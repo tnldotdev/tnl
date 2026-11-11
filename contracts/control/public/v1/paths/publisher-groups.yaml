@@ -1,8 +1,54 @@
 paths:
+  /v1/projects/{project_key}/publisher-groups:
+    parameters:
+      - { name: project_key, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: createBoundPublisherGroup
+      security: [{ bearerAuth: [] }]
+      description: Create one concrete group with exact saved bindings. An omitted name generates a DNS-safe selector independent of customer IDs. An idempotency key is scoped to team/project and normalized name/template/bindings, not the revision precondition. Authorized retries return the same immutable active identity; changed requests and retired keys conflict. Retirement never recreates resources. New mutations use the project's expected revision and commit allocation, bindings and grants together.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/CreatePublisherGroupRequest" }
+      responses:
+        "200":
+          description: Active concrete management resource
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/PublisherGroupResource" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+    get:
+      operationId: listPublisherGroups
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
+      responses:
+        "200":
+          description: Current concrete groups, excluding retired groups and template declarations
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "../openapi.yaml#/components/schemas/PublisherGroupResource" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/projects/{project_key}/publisher-groups/{group_name}:
     parameters:
       - { name: project_key, in: path, required: true, schema: { type: string } }
       - { name: group_name, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getPublisherGroup
+      security: [{ bearerAuth: [] }]
+      description: Read a concrete group by immutable ID or its existing selector.
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
+      responses:
+        "200":
+          description: Current concrete management resource
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/PublisherGroupResource" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
     put:
       operationId: createPublisherGroup
       security: [{ bearerAuth: [] }]
@@ -22,7 +68,7 @@ paths:
     delete:
       operationId: removePublisherGroup
       security: [{ bearerAuth: [] }]
-      description: Retire a template-created group and its services, publisher identities and enrollments. Directly declared groups remain owned by apply.
+      description: Retire a template-created group by immutable ID or selector, including services, publisher identities and enrollments. Directly declared groups remain owned by apply.
       parameters:
         - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
         - {
@@ -33,6 +79,44 @@ paths:
           }
       responses:
         "204": { description: Group retired }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/projects/{project_key}/publisher-groups/{group_name}/bindings:
+    put:
+      operationId: updatePublisherGroupBindings
+      security: [{ bearerAuth: [] }]
+      description: Replace the exact saved bindings of a template-created group by ID or selector. Preserves group/service IDs and reserved endpoints; closes changed runs and replaces their grants and target trust through the existing apply lifecycle. The project revision fences binding and template changes together.
+      parameters:
+        - { name: project_key, in: path, required: true, schema: { type: string } }
+        - { name: group_name, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              { $ref: "../openapi.yaml#/components/schemas/UpdatePublisherGroupBindingsRequest" }
+      responses:
+        "200":
+          description: Updated concrete management resource
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/PublisherGroupResource" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/projects/{project_key}/publisher-groups/{group_name}/members:
+    get:
+      operationId: listPublisherGroupMembers
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: project_key, in: path, required: true, schema: { type: string } }
+        - { name: group_name, in: path, required: true, schema: { type: string } }
+        - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
+      responses:
+        "200":
+          description: Current group member observations, without enrollment secrets
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "../openapi.yaml#/components/schemas/PublisherGroupMemberStatus" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/projects/{project_key}/publisher-groups/{group_name}/connection:
     get:

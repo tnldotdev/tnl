@@ -104,7 +104,10 @@ func (d *Database) ExchangeWorkload(ctx context.Context, r ExchangeWorkloadReque
 	if err != nil {
 		return result, err
 	}
-	configuration = publisherTemplateConfiguration(configuration, groups, "")
+	configuration, err = d.expandedPublisherConfiguration(ctx, tx, configuration, groups)
+	if err != nil {
+		return result, err
+	}
 	groupsByID := make(map[string]controlstatedb.ControlProjectPublisherGroup, len(groups))
 	for _, group := range groups {
 		groupsByID[group.ID] = group

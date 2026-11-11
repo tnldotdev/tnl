@@ -918,6 +918,21 @@ type ControlPublisherGrant struct {
 	RevokedAt           pgtype.Timestamptz
 }
 
+type ControlPublisherGroupBinding struct {
+	GroupID            string
+	BindingsCiphertext []byte
+	StorageKeyID       string
+}
+
+type ControlPublisherGroupCreation struct {
+	TeamID           string
+	ProjectKey       string
+	IdempotencyKey   string
+	RequestDigest    []byte
+	BindingProtocols []byte
+	GroupID          string
+}
+
 type ControlPublisherGroupEnrollment struct {
 	ID                  string
 	GroupID             string

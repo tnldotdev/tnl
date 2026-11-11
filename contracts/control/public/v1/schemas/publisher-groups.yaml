@@ -7,6 +7,51 @@ schemas:
       team_id: { type: string }
       from: { type: string }
       expected_revision: { type: integer, format: int64, minimum: 1 }
+      name: { type: string, pattern: "^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$" }
+      idempotency_key: { type: string, minLength: 1, maxLength: 256 }
+      bindings: { $ref: "../openapi.yaml#/components/schemas/PublisherGroupBindings" }
+  PublisherGroupTargetBinding:
+    type: object
+    additionalProperties: false
+    description: Exact target settings for one group. Control privately pins the template service's protocol when this binding is explicitly saved; callers never select a separate protocol. A retained binding cannot be reinterpreted by a template protocol change.
+    properties:
+      target: { type: string, maxLength: 8192 }
+      target_tls: { $ref: "../openapi.yaml#/components/schemas/ProjectTargetTLS" }
+      target_discovery: { $ref: "../openapi.yaml#/components/schemas/ProjectTargetDiscovery" }
+  PublisherGroupBindings:
+    type: object
+    maxProperties: 128
+    additionalProperties:
+      { $ref: "../openapi.yaml#/components/schemas/PublisherGroupTargetBinding" }
+  PublisherGroupResource:
+    type: object
+    additionalProperties: false
+    required: [id, name, from, revision, retired, bindings, services, members]
+    properties:
+      id: { type: string, pattern: "^pgrp_[A-Za-z0-9]{22}$" }
+      name: { type: string }
+      from: { type: string }
+      revision: { type: integer, format: int64 }
+      retired: { type: boolean }
+      bindings: { $ref: "../openapi.yaml#/components/schemas/PublisherGroupBindings" }
+      services:
+        {
+          type: array,
+          items: { $ref: "../openapi.yaml#/components/schemas/AppliedProjectService" },
+        }
+      members:
+        {
+          type: array,
+          items: { $ref: "../openapi.yaml#/components/schemas/PublisherGroupMemberStatus" },
+        }
+  UpdatePublisherGroupBindingsRequest:
+    type: object
+    additionalProperties: false
+    required: [team_id, expected_revision, bindings]
+    properties:
+      team_id: { type: string }
+      expected_revision: { type: integer, format: int64, minimum: 1 }
+      bindings: { $ref: "../openapi.yaml#/components/schemas/PublisherGroupBindings" }
   PublisherGroupConnection:
     type: object
     additionalProperties: false
@@ -75,8 +120,16 @@ schemas:
       expires_in: { type: integer, minimum: 60, maximum: 86400 }
   PublisherGroupEnrollment:
     type: object
-    required: [enrollment_key, group_id, expires_at, max_members]
+    required: [enrollment_key, group_id, expires_at, max_members, publisher]
     properties:
+      publisher:
+        type: object
+        additionalProperties: false
+        required: [server, project, group]
+        properties:
+          server: { type: string }
+          project: { type: string }
+          group: { type: string }
       enrollment_key: { type: string }
       group_id: { type: string }
       expires_at: { type: string, format: date-time }

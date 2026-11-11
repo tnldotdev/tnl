@@ -1,7 +1,10 @@
 package state
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"maps"
 	"strings"
@@ -14,9 +17,13 @@ import (
 )
 
 var ErrPublisherTemplateInUse = errors.New("publisher template has dependent groups; remove those groups before removing or converting the template")
+var ErrPublisherGroupRetired = errors.New("publisher group is retired; its creation key cannot be reused")
 
 type PublisherGroupCreation struct {
 	Name, Template string
+	Bindings       PublisherGroupBindings
+	IdempotencyKey string
+	ID             string
 }
 
 // template instances share declarations, never service IDs or publisher keys.
@@ -33,7 +40,7 @@ func appliedServiceName(key string) string {
 
 // expand only inside control. the stored configuration remains the declaration
 // from Git, while this projection feeds the existing resource reconciler.
-func publisherTemplateConfiguration(c ProjectConfiguration, groups []controlstatedb.ControlProjectPublisherGroup, omit string) ProjectConfiguration {
+func publisherTemplateConfiguration(c ProjectConfiguration, groups []controlstatedb.ControlProjectPublisherGroup, omit string, bindings map[string]PublisherGroupBindings) (ProjectConfiguration, error) {
 	result := c
 	result.PublisherGroups = maps.Clone(c.PublisherGroups)
 	result.Services = maps.Clone(c.Services)
@@ -56,16 +63,26 @@ func publisherTemplateConfiguration(c ProjectConfiguration, groups []controlstat
 			continue
 		}
 		definition.Template = false
+		if err := validatePublisherGroupBindings(c, instance.TemplateName, bindings[instance.ID]); err != nil {
+			return ProjectConfiguration{}, err
+		}
 		result.PublisherGroups[instance.Name] = definition
 		for key, service := range c.Services {
 			if service.PublisherGroup != instance.TemplateName {
 				continue
 			}
 			service.PublisherGroup = instance.Name
+			if service.TargetBinding == "group" {
+				var err error
+				service, err = bindPublisherGroupService(service, bindings[instance.ID][key])
+				if err != nil {
+					return ProjectConfiguration{}, err
+				}
+			}
 			result.Services[publisherGroupServiceKey(instance.ID, key)] = service
 		}
 	}
-	return result
+	return result, nil
 }
 
 func validatePublisherTemplates(c ProjectConfiguration, groups []controlstatedb.ControlProjectPublisherGroup, omit string) error {
@@ -83,41 +100,117 @@ func validatePublisherTemplates(c ProjectConfiguration, groups []controlstatedb.
 	return nil
 }
 
-func createTemplateGroup(ctx context.Context, tx pgx.Tx, r ApplyProjectConfigurationRequest, c ProjectConfiguration) (bool, error) {
+func (d *Database) createTemplateGroup(ctx context.Context, tx pgx.Tx, r ApplyProjectConfigurationRequest, c ProjectConfiguration) (created, replay bool, err error) {
 	creation := r.CreateGroup
 	if creation == nil {
-		return false, nil
+		return false, false, nil
 	}
-	if !naming.ValidServiceName(creation.Name) || creation.Name == "local" || !c.PublisherGroups[creation.Template].Template {
-		return false, ErrProjectConfigurationInvalid
+	if len(creation.IdempotencyKey) > 256 || strings.TrimSpace(creation.IdempotencyKey) != creation.IdempotencyKey || strings.ContainsAny(creation.IdempotencyKey, "\x00\r\n") {
+		return false, false, ErrProjectConfigurationInvalid
 	}
-	if _, exists := c.PublisherGroups[creation.Name]; exists {
-		return false, ErrServiceConflict
+	protocols := publisherGroupBindingProtocols(c, creation.Template)
+	if creation.IdempotencyKey != "" {
+		var previous []byte
+		var encodedProtocols []byte
+		var retired bool
+		err := tx.QueryRow(ctx, `SELECT creation.request_digest,creation.group_id,creation.binding_protocols,g.deleted_at IS NOT NULL FROM control.publisher_group_creations creation JOIN control.project_publisher_groups g ON g.id=creation.group_id WHERE creation.team_id=$1 AND creation.project_key=$2 AND creation.idempotency_key=$3`, r.TeamID, r.ProjectKey, creation.IdempotencyKey).Scan(&previous, &creation.ID, &encodedProtocols, &retired)
+		if err == nil {
+			protocols = nil
+			if err = json.Unmarshal(encodedProtocols, &protocols); err != nil {
+				return false, false, err
+			}
+			bindings, err := normalizePublisherGroupBindings(creation.Bindings, protocols)
+			if err != nil {
+				return false, false, ErrServiceConflict
+			}
+			request, _ := json.Marshal([]any{creation.Name, creation.Template, bindings})
+			digest := sha256.Sum256(request)
+			if !bytes.Equal(previous, digest[:]) {
+				return false, false, ErrServiceConflict
+			}
+			if retired {
+				return false, false, ErrPublisherGroupRetired
+			}
+			return false, true, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return false, false, err
+		}
+	}
+	creation.Bindings, err = normalizePublisherGroupBindings(creation.Bindings, protocols)
+	if err != nil {
+		return false, false, err
+	}
+	request, _ := json.Marshal([]any{creation.Name, creation.Template, creation.Bindings})
+	digest := sha256.Sum256(request)
+	encodedProtocols, _ := json.Marshal(protocols)
+	name := creation.Name
+	if name == "" {
+		id, err := opaqueid.New("pgrp_")
+		if err != nil {
+			return false, false, err
+		}
+		name = "group-" + strings.ToLower(id[len("pgrp_"):])
+	}
+	if !naming.ValidServiceName(name) || name == "local" || !c.PublisherGroups[creation.Template].Template {
+		return false, false, ErrProjectConfigurationInvalid
+	}
+	if err := validatePublisherGroupBindings(c, creation.Template, creation.Bindings); err != nil {
+		return false, false, err
+	}
+	if _, exists := c.PublisherGroups[name]; exists {
+		return false, false, ErrServiceConflict
 	}
 	var template string
-	err := tx.QueryRow(ctx, `SELECT g.template_name FROM control.publisher_group_names alias JOIN control.project_publisher_groups g ON g.id=alias.group_id WHERE alias.team_id=$1 AND alias.project_key=$2 AND alias.name=$3 AND g.deleted_at IS NULL`, r.TeamID, r.ProjectKey, creation.Name).Scan(&template)
+	err = tx.QueryRow(ctx, `SELECT g.template_name,g.id FROM control.publisher_group_names alias JOIN control.project_publisher_groups g ON g.id=alias.group_id WHERE alias.team_id=$1 AND alias.project_key=$2 AND alias.name=$3 AND g.deleted_at IS NULL`, r.TeamID, r.ProjectKey, name).Scan(&template, &creation.ID)
 	if err == nil {
 		if template != creation.Template {
-			return false, ErrServiceConflict
+			return false, false, ErrServiceConflict
 		}
-		return false, nil
+		groups, e := controlstatedb.New(tx).ListProjectPublisherGroups(ctx, controlstatedb.ListProjectPublisherGroupsParams{TeamID: r.TeamID, ProjectKey: r.ProjectKey})
+		if e != nil {
+			return false, false, e
+		}
+		bindings, e := d.loadPublisherGroupBindings(ctx, tx, groups)
+		if e != nil {
+			return false, false, e
+		}
+		a, _ := json.Marshal(bindings[creation.ID])
+		b, _ := json.Marshal(creation.Bindings)
+		if !bytes.Equal(a, b) {
+			return false, false, ErrServiceConflict
+		}
+		if creation.IdempotencyKey != "" {
+			_, err = tx.Exec(ctx, `INSERT INTO control.publisher_group_creations(team_id,project_key,idempotency_key,request_digest,group_id,binding_protocols) VALUES($1,$2,$3,$4,$5,$6::jsonb)`, r.TeamID, r.ProjectKey, creation.IdempotencyKey, digest[:], creation.ID, string(encodedProtocols))
+		}
+		return false, false, err
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
-		return false, err
+		return false, false, err
 	}
 	var count int
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM control.project_publisher_groups WHERE team_id=$1 AND project_key=$2 AND template_name<>'' AND deleted_at IS NULL`, r.TeamID, r.ProjectKey).Scan(&count); err != nil {
-		return false, err
+		return false, false, err
 	}
 	if count >= 1024 {
-		return false, ErrProjectConfigurationInvalid
+		return false, false, ErrProjectConfigurationInvalid
 	}
 	id, err := opaqueid.New("pgrp_")
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO control.project_publisher_groups(id,team_id,project_key,name,template_name) VALUES($1,$2,$3,$4,$5)`, id, r.TeamID, r.ProjectKey, creation.Name, creation.Template)
-	return err == nil, projectConstraintError(err)
+	_, err = tx.Exec(ctx, `INSERT INTO control.project_publisher_groups(id,team_id,project_key,name,template_name) VALUES($1,$2,$3,$4,$5)`, id, r.TeamID, r.ProjectKey, name, creation.Template)
+	if err != nil {
+		return false, false, projectConstraintError(err)
+	}
+	creation.ID = id
+	if err = d.savePublisherGroupBindings(ctx, tx, id, creation.Bindings); err != nil {
+		return false, false, err
+	}
+	if creation.IdempotencyKey != "" {
+		_, err = tx.Exec(ctx, `INSERT INTO control.publisher_group_creations(team_id,project_key,idempotency_key,request_digest,group_id,binding_protocols) VALUES($1,$2,$3,$4,$5,$6::jsonb)`, r.TeamID, r.ProjectKey, creation.IdempotencyKey, digest[:], id, string(encodedProtocols))
+	}
+	return err == nil, false, err
 }
 
 // create and remove reuse apply's transaction, revision fence, resource locks,
@@ -135,8 +228,15 @@ func (d *Database) mutateTemplateGroup(ctx context.Context, team, project, actor
 	if err != nil {
 		return current, err
 	}
-	if current.Revision != expected {
+	if create == nil && current.Revision != expected {
 		return AppliedProjectConfiguration{}, ErrProjectConfigurationStale
+	}
+	if remove != "" {
+		resource, err := publisherGroupResource(current, remove)
+		if err != nil {
+			return AppliedProjectConfiguration{}, err
+		}
+		remove = resource.Name
 	}
 	return d.ApplyProjectConfiguration(ctx, ApplyProjectConfigurationRequest{
 		TeamID: team, ProjectKey: project, SourceFingerprint: current.SourceFingerprint,

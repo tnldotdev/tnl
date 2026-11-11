@@ -202,13 +202,35 @@ func workloadRefSchema(base *jsonschema.Schema) *jsonschema.Schema {
 }
 
 func servicesSchema() *jsonschema.Schema {
+	variants := []*jsonschema.Schema{serviceSchema("http"), privateHTTPServiceSchema(), serviceSchema("tcp"), serviceSchema("mysql"), serviceSchema("postgres"), serviceSchema("kubernetes")}
+	for _, protocol := range []string{"http", "tcp", "mysql", "postgres", "kubernetes"} {
+		variants = append(variants, groupBoundServiceSchema(protocol))
+	}
 	return &jsonschema.Schema{
 		Type: "object", MaxProperties: integerPointer(32),
-		PropertyNames: &jsonschema.Schema{Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`},
-		AdditionalProperties: &jsonschema.Schema{OneOf: []*jsonschema.Schema{
-			serviceSchema("http"), privateHTTPServiceSchema(), serviceSchema("tcp"), serviceSchema("mysql"), serviceSchema("postgres"), serviceSchema("kubernetes"),
-		}},
+		PropertyNames:        &jsonschema.Schema{Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`},
+		AdditionalProperties: &jsonschema.Schema{OneOf: variants},
 	}
+}
+
+func groupBoundServiceSchema(protocol string) *jsonschema.Schema {
+	service := serviceSchema(protocol)
+	service.Required = []string{"publisher_group", "target_binding"}
+	if protocol != "http" {
+		service.Required = append(service.Required, "protocol")
+	}
+	service.AllOf = nil
+	service.Properties.Set("publisher_group", &jsonschema.Schema{Type: "string", Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`, Not: &jsonschema.Schema{Const: "local"}})
+	service.Properties.Set("target_binding", &jsonschema.Schema{Type: "string", Const: "group", Description: "Use an exact saved target binding for each concrete group following this template. The publisher never accepts a connect-time target."})
+	service.Properties.Set("target", jsonschema.FalseSchema)
+	service.Properties.Set("public_url", jsonschema.FalseSchema)
+	if protocol == "http" {
+		http, _ := service.Properties.Get("http")
+		for _, name := range []string{"readiness", "paths", "open"} {
+			http.Properties.Set(name, jsonschema.FalseSchema)
+		}
+	}
+	return service
 }
 
 // serviceSchema keeps the protocol boundary in the generated TypeScript union,
@@ -239,6 +261,7 @@ func serviceSchema(protocol string) *jsonschema.Schema {
 	target := targetSchema(protocol)
 	properties.Set("protocol", &jsonschema.Schema{Type: "string", Enum: protocols})
 	properties.Set("target", target)
+	properties.Set("target_binding", &jsonschema.Schema{Type: "string", Enum: []any{"fixed"}, Description: "Use the template's declared target. Concrete groups cannot override it."})
 	properties.Set("tls", jsonschema.FalseSchema)
 	httpProperties := jsonschema.NewProperties()
 	httpProperties.Set("access", accessSchema("restricted"))

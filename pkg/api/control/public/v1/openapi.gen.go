@@ -636,6 +636,24 @@ func (e ProjectServiceAccessTeam) Valid() bool {
 	}
 }
 
+// Defines values for ProjectServiceConfigurationTargetBinding.
+const (
+	Fixed ProjectServiceConfigurationTargetBinding = "fixed"
+	Group ProjectServiceConfigurationTargetBinding = "group"
+)
+
+// Valid indicates whether the value is a known member of the ProjectServiceConfigurationTargetBinding enum.
+func (e ProjectServiceConfigurationTargetBinding) Valid() bool {
+	switch e {
+	case Fixed:
+		return true
+	case Group:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ProjectTargetDiscoveryEndpoint.
 const (
 	Reader ProjectTargetDiscoveryEndpoint = "reader"
@@ -1836,7 +1854,8 @@ type AppliedProjectServiceServiceKind string
 
 // AppliedPublisherGroup defines model for AppliedPublisherGroup.
 type AppliedPublisherGroup struct {
-	DomainId string `json:"domain_id"`
+	Bindings *PublisherGroupBindings `json:"bindings,omitempty"`
+	DomainId string                  `json:"domain_id"`
 
 	// GroupNames Authoritative current and historical selectors permanently bound to this group ID.
 	GroupNames []string `json:"group_names"`
@@ -1847,6 +1866,7 @@ type AppliedPublisherGroup struct {
 	Name          string `json:"name"`
 	Namespace     string `json:"namespace"`
 	Public        bool   `json:"public"`
+	Retired       *bool  `json:"retired,omitempty"`
 
 	// Template Source template followed by this concrete group.
 	Template *string `json:"template,omitempty"`
@@ -1855,11 +1875,14 @@ type AppliedPublisherGroup struct {
 // ApplyProjectConfigurationRequest defines model for ApplyProjectConfigurationRequest.
 type ApplyProjectConfigurationRequest struct {
 	// Configuration Normalized declarative configuration, at most 512 KiB encoded. All local declarations defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its groups.
-	Configuration     ProjectConfiguration `json:"configuration"`
-	ExpectedRevision  int64                `json:"expected_revision"`
-	ProjectLabel      *string              `json:"project_label,omitempty"`
-	SourceFingerprint string               `json:"source_fingerprint"`
-	TeamId            string               `json:"team_id"`
+	Configuration    ProjectConfiguration `json:"configuration"`
+	ExpectedRevision int64                `json:"expected_revision"`
+
+	// GroupBindings Complete replacement binding sets keyed by concrete group ID, saved atomically with this declaration. Omitted groups retain their saved target and approved protocol. Changing a bound service's protocol requires an explicit replacement set for every affected group in this same apply.
+	GroupBindings     *map[string]PublisherGroupBindings `json:"group_bindings,omitempty"`
+	ProjectLabel      *string                            `json:"project_label,omitempty"`
+	SourceFingerprint string                             `json:"source_fingerprint"`
+	TeamId            string                             `json:"team_id"`
 }
 
 // AuthenticationFacts defines model for AuthenticationFacts.
@@ -2356,9 +2379,12 @@ type CreatePublisherGroupEnrollmentRequest struct {
 
 // CreatePublisherGroupRequest defines model for CreatePublisherGroupRequest.
 type CreatePublisherGroupRequest struct {
-	ExpectedRevision int64  `json:"expected_revision"`
-	From             string `json:"from"`
-	TeamId           string `json:"team_id"`
+	Bindings         *PublisherGroupBindings `json:"bindings,omitempty"`
+	ExpectedRevision int64                   `json:"expected_revision"`
+	From             string                  `json:"from"`
+	IdempotencyKey   *string                 `json:"idempotency_key,omitempty"`
+	Name             *string                 `json:"name,omitempty"`
+	TeamId           string                  `json:"team_id"`
 }
 
 // CreateServiceCertificateIssuanceRequest defines model for CreateServiceCertificateIssuanceRequest.
@@ -2851,12 +2877,18 @@ type ProjectServiceConfiguration struct {
 	// Target Public URL targets are HTTP/HTTPS origins with an explicit port and no trailing slash. Service targets normalize to host:port with separate target_tls trust. Only local declarations may use deferred app, compose:SERVICE:PORT, or docker:CONTAINER:PORT descriptors; control does not discover targets.
 	Target string `json:"target"`
 
+	// TargetBinding Only template services may use group. Each concrete group must supply an exact saved binding; target, target_tls and target_discovery must be omitted or empty in the declaration. Omitted or fixed uses the template target and forbids instance overrides.
+	TargetBinding *ProjectServiceConfigurationTargetBinding `json:"target_binding,omitempty"`
+
 	// TargetDiscovery Exact provider selector resolved by the assigned publisher with its own AWS credentials. Control does not discover targets or credentials. EKS requires kubernetes; RDS requires postgres or mysql, verified against provider metadata.
 	TargetDiscovery *ProjectTargetDiscovery `json:"target_discovery,omitempty"`
 
 	// TargetTls Publisher-to-target TLS trust, independent of visitor TLS. The protocol selects native negotiation. ca_pem is a CA-only snapshot added to the publisher's system roots. digest is lowercase SHA-256 of "tnl-target-tls/v1", NUL, hostname, NUL, and ca_pem.
 	TargetTls *ProjectTargetTLS `json:"target_tls,omitempty"`
 }
+
+// ProjectServiceConfigurationTargetBinding Only template services may use group. Each concrete group must supply an exact saved binding; target, target_tls and target_discovery must be omitted or empty in the declaration. Omitted or fixed uses the template target and forbids instance overrides.
+type ProjectServiceConfigurationTargetBinding string
 
 // ProjectServiceHTTP Local readiness and path mounts, or named-group restricted HTTP access and request limits. A group owns its endpoint and reachability.
 type ProjectServiceHTTP struct {
@@ -3170,6 +3202,9 @@ type PublisherGroupAssignments struct {
 	Services              []PublisherGroupServiceAssignment `json:"services"`
 }
 
+// PublisherGroupBindings defines model for PublisherGroupBindings.
+type PublisherGroupBindings map[string]PublisherGroupTargetBinding
+
 // PublisherGroupConnection defines model for PublisherGroupConnection.
 type PublisherGroupConnection struct {
 	GroupId           string                                      `json:"group_id"`
@@ -3200,6 +3235,11 @@ type PublisherGroupEnrollment struct {
 	ExpiresAt     time.Time `json:"expires_at"`
 	GroupId       string    `json:"group_id"`
 	MaxMembers    int       `json:"max_members"`
+	Publisher     struct {
+		Group   string `json:"group"`
+		Project string `json:"project"`
+		Server  string `json:"server"`
+	} `json:"publisher"`
 }
 
 // PublisherGroupLease defines model for PublisherGroupLease.
@@ -3244,6 +3284,18 @@ type PublisherGroupMemberStatus struct {
 	TeamId     string                  `json:"team_id"`
 }
 
+// PublisherGroupResource defines model for PublisherGroupResource.
+type PublisherGroupResource struct {
+	Bindings PublisherGroupBindings       `json:"bindings"`
+	From     string                       `json:"from"`
+	Id       string                       `json:"id"`
+	Members  []PublisherGroupMemberStatus `json:"members"`
+	Name     string                       `json:"name"`
+	Retired  bool                         `json:"retired"`
+	Revision int64                        `json:"revision"`
+	Services []AppliedProjectService      `json:"services"`
+}
+
 // PublisherGroupServiceAssignment defines model for PublisherGroupServiceAssignment.
 type PublisherGroupServiceAssignment struct {
 	Configuration ProjectServiceConfiguration                `json:"configuration"`
@@ -3257,6 +3309,17 @@ type PublisherGroupServiceAssignment struct {
 
 // PublisherGroupServiceAssignmentServiceKind defines model for PublisherGroupServiceAssignment.ServiceKind.
 type PublisherGroupServiceAssignmentServiceKind string
+
+// PublisherGroupTargetBinding Exact target settings for one group. Control privately pins the template service's protocol when this binding is explicitly saved; callers never select a separate protocol. A retained binding cannot be reinterpreted by a template protocol change.
+type PublisherGroupTargetBinding struct {
+	Target *string `json:"target,omitempty"`
+
+	// TargetDiscovery Exact provider selector resolved by the assigned publisher with its own AWS credentials. Control does not discover targets or credentials. EKS requires kubernetes; RDS requires postgres or mysql, verified against provider metadata.
+	TargetDiscovery *ProjectTargetDiscovery `json:"target_discovery,omitempty"`
+
+	// TargetTls Publisher-to-target TLS trust, independent of visitor TLS. The protocol selects native negotiation. ca_pem is a CA-only snapshot added to the publisher's system roots. digest is lowercase SHA-256 of "tnl-target-tls/v1", NUL, hostname, NUL, and ca_pem.
+	TargetTls *ProjectTargetTLS `json:"target_tls,omitempty"`
+}
 
 // PublisherGroupVerification defines model for PublisherGroupVerification.
 type PublisherGroupVerification struct {
@@ -3938,6 +4001,13 @@ type UpdatePublicURLRequest struct {
 	Target string `json:"target"`
 }
 
+// UpdatePublisherGroupBindingsRequest defines model for UpdatePublisherGroupBindingsRequest.
+type UpdatePublisherGroupBindingsRequest struct {
+	Bindings         PublisherGroupBindings `json:"bindings"`
+	ExpectedRevision int64                  `json:"expected_revision"`
+	TeamId           string                 `json:"team_id"`
+}
+
 // VisitorAccessMode defines model for VisitorAccessMode.
 type VisitorAccessMode string
 
@@ -4322,14 +4392,29 @@ type GetProjectPublicMetadataParams struct {
 	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
 }
 
+// ListPublisherGroupsParams defines parameters for ListPublisherGroups.
+type ListPublisherGroupsParams struct {
+	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
+}
+
 // RemovePublisherGroupParams defines parameters for RemovePublisherGroup.
 type RemovePublisherGroupParams struct {
 	TeamId           TeamIDQuery `form:"team_id" json:"team_id"`
 	ExpectedRevision int64       `form:"expected_revision" json:"expected_revision"`
 }
 
+// GetPublisherGroupParams defines parameters for GetPublisherGroup.
+type GetPublisherGroupParams struct {
+	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
+}
+
 // GetPublisherGroupConnectionParams defines parameters for GetPublisherGroupConnection.
 type GetPublisherGroupConnectionParams struct {
+	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
+}
+
+// ListPublisherGroupMembersParams defines parameters for ListPublisherGroupMembers.
+type ListPublisherGroupMembersParams struct {
 	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
 }
 
@@ -4549,8 +4634,14 @@ type ApplyProjectConfigurationJSONRequestBody = ApplyProjectConfigurationRequest
 // RealizeLocalProjectServiceJSONRequestBody defines body for RealizeLocalProjectService for application/json ContentType.
 type RealizeLocalProjectServiceJSONRequestBody = RealizeLocalProjectServiceRequest
 
+// CreateBoundPublisherGroupJSONRequestBody defines body for CreateBoundPublisherGroup for application/json ContentType.
+type CreateBoundPublisherGroupJSONRequestBody = CreatePublisherGroupRequest
+
 // CreatePublisherGroupJSONRequestBody defines body for CreatePublisherGroup for application/json ContentType.
 type CreatePublisherGroupJSONRequestBody = CreatePublisherGroupRequest
+
+// UpdatePublisherGroupBindingsJSONRequestBody defines body for UpdatePublisherGroupBindings for application/json ContentType.
+type UpdatePublisherGroupBindingsJSONRequestBody = UpdatePublisherGroupBindingsRequest
 
 // CreatePublisherGroupEnrollmentJSONRequestBody defines body for CreatePublisherGroupEnrollment for application/json ContentType.
 type CreatePublisherGroupEnrollmentJSONRequestBody = CreatePublisherGroupEnrollmentRequest
@@ -5110,10 +5201,30 @@ type ClientInterface interface {
 	// Browser-safe project source and public service IDs/hostnames, including exact local worktree realizations before or after first apply. Returns only public services the caller may visit, or all public services for a project manager. A service key may appear more than once for separate worktree URLs. Never returns configuration, targets, trust, grants, or publisher data.
 	GetProjectPublicMetadata(ctx context.Context, projectKey string, params *GetProjectPublicMetadataParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListPublisherGroups performs a GET /v1/projects/{project_key}/publisher-groups (the `ListPublisherGroups` operationId) request.
+	ListPublisherGroups(ctx context.Context, projectKey string, params *ListPublisherGroupsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateBoundPublisherGroupWithBody performs a POST /v1/projects/{project_key}/publisher-groups (the `CreateBoundPublisherGroup` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Create one concrete group with exact saved bindings. An omitted name generates a DNS-safe selector independent of customer IDs. An idempotency key is scoped to team/project and normalized name/template/bindings, not the revision precondition. Authorized retries return the same immutable active identity; changed requests and retired keys conflict. Retirement never recreates resources. New mutations use the project's expected revision and commit allocation, bindings and grants together.
+	CreateBoundPublisherGroupWithBody(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateBoundPublisherGroup performs a POST /v1/projects/{project_key}/publisher-groups (the `CreateBoundPublisherGroup` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Create one concrete group with exact saved bindings. An omitted name generates a DNS-safe selector independent of customer IDs. An idempotency key is scoped to team/project and normalized name/template/bindings, not the revision precondition. Authorized retries return the same immutable active identity; changed requests and retired keys conflict. Retirement never recreates resources. New mutations use the project's expected revision and commit allocation, bindings and grants together.
+	CreateBoundPublisherGroup(ctx context.Context, projectKey string, body CreateBoundPublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// RemovePublisherGroup performs a DELETE /v1/projects/{project_key}/publisher-groups/{group_name} (the `RemovePublisherGroup` operationId) request.
 	//
-	// Retire a template-created group and its services, publisher identities and enrollments. Directly declared groups remain owned by apply.
+	// Retire a template-created group by immutable ID or selector, including services, publisher identities and enrollments. Directly declared groups remain owned by apply.
 	RemovePublisherGroup(ctx context.Context, projectKey string, groupName string, params *RemovePublisherGroupParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetPublisherGroup performs a GET /v1/projects/{project_key}/publisher-groups/{group_name} (the `GetPublisherGroup` operationId) request.
+	//
+	// Read a concrete group by immutable ID or its existing selector.
+	GetPublisherGroup(ctx context.Context, projectKey string, groupName string, params *GetPublisherGroupParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreatePublisherGroupWithBody performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name} (the `CreatePublisherGroup` operationId) request,
 	// with any type of body and a specified content type.
@@ -5127,6 +5238,18 @@ type ClientInterface interface {
 	// Create a concrete team-owned group following an applied template. Same name and template return the existing group; names cannot be adopted from another template or reused after retirement. Creation allocates distinct services but grants no new visitor authority to existing workload sessions.
 	CreatePublisherGroup(ctx context.Context, projectKey string, groupName string, body CreatePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// UpdatePublisherGroupBindingsWithBody performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name}/bindings (the `UpdatePublisherGroupBindings` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Replace the exact saved bindings of a template-created group by ID or selector. Preserves group/service IDs and reserved endpoints; closes changed runs and replaces their grants and target trust through the existing apply lifecycle. The project revision fences binding and template changes together.
+	UpdatePublisherGroupBindingsWithBody(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdatePublisherGroupBindings performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name}/bindings (the `UpdatePublisherGroupBindings` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Replace the exact saved bindings of a template-created group by ID or selector. Preserves group/service IDs and reserved endpoints; closes changed runs and replaces their grants and target trust through the existing apply lifecycle. The project revision fences binding and template changes together.
+	UpdatePublisherGroupBindings(ctx context.Context, projectKey string, groupName string, body UpdatePublisherGroupBindingsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetPublisherGroupConnection performs a GET /v1/projects/{project_key}/publisher-groups/{group_name}/connection (the `GetPublisherGroupConnection` operationId) request.
 	//
 	// Read nonsecret group connection context as a team manager. The descriptor is a selector, never an access credential.
@@ -5139,6 +5262,9 @@ type ClientInterface interface {
 	// CreatePublisherGroupEnrollment performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId) request.
 	// Takes a body of the `application/json` content type.
 	CreatePublisherGroupEnrollment(ctx context.Context, projectKey string, groupName string, body CreatePublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListPublisherGroupMembers performs a GET /v1/projects/{project_key}/publisher-groups/{group_name}/members (the `ListPublisherGroupMembers` operationId) request.
+	ListPublisherGroupMembers(ctx context.Context, projectKey string, groupName string, params *ListPublisherGroupMembersParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RevokePublisherGroupMember performs a DELETE /v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id} (the `RevokePublisherGroupMember` operationId) request.
 	RevokePublisherGroupMember(ctx context.Context, projectKey string, groupName string, publisherIdentityId string, params *RevokePublisherGroupMemberParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -6683,11 +6809,71 @@ func (c *Client) GetProjectPublicMetadata(ctx context.Context, projectKey string
 	return c.Client.Do(req)
 }
 
+// ListPublisherGroups performs a GET /v1/projects/{project_key}/publisher-groups (the `ListPublisherGroups` operationId) request.
+func (c *Client) ListPublisherGroups(ctx context.Context, projectKey string, params *ListPublisherGroupsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListPublisherGroupsRequest(c.Server, projectKey, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateBoundPublisherGroupWithBody performs a POST /v1/projects/{project_key}/publisher-groups (the `CreateBoundPublisherGroup` operationId) request,
+// with any type of body and a specified content type.
+//
+// Create one concrete group with exact saved bindings. An omitted name generates a DNS-safe selector independent of customer IDs. An idempotency key is scoped to team/project and normalized name/template/bindings, not the revision precondition. Authorized retries return the same immutable active identity; changed requests and retired keys conflict. Retirement never recreates resources. New mutations use the project's expected revision and commit allocation, bindings and grants together.
+func (c *Client) CreateBoundPublisherGroupWithBody(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateBoundPublisherGroupRequestWithBody(c.Server, projectKey, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateBoundPublisherGroup performs a POST /v1/projects/{project_key}/publisher-groups (the `CreateBoundPublisherGroup` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Create one concrete group with exact saved bindings. An omitted name generates a DNS-safe selector independent of customer IDs. An idempotency key is scoped to team/project and normalized name/template/bindings, not the revision precondition. Authorized retries return the same immutable active identity; changed requests and retired keys conflict. Retirement never recreates resources. New mutations use the project's expected revision and commit allocation, bindings and grants together.
+func (c *Client) CreateBoundPublisherGroup(ctx context.Context, projectKey string, body CreateBoundPublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateBoundPublisherGroupRequest(c.Server, projectKey, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // RemovePublisherGroup performs a DELETE /v1/projects/{project_key}/publisher-groups/{group_name} (the `RemovePublisherGroup` operationId) request.
 //
-// Retire a template-created group and its services, publisher identities and enrollments. Directly declared groups remain owned by apply.
+// Retire a template-created group by immutable ID or selector, including services, publisher identities and enrollments. Directly declared groups remain owned by apply.
 func (c *Client) RemovePublisherGroup(ctx context.Context, projectKey string, groupName string, params *RemovePublisherGroupParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRemovePublisherGroupRequest(c.Server, projectKey, groupName, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetPublisherGroup performs a GET /v1/projects/{project_key}/publisher-groups/{group_name} (the `GetPublisherGroup` operationId) request.
+//
+// Read a concrete group by immutable ID or its existing selector.
+func (c *Client) GetPublisherGroup(ctx context.Context, projectKey string, groupName string, params *GetPublisherGroupParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetPublisherGroupRequest(c.Server, projectKey, groupName, params)
 	if err != nil {
 		return nil, err
 	}
@@ -6720,6 +6906,38 @@ func (c *Client) CreatePublisherGroupWithBody(ctx context.Context, projectKey st
 // Create a concrete team-owned group following an applied template. Same name and template return the existing group; names cannot be adopted from another template or reused after retirement. Creation allocates distinct services but grants no new visitor authority to existing workload sessions.
 func (c *Client) CreatePublisherGroup(ctx context.Context, projectKey string, groupName string, body CreatePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreatePublisherGroupRequest(c.Server, projectKey, groupName, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdatePublisherGroupBindingsWithBody performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name}/bindings (the `UpdatePublisherGroupBindings` operationId) request,
+// with any type of body and a specified content type.
+//
+// Replace the exact saved bindings of a template-created group by ID or selector. Preserves group/service IDs and reserved endpoints; closes changed runs and replaces their grants and target trust through the existing apply lifecycle. The project revision fences binding and template changes together.
+func (c *Client) UpdatePublisherGroupBindingsWithBody(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdatePublisherGroupBindingsRequestWithBody(c.Server, projectKey, groupName, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdatePublisherGroupBindings performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name}/bindings (the `UpdatePublisherGroupBindings` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Replace the exact saved bindings of a template-created group by ID or selector. Preserves group/service IDs and reserved endpoints; closes changed runs and replaces their grants and target trust through the existing apply lifecycle. The project revision fences binding and template changes together.
+func (c *Client) UpdatePublisherGroupBindings(ctx context.Context, projectKey string, groupName string, body UpdatePublisherGroupBindingsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdatePublisherGroupBindingsRequest(c.Server, projectKey, groupName, body)
 	if err != nil {
 		return nil, err
 	}
@@ -6763,6 +6981,19 @@ func (c *Client) CreatePublisherGroupEnrollmentWithBody(ctx context.Context, pro
 // Takes a body of the `application/json` content type.
 func (c *Client) CreatePublisherGroupEnrollment(ctx context.Context, projectKey string, groupName string, body CreatePublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreatePublisherGroupEnrollmentRequest(c.Server, projectKey, groupName, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListPublisherGroupMembers performs a GET /v1/projects/{project_key}/publisher-groups/{group_name}/members (the `ListPublisherGroupMembers` operationId) request.
+func (c *Client) ListPublisherGroupMembers(ctx context.Context, projectKey string, groupName string, params *ListPublisherGroupMembersParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListPublisherGroupMembersRequest(c.Server, projectKey, groupName, params)
 	if err != nil {
 		return nil, err
 	}
@@ -10819,6 +11050,110 @@ func NewGetProjectPublicMetadataRequest(server string, projectKey string, params
 	return req, nil
 }
 
+// NewListPublisherGroupsRequest constructs an http.Request for the ListPublisherGroups method
+func NewListPublisherGroupsRequest(server string, projectKey string, params *ListPublisherGroupsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/publisher-groups", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateBoundPublisherGroupRequest calls the generic CreateBoundPublisherGroup builder with application/json body
+func NewCreateBoundPublisherGroupRequest(server string, projectKey string, body CreateBoundPublisherGroupJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateBoundPublisherGroupRequestWithBody(server, projectKey, "application/json", bodyReader)
+}
+
+// NewCreateBoundPublisherGroupRequestWithBody constructs an http.Request for the CreateBoundPublisherGroup method, with any body, and a specified content type
+func NewCreateBoundPublisherGroupRequestWithBody(server string, projectKey string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/publisher-groups", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewRemovePublisherGroupRequest constructs an http.Request for the RemovePublisherGroup method
 func NewRemovePublisherGroupRequest(server string, projectKey string, groupName string, params *RemovePublisherGroupParams) (*http.Request, error) {
 	var err error
@@ -10891,6 +11226,70 @@ func NewRemovePublisherGroupRequest(server string, projectKey string, groupName 
 	return req, nil
 }
 
+// NewGetPublisherGroupRequest constructs an http.Request for the GetPublisherGroup method
+func NewGetPublisherGroupRequest(server string, projectKey string, groupName string, params *GetPublisherGroupParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "group_name", groupName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/publisher-groups/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewCreatePublisherGroupRequest calls the generic CreatePublisherGroup builder with application/json body
 func NewCreatePublisherGroupRequest(server string, projectKey string, groupName string, body CreatePublisherGroupJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -10926,6 +11325,60 @@ func NewCreatePublisherGroupRequestWithBody(server string, projectKey string, gr
 	}
 
 	operationPath := fmt.Sprintf("/v1/projects/%s/publisher-groups/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewUpdatePublisherGroupBindingsRequest calls the generic UpdatePublisherGroupBindings builder with application/json body
+func NewUpdatePublisherGroupBindingsRequest(server string, projectKey string, groupName string, body UpdatePublisherGroupBindingsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdatePublisherGroupBindingsRequestWithBody(server, projectKey, groupName, "application/json", bodyReader)
+}
+
+// NewUpdatePublisherGroupBindingsRequestWithBody constructs an http.Request for the UpdatePublisherGroupBindings method, with any body, and a specified content type
+func NewUpdatePublisherGroupBindingsRequestWithBody(server string, projectKey string, groupName string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "group_name", groupName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/publisher-groups/%s/bindings", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -11059,6 +11512,70 @@ func NewCreatePublisherGroupEnrollmentRequestWithBody(server string, projectKey 
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListPublisherGroupMembersRequest constructs an http.Request for the ListPublisherGroupMembers method
+func NewListPublisherGroupMembersRequest(server string, projectKey string, groupName string, params *ListPublisherGroupMembersParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "group_name", groupName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/publisher-groups/%s/members", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -16422,12 +16939,38 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	GetProjectPublicMetadataWithResponse(ctx context.Context, projectKey string, params *GetProjectPublicMetadataParams, reqEditors ...RequestEditorFn) (*GetProjectPublicMetadataResponse, error)
 
+	// ListPublisherGroupsWithResponse performs a GET /v1/projects/{project_key}/publisher-groups (the `ListPublisherGroups` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ListPublisherGroupsWithResponse(ctx context.Context, projectKey string, params *ListPublisherGroupsParams, reqEditors ...RequestEditorFn) (*ListPublisherGroupsResponse, error)
+
+	// CreateBoundPublisherGroupWithBodyWithResponse performs a POST /v1/projects/{project_key}/publisher-groups (the `CreateBoundPublisherGroup` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Create one concrete group with exact saved bindings. An omitted name generates a DNS-safe selector independent of customer IDs. An idempotency key is scoped to team/project and normalized name/template/bindings, not the revision precondition. Authorized retries return the same immutable active identity; changed requests and retired keys conflict. Retirement never recreates resources. New mutations use the project's expected revision and commit allocation, bindings and grants together.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CreateBoundPublisherGroupWithBodyWithResponse(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateBoundPublisherGroupResponse, error)
+
+	// CreateBoundPublisherGroupWithResponse performs a POST /v1/projects/{project_key}/publisher-groups (the `CreateBoundPublisherGroup` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Create one concrete group with exact saved bindings. An omitted name generates a DNS-safe selector independent of customer IDs. An idempotency key is scoped to team/project and normalized name/template/bindings, not the revision precondition. Authorized retries return the same immutable active identity; changed requests and retired keys conflict. Retirement never recreates resources. New mutations use the project's expected revision and commit allocation, bindings and grants together.
+	CreateBoundPublisherGroupWithResponse(ctx context.Context, projectKey string, body CreateBoundPublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateBoundPublisherGroupResponse, error)
+
 	// RemovePublisherGroupWithResponse performs a DELETE /v1/projects/{project_key}/publisher-groups/{group_name} (the `RemovePublisherGroup` operationId) request.
 	//
-	// Retire a template-created group and its services, publisher identities and enrollments. Directly declared groups remain owned by apply.
+	// Retire a template-created group by immutable ID or selector, including services, publisher identities and enrollments. Directly declared groups remain owned by apply.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	RemovePublisherGroupWithResponse(ctx context.Context, projectKey string, groupName string, params *RemovePublisherGroupParams, reqEditors ...RequestEditorFn) (*RemovePublisherGroupResponse, error)
+
+	// GetPublisherGroupWithResponse performs a GET /v1/projects/{project_key}/publisher-groups/{group_name} (the `GetPublisherGroup` operationId) request.
+	//
+	// Read a concrete group by immutable ID or its existing selector.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	GetPublisherGroupWithResponse(ctx context.Context, projectKey string, groupName string, params *GetPublisherGroupParams, reqEditors ...RequestEditorFn) (*GetPublisherGroupResponse, error)
 
 	// CreatePublisherGroupWithBodyWithResponse performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name} (the `CreatePublisherGroup` operationId) request,
 	// with any type of body and a specified content type.
@@ -16442,6 +16985,20 @@ type ClientWithResponsesInterface interface {
 	//
 	// Create a concrete team-owned group following an applied template. Same name and template return the existing group; names cannot be adopted from another template or reused after retirement. Creation allocates distinct services but grants no new visitor authority to existing workload sessions.
 	CreatePublisherGroupWithResponse(ctx context.Context, projectKey string, groupName string, body CreatePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublisherGroupResponse, error)
+
+	// UpdatePublisherGroupBindingsWithBodyWithResponse performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name}/bindings (the `UpdatePublisherGroupBindings` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Replace the exact saved bindings of a template-created group by ID or selector. Preserves group/service IDs and reserved endpoints; closes changed runs and replaces their grants and target trust through the existing apply lifecycle. The project revision fences binding and template changes together.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	UpdatePublisherGroupBindingsWithBodyWithResponse(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdatePublisherGroupBindingsResponse, error)
+
+	// UpdatePublisherGroupBindingsWithResponse performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name}/bindings (the `UpdatePublisherGroupBindings` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Replace the exact saved bindings of a template-created group by ID or selector. Preserves group/service IDs and reserved endpoints; closes changed runs and replaces their grants and target trust through the existing apply lifecycle. The project revision fences binding and template changes together.
+	UpdatePublisherGroupBindingsWithResponse(ctx context.Context, projectKey string, groupName string, body UpdatePublisherGroupBindingsJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdatePublisherGroupBindingsResponse, error)
 
 	// GetPublisherGroupConnectionWithResponse performs a GET /v1/projects/{project_key}/publisher-groups/{group_name}/connection (the `GetPublisherGroupConnection` operationId) request.
 	//
@@ -16459,6 +17016,11 @@ type ClientWithResponsesInterface interface {
 	// CreatePublisherGroupEnrollmentWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	CreatePublisherGroupEnrollmentWithResponse(ctx context.Context, projectKey string, groupName string, body CreatePublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublisherGroupEnrollmentResponse, error)
+
+	// ListPublisherGroupMembersWithResponse performs a GET /v1/projects/{project_key}/publisher-groups/{group_name}/members (the `ListPublisherGroupMembers` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ListPublisherGroupMembersWithResponse(ctx context.Context, projectKey string, groupName string, params *ListPublisherGroupMembersParams, reqEditors ...RequestEditorFn) (*ListPublisherGroupMembersResponse, error)
 
 	// RevokePublisherGroupMemberWithResponse performs a DELETE /v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id} (the `RevokePublisherGroupMember` operationId) request.
 	//
@@ -18987,6 +19549,102 @@ func (r GetProjectPublicMetadataResponse) ContentType() string {
 	return ""
 }
 
+type ListPublisherGroupsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]PublisherGroupResource
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListPublisherGroupsResponse) GetJSON200() *[]PublisherGroupResource {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListPublisherGroupsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListPublisherGroupsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListPublisherGroupsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListPublisherGroupsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListPublisherGroupsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateBoundPublisherGroupResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublisherGroupResource
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CreateBoundPublisherGroupResponse) GetJSON200() *PublisherGroupResource {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateBoundPublisherGroupResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateBoundPublisherGroupResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateBoundPublisherGroupResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateBoundPublisherGroupResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateBoundPublisherGroupResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type RemovePublisherGroupResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -19022,6 +19680,54 @@ func (r RemovePublisherGroupResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RemovePublisherGroupResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetPublisherGroupResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublisherGroupResource
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetPublisherGroupResponse) GetJSON200() *PublisherGroupResource {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetPublisherGroupResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetPublisherGroupResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetPublisherGroupResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetPublisherGroupResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetPublisherGroupResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -19070,6 +19776,54 @@ func (r CreatePublisherGroupResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r CreatePublisherGroupResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdatePublisherGroupBindingsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublisherGroupResource
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdatePublisherGroupBindingsResponse) GetJSON200() *PublisherGroupResource {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UpdatePublisherGroupBindingsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdatePublisherGroupBindingsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdatePublisherGroupBindingsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdatePublisherGroupBindingsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdatePublisherGroupBindingsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -19166,6 +19920,54 @@ func (r CreatePublisherGroupEnrollmentResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r CreatePublisherGroupEnrollmentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListPublisherGroupMembersResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]PublisherGroupMemberStatus
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListPublisherGroupMembersResponse) GetJSON200() *[]PublisherGroupMemberStatus {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListPublisherGroupMembersResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListPublisherGroupMembersResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListPublisherGroupMembersResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListPublisherGroupMembersResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListPublisherGroupMembersResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -24525,9 +25327,46 @@ func (c *ClientWithResponses) GetProjectPublicMetadataWithResponse(ctx context.C
 	return ParseGetProjectPublicMetadataResponse(rsp)
 }
 
+// ListPublisherGroupsWithResponse performs a GET /v1/projects/{project_key}/publisher-groups (the `ListPublisherGroups` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ListPublisherGroupsWithResponse(ctx context.Context, projectKey string, params *ListPublisherGroupsParams, reqEditors ...RequestEditorFn) (*ListPublisherGroupsResponse, error) {
+	rsp, err := c.ListPublisherGroups(ctx, projectKey, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListPublisherGroupsResponse(rsp)
+}
+
+// CreateBoundPublisherGroupWithBodyWithResponse performs a POST /v1/projects/{project_key}/publisher-groups (the `CreateBoundPublisherGroup` operationId) request,
+// with any type of body and a specified content type.
+//
+// Create one concrete group with exact saved bindings. An omitted name generates a DNS-safe selector independent of customer IDs. An idempotency key is scoped to team/project and normalized name/template/bindings, not the revision precondition. Authorized retries return the same immutable active identity; changed requests and retired keys conflict. Retirement never recreates resources. New mutations use the project's expected revision and commit allocation, bindings and grants together.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreateBoundPublisherGroupWithBodyWithResponse(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateBoundPublisherGroupResponse, error) {
+	rsp, err := c.CreateBoundPublisherGroupWithBody(ctx, projectKey, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateBoundPublisherGroupResponse(rsp)
+}
+
+// CreateBoundPublisherGroupWithResponse performs a POST /v1/projects/{project_key}/publisher-groups (the `CreateBoundPublisherGroup` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Create one concrete group with exact saved bindings. An omitted name generates a DNS-safe selector independent of customer IDs. An idempotency key is scoped to team/project and normalized name/template/bindings, not the revision precondition. Authorized retries return the same immutable active identity; changed requests and retired keys conflict. Retirement never recreates resources. New mutations use the project's expected revision and commit allocation, bindings and grants together.
+func (c *ClientWithResponses) CreateBoundPublisherGroupWithResponse(ctx context.Context, projectKey string, body CreateBoundPublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateBoundPublisherGroupResponse, error) {
+	rsp, err := c.CreateBoundPublisherGroup(ctx, projectKey, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateBoundPublisherGroupResponse(rsp)
+}
+
 // RemovePublisherGroupWithResponse performs a DELETE /v1/projects/{project_key}/publisher-groups/{group_name} (the `RemovePublisherGroup` operationId) request.
 //
-// Retire a template-created group and its services, publisher identities and enrollments. Directly declared groups remain owned by apply.
+// Retire a template-created group by immutable ID or selector, including services, publisher identities and enrollments. Directly declared groups remain owned by apply.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) RemovePublisherGroupWithResponse(ctx context.Context, projectKey string, groupName string, params *RemovePublisherGroupParams, reqEditors ...RequestEditorFn) (*RemovePublisherGroupResponse, error) {
@@ -24536,6 +25375,19 @@ func (c *ClientWithResponses) RemovePublisherGroupWithResponse(ctx context.Conte
 		return nil, err
 	}
 	return ParseRemovePublisherGroupResponse(rsp)
+}
+
+// GetPublisherGroupWithResponse performs a GET /v1/projects/{project_key}/publisher-groups/{group_name} (the `GetPublisherGroup` operationId) request.
+//
+// Read a concrete group by immutable ID or its existing selector.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) GetPublisherGroupWithResponse(ctx context.Context, projectKey string, groupName string, params *GetPublisherGroupParams, reqEditors ...RequestEditorFn) (*GetPublisherGroupResponse, error) {
+	rsp, err := c.GetPublisherGroup(ctx, projectKey, groupName, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetPublisherGroupResponse(rsp)
 }
 
 // CreatePublisherGroupWithBodyWithResponse performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name} (the `CreatePublisherGroup` operationId) request,
@@ -24562,6 +25414,32 @@ func (c *ClientWithResponses) CreatePublisherGroupWithResponse(ctx context.Conte
 		return nil, err
 	}
 	return ParseCreatePublisherGroupResponse(rsp)
+}
+
+// UpdatePublisherGroupBindingsWithBodyWithResponse performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name}/bindings (the `UpdatePublisherGroupBindings` operationId) request,
+// with any type of body and a specified content type.
+//
+// Replace the exact saved bindings of a template-created group by ID or selector. Preserves group/service IDs and reserved endpoints; closes changed runs and replaces their grants and target trust through the existing apply lifecycle. The project revision fences binding and template changes together.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) UpdatePublisherGroupBindingsWithBodyWithResponse(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdatePublisherGroupBindingsResponse, error) {
+	rsp, err := c.UpdatePublisherGroupBindingsWithBody(ctx, projectKey, groupName, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdatePublisherGroupBindingsResponse(rsp)
+}
+
+// UpdatePublisherGroupBindingsWithResponse performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name}/bindings (the `UpdatePublisherGroupBindings` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Replace the exact saved bindings of a template-created group by ID or selector. Preserves group/service IDs and reserved endpoints; closes changed runs and replaces their grants and target trust through the existing apply lifecycle. The project revision fences binding and template changes together.
+func (c *ClientWithResponses) UpdatePublisherGroupBindingsWithResponse(ctx context.Context, projectKey string, groupName string, body UpdatePublisherGroupBindingsJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdatePublisherGroupBindingsResponse, error) {
+	rsp, err := c.UpdatePublisherGroupBindings(ctx, projectKey, groupName, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdatePublisherGroupBindingsResponse(rsp)
 }
 
 // GetPublisherGroupConnectionWithResponse performs a GET /v1/projects/{project_key}/publisher-groups/{group_name}/connection (the `GetPublisherGroupConnection` operationId) request.
@@ -24597,6 +25475,17 @@ func (c *ClientWithResponses) CreatePublisherGroupEnrollmentWithResponse(ctx con
 		return nil, err
 	}
 	return ParseCreatePublisherGroupEnrollmentResponse(rsp)
+}
+
+// ListPublisherGroupMembersWithResponse performs a GET /v1/projects/{project_key}/publisher-groups/{group_name}/members (the `ListPublisherGroupMembers` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ListPublisherGroupMembersWithResponse(ctx context.Context, projectKey string, groupName string, params *ListPublisherGroupMembersParams, reqEditors ...RequestEditorFn) (*ListPublisherGroupMembersResponse, error) {
+	rsp, err := c.ListPublisherGroupMembers(ctx, projectKey, groupName, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListPublisherGroupMembersResponse(rsp)
 }
 
 // RevokePublisherGroupMemberWithResponse performs a DELETE /v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id} (the `RevokePublisherGroupMember` operationId) request.
@@ -27659,6 +28548,72 @@ func ParseGetProjectPublicMetadataResponse(rsp *http.Response) (*GetProjectPubli
 	return response, nil
 }
 
+// ParseListPublisherGroupsResponse parses an HTTP response from a ListPublisherGroupsWithResponse call
+func ParseListPublisherGroupsResponse(rsp *http.Response) (*ListPublisherGroupsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListPublisherGroupsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []PublisherGroupResource
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateBoundPublisherGroupResponse parses an HTTP response from a CreateBoundPublisherGroupWithResponse call
+func ParseCreateBoundPublisherGroupResponse(rsp *http.Response) (*CreateBoundPublisherGroupResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateBoundPublisherGroupResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublisherGroupResource
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseRemovePublisherGroupResponse parses an HTTP response from a RemovePublisherGroupWithResponse call
 func ParseRemovePublisherGroupResponse(rsp *http.Response) (*RemovePublisherGroupResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -27688,6 +28643,39 @@ func ParseRemovePublisherGroupResponse(rsp *http.Response) (*RemovePublisherGrou
 	return response, nil
 }
 
+// ParseGetPublisherGroupResponse parses an HTTP response from a GetPublisherGroupWithResponse call
+func ParseGetPublisherGroupResponse(rsp *http.Response) (*GetPublisherGroupResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetPublisherGroupResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublisherGroupResource
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseCreatePublisherGroupResponse parses an HTTP response from a CreatePublisherGroupWithResponse call
 func ParseCreatePublisherGroupResponse(rsp *http.Response) (*CreatePublisherGroupResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -27704,6 +28692,39 @@ func ParseCreatePublisherGroupResponse(rsp *http.Response) (*CreatePublisherGrou
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest PublisherGroupConnection
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdatePublisherGroupBindingsResponse parses an HTTP response from a UpdatePublisherGroupBindingsWithResponse call
+func ParseUpdatePublisherGroupBindingsResponse(rsp *http.Response) (*UpdatePublisherGroupBindingsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdatePublisherGroupBindingsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublisherGroupResource
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -27774,6 +28795,39 @@ func ParseCreatePublisherGroupEnrollmentResponse(rsp *http.Response) (*CreatePub
 			return nil, err
 		}
 		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListPublisherGroupMembersResponse parses an HTTP response from a ListPublisherGroupMembersWithResponse call
+func ParseListPublisherGroupMembersResponse(rsp *http.Response) (*ListPublisherGroupMembersResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListPublisherGroupMembersResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []PublisherGroupMemberStatus
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -31239,17 +32293,32 @@ type ServerInterface interface {
 	// (GET /v1/projects/{project_key}/public-metadata)
 	GetProjectPublicMetadata(w http.ResponseWriter, r *http.Request, projectKey string, params GetProjectPublicMetadataParams)
 
+	// (GET /v1/projects/{project_key}/publisher-groups)
+	ListPublisherGroups(w http.ResponseWriter, r *http.Request, projectKey string, params ListPublisherGroupsParams)
+
+	// (POST /v1/projects/{project_key}/publisher-groups)
+	CreateBoundPublisherGroup(w http.ResponseWriter, r *http.Request, projectKey string)
+
 	// (DELETE /v1/projects/{project_key}/publisher-groups/{group_name})
 	RemovePublisherGroup(w http.ResponseWriter, r *http.Request, projectKey string, groupName string, params RemovePublisherGroupParams)
 
+	// (GET /v1/projects/{project_key}/publisher-groups/{group_name})
+	GetPublisherGroup(w http.ResponseWriter, r *http.Request, projectKey string, groupName string, params GetPublisherGroupParams)
+
 	// (PUT /v1/projects/{project_key}/publisher-groups/{group_name})
 	CreatePublisherGroup(w http.ResponseWriter, r *http.Request, projectKey string, groupName string)
+
+	// (PUT /v1/projects/{project_key}/publisher-groups/{group_name}/bindings)
+	UpdatePublisherGroupBindings(w http.ResponseWriter, r *http.Request, projectKey string, groupName string)
 
 	// (GET /v1/projects/{project_key}/publisher-groups/{group_name}/connection)
 	GetPublisherGroupConnection(w http.ResponseWriter, r *http.Request, projectKey string, groupName string, params GetPublisherGroupConnectionParams)
 
 	// (POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments)
 	CreatePublisherGroupEnrollment(w http.ResponseWriter, r *http.Request, projectKey string, groupName string)
+
+	// (GET /v1/projects/{project_key}/publisher-groups/{group_name}/members)
+	ListPublisherGroupMembers(w http.ResponseWriter, r *http.Request, projectKey string, groupName string, params ListPublisherGroupMembersParams)
 
 	// (DELETE /v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id})
 	RevokePublisherGroupMember(w http.ResponseWriter, r *http.Request, projectKey string, groupName string, publisherIdentityId string, params RevokePublisherGroupMemberParams)
@@ -32625,6 +33694,74 @@ func (siw *ServerInterfaceWrapper) GetProjectPublicMetadata(w http.ResponseWrite
 	handler.ServeHTTP(w, r)
 }
 
+// ListPublisherGroups operation middleware
+func (siw *ServerInterfaceWrapper) ListPublisherGroups(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListPublisherGroupsParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListPublisherGroups(w, r, projectKey, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateBoundPublisherGroup operation middleware
+func (siw *ServerInterfaceWrapper) CreateBoundPublisherGroup(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateBoundPublisherGroup(w, r, projectKey)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // RemovePublisherGroup operation middleware
 func (siw *ServerInterfaceWrapper) RemovePublisherGroup(w http.ResponseWriter, r *http.Request) {
 
@@ -32689,6 +33826,57 @@ func (siw *ServerInterfaceWrapper) RemovePublisherGroup(w http.ResponseWriter, r
 	handler.ServeHTTP(w, r)
 }
 
+// GetPublisherGroup operation middleware
+func (siw *ServerInterfaceWrapper) GetPublisherGroup(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "group_name" -------------
+	var groupName string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "group_name", r.PathValue("group_name"), &groupName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "group_name", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetPublisherGroupParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPublisherGroup(w, r, projectKey, groupName, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // CreatePublisherGroup operation middleware
 func (siw *ServerInterfaceWrapper) CreatePublisherGroup(w http.ResponseWriter, r *http.Request) {
 
@@ -32715,6 +33903,41 @@ func (siw *ServerInterfaceWrapper) CreatePublisherGroup(w http.ResponseWriter, r
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CreatePublisherGroup(w, r, projectKey, groupName)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdatePublisherGroupBindings operation middleware
+func (siw *ServerInterfaceWrapper) UpdatePublisherGroupBindings(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "group_name" -------------
+	var groupName string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "group_name", r.PathValue("group_name"), &groupName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "group_name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdatePublisherGroupBindings(w, r, projectKey, groupName)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -32801,6 +34024,57 @@ func (siw *ServerInterfaceWrapper) CreatePublisherGroupEnrollment(w http.Respons
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CreatePublisherGroupEnrollment(w, r, projectKey, groupName)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListPublisherGroupMembers operation middleware
+func (siw *ServerInterfaceWrapper) ListPublisherGroupMembers(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "group_name" -------------
+	var groupName string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "group_name", r.PathValue("group_name"), &groupName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "group_name", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListPublisherGroupMembersParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListPublisherGroupMembers(w, r, projectKey, groupName, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -36415,7 +37689,12 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups", wrapper.ListPublisherGroups)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups", wrapper.CreateBoundPublisherGroup)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups/{group_name}/bindings", wrapper.UpdatePublisherGroupBindings)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups/{group_name}/members", wrapper.ListPublisherGroupMembers)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups/{group_name}", wrapper.RemovePublisherGroup)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups/{group_name}", wrapper.GetPublisherGroup)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups/{group_name}", wrapper.CreatePublisherGroup)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups/{group_name}/connection", wrapper.GetPublisherGroupConnection)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs", wrapper.ListConnectorPeerPairs)

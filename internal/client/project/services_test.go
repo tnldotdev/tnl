@@ -17,6 +17,9 @@ func TestTypeScriptServiceDiscoveryAndPlacementValidation(t *testing.T) {
 		{"removed HTTP publisher pool", `{services:{web:{publisherPool:true}}}`, false},
 		{"removed private publisher pool", `{services:{db:{publisherPool:true,protocol:"tcp",target:{type:"address",address:5432}}}}`, false},
 		{"remote group", `{publisherGroups:{cloud:{description:"database"}},services:{db:{publisherGroup:"cloud",protocol:"postgres",target:{type:"address",address:"db.internal:5432"},access:{team:true}}}}`, true},
+		{"template group bound target", `{publisherGroups:{customer:{template:true}},services:{db:{publisherGroup:"customer",protocol:"postgres",targetBinding:"group"}}}`, true},
+		{"direct group bound target", `{publisherGroups:{customer:{}},services:{db:{publisherGroup:"customer",protocol:"postgres",targetBinding:"group"}}}`, false},
+		{"template mixed target authority", `{publisherGroups:{customer:{template:true}},services:{db:{publisherGroup:"customer",protocol:"postgres",targetBinding:"group",target:{type:"address",address:"db.internal:5432"}}}}`, false},
 		{"no root pool default", `{publisherPool:true,services:{web:{}}}`, false},
 		{"no public URL pool", `{services:{web:{publicURL:{publisherPool:true,access:"anonymous"}}}}`, false},
 		{"no duplicated public URL name", `{services:{web:{name:"site",publicURL:{name:"other",access:"anonymous"}}}}`, false},
@@ -209,6 +212,27 @@ func TestAppServiceRequiresExplicitNameForMultipleApps(t *testing.T) {
 	}
 	if _, err := p.AppService(t.TempDir(), "web"); err == nil {
 		t.Fatal("app outside project was accepted")
+	}
+}
+
+func TestAppServiceExcludesGroupBoundTargets(t *testing.T) {
+	root := t.TempDir()
+	p := Project{Root: root, Config: config.TNL{PublisherGroups: map[string]config.PublisherGroup{"customer": {Template: true}}, Services: config.Services{
+		"web": {},
+		"db":  {PublisherGroup: new("customer"), Protocol: new("postgres"), TargetBinding: "group"},
+		"api": {PublisherGroup: new("customer"), TargetBinding: "group"},
+	}}}
+	if name, err := p.AppService(root, ""); err != nil || name != "web" {
+		t.Fatal("bound targets confused local app selection", name, err)
+	}
+	for _, name := range []string{"db", "api"} {
+		if _, err := p.AppService(root, name); err == nil {
+			t.Fatalf("remote service %s accepted a local app registration", name)
+		}
+	}
+	delete(p.Config.Services, "web")
+	if _, err := p.AppService(root, ""); err == nil {
+		t.Fatal("remote bound service became a default local app")
 	}
 }
 

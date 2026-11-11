@@ -11,8 +11,15 @@ import (
 
 func (h *handler) CreatePublisherGroup(w http.ResponseWriter, r *http.Request, project, name string) {
 	w.Header().Set("Cache-Control", "no-store")
-	var body controlv1.CreatePublisherGroupRequest
-	if decodeJSON(w, r, &body) != nil {
+	var body struct {
+		TeamId           string                              `json:"team_id"`
+		From             string                              `json:"from"`
+		Name             string                              `json:"name"`
+		ExpectedRevision *int64                              `json:"expected_revision"`
+		IdempotencyKey   string                              `json:"idempotency_key"`
+		Bindings         controlstate.PublisherGroupBindings `json:"bindings"`
+	}
+	if decodeJSONLimited(w, r, &body, 4<<20) != nil || body.ExpectedRevision == nil || *body.ExpectedRevision < 1 || body.Name != "" && body.Name != name {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid publisher group creation")
 		return
 	}
@@ -24,9 +31,22 @@ func (h *handler) CreatePublisherGroup(w http.ResponseWriter, r *http.Request, p
 		writeProblem(w, 503, controlv1.Unavailable, "publisher groups are unavailable")
 		return
 	}
-	result, err := h.dependencies.PublisherGroups.CreatePublisherGroup(r.Context(), body.TeamId, project, name, body.From, actor, body.ExpectedRevision, h.config.DNSAutomation, time.Now())
+	resource, err := h.dependencies.PublisherGroups.CreateBoundPublisherGroup(r.Context(), controlstate.CreateBoundPublisherGroupRequest{TeamID: body.TeamId, ProjectKey: project, ActorID: actor, ExpectedRevision: *body.ExpectedRevision, DNSAutomation: h.config.DNSAutomation, Now: time.Now(), Creation: controlstate.PublisherGroupCreation{Name: name, Template: body.From, Bindings: body.Bindings, IdempotencyKey: body.IdempotencyKey}})
 	if err != nil {
 		projectConfigurationProblem(r.Context(), w, "create publisher group", err)
+		return
+	}
+	if resource.Retired {
+		writeProblem(w, 409, controlv1.Conflict, "publisher group was retired")
+		return
+	}
+	if h.dependencies.ProjectConfiguration == nil {
+		writeProblem(w, 503, controlv1.Unavailable, "project configuration is unavailable")
+		return
+	}
+	result, err := h.dependencies.ProjectConfiguration.GetProjectConfiguration(r.Context(), body.TeamId, project, actor)
+	if err != nil {
+		projectConfigurationProblem(r.Context(), w, "read publisher group connection", err)
 		return
 	}
 	h.writeGroupConnection(w, result, name)

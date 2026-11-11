@@ -100,6 +100,10 @@ func (h *handler) CreatePublisherGroupEnrollment(w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
+	if h.config.ControlURL == "" {
+		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "publisher installation server is unavailable")
+		return
+	}
 	var body controlv1.CreatePublisherGroupEnrollmentRequest
 	if decodeJSON(w, r, &body) != nil || body.MaxMembers < 1 || body.MaxMembers > 256 || body.ExpiresIn < 60 || body.ExpiresIn > 86400 {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid publisher group enrollment")
@@ -118,6 +122,7 @@ func (h *handler) CreatePublisherGroupEnrollment(w http.ResponseWriter, r *http.
 		projectConfigurationProblem(r.Context(), w, "issue publisher group enrollment", err)
 		return
 	}
+	result.Publisher.Server = h.config.ControlURL
 	writeJSON(w, 201, result)
 }
 

@@ -97,7 +97,7 @@ func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 	}
 	keys := map[string]string{}
 	collectTypeScriptKeys(reflect.TypeOf(config.TNL{}), keys)
-	if keys["allow_ip"] != "" || keys["source_ips"] != "sourceIPs" || keys["startup_timeout"] != "" || keys["request_limit"] != "" || keys["strip_prefix"] != "stripPrefix" || keys["require_post_quantum"] != "requirePostQuantum" {
+	if keys["allow_ip"] != "" || keys["source_ips"] != "sourceIPs" || keys["startup_timeout"] != "" || keys["request_limit"] != "" || keys["strip_prefix"] != "stripPrefix" || keys["require_post_quantum"] != "requirePostQuantum" || keys["target_binding"] != "targetBinding" {
 		t.Fatalf("TypeScript key mappings = %#v", keys)
 	}
 	duration := schemaForType(reflect.TypeOf(config.Duration(0)))
@@ -108,10 +108,10 @@ func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 
 func TestServiceSchemaKeepsServicesSeparateFromPublicURLs(t *testing.T) {
 	variants := servicesSchema().AdditionalProperties.OneOf
-	if len(variants) != 6 {
+	if len(variants) != 11 {
 		t.Fatalf("service variants: %d", len(variants))
 	}
-	for index, private := range variants[1:] {
+	for index, private := range variants[1:6] {
 		if slices.Contains(private.Required, "private") || index > 0 && !slices.Contains(private.Required, "target") {
 			t.Fatalf("private fields: %v", private.Required)
 		}
@@ -199,10 +199,10 @@ func TestSchemaHasDisjointTargetsAndNoRetiredPublicFields(t *testing.T) {
 
 func TestProtocolDiscriminatedServiceAndPublisherSchemas(t *testing.T) {
 	variants := servicesSchema().AdditionalProperties.OneOf
-	if len(variants) != 6 {
-		t.Fatal("services must distinguish public and private HTTP, TCP, MySQL, PostgreSQL, and Kubernetes")
+	if len(variants) != 11 {
+		t.Fatal("services must distinguish public and private HTTP, TCP, MySQL, PostgreSQL, Kubernetes, and five group-bound protocol variants")
 	}
-	for i, service := range variants {
+	for i, service := range variants[:6] {
 		group, found := service.Properties.Get("publisher_group")
 		if !found || group.Type != "string" || group.Default != "local" {
 			t.Fatal("publisher must default to the built-in local group")
@@ -261,6 +261,58 @@ func TestProtocolDiscriminatedServiceAndPublisherSchemas(t *testing.T) {
 		trust, _ := service.Properties.Get("tls")
 		if trust != jsonschema.FalseSchema {
 			t.Fatal("service-level TLS must be rejected for every protocol")
+		}
+	}
+}
+
+func TestGroupBoundServiceSchemasKeepTargetAuthoritySeparate(t *testing.T) {
+	variants := servicesSchema().AdditionalProperties.OneOf
+	if len(variants) != 11 {
+		t.Fatal("missing fixed or group-bound service variants")
+	}
+	for _, service := range variants[:6] {
+		binding, found := service.Properties.Get("target_binding")
+		if !found || !reflect.DeepEqual(binding.Enum, []any{"fixed"}) {
+			t.Fatal("fixed target variant accepts a group binding")
+		}
+	}
+	for i, protocol := range []string{"http", "tcp", "mysql", "postgres", "kubernetes"} {
+		service := variants[i+6]
+		binding, found := service.Properties.Get("target_binding")
+		if !found || binding.Const != "group" || !slices.Contains(service.Required, "target_binding") {
+			t.Fatal("group-bound variant lost its explicit discriminator")
+		}
+		group, found := service.Properties.Get("publisher_group")
+		if !found || group.Default != nil || group.Not == nil || group.Not.Const != "local" || !slices.Contains(service.Required, "publisher_group") {
+			t.Fatal("group-bound variant permits the local publisher or a default group")
+		}
+		for _, field := range []string{"target", "public_url", "tls"} {
+			value, found := service.Properties.Get(field)
+			if !found || value != jsonschema.FalseSchema || slices.Contains(service.Required, field) {
+				t.Fatalf("group-bound %s accepts fixed %s", protocol, field)
+			}
+		}
+		selected, _ := service.Properties.Get("protocol")
+		if !reflect.DeepEqual(selected.Enum, []any{protocol}) || slices.Contains(service.Required, "protocol") != (protocol != "http") {
+			t.Fatal("group-bound protocol inference changed")
+		}
+		http, _ := service.Properties.Get("http")
+		if protocol != "http" {
+			if http != jsonschema.FalseSchema {
+				t.Fatal("group-bound non-HTTP service permits HTTP settings")
+			}
+			continue
+		}
+		for _, field := range []string{"readiness", "paths", "open"} {
+			value, found := http.Properties.Get(field)
+			if !found || value != jsonschema.FalseSchema {
+				t.Fatalf("group-bound HTTP permits unsupported %s", field)
+			}
+		}
+		for _, field := range []string{"access", "limits"} {
+			if _, found := http.Properties.Get(field); !found {
+				t.Fatalf("group-bound HTTP lost %s", field)
+			}
 		}
 	}
 }

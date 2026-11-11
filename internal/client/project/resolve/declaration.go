@@ -80,7 +80,10 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 			}
 		}
 		cloud := config.TargetType(service) == "eks" || config.TargetType(service) == "rds"
-		if cloud {
+		if service.TargetBinding == "group" {
+			binding := controlv1.ProjectServiceConfigurationTargetBinding("group")
+			entry.TargetBinding = &binding
+		} else if cloud {
 			t := service.Target
 			entry.TargetDiscovery = &controlv1.ProjectTargetDiscovery{Type: controlv1.ProjectTargetDiscoveryType(t.Type), Region: *t.Region, Cluster: t.Cluster, Instance: t.Instance}
 			if t.Endpoint != nil {

@@ -129,14 +129,14 @@ func (p Project) AppService(cwd, selected string) (string, error) {
 	}
 	if selected != "" {
 		service, found := p.Config.Services[selected]
-		if !found || config.TargetType(service) != "app" {
+		if !found || config.PublisherGroupName(service) != "local" || service.TargetBinding == "group" || config.TargetType(service) != "app" {
 			return "", fmt.Errorf("service %q is not an app service", selected)
 		}
 		return selected, nil
 	}
 	name := ""
 	for candidate, service := range p.Config.Services {
-		if config.TargetType(service) != "app" {
+		if config.PublisherGroupName(service) != "local" || service.TargetBinding == "group" || config.TargetType(service) != "app" {
 			continue
 		}
 		if name != "" {

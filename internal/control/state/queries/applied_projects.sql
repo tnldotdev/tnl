@@ -1,6 +1,9 @@
 -- name: LockAppliedProject :one
 SELECT * FROM control.applied_projects WHERE team_id=sqlc.arg(team_id) AND project_key=sqlc.arg(project_key) FOR UPDATE;
 
+-- name: GetPublisherGroupBindings :one
+SELECT * FROM control.publisher_group_bindings WHERE group_id=$1;
+
 -- name: ServiceNamespaceOwnsHostname :one
 SELECT (EXISTS(SELECT 1 FROM control.service_namespace_claims
     WHERE sqlc.arg(hostname)::text=namespace OR right(sqlc.arg(hostname)::text,length(namespace)+1)='.'||namespace)

@@ -24,6 +24,19 @@ func TestPublisherTemplateDeclarationPreservesTemplate(t *testing.T) {
 	}
 }
 
+func TestPublisherTemplateDeclarationLeavesGroupTargetsUnbound(t *testing.T) {
+	group := "customer"
+	project := clientproject.Project{Config: config.TNL{PublisherGroups: map[string]config.PublisherGroup{group: {Template: true}}, Services: config.Services{"db": {PublisherGroup: &group, Protocol: new("postgres"), TargetBinding: "group"}}}}
+	declaration, err := Declaration(t.Context(), project, appliedTestContext(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := declaration.Services["db"]
+	if service.TargetBinding == nil || *service.TargetBinding != "group" || service.Target != "" || service.TargetTls != nil || service.TargetDiscovery != nil {
+		t.Fatal("template invented an instance target", service)
+	}
+}
+
 func appliedTestContext() team.Context {
 	return team.NewContext(authorityv1.Team{Id: "team_1", DefaultDomainId: "domain_1"}, authorityv1.Membership{Id: "membership_1", TeamId: "team_1", ManagedLabel: "member", MemberSlug: "member"}, []authorityv1.Domain{{Id: "domain_1", CanonicalDomain: "tnl.dev", Kind: authorityv1.Managed, State: authorityv1.DomainStateReady}}, "")
 }

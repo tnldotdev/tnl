@@ -231,14 +231,23 @@ func ValidateTNL(config TNL) error {
 		if !naming.ValidServiceName(name) {
 			return fmt.Errorf("service name %q must be one lowercase DNS label beginning with a letter", name)
 		}
-		if err := validateTarget(service); err != nil {
-			return fmt.Errorf("services.%s: %w", name, err)
+		if service.TargetBinding != "" && service.TargetBinding != "fixed" && service.TargetBinding != "group" {
+			return fmt.Errorf("services.%s.target_binding must be fixed or group", name)
+		}
+		bound := service.TargetBinding == "group"
+		if bound && (!config.PublisherGroups[PublisherGroupName(service)].Template || service.Target != nil || !ValidProtocol(Protocol(service))) {
+			return fmt.Errorf("services.%s: group target binding requires a template and no declared target", name)
+		}
+		if !bound {
+			if err := validateTarget(service); err != nil {
+				return fmt.Errorf("services.%s: %w", name, err)
+			}
 		}
 		if group := PublisherGroupName(service); group != "local" {
 			if _, found := config.PublisherGroups[group]; !found {
 				return fmt.Errorf("services.%s.publisher_group: group %q is not configured", name, group)
 			}
-			if kind := TargetType(service); kind != "address" && kind != "eks" && kind != "rds" {
+			if kind := TargetType(service); !bound && kind != "address" && kind != "eks" && kind != "rds" {
 				return fmt.Errorf("services.%s: remote publishers require an address, eks, or rds target", name)
 			}
 			if service.Tunnel != nil {

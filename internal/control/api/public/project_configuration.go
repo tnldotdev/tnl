@@ -19,6 +19,8 @@ type ProjectConfigurationStore interface {
 
 func projectConfigurationProblem(ctx context.Context, w http.ResponseWriter, operation string, err error) {
 	switch {
+	case errors.Is(err, controlstate.ErrPublisherGroupRetired):
+		writeProblem(w, 409, controlv1.Conflict, "publisher group was retired; its creation key cannot be reused")
 	case errors.Is(err, controlstate.ErrPublisherTemplateInUse):
 		writeProblem(w, 409, controlv1.Conflict, "publisher template has dependent groups; remove them before removing or converting the template")
 	case errors.Is(err, controlstate.ErrWorkloadBinding):
@@ -68,11 +70,12 @@ func (h *handler) ApplyProjectConfiguration(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var body struct {
-		TeamID            string                             `json:"team_id"`
-		SourceFingerprint string                             `json:"source_fingerprint"`
-		ProjectLabel      string                             `json:"project_label"`
-		ExpectedRevision  *int64                             `json:"expected_revision"`
-		Configuration     *controlstate.ProjectConfiguration `json:"configuration"`
+		TeamID            string                                         `json:"team_id"`
+		SourceFingerprint string                                         `json:"source_fingerprint"`
+		ProjectLabel      string                                         `json:"project_label"`
+		ExpectedRevision  *int64                                         `json:"expected_revision"`
+		Configuration     *controlstate.ProjectConfiguration             `json:"configuration"`
+		GroupBindings     map[string]controlstate.PublisherGroupBindings `json:"group_bindings"`
 	}
 	if decodeJSONLimited(w, r, &body, 4<<20) != nil || body.ExpectedRevision == nil || body.Configuration == nil {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid normalized project configuration")
@@ -92,7 +95,7 @@ func (h *handler) ApplyProjectConfiguration(w http.ResponseWriter, r *http.Reque
 		projectConfigurationProblem(r.Context(), w, "resolve project public hostnames", err)
 		return
 	}
-	result, err := store.ApplyProjectConfiguration(r.Context(), controlstate.ApplyProjectConfigurationRequest{TeamID: body.TeamID, ProjectKey: project, SourceFingerprint: body.SourceFingerprint, ProjectLabel: body.ProjectLabel, ActorID: actor, ExpectedRevision: *body.ExpectedRevision, Configuration: c, DNSAutomation: h.config.DNSAutomation, TrafficDefaults: h.config.TrafficDefaults, TrafficCeiling: h.config.TrafficCeiling, Now: time.Now()})
+	result, err := store.ApplyProjectConfiguration(r.Context(), controlstate.ApplyProjectConfigurationRequest{GroupBindings: body.GroupBindings, TeamID: body.TeamID, ProjectKey: project, SourceFingerprint: body.SourceFingerprint, ProjectLabel: body.ProjectLabel, ActorID: actor, ExpectedRevision: *body.ExpectedRevision, Configuration: c, DNSAutomation: h.config.DNSAutomation, TrafficDefaults: h.config.TrafficDefaults, TrafficCeiling: h.config.TrafficCeiling, Now: time.Now()})
 	if err != nil {
 		projectConfigurationProblem(r.Context(), w, "apply project configuration", err)
 		return

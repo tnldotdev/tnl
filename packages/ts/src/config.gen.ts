@@ -256,6 +256,10 @@ export interface TnlConfig {
            */
           publisherGroup?: string;
           publisherPool?: never;
+          /**
+           * Use the template's declared target. Concrete groups cannot override it.
+           */
+          targetBinding?: "fixed";
         }
       | {
           /**
@@ -408,6 +412,10 @@ export interface TnlConfig {
            */
           publisherGroup?: string;
           publisherPool?: never;
+          /**
+           * Use the template's declared target. Concrete groups cannot override it.
+           */
+          targetBinding?: "fixed";
         }
       | {
           /**
@@ -506,6 +514,10 @@ export interface TnlConfig {
            */
           publisherGroup?: string;
           publisherPool?: never;
+          /**
+           * Use the template's declared target. Concrete groups cannot override it.
+           */
+          targetBinding?: "fixed";
         }
       | {
           /**
@@ -632,6 +644,10 @@ export interface TnlConfig {
            */
           publisherGroup?: string;
           publisherPool?: never;
+          /**
+           * Use the template's declared target. Concrete groups cannot override it.
+           */
+          targetBinding?: "fixed";
         }
       | {
           /**
@@ -758,6 +774,10 @@ export interface TnlConfig {
            */
           publisherGroup?: string;
           publisherPool?: never;
+          /**
+           * Use the template's declared target. Concrete groups cannot override it.
+           */
+          targetBinding?: "fixed";
         }
       | {
           /**
@@ -870,6 +890,138 @@ export interface TnlConfig {
            */
           publisherGroup?: string;
           publisherPool?: never;
+          /**
+           * Use the template's declared target. Concrete groups cannot override it.
+           */
+          targetBinding?: "fixed";
+        }
+      | {
+          /**
+           * Saved name; defaults to the configuration key.
+           */
+          name?: string;
+          access?: {
+            team: true;
+          };
+          inspection?: Inspection1;
+          protocol?: "http";
+          target?: never;
+          tls?: never;
+          http?: {
+            access?:
+              | "restricted"
+              | {
+                  mode?: "restricted";
+                  /**
+                   * @minItems 1
+                   * @maxItems 256
+                   */
+                  ip?: [string, ...string[]];
+                };
+            limits?: {
+              total?: number;
+              concurrency?: number;
+              rate?: {
+                count?: number;
+                per?: TnlRatePeriod;
+                burst?: number;
+              };
+            };
+            readiness?: never;
+            open?: never;
+            paths?: never;
+          };
+          publicURL?: never;
+          publisherGroup: string;
+          publisherPool?: never;
+          /**
+           * Use an exact saved target binding for each concrete group following this template. The publisher never accepts a connect-time target.
+           */
+          targetBinding: "group";
+        }
+      | {
+          /**
+           * Saved name; defaults to the configuration key.
+           */
+          name?: string;
+          access?: {
+            team: true;
+          };
+          inspection?: Inspection1;
+          protocol: "tcp";
+          target?: never;
+          tls?: never;
+          http?: never;
+          publicURL?: never;
+          publisherGroup: string;
+          publisherPool?: never;
+          /**
+           * Use an exact saved target binding for each concrete group following this template. The publisher never accepts a connect-time target.
+           */
+          targetBinding: "group";
+        }
+      | {
+          /**
+           * Saved name; defaults to the configuration key.
+           */
+          name?: string;
+          access?: {
+            team: true;
+          };
+          inspection?: Inspection1;
+          protocol: "mysql";
+          target?: never;
+          tls?: never;
+          http?: never;
+          publicURL?: never;
+          publisherGroup: string;
+          publisherPool?: never;
+          /**
+           * Use an exact saved target binding for each concrete group following this template. The publisher never accepts a connect-time target.
+           */
+          targetBinding: "group";
+        }
+      | {
+          /**
+           * Saved name; defaults to the configuration key.
+           */
+          name?: string;
+          access?: {
+            team: true;
+          };
+          inspection?: Inspection1;
+          protocol: "postgres";
+          target?: never;
+          tls?: never;
+          http?: never;
+          publicURL?: never;
+          publisherGroup: string;
+          publisherPool?: never;
+          /**
+           * Use an exact saved target binding for each concrete group following this template. The publisher never accepts a connect-time target.
+           */
+          targetBinding: "group";
+        }
+      | {
+          /**
+           * Saved name; defaults to the configuration key.
+           */
+          name?: string;
+          access?: {
+            team: true;
+          };
+          inspection?: Inspection1;
+          protocol: "kubernetes";
+          target?: never;
+          tls?: never;
+          http?: never;
+          publicURL?: never;
+          publisherGroup: string;
+          publisherPool?: never;
+          /**
+           * Use an exact saved target binding for each concrete group following this template. The publisher never accepts a connect-time target.
+           */
+          targetBinding: "group";
         }
       | undefined;
   };

@@ -62,6 +62,7 @@ type ServiceAccess struct {
 
 // Service contains project-local overrides for one named local service.
 type Service struct {
+	TargetBinding  string         `json:"target_binding,omitempty" yaml:"target_binding,omitempty" jsonschema:"enum=fixed,enum=group" jsonschema_description:"Template target ownership: fixed uses the declared target; group requires an exact saved target binding for each concrete group."`
 	Name           *string        `json:"name,omitempty" yaml:"name,omitempty" jsonschema_description:"Saved name; defaults to the configuration key."`
 	PublisherGroup *string        `json:"publisher_group,omitempty" yaml:"publisher_group,omitempty" jsonschema_description:"Assigned publisher group; defaults to the built-in local publisher."`
 	Access         *ServiceAccess `json:"access,omitempty" yaml:"access,omitempty" jsonschema_description:"Declare team access for this service or public URL."`

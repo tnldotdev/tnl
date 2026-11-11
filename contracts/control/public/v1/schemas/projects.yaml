@@ -51,6 +51,11 @@ schemas:
         { type: string, minLength: 1, maxLength: 63, pattern: "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$" }
       expected_revision: { type: integer, format: int64, minimum: 0 }
       configuration: { $ref: "../openapi.yaml#/components/schemas/ProjectConfiguration" }
+      group_bindings:
+        type: object
+        maxProperties: 1024
+        description: Complete replacement binding sets keyed by concrete group ID, saved atomically with this declaration. Omitted groups retain their saved target and approved protocol. Changing a bound service's protocol requires an explicit replacement set for every affected group in this same apply.
+        additionalProperties: { $ref: "../openapi.yaml#/components/schemas/PublisherGroupBindings" }
   ProjectConfiguration:
     type: object
     description: Normalized declarative configuration, at most 512 KiB encoded. All local declarations defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its groups.
@@ -196,6 +201,10 @@ schemas:
     additionalProperties: false
     required: [target]
     properties:
+      target_binding:
+        type: string
+        enum: [fixed, group]
+        description: Only template services may use group. Each concrete group must supply an exact saved binding; target, target_tls and target_discovery must be omitted or empty in the declaration. Omitted or fixed uses the template target and forbids instance overrides.
       publisher_group: { type: string, default: local }
       name: { type: string, maxLength: 32 }
       protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
@@ -335,6 +344,8 @@ schemas:
     properties:
       ingress_pool_id:
         { type: string, description: Ingress pool permanently assigned to this group. }
+      bindings: { $ref: "../openapi.yaml#/components/schemas/PublisherGroupBindings" }
+      retired: { type: boolean }
       template: { type: string, description: Source template followed by this concrete group. }
       id: { type: string }
       name: { type: string }

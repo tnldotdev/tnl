@@ -20,6 +20,46 @@ export const grouped = defineConfig({
     internal: { target: { type: "app" } },
   },
 });
+export const boundTemplate = defineConfig({
+  publisherGroups: { customer: { template: true } },
+  services: {
+    db: { publisherGroup: "customer", protocol: "postgres", targetBinding: "group" },
+    api: { publisherGroup: "customer", targetBinding: "group" },
+  },
+});
+export const boundTemplateFactory = defineConfig(async () => ({
+  publisherGroups: { customer: { template: true } },
+  services: { db: { publisherGroup: "customer", protocol: "postgres", targetBinding: "group" } },
+}));
+test("defineConfig separates fixed and group-bound template targets", () => {
+  expectTypeOf(boundTemplate.services.db.protocol).toEqualTypeOf<"postgres">();
+  expectTypeOf(boundTemplate.services.api.targetBinding).toEqualTypeOf<"group">();
+  const missingFixedTarget = {
+    publisherGroups: { customer: { template: true } },
+    services: { api: { publisherGroup: "customer", targetBinding: "fixed" } },
+  } as const;
+  // @ts-expect-error fixed remote targets require a declared address or discovery selector.
+  defineConfig(missingFixedTarget);
+  const mixedTarget = {
+    publisherGroups: { customer: { template: true } },
+    services: {
+      db: {
+        publisherGroup: "customer",
+        protocol: "postgres",
+        targetBinding: "group",
+        target: { type: "address", address: "db.internal:5432" },
+      },
+    },
+  } as const;
+  // @ts-expect-error group-bound targets cannot also carry fixed target authority.
+  defineConfig(mixedTarget);
+  const directBoundTarget = {
+    publisherGroups: { customer: {} },
+    services: { api: { publisherGroup: "customer", targetBinding: "group" } },
+  } as const;
+  // @ts-expect-error group-bound targets require a reusable template.
+  defineConfig(directBoundTarget);
+});
 test("publisher groups select named assignments and reject deployment settings", () => {
   // @ts-expect-error publisher groups reject retired deployment settings.
   defineConfig({ publisherGroups: { tractor: { template: true, aws: {} } } });

@@ -271,6 +271,7 @@ var typeScriptKeyMappings = map[string]string{
 	"public_url":           "publicURL",
 	"publisher_groups":     "publisherGroups",
 	"publisher_group":      "publisherGroup",
+	"target_binding":       "targetBinding",
 	"publisher_pool":       "publisherPool",
 	"max_duration":         "maxDuration",
 	"team_id":              "teamId",

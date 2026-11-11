@@ -17,6 +17,7 @@
   "service_account": "serviceAccount",
   "source_ips": "sourceIPs",
   "strip_prefix": "stripPrefix",
+  "target_binding": "targetBinding",
   "total_connections": "totalConnections",
   "total_download_bytes": "totalDownloadBytes",
   "total_upload_bytes": "totalUploadBytes",

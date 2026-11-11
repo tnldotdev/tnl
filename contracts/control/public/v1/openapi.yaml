@@ -9,6 +9,12 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example.com
 paths:
+  /v1/projects/{project_key}/publisher-groups:
+    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1projects~1{project_key}~1publisher-groups"
+  /v1/projects/{project_key}/publisher-groups/{group_name}/bindings:
+    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1projects~1{project_key}~1publisher-groups~1{group_name}~1bindings"
+  /v1/projects/{project_key}/publisher-groups/{group_name}/members:
+    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1projects~1{project_key}~1publisher-groups~1{group_name}~1members"
   /v1/projects/{project_key}/publisher-groups/{group_name}:
     $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1projects~1{project_key}~1publisher-groups~1{group_name}"
   /v1/projects/{project_key}/publisher-groups/{group_name}/connection:
@@ -422,6 +428,14 @@ components:
       $ref: "./schemas/projects.yaml#/schemas/AppliedPublisherGroup"
     CreatePublisherGroupRequest:
       $ref: "./schemas/publisher-groups.yaml#/schemas/CreatePublisherGroupRequest"
+    PublisherGroupBindings:
+      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupBindings"
+    PublisherGroupTargetBinding:
+      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupTargetBinding"
+    PublisherGroupResource:
+      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupResource"
+    UpdatePublisherGroupBindingsRequest:
+      $ref: "./schemas/publisher-groups.yaml#/schemas/UpdatePublisherGroupBindingsRequest"
     PublisherGroupConnection:
       $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupConnection"
     PublisherGroupConnectionWorkload:

@@ -24,10 +24,16 @@ var ErrPublisherGroup = errors.New("publisher group lease or enrollment is unava
 const PublisherGroupLeaseLifetime = 2 * time.Minute
 
 type PublisherGroupEnrollment struct {
-	Key        string    `json:"enrollment_key"`
-	GroupID    string    `json:"group_id"`
-	ExpiresAt  time.Time `json:"expires_at"`
-	MaxMembers int       `json:"max_members"`
+	Publisher  PublisherGroupInstallation `json:"publisher"`
+	Key        string                     `json:"enrollment_key"`
+	GroupID    string                     `json:"group_id"`
+	ExpiresAt  time.Time                  `json:"expires_at"`
+	MaxMembers int                        `json:"max_members"`
+}
+type PublisherGroupInstallation struct {
+	Server  string `json:"server"`
+	Project string `json:"project"`
+	Group   string `json:"group"`
 }
 type PublisherGroupMember struct {
 	TeamID              string `json:"team_id"`
@@ -91,8 +97,8 @@ func (d *Database) IssuePublisherGroupEnrollment(ctx context.Context, team, proj
 	if err = SetServiceAuditActor(ctx, tx, actor); err != nil {
 		return result, err
 	}
-	var gid string
-	if err = tx.QueryRow(ctx, `SELECT g.id FROM control.project_publisher_groups g JOIN control.publisher_group_names alias ON alias.group_id=g.id WHERE alias.team_id=$1 AND alias.project_key=$2 AND alias.name=$3 AND g.deleted_at IS NULL FOR UPDATE OF g`, team, project, group).Scan(&gid); err != nil {
+	var gid, name string
+	if err = tx.QueryRow(ctx, `SELECT g.id,g.name FROM control.project_publisher_groups g JOIN control.publisher_group_names alias ON alias.group_id=g.id WHERE alias.team_id=$1 AND alias.project_key=$2 AND (alias.name=$3 OR g.id=$3) AND g.deleted_at IS NULL FOR UPDATE OF g`, team, project, group).Scan(&gid, &name); err != nil {
 		return result, publisherLookupError(err, ErrPublisherGroup)
 	}
 	id, err := opaqueid.New(opaqueid.PublisherEnrollmentPrefix)
@@ -113,7 +119,9 @@ func (d *Database) IssuePublisherGroupEnrollment(ctx context.Context, team, proj
 	if err = recordPublisherGroupUpdate(ctx, tx, gid, actor, "", "enrollment/"+id, now); err != nil {
 		return result, err
 	}
-	return PublisherGroupEnrollment{Key: key, GroupID: gid, ExpiresAt: until, MaxMembers: maxMembers}, tx.Commit(ctx)
+	result.Key, result.GroupID, result.ExpiresAt, result.MaxMembers = key, gid, until, maxMembers
+	result.Publisher = PublisherGroupInstallation{Project: project, Group: name}
+	return result, tx.Commit(ctx)
 }
 
 func (d *Database) RedeemPublisherGroupEnrollment(ctx context.Context, secret string, public ed25519.PublicKey, now time.Time) (result PublisherGroupMember, retErr error) {
@@ -228,7 +236,7 @@ func (d *Database) RevokePublisherGroupMember(ctx context.Context, team, project
 		return err
 	}
 	var gid string
-	err = tx.QueryRow(ctx, `SELECT g.id FROM control.project_publisher_groups g JOIN control.publisher_group_names alias ON alias.group_id=g.id JOIN control.publisher_group_members m ON m.group_id=g.id WHERE alias.team_id=$1 AND alias.project_key=$2 AND alias.name=$3 AND m.publisher_identity_id=$4 AND g.deleted_at IS NULL FOR UPDATE OF g,m`, team, project, group, publisher).Scan(&gid)
+	err = tx.QueryRow(ctx, `SELECT g.id FROM control.project_publisher_groups g JOIN control.publisher_group_names alias ON alias.group_id=g.id JOIN control.publisher_group_members m ON m.group_id=g.id WHERE alias.team_id=$1 AND alias.project_key=$2 AND (alias.name=$3 OR g.id=$3) AND m.publisher_identity_id=$4 AND g.deleted_at IS NULL FOR UPDATE OF g,m`, team, project, group, publisher).Scan(&gid)
 	if err != nil {
 		return err
 	}
@@ -394,7 +402,10 @@ func (d *Database) GetPublisherGroupAssignments(ctx context.Context, token strin
 	if err != nil {
 		return result, err
 	}
-	c = publisherTemplateConfiguration(c, groups, "")
+	c, err = d.expandedPublisherConfiguration(ctx, tx, c, groups)
+	if err != nil {
+		return result, err
+	}
 	result = PublisherGroupAssignments{Member: m, Revision: row.Revision, ConfigurationHash: row.ConfigurationHash, Services: []PublisherGroupServiceAssignment{}}
 	result.CertificateStatePlans = []CertificatePlan{}
 	checkpoints, err := q.ListPublisherCertificateCheckpoints(ctx, m.PublisherIdentityID)

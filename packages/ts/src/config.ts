@@ -37,13 +37,24 @@ type PublisherNames<Config> =
   | (Config extends { readonly publisherGroups: infer Groups }
       ? Extract<keyof Groups, string>
       : never);
+type TemplatePublisherNames<Config> = Config extends { readonly publisherGroups: infer Groups }
+  ? Extract<
+      {
+        [Name in keyof Groups]: Groups[Name] extends { readonly template: true } ? Name : never;
+      }[keyof Groups],
+      string
+    >
+  : never;
 type PublisherReference<Config, Service> = Service extends { readonly publisherGroup: infer Group }
   ? {
       readonly publisherGroup: Group extends PublisherNames<Config> ? Group : never;
     } & (Group extends "local"
       ? unknown
-      : {
-          readonly target: { readonly type: "address" | "eks" | "rds" };
+      : (Service extends { readonly targetBinding: "group" }
+          ? Group extends TemplatePublisherNames<Config>
+            ? { readonly target?: never }
+            : never
+          : { readonly target: { readonly type: "address" | "eks" | "rds" } }) & {
           readonly publicURL?: never;
           readonly http?: {
             readonly readiness?: never;

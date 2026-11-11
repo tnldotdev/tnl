@@ -68,6 +68,27 @@ func (d *Database) visitorKubernetesAuth(ctx context.Context, q *controlstatedb.
 	if !ok {
 		return nil, ErrServiceAccess
 	}
+	if s.TargetBinding == "group" {
+		if !row.GroupID.Valid {
+			return nil, ErrServiceAccess
+		}
+		settings, err := q.GetPublisherGroupBindings(ctx, row.GroupID.String)
+		if err != nil {
+			return nil, err
+		}
+		bindings, err := d.openPublisherGroupBindings(settings)
+		if err != nil {
+			return nil, err
+		}
+		binding, ok := bindings[appliedServiceName(row.Service)]
+		if !ok {
+			return nil, ErrServiceAccess
+		}
+		s, err = bindPublisherGroupService(s, binding)
+		if err != nil {
+			return nil, err
+		}
+	}
 	target := s.TargetDiscovery
 	if s.Protocol != "kubernetes" || target == nil || target.Type != "eks" {
 		return nil, nil

@@ -113,7 +113,7 @@ func (q *Queries) LockWorkloadSession(ctx context.Context, id string) (ControlWo
 }
 
 const visitorServiceConfiguration = `-- name: VisitorServiceConfiguration :one
-SELECT project.team_id,project.project_key,project.configuration_ciphertext,project.storage_key_id,service.service
+SELECT project.team_id,project.project_key,project.configuration_ciphertext,project.storage_key_id,service.service,service.group_id
 FROM control.applied_project_services service
 JOIN control.applied_projects project ON project.team_id=service.team_id AND project.project_key=service.project_key
 WHERE service.service_id=$1
@@ -125,6 +125,7 @@ type VisitorServiceConfigurationRow struct {
 	ConfigurationCiphertext []byte
 	StorageKeyID            string
 	Service                 string
+	GroupID                 pgtype.Text
 }
 
 func (q *Queries) VisitorServiceConfiguration(ctx context.Context, serviceID pgtype.Text) (VisitorServiceConfigurationRow, error) {
@@ -136,6 +137,7 @@ func (q *Queries) VisitorServiceConfiguration(ctx context.Context, serviceID pgt
 		&i.ConfigurationCiphertext,
 		&i.StorageKeyID,
 		&i.Service,
+		&i.GroupID,
 	)
 	return i, err
 }

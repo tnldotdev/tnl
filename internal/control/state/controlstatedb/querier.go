@@ -223,6 +223,7 @@ type Querier interface {
 	// permits the heartbeat to commit before a waiting release closes its run.
 	GetPublisherDomain(ctx context.Context, arg GetPublisherDomainParams) (ControlDomain, error)
 	GetPublisherGrant(ctx context.Context, arg GetPublisherGrantParams) (ControlPublisherGrant, error)
+	GetPublisherGroupBindings(ctx context.Context, groupID string) (ControlPublisherGroupBinding, error)
 	GetPublisherKey(ctx context.Context, arg GetPublisherKeyParams) (ControlPublisherIdentityKey, error)
 	GetPublisherRuntime(ctx context.Context, publisherIdentityID string) (ControlPublisherRuntime, error)
 	GetRelayDNSChallengeContext(ctx context.Context, orderID string) (GetRelayDNSChallengeContextRow, error)

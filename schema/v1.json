@@ -680,6 +680,11 @@
                       }
                     ]
                   },
+                  "target_binding": {
+                    "type": "string",
+                    "enum": ["fixed"],
+                    "description": "Use the template's declared target. Concrete groups cannot override it."
+                  },
                   "tls": false,
                   "http": {
                     "properties": {
@@ -1058,6 +1063,11 @@
                       }
                     ]
                   },
+                  "target_binding": {
+                    "type": "string",
+                    "enum": ["fixed"],
+                    "description": "Use the template's declared target. Concrete groups cannot override it."
+                  },
                   "tls": false,
                   "http": {
                     "properties": {
@@ -1370,6 +1380,11 @@
                       }
                     ]
                   },
+                  "target_binding": {
+                    "type": "string",
+                    "enum": ["fixed"],
+                    "description": "Use the template's declared target. Concrete groups cannot override it."
+                  },
                   "tls": false,
                   "http": false
                 },
@@ -1669,6 +1684,11 @@
                         "required": ["type", "region", "cluster"]
                       }
                     ]
+                  },
+                  "target_binding": {
+                    "type": "string",
+                    "enum": ["fixed"],
+                    "description": "Use the template's declared target. Concrete groups cannot override it."
                   },
                   "tls": false,
                   "http": false
@@ -1970,6 +1990,11 @@
                       }
                     ]
                   },
+                  "target_binding": {
+                    "type": "string",
+                    "enum": ["fixed"],
+                    "description": "Use the template's declared target. Concrete groups cannot override it."
+                  },
                   "tls": false,
                   "http": false
                 },
@@ -2228,12 +2253,323 @@
                       }
                     ]
                   },
+                  "target_binding": {
+                    "type": "string",
+                    "enum": ["fixed"],
+                    "description": "Use the template's declared target. Concrete groups cannot override it."
+                  },
                   "tls": false,
                   "http": false
                 },
                 "additionalProperties": false,
                 "type": "object",
                 "required": ["protocol", "target"]
+              },
+              {
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$",
+                    "description": "Saved name; defaults to the configuration key."
+                  },
+                  "publisher_group": {
+                    "not": {
+                      "const": "local"
+                    },
+                    "type": "string",
+                    "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                  },
+                  "publisher_pool": false,
+                  "access": {
+                    "properties": {
+                      "team": {
+                        "type": "boolean",
+                        "const": true
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": ["team"]
+                  },
+                  "inspection": {
+                    "$ref": "#/$defs/Inspection"
+                  },
+                  "public_url": false,
+                  "protocol": {
+                    "type": "string",
+                    "enum": ["http"]
+                  },
+                  "target": false,
+                  "target_binding": {
+                    "type": "string",
+                    "const": "group",
+                    "description": "Use an exact saved target binding for each concrete group following this template. The publisher never accepts a connect-time target."
+                  },
+                  "tls": false,
+                  "http": {
+                    "properties": {
+                      "access": {
+                        "oneOf": [
+                          {
+                            "type": "string",
+                            "enum": ["restricted"]
+                          },
+                          {
+                            "properties": {
+                              "mode": {
+                                "type": "string",
+                                "enum": ["restricted"]
+                              },
+                              "ip": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array",
+                                "maxItems": 256,
+                                "minItems": 1,
+                                "uniqueItems": true
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        ]
+                      },
+                      "limits": {
+                        "properties": {
+                          "total": {
+                            "type": "integer",
+                            "maximum": 9007199254740991,
+                            "minimum": 1
+                          },
+                          "concurrency": {
+                            "type": "integer",
+                            "maximum": 9007199254740991,
+                            "minimum": 1
+                          },
+                          "rate": {
+                            "properties": {
+                              "count": {
+                                "type": "integer",
+                                "maximum": 9007199254740991,
+                                "minimum": 1
+                              },
+                              "per": {
+                                "type": "string",
+                                "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                              },
+                              "burst": {
+                                "type": "integer",
+                                "maximum": 9007199254740991,
+                                "minimum": 1
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object"
+                      },
+                      "readiness": false,
+                      "open": false,
+                      "paths": false
+                    },
+                    "additionalProperties": false,
+                    "type": "object"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["publisher_group", "target_binding"]
+              },
+              {
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$",
+                    "description": "Saved name; defaults to the configuration key."
+                  },
+                  "publisher_group": {
+                    "not": {
+                      "const": "local"
+                    },
+                    "type": "string",
+                    "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                  },
+                  "publisher_pool": false,
+                  "access": {
+                    "properties": {
+                      "team": {
+                        "type": "boolean",
+                        "const": true
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": ["team"]
+                  },
+                  "inspection": {
+                    "$ref": "#/$defs/Inspection"
+                  },
+                  "public_url": false,
+                  "protocol": {
+                    "type": "string",
+                    "enum": ["tcp"]
+                  },
+                  "target": false,
+                  "target_binding": {
+                    "type": "string",
+                    "const": "group",
+                    "description": "Use an exact saved target binding for each concrete group following this template. The publisher never accepts a connect-time target."
+                  },
+                  "tls": false,
+                  "http": false
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["publisher_group", "target_binding", "protocol"]
+              },
+              {
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$",
+                    "description": "Saved name; defaults to the configuration key."
+                  },
+                  "publisher_group": {
+                    "not": {
+                      "const": "local"
+                    },
+                    "type": "string",
+                    "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                  },
+                  "publisher_pool": false,
+                  "access": {
+                    "properties": {
+                      "team": {
+                        "type": "boolean",
+                        "const": true
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": ["team"]
+                  },
+                  "inspection": {
+                    "$ref": "#/$defs/Inspection"
+                  },
+                  "public_url": false,
+                  "protocol": {
+                    "type": "string",
+                    "enum": ["mysql"]
+                  },
+                  "target": false,
+                  "target_binding": {
+                    "type": "string",
+                    "const": "group",
+                    "description": "Use an exact saved target binding for each concrete group following this template. The publisher never accepts a connect-time target."
+                  },
+                  "tls": false,
+                  "http": false
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["publisher_group", "target_binding", "protocol"]
+              },
+              {
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$",
+                    "description": "Saved name; defaults to the configuration key."
+                  },
+                  "publisher_group": {
+                    "not": {
+                      "const": "local"
+                    },
+                    "type": "string",
+                    "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                  },
+                  "publisher_pool": false,
+                  "access": {
+                    "properties": {
+                      "team": {
+                        "type": "boolean",
+                        "const": true
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": ["team"]
+                  },
+                  "inspection": {
+                    "$ref": "#/$defs/Inspection"
+                  },
+                  "public_url": false,
+                  "protocol": {
+                    "type": "string",
+                    "enum": ["postgres"]
+                  },
+                  "target": false,
+                  "target_binding": {
+                    "type": "string",
+                    "const": "group",
+                    "description": "Use an exact saved target binding for each concrete group following this template. The publisher never accepts a connect-time target."
+                  },
+                  "tls": false,
+                  "http": false
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["publisher_group", "target_binding", "protocol"]
+              },
+              {
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$",
+                    "description": "Saved name; defaults to the configuration key."
+                  },
+                  "publisher_group": {
+                    "not": {
+                      "const": "local"
+                    },
+                    "type": "string",
+                    "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                  },
+                  "publisher_pool": false,
+                  "access": {
+                    "properties": {
+                      "team": {
+                        "type": "boolean",
+                        "const": true
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": ["team"]
+                  },
+                  "inspection": {
+                    "$ref": "#/$defs/Inspection"
+                  },
+                  "public_url": false,
+                  "protocol": {
+                    "type": "string",
+                    "enum": ["kubernetes"]
+                  },
+                  "target": false,
+                  "target_binding": {
+                    "type": "string",
+                    "const": "group",
+                    "description": "Use an exact saved target binding for each concrete group following this template. The publisher never accepts a connect-time target."
+                  },
+                  "tls": false,
+                  "http": false
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["publisher_group", "target_binding", "protocol"]
               }
             ]
           },

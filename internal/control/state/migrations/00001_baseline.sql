@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-explicit-capabilities-publisher-pools')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-explicit-capabilities-publisher-group-bindings')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-explicit-capabilities-publisher-pools');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-explicit-capabilities-publisher-group-bindings');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -2065,6 +2065,25 @@ END;
 $$;
 -- +goose StatementEnd
 CREATE TRIGGER publisher_group_ingress_pool_pinned BEFORE UPDATE OF ingress_pool_id ON control.project_publisher_groups FOR EACH ROW EXECUTE FUNCTION control.reject_publisher_group_ingress_pool_move();
+-- exact instance settings are encrypted separately from the desired declaration.
+CREATE TABLE control.publisher_group_bindings (
+    group_id text PRIMARY KEY REFERENCES control.project_publisher_groups(id) ON DELETE RESTRICT,
+    bindings_ciphertext bytea NOT NULL,
+    storage_key_id text NOT NULL
+);
+-- keys and immutable identities outlive retirement, including failed retries.
+CREATE TABLE control.publisher_group_creations (
+    team_id text NOT NULL,
+    project_key text NOT NULL,
+    idempotency_key text NOT NULL CHECK (length(idempotency_key) BETWEEN 1 AND 256),
+    request_digest bytea NOT NULL,
+    -- this immutable protocol snapshot normalizes retries after a template
+    -- changes; it grants no target, publisher or visitor authority.
+    binding_protocols jsonb NOT NULL,
+    group_id text NOT NULL,
+    PRIMARY KEY (team_id, project_key, idempotency_key),
+    FOREIGN KEY (group_id, team_id, project_key) REFERENCES control.project_publisher_groups(id, team_id, project_key) ON DELETE RESTRICT
+);
 -- namespace claims outlive group names and runs. reuse waits for certificate,
 -- DNS and forwarding retirement; a config rename never changes this owner.
 CREATE TABLE control.service_namespace_claims (

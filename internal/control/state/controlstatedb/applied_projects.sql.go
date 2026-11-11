@@ -93,6 +93,17 @@ func (q *Queries) GetLocalProjectService(ctx context.Context, arg GetLocalProjec
 	return i, err
 }
 
+const getPublisherGroupBindings = `-- name: GetPublisherGroupBindings :one
+SELECT group_id, bindings_ciphertext, storage_key_id FROM control.publisher_group_bindings WHERE group_id=$1
+`
+
+func (q *Queries) GetPublisherGroupBindings(ctx context.Context, groupID string) (ControlPublisherGroupBinding, error) {
+	row := q.db.QueryRow(ctx, getPublisherGroupBindings, groupID)
+	var i ControlPublisherGroupBinding
+	err := row.Scan(&i.GroupID, &i.BindingsCiphertext, &i.StorageKeyID)
+	return i, err
+}
+
 const invalidatePublisherGroupRuntimeHealth = `-- name: InvalidatePublisherGroupRuntimeHealth :exec
 UPDATE control.publisher_group_members
 SET healthy=false, acknowledged_at=NULL

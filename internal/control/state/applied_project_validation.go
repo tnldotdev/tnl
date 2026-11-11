@@ -87,6 +87,9 @@ func normalizeAppliedProjectService(s *ProjectServiceConfiguration) error {
 			}
 		}
 	}
+	if s.TargetBinding == "group" {
+		return nil
+	}
 	descriptor := s.TargetDiscovery != nil
 	var err error
 	if descriptor {
