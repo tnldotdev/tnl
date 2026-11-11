@@ -172,10 +172,17 @@ pnpm dev
 This would end up looking like:
 
 ```text
-shop
-+-- main checkout -> https://app-shop-k7n2p9.calm-otter.tnl.dev
+your browser
 |
-+-- perf worktree -> https://app-shop-perf-m4q8s2.calm-otter.tnl.dev
++-- https://app-shop-k7n2p9.calm-otter.tnl.dev
+|          |
+|          v
+|   main checkout -> localhost:5173
+|
++-- https://app-shop-perf-m4q8s2.calm-otter.tnl.dev
+           |
+           v
+    perf worktree -> localhost:5174
 ```
 
 Vite and Next.js can choose another port when the preferred one is taken, and `tnl` will publish the port they actually open. Restarting either checkout reuses its URL. Read [more about worktrees](https://tnl.dev/docs/development#develop-in-parallel-worktrees).
