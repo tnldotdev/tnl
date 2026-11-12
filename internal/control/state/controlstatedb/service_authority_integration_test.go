@@ -74,7 +74,8 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	if err != nil || invite.Secret == "" {
 		t.Fatalf("create invitation: %+v, %v", invite, err)
 	}
-	if retry, err := d.InviteServiceVisitor(ctx, service.ID, identityID, "invite", "visitor@example.test", now.Add(time.Hour), now); err != nil || retry.ID != invite.ID || retry.Secret != "" {
+	var delivery *controlstate.CredentialDeliveryUnavailable
+	if retry, err := d.InviteServiceVisitor(ctx, service.ID, identityID, "invite", "visitor@example.test", now.Add(time.Hour), now); !errors.As(err, &delivery) || delivery.ResourceID != invite.ID || retry.Secret != "" {
 		t.Fatalf("invitation retry lost its ID or reissued a secret: %v", err)
 	}
 	if _, err = d.AcceptServiceInvitation(ctx, wrongEmailID, invite.Secret, now); !errors.Is(err, controlstate.ErrServiceAccess) {
