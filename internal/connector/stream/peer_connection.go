@@ -12,6 +12,7 @@ import (
 	"time"
 
 	quic "github.com/quic-go/quic-go"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/tlspolicy"
@@ -19,6 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/peer"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	telemetryv1 "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -44,46 +46,47 @@ type connectorPath struct {
 // background workers own authority renewal and proof generation;
 // local arrivals consume immutable signed openings and never call control.
 type connectorConnection struct {
-	ctx           context.Context
-	cancel        context.CancelCauseFunc
-	config        Config
-	signer        Signer
-	owner         string
-	endpoint      *peer.Endpoint
-	socket        *peer.Socket
-	ownedSocket   bool
-	connectivity  *peer.Connectivity
-	transport     *quic.Transport
-	udpTransport  *muxsession.QUICTransport
-	connection    *quic.Conn
-	session       muxsession.Session
-	permissions   *tunnel.ConnectorPermissionWriter
-	mu            sync.Mutex
-	run           Run
-	pair          controlv1.ConnectorPeerPair
-	until         time.Time
-	preparedUntil time.Time
-	reportedUntil time.Time
-	source        string
-	permission    controlv1.VisitorTokenResponse
-	paths         [2]connectorPath
-	key           [32]byte
-	openings      []preparedOpening
-	active        map[*connectorUse]struct{}
-	warm          *connectorUse
-	changed       chan struct{}
-	refill        chan struct{}
-	recover       chan struct{}
-	recoveryState connectorRecoveryState
-	rebind        *connectorRebindOperation
-	inspection    *connectorRebindPhase
-	highWater     int64
-	bindingCtx    context.Context
-	bindingCancel context.CancelFunc
-	legUses       sync.WaitGroup
-	workers       sync.WaitGroup
-	uses          sync.WaitGroup
-	once          sync.Once
+	ctx             context.Context
+	cancel          context.CancelCauseFunc
+	config          Config
+	signer          Signer
+	owner           string
+	endpoint        *peer.Endpoint
+	socket          *peer.Socket
+	ownedSocket     bool
+	connectivity    *peer.Connectivity
+	transport       *quic.Transport
+	udpTransport    *muxsession.QUICTransport
+	connection      *quic.Conn
+	session         muxsession.Session
+	permissions     *tunnel.ConnectorPermissionWriter
+	mu              sync.Mutex
+	run             Run
+	pair            controlv1.ConnectorPeerPair
+	until           time.Time
+	preparedUntil   time.Time
+	reportedUntil   time.Time
+	source          string
+	permission      controlv1.VisitorTokenResponse
+	paths           [2]connectorPath
+	key             [32]byte
+	openings        []preparedOpening
+	active          map[*connectorUse]struct{}
+	warm            *connectorUse
+	changed         chan struct{}
+	refill          chan struct{}
+	recover         chan struct{}
+	recoveryState   connectorRecoveryState
+	recoveryStarted time.Time
+	rebind          *connectorRebindOperation
+	inspection      *connectorRebindPhase
+	highWater       int64
+	bindingCtx      context.Context
+	bindingCancel   context.CancelFunc
+	legUses         sync.WaitGroup
+	workers         sync.WaitGroup
+	uses            sync.WaitGroup
+	once            sync.Once
 }
 
 func connectorTemporary(err error) bool {
@@ -99,6 +102,8 @@ func connectorTemporary(err error) bool {
 }
 
 func prepareConnectorConnection(ctx, setup context.Context, config Config, signer Signer) (_ *connectorConnection, result error) {
+	config.telemetry = config.Telemetry.BeginScope("connector")
+	config.Connectivity = config.telemetry.Connectivity(config.Connectivity)
 	life, cancel := context.WithCancelCause(ctx)
 	p := &connectorConnection{ctx: life, cancel: cancel, config: config, signer: signer, changed: make(chan struct{}), refill: make(chan struct{}, 1), recover: make(chan struct{}, 1), active: make(map[*connectorUse]struct{})}
 	p.bindingCtx, p.bindingCancel = context.WithCancel(life)
@@ -949,5 +954,13 @@ func (p *connectorConnection) Close() {
 		if p.udpTransport != nil {
 			_ = p.udpTransport.Close()
 		}
+		if !p.recoveryStarted.IsZero() && p.paths[0].leg != nil {
+			outcome := telemetryv1.Canceled
+			if cause := context.Cause(p.ctx); cause != nil && cause != context.Canceled {
+				outcome = telemetryv1.Failed
+			}
+			p.config.telemetry.Record(telemetryv1.Recovery, clienttelemetry.Path(p.paths[0].leg.transport), outcome, time.Since(p.recoveryStarted))
+		}
+		p.config.telemetry.Close()
 	})
 }

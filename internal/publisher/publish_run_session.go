@@ -245,6 +245,7 @@ func runSession(
 	})
 	defer stopAdmissions()
 	connections, err := authority.connections(transportCtx, publisherConnectionManagerConfig{
+		Telemetry:     config.telemetry,
 		QUICConnector: config.QUICConnector, TCPConnector: config.TCPConnector,
 		FallbackDelay: config.FallbackDelay, ReconnectDelay: activationRetry,
 		Report: func(err error) {

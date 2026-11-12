@@ -80,6 +80,7 @@ test("real Node port-0 wildcard listener waits for exact native status and joins
         target = payload.target;
         expect(payload.publisher_identity_id).toBe(`pub_${"A".repeat(22)}`);
         expect(payload.require_post_quantum).toBe(true);
+        expect(payload.telemetry_disabled).toBe(true);
         expect(payload.credential).toBeUndefined();
         response.end(JSON.stringify({ version: 1, registration_id: id, owner, target }));
       } else if (request.url === "/v1/status") {
@@ -102,7 +103,7 @@ test("real Node port-0 wildcard listener waits for exact native status and joins
   try {
     const handle = await openServer(
       app,
-      { publisherIdentityID: `pub_${"A".repeat(22)}`, requirePostQuantum: true },
+      { publisherIdentityID: `pub_${"A".repeat(22)}`, requirePostQuantum: true, telemetry: false },
       {
         start: async (_directory, _binary, selection) => ({
           version: 1,

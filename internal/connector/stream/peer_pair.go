@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/peer"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	telemetryv1 "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -305,30 +306,31 @@ func dialConnectorLeg(ctx, lifetime context.Context, config Config, signer Signe
 	defer cancel()
 	start := func(connector muxsession.Connector, transport tunnel.Transport) {
 		go func() {
-			proof, err := connectorLegProof(signer, pair, slot)
-			if err != nil {
-				results <- result{err: err}
-				return
-			}
-			outer, err := connector.Connect(race, muxsession.Endpoint{Address: pair.Relays[slot].RelayAddress, ServerName: pair.Relays[slot].TlsServerName})
-			if err != nil {
-				results <- result{err: err}
-				return
-			}
-			if transport == tunnel.TransportQUIC {
-				packets, ok := outer.(muxsession.DatagramSession)
-				if !ok || !packets.SupportsDatagrams() {
-					results <- result{err: errors.Join(peer.ErrConfiguration, outer.Close())}
-					return
+			startedAttempt := time.Now()
+			next := func() result {
+				proof, err := connectorLegProof(signer, pair, slot)
+				if err != nil {
+					return result{err: err}
 				}
-			}
-			started := time.Now()
-			session, receipt, err := tunnel.DialConnector(race, outer, tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version, Role: tunnelv1.Connector, ConnectorPairLegProof: &proof}, pair.DeliveryId)
-			if err != nil {
-				results <- result{err: err}
-				return
-			}
-			results <- result{leg: &connectorRelayLeg{session: session, proof: proof, receipt: receipt, transport: transport, until: started.Add(receipt.ExpiresAt.Sub(receipt.ObservedAt)), relay: pair.Relays[slot]}, outer: outer}
+				outer, err := connector.Connect(race, muxsession.Endpoint{Address: pair.Relays[slot].RelayAddress, ServerName: pair.Relays[slot].TlsServerName})
+				if err != nil {
+					return result{err: err}
+				}
+				if transport == tunnel.TransportQUIC {
+					packets, ok := outer.(muxsession.DatagramSession)
+					if !ok || !packets.SupportsDatagrams() {
+						return result{err: errors.Join(peer.ErrConfiguration, outer.Close())}
+					}
+				}
+				started := time.Now()
+				session, receipt, err := tunnel.DialConnector(race, outer, tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version, Role: tunnelv1.Connector, ConnectorPairLegProof: &proof}, pair.DeliveryId)
+				if err != nil {
+					return result{err: err}
+				}
+				return result{leg: &connectorRelayLeg{session: session, proof: proof, receipt: receipt, transport: transport, until: started.Add(receipt.ExpiresAt.Sub(receipt.ObservedAt)), relay: pair.Relays[slot]}, outer: outer}
+			}()
+			config.telemetry.RelayAttempt(race, transport, time.Since(startedAttempt), next.err)
+			results <- next
 		}()
 	}
 	primary, fallback := quicConnector, tcpConnector
@@ -375,6 +377,9 @@ func dialConnectorLeg(ctx, lifetime context.Context, config Config, signer Signe
 		return nil, errors.Join(ErrServiceConnection, failures)
 	}
 	l := winner.leg
+	if l.transport == tunnel.TransportTLSTCP {
+		config.telemetry.Record(telemetryv1.Fallback, telemetryv1.TlsTcp, telemetryv1.Succeeded, 0)
+	}
 	hello, err := tunnelv1.ParseConnectorHelloNonce(l.proof.Nonce)
 	if err != nil {
 		_ = l.session.Close()

@@ -22,6 +22,8 @@ func Run(ctx context.Context, config Config) (result error) {
 	if result != nil {
 		return result
 	}
+	config.telemetry = config.Telemetry.BeginScope("publisher")
+	defer config.telemetry.Close()
 	if config.Control == nil {
 		return errors.New("publisher: control client is required")
 	}

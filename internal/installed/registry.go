@@ -63,6 +63,7 @@ const (
 )
 
 type Job struct {
+	TelemetryDisabled   bool                            `json:"telemetry_disabled,omitempty"`
 	PreferredRegions    []string                        `json:"preferred_regions,omitempty"`
 	GroupMember         *controlv1.PublisherGroupMember `json:"group_member,omitempty"`
 	GroupInstance       string                          `json:"group_instance,omitempty"`

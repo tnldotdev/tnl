@@ -27,6 +27,7 @@ const prepareOptionsSchema = z
     service: serviceNameSchema.exactOptional(),
     directory: pathTextSchema.exactOptional(),
     stateDir: pathTextSchema.exactOptional(),
+    telemetry: z.boolean().exactOptional(),
   })
   .readonly();
 export type PrepareOptions = z.output<typeof prepareOptionsSchema>;
@@ -85,6 +86,10 @@ interface Dependencies {
 }
 const defaultDependencies: Dependencies = { start: startRuntime, request: runtimeRequest };
 
+function telemetryDisabled(options: PrepareOptions): boolean {
+  return options.telemetry === false || /^(1|true)$/i.test(process.env.TNL_NO_TELEMETRY ?? "");
+}
+
 interface AppRegistry {
   readonly preparations: Map<string, Promise<PreparedService>>;
   readonly frameworkTargets: WeakMap<
@@ -118,7 +123,7 @@ export function prepareService(
 ): Promise<PreparedService> {
   validateOptions(options);
   const directory = path.resolve(options.directory ?? process.cwd());
-  const key = `${directory}\0${options.service ?? ""}\0${options.stateDir ?? process.env.TNL_STATE_DIR ?? ""}\0${process.env.TNL_APP_ENDPOINT ?? ""}\0${framework}`;
+  const key = `${directory}\0${options.service ?? ""}\0${options.stateDir ?? process.env.TNL_STATE_DIR ?? ""}\0${process.env.TNL_APP_ENDPOINT ?? ""}\0${framework}\0${telemetryDisabled(options)}`;
   const existing = registry.preparations.get(key);
   if (existing !== undefined) return existing;
   const evict = () => {
@@ -161,6 +166,7 @@ async function createPreparedServiceUntraced(
     framework,
     owner,
     pid: process.pid,
+    telemetry_disabled: telemetryDisabled(options),
   };
   const endpoint = await dependencies.start(directory, undefined, selection);
   const assignment = parseAssignment(

@@ -35,12 +35,35 @@ func TestRaceUsesFallbackAfterPrimaryFailure(t *testing.T) {
 	primary := muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
 		return nil, errors.New("UDP unavailable")
 	})
-	s, transport, err := Race(observability.WithMetrics(tunnelContext(t), metrics), Candidate{Connector: primary, Transport: TransportQUIC}, Candidate{Connector: fallback, Transport: TransportTLSTCP}, time.Hour, publisherHello())
+	observed := make(chan struct {
+		transport Transport
+		failed    bool
+	}, 2)
+	observe := func(_ context.Context, transport Transport, elapsed time.Duration, err error) {
+		if elapsed < 0 {
+			t.Error("negative attempt duration")
+		}
+		observed <- struct {
+			transport Transport
+			failed    bool
+		}{transport, err != nil}
+	}
+	s, transport, err := Race(observability.WithMetrics(tunnelContext(t), metrics), Candidate{Connector: primary, Transport: TransportQUIC, Observe: observe}, Candidate{Connector: fallback, Transport: TransportTLSTCP, Observe: observe}, time.Hour, publisherHello())
 	if s != nil {
 		t.Cleanup(func() { _ = s.Close() })
 	}
 	if err != nil || transport != TransportTLSTCP || calls.Load() != 1 {
 		t.Fatalf("race=%s, %v; fallback=%d", transport, err, calls.Load())
+	}
+	for range 2 {
+		select {
+		case result := <-observed:
+			if result.failed != (result.transport == TransportQUIC) {
+				t.Fatalf("lost candidate outcome: %+v", result)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("candidate did not report outcome")
+		}
 	}
 	families, err := metrics.Gather()
 	if err != nil {

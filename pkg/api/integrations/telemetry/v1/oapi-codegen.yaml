@@ -1,0 +1,6 @@
+package: telemetryv1
+output: openapi.gen.go
+generate:
+  models: true
+output-options:
+  skip-prune: true

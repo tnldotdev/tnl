@@ -17,11 +17,6 @@ type Progress struct {
 	Details []clioutput.Block
 }
 
-type IntegrationObservation struct {
-	Event    string
-	Delivery string
-}
-
 type Presentation struct {
 	Delegated        func()
 	ConfigureBrowser func(bool)
@@ -37,7 +32,6 @@ type Presentation struct {
 	Stopped          func() error
 	Progress         func(Progress) error
 	Warning          func(string) error
-	Observe          func(IntegrationObservation)
 }
 
 func (p *Presentation) configureBrowser(automated bool) {
@@ -108,29 +102,6 @@ func publishWarning(tunnel *clientstate.Tunnel, output *Presentation) func(strin
 			tunnel.CancelWithCause(failure.Wrap("write publication warning", failure.OutputUnavailable, err))
 		}
 	}
-}
-
-type telemetryWebhookDelivery string
-type telemetryEventName string
-
-const (
-	telemetryFanout          telemetryWebhookDelivery = "fanout"
-	telemetrySelected        telemetryWebhookDelivery = "selected"
-	telemetryOAuthReady      telemetryEventName       = "oauth_callback_url_ready"
-	telemetryOAuthRedirected telemetryEventName       = "oauth_callback_redirected"
-	telemetryWebhookReady    telemetryEventName       = "webhook_endpoint_ready"
-	telemetryWebhookReached  telemetryEventName       = "webhook_delivery_reached_receiver"
-)
-
-type telemetryReporter func(IntegrationObservation)
-
-func (r telemetryReporter) Report(value IntegrationObservation) {
-	if r != nil {
-		r(value)
-	}
-}
-func newIntegrationTelemetry(event telemetryEventName, delivery telemetryWebhookDelivery) IntegrationObservation {
-	return IntegrationObservation{Event: string(event), Delivery: string(delivery)}
 }
 
 func failureMessage(err error) string {

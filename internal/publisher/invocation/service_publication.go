@@ -321,7 +321,7 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 	if err := publisheridentity.MatchServiceDeclaration(approved, string(protocol), trust); err != nil {
 		return failure.Wrap("match service declaration", failure.ServerConflict, errors.Join(err, errors.New("saved service protocol or TLS trust differs from the local declaration")))
 	}
-	job := installedjobs.Job{Kind: installedjobs.KindService, ID: installedjobs.ServiceJobKey(server, *identity.ServiceId), Name: name, Server: server,
+	job := installedjobs.Job{TelemetryDisabled: flags.TelemetryDisabled, Kind: installedjobs.KindService, ID: installedjobs.ServiceJobKey(server, *identity.ServiceId), Name: name, Server: server,
 		ServiceID: *identity.ServiceId, PublisherIdentityID: identity.ClientId, GrantID: identity.GrantId, Target: target, Protocol: config.ProtocolName(protocol), Trust: trust, ServerCAPEM: serverCAPEM,
 		TrustRevision: approved.TrustRevision, PublisherPool: approved.PublisherPool}
 	job.Limits = flags.Limits
@@ -358,7 +358,7 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 		}
 		defer func() { result = errors.Join(result, stopRuntime()) }()
 	}
-	err = targetplan.PublishPrivate(ctx, job.TargetPlan(), publisherservice.RunConfig{Control: native, State: profile, Access: native.Access, Identity: identity, ServiceID: job.ServiceID, Target: target, Metadata: publisheridentity.ServiceMetadata(approved), StreamCapacity: int32(job.Limits.Concurrency),
+	err = targetplan.PublishPrivate(ctx, job.TargetPlan(), publisherservice.RunConfig{Telemetry: flags.Telemetry, Control: native, State: profile, Access: native.Access, Identity: identity, ServiceID: job.ServiceID, Target: target, Metadata: publisheridentity.ServiceMetadata(approved), StreamCapacity: int32(job.Limits.Concurrency),
 		PreferredRegions: job.PreferredRegions,
 		Ready: func() error {
 			if output.Ready != nil {

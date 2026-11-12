@@ -3,6 +3,9 @@ package service
 import (
 	"time"
 
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
+	telemetryv1 "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
+
 	"github.com/tnldotdev/tnl/internal/transport/peer"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -53,6 +56,9 @@ func (p *PeerSession) detachDeliveryUnderInstall(expected peerNetworkBinding) {
 		return
 	}
 	p.deliveryState = peerDeliverySuspended
+	if p.recoveryStarted.IsZero() {
+		p.recoveryStarted = time.Now()
+	}
 	if p.pending != nil {
 		p.deliveryState = peerDeliveryRetired
 	}
@@ -109,6 +115,9 @@ func (p *PeerSession) stageBinding(binding PeerBinding) (result error) {
 		return ErrPrivateStream
 	}
 	p.highwater, p.pending, p.deliveryState = binding.generation, &binding, peerDeliveryStaging
+	if p.recoveryStarted.IsZero() {
+		p.recoveryStarted = time.Now()
+	}
 	if p.connectivity != nil {
 		p.connectivity.Suspend()
 	}
@@ -222,5 +231,11 @@ func (p *PeerSession) activateBinding(binding PeerBinding) error {
 		p.stop()
 		return err
 	}
+	b.mu.Lock()
+	if !p.recoveryStarted.IsZero() && p.deliverySlots[0] != nil {
+		p.bound.telemetry.Record(telemetryv1.Recovery, clienttelemetry.Path(p.deliverySlots[0].transport), telemetryv1.Succeeded, time.Since(p.recoveryStarted))
+		p.recoveryStarted = time.Time{}
+	}
+	b.mu.Unlock()
 	return nil
 }

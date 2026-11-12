@@ -64,6 +64,7 @@ func (e Engine) publishJob(ctx context.Context, job Job, attempts uint64, runtim
 		}
 		var ready atomic.Bool
 		err = targetplan.PublishPrivate(ctx, job.TargetPlan(), publisherservice.RunConfig{
+			Telemetry:        e.Telemetry,
 			PreferredRegions: slices.Clone(job.PreferredRegions),
 			Control:          native, State: profile, Access: native.Access, Identity: identity, Metadata: publisheridentity.ServiceMetadata(service), StreamCapacity: int32(job.Limits.Concurrency),
 			ServiceID: job.ServiceID, Target: job.Target,
@@ -83,6 +84,7 @@ func (e Engine) publishJob(ctx context.Context, job Job, attempts uint64, runtim
 		return false, err
 	}
 	cfg.Control, cfg.State, cfg.DrainTime = native, profile, e.DrainTime
+	cfg.Telemetry = e.Telemetry
 	cfg.Identity, cfg.Audit, cfg.VisitorControl = native, native, control.PublicURLControl
 	cfg.BrowserControl = control.PublicURLControl
 	cfg.Shares, cfg.Previews, cfg.FeedbackControl = control.PublicURLControl, control.PublicURLControl, control.PublicURLControl

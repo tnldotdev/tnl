@@ -14,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/buildinfo"
 	"github.com/tnldotdev/tnl/internal/client/detached"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -28,20 +29,22 @@ import (
 )
 
 type publisherServeCommand struct {
-	scopedTeamFlags `embed:""`
-	Group           string   `name:"group" help:"Configured publisher group name; omit to use the identities bound in --identity-file."`
-	ProjectKey      string   `name:"project-key" help:"Applied project key; defaults to the current Git configuration source."`
-	EnrollmentKey   string   `name:"enroll-key" env:"TNL_GROUP_ENROLL_KEY" help:"One-use group enrollment key; use - to read stdin. Without a saved or portable identity, bootstrap with the saved person session once."`
-	IdentityFile    []string `name:"identity-file" type:"path" help:"Private portable group identity. Repeat for independent groups in this process, omitting --group. Single-group mode also accepts TNL_GROUP_IDENTITY."`
-	BindingFile     []string `name:"binding-file" type:"path" help:"Operator-owned local dependency binding for an immutable group identity. Repeat per group; omitted bindings deny secret and cloud access."`
-	IdentityDir     string   `name:"identity-dir" env:"TNL_IDENTITY_DIR" type:"path" help:"Durable publisher identity and TLS files; defaults to identities beneath the state directory. Keep SQLite task-local when using a network mount."`
-	Instance        string   `name:"instance" default:"default" help:"Replica identity name; must match the portable identity when supplied."`
-	Foreground      bool     `name:"foreground" help:"Run in this terminal (the default)."`
-	Detach          bool     `name:"detach" help:"Run independently of this terminal without automatic restart."`
-	Install         bool     `name:"install" help:"Run durably with the user publisher supervisor."`
-	System          bool     `name:"system" hidden:""`
-	SystemStateDir  string   `name:"system-state-dir" type:"path"`
-	DetachedChild   string   `name:"detached-child" hidden:""`
+	telemetry         *clienttelemetry.Collector
+	telemetryDisabled bool
+	scopedTeamFlags   `embed:""`
+	Group             string   `name:"group" help:"Configured publisher group name; omit to use the identities bound in --identity-file."`
+	ProjectKey        string   `name:"project-key" help:"Applied project key; defaults to the current Git configuration source."`
+	EnrollmentKey     string   `name:"enroll-key" env:"TNL_GROUP_ENROLL_KEY" help:"One-use group enrollment key; use - to read stdin. Without a saved or portable identity, bootstrap with the saved person session once."`
+	IdentityFile      []string `name:"identity-file" type:"path" help:"Private portable group identity. Repeat for independent groups in this process, omitting --group. Single-group mode also accepts TNL_GROUP_IDENTITY."`
+	BindingFile       []string `name:"binding-file" type:"path" help:"Operator-owned local dependency binding for an immutable group identity. Repeat per group; omitted bindings deny secret and cloud access."`
+	IdentityDir       string   `name:"identity-dir" env:"TNL_IDENTITY_DIR" type:"path" help:"Durable publisher identity and TLS files; defaults to identities beneath the state directory. Keep SQLite task-local when using a network mount."`
+	Instance          string   `name:"instance" default:"default" help:"Replica identity name; must match the portable identity when supplied."`
+	Foreground        bool     `name:"foreground" help:"Run in this terminal (the default)."`
+	Detach            bool     `name:"detach" help:"Run independently of this terminal without automatic restart."`
+	Install           bool     `name:"install" help:"Run durably with the user publisher supervisor."`
+	System            bool     `name:"system" hidden:""`
+	SystemStateDir    string   `name:"system-state-dir" type:"path"`
+	DetachedChild     string   `name:"detached-child" hidden:""`
 
 	identityInputRead bool
 	identity          *credentialfile.GroupFile
@@ -300,6 +303,7 @@ func runPublisherServe(ctx context.Context, flags publisherServeCommand, project
 	}
 	job := installedjobs.Job{Kind: installedjobs.KindGroup, ID: installedjobs.JobKey(server, "group", member.GroupId+":"+flags.Instance), Name: flags.Group + "-" + flags.Instance, Server: server, PublisherIdentityID: member.PublisherIdentityId, GroupMember: &member, GroupInstance: flags.Instance}
 	job.IdentityDir = profile.IdentityDirectory()
+	job.TelemetryDisabled = flags.telemetryDisabled
 	if flags.Install {
 		registry, err := installedjobs.Open(ctx, installedjobs.OpenOptions{Root: options.Root, User: true})
 		if err != nil {
@@ -317,7 +321,7 @@ func runPublisherServe(ctx context.Context, flags publisherServeCommand, project
 		return err
 	}
 	detached.Starting(ctx)
-	return servePublisherGroup(ctx, job, profile, private, func(revision int64, healthy bool) error {
+	return servePublisherGroup(ctx, job, profile, private, flags.telemetry, func(revision int64, healthy bool) error {
 		if healthy {
 			detached.Ready(ctx)
 		}
@@ -336,11 +340,11 @@ func runPublisherServe(ctx context.Context, flags publisherServeCommand, project
 	})
 }
 
-func servePublisherGroup(ctx context.Context, job installedjobs.Job, profile *clientstate.Store, private ed25519.PrivateKey, observe func(int64, bool) error) error {
-	return servePublisherGroupWithDiscovery(ctx, job, profile, private, observe, nil)
+func servePublisherGroup(ctx context.Context, job installedjobs.Job, profile *clientstate.Store, private ed25519.PrivateKey, telemetry *clienttelemetry.Collector, observe func(int64, bool) error) error {
+	return servePublisherGroupWithDiscovery(ctx, job, profile, private, telemetry, observe, nil)
 }
 
-func servePublisherGroupWithDiscovery(ctx context.Context, job installedjobs.Job, profile *clientstate.Store, private ed25519.PrivateKey, observe func(int64, bool) error, provider publisherdiscovery.Provider) error {
+func servePublisherGroupWithDiscovery(ctx context.Context, job installedjobs.Job, profile *clientstate.Store, private ed25519.PrivateKey, telemetry *clienttelemetry.Collector, observe func(int64, bool) error, provider publisherdiscovery.Provider) error {
 	deployment, err := publisherprovenance.ReadEnvironment(os.LookupEnv, job.GroupInstance, buildinfo.Version)
 	if err != nil {
 		return err
@@ -348,5 +352,5 @@ func servePublisherGroupWithDiscovery(ctx context.Context, job installedjobs.Job
 	if provider == nil {
 		provider = publisherdiscovery.AWS{}
 	}
-	return (installedjobs.GroupRunner{Discovery: provider, Deployment: deployment}).Serve(ctx, job, profile, private, observe)
+	return (installedjobs.GroupRunner{Telemetry: telemetry, Discovery: provider, Deployment: deployment}).Serve(ctx, job, profile, private, observe)
 }

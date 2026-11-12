@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	"github.com/tnldotdev/tnl/internal/observability"
 	publishergroup "github.com/tnldotdev/tnl/internal/publisher/group"
@@ -61,12 +62,13 @@ func TestSignedCloudAssignmentProductionCallbackAndTargetTLS(t *testing.T) {
 				if err := registry.InstallGroup(t.Context(), fixture.Job, *fixture.Job.GroupMember, fixture.Key); err != nil {
 					t.Fatal(err)
 				}
-				engine := installedjobs.Engine{Registry: registry, PollInterval: 5 * time.Millisecond, Group: func(ctx context.Context, job installedjobs.Job, observe func(int64, bool) error) error {
+				engine := installedjobs.Engine{Registry: registry, PollInterval: 5 * time.Millisecond, Group: func(ctx context.Context, job installedjobs.Job, telemetry *clienttelemetry.Collector, observe func(int64, bool) error) error {
 					member, key, profile, err := registry.GroupIdentity(ctx, job)
 					if err != nil {
 						return err
 					}
 					publication.Member, publication.Private, publication.State = member, key, profile
+					publication.Telemetry = telemetry
 					return runtime(ctx, job, observe)
 				}}
 				go func() { defer close(done); result = engine.Serve(ctx) }()

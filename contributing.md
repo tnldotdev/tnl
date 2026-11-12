@@ -108,6 +108,10 @@ preferences. Use a fresh database, run `tnld migrate`, and start matching server
 publisher, and connector binaries. Databases from previous baselines are rejected.
 A publisher restart does not restore its application sockets.
 
+The client telemetry baseline also requires a fresh client state directory. Use
+`TNL_STATE_DIR` to select a new directory and sign in again; do not copy an older
+`v1.db` or its publisher credentials into it.
+
 tnl-owned formats also start at version 1: project metadata, tunnel snapshots,
 inspection JSON, and workload metadata. Regenerate project metadata
 with matching native and SDK versions when replacing an earlier build.

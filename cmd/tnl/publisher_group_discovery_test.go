@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	"github.com/tnldotdev/tnl/internal/testutil/groupdiscovery"
 )
@@ -17,7 +18,7 @@ func TestPublisherGroupDiscoveryForegroundUsesNativeTLS(t *testing.T) {
 	var result error
 	go func() {
 		defer close(done)
-		result = servePublisherGroupWithDiscovery(ctx, fixture.Job, fixture.Profile, fixture.Key, nil, fixture)
+		result = servePublisherGroupWithDiscovery(ctx, fixture.Job, fixture.Profile, fixture.Key, nil, nil, fixture)
 	}()
 	defer func() { cancel(); <-done }()
 	deadline := time.NewTimer(5 * time.Second)
@@ -83,18 +84,18 @@ func TestPublisherGroupDiscoveryShutdownJoinsAWSLookupsAndWorkers(t *testing.T) 
 				if err := registry.InstallGroup(t.Context(), fixture.Job, *fixture.Job.GroupMember, fixture.Key); err != nil {
 					t.Fatal(err)
 				}
-				engine := installedjobs.Engine{Registry: registry, PollInterval: 5 * time.Millisecond, Group: func(ctx context.Context, job installedjobs.Job, observe func(int64, bool) error) error {
+				engine := installedjobs.Engine{Registry: registry, PollInterval: 5 * time.Millisecond, Group: func(ctx context.Context, job installedjobs.Job, telemetry *clienttelemetry.Collector, observe func(int64, bool) error) error {
 					_, private, profile, err := registry.GroupIdentity(ctx, job)
 					if err != nil {
 						return err
 					}
-					return servePublisherGroupWithDiscovery(ctx, job, profile, private, observe, fixture)
+					return servePublisherGroupWithDiscovery(ctx, job, profile, private, telemetry, observe, fixture)
 				}}
 				go func() { defer close(done); result = engine.Serve(ctx) }()
 			} else {
 				go func() {
 					defer close(done)
-					result = servePublisherGroupWithDiscovery(ctx, fixture.Job, fixture.Profile, fixture.Key, nil, fixture)
+					result = servePublisherGroupWithDiscovery(ctx, fixture.Job, fixture.Profile, fixture.Key, nil, nil, fixture)
 				}()
 			}
 			defer func() { cancel(); <-done }()

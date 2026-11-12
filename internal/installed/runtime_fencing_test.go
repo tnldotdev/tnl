@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/failure"
 	publishergroup "github.com/tnldotdev/tnl/internal/publisher/group"
 	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
@@ -74,7 +75,7 @@ func TestInstalledGroupRuntimeConflictBlocksWithoutReclaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	var attempts atomic.Int64
-	engine := Engine{Registry: r, PollInterval: 5 * time.Millisecond, RetryMin: 5 * time.Millisecond, RetryMax: 10 * time.Millisecond, Group: func(ctx context.Context, job Job, observe func(int64, bool) error) error {
+	engine := Engine{Registry: r, PollInterval: 5 * time.Millisecond, RetryMin: 5 * time.Millisecond, RetryMax: 10 * time.Millisecond, Group: func(ctx context.Context, job Job, _ *clienttelemetry.Collector, observe func(int64, bool) error) error {
 		attempts.Add(1)
 		current, private, _, err := r.GroupIdentity(ctx, job)
 		if err != nil {

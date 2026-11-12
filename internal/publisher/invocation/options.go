@@ -7,6 +7,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/config"
 	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
@@ -16,6 +17,8 @@ import (
 
 // PublicOptions contains selected publication inputs, independent of CLI flags.
 type PublicOptions struct {
+	Telemetry          *clienttelemetry.Collector
+	TelemetryDisabled  bool
 	PreferredRegions   []string
 	RequirePostQuantum *bool
 	Target             string

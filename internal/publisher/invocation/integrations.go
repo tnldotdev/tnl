@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/project/meta"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -24,6 +25,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/integrations"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	telemetryv1 "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 )
 
 func projectIntegrationScope(project clientproject.Project, namespace string) clientstate.IntegrationScope {
@@ -58,7 +60,7 @@ func reportIntegrationURL(tunnel *clientstate.Tunnel, output *Presentation, stat
 	}
 }
 
-func startOAuthIntegrationURL(ctx context.Context, state *clientstate.Database, services publisherServices, oauth meta.IntegrationOrigin, tunnel *clientstate.Tunnel, output *Presentation, telemetry telemetryReporter) func() {
+func startOAuthIntegrationURL(ctx context.Context, state *clientstate.Database, services publisherServices, oauth meta.IntegrationOrigin, tunnel *clientstate.Tunnel, output *Presentation, telemetry *clienttelemetry.Scope) func() {
 	ctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	var reportMu sync.Mutex
@@ -72,9 +74,7 @@ func startOAuthIntegrationURL(ctx context.Context, state *clientstate.Database, 
 			}
 			config.OnWarning = publishWarning(tunnel, output)
 			config.Handler = integrations.OAuthHandler(state, services.authenticated.ServerEndpoint, oauth.Hostname, func() {
-				if telemetry != nil {
-					telemetry.Report(newIntegrationTelemetry(telemetryOAuthRedirected, ""))
-				}
+				telemetry.Integration(telemetryv1.IntegrationOutcome{Kind: "oauth", Outcome: telemetryv1.Redirected})
 			})
 			return integrations.Snapshot{Config: config}, nil
 		},
@@ -87,9 +87,7 @@ func startOAuthIntegrationURL(ctx context.Context, state *clientstate.Database, 
 					reportIntegrationURL(tunnel, output, "oauth unavailable", "app tunnel continues; retry sign-in shortly", clioutput.Text("the callback publisher could not become ready"))
 				}
 			} else if event.Type == publisher.EventReady {
-				if telemetry != nil {
-					telemetry.Report(newIntegrationTelemetry(telemetryOAuthReady, ""))
-				}
+				telemetry.Integration(telemetryv1.IntegrationOutcome{Kind: "oauth", Outcome: telemetryv1.Ready})
 				reportIntegrationURL(tunnel, output, "oauth ready", "", clioutput.Fields(clioutput.Field{Label: "oauth origin", Value: oauth.URL}))
 			}
 		},
@@ -98,7 +96,7 @@ func startOAuthIntegrationURL(ctx context.Context, state *clientstate.Database, 
 	return func() { cancel(); <-done }
 }
 
-func startWebhookIntegrationURL(ctx context.Context, state *clientstate.Database, services publisherServices, project clientproject.Project, tunnel *clientstate.Tunnel, service string, group clientstate.IntegrationScope, output *Presentation, telemetry telemetryReporter) func() {
+func startWebhookIntegrationURL(ctx context.Context, state *clientstate.Database, services publisherServices, project clientproject.Project, tunnel *clientstate.Tunnel, service string, group clientstate.IntegrationScope, output *Presentation, telemetry *clienttelemetry.Scope) func() {
 	if len(project.Config.Webhooks) == 0 {
 		return func() {}
 	}
@@ -166,12 +164,12 @@ func startWebhookIntegrationURL(ctx context.Context, state *clientstate.Database
 	return func() { cancel(); workers.Wait() }
 }
 
-func watchWebhookReady(ctx context.Context, state *clientstate.Database, server string, group clientstate.IntegrationScope, hostname string, definitions map[string]config.Webhook, telemetry telemetryReporter) {
+func watchWebhookReady(ctx context.Context, state *clientstate.Database, server string, group clientstate.IntegrationScope, hostname string, definitions map[string]config.Webhook, telemetry *clienttelemetry.Scope) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for ctx.Err() == nil {
 		if mode := readyWebhookDelivery(ctx, state, server, group, hostname, definitions); mode != "" {
-			telemetry.Report(newIntegrationTelemetry(telemetryWebhookReady, mode))
+			telemetry.Integration(telemetryv1.IntegrationOutcome{Kind: "webhook", Outcome: telemetryv1.Ready, Delivery: &mode})
 			return
 		}
 		select {
@@ -182,7 +180,7 @@ func watchWebhookReady(ctx context.Context, state *clientstate.Database, server 
 	}
 }
 
-func readyWebhookDelivery(ctx context.Context, state *clientstate.Database, server string, group clientstate.IntegrationScope, hostname string, definitions map[string]config.Webhook) telemetryWebhookDelivery {
+func readyWebhookDelivery(ctx context.Context, state *clientstate.Database, server string, group clientstate.IntegrationScope, hostname string, definitions map[string]config.Webhook) telemetryv1.IntegrationOutcomeDelivery {
 	ready, err := state.IntegrationURLReady(ctx, server, hostname)
 	if err != nil || !ready {
 		return ""
@@ -196,19 +194,19 @@ func readyWebhookDelivery(ctx context.Context, state *clientstate.Database, serv
 		if definition.DeliveryMode() == "selected" {
 			receiver, err := state.ExclusiveWebhookReceiver(ctx, server, group, name, digest)
 			if err == nil && receiver.ID != "" {
-				return telemetrySelected
+				return telemetryv1.Selected
 			}
 			continue
 		}
 		receivers, err := state.WebhookReceivers(ctx, server, group, name, digest)
 		if err == nil && len(receivers) != 0 {
-			return telemetryFanout
+			return telemetryv1.Fanout
 		}
 	}
 	return ""
 }
 
-func webhookURLPublisher(state *clientstate.Database, services publisherServices, group clientstate.IntegrationScope, origin meta.IntegrationOrigin, tunnel *clientstate.Tunnel, output *Presentation, telemetry telemetryReporter) integrations.Publisher {
+func webhookURLPublisher(state *clientstate.Database, services publisherServices, group clientstate.IntegrationScope, origin meta.IntegrationOrigin, tunnel *clientstate.Tunnel, output *Presentation, telemetry *clienttelemetry.Scope) integrations.Publisher {
 	var reportMu sync.Mutex
 	lastReport := time.Time{}
 	failure := func(message string) {
@@ -254,8 +252,9 @@ func webhookURLPublisher(state *clientstate.Database, services publisherServices
 			}
 			if telemetry != nil {
 				handler.OnReceiverResponse = func(mode string) {
-					telemetry.Report(newIntegrationTelemetry(telemetryWebhookReady, telemetryWebhookDelivery(mode)))
-					telemetry.Report(newIntegrationTelemetry(telemetryWebhookReached, telemetryWebhookDelivery(mode)))
+					delivery := telemetryv1.IntegrationOutcomeDelivery(mode)
+					telemetry.Integration(telemetryv1.IntegrationOutcome{Kind: "webhook", Outcome: telemetryv1.Ready, Delivery: &delivery})
+					telemetry.Integration(telemetryv1.IntegrationOutcome{Kind: "webhook", Outcome: telemetryv1.ReachedReceiver, Delivery: &delivery})
 				}
 			}
 			config, err := nativeIntegrationConfig(ctx, state, services, origin.Hostname, controlv1.Webhooks, prefixes)

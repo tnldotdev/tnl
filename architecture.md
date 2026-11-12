@@ -141,6 +141,7 @@ internal/
   ingress/             public visitor acceptance and forwarding
   relay/               publisher connections and visitor streams
   client/              shared auth, API clients, local state, and projects
+    telemetry/         bounded collection and delivery of client telemetry
   config/              project configuration types and validation
   serverhttp/          shared HTTP decoding, errors, cookies, and auth
   naming/              shared names and validated identifiers
@@ -152,7 +153,7 @@ internal/
   testutil/            shared test-only fixtures
 contracts/             HTTP OpenAPI sources and other shared inputs
 pkg/
-  api/                 six generated Go HTTP API packages
+  api/                 generated HTTP API contracts
   protocol/tunnelv1/   handwritten tunnel protocol
   tnl/                 public Go SDK
 packages/ts/           TypeScript SDK and framework integrations
@@ -324,16 +325,22 @@ Edit the source, then regenerate:
 | ------------------------------------------------------- | -------------------------------------------------- |
 | `contracts/control/**/v1`                               | Four matching Go packages under `pkg/api/control`. |
 | `contracts/publisher/{local,browser}/v1`                | Two Go packages and browser API validators.        |
+| `contracts/integrations/telemetry/v1`                   | Go telemetry models and TypeScript validators.     |
 | `internal/control/state/{migrations,queries,sqlc.yaml}` | PostgreSQL access in `controlstatedb`.             |
 | `internal/client/state/{migrations,queries,sqlc.yaml}`  | SQLite access in `clientstatedb`.                  |
 | `internal/config` and its generators                    | JSON Schema, SDK configuration types, and keys.    |
 | `internal/client/project/loader.ts`                     | Embedded JavaScript loader.                        |
 
-The six HTTP contracts follow the component serving them. Local publisher
+The six HTTP serving contracts follow the component serving them. Local publisher
 registration and the browser API are separate contracts. Edit their OpenAPI
 `paths/` and `schemas/` fragments and generator configuration. Reuse control
 schemas for identical wire shapes; shared components contain only byte-identical
 referenced schemas and generate no Go package.
+
+The telemetry contract describes batches sent by native clients. Its generated
+models and validators do not add a native HTTP server. `client/telemetry` collects
+and delivers bounded events; process and publication owners close their scopes
+after their workers stop.
 
 `pkg/protocol/tunnelv1` is handwritten and is the only tunnel protocol definition.
 Use golden JSON, framed-wire fixtures, invalid inputs, bounds tests, fuzzing, and

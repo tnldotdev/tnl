@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/config"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
@@ -21,6 +22,7 @@ import (
 // installed jobs and foreground callers compose this operation without giving it
 // a registry or transferring their process lifetime to it.
 type AssignmentPublisher struct {
+	Telemetry *clienttelemetry.Collector
 	Member    controlv1.PublisherGroupMember
 	Private   ed25519.PrivateKey
 	State     *clientstate.Store
@@ -48,7 +50,7 @@ func (p AssignmentPublisher) Publish(ctx context.Context, assignment controlv1.P
 	if service.Id != assignment.ServiceId || service.TrustRevision != assignment.TrustRevision || service.Protocol != *assignment.Configuration.Protocol {
 		return ErrAssignment
 	}
-	run := publisherservice.RunConfig{Control: native, State: p.State, Access: native.Access, Identity: identity, ServiceID: service.Id, Metadata: publisheridentity.ServiceMetadata(service), ObserveReadiness: func(status publisherservice.RunStatus) {
+	run := publisherservice.RunConfig{Telemetry: p.Telemetry, Control: native, State: p.State, Access: native.Access, Identity: identity, ServiceID: service.Id, Metadata: publisheridentity.ServiceMetadata(service), ObserveReadiness: func(status publisherservice.RunStatus) {
 		if health != nil {
 			health(status.Ready)
 		}

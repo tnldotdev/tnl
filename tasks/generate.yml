@@ -22,6 +22,7 @@ tasks:
     cmds:
       # generate API models and browser validators before compiling Go generators.
       - node scripts/generate/api-contracts.ts
+      - node scripts/generate/telemetry.ts
       - node scripts/generate/browser-api-schemas.ts
       - sqlc generate -f internal/client/state/sqlc.yaml
       - sqlc generate -f internal/control/state/sqlc.yaml

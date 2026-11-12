@@ -15,6 +15,7 @@ import (
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/client/filelock"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
@@ -29,6 +30,40 @@ import (
 type jobAuthority struct {
 	identity authorityv1.PublisherEnrollmentResult
 	public   ed25519.PublicKey
+}
+
+func TestInstalledTelemetryOptOutSurvivesSupervisorRestart(t *testing.T) {
+	for _, disabled := range []bool{true, false} {
+		t.Run(fmt.Sprint(disabled), func(t *testing.T) {
+			registry := testRegistry(t)
+			job, identity, key := fixture(t, "web")
+			job.TelemetryDisabled = disabled
+			control, authority := jobBoundary(job, identity, key)
+			if err := registry.Install(t.Context(), job, identity, key); err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				observed := make(chan bool, 1)
+				engine := Engine{Telemetry: &clienttelemetry.Collector{}, Registry: registry, PollInterval: 5 * time.Millisecond, Clients: func(Job) (PublisherClients, publisheridentity.EnrollmentAuthority, error) {
+					return jobClients(control), authority, nil
+				}, Publish: func(ctx context.Context, cfg publisher.Config) error {
+					observed <- cfg.Telemetry == nil
+					<-ctx.Done()
+					return nil
+				}}
+				cancel, done := startEngine(t, engine)
+				select {
+				case value := <-observed:
+					if value != disabled {
+						t.Fatal("installed job lost choice")
+					}
+				case <-time.After(3 * time.Second):
+					t.Fatal("job did not start")
+				}
+				joinEngine(t, cancel, done)
+			}
+		})
+	}
 }
 
 type testUserRunner func(context.Context) error

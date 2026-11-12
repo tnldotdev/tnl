@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
@@ -59,7 +60,7 @@ func TestConnectorIsUserOnlyAndJoinsBeforeRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 	started, joined := make(chan struct{}), make(chan struct{})
-	engine := Engine{Registry: r, PollInterval: 5 * time.Millisecond, Connect: func(ctx context.Context, got Job, ready func() error) error {
+	engine := Engine{Registry: r, PollInterval: 5 * time.Millisecond, Connect: func(ctx context.Context, got Job, _ *clienttelemetry.Collector, ready func() error) error {
 		if got.ServiceID != service || got.IdentityID != job.IdentityID || got.Target != job.Target {
 			return ErrScope
 		}

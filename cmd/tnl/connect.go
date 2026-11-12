@@ -9,6 +9,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/client/detached"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/connector"
 	installedjobs "github.com/tnldotdev/tnl/internal/installed"
@@ -25,25 +26,27 @@ type connectCommand struct {
 }
 
 type connectStartCommand struct {
-	scopedTeamFlags `embed:""`
-	Name            string           `arg:"" name:"name" help:"Configured service name or exact service ID."`
-	Listen          string           `name:"listen" help:"Loopback IP and port; defaults to 127.0.0.1 and the allocated service port."`
-	Protocol        string           `name:"protocol" help:"Require an exact match: http, tcp, mysql, postgres, or kubernetes."`
-	Kubeconfig      string           `name:"kubeconfig" type:"path" help:"Kubeconfig to register the owned Kubernetes context; defaults to KUBECONFIG or ~/.kube/config."`
-	Namespace       string           `name:"namespace" help:"Default Kubernetes namespace for this context."`
-	KubeUserConfig  string           `name:"kube-user-config" type:"path" help:"Existing kubeconfig containing the explicitly selected bearer-token user."`
-	KubeUser        string           `name:"kube-user" help:"Exact existing Kubernetes user; explicitly permits that user's noninteractive exec plugin."`
-	KubeTokenFile   string           `name:"kube-token-file" type:"path" help:"Private file containing the cluster bearer token."`
-	Foreground      bool             `name:"foreground" help:"Run in this terminal (the default)."`
-	Detach          bool             `name:"detach" help:"Run independently of this terminal without automatic restart."`
-	Install         bool             `name:"install" help:"Keep this connector running with the installed user supervisor."`
-	System          bool             `name:"system" hidden:""`
-	SystemStateDir  string           `name:"system-state-dir" type:"path" help:"Private user supervisor state directory."`
-	DetachedChild   string           `name:"detached-child" hidden:""`
-	Stdio           bool             `name:"stdio" help:"Carry one opaque TCP stream on stdin/stdout; sign in explicitly before use."`
-	Output          statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Ready local connection address and native client instructions."`
-	project         projectConfiguration
-	detach          func() error
+	telemetry         *clienttelemetry.Collector
+	telemetryDisabled bool
+	scopedTeamFlags   `embed:""`
+	Name              string           `arg:"" name:"name" help:"Configured service name or exact service ID."`
+	Listen            string           `name:"listen" help:"Loopback IP and port; defaults to 127.0.0.1 and the allocated service port."`
+	Protocol          string           `name:"protocol" help:"Require an exact match: http, tcp, mysql, postgres, or kubernetes."`
+	Kubeconfig        string           `name:"kubeconfig" type:"path" help:"Kubeconfig to register the owned Kubernetes context; defaults to KUBECONFIG or ~/.kube/config."`
+	Namespace         string           `name:"namespace" help:"Default Kubernetes namespace for this context."`
+	KubeUserConfig    string           `name:"kube-user-config" type:"path" help:"Existing kubeconfig containing the explicitly selected bearer-token user."`
+	KubeUser          string           `name:"kube-user" help:"Exact existing Kubernetes user; explicitly permits that user's noninteractive exec plugin."`
+	KubeTokenFile     string           `name:"kube-token-file" type:"path" help:"Private file containing the cluster bearer token."`
+	Foreground        bool             `name:"foreground" help:"Run in this terminal (the default)."`
+	Detach            bool             `name:"detach" help:"Run independently of this terminal without automatic restart."`
+	Install           bool             `name:"install" help:"Keep this connector running with the installed user supervisor."`
+	System            bool             `name:"system" hidden:""`
+	SystemStateDir    string           `name:"system-state-dir" type:"path" help:"Private user supervisor state directory."`
+	DetachedChild     string           `name:"detached-child" hidden:""`
+	Stdio             bool             `name:"stdio" help:"Carry one opaque TCP stream on stdin/stdout; sign in explicitly before use."`
+	Output            statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Ready local connection address and native client instructions."`
+	project           projectConfiguration
+	detach            func() error
 }
 
 type connectListCommand struct {
@@ -84,6 +87,7 @@ func (flags connectStartCommand) options() connector.StartOptions {
 
 func runConnectStart(ctx context.Context, flags connectStartCommand, output, diagnostics io.Writer) error {
 	options := flags.options()
+	options.TelemetryDisabled = flags.telemetryDisabled
 	if err := connector.ValidateMode(options); err != nil {
 		return err
 	}
@@ -97,15 +101,19 @@ func runConnectStart(ctx context.Context, flags connectStartCommand, output, dia
 			return err
 		}
 	}
-	return connectorOperations().Start(ctx, options, os.Stdin, output, diagnostics)
+	operations := connectorOperations()
+	operations.Telemetry = flags.telemetry
+	return operations.Start(ctx, options, os.Stdin, output, diagnostics)
 }
 
 func validateConnectMode(flags connectStartCommand) error {
 	return connector.ValidateMode(flags.options())
 }
 
-func runInstalledConnector(ctx context.Context, job installedjobs.Job, ready func() error) error {
-	return connectorOperations().RunInstalled(ctx, job, ready)
+func runInstalledConnector(ctx context.Context, job installedjobs.Job, telemetry *clienttelemetry.Collector, ready func() error) error {
+	operations := connectorOperations()
+	operations.Telemetry = telemetry
+	return operations.RunInstalled(ctx, job, ready)
 }
 func runKubeCredential(ctx context.Context, flags kubeCredentialCommand, output io.Writer) error {
 	return connector.WriteKubeCredential(ctx, flags.Profile, output)

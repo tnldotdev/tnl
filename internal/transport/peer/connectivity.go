@@ -32,6 +32,13 @@ type ConnectivityOptions struct {
 	DisableDirect   bool
 	IncludeLoopback bool
 	Observe         func(ConnectivityState)
+	ObserveAttempt  func(ConnectivityAttempt)
+	ObserveFallback func()
+}
+
+type ConnectivityAttempt struct {
+	Outcome  string
+	Duration time.Duration
 }
 
 type ConnectivityBinding struct {
@@ -232,6 +239,19 @@ func connectivityMatches(binding ConnectivityBinding, message tunnelv1.Connector
 }
 
 func (c *Connectivity) runAttempt(ctx context.Context, binding ConnectivityBinding, attempt uint64, offer *tunnelv1.ConnectorPeerConnectivity, signals <-chan connectivitySignal) (retErr error) {
+	started, established, directActive := time.Now(), false, false
+	defer func() {
+		if !established && c.options.ObserveAttempt != nil {
+			outcome := "failed"
+			if ctx.Err() != nil {
+				outcome = "canceled"
+			}
+			c.options.ObserveAttempt(ConnectivityAttempt{Outcome: outcome, Duration: time.Since(started)})
+		}
+		if directActive && ctx.Err() == nil && c.options.ObserveFallback != nil {
+			c.options.ObserveFallback()
+		}
+	}()
 	setup, cancel := context.WithTimeout(ctx, connectivitySetupTimeout)
 	defer cancel()
 	urls, err := connectivitySTUNURLs(setup, binding.RelayAddresses)
@@ -363,8 +383,18 @@ func (c *Connectivity) runAttempt(ctx context.Context, binding ConnectivityBindi
 			next := ConnectivityRelay
 			if c.packets.PathHealthy(Direct) {
 				next, lastHealthy = ConnectivityDirect, now
+				if !established {
+					established = true
+					if c.options.ObserveAttempt != nil {
+						c.options.ObserveAttempt(ConnectivityAttempt{Outcome: "succeeded", Duration: time.Since(started)})
+					}
+				}
 			}
 			if next != state {
+				if directActive && next == ConnectivityRelay && c.options.ObserveFallback != nil {
+					c.options.ObserveFallback()
+				}
+				directActive = next == ConnectivityDirect
 				c.observe(next)
 				state = next
 			}

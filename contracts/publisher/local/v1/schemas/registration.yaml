@@ -10,6 +10,7 @@ schemas:
       framework: { type: string, enum: [node, bun, vite, next, python] }
       owner: { type: string, pattern: "^[a-f0-9]{32}$" }
       pid: { type: integer, minimum: 1, x-go-name: PID }
+      telemetry_disabled: { type: boolean, x-go-type-skip-optional-pointer: true }
   Assignment:
     type: object
     additionalProperties: false

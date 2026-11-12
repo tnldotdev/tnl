@@ -296,7 +296,7 @@ def test_native_retained_failure_preserves_exception_identity_and_private_causes
     binary.write_text(
         f"#!{sys.executable}\nimport json, pathlib, sys\n"
         f"counter = pathlib.Path({str(counter)!r})\n"
-        "if sys.argv[4] in ('sdk-stop', 'sdk-close'):\n"
+        "if sys.argv[3] in ('sdk-stop', 'sdk-close'):\n"
         " print(json.dumps({'schema': 1, 'state': 'stopped'}))\n"
         "else:\n counter.write_text(counter.read_text() + 'x' if counter.exists() else 'x')\n"
         " sys.stderr.write(json.dumps({'reason': 'TNL_CLIENT_AUTHENTICATION_REQUIRED', "
