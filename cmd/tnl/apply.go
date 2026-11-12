@@ -59,8 +59,7 @@ func runApply(ctx context.Context, flags applyCommand, project projectConfigurat
 		return err
 	}
 	applied, err := session.Authenticated().Control.ApplyProjectConfiguration(ctx, source.Key, controlv1.ApplyProjectConfigurationRequest{
-		TeamId: current.Team().Id, SourceFingerprint: source.Fingerprint, ExpectedRevision: revision, Configuration: declaration,
-		ProjectLabel: &source.Label,
+		TeamId: current.Team().Id, Source: &controlv1.GitProjectSource{GitOrigin: source.Source.GitOrigin, ConfigurationPath: source.Source.ConfigurationPath}, ExpectedRevision: revision, Configuration: declaration,
 	})
 	if err != nil {
 		return err

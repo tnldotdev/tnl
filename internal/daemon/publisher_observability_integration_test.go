@@ -13,7 +13,6 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -333,7 +332,7 @@ func TestIntegrationPublisherObservabilityPublicService(t *testing.T) {
 			target := startPrivateEchoTarget(t, f.owner)
 			group, protocol, public := "trace", controlv1.Tcp, true
 			applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{
-				TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64),
+				TeamId: f.identity.teamID, Source: &testProjectSource,
 				Configuration: controlv1.ProjectConfiguration{
 					PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {Public: &public}},
 					Services:        map[string]controlv1.ProjectServiceConfiguration{"echo": {PublisherGroup: &group, Protocol: &protocol, Target: target.address}},

@@ -69,6 +69,10 @@ tags:
   - name: service-audit
     description: Read the team's bounded service access and lifecycle audit history.
 paths:
+  /v1/projects/resolve-source:
+    $ref: "./paths/projects.yaml#/paths/~1v1~1projects~1resolve-source"
+  /v1/projects:
+    $ref: "./paths/projects.yaml#/paths/~1v1~1projects"
   /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs:
     $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1connector-peer-pairs"
   /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery:
@@ -440,6 +444,18 @@ components:
       $ref: "./schemas/projects.yaml#/schemas/LocalProjectService"
     ApplyProjectConfigurationRequest:
       $ref: "./schemas/projects.yaml#/schemas/ApplyProjectConfigurationRequest"
+    GitProjectSource:
+      $ref: "./schemas/projects.yaml#/schemas/GitProjectSource"
+    ProjectSourceIdentity:
+      $ref: "./schemas/projects.yaml#/schemas/ProjectSourceIdentity"
+    ProjectSummary:
+      $ref: "./schemas/projects.yaml#/schemas/ProjectSummary"
+    PreviewSummary:
+      $ref: "./schemas/projects.yaml#/schemas/PreviewSummary"
+    PreviewPage:
+      $ref: "./schemas/projects.yaml#/schemas/PreviewPage"
+    ProjectPage:
+      $ref: "./schemas/projects.yaml#/schemas/ProjectPage"
     ProjectConfiguration:
       $ref: "./schemas/projects.yaml#/schemas/ProjectConfiguration"
     ProjectPublisherGroup:

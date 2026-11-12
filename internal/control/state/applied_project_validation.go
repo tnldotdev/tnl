@@ -132,9 +132,11 @@ func normalizeAppliedProjectService(s *ProjectServiceConfiguration) error {
 	}
 	if s.TargetTLS != nil {
 		t := s.TargetTLS
-		if (targettrust.Declaration{Hostname: t.Hostname, CAPEM: []byte(t.CAPEM), Digest: t.Digest}).Validate() != nil {
+		declaration, err := targettrust.NewDeclaration(t.Hostname, []byte(t.CAPEM))
+		if err != nil || t.Digest != "" && t.Digest != declaration.Digest {
 			return ErrProjectConfigurationInvalid
 		}
+		t.Digest = declaration.Digest
 	}
 	if p := s.PublicURL; p != nil {
 		if p.Hostname != "" {

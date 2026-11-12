@@ -1,6 +1,17 @@
 -- name: LockAppliedProject :one
 SELECT * FROM control.applied_projects WHERE team_id=sqlc.arg(team_id) AND project_key=sqlc.arg(project_key) FOR UPDATE;
 
+-- name: ListDiscoverableProjects :many
+SELECT project_key, project_label, revision, updated_at FROM control.applied_projects
+WHERE team_id=sqlc.arg(team_id) AND project_key>sqlc.arg(after_key)
+ORDER BY project_key LIMIT 101;
+
+-- name: ListDiscoverablePreviews :many
+SELECT id, created_at FROM control.previews
+WHERE team_id=sqlc.arg(team_id) AND created_by_identity_id=sqlc.arg(created_by_identity_id)
+    AND id>sqlc.arg(after_id)
+ORDER BY id LIMIT 101;
+
 -- name: ServiceNamespaceOwnsHostname :one
 SELECT (EXISTS(SELECT 1 FROM control.service_namespace_claims
     WHERE sqlc.arg(hostname)::text=namespace OR right(sqlc.arg(hostname)::text,length(namespace)+1)='.'||namespace)

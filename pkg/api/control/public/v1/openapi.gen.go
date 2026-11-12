@@ -1885,11 +1885,13 @@ type AppliedPublisherGroup struct {
 // ApplyProjectConfigurationRequest defines model for ApplyProjectConfigurationRequest.
 type ApplyProjectConfigurationRequest struct {
 	// Configuration Normalized declarative configuration, at most 512 KiB encoded. All local declarations defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its groups.
-	Configuration     ProjectConfiguration `json:"configuration"`
-	ExpectedRevision  int64                `json:"expected_revision"`
-	ProjectLabel      *string              `json:"project_label,omitempty"`
-	SourceFingerprint string               `json:"source_fingerprint"`
-	TeamId            string               `json:"team_id"`
+	Configuration    ProjectConfiguration `json:"configuration"`
+	ExpectedRevision int64                `json:"expected_revision"`
+	ProjectLabel     *string              `json:"project_label,omitempty"`
+
+	// Source Required on first apply. Omit on updates to retain the saved source binding.
+	Source *GitProjectSource `json:"source,omitempty"`
+	TeamId string            `json:"team_id"`
 }
 
 // AuthenticationFacts defines model for AuthenticationFacts.
@@ -2639,6 +2641,13 @@ type FeedbackThreadSummary struct {
 	State         FeedbackThreadState `json:"state"`
 }
 
+// GitProjectSource defines model for GitProjectSource.
+type GitProjectSource struct {
+	// ConfigurationPath Repository-relative configuration filename using forward slashes. Absolute paths and parent traversal are rejected.
+	ConfigurationPath string `json:"configuration_path"`
+	GitOrigin         string `json:"git_origin"`
+}
+
 // GuestDemoNumber defines model for GuestDemoNumber.
 type GuestDemoNumber struct {
 	Number int64 `json:"number"`
@@ -2767,6 +2776,12 @@ type Preview struct {
 // PreviewID defines model for PreviewID.
 type PreviewID = ResourceID
 
+// PreviewPage defines model for PreviewPage.
+type PreviewPage struct {
+	NextCursor *string          `json:"next_cursor,omitempty"`
+	Previews   []PreviewSummary `json:"previews"`
+}
+
 // PreviewPageFeedbackRequest defines model for PreviewPageFeedbackRequest.
 type PreviewPageFeedbackRequest struct {
 	Access           FeedbackReviewerAccess `json:"access"`
@@ -2775,6 +2790,13 @@ type PreviewPageFeedbackRequest struct {
 	PreviewId        PreviewID              `json:"preview_id"`
 	PublishRunNumber int64                  `json:"publish_run_number"`
 	State            *FeedbackThreadState   `json:"state,omitempty"`
+}
+
+// PreviewSummary defines model for PreviewSummary.
+type PreviewSummary struct {
+	CreatedAt time.Time `json:"created_at"`
+	Id        PreviewID `json:"id"`
+	TeamId    string    `json:"team_id"`
 }
 
 // Problem defines model for Problem.
@@ -2816,6 +2838,12 @@ type ProjectHTTPApplicationLimits struct {
 	Concurrency *int                    `json:"concurrency,omitempty"`
 	Rate        *ProjectApplicationRate `json:"rate,omitempty"`
 	Total       *int                    `json:"total,omitempty"`
+}
+
+// ProjectPage defines model for ProjectPage.
+type ProjectPage struct {
+	NextCursor *string          `json:"next_cursor,omitempty"`
+	Projects   []ProjectSummary `json:"projects"`
 }
 
 // ProjectPublicAccess defines model for ProjectPublicAccess.
@@ -2878,7 +2906,7 @@ type ProjectServiceConfiguration struct {
 	// TargetDiscovery Exact provider selector resolved by the assigned publisher with its own AWS credentials. Control does not discover targets or credentials. EKS requires kubernetes; RDS requires postgres or mysql, verified against provider metadata.
 	TargetDiscovery *ProjectTargetDiscovery `json:"target_discovery,omitempty"`
 
-	// TargetTls Publisher-to-target TLS trust, independent of visitor TLS. The protocol selects native negotiation. ca_pem is a CA-only snapshot added to the publisher's system roots. digest is lowercase SHA-256 of "tnl-target-tls/v1", NUL, hostname, NUL, and ca_pem.
+	// TargetTls Publisher-to-target TLS trust, independent of visitor TLS. The protocol selects native negotiation. ca_pem is a CA-only snapshot added to the publisher's system roots. Control derives digest from hostname and ca_pem and includes it in normalized output. A supplied digest must match; callers do not need to compute it.
 	TargetTls *ProjectTargetTLS `json:"target_tls,omitempty"`
 }
 
@@ -2908,6 +2936,22 @@ type ProjectServicePublicURL struct {
 	RequirePostQuantum *bool                `json:"require_post_quantum,omitempty"`
 }
 
+// ProjectSourceIdentity defines model for ProjectSourceIdentity.
+type ProjectSourceIdentity struct {
+	ProjectKey        string `json:"project_key"`
+	ProjectLabel      string `json:"project_label"`
+	SourceFingerprint string `json:"source_fingerprint"`
+}
+
+// ProjectSummary defines model for ProjectSummary.
+type ProjectSummary struct {
+	ProjectKey   string    `json:"project_key"`
+	ProjectLabel string    `json:"project_label"`
+	Revision     int64     `json:"revision"`
+	TeamId       string    `json:"team_id"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
 // ProjectTargetDiscovery Exact provider selector resolved by the assigned publisher with its own AWS credentials. Control does not discover targets or credentials. EKS requires kubernetes; RDS requires postgres or mysql, verified against provider metadata.
 type ProjectTargetDiscovery struct {
 	Cluster  *string                         `json:"cluster,omitempty"`
@@ -2923,10 +2967,10 @@ type ProjectTargetDiscoveryEndpoint string
 // ProjectTargetDiscoveryType defines model for ProjectTargetDiscovery.Type.
 type ProjectTargetDiscoveryType string
 
-// ProjectTargetTLS Publisher-to-target TLS trust, independent of visitor TLS. The protocol selects native negotiation. ca_pem is a CA-only snapshot added to the publisher's system roots. digest is lowercase SHA-256 of "tnl-target-tls/v1", NUL, hostname, NUL, and ca_pem.
+// ProjectTargetTLS Publisher-to-target TLS trust, independent of visitor TLS. The protocol selects native negotiation. ca_pem is a CA-only snapshot added to the publisher's system roots. Control derives digest from hostname and ca_pem and includes it in normalized output. A supplied digest must match; callers do not need to compute it.
 type ProjectTargetTLS struct {
 	CaPem    *string `json:"ca_pem,omitempty"`
-	Digest   string  `json:"digest"`
+	Digest   string  `json:"digest,omitempty"`
 	Hostname string  `json:"hostname"`
 }
 
@@ -4345,6 +4389,12 @@ type AppendFeedbackEventParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
+// ListPreviewsParams defines parameters for ListPreviews.
+type ListPreviewsParams struct {
+	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
+	Cursor *string     `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
 // CreatePreviewParams defines parameters for CreatePreview.
 type CreatePreviewParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
@@ -4358,6 +4408,12 @@ type ListSharesParams struct {
 // CreateShareParams defines parameters for CreateShare.
 type CreateShareParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
+// ListProjectsParams defines parameters for ListProjects.
+type ListProjectsParams struct {
+	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
+	Cursor *string     `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
 // GetProjectConfigurationParams defines parameters for GetProjectConfiguration.
@@ -4586,6 +4642,9 @@ type CreateShareJSONRequestBody = CreateShareRequest
 
 // SetPreviewTeamAccessJSONRequestBody defines body for SetPreviewTeamAccess for application/json ContentType.
 type SetPreviewTeamAccessJSONRequestBody = SetPreviewTeamAccessRequest
+
+// ResolveProjectSourceJSONRequestBody defines body for ResolveProjectSource for application/json ContentType.
+type ResolveProjectSourceJSONRequestBody = GitProjectSource
 
 // ApplyProjectConfigurationJSONRequestBody defines body for ApplyProjectConfiguration for application/json ContentType.
 type ApplyProjectConfigurationJSONRequestBody = ApplyProjectConfigurationRequest
@@ -5111,6 +5170,13 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/health (the `GetHealth` operationId).
 	GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListPreviews List the caller's previews
+	//
+	// List the caller's previews in one current team, ordered by immutable preview ID. Includes previews created before project configuration was applied. Team administrators do not gain access to another creator's preview. Cursors are bound to this team, identity, and collection. Read each ID with the preview endpoint to get its public URL IDs.
+	//
+	// Corresponds with GET /v1/previews (the `ListPreviews` operationId).
+	ListPreviews(ctx context.Context, params *ListPreviewsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// CreatePreviewWithBody Create or reuse a preview for one team
 	//
 	// Save or reuse a preview identity for the selected team and idempotency key. The preview groups public URLs; creation alone does not grant visitor access or start their publish runs.
@@ -5197,6 +5263,31 @@ type ClientInterface interface {
 	// Corresponds with PUT /v1/previews/{preview_id}/team-access (the `SetPreviewTeamAccess` operationId).
 	SetPreviewTeamAccess(ctx context.Context, previewId PreviewID, body SetPreviewTeamAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListProjects List applied projects
+	//
+	// List applied project selectors for a current team manager, ordered by immutable project_key. Summaries contain no targets, configuration, or checkout paths. Use each selector with the configuration endpoint; its detail includes publisher group IDs and current members. Cursors are bound to this team, identity, and collection. Authorization is checked on every page.
+	//
+	// Corresponds with GET /v1/projects (the `ListProjects` operationId).
+	ListProjects(ctx context.Context, params *ListProjectsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResolveProjectSourceWithBody Resolve a project's portable source selector
+	//
+	// Resolve a network Git origin and repository-relative configuration path to the existing portable project selector. Does not read a repository, evaluate configuration, create a project, or reserve a name. Branches, checkout directories, and configuration content do not affect this identity. Use the returned project_key with the configuration endpoint, passing these source facts on first apply.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/projects/resolve-source (the `ResolveProjectSource` operationId).
+	ResolveProjectSourceWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResolveProjectSource Resolve a project's portable source selector
+	//
+	// Resolve a network Git origin and repository-relative configuration path to the existing portable project selector. Does not read a repository, evaluate configuration, create a project, or reserve a name. Branches, checkout directories, and configuration content do not affect this identity. Use the returned project_key with the configuration endpoint, passing these source facts on first apply.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/projects/resolve-source (the `ResolveProjectSource` operationId).
+	ResolveProjectSource(ctx context.Context, body ResolveProjectSourceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetProjectConfiguration Read a project's applied configuration and publisher status
 	//
 	// Read the normalized desired configuration and observed publisher revisions for the selected team and project. Requires current project management permission; the response can include targets and must not be exposed as public project metadata.
@@ -5206,7 +5297,7 @@ type ClientInterface interface {
 
 	// ApplyProjectConfigurationWithBody Apply a project's desired services and publisher groups
 	//
-	// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+	// Atomically reconcile declarations. On first apply provide source facts; control derives the source fingerprint using the same portable identity rules as resolve-source. On updates source may be omitted to retain the saved binding, or supplied to check that it matches. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5215,7 +5306,7 @@ type ClientInterface interface {
 
 	// ApplyProjectConfiguration Apply a project's desired services and publisher groups
 	//
-	// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+	// Atomically reconcile declarations. On first apply provide source facts; control derives the source fingerprint using the same portable identity rules as resolve-source. On updates source may be omitted to retain the saved binding, or supplied to check that it matches. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -7154,6 +7245,23 @@ func (c *Client) GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (
 	return c.Client.Do(req)
 }
 
+// ListPreviews List the caller's previews
+//
+// List the caller's previews in one current team, ordered by immutable preview ID. Includes previews created before project configuration was applied. Team administrators do not gain access to another creator's preview. Cursors are bound to this team, identity, and collection. Read each ID with the preview endpoint to get its public URL IDs.
+//
+// Corresponds with GET /v1/previews (the `ListPreviews` operationId).
+func (c *Client) ListPreviews(ctx context.Context, params *ListPreviewsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListPreviewsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // CreatePreviewWithBody Create or reuse a preview for one team
 //
 // Save or reuse a preview identity for the selected team and idempotency key. The preview groups public URLs; creation alone does not grant visitor access or start their publish runs.
@@ -7340,6 +7448,61 @@ func (c *Client) SetPreviewTeamAccess(ctx context.Context, previewId PreviewID, 
 	return c.Client.Do(req)
 }
 
+// ListProjects List applied projects
+//
+// List applied project selectors for a current team manager, ordered by immutable project_key. Summaries contain no targets, configuration, or checkout paths. Use each selector with the configuration endpoint; its detail includes publisher group IDs and current members. Cursors are bound to this team, identity, and collection. Authorization is checked on every page.
+//
+// Corresponds with GET /v1/projects (the `ListProjects` operationId).
+func (c *Client) ListProjects(ctx context.Context, params *ListProjectsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListProjectsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ResolveProjectSourceWithBody Resolve a project's portable source selector
+//
+// Resolve a network Git origin and repository-relative configuration path to the existing portable project selector. Does not read a repository, evaluate configuration, create a project, or reserve a name. Branches, checkout directories, and configuration content do not affect this identity. Use the returned project_key with the configuration endpoint, passing these source facts on first apply.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/projects/resolve-source (the `ResolveProjectSource` operationId).
+func (c *Client) ResolveProjectSourceWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResolveProjectSourceRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ResolveProjectSource Resolve a project's portable source selector
+//
+// Resolve a network Git origin and repository-relative configuration path to the existing portable project selector. Does not read a repository, evaluate configuration, create a project, or reserve a name. Branches, checkout directories, and configuration content do not affect this identity. Use the returned project_key with the configuration endpoint, passing these source facts on first apply.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/projects/resolve-source (the `ResolveProjectSource` operationId).
+func (c *Client) ResolveProjectSource(ctx context.Context, body ResolveProjectSourceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResolveProjectSourceRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetProjectConfiguration Read a project's applied configuration and publisher status
 //
 // Read the normalized desired configuration and observed publisher revisions for the selected team and project. Requires current project management permission; the response can include targets and must not be exposed as public project metadata.
@@ -7359,7 +7522,7 @@ func (c *Client) GetProjectConfiguration(ctx context.Context, projectKey string,
 
 // ApplyProjectConfigurationWithBody Apply a project's desired services and publisher groups
 //
-// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+// Atomically reconcile declarations. On first apply provide source facts; control derives the source fingerprint using the same portable identity rules as resolve-source. On updates source may be omitted to retain the saved binding, or supplied to check that it matches. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7378,7 +7541,7 @@ func (c *Client) ApplyProjectConfigurationWithBody(ctx context.Context, projectK
 
 // ApplyProjectConfiguration Apply a project's desired services and publisher groups
 //
-// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+// Atomically reconcile declarations. On first apply provide source facts; control derives the source fingerprint using the same portable identity rules as resolve-source. On updates source may be omitted to retain the saved binding, or supplied to check that it matches. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -11572,6 +11735,68 @@ func NewGetHealthRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewListPreviewsRequest constructs an http.Request for the ListPreviews method
+func NewListPreviewsRequest(server string, params *ListPreviewsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/previews")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewCreatePreviewRequest calls the generic CreatePreview builder with application/json body
 func NewCreatePreviewRequest(server string, params *CreatePreviewParams, body CreatePreviewJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -11865,6 +12090,108 @@ func NewSetPreviewTeamAccessRequestWithBody(server string, previewId PreviewID, 
 	}
 
 	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListProjectsRequest constructs an http.Request for the ListProjects method
+func NewListProjectsRequest(server string, params *ListProjectsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewResolveProjectSourceRequest calls the generic ResolveProjectSource builder with application/json body
+func NewResolveProjectSourceRequest(server string, body ResolveProjectSourceJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewResolveProjectSourceRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewResolveProjectSourceRequestWithBody constructs an http.Request for the ResolveProjectSource method, with any body, and a specified content type
+func NewResolveProjectSourceRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/resolve-source")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
@@ -17653,6 +17980,15 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/health (the `GetHealth` operationId).
 	GetHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetHealthResponse, error)
 
+	// ListPreviewsWithResponse List the caller's previews
+	//
+	// List the caller's previews in one current team, ordered by immutable preview ID. Includes previews created before project configuration was applied. Team administrators do not gain access to another creator's preview. Cursors are bound to this team, identity, and collection. Read each ID with the preview endpoint to get its public URL IDs.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/previews (the `ListPreviews` operationId).
+	ListPreviewsWithResponse(ctx context.Context, params *ListPreviewsParams, reqEditors ...RequestEditorFn) (*ListPreviewsResponse, error)
+
 	// CreatePreviewWithBodyWithResponse Create or reuse a preview for one team
 	//
 	// Save or reuse a preview identity for the selected team and idempotency key. The preview groups public URLs; creation alone does not grant visitor access or start their publish runs.
@@ -17743,6 +18079,33 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /v1/previews/{preview_id}/team-access (the `SetPreviewTeamAccess` operationId).
 	SetPreviewTeamAccessWithResponse(ctx context.Context, previewId PreviewID, body SetPreviewTeamAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*SetPreviewTeamAccessResponse, error)
 
+	// ListProjectsWithResponse List applied projects
+	//
+	// List applied project selectors for a current team manager, ordered by immutable project_key. Summaries contain no targets, configuration, or checkout paths. Use each selector with the configuration endpoint; its detail includes publisher group IDs and current members. Cursors are bound to this team, identity, and collection. Authorization is checked on every page.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/projects (the `ListProjects` operationId).
+	ListProjectsWithResponse(ctx context.Context, params *ListProjectsParams, reqEditors ...RequestEditorFn) (*ListProjectsResponse, error)
+
+	// ResolveProjectSourceWithBodyWithResponse Resolve a project's portable source selector
+	//
+	// Resolve a network Git origin and repository-relative configuration path to the existing portable project selector. Does not read a repository, evaluate configuration, create a project, or reserve a name. Branches, checkout directories, and configuration content do not affect this identity. Use the returned project_key with the configuration endpoint, passing these source facts on first apply.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/projects/resolve-source (the `ResolveProjectSource` operationId).
+	ResolveProjectSourceWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResolveProjectSourceResponse, error)
+
+	// ResolveProjectSourceWithResponse Resolve a project's portable source selector
+	//
+	// Resolve a network Git origin and repository-relative configuration path to the existing portable project selector. Does not read a repository, evaluate configuration, create a project, or reserve a name. Branches, checkout directories, and configuration content do not affect this identity. Use the returned project_key with the configuration endpoint, passing these source facts on first apply.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/projects/resolve-source (the `ResolveProjectSource` operationId).
+	ResolveProjectSourceWithResponse(ctx context.Context, body ResolveProjectSourceJSONRequestBody, reqEditors ...RequestEditorFn) (*ResolveProjectSourceResponse, error)
+
 	// GetProjectConfigurationWithResponse Read a project's applied configuration and publisher status
 	//
 	// Read the normalized desired configuration and observed publisher revisions for the selected team and project. Requires current project management permission; the response can include targets and must not be exposed as public project metadata.
@@ -17754,7 +18117,7 @@ type ClientWithResponsesInterface interface {
 
 	// ApplyProjectConfigurationWithBodyWithResponse Apply a project's desired services and publisher groups
 	//
-	// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+	// Atomically reconcile declarations. On first apply provide source facts; control derives the source fingerprint using the same portable identity rules as resolve-source. On updates source may be omitted to retain the saved binding, or supplied to check that it matches. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -17763,7 +18126,7 @@ type ClientWithResponsesInterface interface {
 
 	// ApplyProjectConfigurationWithResponse Apply a project's desired services and publisher groups
 	//
-	// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+	// Atomically reconcile declarations. On first apply provide source facts; control derives the source fingerprint using the same portable identity rules as resolve-source. On updates source may be omitted to retain the saved binding, or supplied to check that it matches. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -20303,6 +20666,54 @@ func (r GetHealthResponse) ContentType() string {
 	return ""
 }
 
+type ListPreviewsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PreviewPage
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListPreviewsResponse) GetJSON200() *PreviewPage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListPreviewsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListPreviewsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListPreviewsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListPreviewsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListPreviewsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type CreatePreviewResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -20592,6 +21003,102 @@ func (r SetPreviewTeamAccessResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r SetPreviewTeamAccessResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListProjectsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ProjectPage
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListProjectsResponse) GetJSON200() *ProjectPage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListProjectsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListProjectsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListProjectsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListProjectsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListProjectsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ResolveProjectSourceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ProjectSourceIdentity
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ResolveProjectSourceResponse) GetJSON200() *ProjectSourceIdentity {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ResolveProjectSourceResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ResolveProjectSourceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ResolveProjectSourceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ResolveProjectSourceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ResolveProjectSourceResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -26230,6 +26737,21 @@ func (c *ClientWithResponses) GetHealthWithResponse(ctx context.Context, reqEdit
 	return ParseGetHealthResponse(rsp)
 }
 
+// ListPreviewsWithResponse List the caller's previews
+//
+// List the caller's previews in one current team, ordered by immutable preview ID. Includes previews created before project configuration was applied. Team administrators do not gain access to another creator's preview. Cursors are bound to this team, identity, and collection. Read each ID with the preview endpoint to get its public URL IDs.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/previews (the `ListPreviews` operationId).
+func (c *ClientWithResponses) ListPreviewsWithResponse(ctx context.Context, params *ListPreviewsParams, reqEditors ...RequestEditorFn) (*ListPreviewsResponse, error) {
+	rsp, err := c.ListPreviews(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListPreviewsResponse(rsp)
+}
+
 // CreatePreviewWithBodyWithResponse Create or reuse a preview for one team
 //
 // Save or reuse a preview identity for the selected team and idempotency key. The preview groups public URLs; creation alone does not grant visitor access or start their publish runs.
@@ -26380,6 +26902,51 @@ func (c *ClientWithResponses) SetPreviewTeamAccessWithResponse(ctx context.Conte
 	return ParseSetPreviewTeamAccessResponse(rsp)
 }
 
+// ListProjectsWithResponse List applied projects
+//
+// List applied project selectors for a current team manager, ordered by immutable project_key. Summaries contain no targets, configuration, or checkout paths. Use each selector with the configuration endpoint; its detail includes publisher group IDs and current members. Cursors are bound to this team, identity, and collection. Authorization is checked on every page.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/projects (the `ListProjects` operationId).
+func (c *ClientWithResponses) ListProjectsWithResponse(ctx context.Context, params *ListProjectsParams, reqEditors ...RequestEditorFn) (*ListProjectsResponse, error) {
+	rsp, err := c.ListProjects(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListProjectsResponse(rsp)
+}
+
+// ResolveProjectSourceWithBodyWithResponse Resolve a project's portable source selector
+//
+// Resolve a network Git origin and repository-relative configuration path to the existing portable project selector. Does not read a repository, evaluate configuration, create a project, or reserve a name. Branches, checkout directories, and configuration content do not affect this identity. Use the returned project_key with the configuration endpoint, passing these source facts on first apply.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/projects/resolve-source (the `ResolveProjectSource` operationId).
+func (c *ClientWithResponses) ResolveProjectSourceWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResolveProjectSourceResponse, error) {
+	rsp, err := c.ResolveProjectSourceWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResolveProjectSourceResponse(rsp)
+}
+
+// ResolveProjectSourceWithResponse Resolve a project's portable source selector
+//
+// Resolve a network Git origin and repository-relative configuration path to the existing portable project selector. Does not read a repository, evaluate configuration, create a project, or reserve a name. Branches, checkout directories, and configuration content do not affect this identity. Use the returned project_key with the configuration endpoint, passing these source facts on first apply.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/projects/resolve-source (the `ResolveProjectSource` operationId).
+func (c *ClientWithResponses) ResolveProjectSourceWithResponse(ctx context.Context, body ResolveProjectSourceJSONRequestBody, reqEditors ...RequestEditorFn) (*ResolveProjectSourceResponse, error) {
+	rsp, err := c.ResolveProjectSource(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResolveProjectSourceResponse(rsp)
+}
+
 // GetProjectConfigurationWithResponse Read a project's applied configuration and publisher status
 //
 // Read the normalized desired configuration and observed publisher revisions for the selected team and project. Requires current project management permission; the response can include targets and must not be exposed as public project metadata.
@@ -26397,7 +26964,7 @@ func (c *ClientWithResponses) GetProjectConfigurationWithResponse(ctx context.Co
 
 // ApplyProjectConfigurationWithBodyWithResponse Apply a project's desired services and publisher groups
 //
-// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+// Atomically reconcile declarations. On first apply provide source facts; control derives the source fingerprint using the same portable identity rules as resolve-source. On updates source may be omitted to retain the saved binding, or supplied to check that it matches. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -26412,7 +26979,7 @@ func (c *ClientWithResponses) ApplyProjectConfigurationWithBodyWithResponse(ctx 
 
 // ApplyProjectConfigurationWithResponse Apply a project's desired services and publisher groups
 //
-// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+// Atomically reconcile declarations. On first apply provide source facts; control derives the source fingerprint using the same portable identity rules as resolve-source. On updates source may be omitted to retain the saved binding, or supplied to check that it matches. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -29728,6 +30295,39 @@ func ParseGetHealthResponse(rsp *http.Response) (*GetHealthResponse, error) {
 	return response, nil
 }
 
+// ParseListPreviewsResponse parses an HTTP response from a ListPreviewsWithResponse call
+func ParseListPreviewsResponse(rsp *http.Response) (*ListPreviewsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListPreviewsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PreviewPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseCreatePreviewResponse parses an HTTP response from a CreatePreviewWithResponse call
 func ParseCreatePreviewResponse(rsp *http.Response) (*CreatePreviewResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -29916,6 +30516,72 @@ func ParseSetPreviewTeamAccessResponse(rsp *http.Response) (*SetPreviewTeamAcces
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest Preview
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListProjectsResponse parses an HTTP response from a ListProjectsWithResponse call
+func ParseListProjectsResponse(rsp *http.Response) (*ListProjectsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListProjectsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ProjectPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseResolveProjectSourceResponse parses an HTTP response from a ResolveProjectSourceWithResponse call
+func ParseResolveProjectSourceResponse(rsp *http.Response) (*ResolveProjectSourceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ResolveProjectSourceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ProjectSourceIdentity
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -33662,6 +34328,9 @@ type ServerInterface interface {
 	// GetHealth Confirm that the control HTTP server is serving
 	// (GET /v1/health)
 	GetHealth(w http.ResponseWriter, r *http.Request)
+	// ListPreviews List the caller's previews
+	// (GET /v1/previews)
+	ListPreviews(w http.ResponseWriter, r *http.Request, params ListPreviewsParams)
 	// CreatePreview Create or reuse a preview for one team
 	// (POST /v1/previews)
 	CreatePreview(w http.ResponseWriter, r *http.Request, params CreatePreviewParams)
@@ -33680,6 +34349,12 @@ type ServerInterface interface {
 	// SetPreviewTeamAccess Enable or disable team visitor access for this preview
 	// (PUT /v1/previews/{preview_id}/team-access)
 	SetPreviewTeamAccess(w http.ResponseWriter, r *http.Request, previewId PreviewID)
+	// ListProjects List applied projects
+	// (GET /v1/projects)
+	ListProjects(w http.ResponseWriter, r *http.Request, params ListProjectsParams)
+	// ResolveProjectSource Resolve a project's portable source selector
+	// (POST /v1/projects/resolve-source)
+	ResolveProjectSource(w http.ResponseWriter, r *http.Request)
 	// GetProjectConfiguration Read a project's applied configuration and publisher status
 	// (GET /v1/projects/{project_key}/configuration)
 	GetProjectConfiguration(w http.ResponseWriter, r *http.Request, projectKey string, params GetProjectConfigurationParams)
@@ -34641,6 +35316,52 @@ func (siw *ServerInterfaceWrapper) GetHealth(w http.ResponseWriter, r *http.Requ
 	handler.ServeHTTP(w, r)
 }
 
+// ListPreviews operation middleware
+func (siw *ServerInterfaceWrapper) ListPreviews(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListPreviewsParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListPreviews(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // CreatePreview operation middleware
 func (siw *ServerInterfaceWrapper) CreatePreview(w http.ResponseWriter, r *http.Request) {
 
@@ -34851,6 +35572,66 @@ func (siw *ServerInterfaceWrapper) SetPreviewTeamAccess(w http.ResponseWriter, r
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SetPreviewTeamAccess(w, r, previewId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListProjects operation middleware
+func (siw *ServerInterfaceWrapper) ListProjects(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListProjectsParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListProjects(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ResolveProjectSource operation middleware
+func (siw *ServerInterfaceWrapper) ResolveProjectSource(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ResolveProjectSource(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -38799,6 +39580,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/resolve-source", wrapper.ResolveProjectSource)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects", wrapper.ListProjects)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs", wrapper.ListConnectorPeerPairs)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery", wrapper.DeliverConnectorPeerPair)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared", wrapper.ConfirmConnectorPeerPairPrepared)
@@ -38890,6 +39673,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/webhook-providers/{provider}/source", wrapper.GetWebhookProviderSource)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/guest-demo", wrapper.CreateGuestDemo)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/guest-demo/number", wrapper.AllocateGuestDemoNumber)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/previews", wrapper.ListPreviews)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/previews", wrapper.CreatePreview)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/previews/{preview_id}", wrapper.GetPreview)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/previews/{preview_id}/public-urls", wrapper.AddPreviewPublicURL)

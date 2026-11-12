@@ -91,6 +91,12 @@ func appliedTargetTrust(t *testing.T, hostname string) *ProjectTargetTLS {
 
 func TestNormalizeAppliedProjectTargetsAndTrustBoundaries(t *testing.T) {
 	trust := appliedTargetTrust(t, "upstream.internal")
+	withoutDigest := *trust
+	withoutDigest.Digest = ""
+	derived, _, err := NormalizeProjectConfiguration(ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"web": {Target: "https://upstream.internal:8443", PublicURL: &ProjectServicePublicURL{}, TargetTLS: &withoutDigest}}})
+	if err != nil || derived.Services["web"].TargetTLS.Digest != trust.Digest || withoutDigest.Digest != "" {
+		t.Fatal("control did not derive the existing project digest without mutating input", err)
+	}
 	keyTrust := *trust
 	keyTrust.CAPEM = "-----BEGIN PRIVATE KEY-----\ninvalid\n-----END PRIVATE KEY-----"
 	keyDigest := sha256.Sum256([]byte("tnl-target-tls/v1\x00" + keyTrust.Hostname + "\x00" + keyTrust.CAPEM))

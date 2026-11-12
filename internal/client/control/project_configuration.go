@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"maps"
 	"net/http"
 
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -16,8 +17,36 @@ func (c *Client) GetProjectService(ctx context.Context, project, service string,
 }
 
 func (c *Client) ApplyProjectConfiguration(ctx context.Context, project string, body controlv1.ApplyProjectConfigurationRequest) (controlv1.AppliedProjectConfiguration, error) {
+	// digests are resolved output; send only the desired trust material.
+	body.Configuration.Services = maps.Clone(body.Configuration.Services)
+	for name, service := range body.Configuration.Services {
+		if service.TargetTls != nil {
+			trust := *service.TargetTls
+			trust.Digest = ""
+			service.TargetTls = &trust
+			body.Configuration.Services[name] = service
+		}
+	}
 	return requestWithAccess[controlv1.AppliedProjectConfiguration](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.ApplyProjectConfiguration(ctx, project, body, editors...)
+	})
+}
+
+func (c *Client) ListProjects(ctx context.Context, params controlv1.ListProjectsParams) (controlv1.ProjectPage, error) {
+	return requestWithAccess[controlv1.ProjectPage](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ListProjects(ctx, &params, editors...)
+	})
+}
+
+func (c *Client) ResolveProjectSource(ctx context.Context, source controlv1.GitProjectSource) (controlv1.ProjectSourceIdentity, error) {
+	return requestWithAccess[controlv1.ProjectSourceIdentity](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ResolveProjectSource(ctx, source, editors...)
+	})
+}
+
+func (c *Client) ListPreviews(ctx context.Context, params controlv1.ListPreviewsParams) (controlv1.PreviewPage, error) {
+	return requestWithAccess[controlv1.PreviewPage](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ListPreviews(ctx, &params, editors...)
 	})
 }
 

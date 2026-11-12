@@ -1,4 +1,40 @@
 paths:
+  /v1/projects/resolve-source:
+    post:
+      operationId: resolveProjectSource
+      summary: Resolve a project's portable source selector
+      tags: [projects]
+      security: [{ bearerAuth: [] }]
+      description: Resolve a network Git origin and repository-relative configuration path to the existing portable project selector. Does not read a repository, evaluate configuration, create a project, or reserve a name. Branches, checkout directories, and configuration content do not affect this identity. Use the returned project_key with the configuration endpoint, passing these source facts on first apply.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/GitProjectSource" }
+      responses:
+        "200":
+          description: Portable project selector and suggested label
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/ProjectSourceIdentity" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/projects:
+    get:
+      operationId: listProjects
+      summary: List applied projects
+      tags: [projects]
+      security: [{ bearerAuth: [] }]
+      description: List applied project selectors for a current team manager, ordered by immutable project_key. Summaries contain no targets, configuration, or checkout paths. Use each selector with the configuration endpoint; its detail includes publisher group IDs and current members. Cursors are bound to this team, identity, and collection. Authorization is checked on every page.
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
+        - { name: cursor, in: query, schema: { type: string, maxLength: 2048 } }
+      responses:
+        "200":
+          description: Up to 100 applied projects
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/ProjectPage" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/projects/{project_key}/public-metadata:
     get:
       operationId: getProjectPublicMetadata
@@ -91,7 +127,7 @@ paths:
       tags: [projects]
       summary: Apply a project's desired services and publisher groups
       security: [{ bearerAuth: [] }]
-      description: Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+      description: Atomically reconcile declarations. On first apply provide source facts; control derives the source fingerprint using the same portable identity rules as resolve-source. On updates source may be omitted to retain the saved binding, or supplied to check that it matches. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
       requestBody:
         {
           required: true,

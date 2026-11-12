@@ -19,6 +19,10 @@ type previewStoreStub struct {
 	attach  controlstate.AddPreviewPublicURLRequest
 }
 
+func (s *previewStoreStub) ListPreviews(context.Context, string, string, string) (controlstate.PreviewPage, error) {
+	return controlstate.PreviewPage{Previews: []controlstate.PreviewSummary{{ID: s.preview.ID}}}, nil
+}
+
 func (s *previewStoreStub) CreatePreview(_ context.Context, teamID, identityID, _ string, _ time.Time) (controlstate.Preview, error) {
 	s.preview = controlstate.Preview{ID: "pv_preview", TeamID: teamID, CreatedByIdentityID: identityID, PublicURLIDs: []string{}, CreatedAt: time.Now()}
 	return s.preview, nil

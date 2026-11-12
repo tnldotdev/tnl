@@ -71,7 +71,7 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 	continuous := policies["test"]
 	continuous.MaxDurationSeconds = 0
 	policies["continuous"] = continuous
-	body := controlv1.ApplyProjectConfigurationRequest{TeamId: team, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{Workloads: &policies, PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"cluster": {PublisherGroup: &group, Protocol: &protocol, Target: "", TargetDiscovery: &controlv1.ProjectTargetDiscovery{Type: controlv1.Eks, Region: "us-east-1", Cluster: new("production")}}}, Webhooks: map[string]controlv1.ProjectWebhook{}}}
+	body := controlv1.ApplyProjectConfigurationRequest{TeamId: team, Source: &testProjectSource, Configuration: controlv1.ProjectConfiguration{Workloads: &policies, PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"cluster": {PublisherGroup: &group, Protocol: &protocol, Target: "", TargetDiscovery: &controlv1.ProjectTargetDiscovery{Type: controlv1.Eks, Region: "us-east-1", Cluster: new("production")}}}, Webhooks: map[string]controlv1.ProjectWebhook{}}}
 	applied, err := owner.ApplyProjectConfiguration(ctx, "example", body)
 	if err != nil {
 		t.Fatal(err)
@@ -87,14 +87,14 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 	claims["environment"] = "ci"
 	claims["job_workflow_ref"] = "example/shared/.github/workflows/reuse.yml@refs/tags/v1"
 	assertion := issuer.Sign(t, claims)
-	session, err := job.Exchange(ctx, team, "example", body.SourceFingerprint, "test", assertion, nil)
+	session, err := job.Exchange(ctx, team, "example", applied.SourceFingerprint, "test", assertion, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if g := session.Github; g == nil || g.RepositoryId != "12345" || g.RepositoryOwnerId != "6789" || g.RunId != "111" || g.RunAttempt != "1" || g.CheckRunId != "222" {
 		t.Fatal("GitHub session omitted signed execution metadata")
 	}
-	retry, err := job.Exchange(ctx, team, "example", body.SourceFingerprint, "test", assertion, nil)
+	retry, err := job.Exchange(ctx, team, "example", applied.SourceFingerprint, "test", assertion, nil)
 	if err != nil || retry.Id != session.Id || retry.Credential != session.Credential || !retry.ExpiresAt.Equal(*session.ExpiresAt) {
 		t.Fatal("HTTP lost-reply recovery changed execution", err)
 	}
@@ -133,7 +133,7 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 			uncappedClaims := githubtest.Claims(server.URL, time.Now())
 			uncappedClaims["environment"], uncappedClaims["job_workflow_ref"] = claims["environment"], claims["job_workflow_ref"]
 			uncappedClaims["check_run_id"], uncappedClaims["jti"] = "223", "uncapped-rebinding"
-			current, err := uncapped.Exchange(t.Context(), team, "example", body.SourceFingerprint, "continuous", issuer.Sign(t, uncappedClaims), nil)
+			current, err := uncapped.Exchange(t.Context(), team, "example", applied.SourceFingerprint, "continuous", issuer.Sign(t, uncappedClaims), nil)
 			if err != nil || current.ExpiresAt != nil {
 				t.Fatal("uncapped session acquired a hard limit", err)
 			}
@@ -216,7 +216,7 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 		mutated["environment"] = "ci"
 		mutated["job_workflow_ref"] = "example/shared/.github/workflows/reuse.yml@refs/tags/v1"
 		mutated[bad.field] = bad.value
-		if _, err = job.Exchange(ctx, team, "example", body.SourceFingerprint, "test", issuer.Sign(t, mutated), nil); err == nil {
+		if _, err = job.Exchange(ctx, team, "example", applied.SourceFingerprint, "test", issuer.Sign(t, mutated), nil); err == nil {
 			t.Fatalf("HTTP accepted wrong %s", bad.field)
 		}
 	}
@@ -314,8 +314,8 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 				t.Fatal(err)
 			}
 			c := oidc.WorkloadExecution{Provider: "github", Issuer: oidc.GitHubIssuer, Subject: g.Subject, GitHub: &g, IssuedAt: g.IssuedAt, NotBefore: g.NotBefore, ExpiresAt: g.ExpiresAt, AssertionDigest: sha256.Sum256([]byte(name))}
-			exchange := controlstate.ExchangeWorkloadRequest{TeamID: team, ProjectKey: "example", Workload: "test", SourceFingerprint: body.SourceFingerprint, Nonce: rand.Text(), Execution: c, PublicKey: public}
-			exchange.Signature = ed25519.Sign(key, workloadproof.Exchange(team, "example", "test", body.SourceFingerprint, exchange.Nonce, c.AssertionDigest, nil))
+			exchange := controlstate.ExchangeWorkloadRequest{TeamID: team, ProjectKey: "example", Workload: "test", SourceFingerprint: applied.SourceFingerprint, Nonce: rand.Text(), Execution: c, PublicKey: public}
+			exchange.Signature = ed25519.Sign(key, workloadproof.Exchange(team, "example", "test", applied.SourceFingerprint, exchange.Nonce, c.AssertionDigest, nil))
 			s, err := d.ExchangeWorkload(ctx, exchange, at)
 			if err != nil {
 				t.Fatal(err)

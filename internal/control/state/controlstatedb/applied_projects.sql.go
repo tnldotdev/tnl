@@ -142,6 +142,87 @@ func (q *Queries) ListAppliedProjectServices(ctx context.Context, arg ListApplie
 	return items, nil
 }
 
+const listDiscoverablePreviews = `-- name: ListDiscoverablePreviews :many
+SELECT id, created_at FROM control.previews
+WHERE team_id=$1 AND created_by_identity_id=$2
+    AND id>$3
+ORDER BY id LIMIT 101
+`
+
+type ListDiscoverablePreviewsParams struct {
+	TeamID              string
+	CreatedByIdentityID string
+	AfterID             string
+}
+
+type ListDiscoverablePreviewsRow struct {
+	ID        string
+	CreatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) ListDiscoverablePreviews(ctx context.Context, arg ListDiscoverablePreviewsParams) ([]ListDiscoverablePreviewsRow, error) {
+	rows, err := q.db.Query(ctx, listDiscoverablePreviews, arg.TeamID, arg.CreatedByIdentityID, arg.AfterID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDiscoverablePreviewsRow
+	for rows.Next() {
+		var i ListDiscoverablePreviewsRow
+		if err := rows.Scan(&i.ID, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDiscoverableProjects = `-- name: ListDiscoverableProjects :many
+SELECT project_key, project_label, revision, updated_at FROM control.applied_projects
+WHERE team_id=$1 AND project_key>$2
+ORDER BY project_key LIMIT 101
+`
+
+type ListDiscoverableProjectsParams struct {
+	TeamID   string
+	AfterKey string
+}
+
+type ListDiscoverableProjectsRow struct {
+	ProjectKey   string
+	ProjectLabel string
+	Revision     int64
+	UpdatedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) ListDiscoverableProjects(ctx context.Context, arg ListDiscoverableProjectsParams) ([]ListDiscoverableProjectsRow, error) {
+	rows, err := q.db.Query(ctx, listDiscoverableProjects, arg.TeamID, arg.AfterKey)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDiscoverableProjectsRow
+	for rows.Next() {
+		var i ListDiscoverableProjectsRow
+		if err := rows.Scan(
+			&i.ProjectKey,
+			&i.ProjectLabel,
+			&i.Revision,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProjectPublisherGroups = `-- name: ListProjectPublisherGroups :many
 SELECT ownership, id, team_id, project_key, name, description, domain_id, namespace, public, deleted_at FROM control.project_publisher_groups WHERE team_id=$1 AND project_key=$2 AND deleted_at IS NULL ORDER BY name
 `

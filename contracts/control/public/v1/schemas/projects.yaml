@@ -1,4 +1,59 @@
 schemas:
+  GitProjectSource:
+    type: object
+    additionalProperties: false
+    required: [git_origin, configuration_path]
+    properties:
+      git_origin: { type: string, minLength: 1, maxLength: 4096 }
+      configuration_path:
+        type: string
+        minLength: 1
+        maxLength: 4096
+        description: Repository-relative configuration filename using forward slashes. Absolute paths and parent traversal are rejected.
+  ProjectSourceIdentity:
+    type: object
+    additionalProperties: false
+    required: [project_key, source_fingerprint, project_label]
+    properties:
+      project_key: { type: string }
+      source_fingerprint: { type: string }
+      project_label: { type: string }
+  ProjectSummary:
+    type: object
+    additionalProperties: false
+    required: [team_id, project_key, project_label, revision, updated_at]
+    properties:
+      team_id: { type: string }
+      project_key: { type: string }
+      project_label: { type: string }
+      revision: { type: integer, format: int64 }
+      updated_at: { type: string, format: date-time }
+  PreviewSummary:
+    type: object
+    additionalProperties: false
+    required: [id, team_id, created_at]
+    properties:
+      id: { $ref: "../openapi.yaml#/components/schemas/PreviewID" }
+      team_id: { type: string }
+      created_at: { type: string, format: date-time }
+  PreviewPage:
+    type: object
+    additionalProperties: false
+    required: [previews]
+    properties:
+      previews:
+        type: array
+        items: { $ref: "../openapi.yaml#/components/schemas/PreviewSummary" }
+      next_cursor: { type: string }
+  ProjectPage:
+    type: object
+    additionalProperties: false
+    required: [projects]
+    properties:
+      projects:
+        type: array
+        items: { $ref: "../openapi.yaml#/components/schemas/ProjectSummary" }
+      next_cursor: { type: string }
   ProjectPublicMetadata:
     type: object
     additionalProperties: false
@@ -43,10 +98,12 @@ schemas:
   ApplyProjectConfigurationRequest:
     type: object
     additionalProperties: false
-    required: [team_id, source_fingerprint, expected_revision, configuration]
+    required: [team_id, expected_revision, configuration]
     properties:
       team_id: { type: string }
-      source_fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
+      source:
+        $ref: "../openapi.yaml#/components/schemas/GitProjectSource"
+        description: Required on first apply. Omit on updates to retain the saved source binding.
       project_label:
         { type: string, minLength: 1, maxLength: 63, pattern: "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$" }
       expected_revision: { type: integer, format: int64, minimum: 0 }
@@ -280,12 +337,12 @@ schemas:
   ProjectTargetTLS:
     type: object
     additionalProperties: false
-    required: [hostname, digest]
-    description: Publisher-to-target TLS trust, independent of visitor TLS. The protocol selects native negotiation. ca_pem is a CA-only snapshot added to the publisher's system roots. digest is lowercase SHA-256 of "tnl-target-tls/v1", NUL, hostname, NUL, and ca_pem.
+    required: [hostname]
+    description: Publisher-to-target TLS trust, independent of visitor TLS. The protocol selects native negotiation. ca_pem is a CA-only snapshot added to the publisher's system roots. Control derives digest from hostname and ca_pem and includes it in normalized output. A supplied digest must match; callers do not need to compute it.
     properties:
       hostname: { type: string, minLength: 1, maxLength: 253 }
       ca_pem: { type: string, maxLength: 1048576 }
-      digest: { type: string, pattern: "^[0-9a-f]{64}$" }
+      digest: { type: string, pattern: "^[0-9a-f]{64}$", x-go-type-skip-optional-pointer: true }
   ProjectServiceAccess:
     type: object
     additionalProperties: false

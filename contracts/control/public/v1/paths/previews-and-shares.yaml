@@ -25,6 +25,22 @@ paths:
         default:
           $ref: "../openapi.yaml#/components/responses/Problem"
   /v1/previews:
+    get:
+      operationId: listPreviews
+      summary: List the caller's previews
+      tags: [previews]
+      security: [{ bearerAuth: [] }]
+      description: List the caller's previews in one current team, ordered by immutable preview ID. Includes previews created before project configuration was applied. Team administrators do not gain access to another creator's preview. Cursors are bound to this team, identity, and collection. Read each ID with the preview endpoint to get its public URL IDs.
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
+        - { name: cursor, in: query, schema: { type: string, maxLength: 2048 } }
+      responses:
+        "200":
+          description: Up to 100 creator-owned preview summaries
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/PreviewPage" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
     post:
       operationId: createPreview
       tags: [previews]
