@@ -8,6 +8,9 @@ import (
 	"sync"
 	"time"
 
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
+	telemetryv1 "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
+
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/transport/peer"
@@ -94,6 +97,9 @@ func (p *connectorConnection) requestRecovery(next connectorRecoveryState) {
 		return
 	}
 	p.recoveryState = next
+	if next == connectorRebinding && p.recoveryStarted.IsZero() {
+		p.recoveryStarted = time.Now()
+	}
 	if next == connectorRebinding {
 		p.openings = nil
 		if p.connectivity != nil {
@@ -529,6 +535,10 @@ func (p *connectorConnection) installActiveBinding(op *connectorRebindOperation,
 		}
 	}
 	p.rebind, p.recoveryState = nil, connectorBindingReady
+	if !p.recoveryStarted.IsZero() {
+		p.config.telemetry.Record(telemetryv1.Recovery, clienttelemetry.Path(p.paths[0].leg.transport), telemetryv1.Succeeded, time.Since(p.recoveryStarted))
+		p.recoveryStarted = time.Time{}
+	}
 	if p.connectivity != nil {
 		p.connectivity.SetBinding(connectorConnectivityBinding(*active))
 	}

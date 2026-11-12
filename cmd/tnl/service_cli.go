@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/supervisor"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
 )
@@ -42,6 +43,7 @@ type serviceListCommand struct {
 	systemStateFlags `embed:""`
 }
 type serviceServeCommand struct {
+	telemetry        *clienttelemetry.Collector
 	systemStateFlags `embed:""`
 }
 type serviceRegisterCommand struct {
@@ -257,15 +259,15 @@ func runServiceServeWithUserJobs(ctx context.Context, flags serviceServeCommand,
 		return err
 	}
 	defer registry.Close()
-	engine := supervisor.Engine{Registry: registry, UserJobs: runners}
+	engine := supervisor.Engine{Registry: registry, UserJobs: runners, Telemetry: flags.telemetry}
 	if options.User {
 		engine.Connect = runInstalledConnector
-		engine.Group = func(ctx context.Context, job supervisor.Job, observe func(int64, bool) error) error {
+		engine.Group = func(ctx context.Context, job supervisor.Job, telemetry *clienttelemetry.Collector, observe func(int64, bool) error) error {
 			_, private, profile, err := registry.GroupIdentity(ctx, job)
 			if err != nil {
 				return err
 			}
-			return servePublisherGroup(ctx, job, profile, private, observe)
+			return servePublisherGroup(ctx, job, profile, private, telemetry, observe)
 		}
 	}
 	return engine.Serve(ctx)

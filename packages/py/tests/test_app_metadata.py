@@ -22,6 +22,7 @@ class AssignmentRuntime(NativeRuntime):
         self.assignment = assignment
         self.endpoint = Endpoint("http://127.0.0.1:1234", "b" * 64, "a" * 32, "app", service)
         self.operations: list[str] = []
+        self.preparations: list[dict[str, object]] = []
 
     async def start(
         self,
@@ -40,9 +41,33 @@ class AssignmentRuntime(NativeRuntime):
         assert endpoint == self.endpoint
         assert payload is not None
         if operation == "prepare":
+            self.preparations.append(dict(payload))
             return self.assignment
         assert payload["registration_id"] == self.assignment["registration_id"]
         return None
+
+
+def test_publication_telemetry_opt_out_survives_reprepare_and_keeps_siblings_separate(
+    native_app_assignment: dict[str, object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("TNL_NO_TELEMETRY", raising=False)
+
+    async def scenario() -> None:
+        disabled_runtime = AssignmentRuntime(native_app_assignment)
+        enabled_runtime = AssignmentRuntime(native_app_assignment)
+        disabled = tnl.PreparedService("/project", "web", None, disabled_runtime, telemetry=False)
+        enabled = tnl.PreparedService("/project", "web", None, enabled_runtime)
+        await disabled.start()
+        await enabled.start()
+        await disabled._prepare()
+        try:
+            assert [p["telemetry_disabled"] for p in disabled_runtime.preparations] == [True, True]
+            assert [p["telemetry_disabled"] for p in enabled_runtime.preparations] == [False]
+        finally:
+            await disabled.close()
+            await enabled.close()
+
+    asyncio.run(scenario())
 
 
 def test_native_assignment_is_http_only_for_selected_app(

@@ -251,6 +251,7 @@ func startProjectAliases(ctx context.Context, state *clientstate.Database, proje
 
 func projectAliasPublisher(state *clientstate.Database, services publisherServices, selection clientstate.AliasSelection, tunnelID string, base publisher.Config, policy resolvedVisitorAccess, report func(publisher.Event, error)) integrations.Publisher {
 	cfg := services.config(base.Target, slices.Clone(policy.prefixes), base.Limits)
+	cfg.Telemetry = base.Telemetry
 	cfg.AccessMode, cfg.Purpose, cfg.ServiceProtocol = policy.access, controlv1.Alias, controlv1.Http
 	cfg.ControlURL = services.authenticated.ServerEndpoint
 	cfg.BrowserLoginAvailable = services.authenticated.Discovery.BrowserLoginAvailable != nil && *services.authenticated.Discovery.BrowserLoginAvailable

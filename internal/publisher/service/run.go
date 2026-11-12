@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -24,6 +25,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	telemetryv1 "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -80,7 +82,8 @@ func (p *Prepared) currentCertificate() (*tls.Certificate, error) {
 // Bound accepts only the exact control-approved run and two different assigned
 // relay services. neither the run token nor cached TLS key enters any log.
 type Bound struct {
-	prepared *Prepared
+	telemetry *clienttelemetry.Scope
+	prepared  *Prepared
 	*boundState
 	streamCapacity      int
 	audit               serviceaudit.Sink
@@ -275,8 +278,8 @@ func (b *Bound) ConnectSlot(ctx context.Context, slot uint8, options ConnectOpti
 	if err != nil {
 		return nil, err
 	}
-	primary := tunnel.Candidate{Connector: requirePeerDatagrams(options.QUIC), Endpoint: endpoint, Transport: tunnel.TransportQUIC}
-	fallback := tunnel.Candidate{Connector: options.TCP, Endpoint: endpoint, Transport: tunnel.TransportTLSTCP}
+	primary := tunnel.Candidate{Connector: requirePeerDatagrams(options.QUIC), Endpoint: endpoint, Transport: tunnel.TransportQUIC, Observe: b.telemetry.RelayAttempt}
+	fallback := tunnel.Candidate{Connector: options.TCP, Endpoint: endpoint, Transport: tunnel.TransportTLSTCP, Observe: b.telemetry.RelayAttempt}
 	if options.PreferTCP {
 		primary, fallback = fallback, primary
 	}
@@ -284,6 +287,9 @@ func (b *Bound) ConnectSlot(ctx context.Context, slot uint8, options ConnectOpti
 	session, transport, err := tunnel.Race(connectCtx, primary, fallback, 250*time.Millisecond, hello)
 	finish(err)
 	observability.PublisherConnection(ctx, string(transport), options.PreferTCP, err)
+	if err == nil && transport == tunnel.TransportTLSTCP && !options.PreferTCP {
+		b.telemetry.Record(telemetryv1.Fallback, telemetryv1.TlsTcp, telemetryv1.Succeeded, 0)
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -13,6 +13,7 @@ import (
 
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
@@ -27,7 +28,7 @@ func TestBackgroundDispatchDoesNotOpenForegroundState(t *testing.T) {
 	ordinaryState := filepath.Join(root, "ordinary-state")
 	var output, diagnostics bytes.Buffer
 	err := run(t.Context(), []string{"--config", "missing.yml", "publish", "3000", "--bg", "--server", "https://control.example", "--state-dir", ordinaryState}, &output, &diagnostics,
-		func(string) telemetryReporter {
+		func(clienttelemetry.Config) *clienttelemetry.Collector {
 			t.Fatal("background dispatch selected foreground telemetry")
 			return nil
 		})
@@ -45,7 +46,7 @@ func TestBackgroundDispatchDoesNotOpenForegroundState(t *testing.T) {
 func TestEnrolledDispatchRejectsMixedAuthorityBeforeSignIn(t *testing.T) {
 	var output, diagnostics bytes.Buffer
 	root := filepath.Join(t.TempDir(), "state")
-	err := runPublish(t.Context(), publishCommand{EnrollmentKey: "-", PublisherIdentityID: "pub_example", Output: publishOutputHuman, remoteFlags: remoteFlags{StateDir: root}}, &output, &diagnostics, nil)
+	err := runPublish(t.Context(), publishCommand{EnrollmentKey: "-", PublisherIdentityID: "pub_example", Output: publishOutputHuman, remoteFlags: remoteFlags{StateDir: root}}, &output, &diagnostics)
 	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.PublisherSelectionInvalid {
 		t.Fatalf("mixed enrollment selection = %v", err)
 	}

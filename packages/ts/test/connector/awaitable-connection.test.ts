@@ -11,7 +11,6 @@ vi.mock("../../src/internal/native/launcher.js", () => ({ resolveNativeBinary: n
 vi.mock("../../src/internal/connector/connection_ipc.js", () => ({
   async prepareExternal(file: string, name: string) {
     const { stdout } = await native.async("/installed/matching/tnl", [
-      "--no-telemetry",
       "runtime",
       "connections",
       "prepare",
@@ -26,7 +25,6 @@ vi.mock("../../src/internal/connector/connection_ipc.js", () => ({
   ownerIPC: async (file: string) => ({
     async prepare(name: string, _assertion?: string, selection?: object) {
       const { stdout } = await native.async("/installed/matching/tnl", [
-        "--no-telemetry",
         "runtime",
         "connections",
         selection === undefined ? "prepare" : "sdk-prepare",
@@ -303,7 +301,7 @@ describe("awaitable root connection handles", () => {
     });
     expect(() => Reflect.get(connectionHandle("sibling", vi.fn()), "port")).toThrow();
     expect(native.async).toHaveBeenCalledTimes(before);
-    expect(native.sync.mock.calls.at(-1)?.[1][3]).toBe("read");
+    expect(native.sync.mock.calls.at(-1)?.[1][2]).toBe("read");
   });
   test("creation is immediate and unprepared reads fail before resolving a binary", async () => {
     const { connectionHandle } = await import("../../src/internal/connector/connection.js");
@@ -353,7 +351,6 @@ describe("awaitable root connection handles", () => {
     expect(native.sync).toHaveBeenCalledWith(
       "/installed/matching/tnl",
       [
-        "--no-telemetry",
         "runtime",
         "connections",
         "read",
@@ -570,7 +567,7 @@ describe("awaitable root connection handles", () => {
         expect.objectContaining({ code: "sdk.connection_unprepared" }),
       );
       expect(await handle).toHaveProperty("port", 24567);
-      const operations = native.async.mock.calls.map(([, args]) => args[3]);
+      const operations = native.async.mock.calls.map(([, args]) => args[2]);
       expect(operations).toEqual(["sdk-prepare", "sdk-prepare"]);
     },
   );
@@ -609,7 +606,7 @@ describe("awaitable root connection handles", () => {
       cause: failure.cause,
     });
     expect(await handle).toHaveProperty("port", 24567);
-    expect(native.async.mock.calls.map(([, args]) => args[3])).toEqual([
+    expect(native.async.mock.calls.map(([, args]) => args[2])).toEqual([
       "sdk-prepare",
       "sdk-prepare",
       "sdk-prepare",
@@ -623,7 +620,7 @@ describe("awaitable root connection handles", () => {
     native.async.mockResolvedValueOnce({ stdout: JSON.stringify({ ...prepared(), schema: 2 }) });
     await expect(Promise.resolve(handle)).rejects.toMatchObject({ code: "sdk.response_invalid" });
     expect(await handle).toHaveProperty("port", 24567);
-    expect(native.async.mock.calls.map(([, args]) => args[3])).toEqual(["prepare", "prepare"]);
+    expect(native.async.mock.calls.map(([, args]) => args[2])).toEqual(["prepare", "prepare"]);
   });
 
   test("known owner expiry requires async preparation and coalesces one joined replacement", async () => {
@@ -645,7 +642,7 @@ describe("awaitable root connection handles", () => {
     );
     expect(settings.every((value) => Object.isFrozen(value))).toBe(true);
     expect(JSON.stringify(first)).toBe(previous);
-    expect(native.async.mock.calls.map(([, args]) => args[3])).toEqual(
+    expect(native.async.mock.calls.map(([, args]) => args[2])).toEqual(
       Array.from({ length: 2 }, () => "sdk-prepare"),
     );
   });
@@ -671,7 +668,7 @@ describe("awaitable root connection handles", () => {
       expect.objectContaining({ code: "sdk.connection_unprepared" }),
     );
     await handle;
-    expect(native.async.mock.calls.map(([, args]) => args[3])).toEqual(
+    expect(native.async.mock.calls.map(([, args]) => args[2])).toEqual(
       Array.from({ length: 6 }, () => "sdk-prepare"),
     );
   });

@@ -32,6 +32,7 @@ export type OpenOptions = OpenSettings &
     | { readonly publisherCredentialFile?: never; readonly publisherIdentityID?: never }
   );
 interface OpenSettings {
+  readonly telemetry?: boolean;
   readonly server?: string;
   readonly directory?: string;
   readonly stateDir?: string;
@@ -118,6 +119,8 @@ async function openServerUntraced(
     owner,
     pid: process.pid,
     target,
+    telemetry_disabled:
+      options.telemetry === false || /^(1|true)$/i.test(process.env.TNL_NO_TELEMETRY ?? ""),
     ...(options.server === undefined ? {} : { server_url: options.server }),
     ...(options.publisherIdentityID === undefined
       ? {}
@@ -383,6 +386,7 @@ const openOptionsSchema = z
     stateDir: pathTextSchema.optional(),
     targetHostname: z.string().min(1).optional(),
     requirePostQuantum: z.boolean().optional(),
+    telemetry: z.boolean().optional(),
     access: z
       .union([
         accessModeSchema,

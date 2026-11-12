@@ -11,13 +11,14 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/supervisor"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/config"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"golang.org/x/sys/unix"
 )
 
-func runConnectStdio(ctx context.Context, session *Session, service controlv1.Service, input *os.File, output io.Writer) error {
+func runConnectStdio(ctx context.Context, session *Session, service controlv1.Service, input *os.File, output io.Writer, telemetry *clienttelemetry.Collector) error {
 	configuration, err := connectConfiguration(ctx, session, supervisor.Job{ServiceID: service.Id,
 		IdentityID: session.identity.Identity.Id, Protocol: config.ProtocolTCP, TrustRevision: service.TrustRevision, Endpoint: service.Endpoint})
 	if err != nil {
@@ -27,6 +28,7 @@ func runConnectStdio(ctx context.Context, session *Session, service controlv1.Se
 	if err != nil {
 		return err
 	}
+	configuration.Telemetry = telemetry
 	return connectorstream.Stream(ctx, local, configuration)
 }
 

@@ -18,6 +18,7 @@ type Candidate struct {
 	Connector muxsession.Connector
 	Endpoint  muxsession.Endpoint
 	Transport Transport
+	Observe   func(context.Context, Transport, time.Duration, error)
 }
 
 // Transport identifies one publisher connection transport.
@@ -91,7 +92,14 @@ func Race(
 	}()
 	start := func(candidate Candidate) {
 		remaining++
-		workers.Go(func() { results <- dialCandidate(raceCtx, candidate, hello) })
+		workers.Go(func() {
+			started := time.Now()
+			result := dialCandidate(raceCtx, candidate, hello)
+			if candidate.Observe != nil {
+				candidate.Observe(raceCtx, candidate.Transport, time.Since(started), result.err)
+			}
+			results <- result
+		})
 	}
 	start(primary)
 	timer := time.NewTimer(fallbackDelay)

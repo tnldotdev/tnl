@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/config"
 	publishergroup "github.com/tnldotdev/tnl/internal/publisher/group"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
@@ -37,6 +38,7 @@ func GroupClient(job Job) (*publishergroup.Client, error) {
 // GroupPublisher is the common foreground/installed assignment callback. its
 // resolver belongs to the surrounding group loop and outlives all its workers.
 type GroupPublisher struct {
+	Telemetry *clienttelemetry.Collector
 	Member    controlv1.PublisherGroupMember
 	Private   ed25519.PrivateKey
 	State     *clientstate.Store
@@ -128,7 +130,7 @@ func (p GroupPublisher) Publish(ctx context.Context, assignment controlv1.Publis
 	if service.Id != assignment.ServiceId || service.TrustRevision != assignment.TrustRevision || service.Protocol != *assignment.Configuration.Protocol {
 		return publishergroup.ErrAssignment
 	}
-	run := publisherservice.RunConfig{Control: native, State: p.State, Access: native.Access, Identity: identity, ServiceID: service.Id, Metadata: publisheridentity.ServiceMetadata(service), ObserveReadiness: func(status publisherservice.RunStatus) {
+	run := publisherservice.RunConfig{Telemetry: p.Telemetry, Control: native, State: p.State, Access: native.Access, Identity: identity, ServiceID: service.Id, Metadata: publisheridentity.ServiceMetadata(service), ObserveReadiness: func(status publisherservice.RunStatus) {
 		if health != nil {
 			health(status.Ready)
 		}

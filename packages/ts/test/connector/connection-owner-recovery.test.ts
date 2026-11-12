@@ -112,11 +112,9 @@ beforeEach(async () => {
       try {
         for (const operation of ["/fixture/release", "/fixture/release-stop"])
           await (await control(event.file, operation)).arrayBuffer();
-        await run(
-          binary,
-          ["--no-telemetry", "runtime", "connections", "stop", "--handle", event.file],
-          { timeout: 5000 },
-        );
+        await run(binary, ["runtime", "connections", "stop", "--handle", event.file], {
+          timeout: 5000,
+        });
       } catch (error) {
         if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
           try {
@@ -277,20 +275,13 @@ test("concurrent awaits after a known deadline join and replace one same-port ow
   expect(history.findIndex((event) => event.event === "closed")).toBeLessThan(
     history.findLastIndex((event) => event.event === "start"),
   );
-  await run(binary, [
-    "--no-telemetry",
-    "runtime",
-    "connections",
-    "stop",
-    "--handle",
-    replacement.file,
-  ]);
+  await run(binary, ["runtime", "connections", "stop", "--handle", replacement.file]);
   await assertPortFree(port);
 }, 20_000);
 
 test("expired caller-owned handles fail without SDK replacement or cleanup", async () => {
   await configure({ lifetimeMs: 4000 });
-  const { stdout } = await run(binary, ["--no-telemetry", "runtime", "connections", "start"]);
+  const { stdout } = await run(binary, ["runtime", "connections", "start"]);
   const external = z.object({ connection_handle: z.string() }).parse(JSON.parse(stdout) as unknown);
   vi.stubEnv("TNL_CONNECTION_HANDLE", external.connection_handle);
   const { connectionHandle } = await import("../../src/internal/connector/connection.js");

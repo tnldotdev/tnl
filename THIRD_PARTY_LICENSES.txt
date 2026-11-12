@@ -40,6 +40,16 @@ License text: [BSD-3-Clause-1]
 go modules
 
 --------------------------------------------------------------------------------
+Package: github.com/santhosh-tekuri/jsonschema/v6
+Version: v6.0.2
+License: Apache-2.0
+Source: https://github.com/santhosh-tekuri/jsonschema/tree/v6.0.2
+
+LICENSE
+
+License text: [Apache-2.0]
+
+--------------------------------------------------------------------------------
 Packages with identical license text:
 github.com/pion/ice/v4 v4.4.8
 github.com/pion/dtls/v3 v3.1.9

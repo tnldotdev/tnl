@@ -9,6 +9,8 @@ import (
 	"net"
 	"time"
 
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
+
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
@@ -64,6 +66,8 @@ type Control interface {
 }
 
 type Config struct {
+	Telemetry                       *clienttelemetry.Collector
+	telemetry                       *clienttelemetry.Scope
 	Control                         Control
 	ServiceID, IdentityID, Protocol string
 	TrustRevision                   int64

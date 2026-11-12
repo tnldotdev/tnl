@@ -91,6 +91,8 @@ const (
 )
 
 type OpenOptions struct {
+	// optional telemetry drops work instead of waiting behind a SQLite writer.
+	NoWait bool
 	// protection defaults to Keychain on macOS and a private file elsewhere.
 	// reopening must use the same mode; the database verifies the wrapping key.
 	Protection ProtectionMode
@@ -153,9 +155,9 @@ func OpenWithOptions(ctx context.Context, root string, options OpenOptions) (res
 	protector := &encryptedProtector{key: key, account: account}
 	var db *sql.DB
 	if exists {
-		db, err = openClientSQLite(ctx, path, false)
+		db, err = openClientSQLite(ctx, path, false, options.NoWait)
 	} else {
-		db, err = initializeClientSQLite(ctx, path, mode, protector)
+		db, err = initializeClientSQLite(ctx, path, mode, protector, options.NoWait)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("clientstate: %w", err)

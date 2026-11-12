@@ -4,8 +4,10 @@ import (
 	"context"
 	"time"
 
+	clientserver "github.com/tnldotdev/tnl/internal/client/server"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	telemetryv1 "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 )
 
 type EventType string
@@ -32,10 +34,25 @@ type Event struct {
 }
 
 func observe(config Config, event Event) error {
-	if config.Observe == nil {
-		return nil
+	if config.Observe != nil {
+		if err := config.Observe(event); err != nil {
+			return err
+		}
 	}
-	return config.Observe(event)
+	if event.Type == EventReady && (config.Purpose == "" || config.Purpose == controlv1.App || config.Purpose == controlv1.Demo) {
+		payload := telemetryv1.PublicationReady{ServerKind: telemetryv1.SelfHosted, PublishMode: telemetryv1.App}
+		if config.ControlURL == clientserver.DefaultURL {
+			payload.ServerKind = telemetryv1.Hosted
+		}
+		if config.Demo {
+			payload.PublishMode = telemetryv1.Demo
+		}
+		if config.TelemetryFramework != "" {
+			payload.Framework = &config.TelemetryFramework
+		}
+		config.telemetry.Ready(payload)
+	}
+	return nil
 }
 
 func observeProvisioningStall(ctx context.Context, config Config, setup controlv1.PublishRunSetup) error {

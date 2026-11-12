@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
@@ -18,6 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/peer"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	telemetryv1 "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -29,31 +31,32 @@ const maxConnectorPeerStreams = tunnel.MaxConnectorApplicationStreams
 // neither a carrier change nor a sibling connector changes this owner. a new
 // pair/run needs a new owner; it cannot transfer the old owner's admissions.
 type PeerSession struct {
-	bound          *Bound
-	identity       peerIdentity
-	network        peerNetworkBinding
-	lease          peerLease
-	owner          peerLease
-	pending        *PeerBinding
-	deliveryState  peerDeliveryState
-	highwater      int64
-	installMu      sync.Mutex
-	packets        *peer.Endpoint
-	connectivity   *peer.Connectivity
-	permissionGate tunnel.ConnectorPermissionGate
-	packetPaths    [2]*peer.CarrierSlot
-	deliverySlots  [2]*Claimed
-	ctx            context.Context
-	cancel         context.CancelFunc
-	seen           map[string]struct{}
-	streams        map[*connectorAdmission]struct{}
-	serveOnce      sync.Once
-	workers        sync.WaitGroup
-	done           chan struct{}
-	changed        chan struct{}
-	replayUntil    time.Time
-	ready          chan struct{}
-	installedUntil time.Time
+	bound           *Bound
+	identity        peerIdentity
+	network         peerNetworkBinding
+	lease           peerLease
+	owner           peerLease
+	pending         *PeerBinding
+	deliveryState   peerDeliveryState
+	highwater       int64
+	installMu       sync.Mutex
+	packets         *peer.Endpoint
+	connectivity    *peer.Connectivity
+	permissionGate  tunnel.ConnectorPermissionGate
+	packetPaths     [2]*peer.CarrierSlot
+	deliverySlots   [2]*Claimed
+	ctx             context.Context
+	cancel          context.CancelFunc
+	seen            map[string]struct{}
+	streams         map[*connectorAdmission]struct{}
+	serveOnce       sync.Once
+	workers         sync.WaitGroup
+	done            chan struct{}
+	changed         chan struct{}
+	replayUntil     time.Time
+	ready           chan struct{}
+	installedUntil  time.Time
+	recoveryStarted time.Time
 }
 
 func (b *Bound) BindPeer(ctx context.Context, binding PeerBinding) (*PeerSession, error) {
@@ -215,6 +218,12 @@ func (p *PeerSession) serve(ctx context.Context, run func() error) error {
 		stop()
 		<-watchDone
 		p.workers.Wait()
+		p.bound.mu.Lock()
+		if !p.recoveryStarted.IsZero() && p.deliverySlots[0] != nil {
+			p.bound.telemetry.Record(telemetryv1.Recovery, clienttelemetry.Path(p.deliverySlots[0].transport), telemetryv1.Canceled, time.Since(p.recoveryStarted))
+			p.recoveryStarted = time.Time{}
+		}
+		p.bound.mu.Unlock()
 		close(p.done)
 	}()
 	p.bound.mu.Lock()

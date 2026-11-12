@@ -6,12 +6,15 @@ import (
 	"io"
 	"os"
 
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/connector"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	"github.com/tnldotdev/tnl/internal/failure"
 )
 
 type connectionsCommand struct {
+	telemetry      *clienttelemetry.Collector
+	disabled       bool
 	Capabilities   connectionsCapabilities       `cmd:""`
 	Context        connectionsContextOptions     `cmd:""`
 	Start          connectionsStartOptions       `cmd:""`
@@ -128,15 +131,21 @@ func runConnections(ctx context.Context, command string, flags connectionsComman
 	case "runtime connections context":
 		return write(connector.ResolveContext(ctx, flags.Context.options()))
 	case "runtime connections start":
-		return connector.StartOwner(ctx, flags.Start.options(), os.Stdin, output)
+		options := flags.Start.options()
+		options.TelemetryDisabled = flags.disabled
+		return connector.StartOwner(ctx, options, os.Stdin, output)
 	case "runtime connections serve":
-		return connectorOperations().ServeOwner(ctx, connector.OwnerServeOptions{OwnerStartOptions: flags.Serve.options(), OwnerDirectory: flags.Serve.OwnerDirectory}, os.Stdin, output)
+		operations := connectorOperations()
+		operations.Telemetry = flags.telemetry
+		return operations.ServeOwner(ctx, connector.OwnerServeOptions{OwnerStartOptions: flags.Serve.options(), OwnerDirectory: flags.Serve.OwnerDirectory}, os.Stdin, output)
 	case "runtime connections read":
 		return write(connector.ReadPrepared(ctx, flags.Read.Handle, flags.Read.Service))
 	case "runtime connections prepare":
 		return write(connector.Prepare(ctx, flags.Prepare.Handle, flags.Prepare.Service))
 	case "runtime connections sdk-prepare":
-		return write(connector.PrepareSDK(ctx, connector.SDKOptions{OwnerStartOptions: flags.SDKPrepare.connectionsStartOptions.options(), Registry: flags.SDKPrepare.Registry, Service: flags.SDKPrepare.SelectedService, RecoverHandle: flags.SDKPrepare.RecoverHandle, RequestedAt: flags.SDKPrepare.RequestedAt, RetainStartFailure: flags.SDKPrepare.RetainStartFailure}, os.Stdin))
+		options := flags.SDKPrepare.connectionsStartOptions.options()
+		options.TelemetryDisabled = flags.disabled
+		return write(connector.PrepareSDK(ctx, connector.SDKOptions{OwnerStartOptions: options, Registry: flags.SDKPrepare.Registry, Service: flags.SDKPrepare.SelectedService, RecoverHandle: flags.SDKPrepare.RecoverHandle, RequestedAt: flags.SDKPrepare.RequestedAt, RetainStartFailure: flags.SDKPrepare.RetainStartFailure}, os.Stdin))
 	case "runtime connections sdk-workload":
 		return write(connector.SelectSDKWorkload(flags.SDKWorkload.Directory, flags.SDKWorkload.Service, os.Stdin))
 	case "runtime connections sdk-stop":

@@ -14,6 +14,7 @@ import (
 
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/publisher"
@@ -21,6 +22,51 @@ import (
 )
 
 type trip func(*http.Request) (*http.Response, error)
+
+func TestPublicationTelemetryOptOutDoesNotDisableSiblingWorker(t *testing.T) {
+	w, _ := testWorkers(t)
+	configure := w.Configure
+	w.Configure = func(ctx context.Context, service Service) (Configuration, error) {
+		configuration, err := configure(ctx, service)
+		if service.Name != "web" {
+			configuration.Publisher.Telemetry = &clienttelemetry.Collector{}
+		}
+		return configuration, err
+	}
+	type observation struct {
+		service  string
+		disabled bool
+	}
+	observed := make(chan observation, 2)
+	w.RunPublisher = func(ctx context.Context, cfg publisher.Config) error {
+		observed <- observation{cfg.Service, cfg.Telemetry == nil}
+		<-ctx.Done()
+		return nil
+	}
+	services := append(w.Manager.Snapshot().Services, Service{Name: "api", ServiceProtocol: "http"})
+	if err := w.Manager.Configure(services); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"web", "api"} {
+		id, err := w.Manager.Reserve(name, name, 1, "https://public.example")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Manager.Register(id, name, "http://127.0.0.1:3000", "node"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for range 2 {
+		select {
+		case value := <-observed:
+			if value.disabled != (value.service == "web") {
+				t.Fatalf("mixed sibling choice: %+v", value)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("worker did not start")
+		}
+	}
+}
 
 func (f trip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 

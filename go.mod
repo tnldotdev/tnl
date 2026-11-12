@@ -33,6 +33,7 @@ require (
 	github.com/prometheus/common v0.72.0
 	github.com/prometheus/otlptranslator v1.0.0
 	github.com/quic-go/quic-go v0.63.0
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/tailscale/hujson v0.0.0-20260727124030-b80ff77dac4f
 	github.com/zalando/go-keyring v0.2.8
 	go.opentelemetry.io/contrib/bridges/prometheus v0.72.0

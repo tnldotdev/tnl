@@ -255,7 +255,7 @@ func TestPublishOutputNDJSONOwnsSuccessfulErrorEvent(t *testing.T) {
 
 func TestRunPublishNDJSONFailureHasSingleOwner(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	result := runPublish(t.Context(), publishCommand{Target: "https://example.com", Output: "ndjson"}, &stdout, &stderr, nil)
+	result := runPublish(t.Context(), publishCommand{Target: "https://example.com", Output: "ndjson"}, &stdout, &stderr)
 	if code, render := terminalResult(result); code != 1 || render != nil {
 		t.Fatalf("terminal result = %d, %v", code, render)
 	}

@@ -224,6 +224,7 @@ func (b *connectorConnectionBackend) prepareListener(ctx context.Context, name s
 	ready := make(chan struct{})
 	connection.Port = owner.listener.Addr().(*net.TCPAddr).Port
 	configuration := connectorstream.Config{Control: control, ServiceID: service.Id, IdentityID: identity, Protocol: string(service.Protocol), TrustRevision: run.TrustRevision, Endpoint: endpoint, ServiceTLS: verification, CleanupContext: b.cleanup, Ready: func() error { close(ready); return nil }}
+	configuration.Telemetry = b.telemetry
 	b.workers.Go(func() {
 		defer close(p.done)
 		if old != nil && old.cancel != nil {

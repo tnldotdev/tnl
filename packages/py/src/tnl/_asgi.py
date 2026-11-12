@@ -158,6 +158,7 @@ class Tunnel:
         ip: list[str] | None,
         limits: Limits | None,
         require_post_quantum: bool = False,
+        telemetry: bool = True,
     ) -> None:
         self._native = native
         self._server = server
@@ -175,6 +176,8 @@ class Tunnel:
             "owner": self._owner,
             "pid": os.getpid(),
             "target": self._target,
+            "telemetry_disabled": not telemetry
+            or os.getenv("TNL_NO_TELEMETRY", "").lower() in {"1", "true"},
         }
         if publisher_credential_file is not None:
             self._payload["publisher_credential_file"] = publisher_credential_file
@@ -443,12 +446,15 @@ async def open(
     access: Literal["restricted", "anonymous"] | AccessPolicy | None = None,
     limits: Limits | None = None,
     require_post_quantum: bool = False,
+    telemetry: bool = True,
 ) -> AsyncIterator[Tunnel]:
     """start ASGI, register its bound listener, and wait for native routability."""
     if not callable(app):
         raise TnlError("sdk.configuration_invalid", "pass an ASGI app")
     if not isinstance(require_post_quantum, bool):
         raise TnlError("sdk.configuration_invalid", "require_post_quantum must be a boolean")
+    if type(telemetry) is not bool:
+        raise TnlError("sdk.configuration_invalid", "telemetry must be a boolean")
     if publisher_credential_file is not None and publisher_identity_id is not None:
         raise TnlError("sdk.configuration_invalid", "select a publisher file or publisher ID")
     # a running connector owner does not inherit later changes to the app's env.
@@ -500,6 +506,7 @@ async def open(
         ip,
         limits,
         require_post_quantum,
+        telemetry,
     )
     try:
         await tunnel.start()

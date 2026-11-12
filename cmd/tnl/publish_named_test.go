@@ -31,7 +31,7 @@ func TestNamedPrivatePublishDispatchesPublisherCredentialFileBeforeOwnerOrPerson
 	if err := project.applyPublish(&flags); err != nil {
 		t.Fatal(err)
 	}
-	if err := runPublish(t.Context(), flags, io.Discard, io.Discard, nil); !errors.Is(err, credentialfile.ErrInvalid) {
+	if err := runPublish(t.Context(), flags, io.Discard, io.Discard); !errors.Is(err, credentialfile.ErrInvalid) {
 		t.Fatalf("named private credential dispatch = %v", err)
 	}
 	if _, err := os.Stat(flags.StateDir); !errors.Is(err, os.ErrNotExist) {
@@ -66,7 +66,7 @@ func TestNamedPublisherCredentialFileRejectsAnotherServerWithoutPersonFallback(t
 	if err := project.applyPublish(&flags); err != nil {
 		t.Fatal(err)
 	}
-	if err := runPublish(t.Context(), flags, io.Discard, io.Discard, nil); !errors.Is(err, publisheridentity.ErrScope) {
+	if err := runPublish(t.Context(), flags, io.Discard, io.Discard); !errors.Is(err, publisheridentity.ErrScope) {
 		t.Fatalf("publisher file changed control server: %v", err)
 	}
 	if _, err := os.Stat(flags.StateDir); !errors.Is(err, os.ErrNotExist) {
@@ -95,7 +95,7 @@ func TestNamedPublishRejectsUnsupportedPolicyBeforeOwnerState(t *testing.T) {
 	if err := project.applyPublish(&flags); err != nil {
 		t.Fatal(err)
 	}
-	err := runPublish(t.Context(), flags, io.Discard, io.Discard, nil)
+	err := runPublish(t.Context(), flags, io.Discard, io.Discard)
 	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.NamedPublishOverrides {
 		t.Fatalf("unsupported named policy = %v", err)
 	}
