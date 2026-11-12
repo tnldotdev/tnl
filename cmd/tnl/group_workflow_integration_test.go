@@ -927,7 +927,7 @@ func (f *cliWorkflow) relay(t *testing.T, database *controlstate.Database, id st
 		t.Fatal(err)
 	}
 	encodedKey := base64.RawURLEncoding.EncodeToString(publicKey)
-	controller, err := relay.NewController(relay.ControllerConfig{Client: client, Registration: relayv1.RelayRegistration{ProtocolVersion: 1, RelayServiceId: id, RelayId: id, RelayRunId: runID, PeerSigningPublicKey: &encodedKey, RelayAddress: net.JoinHostPort("localhost", fmt.Sprint(public.Addr().(*net.TCPAddr).Port)), InternalRelayAddress: internal.Addr().String(), InternalNetworks: []string{"127.0.0.0/8"}, TlsServerName: "localhost", ConnectionCapacity: 128, StreamCapacity: 128}, RenewalInterval: 200 * time.Millisecond, RetryInterval: 25 * time.Millisecond})
+	controller, err := relay.NewController(relay.ControllerConfig{Client: client, Registration: relayv1.RelayRegistration{Region: "local", ProtocolVersion: 1, RelayServiceId: id, RelayId: id, RelayRunId: runID, PeerSigningPublicKey: &encodedKey, RelayAddress: net.JoinHostPort("localhost", fmt.Sprint(public.Addr().(*net.TCPAddr).Port)), InternalRelayAddress: internal.Addr().String(), InternalNetworks: []string{"127.0.0.0/8"}, TlsServerName: "localhost", ConnectionCapacity: 128, StreamCapacity: 128}, RenewalInterval: 200 * time.Millisecond, RetryInterval: 25 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -983,7 +983,7 @@ func (f *cliWorkflow) ingress(t *testing.T, database *controlstate.Database, id 
 	for index := range ports {
 		ports[index] = 20000 + index
 	}
-	controller, err := ingress.NewController(ingress.ControllerConfig{Client: client, RoutingTable: routing, Registration: ingressv1.IngressRegistration{ProtocolVersion: 1, IngressId: id, IngressRunId: runID, IngressPoolId: "ingress-a", ServicePorts: ports, ConnectionCapacity: 128}, RenewalInterval: 200 * time.Millisecond, RetryInterval: 25 * time.Millisecond, RoutingWait: time.Second})
+	controller, err := ingress.NewController(ingress.ControllerConfig{Client: client, RoutingTable: routing, Registration: ingressv1.IngressRegistration{Region: "local", ProtocolVersion: 1, IngressId: id, IngressRunId: runID, IngressPoolId: "ingress-a", ServicePorts: ports, ConnectionCapacity: 128}, RenewalInterval: 200 * time.Millisecond, RetryInterval: 25 * time.Millisecond, RoutingWait: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}

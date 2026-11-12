@@ -57,6 +57,7 @@ func TestRegisterRelayAuthorizesAndConvertsRequest(t *testing.T) {
 	) (controlstate.RelayLease, error) {
 		got, gotNow, gotDuration = registration, registeredAt, leaseDuration
 		return controlstate.RelayLease{
+			Region: registration.Region,
 			RelayLeaseIdentity: controlstate.RelayLeaseIdentity{
 				RelayServiceID: registration.RelayServiceID, RelayID: registration.RelayID,
 				RelayRunID: registration.RelayRunID, RelayLeaseRevision: 7,
@@ -69,6 +70,7 @@ func TestRegisterRelayAuthorizesAndConvertsRequest(t *testing.T) {
 		}, nil
 	}}
 	body := relayv1.RelayRegistration{
+		Region:         "fly:sjc",
 		RelayServiceId: "relay-service-1", RelayId: "relay-1", RelayRunId: "run-1", ProtocolVersion: 1,
 		RelayAddress: "relay.example:443", TlsServerName: "relay.example",
 		InternalRelayAddress: "10.0.0.10:8443", InternalNetworks: []string{"10.0.0.0/24", "2001:db8::/64"},
@@ -78,7 +80,7 @@ func TestRegisterRelayAuthorizesAndConvertsRequest(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
 	}
-	if got.RelayServiceID != body.RelayServiceId || got.RelayID != body.RelayId || got.RelayRunID != body.RelayRunId ||
+	if string(got.Region) != body.Region || got.RelayServiceID != body.RelayServiceId || got.RelayID != body.RelayId || got.RelayRunID != body.RelayRunId ||
 		got.ProtocolVersion != 1 || got.ConnectionCapacity != 100 || got.StreamCapacity != 1000 {
 		t.Fatalf("registration = %#v", got)
 	}
