@@ -37,20 +37,17 @@ func recordAppliedGroupChange(ctx context.Context, tx pgx.Tx, s controlstatedb.C
 }
 
 func recordPublisherGroupUpdate(ctx context.Context, tx pgx.Tx, group, actor, publisher, request string, now time.Time) error {
-	var team, project string
 	var revision int64
-	if err := tx.QueryRow(ctx, `SELECT g.team_id,g.project_key,p.revision FROM control.project_publisher_groups g JOIN control.applied_projects p ON p.team_id=g.team_id AND p.project_key=g.project_key WHERE g.id=$1`, group).Scan(&team, &project, &revision); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT p.revision FROM control.project_publisher_groups g JOIN control.applied_projects p ON p.team_id=g.team_id AND p.project_key=g.project_key WHERE g.id=$1`, group).Scan(&revision); err != nil {
 		return err
 	}
-	services, err := controlstatedb.New(tx).ListAppliedProjectServices(ctx, controlstatedb.ListAppliedProjectServicesParams{TeamID: team, ProjectKey: project})
+	services, err := controlstatedb.New(tx).ListPublisherGroupServices(ctx, group)
 	if err != nil {
 		return err
 	}
 	for _, s := range services {
-		if s.GroupID.String == group {
-			if err = recordAppliedGroupChange(ctx, tx, s, actor, publisher, request, revision, now); err != nil {
-				return err
-			}
+		if err = recordAppliedGroupChange(ctx, tx, s, actor, publisher, request, revision, now); err != nil {
+			return err
 		}
 	}
 	return nil

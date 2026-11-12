@@ -956,6 +956,7 @@ type ControlPublisherGroupName struct {
 
 type ControlPublisherGroupServiceGrant struct {
 	PublisherIdentityID string
+	GroupID             string
 	TeamID              string
 	ProjectKey          string
 	Service             string

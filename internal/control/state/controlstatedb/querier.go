@@ -348,6 +348,7 @@ type Querier interface {
 	ListPublisherCertificateCheckpoints(ctx context.Context, publisherIdentityID string) ([][]byte, error)
 	ListPublisherGrants(ctx context.Context, publisherIdentityID string) ([]ControlPublisherGrant, error)
 	ListPublisherGroupMemberStatus(ctx context.Context, arg ListPublisherGroupMemberStatusParams) ([]ListPublisherGroupMemberStatusRow, error)
+	ListPublisherGroupServices(ctx context.Context, groupID string) ([]ControlAppliedProjectService, error)
 	ListPublisherIdentities(ctx context.Context, arg ListPublisherIdentitiesParams) ([]ControlPublisherIdentity, error)
 	ListReadyShareHostnames(ctx context.Context, arg ListReadyShareHostnamesParams) ([]ListReadyShareHostnamesRow, error)
 	ListRelayDNSChallengePresentations(ctx context.Context, tlsServerName string) ([]ListRelayDNSChallengePresentationsRow, error)

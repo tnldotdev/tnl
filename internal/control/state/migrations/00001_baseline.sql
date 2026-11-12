@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-provider-regions')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-deployments')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-provider-regions');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-deployments');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -2143,7 +2143,7 @@ CREATE TABLE control.applied_project_services (
     public_url_id text UNIQUE REFERENCES control.public_urls(id) ON DELETE RESTRICT,
     visitor_grant_id text,
     desired_revision bigint NOT NULL CHECK (desired_revision >= 1),
-    PRIMARY KEY (team_id, project_key, service),
+    UNIQUE NULLS NOT DISTINCT (team_id, project_key, group_id, service),
     FOREIGN KEY (team_id, project_key) REFERENCES control.applied_projects(team_id, project_key) ON DELETE RESTRICT,
     FOREIGN KEY (group_id, team_id, project_key) REFERENCES control.project_publisher_groups(id, team_id, project_key) ON DELETE RESTRICT,
     CHECK (service_id IS NULL OR public_url_id IS NULL)
@@ -2194,12 +2194,14 @@ CREATE TABLE control.publisher_group_leases (
 );
 CREATE TABLE control.publisher_group_service_grants (
     publisher_identity_id text NOT NULL REFERENCES control.publisher_group_members(publisher_identity_id) ON DELETE RESTRICT,
+    group_id text NOT NULL,
     team_id text NOT NULL,
     project_key text NOT NULL,
     service text NOT NULL,
     grant_id text NOT NULL,
     PRIMARY KEY (publisher_identity_id, team_id, project_key, service),
-    FOREIGN KEY (team_id, project_key, service) REFERENCES control.applied_project_services(team_id, project_key, service) ON DELETE RESTRICT,
+    FOREIGN KEY (group_id, publisher_identity_id) REFERENCES control.publisher_group_members(group_id, publisher_identity_id) ON DELETE RESTRICT,
+    FOREIGN KEY (team_id, project_key, group_id, service) REFERENCES control.applied_project_services(team_id, project_key, group_id, service) ON DELETE RESTRICT,
     FOREIGN KEY (grant_id, publisher_identity_id) REFERENCES control.publisher_grants(id, publisher_identity_id) ON DELETE RESTRICT
 );
 

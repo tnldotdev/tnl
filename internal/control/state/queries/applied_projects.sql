@@ -7,7 +7,10 @@ SELECT (EXISTS(SELECT 1 FROM control.service_namespace_claims
     OR EXISTS(SELECT 1 FROM control.service_endpoints WHERE hostname=sqlc.arg(hostname)))::boolean;
 
 -- name: ListAppliedProjectServices :many
-SELECT * FROM control.applied_project_services WHERE team_id=sqlc.arg(team_id) AND project_key=sqlc.arg(project_key) ORDER BY service;
+SELECT * FROM control.applied_project_services WHERE team_id=sqlc.arg(team_id) AND project_key=sqlc.arg(project_key) ORDER BY group_id,service;
+
+-- name: ListPublisherGroupServices :many
+SELECT * FROM control.applied_project_services WHERE group_id=sqlc.arg(group_id)::text ORDER BY service;
 
 -- name: ListProjectPublisherGroups :many
 SELECT * FROM control.project_publisher_groups WHERE team_id=sqlc.arg(team_id) AND project_key=sqlc.arg(project_key) AND deleted_at IS NULL ORDER BY name;

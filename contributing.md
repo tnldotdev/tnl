@@ -109,7 +109,8 @@ stop/start of all server roles. `tnld migrate` accepts only
 require the exact schema version and baseline identity. Connector session
 rebinding and the post-quantum public URL policy are part of the version 1
 baseline, including provider-qualified ingress and relay regions and saved run
-preferences. Use a fresh database, run `tnld migrate`, and start matching server,
+preferences. Deployment-scoped service bindings also require this fresh baseline.
+Use a fresh database, run `tnld migrate`, and start matching server,
 publisher, and connector binaries. Databases from previous baselines are rejected.
 A publisher restart does not restore its application sockets.
 

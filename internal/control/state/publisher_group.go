@@ -193,15 +193,13 @@ func (d *Database) RedeemPublisherGroupEnrollment(ctx context.Context, secret st
 	if err != nil {
 		return result, err
 	}
-	services, err := q.ListAppliedProjectServices(ctx, controlstatedb.ListAppliedProjectServicesParams{TeamID: team, ProjectKey: project})
+	services, err := q.ListPublisherGroupServices(ctx, gid)
 	if err != nil {
 		return result, err
 	}
 	for _, s := range services {
-		if s.GroupID.String == gid {
-			if err = d.ensureGroupServiceGrant(ctx, tx, q, id, s, actor, now); err != nil {
-				return result, err
-			}
+		if err = d.ensureGroupServiceGrant(ctx, tx, q, id, s, actor, now); err != nil {
+			return result, err
 		}
 	}
 	result.PublisherIdentityID, result.KeyID = id, kid
@@ -232,12 +230,12 @@ func (d *Database) RevokePublisherGroupMember(ctx context.Context, team, project
 	if err != nil {
 		return err
 	}
-	services, err := q.ListAppliedProjectServices(ctx, controlstatedb.ListAppliedProjectServicesParams{TeamID: team, ProjectKey: project})
+	services, err := q.ListPublisherGroupServices(ctx, gid)
 	if err != nil {
 		return err
 	}
 	for _, s := range services {
-		if s.GroupID.String == gid && s.ServiceID.Valid {
+		if s.ServiceID.Valid {
 			if err = closeRevokedPrivatePublication(ctx, tx, q, s.ServiceID.String, publisher, "", now); err != nil {
 				return err
 			}
@@ -406,14 +404,11 @@ func (d *Database) GetPublisherGroupAssignments(ctx context.Context, token strin
 		}
 		result.CertificateStatePlans = append(result.CertificateStatePlans, plan)
 	}
-	services, err := q.ListAppliedProjectServices(ctx, controlstatedb.ListAppliedProjectServicesParams{TeamID: m.TeamID, ProjectKey: m.ProjectKey})
+	services, err := q.ListPublisherGroupServices(ctx, m.GroupID)
 	if err != nil {
 		return result, err
 	}
 	for _, s := range services {
-		if s.GroupID.String != m.GroupID {
-			continue
-		}
 		var grant string
 		if err = tx.QueryRow(ctx, `SELECT assignment.grant_id FROM control.publisher_group_service_grants assignment JOIN control.publisher_grants g ON g.id=assignment.grant_id WHERE assignment.publisher_identity_id=$1 AND assignment.team_id=$2 AND assignment.project_key=$3 AND assignment.service=$4 AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>$5)`, m.PublisherIdentityID, m.TeamID, m.ProjectKey, s.Service, now).Scan(&grant); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {

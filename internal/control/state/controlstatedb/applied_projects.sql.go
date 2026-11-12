@@ -105,7 +105,7 @@ func (q *Queries) InvalidatePublisherGroupRuntimeHealth(ctx context.Context, pub
 }
 
 const listAppliedProjectServices = `-- name: ListAppliedProjectServices :many
-SELECT team_id, project_key, service, group_id, service_id, public_url_id, visitor_grant_id, desired_revision FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2 ORDER BY service
+SELECT team_id, project_key, service, group_id, service_id, public_url_id, visitor_grant_id, desired_revision FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2 ORDER BY group_id,service
 `
 
 type ListAppliedProjectServicesParams struct {
@@ -233,6 +233,39 @@ func (q *Queries) ListPublisherGroupMemberStatus(ctx context.Context, arg ListPu
 			&i.AcknowledgedAt,
 			&i.Healthy,
 			&i.LeaseExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPublisherGroupServices = `-- name: ListPublisherGroupServices :many
+SELECT team_id, project_key, service, group_id, service_id, public_url_id, visitor_grant_id, desired_revision FROM control.applied_project_services WHERE group_id=$1::text ORDER BY service
+`
+
+func (q *Queries) ListPublisherGroupServices(ctx context.Context, groupID string) ([]ControlAppliedProjectService, error) {
+	rows, err := q.db.Query(ctx, listPublisherGroupServices, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ControlAppliedProjectService
+	for rows.Next() {
+		var i ControlAppliedProjectService
+		if err := rows.Scan(
+			&i.TeamID,
+			&i.ProjectKey,
+			&i.Service,
+			&i.GroupID,
+			&i.ServiceID,
+			&i.PublicURLID,
+			&i.VisitorGrantID,
+			&i.DesiredRevision,
 		); err != nil {
 			return nil, err
 		}
