@@ -74,6 +74,7 @@ type Slots struct {
 	changed   chan struct{}
 	phase     slotsPhase
 	group     sync.WaitGroup
+	closeErr  error
 }
 
 func NewSlots(ctx context.Context, config SlotsConfig) (*Slots, error) {
@@ -131,6 +132,12 @@ func (s *Slots) run(ctx context.Context, slot uint8, w *slotWorker) {
 		preferTCP := s.preferTCP[slot]
 		s.mu.Unlock()
 		session, err := s.config.Connect(ctx, slot, preferTCP)
+		var cleanup *SessionCleanupError
+		if errors.As(err, &cleanup) {
+			s.mu.Lock()
+			s.closeErr = errors.Join(s.closeErr, err)
+			s.mu.Unlock()
+		}
 		if err == nil && session != nil {
 			s.mu.Lock()
 			current := s.workers[slot] == w && s.phase == slotsAccepting && ctx.Err() == nil
@@ -143,10 +150,10 @@ func (s *Slots) run(ctx context.Context, slot uint8, w *slotWorker) {
 			}
 			s.mu.Unlock()
 			if !current {
-				_ = session.Close()
+				s.closeSession(session)
 				return
 			}
-			closeOwned := sync.OnceFunc(func() { _ = session.Close() })
+			closeOwned := sync.OnceFunc(func() { s.closeSession(session) })
 			stop := context.AfterFunc(ctx, closeOwned)
 			serveErr := session.Serve(ctx)
 			stop()
@@ -206,6 +213,13 @@ func (s *Slots) run(ctx context.Context, slot uint8, w *slotWorker) {
 		}
 		backoff = min(2*backoff, s.config.BackoffMax)
 	}
+}
+
+func (s *Slots) closeSession(session SlotSession) {
+	err := session.Close()
+	s.mu.Lock()
+	s.closeErr = errors.Join(s.closeErr, err)
+	s.mu.Unlock()
 }
 
 // Snapshot returns only current ready paths and a wakeup for any state change.
@@ -278,5 +292,7 @@ func (s *Slots) Close() error {
 	s.notifyLocked()
 	s.mu.Unlock()
 	s.group.Wait()
-	return nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.closeErr
 }

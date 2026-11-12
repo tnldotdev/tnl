@@ -1,3 +1,5 @@
+//go:build linux
+
 package main
 
 import (
@@ -13,7 +15,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 
@@ -57,17 +58,11 @@ func runNamedWorkflowProcess(t *testing.T, personal bool, noGit ...bool) {
 
 func TestIntegrationCLINamedLocalIdentityContinuity(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	if runtime.GOOS != "linux" {
-		t.Skip("real CLI state protection is qualified in Linux")
-	}
 	runNamedWorkflowProcess(t, true, true)
 }
 
 func TestIntegrationCLINamedPersonalServiceRealization(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	if runtime.GOOS != "linux" {
-		t.Skip("real CLI state protection is qualified in Linux")
-	}
 	runNamedWorkflowProcess(t, true)
 }
 
@@ -75,9 +70,6 @@ func TestIntegrationCLINamedPersonalServiceRealization(t *testing.T) {
 // a nondefault config must survive the process boundary before and after apply.
 func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	if runtime.GOOS != "linux" {
-		t.Skip("real CLI state protection is qualified in Linux")
-	}
 	if !*cliWorkflowChild {
 		runNamedWorkflowProcess(t, false)
 		return
@@ -113,7 +105,7 @@ func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 		team = created.Id
 	}
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "selected target") }))
-	defer target.Close()
+	t.Cleanup(target.Close)
 	configuration := filepath.Join(root, "development.json")
 	services := map[string]any{
 		"api": map[string]any{"target": map[string]any{"type": "address", "address": target.URL}, "access": map[string]any{"team": true}},
@@ -216,6 +208,9 @@ func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 		})
 		return stop
 	}
+	// runtime endpoint/publish can leave their automatically started owner alive
+	// after the launcher exits. keep infrastructure and state until it is reaped.
+	joinNamedWorkflowOwners(t)
 	firstAPI, firstWeb := start("api"), start("web")
 	if _, err := session.Authenticated().Control.GetProjectConfiguration(t.Context(), team, source.Key); !errors.Is(err, clientcontrol.ErrNotFound) {
 		t.Fatalf("local startup implicitly applied production configuration: %v", err)

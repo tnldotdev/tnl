@@ -45,9 +45,10 @@ func TestIngressBindsExactServiceInventory(t *testing.T) {
 	if _, err := listener.Accept(); !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("closed accept = %v", err)
 	}
-	if connection, err := net.DialTimeout("tcp", address, time.Second); err == nil {
-		_ = connection.Close()
-		t.Fatal("drained service port remained open")
+	for _, socket := range listener.(*ingressListeners).listeners {
+		if err := socket.(*net.TCPListener).SetDeadline(time.Now()); !errors.Is(err, net.ErrClosed) {
+			t.Fatal("drained service socket remained open", err)
+		}
 	}
 }
 

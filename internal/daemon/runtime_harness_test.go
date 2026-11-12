@@ -49,22 +49,23 @@ type runtimeTopology struct {
 	databaseURL, managedDomain string
 	directory                  string
 	afterStop                  []func()
-	publishers                 []*integrationPublisher
-	ingress                    []*integrationProcess
-	relays                     []*integrationProcess
-	controls                   []*integrationProcess
+	publishers                 []runtimeProcess
+	ingress                    []runtimeProcess
+	relays                     []runtimeProcess
+	controls                   []runtimeProcess
+}
+
+type runtimeProcess struct {
+	name   string
+	cancel func()
+	wait   func() error
 }
 
 func newRuntimeTopology(t *testing.T) *runtimeTopology {
 	t.Helper()
 	f := &runtimeTopology{directory: t.TempDir()}
 	t.Cleanup(func() {
-		for _, publisher := range f.publishers {
-			if err := publisher.stop(); err != nil {
-				t.Errorf("publisher cleanup: %v", err)
-			}
-		}
-		for _, processes := range [][]*integrationProcess{f.ingress, f.relays, f.controls} {
+		for _, processes := range [][]runtimeProcess{f.publishers, f.ingress, f.relays, f.controls} {
 			for _, process := range processes {
 				process.cancel()
 			}
@@ -74,8 +75,8 @@ func newRuntimeTopology(t *testing.T) *runtimeTopology {
 				}
 			}
 		}
-		for _, close := range f.afterStop {
-			close()
+		for index := len(f.afterStop) - 1; index >= 0; index-- {
+			f.afterStop[index]()
 		}
 	})
 	return f
@@ -83,11 +84,7 @@ func newRuntimeTopology(t *testing.T) *runtimeTopology {
 
 func (f *runtimeTopology) cleanupResource(t *testing.T, close func()) {
 	t.Helper()
-	if f == nil {
-		t.Cleanup(close)
-	} else {
-		f.afterStop = append(f.afterStop, close)
-	}
+	f.afterStop = append(f.afterStop, close)
 }
 
 // shared relay sockets outlive publisher drain, even when opened after the
@@ -120,7 +117,7 @@ func cleanupIntegrationHTTPServer(t *testing.T, server *httptest.Server, owner *
 	})
 }
 
-func (f *runtimeTopology) own(role daemonconfig.Role, p *integrationProcess) {
+func (f *runtimeTopology) own(role daemonconfig.Role, p runtimeProcess) {
 	switch role {
 	case daemonconfig.RoleIngress:
 		f.ingress = append(f.ingress, p)
@@ -131,15 +128,27 @@ func (f *runtimeTopology) own(role daemonconfig.Role, p *integrationProcess) {
 	}
 }
 
-func startIntegrationProcess(t *testing.T, cfg daemonconfig.Config, acmeHTTPClient, serviceHTTPClient *http.Client) *integrationProcess {
+func (f *runtimeTopology) ownDaemon(role daemonconfig.Role, process *daemon) func() error {
+	stop := sync.OnceValue(func() error { return process.shutdown(time.Second) })
+	// daemon shutdown owns the drain-before-cancel boundary, unlike serveRuntime.
+	f.own(role, runtimeProcess{name: string(role), cancel: func() { _ = stop() }, wait: stop})
+	return stop
+}
+
+func (f *runtimeTopology) tempDir(t *testing.T) string {
 	t.Helper()
-	return startIntegrationProcessWithOptions(t, cfg, integrationProcessOptions{
-		acmeHTTPClient: acmeHTTPClient, serviceHTTPClient: serviceHTTPClient,
-	})
+	directory, err := os.MkdirTemp(f.directory, "fixture-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return directory
 }
 
 func startIntegrationProcessWithOptions(t *testing.T, cfg daemonconfig.Config, options integrationProcessOptions) *integrationProcess {
 	t.Helper()
+	if options.owner == nil {
+		t.Fatal("runtime process requires its topology owner")
+	}
 	if cfg.DNSProviderEnabled() && options.dns == nil {
 		endpoint, err := url.Parse(os.Getenv("AWS_ENDPOINT_URL_ROUTE_53"))
 		if err != nil || endpoint.Scheme != "http" || !(net.ParseIP(endpoint.Hostname()).IsLoopback() || endpoint.Hostname() == "dns" && os.Getenv("AWS_ACCESS_KEY_ID") == "tnl-local-only") {
@@ -165,19 +174,10 @@ func startIntegrationProcessWithOptions(t *testing.T, cfg daemonconfig.Config, o
 		name += " " + cfg.RelayID
 	}
 	process := &integrationProcess{cancel: cancel, done: make(chan struct{}), metricsAddress: cfg.MetricsListen, name: name}
-	if options.owner != nil {
-		if cfg.Role.RunsControl() {
-			options.owner.databaseURL, options.owner.managedDomain = cfg.DatabaseURL, cfg.ManagedDomain
-		}
-		options.owner.own(cfg.Role, process)
-	} else {
-		t.Cleanup(func() {
-			process.cancel()
-			if err := process.wait(); err != nil {
-				t.Errorf("tnld %s cleanup: %v", process.name, err)
-			}
-		})
+	if cfg.Role.RunsControl() {
+		options.owner.databaseURL, options.owner.managedDomain = cfg.DatabaseURL, cfg.ManagedDomain
 	}
+	options.owner.own(cfg.Role, runtimeProcess{name: name, cancel: cancel, wait: process.wait})
 	go func() {
 		err := serveRuntime(ctx, cfg, runtimeOptions{
 			acmeHTTPClient: options.acmeHTTPClient, serviceHTTPClient: options.serviceHTTPClient,
@@ -333,13 +333,13 @@ func unusedTCPAddress(t *testing.T) string {
 	}
 }
 
-func integrationPacketListener(t *testing.T) net.PacketConn {
+func integrationPacketListener(t *testing.T, owner *runtimeTopology) net.PacketConn {
 	t.Helper()
 	connection, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = connection.Close() })
+	owner.cleanupResource(t, func() { _ = connection.Close() })
 	return connection
 }
 
@@ -359,9 +359,10 @@ func splitTestConfig(role daemonconfig.Role, metricsAddress string) daemonconfig
 	}
 }
 
-func splitTestRelayConfig(t *testing.T, controlHostname, relayServiceID, relayID, certificateFile, privateKeyFile string) (daemonconfig.Config, runtimeListeners) {
+func splitTestRelayConfig(t *testing.T, controlHostname, relayServiceID, relayID, certificateFile, privateKeyFile string, owner *runtimeTopology) (daemonconfig.Config, runtimeListeners) {
 	t.Helper()
-	cfg := splitTestConfig(daemonconfig.RoleRelay, unusedTCPAddress(t))
+	listeners := runtimeListeners{metrics: serviceRuntimeListener(t, owner), relayTCP: serviceRuntimeListener(t, owner), relayUDP: integrationPacketListener(t, owner), relayInternal: serviceRuntimeListener(t, owner)}
+	cfg := splitTestConfig(daemonconfig.RoleRelay, listeners.metrics.Addr().String())
 	cfg.ControlHostname = controlHostname
 	cfg.ClusterSecret = testClusterSecret
 	cfg.RelayServiceID = relayServiceID
@@ -369,15 +370,14 @@ func splitTestRelayConfig(t *testing.T, controlHostname, relayServiceID, relayID
 	cfg.RelayAddress = relayServiceID + ".127.0.0.1.nip.io:443"
 	cfg.RelayTLSCertificateFile = certificateFile
 	cfg.RelayTLSPrivateKeyFile = privateKeyFile
-	cfg.RelayTCPListen = unusedTCPAddress(t)
-	listeners := runtimeListeners{relayUDP: integrationPacketListener(t)}
+	cfg.RelayTCPListen = listeners.relayTCP.Addr().String()
 	cfg.RelayUDPListen = listeners.relayUDP.LocalAddr().String()
-	cfg.InternalRelayListen = unusedTCPAddress(t)
+	cfg.InternalRelayListen = listeners.relayInternal.Addr().String()
 	cfg.InternalRelayAddress = cfg.InternalRelayListen
 	return cfg, listeners
 }
 
-func splitTestServiceHTTPClient(t *testing.T, roots *x509.CertPool, controlAddress string) *http.Client {
+func splitTestServiceHTTPClient(t *testing.T, roots *x509.CertPool, controlAddress string, owner *runtimeTopology) *http.Client {
 	t.Helper()
 	dialer := new(net.Dialer)
 	transport := &http.Transport{
@@ -386,6 +386,6 @@ func splitTestServiceHTTPClient(t *testing.T, roots *x509.CertPool, controlAddre
 			return dialer.DialContext(ctx, network, controlAddress)
 		},
 	}
-	t.Cleanup(transport.CloseIdleConnections)
+	owner.cleanupResource(t, transport.CloseIdleConnections)
 	return &http.Client{Transport: transport, Timeout: 5 * time.Second}
 }

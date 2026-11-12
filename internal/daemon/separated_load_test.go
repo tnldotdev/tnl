@@ -77,7 +77,7 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 	t.Cleanup(func() { _ = server.Close(); <-serverDone })
 	separatedWrite(t, "coordinator.ready", true)
 	database := inspectStandaloneTestDatabase(t, testutil.PostgresURL(t))
-	t.Logf("separated_load routes=%d rps=%d held=%d held_warmup=%s held_measure=%s sources=4 workers=%d queue=%d payload=32768 phase_duration=%s", routes, rate, *runtimeLoadHeldStreams, *runtimeLoadHeldWarmup, *runtimeLoadHeldMeasure, *runtimeLoadWorkers, *runtimeLoadQueue, duration)
+	t.Logf("separated_load routes=%d rps=%d held=%d held_warmup=%s held_measure=%s sources=%d workers=%d queue=%d payload=32768 phase_duration=%s", routes, rate, *runtimeLoadHeldStreams, *runtimeLoadHeldWarmup, *runtimeLoadHeldMeasure, len(separatedNames("visitors")), *runtimeLoadWorkers, *runtimeLoadQueue, duration)
 	defer func() {
 		if !t.Failed() {
 			return
@@ -90,7 +90,7 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 			'orders', (SELECT jsonb_agg(jsonb_build_object('state', state, 'public_url_id', public_url_id, 'attempts', attempts, 'available_at', available_at, 'claimed', work_owner IS NOT NULL, 'last_error', last_error)) FROM control.acme_orders))::text`).Scan(&states)
 		t.Logf("separated_failure_state=%s error=%v", states, err)
 	}()
-	for _, name := range append(append(separatedServerRoles(), separatedAppComponents()...), "pebble") {
+	for _, name := range separatedPlan(t)["ready"] {
 		separatedWait(t, name+".ready", 30*time.Second, nil)
 	}
 	verifySeparatedAdmission(t)
@@ -100,7 +100,7 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 		separatedWait(t, "fault.applied", 15*time.Second, &initialFault)
 		t.Logf("network_impairment scenario=%s path=%s added_rtt=%s loss_percent=%g active_before_publishing=true", *runtimeLoadScenario, *runtimeLoadNetworkPath, *runtimeLoadRTT, *runtimeLoadLoss)
 	}
-	for _, component := range separatedActiveComponents() {
+	for _, component := range separatedNames("components") {
 		separatedWait(t, component+".resources-ready", 30*time.Second, nil)
 	}
 	if *runtimeLoadWorkload == "connect" || *runtimeLoadWorkload == "postgres" {
@@ -109,8 +109,8 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 	}
 	publishers := activateSeparatedPublishers(t, database, routes)
 	separatedWrite(t, "visitors.start", time.Now())
-	for i := 1; i <= 4; i++ {
-		separatedWait(t, fmt.Sprintf("visitor-%d.ready", i), 15*time.Second, nil)
+	for _, visitor := range separatedNames("visitors") {
+		separatedWait(t, visitor+".ready", 15*time.Second, nil)
 	}
 	sequence := 0
 	if *runtimeLoadDirectPath {
@@ -318,7 +318,7 @@ func separatedBandwidthConfig() *benchworkload.BandwidthConfig {
 
 func assertSeparatedNoRejections(t *testing.T, phase string, before, after separatedSnapshot) {
 	t.Helper()
-	for _, role := range append(separatedIngresses(), "relay-a", "relay-b") {
+	for _, role := range slices.Concat(separatedNames("ingresses"), separatedPlan(t)["relays"]) {
 		for _, name := range []string{"tnl_admission_rejections_total"} {
 			count := func(snapshot separatedSnapshot) float64 {
 				var total float64
@@ -340,7 +340,7 @@ func assertSeparatedNoRejections(t *testing.T, phase string, before, after separ
 
 func assertSeparatedIngressTraffic(t *testing.T, before, after separatedSnapshot) {
 	t.Helper()
-	for _, role := range separatedIngresses() {
+	for _, role := range separatedNames("ingresses") {
 		count := func(snapshot separatedSnapshot) uint64 {
 			var total uint64
 			for _, family := range snapshot.Metrics[role] {
@@ -369,13 +369,7 @@ func assertSeparatedIngressTraffic(t *testing.T, before, after separatedSnapshot
 
 func assertSeparatedNoMemoryLimitEvents(t *testing.T, phase string, before, after separatedSnapshot) {
 	t.Helper()
-	components := append(append(separatedIngresses(), "relay-a", "relay-b"), separatedAppComponents()...)
-	components = append(components, separatedPublisherComponents()...)
-	components = append(components, "visitor-1", "visitor-2", "visitor-3", "visitor-4")
-	if *runtimeLoadWorkload == "postgres" {
-		components = append(components, "postgres-target")
-	}
-	for _, component := range components {
+	for _, component := range separatedPlan(t)["resources"] {
 		a, b := before.Resources[component], after.Resources[component]
 		if b.MemoryMaxEvents > a.MemoryMaxEvents || b.OOMKills > a.OOMKills {
 			t.Errorf("%s: %s memory limit events=%d OOM kills=%d", phase, component, b.MemoryMaxEvents-a.MemoryMaxEvents, b.OOMKills-a.OOMKills)
@@ -444,8 +438,8 @@ func sampleSeparatedGauges(t *testing.T, phase string) func() {
 				return
 			case <-ticker.C:
 			}
-			for _, role := range separatedServerRoles() {
-				if (phase == "relay-restart" || phase == "relay-kill") && role == "relay-a" || phase == "control-restart" && role == "control-a" {
+			for _, role := range separatedNames("servers") {
+				if (phase == "relay-restart" || phase == "relay-kill" || phase == "control-restart") && slices.Contains(separatedPlan(t)["fault-targets"], role) {
 					continue
 				}
 				response, err := integrationGET(ctx, client, "http://"+role+":9090/metrics")

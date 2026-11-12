@@ -17,7 +17,7 @@ import (
 func TestIntegrationConnectorDirectDefaultComposition(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	f := newServiceRuntimeFixture(t, false, nil)
-	target := startPrivateEchoTarget(t)
+	target := startPrivateEchoTarget(t, f.owner)
 	observations := connectorDirectObservations(t)
 	options := connectorDirectOptions(observations)
 	gate := make(chan struct{})
@@ -59,7 +59,7 @@ func TestIntegrationConnectorDirectDefaultComposition(t *testing.T) {
 func TestIntegrationConnectorDirectRetriesAndRepeatedFallback(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	f := newServiceRuntimeFixture(t, false, nil)
-	target := startPrivateEchoTarget(t)
+	target := startPrivateEchoTarget(t, f.owner)
 	observations := connectorDirectObservations(t)
 	sockets, packets := connectorDirectSockets(t, f, nil)
 	for _, packet := range packets {
@@ -123,7 +123,7 @@ func TestIntegrationConnectorDirectSourceRebinding(t *testing.T) {
 		t.Skip("real multi-source loopback sockets require Linux")
 	}
 	f := newServiceRuntimeFixture(t, false, nil)
-	target := startPrivateEchoTarget(t)
+	target := startPrivateEchoTarget(t, f.owner)
 	observations := connectorDirectObservations(t)
 	source := new(atomic.Uint32)
 	source.Store(1)
@@ -173,7 +173,7 @@ func TestIntegrationConnectorDirectSourceRebinding(t *testing.T) {
 func TestIntegrationConnectorDirectFailedChecksAndConsentExpiry(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	f := newServiceRuntimeFixture(t, false, nil)
-	target := startPrivateEchoTarget(t)
+	target := startPrivateEchoTarget(t, f.owner)
 	observations := connectorDirectObservations(t)
 	sockets, packets := connectorDirectSockets(t, f, nil)
 	packets[0].blockChecks.Store(true)

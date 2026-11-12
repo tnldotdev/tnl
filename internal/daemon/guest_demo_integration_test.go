@@ -294,24 +294,24 @@ func TestIntegrationGuestDemoDeadlineClosesConnectionsWithoutControl(t *testing.
 func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 	t.Helper()
 	databaseURL, inspect := standaloneTestDatabase(t)
-	publicListener := serviceRuntimeListener(t)
-	relayUDP := integrationPacketListener(t)
+	owner := newRuntimeTopology(t)
+	publicListener := serviceRuntimeListener(t, owner)
+	relayUDP := integrationPacketListener(t, owner)
 	publicAddress, relayUDPAddress := publicListener.Addr().String(), relayUDP.LocalAddr().String()
-	dns := newPrivateFixtureDNS(t)
-	pebble := startIntegrationPebble(t, integrationPort(t, publicAddress), dns.address)
-	cfg, listeners := standalonePublishConfig(t, databaseURL, publicListener, relayUDP, pebble.directoryURL)
+	dns := newPrivateFixtureDNS(t, owner)
+	pebble := startIntegrationPebble(t, integrationPort(t, publicAddress), dns.address, owner)
+	cfg, listeners := standalonePublishConfig(t, databaseURL, publicListener, relayUDP, pebble.directoryURL, owner)
 	cfg.GuestDemoEnabled = true
 	if deadlineProof {
 		// keep process leases longer than guest authority, so their expiry cannot
 		// conceal a missing guest connection fence.
 		cfg.IngressLeaseDuration, cfg.RelayLeaseDuration = time.Minute, time.Minute
 	}
-	owner := newRuntimeTopology(t)
 	ca := newIntegrationTestCA(t)
-	controlCertificate := ca.issueServer(t, cfg.ServerHostname())
+	controlCertificate := ca.issueServer(t, cfg.ServerHostname(), owner)
 	// this boundary tests guest issuance and visitor access, not infrastructure
 	// DNS-01 polling. automatic relay issuance has its own real DNS/Pebble suite.
-	relayCertificate := ca.issueServer(t, cfg.StandaloneRelayHostname())
+	relayCertificate := ca.issueServer(t, cfg.StandaloneRelayHostname(), owner)
 	cfg.RelayTLSCertificateFile, cfg.RelayTLSPrivateKeyFile = relayCertificate.certificateFile, relayCertificate.privateKeyFile
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
@@ -320,8 +320,9 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	publicControl := unusedTCPAddress(t)
-	startIntegrationControlProxy(t, owner, publicControl, cfg.ControlListen, controlTLS)
+	controlProxy := serviceRuntimeListener(t, owner)
+	publicControl := controlProxy.Addr().String()
+	serveIntegrationControlProxy(t, owner, controlProxy, cfg.ControlListen, controlTLS)
 	var offline atomic.Bool
 	var rejected atomic.Int64
 	closing := make(chan struct{})

@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -43,7 +44,7 @@ func TestRuntimeTopologyRetainsRelayUDPThroughPublisherDrain(t *testing.T) {
 			_ = packets.Close()
 			close(publisher.done)
 		}
-		owner.publishers = append(owner.publishers, publisher)
+		owner.publishers = append(owner.publishers, runtimeProcess{name: "publisher", cancel: publisher.cancel, wait: publisher.wait})
 	})
 	packet, err := net.ListenPacket("udp", address)
 	if err != nil {
@@ -299,7 +300,7 @@ func TestTopologyCleanupKeepsControlUntilAllIncarnationsDrain(t *testing.T) {
 		add := func(role daemonconfig.Role, name string) *integrationProcess {
 			ctx, cancel := context.WithCancel(context.Background())
 			p := &integrationProcess{name: name, cancel: cancel, done: make(chan struct{})}
-			owner.own(role, p)
+			owner.own(role, runtimeProcess{name: name, cancel: cancel, wait: p.wait})
 			go func() { <-ctx.Done(); order.append(name); close(p.done) }()
 			return p
 		}
@@ -312,14 +313,106 @@ func TestTopologyCleanupKeepsControlUntilAllIncarnationsDrain(t *testing.T) {
 		add(daemonconfig.RoleControl, "replacement control")
 		ctx, cancel := context.WithCancel(context.Background())
 		p := &integrationPublisher{cancel: cancel, done: make(chan struct{})}
-		owner.publishers = append(owner.publishers, p)
+		owner.publishers = append(owner.publishers, runtimeProcess{name: "publisher", cancel: cancel, wait: p.wait})
 		go func() { <-ctx.Done(); order.append("publisher"); close(p.done) }()
-		owner.afterStop = append(owner.afterStop, func() { order.append("resources") })
+		owner.afterStop = append(owner.afterStop, func() { order.append("resources") }, func() { order.append("dependent resources") })
 	})
 	events, _ := order.snapshot()
-	want := []string{"old relay", "old control", "publisher", "ingress", "replacement relay", "replacement control", "resources"}
+	want := []string{"old relay", "old control", "publisher", "ingress", "replacement relay", "replacement control", "dependent resources", "resources"}
 	if strings.Join(events, ",") != strings.Join(want, ",") {
 		t.Fatalf("cleanup order = %v, want %v", events, want)
+	}
+}
+
+func TestRuntimeTopologyRetainsResourcesThroughProcessJoin(t *testing.T) {
+	var socket *net.TCPListener
+	var file string
+	t.Run("topology", func(t *testing.T) {
+		owner := newRuntimeTopology(t)
+		socket = serviceRuntimeListener(t, owner).(*net.TCPListener)
+		file = filepath.Join(owner.tempDir(t), "state")
+		if err := os.WriteFile(file, []byte("owned"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		owner.own(daemonconfig.RoleControl, runtimeProcess{name: "control", cancel: func() {}, wait: func() error {
+			if _, err := os.Stat(file); err != nil {
+				return err
+			}
+			return socket.SetDeadline(time.Now())
+		}})
+	})
+	if err := socket.SetDeadline(time.Now()); !errors.Is(err, net.ErrClosed) {
+		t.Fatal("topology did not close its retained socket", err)
+	}
+	if _, err := os.Stat(file); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("topology did not remove its owned files", err)
+	}
+}
+
+func TestRuntimeTopologyDaemonDrainsBeforeComponentCancellation(t *testing.T) {
+	var order []string
+	t.Run("topology", func(t *testing.T) {
+		owner := newRuntimeTopology(t)
+		for _, role := range []daemonconfig.Role{daemonconfig.RoleControl, daemonconfig.RoleRelay, daemonconfig.RoleIngress} {
+			process := &daemon{}
+			process.cancel = func() {
+				if !process.draining.Load() {
+					t.Error("component cancellation preceded daemon drain", role)
+				}
+				order = append(order, string(role))
+			}
+			owner.ownDaemon(role, process)
+		}
+	})
+	if strings.Join(order, ",") != "ingress,relay,control" {
+		t.Fatal("daemon cleanup skipped, repeated, or reordered an incarnation", order)
+	}
+}
+
+func TestPublisherStopRetainsJoinedCancellationFailure(t *testing.T) {
+	operation := errors.New("publisher operation failed")
+	done := make(chan struct{})
+	close(done)
+	publisher := &integrationPublisher{cancel: func() {}, done: done, err: errors.Join(context.Canceled, operation)}
+	if err := publisher.stop(); !errors.Is(err, operation) || !errors.Is(err, context.Canceled) {
+		t.Fatal("publisher cleanup hid an operation failure joined with cancellation", err)
+	}
+}
+
+func TestRuntimeTopologySplitProxyJoinsIdleVisitor(t *testing.T) {
+	backend, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted, acceptDone := make(chan net.Conn, 1), make(chan struct{})
+	defer func() { _ = backend.Close(); <-acceptDone }()
+	go func() {
+		defer close(acceptDone)
+		connection, _ := backend.Accept()
+		accepted <- connection
+	}()
+	var visitor net.Conn
+	t.Run("topology", func(t *testing.T) {
+		owner := newRuntimeTopology(t)
+		listener := serviceRuntimeListener(t, owner)
+		startSplitIngressProxy(t, owner, listener, backend.Addr().String())
+		visitor, err = net.DialTimeout("tcp", listener.Addr().String(), time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case connection := <-accepted:
+			if connection == nil {
+				t.Fatal("proxy did not connect to the backend")
+			}
+			defer connection.Close()
+		case <-time.After(time.Second):
+			t.Fatal("proxy did not connect to the backend")
+		}
+		// keep the visitor open while topology cleanup joins both copy directions.
+	})
+	if visitor != nil {
+		_ = visitor.Close()
 	}
 }
 
@@ -405,17 +498,14 @@ func TestRelayKillFreshVisitorContract(t *testing.T) {
 }
 
 func TestDNSGateAllowsTrafficAndCancelsAtomically(t *testing.T) {
+	owner := newRuntimeTopology(t)
 	f := &integrationRoute53{zoneID: "unit", zone: &integrationDNSZone{Name: "example.test.", records: map[string]integrationDNSRecord{
 		"existing.example.test./A": {Name: "existing.example.test.", Type: "A", TTL: 1, Values: []integrationDNSValue{{Value: "127.0.0.1"}}},
 	}}}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = listener.Close() })
-	startOwnedDNSServer(t, &dns.Server{Listener: listener, Handler: dns.HandlerFunc(f.serveDNS)})
+	listener := serviceRuntimeListener(t, owner)
+	startOwnedDNSServer(t, &dns.Server{Listener: listener, Handler: dns.HandlerFunc(f.serveDNS)}, owner)
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { f.serveRoute53(t, w, r) }))
-	cleanupIntegrationHTTPServer(t, f.server, nil)
+	cleanupIntegrationHTTPServer(t, f.server, owner)
 	entered := make(chan struct{})
 	f.setBeforeChange(func(ctx context.Context, change integrationDNSChange) error {
 		if change.Record.Name != "blocked.example.test." {

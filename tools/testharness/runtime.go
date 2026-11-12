@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,27 +26,68 @@ import (
 )
 
 type runtimeHarness struct {
-	stack         *compose.DockerCompose
-	project       string
-	file          string
-	results       string
-	endpoint      string
-	token         string
-	containers    map[string]*testcontainers.DockerContainer
-	selected      string
-	activePublish []string
-	ingresses     []string
-	intentional   atomic.Bool
-	faultStarted  bool
-	faultDone     chan error
-	faultTasks    sync.WaitGroup
-	eventsCancel  context.CancelFunc
-	logsCancel    context.CancelFunc
-	watchers      sync.WaitGroup
+	stack        *compose.DockerCompose
+	project      string
+	file         string
+	results      string
+	endpoint     string
+	token        string
+	containers   map[string]*testcontainers.DockerContainer
+	selected     string
+	plan         map[string][]string
+	intentional  atomic.Bool
+	faultStarted bool
+	faultDone    chan error
+	faultTasks   sync.WaitGroup
+	eventsCancel context.CancelFunc
+	logsCancel   context.CancelFunc
+	watchers     sync.WaitGroup
 }
 
-var runtimePublishers = []string{"publishers", "publishers-2", "publishers-3", "publishers-4"}
-var runtimeApps = []string{"app", "app-2", "app-3", "app-4"}
+var runtimeStopStages = [...]string{"stop-visitors", "stop-publishers", "stop-servers", "stop-controls", "stop-support"}
+
+func readRuntimePlan(results string) (map[string][]string, error) {
+	data, err := os.ReadFile(filepath.Join(results, "runtime-plan.json"))
+	if err != nil {
+		return nil, fmt.Errorf("read runtime plan: %w", err)
+	}
+	var plan map[string][]string
+	if err := json.Unmarshal(data, &plan); err != nil {
+		return nil, fmt.Errorf("decode runtime plan: %w", err)
+	}
+	for _, key := range append([]string{"services", "start", "publishers", "ingresses", "fault-targets"}, runtimeStopStages[:]...) {
+		if len(plan[key]) == 0 {
+			return nil, fmt.Errorf("runtime plan is missing %s", key)
+		}
+	}
+	services := slices.Sorted(slices.Values(plan["services"]))
+	if len(slices.Compact(slices.Clone(services))) != len(services) {
+		return nil, errors.New("runtime plan has duplicate services")
+	}
+	var stopped []string
+	for _, stage := range runtimeStopStages {
+		stopped = append(stopped, plan[stage]...)
+	}
+	slices.Sort(stopped)
+	if !slices.Equal(stopped, services) {
+		return nil, errors.New("runtime plan shutdown must cover each service once")
+	}
+	for _, key := range []string{"start", "targets", "publishers", "ingresses", "controls", "relays", "visitors", "apps", "components", "ready", "resources", "fault-targets", "fault-sources", "fault-destinations"} {
+		for _, name := range plan[key] {
+			if !slices.Contains(services, name) {
+				return nil, fmt.Errorf("runtime plan %s contains absent service %s", key, name)
+			}
+		}
+	}
+	for _, key := range []string{"fault-sources", "fault-destinations"} {
+		for _, name := range plan[key] {
+			if !slices.Contains(plan["fault-targets"], name) {
+				return nil, fmt.Errorf("runtime plan %s contains component %s outside the planned fault", key, name)
+			}
+		}
+	}
+	return plan, nil
+}
 
 func runRuntime(ctx context.Context, root string) (retErr error) {
 	workload := os.Getenv("RUNTIME_WORKLOAD")
@@ -122,40 +164,19 @@ func runRuntime(ctx context.Context, root string) (retErr error) {
 	if topology := os.Getenv("HA_TOPOLOGY"); topology != "0" && topology != "1" && topology != "" {
 		return errors.New("HA_TOPOLOGY must be 0 or 1")
 	}
-	ha := os.Getenv("HA_TOPOLOGY") != "0"
-	profiles := []string{}
-	if ha {
-		profiles = append(profiles, "ha")
-	}
-	if scenario == "control-restart" {
-		profiles = append(profiles, "replicated-relays")
-	}
-	if workload == "postgres" {
-		profiles = append(profiles, "postgres-load")
-	}
 	var random [8]byte
 	if _, err := rand.Read(random[:]); err != nil {
 		return err
 	}
 	project := "tnl-separated-load-" + hex.EncodeToString(random[:])
 	file := filepath.Join(root, "tests/integration/fixtures/separated-stack/compose.yaml")
-	stack, err := compose.NewDockerComposeWith(compose.StackIdentifier(project), compose.WithStackFiles(file), compose.WithProfiles(profiles...))
+	stack, err := compose.NewDockerComposeWith(compose.StackIdentifier(project), compose.WithStackFiles(file))
 	if err != nil {
 		return fmt.Errorf("configure runtime topology: %w", err)
 	}
 	stack.WithOsEnv()
 	h := &runtimeHarness{stack: stack, file: file, project: project, results: results, selected: scenario,
 		containers: make(map[string]*testcontainers.DockerContainer), faultDone: make(chan error, 1)}
-	if ha {
-		h.ingresses = []string{"ingress-a", "ingress-b"}
-	} else {
-		h.ingresses = []string{"ingress-a"}
-	}
-	for index, name := range runtimePublishers {
-		if index*2 < routes {
-			h.activePublish = append(h.activePublish, name)
-		}
-	}
 	defer func() { retErr = errors.Join(retErr, h.close()) }()
 	for _, volume := range []string{"tnl-load-go-build", "tnl-load-go-modules"} {
 		if _, err := h.docker(ctx, "volume", "create", volume); err != nil {
@@ -177,35 +198,25 @@ func runRuntime(ctx context.Context, root string) (retErr error) {
 	if err := h.waitForExit(ctx, "setup"); err != nil {
 		return err
 	}
-	if workload == "postgres" {
-		if err := stack.Up(ctx, compose.RunServices("postgres-target"), compose.Wait(true)); err != nil {
+	h.plan, err = readRuntimePlan(results)
+	if err != nil {
+		return err
+	}
+	if len(h.plan["targets"]) != 0 {
+		if err := stack.Up(ctx, compose.RunServices(slices.Clone(h.plan["targets"])...), compose.Wait(true)); err != nil {
 			return fmt.Errorf("start runtime PostgreSQL target: %w", err)
 		}
 	}
 	if err := h.startEventWatcher(ctx); err != nil {
 		return err
 	}
-	services := []string{"control-a", "ingress-a", "relay-a", "relay-b"}
-	if ha {
-		services = append(services, "control-b", "ingress-b")
-	}
-	if scenario == "control-restart" {
-		services = append(services, "relay-a-2", "relay-b-2")
-	}
-	services = append(services, runtimePublishers...)
-	services = append(services, "visitor-1", "visitor-2", "visitor-3", "visitor-4")
-	services = append(services, runtimeApps...)
-	if workload == "postgres" {
-		services = append(services[:0], "control-a", "control-b", "ingress-a", "ingress-b", "relay-a", "relay-b", "publishers", "visitor-1", "postgres-target")
-	}
-	services = append(services, "dns", "pebble", "coordinator")
-	if err := stack.Up(ctx, compose.RunServices(services...)); err != nil {
+	if err := stack.Up(ctx, compose.RunServices(slices.Clone(h.plan["start"])...)); err != nil {
 		return fmt.Errorf("start runtime components: %w", err)
 	}
 	if err := h.startLogWatcher(ctx); err != nil {
 		return err
 	}
-	for _, name := range append([]string{"postgres"}, services...) {
+	for _, name := range h.plan["services"] {
 		container, err := stack.ServiceContainer(ctx, name)
 		if err != nil {
 			return fmt.Errorf("inspect runtime component %s: %w", name, err)
@@ -263,7 +274,7 @@ func (h *runtimeHarness) observe(ctx context.Context) error {
 				}
 				return nil
 			}
-			if !state.Running && !(name == "relay-a" && h.intentional.Load() && state.ExitCode == 137) {
+			if !state.Running && !(slices.Contains(h.plan["fault-targets"], name) && h.intentional.Load() && state.ExitCode == 137) {
 				h.saveSnapshot("unexpected-component-exit.json")
 				return fmt.Errorf("unexpected runtime component exit: %s (%d)", name, state.ExitCode)
 			}
@@ -385,8 +396,43 @@ func (h *runtimeHarness) docker(ctx context.Context, args ...string) (string, er
 }
 
 func (h *runtimeHarness) compose(ctx context.Context, args ...string) (string, error) {
+	if err := h.checkCommandServices(args); err != nil {
+		return "", err
+	}
 	arguments := append([]string{"compose", "--ansi", "never", "--file", h.file, "--project-name", h.project}, args...)
 	return h.docker(ctx, arguments...)
+}
+
+// faults and shutdown may only act on services selected by setup. in particular,
+// an unused publisher/app group must never become a fault or socket-check target.
+func (h *runtimeHarness) checkCommandServices(args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	var services []string
+	switch args[0] {
+	case "exec":
+		if len(args) < 3 || args[1] != "-T" {
+			return errors.New("runtime exec requires -T and a planned service")
+		}
+		services = args[2:3]
+	case "kill":
+		if len(args) != 4 || args[1] != "--signal" {
+			return errors.New("runtime kill requires a signal and a planned service")
+		}
+		services = args[3:]
+	case "start", "stop":
+		services = args[1:]
+	}
+	for _, name := range services {
+		if !slices.Contains(h.plan["services"], name) {
+			return fmt.Errorf("runtime command %s targets component %s absent from the plan", args[0], name)
+		}
+		if args[0] != "stop" && !slices.Contains(h.plan["fault-targets"], name) {
+			return fmt.Errorf("runtime command %s targets component %s outside the planned fault", args[0], name)
+		}
+	}
+	return nil
 }
 
 func (h *runtimeHarness) event(ctx context.Context, name string, body any) ([]byte, error) {
@@ -425,20 +471,14 @@ func (h *runtimeHarness) close() error {
 	defer cancel()
 	h.faultTasks.Wait()
 	h.saveSnapshot("containers-before-cleanup.json")
-	for _, group := range [][]string{
-		{"visitor-1", "visitor-2", "visitor-3", "visitor-4"},
-		append(runtimeApps, runtimePublishers...),
-		{"ingress-a", "ingress-b", "relay-a", "relay-b"},
-		{"control-a", "control-b", "pebble", "dns", "coordinator", "postgres-target", "postgres"},
-	} {
-		var present []string
-		for _, name := range group {
-			if _, ok := h.containers[name]; ok {
-				present = append(present, name)
+	var stopErr error
+	// startup may fail before container inspection; stop the plan, not the map.
+	for _, stage := range runtimeStopStages {
+		if services := h.plan[stage]; len(services) != 0 {
+			_, err := h.compose(ctx, append([]string{"stop"}, services...)...)
+			if err != nil {
+				stopErr = errors.Join(stopErr, fmt.Errorf("runtime cleanup %s: %w", stage, err))
 			}
-		}
-		if len(present) != 0 {
-			_, _ = h.compose(ctx, append([]string{"stop"}, present...)...)
 		}
 	}
 	h.saveSnapshot("containers.json")
@@ -450,5 +490,5 @@ func (h *runtimeHarness) close() error {
 	}
 	h.watchers.Wait()
 	err := h.stack.Down(ctx, compose.RemoveOrphans(true), compose.RemoveVolumes(true))
-	return errors.Join(err, h.stack.Close())
+	return errors.Join(stopErr, err, h.stack.Close())
 }

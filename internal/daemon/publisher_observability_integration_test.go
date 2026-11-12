@@ -219,7 +219,7 @@ func TestIntegrationPublisherObservabilityPrivate(t *testing.T) {
 			f := newServiceRuntimeFixtureContext(t, false, nil, true, func(role string) context.Context { return collector.process(t, role) })
 			startSeparatedPrivateIngress(t, f, 0, transport, nil)
 			startSeparatedPrivateIngress(t, f, 1, transport, nil)
-			target := startPrivateEchoTarget(t)
+			target := startPrivateEchoTarget(t, f.owner)
 			key, _ := opaqueid.New(opaqueid.IdempotencyPrefix)
 			service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "trace", key, controlv1.ServiceMetadata{Protocol: controlv1.Tcp})
 			if err != nil {
@@ -330,7 +330,7 @@ func TestIntegrationPublisherObservabilityPublicService(t *testing.T) {
 			collector := newTopologyTraceCollector(t)
 			f := newServiceRuntimeFixtureContext(t, false, nil, true, func(role string) context.Context { return collector.process(t, role) })
 			process := startSeparatedPrivateIngress(t, f, 0, transport, nil)
-			target := startPrivateEchoTarget(t)
+			target := startPrivateEchoTarget(t, f.owner)
 			group, protocol, public := "trace", controlv1.Tcp, true
 			applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{
 				TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64),

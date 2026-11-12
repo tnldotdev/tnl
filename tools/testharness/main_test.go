@@ -2,6 +2,7 @@ package main
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -18,10 +19,17 @@ func TestHarnessArgumentsPreserveChildCommand(t *testing.T) {
 	if err != nil || sharded.TestShard != "2/4" || !reflect.DeepEqual(sharded.Command, arguments[2:]) {
 		t.Fatalf("parsed sharded command = %+v, %v", sharded, err)
 	}
-	for _, input := range [][]string{{"mysql", "--", "go", "test"}, {"mysql-tls", "--", "go", "test"}, {"postgres-tls", "--", "go", "test"}, {"redis", "--", "go", "test"}, {"dns"}, {"runtime"}} {
+	for _, input := range [][]string{{"mysql", "--", "go", "test"}, {"mysql-tls", "--", "go", "test"}, {"postgres-tls", "--", "go", "test"}, {"redis", "--", "go", "test"}, {"connections", "--", "go", "test"}, {"dns"}, {"runtime"}} {
 		if _, err := parseHarnessArguments(input); err != nil {
 			t.Fatalf("parse %v: %v", input, err)
 		}
+	}
+}
+
+func TestHarnessUsageIncludesConnections(t *testing.T) {
+	_, err := parseHarnessArguments([]string{"connections"})
+	if err == nil || !strings.Contains(err.Error(), "redis|connections -- go test") {
+		t.Fatalf("connections usage = %v", err)
 	}
 }
 

@@ -89,15 +89,7 @@ func Run(ctx context.Context, config Config) (result error) {
 	}
 	defer hostLock.Close()
 	if config.QUICConnector == nil {
-		transport, udpErr := muxsession.ListenQUICTransport("udp", ":0")
-		if udpErr == nil {
-			defer func() { result = errors.Join(result, transport.Close()) }()
-			config.QUICConnector = muxsession.QUICConnector{TLSConfig: config.TransportTLS, Config: config.QUICConfig, Dialer: transport}
-		} else {
-			config.QUICConnector = muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
-				return nil, udpErr
-			})
-		}
+		config.QUICConnector = muxsession.OwnedQUICConnector{TLSConfig: config.TransportTLS, Config: config.QUICConfig}
 	}
 	if config.TCPConnector == nil {
 		config.TCPConnector = muxsession.TLSYamuxConnector{TLSConfig: config.TransportTLS}

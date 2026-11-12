@@ -69,7 +69,7 @@ func runSeparatedConnectTarget(t *testing.T, ctx context.Context, component stri
 	}
 }
 
-func connectLoadClient(t *testing.T, ctx context.Context) (*clientstate.Database, *clientauth.Client) {
+func connectLoadClient(t *testing.T, ctx context.Context, owner *runtimeTopology) (*clientstate.Database, *clientauth.Client) {
 	t.Helper()
 	state, err := clientstate.Open(ctx, filepath.Join(t.TempDir(), "state"))
 	if err != nil {
@@ -77,14 +77,14 @@ func connectLoadClient(t *testing.T, ctx context.Context) (*clientstate.Database
 	}
 	t.Cleanup(func() { _ = state.Close() })
 	saveRuntimeOIDCSession(t, state, "https://control."+separatedDomain, testutil.PostgresURL(t), "routes."+separatedDomain)
-	authenticated, err := clientauth.Authenticate(ctx, clientauth.Config{ServerEndpoint: "https://control." + separatedDomain, State: state, HTTPClient: separatedHTTP(t), Diagnostics: io.Discard})
+	authenticated, err := clientauth.Authenticate(ctx, clientauth.Config{ServerEndpoint: "https://control." + separatedDomain, State: state, HTTPClient: separatedHTTP(t, owner), Diagnostics: io.Discard})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return state, authenticated
 }
 
-func runSeparatedConnectPublishers(t *testing.T, ctx context.Context, count, shard int) {
+func runSeparatedConnectPublishers(t *testing.T, ctx context.Context, count, shard int, owner *runtimeTopology) {
 	separatedWrite(t, separatedPublisherShardKey(shard, "concurrency"), runtimeLoadAdmission.PublisherConcurrency)
 	if !separatedRead(t, ctx, "publish.start", nil) {
 		return
@@ -94,7 +94,7 @@ func runSeparatedConnectPublishers(t *testing.T, ctx context.Context, count, sha
 		ctx, diagnostics = setupSeparatedPublisherDiagnostics(t, ctx)
 		defer diagnostics.Close(t)
 	}
-	state, authenticated := connectLoadClient(t, ctx)
+	state, authenticated := connectLoadClient(t, ctx, owner)
 	profile, err := state.Server(ctx, authenticated.ServerEndpoint)
 	if err != nil {
 		t.Fatal(err)
@@ -107,7 +107,7 @@ func runSeparatedConnectPublishers(t *testing.T, ctx context.Context, count, sha
 	publishCtx, stop := context.WithCancel(ctx)
 	var publishers sync.WaitGroup
 	defer func() { stop(); publishers.Wait() }()
-	for _, index := range separatedPublisherIndexes(count, shard) {
+	for _, index := range separatedPublisherIndexes(t, shard) {
 		key, err := opaqueid.New(opaqueid.IdempotencyPrefix)
 		if err != nil {
 			t.Fatal(err)
@@ -166,7 +166,7 @@ func runSeparatedConnectPublishers(t *testing.T, ctx context.Context, count, sha
 		case <-time.After(*runtimeLoadReadyTimeout):
 			t.Fatal("connect publisher readiness deadline")
 		}
-		services[index] = connectLoadService{Service: service, Target: separatedPublisherComponents()[shard] + ":8080", Transport: transport}
+		services[index] = connectLoadService{Service: service, Target: separatedNames("publishers")[shard] + ":8080", Transport: transport}
 		if *runtimeLoadWorkload == "postgres" {
 			services[index].Target = target
 		}
@@ -192,7 +192,7 @@ func runSeparatedConnectPublishers(t *testing.T, ctx context.Context, count, sha
 func runSeparatedConnect(t *testing.T, database *sql.DB, count, rate int, duration time.Duration) {
 	separatedWrite(t, "publish.start", true)
 	services := make([]connectLoadService, count)
-	for shard := range separatedPublisherComponents() {
+	for shard := range separatedNames("publishers") {
 		var result []connectLoadService
 		separatedWait(t, separatedPublisherShardKey(shard, "connect-ready"), time.Duration(count)**runtimeLoadReadyTimeout, &result)
 		for index, service := range result {
@@ -208,7 +208,7 @@ func runSeparatedConnect(t *testing.T, database *sql.DB, count, rate int, durati
 	}
 	separatedWrite(t, "connect.services", services)
 	var startup benchworkload.Histogram
-	for _, component := range separatedConnectVisitors() {
+	for _, component := range separatedNames("visitors") {
 		var result benchworkload.Histogram
 		separatedWait(t, component+".connect-ready", time.Duration(count)*35*time.Second, &result)
 		if err := startup.Merge(result); err != nil {
@@ -249,7 +249,7 @@ func runSeparatedConnect(t *testing.T, database *sql.DB, count, rate int, durati
 		// and offered scheduling delay out of the steady-state measurement.
 		if phase.Reuse {
 			separatedWrite(t, fmt.Sprintf("connect.prepare-%d", sequence), phase)
-			for _, component := range separatedConnectVisitors() {
+			for _, component := range separatedNames("visitors") {
 				separatedWait(t, name+"."+component+".prepared", 2*time.Minute, nil)
 			}
 		}
@@ -257,7 +257,7 @@ func runSeparatedConnect(t *testing.T, database *sql.DB, count, rate int, durati
 		phase.Start = time.Now().Add(time.Second)
 		separatedWrite(t, fmt.Sprintf("connect.phase-%d", sequence), phase)
 		var results []connectLoadResult
-		for _, component := range separatedConnectVisitors() {
+		for _, component := range separatedNames("visitors") {
 			var result connectLoadResult
 			separatedWait(t, name+"."+component, duration+15*time.Second, &result)
 			results = append(results, result)
@@ -272,7 +272,7 @@ func runSeparatedConnect(t *testing.T, database *sql.DB, count, rate int, durati
 		reportConnectLoad(t, name, results)
 	}
 	separatedWrite(t, fmt.Sprintf("connect.phase-%d", len(names)), connectLoadPhase{Done: true})
-	for _, component := range separatedConnectVisitors() {
+	for _, component := range separatedNames("visitors") {
 		var clean bool
 		separatedWait(t, component+".connect-stopped", 30*time.Second, &clean)
 		if !clean {
@@ -280,7 +280,7 @@ func runSeparatedConnect(t *testing.T, database *sql.DB, count, rate int, durati
 		}
 	}
 	separatedWrite(t, "connect.publishers.stop", true)
-	for shard := range separatedPublisherComponents() {
+	for shard := range separatedNames("publishers") {
 		var clean bool
 		separatedWait(t, separatedPublisherShardKey(shard, "connect-stopped"), 30*time.Second, &clean)
 		if !clean {
@@ -299,10 +299,10 @@ func runSeparatedConnect(t *testing.T, database *sql.DB, count, rate int, durati
 		t.Errorf("connect cleanup retained runs=%d live owners=%d: %v", openRuns, liveOwners, err)
 	}
 	separatedResult(t, "connect-cleanup", map[string]int{"open_runs": openRuns, "live_native_owners": liveOwners})
-	for _, ingress := range separatedIngresses() {
+	for _, ingress := range separatedNames("ingresses") {
 		separatedWrite(t, ingress+".stop", true)
 	}
-	for _, ingress := range separatedIngresses() {
+	for _, ingress := range separatedNames("ingresses") {
 		separatedWait(t, ingress+".stopped", 35*time.Second, nil)
 	}
 }
@@ -372,8 +372,8 @@ func reportConnectLoad(t *testing.T, name string, results []connectLoadResult) {
 	separatedResult(t, name+"-latency", map[string]any{"samples": len(actual), "request": exact(actual), "first_response_byte": exact(first), "scheduled": exact(scheduled), "queue": exact(queue), "successful_requests_per_second": float64(summary.Successes) / (summary.OfferDuration + summary.DrainDuration).Seconds()})
 	t.Logf("connect_load phase=%s success=%d failure=%d missed=%d queue_expired=%d request=%v first_response_byte=%v", name, summary.Successes, summary.Failures, summary.Missed, summary.QueueExpired, exact(actual), exact(first))
 	var expected int
-	for index := range separatedConnectVisitors() {
-		rate := benchworkload.Assignment(*runtimeLoadRPS, len(separatedConnectVisitors()), index)
+	for index := range separatedNames("visitors") {
+		rate := benchworkload.Assignment(*runtimeLoadRPS, len(separatedNames("visitors")), index)
 		expected += int((time.Duration(rate)**runtimeLoadDuration + time.Second - 1) / time.Second)
 	}
 	if err := summary.Err(); err != nil || summary.Scheduled != expected || len(actual) != summary.Successes {
@@ -417,18 +417,19 @@ func forEachConnectLoadRequest(directory string, result connectLoadResult, obser
 	return nil
 }
 
-func runSeparatedConnectVisitor(t *testing.T, ctx context.Context, component string, rate int) {
+func runSeparatedConnectVisitor(t *testing.T, ctx context.Context, component string, rate int, owner *runtimeTopology) {
 	var services []connectLoadService
 	if !separatedRead(t, ctx, "connect.services", &services) {
 		return
 	}
-	index, _ := strconv.Atoi(strings.TrimPrefix(component, "visitor-"))
-	state, _ := connectLoadClient(t, ctx)
+	visitors := separatedNames("visitors")
+	index, sources := slices.Index(visitors, component)+1, len(visitors)
+	state, _ := connectLoadClient(t, ctx, owner)
 	var local, direct []string
 	cohortByAddress := make(map[string]string)
 	var startup benchworkload.Histogram
 	var processes []*integrationBinaryProcess
-	for serviceIndex := index - 1; serviceIndex < len(services); serviceIndex += len(separatedConnectVisitors()) {
+	for serviceIndex := index - 1; serviceIndex < len(services); serviceIndex += sources {
 		service := services[serviceIndex]
 		started := time.Now()
 		address := unusedTCPAddress(t)
@@ -482,7 +483,7 @@ func runSeparatedConnectVisitor(t *testing.T, ctx context.Context, component str
 	for sequence := 0; ; sequence++ {
 		var phase connectLoadPhase
 		visitor := &benchworkload.TCPVisitor{PayloadBytes: *connectLoadPayloadBytes}
-		workers := benchworkload.Assignment(*runtimeLoadWorkers, 4, index-1)
+		workers := benchworkload.Assignment(*runtimeLoadWorkers, sources, index-1)
 		var setup benchworkload.Histogram
 		if sequence == 2 || sequence == 3 {
 			if !separatedRead(t, ctx, fmt.Sprintf("connect.prepare-%d", sequence), &phase) {
@@ -512,8 +513,8 @@ func runSeparatedConnectVisitor(t *testing.T, ctx context.Context, component str
 		}
 		result := connectLoadResult{Setup: setup, Cohorts: make(map[string]benchworkload.VisitorResult)}
 		var err error
-		result.Summary, err = visitor.Run(ctx, benchworkload.VisitorConfig{Rate: benchworkload.Assignment(rate, 4, index-1), Workers: workers,
-			QueueSlots: benchworkload.Assignment(*runtimeLoadQueue, 4, index-1), Start: phase.Start.Add(time.Duration(index-1) * time.Second / time.Duration(rate)), Duration: phase.Duration,
+		result.Summary, err = visitor.Run(ctx, benchworkload.VisitorConfig{Rate: benchworkload.Assignment(rate, sources, index-1), Workers: workers,
+			QueueSlots: benchworkload.Assignment(*runtimeLoadQueue, sources, index-1), Start: phase.Start.Add(time.Duration(index-1) * time.Second / time.Duration(rate)), Duration: phase.Duration,
 			OnResult: func(row benchworkload.RequestResult) {
 				result.Requests = append(result.Requests, row)
 				cohort := result.Cohorts[cohortByAddress[row.URL]]

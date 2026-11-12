@@ -16,7 +16,7 @@ func TestBinaryIntegrationStandalonePublish(t *testing.T) {
 		response.Header().Set("X-Tnl-Integration", "binary")
 		_, _ = io.WriteString(response, request.URL.RequestURI())
 	}))
-	cleanupIntegrationHTTPServer(t, target, nil)
+	cleanupIntegrationHTTPServer(t, target, fixture.dependencies)
 	publish := startIntegrationBinaryPublish(t, fixture.repositoryRoot, fixture.environment, fixture.tnlPath,
 		"--no-config", "publish", target.URL, "--public-url", "https://binary.developer.routes.127.0.0.1.nip.io",
 		"--anonymous", "--ip", "127.0.0.1/32", "--output", "ndjson")
@@ -24,7 +24,7 @@ func TestBinaryIntegrationStandalonePublish(t *testing.T) {
 	if ready.SchemaVersion != 1 || ready.URL != "https://binary.developer.routes.127.0.0.1.nip.io" || ready.PublishRunNumber != 1 {
 		t.Fatalf("binary ready event = %#v", ready)
 	}
-	visitor := newIntegrationVisitor(t, fixture.pebble.roots, "")
+	visitor := newIntegrationVisitor(t, fixture.pebble.roots, "", fixture.dependencies)
 	var response *http.Response
 	var body []byte
 	waitForIntegrationCondition(t, 10*time.Second, func(ctx context.Context) (bool, error) {

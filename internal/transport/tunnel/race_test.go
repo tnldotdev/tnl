@@ -3,6 +3,7 @@ package tunnel
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -255,12 +256,18 @@ func rejectingConnectorAfter(t *testing.T, gate <-chan struct{}, code tunnelv1.E
 }
 
 func TestRaceClosesLateSuccessfulLoser(t *testing.T) {
+	synctest.Test(t, testRaceClosesLateSuccessfulLoser)
+}
+
+func testRaceClosesLateSuccessfulLoser(t *testing.T) {
 	// pause the fallback after hello_accepted, immediately before Dial returns.
 	// this models a successful result already in flight when the winner cancels.
 	entered, release := make(chan struct{}), make(chan struct{})
 	unblock := sync.OnceFunc(func() { close(release) })
 	fallback, loser := handshakeConnector(t, func(context.Context, tunnelv1.Message) error { return nil })
+	started := make(chan context.Context, 1)
 	wrapped := muxsession.ConnectorFunc(func(ctx context.Context, e muxsession.Endpoint) (muxsession.Session, error) {
+		started <- ctx
 		s, err := fallback.Connect(ctx, e)
 		return &gatedDeadlineSession{Session: s, entered: entered, release: release}, err
 	})
@@ -273,15 +280,37 @@ func TestRaceClosesLateSuccessfulLoser(t *testing.T) {
 		}
 	})
 	t.Cleanup(unblock)
-	s, winner, err := Race(tunnelContext(t), Candidate{Connector: primary, Transport: TransportQUIC}, Candidate{Connector: wrapped, Transport: TransportTLSTCP}, 0, publisherHello())
-	if s != nil {
-		t.Cleanup(func() { _ = s.Close() })
+	done := make(chan struct{})
+	var result raceOutcome
+	go func() {
+		result.session, result.transport, result.err = Race(t.Context(), Candidate{Connector: primary, Transport: TransportQUIC}, Candidate{Connector: wrapped, Transport: TransportTLSTCP}, 0, publisherHello())
+		close(done)
+	}()
+	loserCtx := <-started
+	synctest.Wait()
+	select {
+	case <-loserCtx.Done():
+	default:
+		t.Error("winner did not cancel the in-flight successful loser")
 	}
-	if err != nil || winner != TransportQUIC {
-		t.Fatalf("race: %s, %v", winner, err)
+	select {
+	case <-done:
+		t.Error("race returned before the late successful handshake finished")
+	default:
 	}
 	unblock()
-	await(t, loser.Done())
+	<-done
+	if result.session != nil {
+		defer result.session.Close()
+	}
+	if result.err != nil || result.transport != TransportQUIC {
+		t.Fatalf("race: %s, %v", result.transport, result.err)
+	}
+	select {
+	case <-loser.Done():
+	default:
+		t.Fatal("race returned before closing the late successful loser")
+	}
 }
 
 type gatedDeadlineSession struct {
@@ -321,4 +350,245 @@ func TestRacePreservesBothTransportFailures(t *testing.T) {
 	if s != nil || transport != "" || !errors.Is(err, one) || !errors.Is(err, two) {
 		t.Fatalf("both failures: %v, %s, %v", s, transport, err)
 	}
+}
+
+type raceOutcome struct {
+	session   *Session
+	transport Transport
+	err       error
+}
+
+type raceCloseFailureSession struct {
+	muxsession.Session
+	err    error
+	closes atomic.Int32
+}
+
+func (s *raceCloseFailureSession) Close() error {
+	s.closes.Add(1)
+	return errors.Join(s.Session.Close(), s.err)
+}
+
+type raceBlockedSession struct {
+	*raceCloseFailureSession
+	entered, canceled, release chan struct{}
+	stage                      string
+}
+
+func (s *raceBlockedSession) OpenStream(ctx context.Context) (muxsession.Stream, error) {
+	close(s.entered)
+	<-ctx.Done()
+	close(s.canceled)
+	if s.stage == "authenticating" {
+		<-s.release
+	}
+	return nil, errors.Join(ctx.Err(), context.Cause(ctx))
+}
+
+func (s *raceBlockedSession) Close() error {
+	if s.stage == "closing" {
+		<-s.release
+	}
+	return s.raceCloseFailureSession.Close()
+}
+
+func TestRaceJoinsLosingCandidatesBeforeReturning(t *testing.T) {
+	for _, losingTransport := range []Transport{TransportQUIC, TransportTLSTCP} {
+		for _, stage := range []string{"dialing", "authenticating", "closing"} {
+			t.Run(string(losingTransport)+"/"+stage, func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					entered, canceled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
+					raw, _ := newMemoryPair(t)
+					loser := &raceBlockedSession{raceCloseFailureSession: &raceCloseFailureSession{Session: raw}, entered: entered, canceled: canceled, release: release, stage: stage}
+					losing := muxsession.ConnectorFunc(func(ctx context.Context, _ muxsession.Endpoint) (muxsession.Session, error) {
+						if stage != "dialing" {
+							return loser, nil
+						}
+						close(entered)
+						<-ctx.Done()
+						close(canceled)
+						<-release
+						return nil, errors.Join(ctx.Err(), context.Cause(ctx))
+					})
+					winner, _ := handshakeConnector(t, func(context.Context, tunnelv1.Message) error { return nil })
+					winning := muxsession.ConnectorFunc(func(ctx context.Context, endpoint muxsession.Endpoint) (muxsession.Session, error) {
+						<-entered
+						return winner.Connect(ctx, endpoint)
+					})
+					winningTransport := TransportQUIC
+					if losingTransport == TransportQUIC {
+						winningTransport = TransportTLSTCP
+					}
+					metrics := observability.New("publisher")
+					t.Cleanup(func() { _ = metrics.Shutdown(context.Background()) })
+					ctx := observability.WithMetrics(t.Context(), metrics)
+					done := make(chan struct{})
+					var result raceOutcome
+					go func() {
+						result.session, result.transport, result.err = Race(ctx, Candidate{Connector: losing, Transport: losingTransport}, Candidate{Connector: winning, Transport: winningTransport}, 0, publisherHello())
+						close(done)
+					}()
+					synctest.Wait()
+					select {
+					case <-canceled:
+					default:
+						t.Error("proof did not reach the canceled losing candidate")
+					}
+					select {
+					case <-done:
+						t.Error("race exposed the winner before joining its losing candidate")
+					default:
+					}
+					close(release)
+					<-done
+					if result.session != nil {
+						defer result.session.Close()
+					}
+					if result.err != nil || result.transport != winningTransport {
+						t.Fatal("joined candidate prevented ordinary fallback", result.err)
+					}
+					if stage != "dialing" && loser.closes.Load() != 1 {
+						t.Fatal("failed authentication did not close its raw session exactly once", loser.closes.Load())
+					}
+					families, err := metrics.Gather()
+					if err != nil {
+						t.Fatal(err)
+					}
+					var observations uint64
+					for _, family := range families {
+						if family.GetName() == "tnl_publisher_transport_candidate_duration_seconds" {
+							for _, point := range family.Metric {
+								observations += point.GetHistogram().GetSampleCount()
+							}
+						}
+					}
+					if observations != 2 {
+						t.Fatal("race returned before both candidate observations finished", observations)
+					}
+				})
+			})
+		}
+	}
+}
+
+func TestRaceCleanupFailuresCloseWinnerAndPreserveCauses(t *testing.T) {
+	for _, stage := range []string{"dialing", "authenticating"} {
+		for _, canceled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/canceled=%t", stage, canceled), func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					cleanupErr, winnerErr, cause := errors.New("loser cleanup failed"), errors.New("winner cleanup failed"), errors.New("publisher canceled")
+					operationErr := errors.New("candidate failed independently")
+					entered, stopped, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
+					close(release)
+					raw, _ := newMemoryPair(t)
+					loser := &raceBlockedSession{raceCloseFailureSession: &raceCloseFailureSession{Session: raw, err: cleanupErr}, entered: entered, canceled: stopped, release: release, stage: stage}
+					primary := muxsession.ConnectorFunc(func(ctx context.Context, _ muxsession.Endpoint) (muxsession.Session, error) {
+						if stage == "authenticating" {
+							return loser, nil
+						}
+						close(entered)
+						<-ctx.Done()
+						return nil, errors.Join(ctx.Err(), context.Cause(ctx), operationErr, &muxsession.QUICTransportCloseError{Err: cleanupErr})
+					})
+					winner, winnerRaw := handshakeConnector(t, func(context.Context, tunnelv1.Message) error { return nil })
+					winnerSession := &raceCloseFailureSession{Session: winnerRaw, err: winnerErr}
+					fallback := muxsession.ConnectorFunc(func(ctx context.Context, endpoint muxsession.Endpoint) (muxsession.Session, error) {
+						<-entered
+						if canceled {
+							<-ctx.Done()
+							return nil, context.Cause(ctx)
+						}
+						_, err := winner.Connect(ctx, endpoint)
+						return winnerSession, err
+					})
+					ctx, cancel := context.WithCancelCause(t.Context())
+					defer cancel(cause)
+					done := make(chan struct{})
+					var result raceOutcome
+					go func() {
+						result.session, result.transport, result.err = Race(ctx, Candidate{Connector: primary, Transport: TransportQUIC}, Candidate{Connector: fallback, Transport: TransportTLSTCP}, 0, publisherHello())
+						close(done)
+					}()
+					synctest.Wait()
+					if canceled {
+						cancel(cause)
+					}
+					<-done
+					if result.session != nil {
+						_ = result.session.Close()
+						t.Error("failed cleanup exposed an authenticated winner")
+					}
+					var cleanup *SessionCleanupError
+					if !errors.As(result.err, &cleanup) || !errors.Is(result.err, cleanupErr) ||
+						(canceled && (!errors.Is(result.err, cause) || !errors.Is(result.err, context.Canceled))) ||
+						(!canceled && !errors.Is(result.err, winnerErr)) ||
+						(stage == "dialing" && !errors.Is(result.err, operationErr)) {
+						t.Fatal("race lost cleanup, operation, or cancellation identity", result.err)
+					}
+					if stage == "authenticating" && loser.closes.Load() != 1 {
+						t.Fatal("handshake failure acquired a second closing owner", loser.closes.Load())
+					}
+					if !canceled && winnerSession.closes.Load() != 1 {
+						t.Fatal("cleanup failure did not close the authenticated winner exactly once", winnerSession.closes.Load())
+					}
+				})
+			})
+		}
+	}
+}
+
+func TestRaceCanceledBeforeEntryNeverAllocates(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(t.Context())
+	cause := errors.New("race ended before entry")
+	cancel(cause)
+	var calls atomic.Int32
+	connector := muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
+		calls.Add(1)
+		return nil, errors.New("late canceled candidate allocated")
+	})
+	primary, fallback := Candidate{Connector: connector, Transport: TransportQUIC}, Candidate{Connector: connector, Transport: TransportTLSTCP}
+	if session, _, err := Race(ctx, primary, fallback, 0, publisherHello()); session != nil || !errors.Is(err, cause) || !errors.Is(err, context.Canceled) {
+		t.Error("canceled race lost its cause", err)
+	}
+	// a worker already scheduled before cancellation must also skip Connect.
+	if result := dialCandidate(ctx, primary, publisherHello()); result.session != nil || !errors.Is(result.err, cause) {
+		t.Error("late canceled candidate lost its cause", result.err)
+	}
+	if calls.Load() != 0 {
+		t.Fatal("canceled race or late candidate called the connector", calls.Load())
+	}
+}
+
+func TestRaceTerminalRejectionJoinsSiblingCleanup(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		cleanupErr := errors.New("rejected race sibling cleanup failed")
+		entered, canceled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
+		primary := rejectingConnectorAfter(t, entered, tunnelv1.Unauthenticated)
+		raw, _ := newMemoryPair(t)
+		loser := &raceBlockedSession{raceCloseFailureSession: &raceCloseFailureSession{Session: raw, err: cleanupErr}, entered: entered, canceled: canceled, release: release, stage: "closing"}
+		fallback := muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) { return loser, nil })
+		done := make(chan struct{})
+		var result raceOutcome
+		go func() {
+			result.session, result.transport, result.err = Race(t.Context(), Candidate{Connector: primary, Transport: TransportQUIC}, Candidate{Connector: fallback, Transport: TransportTLSTCP}, 0, publisherHello())
+			close(done)
+		}()
+		synctest.Wait()
+		select {
+		case <-canceled:
+		default:
+			t.Error("terminal rejection did not cancel its running sibling")
+		}
+		select {
+		case <-done:
+			t.Error("terminal rejection returned before joining sibling cleanup")
+		default:
+		}
+		close(release)
+		<-done
+		var protocol *ProtocolError
+		if result.session != nil || !errors.As(result.err, &protocol) || protocol.Code != tunnelv1.Unauthenticated || !errors.Is(result.err, cleanupErr) || loser.closes.Load() != 1 {
+			t.Fatal("terminal denial lost precedence, cleanup cause, or its sole closing owner", result.err)
+		}
+	})
 }

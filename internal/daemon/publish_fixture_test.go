@@ -19,6 +19,7 @@ import (
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
@@ -70,7 +71,7 @@ func disabledIntegrationConnector(message string) (muxsession.Connector, *integr
 	}))
 }
 
-func newIntegrationHTTPSClient(t *testing.T, roots *x509.CertPool, address string, disableKeepAlives bool, owners ...*runtimeTopology) (*http.Client, *http.Transport) {
+func newIntegrationHTTPSClient(t *testing.T, roots *x509.CertPool, address string, disableKeepAlives bool, owner *runtimeTopology) (*http.Client, *http.Transport) {
 	t.Helper()
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS13}, DisableKeepAlives: disableKeepAlives,
@@ -79,10 +80,6 @@ func newIntegrationHTTPSClient(t *testing.T, roots *x509.CertPool, address strin
 		transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
 			return new(net.Dialer).DialContext(ctx, network, address)
 		}
-	}
-	var owner *runtimeTopology
-	if len(owners) != 0 {
-		owner = owners[0]
 	}
 	owner.cleanupResource(t, transport.CloseIdleConnections)
 	return &http.Client{Transport: transport, Timeout: 10 * time.Second}, transport
@@ -93,9 +90,9 @@ type integrationVisitor struct {
 	transport *http.Transport
 }
 
-func newIntegrationVisitor(t *testing.T, roots *x509.CertPool, address string, owners ...*runtimeTopology) *integrationVisitor {
+func newIntegrationVisitor(t *testing.T, roots *x509.CertPool, address string, owner *runtimeTopology) *integrationVisitor {
 	t.Helper()
-	client, transport := newIntegrationHTTPSClient(t, roots, address, true, owners...)
+	client, transport := newIntegrationHTTPSClient(t, roots, address, true, owner)
 	return &integrationVisitor{client: client, transport: transport}
 }
 
@@ -141,19 +138,11 @@ type integrationPublishingIdentity struct {
 	publicURLScope                                          controlv1.PublicURLScope
 }
 
-func newIntegrationPublishingIdentity(t *testing.T, controlOrigin string, controlHTTP *http.Client, hostnameLabel string, owners ...*runtimeTopology) *integrationPublishingIdentity {
+func newIntegrationPublishingIdentity(t *testing.T, controlOrigin string, controlHTTP *http.Client, hostnameLabel string, owner *runtimeTopology) *integrationPublishingIdentity {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
-	var owner *runtimeTopology
-	var directory string
-	if len(owners) != 0 {
-		owner = owners[0]
-		directory = owner.directory
-	} else {
-		directory = t.TempDir()
-	}
-	stateDatabase, err := clientstate.Open(ctx, filepath.Join(directory, "state"))
+	stateDatabase, err := clientstate.Open(ctx, filepath.Join(owner.directory, "state"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,15 +288,7 @@ func startOwnedIntegrationPublisherContext(t *testing.T, parent context.Context,
 	}
 	ctx, cancel := context.WithCancel(parent)
 	handle := &integrationPublisher{cancel: cancel, done: make(chan struct{}), diagnostics: diagnostics}
-	if owner != nil {
-		owner.publishers = append(owner.publishers, handle)
-	} else {
-		t.Cleanup(func() {
-			if err := handle.stop(); err != nil {
-				t.Errorf("publisher cleanup: %v", err)
-			}
-		})
-	}
+	owner.publishers = append(owner.publishers, runtimeProcess{name: "publisher", cancel: cancel, wait: handle.wait})
 	config.Logf = t.Logf
 	previous := config.Observe
 	config.Observe = func(event publisher.Event) error {
@@ -347,10 +328,14 @@ func (p *integrationPublisher) result() error {
 
 func (p *integrationPublisher) stop() error {
 	p.cancel()
+	return p.wait()
+}
+
+func (p *integrationPublisher) wait() error {
 	if err := waitForDoneWithin(p.done, 10*time.Second); err != nil {
 		return fmt.Errorf("publisher did not stop: %w", err)
 	}
-	if err := p.result(); err != nil && !errors.Is(err, context.Canceled) {
+	if err := p.result(); err != nil && !failure.Only(err, context.Canceled) {
 		return err
 	}
 	return nil

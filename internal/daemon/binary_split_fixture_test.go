@@ -12,6 +12,7 @@ import (
 )
 
 type integrationBinarySplit struct {
+	dependencies                                        *runtimeTopology
 	repositoryRoot, tnlPath, databaseURL, publicURLHost string
 	environment                                         []string
 	pebble                                              integrationPebble
@@ -35,6 +36,7 @@ func startIntegrationBinarySplit(t *testing.T) *integrationBinarySplit {
 	buildIntegrationBinary(t, repositoryRoot, tnldPath, "./cmd/tnld")
 	buildIntegrationBinary(t, repositoryRoot, tnlPath, "./cmd/tnl")
 	databaseURL := testutil.NewDisposablePostgresDatabaseURL(t, "split-binary")
+	dependencies := newRuntimeTopology(t)
 	runIntegrationBinaryCommand(t, repositoryRoot, integrationBinaryEnvironment(map[string]string{
 		"TNLD_DATABASE_DIRECT_URL": databaseURL,
 	}), tnldPath, "migrate")
@@ -45,14 +47,14 @@ func startIntegrationBinarySplit(t *testing.T) *integrationBinarySplit {
 		publicURLHost = "split-binary.developer.routes.127.0.0.1.nip.io"
 	)
 	root := newIntegrationTestCA(t)
-	controlCertificate := root.issueServer(t, controlHost)
-	oidcIssuer := binaryOIDCProvider(t, root.issueServer(t, "localhost"), "https://"+controlHost)
+	controlCertificate := root.issueServer(t, controlHost, dependencies)
+	oidcIssuer := binaryOIDCProvider(t, root.issueServer(t, "localhost", dependencies), "https://"+controlHost)
 	relayAHost, relayBHost := "relay-a."+serverDomain, "relay-b."+serverDomain
-	relayACertificate := root.issueServer(t, relayAHost)
-	relayBCertificate := root.issueServer(t, relayBHost)
-	dns := newIntegrationRoute53(t, "binary", "routes.127.0.0.1.nip.io")
-	pebble := startIntegrationPebble(t, 443, dns.address)
-	trustFile := filepath.Join(t.TempDir(), "integration-roots.pem")
+	relayACertificate := root.issueServer(t, relayAHost, dependencies)
+	relayBCertificate := root.issueServer(t, relayBHost, dependencies)
+	dns := newIntegrationRoute53(t, "binary", "routes.127.0.0.1.nip.io", dependencies)
+	pebble := startIntegrationPebble(t, 443, dns.address, dependencies)
+	trustFile := filepath.Join(dependencies.tempDir(t), "integration-roots.pem")
 	trustedCertificates := append([]byte{}, root.certificatePEM...)
 	trustedCertificates = append(trustedCertificates, pebble.apiRootPEM...)
 	trustedCertificates = append(trustedCertificates, pebble.rootPEM...)
@@ -66,7 +68,11 @@ func startIntegrationBinarySplit(t *testing.T) *integrationBinarySplit {
 	if err != nil {
 		t.Fatal(err)
 	}
-	startIntegrationControlProxy(t, nil, "127.0.0.2:443", controlBackend, controlTLS)
+	controlProxy, err := net.Listen("tcp", "127.0.0.2:443")
+	if err != nil {
+		t.Fatal(err)
+	}
+	serveIntegrationControlProxy(t, dependencies, controlProxy, controlBackend, controlTLS)
 	controlEnvironment := integrationBinaryEnvironment(map[string]string{
 		"SSL_CERT_FILE":                             trustFile,
 		"TNLD_ACCESS_TOKEN_LIFETIME":                "5m",
@@ -142,7 +148,7 @@ func startIntegrationBinarySplit(t *testing.T) *integrationBinarySplit {
 	})
 	binaryOIDCLogin(t, repositoryRoot, clientEnvironment, tnlPath, trustFile)
 
-	return &integrationBinarySplit{repositoryRoot: repositoryRoot, tnlPath: tnlPath, databaseURL: databaseURL,
+	return &integrationBinarySplit{dependencies: dependencies, repositoryRoot: repositoryRoot, tnlPath: tnlPath, databaseURL: databaseURL,
 		publicURLHost: publicURLHost, environment: clientEnvironment, pebble: pebble}
 }
 

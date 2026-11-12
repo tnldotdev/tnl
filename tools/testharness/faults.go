@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -21,11 +22,19 @@ func (h *runtimeHarness) applyFault(ctx context.Context) error {
 	started := time.Now().UTC()
 	switch h.selected {
 	case "relay-kill":
+		if len(h.plan["fault-targets"]) != 1 {
+			return errors.New("relay kill requires exactly one planned fault target")
+		}
+		target := h.plan["fault-targets"][0]
+		container := h.containers[target]
+		if container == nil {
+			return fmt.Errorf("runtime fault target %s is missing", target)
+		}
 		h.intentional.Store(true)
-		if _, err := h.compose(ctx, "kill", "--signal", "SIGKILL", "relay-a"); err != nil {
+		if _, err := h.compose(ctx, "kill", "--signal", "SIGKILL", target); err != nil {
 			return err
 		}
-		state, err := h.containers["relay-a"].State(ctx)
+		state, err := container.State(ctx)
 		if err != nil || state.Running || state.ExitCode != 137 {
 			return fmt.Errorf("relay kill did not produce the expected process exit: %v", err)
 		}
@@ -35,7 +44,7 @@ func (h *runtimeHarness) applyFault(ctx context.Context) error {
 		if err := sleepRuntime(ctx, 31*time.Second); err != nil {
 			return err
 		}
-		if _, err := h.compose(ctx, "start", "relay-a"); err != nil {
+		if _, err := h.compose(ctx, "start", target); err != nil {
 			return err
 		}
 		h.intentional.Store(false)
@@ -71,28 +80,32 @@ func withFaultCleanup(ctx context.Context, command func(context.Context, ...stri
 }
 
 func (h *runtimeHarness) blackhole(ctx context.Context, started time.Time) error {
-	sources := h.activePublish
-	if h.selected == "forwarding-blackhole" {
-		sources = h.ingresses
+	sources, destinations := h.plan["fault-sources"], h.plan["fault-destinations"]
+	if len(sources) == 0 || len(destinations) == 0 {
+		return errors.New("blackhole requires planned fault sources and destinations")
 	}
-	relays, protocols := []string{"relay-a"}, []string{"tcp"}
-	if h.selected == "udp-fallback" {
-		relays, protocols = []string{"relay-a", "relay-b"}, []string{"udp"}
-	} else if h.selected == "publisher-blackhole" {
+	port, protocols := "443", []string{"tcp"}
+	switch h.selected {
+	case "forwarding-blackhole":
+		port = "8443"
+	case "publisher-blackhole":
 		protocols = []string{"tcp", "udp"}
+	case "udp-fallback":
+		protocols = []string{"udp"}
+		if len(h.plan["publishers"]) == 0 {
+			return errors.New("UDP fallback requires planned publishers")
+		}
+	default:
+		return fmt.Errorf("unknown runtime blackhole %q", h.selected)
 	}
 	return h.withFaultCleanup(ctx, func(undo func(...string)) error {
 		for _, source := range sources {
-			for _, relay := range relays {
-				address, err := h.containerIP(ctx, relay)
+			for _, destination := range destinations {
+				address, err := h.containerIP(ctx, destination)
 				if err != nil {
 					return err
 				}
 				for _, protocol := range protocols {
-					port := "443"
-					if h.selected == "forwarding-blackhole" {
-						port = "8443"
-					}
 					rule := []string{"OUTPUT", "-d", address, "-p", protocol, "--dport", port,
 						"-m", "comment", "--comment", "tnl-runtime-fault", "-j", "DROP"}
 					if _, err := h.compose(ctx, append([]string{"exec", "-T", source, "iptables", "-I"}, rule...)...); err != nil {
@@ -109,7 +122,7 @@ func (h *runtimeHarness) blackhole(ctx context.Context, started time.Time) error
 			if err := h.waitEvent(ctx, "publishers.ready"); err != nil {
 				return err
 			}
-			for _, publisher := range runtimePublishers {
+			for _, publisher := range h.plan["publishers"] {
 				sockets, err := h.compose(ctx, "exec", "-T", publisher, "ss", "-H", "-uan")
 				if err != nil {
 					return err
@@ -139,7 +152,7 @@ func (h *runtimeHarness) blackhole(ctx context.Context, started time.Time) error
 			if err := h.writeResult(h.selected+"-"+source+"-counters.txt", counters); err != nil {
 				return err
 			}
-			if err := validateBlackholeCounters(counters, len(relays)*len(protocols)); err != nil {
+			if err := validateBlackholeCounters(counters, len(destinations)*len(protocols)); err != nil {
 				return err
 			}
 		}
@@ -148,6 +161,9 @@ func (h *runtimeHarness) blackhole(ctx context.Context, started time.Time) error
 }
 
 func validateBlackholeCounters(counters string, expected int) error {
+	if expected < 1 {
+		return errors.New("blackhole evidence requires at least one rule")
+	}
 	matched := 0
 	for _, line := range strings.Split(counters, "\n") {
 		if !strings.Contains(line, "tnl-runtime-fault") {
@@ -171,29 +187,19 @@ func validateBlackholeCounters(counters string, expected int) error {
 
 func (h *runtimeHarness) impair(ctx context.Context, started time.Time) error {
 	path := os.Getenv("NETWORK_PATH")
-	if path != "forwarding" && path != "publisher" && !(path == "connector" && os.Getenv("RUNTIME_WORKLOAD") == "connect") {
-		return errors.New("invalid network path")
-	}
 	options, err := netemOptions(h.selected, os.Getenv("RTT"), os.Getenv("LOSS"), os.Getenv("SEED"))
 	if err != nil {
 		return err
 	}
 	addresses := make(map[string]string)
-	visitors := []string{"visitor-1", "visitor-2", "visitor-3", "visitor-4"}
-	for _, service := range append(append(append([]string{}, h.ingresses...), visitors...), append(h.activePublish, "relay-a", "relay-b")...) {
+	for _, service := range h.plan["fault-targets"] {
 		addresses[service], err = h.containerIP(ctx, service)
 		if err != nil {
 			return err
 		}
 	}
-	sources, destinations := h.ingresses, []string{"relay-a", "relay-b"}
-	if path == "publisher" {
-		sources = h.activePublish
-	}
-	if path == "connector" {
-		sources = visitors
-	}
-	endpoints, err := impairmentEndpoints(path, addresses, h.ingresses, h.activePublish, visitors)
+	sources, destinations := h.plan["fault-sources"], h.plan["fault-destinations"]
+	endpoints, err := impairmentEndpoints(path, addresses, sources, destinations)
 	if err != nil {
 		return err
 	}
@@ -316,31 +322,32 @@ func netemOptions(scenario, rtt, loss, rawSeed string) ([]string, error) {
 	return result, nil
 }
 
-func impairmentEndpoints(path string, addresses map[string]string, ingresses, publishers, visitors []string) ([]impairmentEndpoint, error) {
-	sources, destinations, port, protocols := ingresses, []string{"relay-a", "relay-b"}, "8443", []string{"6"}
-	if path == "publisher" {
-		sources, port, protocols = publishers, "443", []string{"6", "17"}
-	} else if path == "connector" {
-		sources, port, protocols = visitors, "443", []string{"6", "17"}
-	} else if path != "forwarding" {
+func impairmentEndpoints(path string, addresses map[string]string, sources, destinations []string) ([]impairmentEndpoint, error) {
+	port, protocols := "8443", []string{"6"}
+	switch path {
+	case "forwarding":
+	case "publisher", "connector":
+		port, protocols = "443", []string{"6", "17"}
+	default:
 		return nil, errors.New("invalid network path")
 	}
-	return targetedImpairmentEndpoints(addresses, sources, destinations, port, protocols)
-}
-
-func targetedImpairmentEndpoints(addresses map[string]string, sources, destinations []string, port string, protocols []string) ([]impairmentEndpoint, error) {
 	if len(sources) == 0 || len(destinations) == 0 {
-		return nil, errors.New("network path requires a source")
+		return nil, errors.New("network path requires planned sources and destinations")
+	}
+	for _, service := range slices.Concat(sources, destinations) {
+		if addresses[service] == "" {
+			return nil, fmt.Errorf("network path component %s has no address", service)
+		}
 	}
 	endpoints := make([]impairmentEndpoint, 0, len(sources)+len(destinations))
 	for _, source := range sources {
 		endpoints = append(endpoints, impairmentEndpoint{Service: source, Filters: [][]string{}})
 	}
-	for _, relay := range destinations {
-		reverse := impairmentEndpoint{Service: relay, Filters: [][]string{}}
+	for _, destination := range destinations {
+		reverse := impairmentEndpoint{Service: destination, Filters: [][]string{}}
 		for index := range sources {
 			for _, protocol := range protocols {
-				endpoints[index].Filters = append(endpoints[index].Filters, []string{"match", "ip", "dst", addresses[relay],
+				endpoints[index].Filters = append(endpoints[index].Filters, []string{"match", "ip", "dst", addresses[destination],
 					"match", "ip", "protocol", protocol, "0xff", "match", "ip", "dport", port, "0xffff"})
 				reverse.Filters = append(reverse.Filters, []string{"match", "ip", "dst", addresses[sources[index]],
 					"match", "ip", "protocol", protocol, "0xff", "match", "ip", "sport", port, "0xffff"})

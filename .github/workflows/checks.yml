@@ -56,7 +56,7 @@ jobs:
         with:
           tools: node pnpm bun task
           pnpm: true
-          pnpm-cache-save: true
+          save-cache: true
 
       - name: Check packages
         run: task js:check
@@ -67,29 +67,10 @@ jobs:
       - name: Test embedded toolbar
         run: task js:test:browser
 
-  python-sdk:
-    name: Python SDK
+  python:
+    name: Python
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up tools
-        uses: ./.github/actions/setup # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
-        with:
-          tools: go python uv task
-          go-cache: race
-
-      - name: Check Python SDK
-        run: task py:check
-
-  packages:
-    name: Release packages
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -101,26 +82,14 @@ jobs:
         uses: ./.github/actions/setup # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
         with:
           tools: go node pnpm python uv task aqua:goreleaser/goreleaser aqua:anchore/syft
-          go-cache: packages
-          go-cache-save: true
+          go-cache: build
           pnpm: true
+
+      - name: Check Python SDK
+        run: task py:check
 
       - name: Build and verify installed release packages
         run: task package
-
-  python:
-    name: Python
-    if: always()
-    needs: [python-sdk, packages]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions: {}
-    steps:
-      - name: Verify Python and installed packages passed
-        env:
-          PYTHON_RESULT: ${{ needs.python-sdk.result }}
-          PACKAGES_RESULT: ${{ needs.packages.result }}
-        run: test "$PYTHON_RESULT" = success && test "$PACKAGES_RESULT" = success
 
   framework-compatibility:
     name: ${{ matrix.framework }} ${{ matrix.version }}
@@ -201,7 +170,7 @@ jobs:
             go:golang.org/x/vuln/cmd/govulncheck
             go:honnef.co/go/tools/cmd/staticcheck
           go-cache: build
-          go-cache-save: true
+          save-cache: true
           pnpm: true
 
       - name: Check formatting
@@ -237,9 +206,8 @@ jobs:
         with:
           tools: go node pnpm task
           go-cache: build
-          go-cache-save: true
+          save-cache: true
           pnpm: true
-          pnpm-cache-save: true
 
       - name: Run Go tests
         run: task go:test
@@ -258,7 +226,7 @@ jobs:
         uses: ./.github/actions/setup # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
         with:
           go-cache: race
-          go-cache-save: true
+          save-cache: true
 
       - name: Run race tests
         run: task go:test:race
