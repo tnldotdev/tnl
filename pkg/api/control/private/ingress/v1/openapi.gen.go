@@ -208,10 +208,13 @@ type IngressLease struct {
 	IngressRunId         Identifier `json:"ingress_run_id"`
 	LeaseExpiresAt       time.Time  `json:"lease_expires_at"`
 	ProtocolVersion      int64      `json:"protocol_version"`
-	RegisteredAt         time.Time  `json:"registered_at"`
-	RenewedAt            time.Time  `json:"renewed_at"`
-	ReportedConnections  int64      `json:"reported_connections"`
-	RoutingTableRevision int64      `json:"routing_table_revision"`
+
+	// Region Exact catalog provider:region identity, such as aws:us-west-2 or fly:sjc. local makes no geographic claim.
+	Region               string    `json:"region"`
+	RegisteredAt         time.Time `json:"registered_at"`
+	RenewedAt            time.Time `json:"renewed_at"`
+	ReportedConnections  int64     `json:"reported_connections"`
+	RoutingTableRevision int64     `json:"routing_table_revision"`
 }
 
 // IngressLeaseIdentity defines model for IngressLeaseIdentity.
@@ -236,6 +239,9 @@ type IngressRegistration struct {
 	IngressPoolId      Identifier `json:"ingress_pool_id"`
 	IngressRunId       Identifier `json:"ingress_run_id"`
 	ProtocolVersion    int64      `json:"protocol_version"`
+
+	// Region Exact catalog provider:region identity, such as aws:us-west-2 or fly:sjc. local makes no geographic claim.
+	Region string `json:"region"`
 
 	// ServicePorts Sorted managed ports bound before registration or exposed by the trusted destination-metadata proxy.
 	ServicePorts []int `json:"service_ports"`

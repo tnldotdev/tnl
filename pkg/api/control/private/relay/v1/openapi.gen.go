@@ -286,19 +286,22 @@ type RelayLease struct {
 	ObservedAddress      *string    `json:"observed_address,omitempty"`
 
 	// PeerSigningPublicKey Process-run key when registered. Missing-key leases cannot authorize connector pair claims.
-	PeerSigningPublicKey *string    `json:"peer_signing_public_key,omitempty"`
-	ProtocolVersion      int64      `json:"protocol_version"`
-	RegisteredAt         time.Time  `json:"registered_at"`
-	RelayAddress         Identifier `json:"relay_address"`
-	RelayId              Identifier `json:"relay_id"`
-	RelayLeaseRevision   int64      `json:"relay_lease_revision"`
-	RelayRunId           Identifier `json:"relay_run_id"`
-	RelayServiceId       Identifier `json:"relay_service_id"`
-	RenewedAt            time.Time  `json:"renewed_at"`
-	ReportedConnections  int64      `json:"reported_connections"`
-	ReportedStreams      int64      `json:"reported_streams"`
-	StreamCapacity       int64      `json:"stream_capacity"`
-	TlsServerName        Identifier `json:"tls_server_name"`
+	PeerSigningPublicKey *string `json:"peer_signing_public_key,omitempty"`
+	ProtocolVersion      int64   `json:"protocol_version"`
+
+	// Region Exact catalog provider:region identity, such as aws:us-west-2 or fly:sjc. local makes no geographic claim.
+	Region              string     `json:"region"`
+	RegisteredAt        time.Time  `json:"registered_at"`
+	RelayAddress        Identifier `json:"relay_address"`
+	RelayId             Identifier `json:"relay_id"`
+	RelayLeaseRevision  int64      `json:"relay_lease_revision"`
+	RelayRunId          Identifier `json:"relay_run_id"`
+	RelayServiceId      Identifier `json:"relay_service_id"`
+	RenewedAt           time.Time  `json:"renewed_at"`
+	ReportedConnections int64      `json:"reported_connections"`
+	ReportedStreams     int64      `json:"reported_streams"`
+	StreamCapacity      int64      `json:"stream_capacity"`
+	TlsServerName       Identifier `json:"tls_server_name"`
 }
 
 // RelayLeaseIdentity defines model for RelayLeaseIdentity.
@@ -316,14 +319,17 @@ type RelayRegistration struct {
 	InternalRelayAddress Identifier `json:"internal_relay_address"`
 
 	// PeerSigningPublicKey Optional process-run Ed25519 public key. A missing key cannot authorize connector pair claims; retries must retain the exact key.
-	PeerSigningPublicKey *string    `json:"peer_signing_public_key,omitempty"`
-	ProtocolVersion      int64      `json:"protocol_version"`
-	RelayAddress         Identifier `json:"relay_address"`
-	RelayId              Identifier `json:"relay_id"`
-	RelayRunId           Identifier `json:"relay_run_id"`
-	RelayServiceId       Identifier `json:"relay_service_id"`
-	StreamCapacity       int64      `json:"stream_capacity"`
-	TlsServerName        Identifier `json:"tls_server_name"`
+	PeerSigningPublicKey *string `json:"peer_signing_public_key,omitempty"`
+	ProtocolVersion      int64   `json:"protocol_version"`
+
+	// Region Exact catalog provider:region identity, such as aws:us-west-2 or fly:sjc. local makes no geographic claim.
+	Region         string     `json:"region"`
+	RelayAddress   Identifier `json:"relay_address"`
+	RelayId        Identifier `json:"relay_id"`
+	RelayRunId     Identifier `json:"relay_run_id"`
+	RelayServiceId Identifier `json:"relay_service_id"`
+	StreamCapacity int64      `json:"stream_capacity"`
+	TlsServerName  Identifier `json:"tls_server_name"`
 }
 
 // RelayRenewal defines model for RelayRenewal.

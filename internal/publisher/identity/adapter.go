@@ -34,7 +34,7 @@ type PublicURLControl interface {
 	AllocatePublisherPublicURL(context.Context, string, controlv1.AllocateEphemeralPublicURLRequest) (controlv1.PublicURL, error)
 	DeletePublisherPublicURL(context.Context, string, string) error
 	// nil traffic selection uses control's defaults.
-	CreatePublisherRun(context.Context, string, string, string, string, *trafficlimits.Selection) (controlv1.PublishRunSetup, error)
+	CreatePublisherRun(context.Context, string, string, string, string, *trafficlimits.Selection, ...string) (controlv1.PublishRunSetup, error)
 	ClosePublishRun(context.Context, string, credentials.PublishRunToken) error
 	MarkPublishRunReady(context.Context, string, uint64, credentials.PublishRunToken) error
 	HeartbeatPublishRun(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error)
@@ -172,7 +172,7 @@ func (n *Native) GetPublicURLByHostname(ctx context.Context, team, hostname stri
 	return clonePublicURL(n.publicURL), nil
 }
 
-func (n *Native) CreatePublishRun(ctx context.Context, id, retry string) (controlv1.PublishRunSetup, error) {
+func (n *Native) CreatePublishRun(ctx context.Context, id, retry string, preferred ...string) (controlv1.PublishRunSetup, error) {
 	if n.publicURL.Id == "" || n.publicURL.Id != id {
 		return controlv1.PublishRunSetup{}, ErrScope
 	}
@@ -189,7 +189,7 @@ func (n *Native) CreatePublishRun(ctx context.Context, id, retry string) (contro
 	if err != nil {
 		return controlv1.PublishRunSetup{}, err
 	}
-	return n.NativeControl.CreatePublisherRun(ctx, id, retry, token, proof, n.traffic.Clone())
+	return n.NativeControl.CreatePublisherRun(ctx, id, retry, token, proof, n.traffic.Clone(), preferred...)
 }
 
 func (n *Native) DeletePublicURL(ctx context.Context, id string) error {
