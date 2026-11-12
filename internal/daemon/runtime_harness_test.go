@@ -129,9 +129,17 @@ func (f *runtimeTopology) own(role daemonconfig.Role, p runtimeProcess) {
 }
 
 func (f *runtimeTopology) ownDaemon(role daemonconfig.Role, process *daemon) func() error {
-	stop := sync.OnceValue(func() error { return process.shutdown(time.Second) })
+	shutdown := sync.OnceValue(func() error { return process.shutdown(time.Second) })
+	var reported sync.Once
+	stop := func() error {
+		// every caller joins shutdown; only one consumes its complete result.
+		err := shutdown()
+		var result error
+		reported.Do(func() { result = err })
+		return result
+	}
 	// daemon shutdown owns the drain-before-cancel boundary, unlike serveRuntime.
-	f.own(role, runtimeProcess{name: string(role), cancel: func() { _ = stop() }, wait: stop})
+	f.own(role, runtimeProcess{name: string(role), cancel: func() { _ = shutdown() }, wait: stop})
 	return stop
 }
 
