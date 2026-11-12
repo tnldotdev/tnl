@@ -2,9 +2,12 @@ paths:
   /v1/public-urls:
     get:
       operationId: listPublicURLs
+      tags: [public URLs]
+      description: Read a cursor-paginated inventory of public URLs the caller may manage in one team. An exact canonical_hostname filter returns zero or one non-deleted URL and cannot be combined with a cursor.
       summary: List public URLs for one team
       security:
         - bearerAuth: []
+        - guestAuth: []
       parameters:
         - $ref: "../openapi.yaml#/components/parameters/TeamIDQuery"
         - $ref: "../openapi.yaml#/components/parameters/Cursor"
@@ -20,9 +23,12 @@ paths:
           $ref: "../openapi.yaml#/components/responses/Problem"
     post:
       operationId: createPublicURL
+      tags: [public URLs]
+      description: Save an authorized hostname, target, and visitor policy using an idempotency key. A control session selects an authorized team scope; a guest credential can create only its assigned ephemeral demo hostname. Creation does not start a publish run.
       summary: Create one team public URL
       security:
         - bearerAuth: []
+        - guestAuth: []
       parameters:
         - $ref: "../openapi.yaml#/components/parameters/IdempotencyKey"
       requestBody:
@@ -43,9 +49,12 @@ paths:
   /v1/public-urls/{public_url_id}:
     get:
       operationId: getPublicURL
+      tags: [public URLs]
+      description: Read one saved public URL under current management authorization. Its saved policy and lifecycle are separate from whether an active publish run is routable.
       summary: Read one public URL
       security:
         - bearerAuth: []
+        - guestAuth: []
       parameters:
         - $ref: "../openapi.yaml#/components/parameters/PublicURLID"
       responses:
@@ -59,6 +68,8 @@ paths:
           $ref: "../openapi.yaml#/components/responses/Problem"
     patch:
       operationId: updatePublicURL
+      tags: [public URLs]
+      description: Replace the target and IP policy, optionally changing the post-quantum requirement, under current management authorization. Use replaceVisitorAccess for complete visitor access policy replacement; this operation does not create a new publish run.
       summary: Update a public URL's target and IP policy
       security:
         - bearerAuth: []
@@ -81,9 +92,12 @@ paths:
           $ref: "../openapi.yaml#/components/responses/Problem"
     delete:
       operationId: deletePublicURL
+      tags: [public URLs]
+      description: Delete the saved public URL under current management authorization and close its active publish run. The hostname cannot keep serving through the deleted URL's old run credentials.
       summary: Delete one public URL and close its publish run
       security:
         - bearerAuth: []
+        - guestAuth: []
       parameters:
         - $ref: "../openapi.yaml#/components/parameters/PublicURLID"
       responses:
@@ -94,6 +108,8 @@ paths:
   /v1/publisher/public-urls:
     post:
       operationId: allocatePublisherPublicURL
+      tags: [public URLs]
+      description: Allocate one ephemeral public URL inside the namespace authorized by the publisher access token. This is publisher work, not a management operation; the exact identity and grant retain ownership of the allocation.
       summary: Create a temporary public URL for one ad-hoc publication
       security:
         - publisherAuth: []
@@ -115,6 +131,8 @@ paths:
   /v1/publisher/public-urls/{public_url_id}:
     delete:
       operationId: deletePublisherPublicURL
+      tags: [public URLs]
+      description: Remove an ephemeral public URL owned by this exact publisher identity and grant. The namespace access token does not authorize deleting other identities' allocations or ordinary saved public URLs.
       summary: Remove the exact URL allocated by this identity and grant
       security:
         - publisherAuth: []

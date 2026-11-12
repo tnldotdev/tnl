@@ -2,6 +2,8 @@ paths:
   /v1/public-urls/{public_url_id}/publish-runs:
     post:
       operationId: createPublishRun
+      tags: [publish runs]
+      description: Start a new publication under the exact publisher grant using an idempotency key and Publisher-Run-Proof signature. The publisher access token does not replace the required proof of the signing key; the response includes the separate run token and two connection assignments.
       summary: Create a publish run and allocate its publish run number
       security:
         - publisherAuth: []
@@ -30,6 +32,8 @@ paths:
   /v1/publish-runs/{publish_run_id}/heartbeat:
     post:
       operationId: heartbeatPublishRun
+      tags: [publish runs]
+      description: Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
       summary: Renew a publish run and replace missing publisher connections
       security:
         - publishRunAuth: []
@@ -53,6 +57,8 @@ paths:
   /v1/publish-runs/{publish_run_id}/share-access:
     post:
       operationId: enableShareAccess
+      tags: [shares]
+      description: Report that the publisher has installed share-aware HTTP handling for this exact run and number. Authenticate with its publish run token; this does not create a share or grant visitor access by itself.
       summary: Enable share-aware HTTP handling for this preview publish run
       security:
         - publishRunAuth: []
@@ -72,6 +78,8 @@ paths:
   /v1/publish-runs/{publish_run_id}/share-redemptions:
     post:
       operationId: redeemPublishRunShare
+      tags: [shares]
+      description: Authenticate the publisher with its exact publish run token and redeem the body's share secret or one-time cross-host handoff. Control checks the share's captured public URL IDs, deadline, and revocation before issuing a host-only visitor session.
       summary: Redeem a share link or one short-lived cross-host handoff
       security:
         - publishRunAuth: []
@@ -95,6 +103,8 @@ paths:
   /v1/publish-runs/{publish_run_id}/ready:
     post:
       operationId: markPublishRunReady
+      tags: [publish runs]
+      description: Ask control to mark the current run routable using its publish run token and number. First readiness requires the approved certificate and two ready publisher connections on independent relay services.
       summary: Mark a publish run ready after its certificate and two publisher connections are ready
       security:
         - publishRunAuth: []
@@ -118,6 +128,8 @@ paths:
   /v1/publish-runs/{publish_run_id}/certificate-installed:
     post:
       operationId: markPublishRunCertificateInstalled
+      tags: [certificates]
+      description: Acknowledge the exact approved public URL certificate installed by the publisher using this run's token and number. Installation alone does not establish publisher connection readiness.
       summary: Record installation of the current public URL certificate
       security:
         - publishRunAuth: []
@@ -141,6 +153,8 @@ paths:
   /v1/publish-runs/{publish_run_id}:
     delete:
       operationId: closePublishRun
+      tags: [publish runs]
+      description: Close the exact publication using its publish run token. Saved public URLs remain available for a later run; ephemeral public URLs follow their removal lifecycle instead.
       summary: Close and drain a publish run without deleting its public URL
       security:
         - publishRunAuth: []
@@ -154,6 +168,8 @@ paths:
   /v1/publish-runs/{publish_run_id}/certificate-issuances:
     post:
       operationId: createCertificateIssuance
+      tags: [certificates]
+      description: Submit the publisher's CSR under the exact publish run token and approved certificate plan. The idempotency key identifies one issuance attempt; a control session or publisher access token cannot substitute for the run token.
       summary: Begin issuance for the publish run's certificate plan
       security:
         - publishRunAuth: []

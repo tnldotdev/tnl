@@ -9,6 +9,8 @@ paths:
         }
     post:
       operationId: selectWorkloadServiceRun
+      tags: [workloads]
+      summary: Select a ready service run for an authenticated workload
       security: [{ workloadAuth: [] }]
       description: Check the selected workload credential and current service permission. pair_ready appears only for two exact ready connections on distinct live relay services; it is a signing snapshot, not a grant or a pair key.
       responses:
@@ -21,6 +23,8 @@ paths:
   /v1/workload/services:
     get:
       operationId: listWorkloadServices
+      tags: [workloads]
+      description: Read the services currently authorized for this workload session using its visitor-only bearer credential. The inventory omits target addresses and application credentials and grants no publisher or control management authority.
       summary: List only the workload session's currently authorized saved services
       security: [{ workloadAuth: [] }]
       responses:
@@ -35,6 +39,9 @@ paths:
       - { name: service_id, in: path, required: true, schema: { type: string } }
     post:
       operationId: checkWorkloadService
+      tags: [workloads]
+      summary: Check a workload session's current permission for one service
+      description: Recheck live workload authorization for the exact service using the workload bearer credential. The decision is bounded by both the renewable lease and the session's fixed absolute deadline; a prior inventory response is not sufficient authorization.
       security: [{ workloadAuth: [] }]
       responses:
         "200":
@@ -48,6 +55,9 @@ paths:
       - { name: service_id, in: path, required: true, schema: { type: string } }
     post:
       operationId: issueWorkloadServiceClientCertificate
+      tags: [workloads]
+      summary: Issue a service client certificate for a workload's existing key
+      description: Submit a CSR under the visitor-only workload bearer credential for one currently authorized service. The returned certificate cannot outlive the workload's fixed absolute expiry, and later access still requires a current workload lease.
       security: [{ workloadAuth: [] }]
       requestBody:
         required: true

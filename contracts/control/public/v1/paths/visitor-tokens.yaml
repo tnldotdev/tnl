@@ -2,7 +2,9 @@ paths:
   /v1/visitor-tokens:
     post:
       operationId: issueVisitorToken
-      description: Prepare or renew one exact-resource visitor permission. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+      tags: [visitor access]
+      summary: Prepare or renew an exact-resource visitor permission
+      description: Prepare or renew one exact-resource visitor permission. For source.kind control_session or device, authenticate with the current control session bearer token. For browser_session, workload, share, share_session, or grant, authenticate with the source credential in the JSON body and omit Authorization entirely; even an empty Authorization header is rejected. The empty security object represents these body-authenticated branches, not anonymous issuance. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
       security: [{}, { bearerAuth: [] }]
       requestBody:
         required: true

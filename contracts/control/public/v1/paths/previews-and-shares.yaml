@@ -2,9 +2,11 @@ paths:
   /v1/publish-runs/{publish_run_id}/preview:
     post:
       operationId: createPublishRunPreview
+      tags: [previews]
+      description: Create or reuse the run-scoped preview used for an ephemeral demo's feedback. Authenticate with that exact publish run token and number; this is not ordinary project preview management.
       summary: Create feedback context for one ephemeral demo publish run
       security:
-        - publishRunBearer: []
+        - publishRunAuth: []
       parameters:
         - $ref: "../openapi.yaml#/components/parameters/PublishRunID"
       requestBody:
@@ -25,6 +27,8 @@ paths:
   /v1/previews:
     post:
       operationId: createPreview
+      tags: [previews]
+      description: Save or reuse a preview identity for the selected team and idempotency key. The preview groups public URLs; creation alone does not grant visitor access or start their publish runs.
       summary: Create or reuse a preview for one team
       security:
         - bearerAuth: []
@@ -48,6 +52,8 @@ paths:
   /v1/previews/{preview_id}:
     get:
       operationId: getPreview
+      tags: [previews]
+      description: Read one preview's saved identity, public URL membership, and team access setting under current management authorization. Active publication and visitor permission are checked separately.
       summary: Read a preview and its public URLs
       security:
         - bearerAuth: []
@@ -65,6 +71,8 @@ paths:
   /v1/previews/{preview_id}/public-urls:
     post:
       operationId: addPreviewPublicURL
+      tags: [previews]
+      description: Add an existing authorized public URL to the preview. This changes future preview membership, not the immutable public URL snapshot held by an already-created share.
       summary: Add an authorized public URL to a preview
       security:
         - bearerAuth: []
@@ -88,6 +96,8 @@ paths:
   /v1/previews/{preview_id}/team-access:
     put:
       operationId: setPreviewTeamAccess
+      tags: [previews]
+      description: Set the preview's opt-in team access grant using current management authorization. Enabled access still requires a current team member's sign-in; it does not make the included public URLs anonymous.
       summary: Enable or disable team visitor access for this preview
       security:
         - bearerAuth: []
@@ -111,6 +121,8 @@ paths:
   /v1/previews/{preview_id}/shares:
     post:
       operationId: createShare
+      tags: [shares]
+      description: Store a share using current preview management authorization and an idempotency key. It captures the authorized public URL IDs now; later preview membership changes do not expand that share's access.
       summary: Store one share for a snapshot of authorized public URLs
       security:
         - bearerAuth: []
@@ -134,6 +146,8 @@ paths:
           $ref: "../openapi.yaml#/components/responses/Problem"
     get:
       operationId: listShares
+      tags: [shares]
+      description: Read a cursor-paginated inventory of the preview's manageable shares without their secrets. A stored share record does not itself function as a share link.
       summary: List shares for a preview
       security:
         - bearerAuth: []
@@ -152,10 +166,12 @@ paths:
   /v1/shares:
     post:
       operationId: createURLShare
+      tags: [shares]
       summary: Store one share for an exact authorized HTTP public URL
       description: A guest trial can share only its own demo URL from the issuing IP; the share expires by the trial's end even if the requested expiry is later.
       security:
         - bearerAuth: []
+        - guestAuth: []
       parameters:
         - $ref: "../openapi.yaml#/components/parameters/IdempotencyKey"
       requestBody:
@@ -175,9 +191,12 @@ paths:
           $ref: "../openapi.yaml#/components/responses/Problem"
     get:
       operationId: listTeamShares
+      tags: [shares]
+      description: Read a cursor-paginated share inventory under current team management authorization. Responses omit share secrets; use the original secret to construct a share link.
       summary: List manageable shares for one team
       security:
         - bearerAuth: []
+        - guestAuth: []
       parameters:
         - $ref: "../openapi.yaml#/components/parameters/TeamIDQuery"
         - $ref: "../openapi.yaml#/components/parameters/Cursor"
@@ -193,9 +212,12 @@ paths:
   /v1/shares/{share_id}:
     get:
       operationId: getShare
+      tags: [shares]
+      description: Read a manageable share's captured public URL IDs, deadline, and revocation state without revealing its secret. Reading the record does not redeem the share or create a visitor session.
       summary: Read one share
       security:
         - bearerAuth: []
+        - guestAuth: []
       parameters:
         - $ref: "../openapi.yaml#/components/parameters/ShareID"
       responses:
@@ -210,9 +232,12 @@ paths:
   /v1/shares/{share_id}/revoke:
     post:
       operationId: revokeShare
+      tags: [shares]
+      description: Revoke the share under current management authorization so it cannot grant new visitor access. Retain the saved record and its captured public URL snapshot for subsequent reads.
       summary: Stop new access through one share
       security:
         - bearerAuth: []
+        - guestAuth: []
       parameters:
         - $ref: "../openapi.yaml#/components/parameters/ShareID"
       responses:

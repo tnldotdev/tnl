@@ -70,7 +70,7 @@ export function operationInventory(document: unknown): Operation[] {
     for (const [method, value] of Object.entries(record(item))) {
       if (!methods.has(method)) continue;
       const { operationId } = record(value);
-      if (typeof operationId !== "string" || operationId.length === 0) {
+      if (typeof operationId !== "string" || operationId.trim().length === 0) {
         throw new Error(`missing operationId: ${method} ${path}`);
       }
       if (ids.has(operationId)) throw new Error(`duplicate operationId: ${operationId}`);
@@ -245,8 +245,97 @@ export class ContractGraph {
         ]),
       ),
     };
-    operationInventory(bundled);
+    this.validate(owner, bundled);
     return bundled;
+  }
+
+  // check the authored operation declarations without code generation. this is
+  // deliberately not a full OpenAPI or request-data validator.
+  private validate(owner: string, document: Record<string, unknown>): void {
+    const components = record(document.components);
+    const schemes = record(components.securitySchemes ?? {});
+    const tags = z
+      .array(z.object({ name: z.string() }))
+      .parse(document.tags ?? [])
+      .map((tag) => tag.name);
+    const operations: Record<string, unknown>[] = [];
+    const responses = Object.values(record(components.responses ?? {}));
+    for (const { method, path } of operationInventory(document)) {
+      const operation = record(record(record(document.paths)[path])[method]);
+      operations.push(operation);
+      if (owner === "controlv1") {
+        if (
+          !Array.isArray(operation.tags) ||
+          operation.tags.length !== 1 ||
+          !tags.includes(operation.tags[0])
+        )
+          throw new Error(`expected one declared primary tag: ${method} ${path}`);
+        z.string().trim().min(1).parse(operation.summary);
+        z.string().trim().min(1).parse(operation.description);
+      }
+      const declarations = record(operation.responses);
+      if (Object.keys(declarations).length === 0)
+        throw new Error(`missing responses: ${method} ${path}`);
+      for (const [status, response] of Object.entries(declarations)) {
+        if (status.startsWith("x-")) continue;
+        if (status !== "default" && !/^[1-5](?:[0-9]{2}|XX)$/.test(status))
+          throw new Error(`invalid response status: ${status}`);
+        responses.push(response);
+      }
+    }
+    for (const object of [document, ...operations]) {
+      if (object.security !== undefined) {
+        for (const requirement of z.array(objectSchema).parse(object.security)) {
+          for (const [name, scopes] of Object.entries(requirement)) {
+            if (!Object.hasOwn(schemes, name))
+              throw new Error(`undefined security scheme: ${name}`);
+            z.array(z.string()).parse(scopes);
+          }
+        }
+      }
+    }
+    for (const value of responses) {
+      let response = record(value);
+      if (typeof response.$ref === "string") {
+        const [entry, pointer] = response.$ref.split("#");
+        const source = this.entries[entry ? entry.replace(/\.yaml$/, "") : owner];
+        response = record(this.parser.$refs.get(`${source}#${pointer ?? ""}`));
+      }
+      z.string().parse(response.description);
+      for (const key of Object.keys(response)) {
+        if (!["description", "headers", "content", "links"].includes(key) && !key.startsWith("x-"))
+          throw new Error(`invalid response field: ${key}`);
+      }
+      for (const field of ["headers", "links"]) {
+        if (response[field] !== undefined) record(response[field]);
+      }
+      for (const [media, value] of Object.entries(
+        record(response.content === undefined ? {} : response.content),
+      )) {
+        if (!/^[^\s/;]+\/[^\s/;]+(?:\s*;[^\r\n]+)?$/.test(media))
+          throw new Error(`invalid media type: ${media}`);
+        const declaration = record(value);
+        for (const key of Object.keys(declaration)) {
+          if (!["schema", "example", "examples", "encoding"].includes(key) && !key.startsWith("x-"))
+            throw new Error(`invalid media field: ${key}`);
+        }
+        if (declaration.schema !== undefined && typeof declaration.schema !== "boolean") {
+          const schema = record(declaration.schema);
+          if (schema.type !== undefined) {
+            const types = z.enum([
+              "null",
+              "boolean",
+              "object",
+              "array",
+              "number",
+              "string",
+              "integer",
+            ]);
+            z.union([types, z.array(types).min(1)]).parse(schema.type);
+          }
+        }
+      }
+    }
   }
 
   browserBundle(owner: string, dependencies: string[]): Record<string, unknown> {
@@ -300,6 +389,11 @@ export async function repositoryGraph(): Promise<ContractGraph> {
 
 async function main(): Promise<void> {
   const requested = process.argv.slice(2);
+  if (requested.length === 1 && requested[0] === "--validate") {
+    const graph = await repositoryGraph();
+    for (const name of Object.keys(contracts)) graph.bundle(name);
+    return;
+  }
   if (requested[0] === "--bundle-dir") {
     const directory = requested[1];
     if (!directory || requested.length !== 2) throw new Error("expected --bundle-dir DIRECTORY");

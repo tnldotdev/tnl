@@ -2,6 +2,8 @@ paths:
   /v1/feedback:
     get:
       operationId: listFeedbackThreads
+      tags: [feedback]
+      description: Read a cursor-paginated team feedback list under current management authorization. Each thread keeps its immutable first report and current state; use the event cursor to follow later changes.
       summary: List feedback threads manageable in one team
       security:
         - bearerAuth: []
@@ -20,6 +22,8 @@ paths:
   /v1/feedback/events:
     get:
       operationId: listFeedbackEvents
+      tags: [feedback]
+      description: Resume the team's ordered feedback history after after_cursor using current management authorization. Event order is independent of branch names or local staging state.
       summary: Resume ordered feedback events for one team
       security:
         - bearerAuth: []
@@ -38,6 +42,8 @@ paths:
   /v1/feedback/{feedback_id}:
     get:
       operationId: getFeedbackThread
+      tags: [feedback]
+      description: Read one manageable feedback thread, including its immutable report and current state. Follow-up replies and state changes remain in the separate ordered event history.
       summary: Read one immutable report and current feedback state
       security:
         - bearerAuth: []
@@ -55,6 +61,8 @@ paths:
   /v1/feedback/{feedback_id}/events:
     get:
       operationId: listFeedbackThreadEvents
+      tags: [feedback]
+      description: Read follow-up events after after_cursor for one manageable feedback thread. The original report is immutable and remains on the thread rather than being rewritten by later events.
       summary: Read ordered follow-up events for one feedback thread
       security:
         - bearerAuth: []
@@ -72,6 +80,8 @@ paths:
           $ref: "../openapi.yaml#/components/responses/Problem"
     post:
       operationId: appendFeedbackEvent
+      tags: [feedback]
+      description: Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Control derives the verified author from the current sign-in; events never edit the immutable first report.
       summary: Reply, record a checkout update, resolve, or reopen feedback
       security:
         - bearerAuth: []
@@ -96,6 +106,8 @@ paths:
   /v1/publish-runs/{publish_run_id}/feedback:
     post:
       operationId: createFeedbackReport
+      tags: [feedback]
+      description: Submit the immutable first report through the exact publish run token with the reviewer's current access proof in the body. Control verifies the author and evidence; publisher authentication alone does not authorize a reviewer report.
       summary: Store a reviewer's first report for a preview page
       security:
         - publishRunAuth: []
@@ -120,6 +132,8 @@ paths:
   /v1/publish-runs/{publish_run_id}/feedback/query:
     post:
       operationId: listPreviewPageFeedback
+      tags: [feedback]
+      description: Read feedback for one page through the exact publish run token and the reviewer's body access proof. The result is limited to the authorized preview context, not a team-wide management inventory.
       summary: List feedback on one page for a reviewer
       security:
         - publishRunAuth: []
@@ -143,6 +157,8 @@ paths:
   /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events:
     post:
       operationId: appendReviewerFeedbackEvent
+      tags: [feedback]
+      description: Append a reply, resolution, or reopening through the exact publish run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
       summary: Reply, resolve, or reopen feedback through preview access
       security:
         - publishRunAuth: []
@@ -168,6 +184,8 @@ paths:
   /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/query:
     post:
       operationId: getReviewerFeedbackThread
+      tags: [feedback]
+      description: Read one thread through the exact publish run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
       summary: Read a feedback thread through a current publisher connection
       security:
         - publishRunAuth: []
@@ -192,6 +210,8 @@ paths:
   /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events/query:
     post:
       operationId: listReviewerFeedbackEvents
+      tags: [feedback]
+      description: Read one thread's ordered follow-up history through the exact publish run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
       summary: Read thread events through a current publisher connection
       security:
         - publishRunAuth: []

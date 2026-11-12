@@ -112,6 +112,46 @@ describe("OpenAPI graph", () => {
         }),
       ),
     ).toThrow("duplicate operationId");
+    expect(() => operationInventory(document({ "/one": { get: {} } }))).toThrow(
+      "missing operationId",
+    );
+  });
+
+  it("rejects undefined security schemes and missing or multiple public primary tags", async () => {
+    const operation = {
+      operationId: "getItems",
+      summary: "Read items",
+      description: "Read saved items.",
+      tags: ["items"],
+      responses: { "200": { description: "ok" } },
+    };
+    for (const change of [
+      { security: [{ missing: [] }] },
+      { tags: [] },
+      { tags: ["items", "items"] },
+    ]) {
+      const api = {
+        ...document({ "/items": { get: { ...operation, ...change } } }),
+        tags: [{ name: "items" }],
+      };
+      const files = await fixture({ "openapi.yaml": api });
+      const graph = await new ContractGraph({ controlv1: files["openapi.yaml"] }).load();
+      expect(() => graph.bundle("controlv1")).toThrow(/undefined security scheme|primary tag/);
+    }
+  });
+
+  it("rejects malformed response declarations, including unquoted YAML commas", async () => {
+    for (const response of [
+      "{description: Accepted, including retries}",
+      "{description: ok, content: {json: {schema: {type: string}}}}",
+      "{description: ok, content: {application/json: {schema: string}}}",
+    ]) {
+      const files = await fixture({
+        "openapi.yaml": `openapi: 3.1.0\npaths:\n  /items:\n    get:\n      operationId: getItems\n      responses:\n        '200': ${response}\n`,
+      });
+      const graph = await new ContractGraph({ fixture: files["openapi.yaml"] }).load();
+      expect(() => graph.bundle("fixture")).toThrow();
+    }
   });
 
   it("rejects conflicting browser component names instead of silently overwriting them", async () => {

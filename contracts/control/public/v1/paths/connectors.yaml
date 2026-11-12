@@ -2,6 +2,9 @@ paths:
   /v1/services/{service_id}/client-certificates:
     post:
       operationId: issueServiceClientCertificate
+      tags: [connectors]
+      summary: Issue a service-scoped client certificate for an enrolled device
+      description: Submit the client's CSR using the current signed-in visitor identity and an enrolled device ID. Control checks exact-service access; the private key stays with the client, and this certificate grants no management authority.
       security: [{ bearerAuth: [] }]
       parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
       requestBody:
@@ -20,6 +23,9 @@ paths:
   /v1/visitor-devices:
     post:
       operationId: enrollVisitorDevice
+      tags: [connectors]
+      summary: Enroll an Ed25519 visitor device for the signed-in identity
+      description: Bind the submitted public key to the current visitor identity using its control session. The private key remains local and signs connector peer pair requests; enrollment alone does not grant access to a service.
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -41,6 +47,9 @@ paths:
   /v1/visitor-devices/{device_id}:
     delete:
       operationId: revokeVisitorDevice
+      tags: [connectors]
+      summary: Revoke a visitor device and its connector peer pairs
+      description: Revoke the exact device belonging to the signed-in visitor identity and invalidate its connector peer pairs. This does not revoke the identity's control session or its other enrolled devices.
       security: [{ bearerAuth: [] }]
       parameters:
         - name: device_id
@@ -53,6 +62,8 @@ paths:
   /v1/visitor/services:
     get:
       operationId: listAvailableServices
+      tags: [connectors]
+      summary: List services available to the signed-in visitor
       description: Authorized saved services for tnl connect, including offline services. Initial readiness requires two ready publisher connections; after that one surviving ready connection keeps a run available during replacement. Inventory never grants a stream ticket by itself and contains no target address, DNS or key material.
       security: [{ bearerAuth: [] }]
       parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceCursor" }]
@@ -70,6 +81,8 @@ paths:
   /v1/services/{service_id}/select-run:
     post:
       operationId: selectServiceRun
+      tags: [connectors]
+      summary: Select a ready service run for an enrolled visitor device
       description: Check current visitor access and select a ready publisher run for background preparation. pair_ready is a credential-free hint containing two exact ready connections on distinct live relay services, not a grant, stream ticket or pair key. The caller never supplies an IP address.
       security: [{ bearerAuth: [] }]
       parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
@@ -97,8 +110,10 @@ paths:
   /v1/services/{service_id}/connector-peer-pairs:
     post:
       operationId: prepareConnectorPeerPair
+      tags: [connectors]
+      summary: Prepare a signed connector pair for an exact ready service run
       security: [{}, { bearerAuth: [] }]
-      description: Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+      description: Signed create or replace for one exact ready service run. The request signature must prove the selected device or workload key. A device source also requires its matching identity's control session bearer token. A workload source authenticates with its credential in the JSON body and must omit Authorization entirely, including empty headers. The empty security object represents body authentication, not anonymous access. The selection snapshot is not a grant; current permission and both relay leases are checked again.
       parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
       requestBody:
         required: true
@@ -115,8 +130,10 @@ paths:
   /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew:
     post:
       operationId: renewConnectorPeerPair
+      tags: [connectors]
+      summary: Renew an exact signed connector pair and visitor permission
       security: [{}, { bearerAuth: [] }]
-      description: Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
+      description: Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
       parameters:
         - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
         - {
@@ -140,8 +157,10 @@ paths:
   /v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind:
     post:
       operationId: rebindConnectorPeerPair
+      tags: [connectors]
+      summary: Inspect or change a retained connector pair's network binding
       security: [{}, { bearerAuth: [] }]
-      description: Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+      description: Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
       parameters:
         - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
         - name: pair_id

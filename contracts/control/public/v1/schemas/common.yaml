@@ -7,18 +7,32 @@ securitySchemes:
     type: http
     scheme: bearer
     bearerFormat: tnl access token
+    description: Current control session access token. Does not stand in for a publisher, run, group lease, guest trial, or workload credential.
   publishRunAuth:
     type: http
     scheme: bearer
     bearerFormat: tnl publish-run token
+    description: Token for one public URL publish run, returned when that run is created. Not a control session or publisher access token.
   serviceRunAuth:
     type: http
     scheme: bearer
     bearerFormat: tnl service run token
+    description: Token for one service run, returned when that prepared run is started. Not a publisher access token.
   publisherAuth:
     type: http
     scheme: bearer
     bearerFormat: tnl grant-scoped publisher access token
+    description: Short-lived pta_ token obtained by exchanging a signed publisher assertion with the authority API. Authorizes only its exact publisher grant, not a group lease or an existing run token.
+  publisherGroupLeaseAuth:
+    type: http
+    scheme: bearer
+    bearerFormat: tnl publisher group lease
+    description: Short-lived pgl_ lease returned by group lease acquisition or group runtime start/renew. Authorizes assignments and configuration acknowledgements for one replica; a pta_ publisher access token is not accepted.
+  guestAuth:
+    type: http
+    scheme: bearer
+    bearerFormat: tnl guest trial credential
+    description: Restricted credential returned by guest demo creation. Bound to the guest trial and its source-address policy; not a signed-in control session.
 parameters:
   ServiceID:
     name: service_id

@@ -2,12 +2,72 @@ openapi: 3.1.0
 info:
   title: tnl control API
   version: 1.0.0
+  description: |-
+    Manage saved public URLs, services, projects, preview sharing, and publisher
+    lifecycles on one tnl server. The tags separate management, visitor preparation,
+    and publisher runtime operations; a public endpoint is not necessarily anonymous.
+
+    Send only the credential named by an operation. Control session access tokens,
+    guest trial credentials, publisher access tokens, group leases, publish run
+    tokens, service run tokens, and workload credentials have different authority.
+    A security requirement with an empty object, or an empty security array, may
+    describe authentication carried in the request body rather than Authorization.
+    Read the operation description for signed assertions and source-specific rules.
+    In particular, visitor preparation with body credentials rejects Authorization
+    where documented; do not attach a default control session to those requests.
+
+    The authority API handles identities, teams, domains, and sign-in separately.
   license:
     name: BSD-3-Clause
     identifier: BSD-3-Clause
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example.com
+tags:
+  - name: discovery
+    description: Discover server capabilities, readiness, client addresses, and webhook source policies.
+  - name: guest demos
+    description: Create a restricted guest trial and enroll its demo publisher.
+  - name: projects
+    description: Apply project declarations and resolve source-bound local and saved services.
+  - name: public URLs
+    description: Manage saved public URLs and publisher-owned ephemeral public URLs.
+  - name: services
+    description: Manage saved services, their approved protocol, and target TLS trust.
+  - name: previews
+    description: Group public URLs for one project directory and select team visitor access.
+  - name: shares
+    description: Create and revoke expiring access to an exact public URL snapshot.
+  - name: feedback
+    description: Read immutable reports and append ordered replies, source updates, and state changes.
+  - name: visitor access
+    description: Manage visitor grants and invitations, then prepare exact-resource visitor tokens.
+  - name: browser access
+    description: Sign visitors in and exchange host-bound browser handoffs and sessions through publishers.
+  - name: connectors
+    description: Enroll visitor devices, select service runs, and prepare signed connector peer pairs.
+  - name: workloads
+    description: Discover and prepare service access using an existing visitor-only workload credential.
+  - name: publisher identities
+    description: Issue enrollments, manage publisher grants, and read the resource selected by a grant.
+  - name: publisher groups
+    description: Manage group enrollment and selectors, then lease and acknowledge assignments for one replica.
+  - name: publisher runtime
+    description: Inspect and update a signed publisher process lifetime independently of its publications.
+  - name: publish runs
+    description: Create, renew, ready, and close a public URL's active publication.
+  - name: service runs
+    description: Prepare and maintain service publications and deliver connector bindings to their publisher.
+  - name: certificates
+    description: Issue and acknowledge the approved certificate for an exact public URL or service run.
+  - name: visitor policy
+    description: Refresh run-scoped visitor policy, revocations, and public verification keys.
+  - name: observations
+    description: Report bounded connection observations without granting visitor access.
+  - name: administration
+    description: Inspect server roles and relay leases, drain relays, and set maintenance controls.
+  - name: service audit
+    description: Read the team's bounded service access and lifecycle audit history.
 paths:
   /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs:
     $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1connector-peer-pairs"
@@ -255,6 +315,10 @@ components:
       $ref: "./schemas/common.yaml#/securitySchemes/serviceRunAuth"
     publisherAuth:
       $ref: "./schemas/common.yaml#/securitySchemes/publisherAuth"
+    publisherGroupLeaseAuth:
+      $ref: "./schemas/common.yaml#/securitySchemes/publisherGroupLeaseAuth"
+    guestAuth:
+      $ref: "./schemas/common.yaml#/securitySchemes/guestAuth"
   parameters:
     ServiceID:
       $ref: "./schemas/common.yaml#/parameters/ServiceID"

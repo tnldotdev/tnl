@@ -2,8 +2,10 @@ paths:
   /v1/visitor-policy:
     post:
       operationId: readPublisherVisitorPolicy
+      tags: [visitor policy]
+      summary: Refresh the current run's visitor policy and verification keys
       description: Read one current publisher run's scoped visitor policy, revocations, and public verification keys. The bearer credential is the exact run token. This background operation is independent of the publisher's process lease and of ordinary visitor admission.
-      security: [{ bearerAuth: [] }]
+      security: [{ publishRunAuth: [] }, { serviceRunAuth: [] }]
       requestBody:
         required: true
         content:

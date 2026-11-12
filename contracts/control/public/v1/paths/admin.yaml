@@ -2,6 +2,9 @@ paths:
   /v1/teams/{team_id}/service-audit:
     get:
       operationId: listServiceAudit
+      tags: [service audit]
+      summary: Read a team's service audit history
+      description: Read a bounded page of service access and lifecycle events using the team's current management permission. Filter by exact service identity or time, and resume with the returned cursor; audit records do not grant visitor access.
       security: [{ bearerAuth: [] }]
       parameters:
         - { name: team_id, in: path, required: true, schema: { type: string } }
@@ -28,6 +31,8 @@ paths:
   /v1/admin/status:
     get:
       operationId: getAdminServerStatus
+      tags: [administration]
+      description: Read control, ingress, relay, and maintenance observations using an administrator's control session. These observations do not renew process leases.
       summary: Read control, ingress, and relay status
       security:
         - bearerAuth: []
@@ -43,6 +48,8 @@ paths:
   /v1/admin/relays:
     get:
       operationId: listAdminRelays
+      tags: [administration]
+      description: Read a cursor-paginated inventory of relay process leases using an administrator's control session. Lease state describes current placement eligibility, not a guarantee that a publisher connection is ready.
       summary: List relay leases
       security:
         - bearerAuth: []
@@ -60,6 +67,8 @@ paths:
   /v1/admin/relays/{relay_id}/drain:
     post:
       operationId: drainAdminRelay
+      tags: [administration]
+      description: Fence the exact relay process lease identified in the request, remove it from new placement, and allow existing connections to drain until the deadline. Requires an administrator's control session.
       summary: Remove a matching relay lease from placement and begin draining
       security:
         - bearerAuth: []
@@ -83,6 +92,8 @@ paths:
   /v1/admin/maintenance-controls:
     get:
       operationId: listMaintenanceControls
+      tags: [administration]
+      description: Read the administrator-controlled gates for public URL creation, publish run creation, and certificate issuance. Reading a gate does not change it.
       summary: List maintenance controls
       security:
         - bearerAuth: []
@@ -100,6 +111,8 @@ paths:
   /v1/admin/maintenance-controls/{control_name}:
     put:
       operationId: setMaintenanceControl
+      tags: [administration]
+      description: Change one named maintenance gate using an administrator's control session. The gate controls new work of that kind, rather than closing all existing publications.
       summary: Set one maintenance control
       security:
         - bearerAuth: []

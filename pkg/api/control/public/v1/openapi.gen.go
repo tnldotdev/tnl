@@ -4818,10 +4818,14 @@ type ClientInterface interface {
 
 	// ListMaintenanceControls List maintenance controls
 	//
+	// Read the administrator-controlled gates for public URL creation, publish run creation, and certificate issuance. Reading a gate does not change it.
+	//
 	// Corresponds with GET /v1/admin/maintenance-controls (the `ListMaintenanceControls` operationId).
 	ListMaintenanceControls(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SetMaintenanceControlWithBody Set one maintenance control
+	//
+	// Change one named maintenance gate using an administrator's control session. The gate controls new work of that kind, rather than closing all existing publications.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -4830,6 +4834,8 @@ type ClientInterface interface {
 
 	// SetMaintenanceControl Set one maintenance control
 	//
+	// Change one named maintenance gate using an administrator's control session. The gate controls new work of that kind, rather than closing all existing publications.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with PUT /v1/admin/maintenance-controls/{control_name} (the `SetMaintenanceControl` operationId).
@@ -4837,10 +4843,14 @@ type ClientInterface interface {
 
 	// ListAdminRelays List relay leases
 	//
+	// Read a cursor-paginated inventory of relay process leases using an administrator's control session. Lease state describes current placement eligibility, not a guarantee that a publisher connection is ready.
+	//
 	// Corresponds with GET /v1/admin/relays (the `ListAdminRelays` operationId).
 	ListAdminRelays(ctx context.Context, params *ListAdminRelaysParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DrainAdminRelayWithBody Remove a matching relay lease from placement and begin draining
+	//
+	// Fence the exact relay process lease identified in the request, remove it from new placement, and allow existing connections to drain until the deadline. Requires an administrator's control session.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -4849,6 +4859,8 @@ type ClientInterface interface {
 
 	// DrainAdminRelay Remove a matching relay lease from placement and begin draining
 	//
+	// Fence the exact relay process lease identified in the request, remove it from new placement, and allow existing connections to drain until the deadline. Requires an administrator's control session.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/admin/relays/{relay_id}/drain (the `DrainAdminRelay` operationId).
@@ -4856,60 +4868,84 @@ type ClientInterface interface {
 
 	// GetAdminServerStatus Read control, ingress, and relay status
 	//
+	// Read control, ingress, relay, and maintenance observations using an administrator's control session. These observations do not renew process leases.
+	//
 	// Corresponds with GET /v1/admin/status (the `GetAdminServerStatus` operationId).
 	GetAdminServerStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CompletePreviewBrowserLogin Return a signed-in visitor to the preview
+	//
+	// Complete the identity provider callback using the pending login state and authorization code, then redirect to a one-time host-bound handoff. No bearer token is used; the callback is authenticated by the checked login flow, not by the empty security array.
 	//
 	// Corresponds with GET /v1/browser/callback (the `CompletePreviewBrowserLogin` operationId).
 	CompletePreviewBrowserLogin(ctx context.Context, params *CompletePreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// BeginPreviewBrowserLogin Start sign-in for a preview visitor
 	//
+	// Begin the configured browser sign-in flow for a public URL, optionally within a preview. No bearer credential is required to begin sign-in; current visit permission is checked before a usable browser credential is issued.
+	//
 	// Corresponds with GET /v1/browser/login (the `BeginPreviewBrowserLogin` operationId).
 	BeginPreviewBrowserLogin(ctx context.Context, params *BeginPreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// BeginServiceBrowserLogin performs a GET /v1/browser/service-login (the `BeginServiceBrowserLogin` operationId) request.
+	// BeginServiceBrowserLogin Start browser sign-in for one HTTP service
 	//
 	// Start sign-in for one service HTTP service. Uses the common browser callback and a snapshot of ready runs; the allocated service port is retained.
+	//
+	// Corresponds with GET /v1/browser/service-login (the `BeginServiceBrowserLogin` operationId).
 	BeginServiceBrowserLogin(ctx context.Context, params *BeginServiceBrowserLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetCertificateIssuance Read one publish-run certificate issuance
+	//
+	// Poll one public URL certificate issuance using its publish run token. The token must belong to the issuance's current run; a control session alone cannot retrieve the certificate.
 	//
 	// Corresponds with GET /v1/certificate-issuances/{issuance_id} (the `GetCertificateIssuance` operationId).
 	GetCertificateIssuance(ctx context.Context, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetClientIP Return the requesting client's public IP address
 	//
+	// Read the request source address observed by control, after configured trusted-proxy handling. No credential is required; a caller-provided address is not accepted as source evidence.
+	//
 	// Corresponds with GET /v1/client-ip (the `GetClientIP` operationId).
 	GetClientIP(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetControlDiscovery Describe control and its authentication methods
+	//
+	// Read this server's public capabilities and authentication facts before choosing a client workflow. No credential is required; discover authority sign-in separately from publisher and visitor credentials.
 	//
 	// Corresponds with GET /v1/discovery (the `GetControlDiscovery` operationId).
 	GetControlDiscovery(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListFeedbackThreads List feedback threads manageable in one team
 	//
+	// Read a cursor-paginated team feedback list under current management authorization. Each thread keeps its immutable first report and current state; use the event cursor to follow later changes.
+	//
 	// Corresponds with GET /v1/feedback (the `ListFeedbackThreads` operationId).
 	ListFeedbackThreads(ctx context.Context, params *ListFeedbackThreadsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListFeedbackEvents Resume ordered feedback events for one team
+	//
+	// Resume the team's ordered feedback history after after_cursor using current management authorization. Event order is independent of branch names or local staging state.
 	//
 	// Corresponds with GET /v1/feedback/events (the `ListFeedbackEvents` operationId).
 	ListFeedbackEvents(ctx context.Context, params *ListFeedbackEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetFeedbackThread Read one immutable report and current feedback state
 	//
+	// Read one manageable feedback thread, including its immutable report and current state. Follow-up replies and state changes remain in the separate ordered event history.
+	//
 	// Corresponds with GET /v1/feedback/{feedback_id} (the `GetFeedbackThread` operationId).
 	GetFeedbackThread(ctx context.Context, feedbackId FeedbackID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListFeedbackThreadEvents Read ordered follow-up events for one feedback thread
 	//
+	// Read follow-up events after after_cursor for one manageable feedback thread. The original report is immutable and remains on the thread rather than being rewritten by later events.
+	//
 	// Corresponds with GET /v1/feedback/{feedback_id}/events (the `ListFeedbackThreadEvents` operationId).
 	ListFeedbackThreadEvents(ctx context.Context, feedbackId FeedbackID, params *ListFeedbackThreadEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AppendFeedbackEventWithBody Reply, record a checkout update, resolve, or reopen feedback
+	//
+	// Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Control derives the verified author from the current sign-in; events never edit the immutable first report.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -4918,6 +4954,8 @@ type ClientInterface interface {
 
 	// AppendFeedbackEvent Reply, record a checkout update, resolve, or reopen feedback
 	//
+	// Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Control derives the verified author from the current sign-in; events never edit the immutable first report.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/feedback/{feedback_id}/events (the `AppendFeedbackEvent` operationId).
@@ -4925,28 +4963,46 @@ type ClientInterface interface {
 
 	// CreateGuestDemo Create a restricted guest credential for the built-in demo
 	//
+	// Create a source-address-bound guest trial when guest demos are enabled. No existing credential is required. Network issuance limits apply; the returned credential grants only restricted demo operations, not a control session.
+	//
 	// Corresponds with POST /v1/guest-demo (the `CreateGuestDemo` operationId).
 	CreateGuestDemo(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AllocateGuestDemoNumber Allocate a new hostname number for this guest trial
 	//
+	// Allocate the next demo hostname number using the guest credential returned by createGuestDemo. Control checks the trial deadline, source address, remaining allowance, and absence of an open demo publish run.
+	//
 	// Corresponds with POST /v1/guest-demo/number (the `AllocateGuestDemoNumber` operationId).
 	AllocateGuestDemoNumber(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// EnrollGuestPublisherWithBody performs a POST /v1/guest-demo/publisher (the `EnrollGuestPublisher` operationId) request,
-	// with any type of body and a specified content type.
+	// EnrollGuestPublisherWithBody Enroll a publisher key for the guest trial's assigned demo URL
+	//
+	// Authenticate with the guest trial credential and bind an Ed25519 key to the trial's assigned public URL. Control checks the trial and validated request source; the resulting identity grants no general control session or service management permission.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/guest-demo/publisher (the `EnrollGuestPublisher` operationId).
 	EnrollGuestPublisherWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// EnrollGuestPublisher performs a POST /v1/guest-demo/publisher (the `EnrollGuestPublisher` operationId) request.
+	// EnrollGuestPublisher Enroll a publisher key for the guest trial's assigned demo URL
+	//
+	// Authenticate with the guest trial credential and bind an Ed25519 key to the trial's assigned public URL. Control checks the trial and validated request source; the resulting identity grants no general control session or service management permission.
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/guest-demo/publisher (the `EnrollGuestPublisher` operationId).
 	EnrollGuestPublisher(ctx context.Context, body EnrollGuestPublisherJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetHealth Confirm that the control HTTP server is serving
+	//
+	// Check that the control HTTP handler responds. No credential is required; use getReadiness to check whether the process can serve its configured role.
 	//
 	// Corresponds with GET /v1/health (the `GetHealth` operationId).
 	GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreatePreviewWithBody Create or reuse a preview for one team
+	//
+	// Save or reuse a preview identity for the selected team and idempotency key. The preview groups public URLs; creation alone does not grant visitor access or start their publish runs.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -4955,6 +5011,8 @@ type ClientInterface interface {
 
 	// CreatePreview Create or reuse a preview for one team
 	//
+	// Save or reuse a preview identity for the selected team and idempotency key. The preview groups public URLs; creation alone does not grant visitor access or start their publish runs.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/previews (the `CreatePreview` operationId).
@@ -4962,10 +5020,14 @@ type ClientInterface interface {
 
 	// GetPreview Read a preview and its public URLs
 	//
+	// Read one preview's saved identity, public URL membership, and team access setting under current management authorization. Active publication and visitor permission are checked separately.
+	//
 	// Corresponds with GET /v1/previews/{preview_id} (the `GetPreview` operationId).
 	GetPreview(ctx context.Context, previewId PreviewID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AddPreviewPublicURLWithBody Add an authorized public URL to a preview
+	//
+	// Add an existing authorized public URL to the preview. This changes future preview membership, not the immutable public URL snapshot held by an already-created share.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -4974,6 +5036,8 @@ type ClientInterface interface {
 
 	// AddPreviewPublicURL Add an authorized public URL to a preview
 	//
+	// Add an existing authorized public URL to the preview. This changes future preview membership, not the immutable public URL snapshot held by an already-created share.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/previews/{preview_id}/public-urls (the `AddPreviewPublicURL` operationId).
@@ -4981,10 +5045,14 @@ type ClientInterface interface {
 
 	// ListShares List shares for a preview
 	//
+	// Read a cursor-paginated inventory of the preview's manageable shares without their secrets. A stored share record does not itself function as a share link.
+	//
 	// Corresponds with GET /v1/previews/{preview_id}/shares (the `ListShares` operationId).
 	ListShares(ctx context.Context, previewId PreviewID, params *ListSharesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateShareWithBody Store one share for a snapshot of authorized public URLs
+	//
+	// Store a share using current preview management authorization and an idempotency key. It captures the authorized public URL IDs now; later preview membership changes do not expand that share's access.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -4993,12 +5061,16 @@ type ClientInterface interface {
 
 	// CreateShare Store one share for a snapshot of authorized public URLs
 	//
+	// Store a share using current preview management authorization and an idempotency key. It captures the authorized public URL IDs now; later preview membership changes do not expand that share's access.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/previews/{preview_id}/shares (the `CreateShare` operationId).
 	CreateShare(ctx context.Context, previewId PreviewID, params *CreateShareParams, body CreateShareJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SetPreviewTeamAccessWithBody Enable or disable team visitor access for this preview
+	//
+	// Set the preview's opt-in team access grant using current management authorization. Enabled access still requires a current team member's sign-in; it does not make the included public URLs anonymous.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5007,94 +5079,148 @@ type ClientInterface interface {
 
 	// SetPreviewTeamAccess Enable or disable team visitor access for this preview
 	//
+	// Set the preview's opt-in team access grant using current management authorization. Enabled access still requires a current team member's sign-in; it does not make the included public URLs anonymous.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with PUT /v1/previews/{preview_id}/team-access (the `SetPreviewTeamAccess` operationId).
 	SetPreviewTeamAccess(ctx context.Context, previewId PreviewID, body SetPreviewTeamAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetProjectConfiguration performs a GET /v1/projects/{project_key}/configuration (the `GetProjectConfiguration` operationId) request.
+	// GetProjectConfiguration Read a project's applied configuration and publisher status
+	//
+	// Read the normalized desired configuration and observed publisher revisions for the selected team and project. Requires current project management permission; the response can include targets and must not be exposed as public project metadata.
+	//
+	// Corresponds with GET /v1/projects/{project_key}/configuration (the `GetProjectConfiguration` operationId).
 	GetProjectConfiguration(ctx context.Context, projectKey string, params *GetProjectConfigurationParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ApplyProjectConfigurationWithBody performs a PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId) request,
-	// with any type of body and a specified content type.
+	// ApplyProjectConfigurationWithBody Apply a project's desired services and publisher groups
 	//
 	// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId).
 	ApplyProjectConfigurationWithBody(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ApplyProjectConfiguration performs a PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId) request.
-	// Takes a body of the `application/json` content type.
+	// ApplyProjectConfiguration Apply a project's desired services and publisher groups
 	//
 	// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId).
 	ApplyProjectConfiguration(ctx context.Context, projectKey string, body ApplyProjectConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetLocalProjectService performs a GET /v1/projects/{project_key}/local-services/{service} (the `GetLocalProjectService` operationId) request.
+	// GetLocalProjectService Resolve one existing source-bound worktree service
 	//
 	// Read the exact service previously realized for this team, project source, service key, and worktree. Requires current ordinary private visitor access, not project management access. Returns only immutable identity and approved visitor protocol/TLS metadata, never configuration, targets, or credentials. Does not realize or adopt a service. Missing or unauthorized bindings return not found; an authorized binding with another source fingerprint returns conflict. No other team, project, worktree, or saved name is searched.
+	//
+	// Corresponds with GET /v1/projects/{project_key}/local-services/{service} (the `GetLocalProjectService` operationId).
 	GetLocalProjectService(ctx context.Context, projectKey string, service string, params *GetLocalProjectServiceParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RealizeLocalProjectServiceWithBody performs a PUT /v1/projects/{project_key}/local-services/{service} (the `RealizeLocalProjectService` operationId) request,
-	// with any type of body and a specified content type.
+	// RealizeLocalProjectServiceWithBody Realize one declared local service for a worktree
 	//
 	// Realize only one source-bound local service for one worktree. Private IDs are allocated here with worktree-scoped names, never adopted by name. Public IDs must be exact caller-owned app URLs already allocated by this runtime, bound to the caller's membership or to the caller's own personal team when current namespace authorization selects shared scope. Organization shared URLs and another member's or team's URLs are rejected. Records provenance before first apply; later apply reconciles that legitimate resource. When configuration has been applied the local declaration must match it. Does not apply remote group changes.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/projects/{project_key}/local-services/{service} (the `RealizeLocalProjectService` operationId).
 	RealizeLocalProjectServiceWithBody(ctx context.Context, projectKey string, service string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RealizeLocalProjectService performs a PUT /v1/projects/{project_key}/local-services/{service} (the `RealizeLocalProjectService` operationId) request.
-	// Takes a body of the `application/json` content type.
+	// RealizeLocalProjectService Realize one declared local service for a worktree
 	//
 	// Realize only one source-bound local service for one worktree. Private IDs are allocated here with worktree-scoped names, never adopted by name. Public IDs must be exact caller-owned app URLs already allocated by this runtime, bound to the caller's membership or to the caller's own personal team when current namespace authorization selects shared scope. Organization shared URLs and another member's or team's URLs are rejected. Records provenance before first apply; later apply reconciles that legitimate resource. When configuration has been applied the local declaration must match it. Does not apply remote group changes.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/projects/{project_key}/local-services/{service} (the `RealizeLocalProjectService` operationId).
 	RealizeLocalProjectService(ctx context.Context, projectKey string, service string, body RealizeLocalProjectServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetProjectPublicMetadata performs a GET /v1/projects/{project_key}/public-metadata (the `GetProjectPublicMetadata` operationId) request.
+	// GetProjectPublicMetadata Read visitor-safe project service identities and hostnames
 	//
 	// Browser-safe project source and public service IDs/hostnames, including exact local worktree realizations before or after first apply. Returns only public services the caller may visit, or all public services for a project manager. A service key may appear more than once for separate worktree URLs. Never returns configuration, targets, trust, grants, or publisher data.
+	//
+	// Corresponds with GET /v1/projects/{project_key}/public-metadata (the `GetProjectPublicMetadata` operationId).
 	GetProjectPublicMetadata(ctx context.Context, projectKey string, params *GetProjectPublicMetadataParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreatePublisherGroupEnrollmentWithBody performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId) request,
-	// with any type of body and a specified content type.
+	// CreatePublisherGroupEnrollmentWithBody Issue a bounded enrollment key for a project's publisher group
+	//
+	// Create an expiring bootstrap credential using current project management permission. Each enrolled replica supplies its own key; the enrollment's member limit bounds how many identities it can create.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId).
 	CreatePublisherGroupEnrollmentWithBody(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreatePublisherGroupEnrollment performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId) request.
+	// CreatePublisherGroupEnrollment Issue a bounded enrollment key for a project's publisher group
+	//
+	// Create an expiring bootstrap credential using current project management permission. Each enrolled replica supplies its own key; the enrollment's member limit bounds how many identities it can create.
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId).
 	CreatePublisherGroupEnrollment(ctx context.Context, projectKey string, groupName string, body CreatePublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RevokePublisherGroupMember performs a DELETE /v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id} (the `RevokePublisherGroupMember` operationId) request.
+	// RevokePublisherGroupMember Revoke one enrolled publisher replica from a group
+	//
+	// Revoke the exact enrolled publisher identity using current project management permission. Control closes that member's public URL and service runs without revoking other group members.
+	//
+	// Corresponds with DELETE /v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id} (the `RevokePublisherGroupMember` operationId).
 	RevokePublisherGroupMember(ctx context.Context, projectKey string, groupName string, publisherIdentityId string, params *RevokePublisherGroupMemberParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RenamePublisherNamespaceWithBody performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId) request,
-	// with any type of body and a specified content type.
+	// RenamePublisherNamespaceWithBody Replace a publisher group's DNS namespace label
 	//
 	// Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId).
 	RenamePublisherNamespaceWithBody(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RenamePublisherNamespace performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId) request.
-	// Takes a body of the `application/json` content type.
+	// RenamePublisherNamespace Replace a publisher group's DNS namespace label
 	//
 	// Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
-	RenamePublisherNamespace(ctx context.Context, projectKey string, groupName string, body RenamePublisherNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RenamePublisherGroupWithBody performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId) request,
-	// with any type of body and a specified content type.
 	//
-	// Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
-	RenamePublisherGroupWithBody(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RenamePublisherGroup performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId) request.
 	// Takes a body of the `application/json` content type.
 	//
+	// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId).
+	RenamePublisherNamespace(ctx context.Context, projectKey string, groupName string, body RenamePublisherNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RenamePublisherGroupWithBody Rename a group's configuration selector without changing endpoints
+	//
 	// Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId).
+	RenamePublisherGroupWithBody(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RenamePublisherGroup Rename a group's configuration selector without changing endpoints
+	//
+	// Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId).
 	RenamePublisherGroup(ctx context.Context, projectKey string, groupName string, body RenamePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetProjectService performs a GET /v1/projects/{project_key}/services/{service} (the `GetProjectService` operationId) request.
+	// GetProjectService Resolve an applied service by project source and key
 	//
 	// Resolve an applied service by its exact Git source and configuration key using current visitor access. Does not return targets or require project-manager permission.
+	//
+	// Corresponds with GET /v1/projects/{project_key}/services/{service} (the `GetProjectService` operationId).
 	GetProjectService(ctx context.Context, projectKey string, service ServiceName, params *GetProjectServiceParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListPublicURLs List public URLs for one team
+	//
+	// Read a cursor-paginated inventory of public URLs the caller may manage in one team. An exact canonical_hostname filter returns zero or one non-deleted URL and cannot be combined with a cursor.
 	//
 	// Corresponds with GET /v1/public-urls (the `ListPublicURLs` operationId).
 	ListPublicURLs(ctx context.Context, params *ListPublicURLsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreatePublicURLWithBody Create one team public URL
+	//
+	// Save an authorized hostname, target, and visitor policy using an idempotency key. A control session selects an authorized team scope; a guest credential can create only its assigned ephemeral demo hostname. Creation does not start a publish run.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5103,6 +5229,8 @@ type ClientInterface interface {
 
 	// CreatePublicURL Create one team public URL
 	//
+	// Save an authorized hostname, target, and visitor policy using an idempotency key. A control session selects an authorized team scope; a guest credential can create only its assigned ephemeral demo hostname. Creation does not start a publish run.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
@@ -5110,15 +5238,21 @@ type ClientInterface interface {
 
 	// DeletePublicURL Delete one public URL and close its publish run
 	//
+	// Delete the saved public URL under current management authorization and close its active publish run. The hostname cannot keep serving through the deleted URL's old run credentials.
+	//
 	// Corresponds with DELETE /v1/public-urls/{public_url_id} (the `DeletePublicURL` operationId).
 	DeletePublicURL(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetPublicURL Read one public URL
 	//
+	// Read one saved public URL under current management authorization. Its saved policy and lifecycle are separate from whether an active publish run is routable.
+	//
 	// Corresponds with GET /v1/public-urls/{public_url_id} (the `GetPublicURL` operationId).
 	GetPublicURL(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UpdatePublicURLWithBody Update a public URL's target and IP policy
+	//
+	// Replace the target and IP policy, optionally changing the post-quantum requirement, under current management authorization. Use replaceVisitorAccess for complete visitor access policy replacement; this operation does not create a new publish run.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5127,12 +5261,16 @@ type ClientInterface interface {
 
 	// UpdatePublicURL Update a public URL's target and IP policy
 	//
+	// Replace the target and IP policy, optionally changing the post-quantum requirement, under current management authorization. Use replaceVisitorAccess for complete visitor access policy replacement; this operation does not create a new publish run.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
 	UpdatePublicURL(ctx context.Context, publicUrlId PublicURLID, body UpdatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ReplaceVisitorAccessWithBody Replace the complete live visitor access policy
+	//
+	// Replace the complete saved visitor access policy under current public URL management authorization. Omitted optional policy members are not a partial patch; publishers must enforce the resulting current visitor policy for new work.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5141,12 +5279,16 @@ type ClientInterface interface {
 
 	// ReplaceVisitorAccess Replace the complete live visitor access policy
 	//
+	// Replace the complete saved visitor access policy under current public URL management authorization. Omitted optional policy members are not a partial patch; publishers must enforce the resulting current visitor policy for new work.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with PUT /v1/public-urls/{public_url_id}/access (the `ReplaceVisitorAccess` operationId).
 	ReplaceVisitorAccess(ctx context.Context, publicUrlId PublicURLID, body ReplaceVisitorAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreatePublishRunWithBody Create a publish run and allocate its publish run number
+	//
+	// Start a new publication under the exact publisher grant using an idempotency key and Publisher-Run-Proof signature. The publisher access token does not replace the required proof of the signing key; the response includes the separate run token and two connection assignments.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5155,26 +5297,48 @@ type ClientInterface interface {
 
 	// CreatePublishRun Create a publish run and allocate its publish run number
 	//
+	// Start a new publication under the exact publisher grant using an idempotency key and Publisher-Run-Proof signature. The publisher access token does not replace the required proof of the signing key; the response includes the separate run token and two connection assignments.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
 	CreatePublishRun(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, body CreatePublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListVisitorGrants performs a GET /v1/public-urls/{public_url_id}/visitor-grants (the `ListVisitorGrants` operationId) request.
+	// ListVisitorGrants List visitor grants for one manageable public URL
+	//
+	// Read exact-public-URL team and identity visitor grants under current management authorization. Listing a grant is not a substitute for checking the visitor's current access.
+	//
+	// Corresponds with GET /v1/public-urls/{public_url_id}/visitor-grants (the `ListVisitorGrants` operationId).
 	ListVisitorGrants(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateTeamVisitorGrantWithBody performs a POST /v1/public-urls/{public_url_id}/visitor-grants (the `CreateTeamVisitorGrant` operationId) request,
-	// with any type of body and a specified content type.
+	// CreateTeamVisitorGrantWithBody Grant current members of a team access to one public URL
+	//
+	// Create an exact-public-URL grant for current members of the selected team using management authorization and an idempotency key. This grants visitor access, not public URL management or publisher authority.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-grants (the `CreateTeamVisitorGrant` operationId).
 	CreateTeamVisitorGrantWithBody(ctx context.Context, publicUrlId PublicURLID, params *CreateTeamVisitorGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateTeamVisitorGrant performs a POST /v1/public-urls/{public_url_id}/visitor-grants (the `CreateTeamVisitorGrant` operationId) request.
+	// CreateTeamVisitorGrant Grant current members of a team access to one public URL
+	//
+	// Create an exact-public-URL grant for current members of the selected team using management authorization and an idempotency key. This grants visitor access, not public URL management or publisher authority.
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-grants (the `CreateTeamVisitorGrant` operationId).
 	CreateTeamVisitorGrant(ctx context.Context, publicUrlId PublicURLID, params *CreateTeamVisitorGrantParams, body CreateTeamVisitorGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RevokeVisitorGrant performs a DELETE /v1/public-urls/{public_url_id}/visitor-grants/{grant_id} (the `RevokeVisitorGrant` operationId) request.
+	// RevokeVisitorGrant Revoke one public URL visitor grant
+	//
+	// Revoke the exact grant under current public URL management authorization. Current visitor policy determines access after revocation; other grants for the URL remain separate.
+	//
+	// Corresponds with DELETE /v1/public-urls/{public_url_id}/visitor-grants/{grant_id} (the `RevokeVisitorGrant` operationId).
 	RevokeVisitorGrant(ctx context.Context, publicUrlId PublicURLID, grantId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateIdentityVisitorGrantWithBody Create an explicit identity grant, including for the current identity
+	//
+	// Create an exact-public-URL identity grant under current management authorization. Use an explicit identity grant even for the current identity when access must not depend on team membership.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5183,31 +5347,55 @@ type ClientInterface interface {
 
 	// CreateIdentityVisitorGrant Create an explicit identity grant, including for the current identity
 	//
+	// Create an exact-public-URL identity grant under current management authorization. Use an explicit identity grant even for the current identity when access must not depend on team membership.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-identity-grants (the `CreateIdentityVisitorGrant` operationId).
 	CreateIdentityVisitorGrant(ctx context.Context, publicUrlId PublicURLID, params *CreateIdentityVisitorGrantParams, body CreateIdentityVisitorGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListVisitorInvitations performs a GET /v1/public-urls/{public_url_id}/visitor-invitations (the `ListVisitorInvitations` operationId) request.
+	// ListVisitorInvitations List named visitor invitations for one public URL
+	//
+	// Read invitation records using current public URL management authorization. Invitation inventory does not reveal a reusable visitor credential or grant management permission to its recipients.
+	//
+	// Corresponds with GET /v1/public-urls/{public_url_id}/visitor-invitations (the `ListVisitorInvitations` operationId).
 	ListVisitorInvitations(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateVisitorInvitationWithBody performs a POST /v1/public-urls/{public_url_id}/visitor-invitations (the `CreateVisitorInvitation` operationId) request,
-	// with any type of body and a specified content type.
+	// CreateVisitorInvitationWithBody Invite a verified email identity to one public URL
+	//
+	// Issue an expiring one-use invitation under current public URL management authorization. Acceptance requires the recipient's verified email and creates an exact-URL identity grant, not team membership.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-invitations (the `CreateVisitorInvitation` operationId).
 	CreateVisitorInvitationWithBody(ctx context.Context, publicUrlId PublicURLID, params *CreateVisitorInvitationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateVisitorInvitation performs a POST /v1/public-urls/{public_url_id}/visitor-invitations (the `CreateVisitorInvitation` operationId) request.
+	// CreateVisitorInvitation Invite a verified email identity to one public URL
+	//
+	// Issue an expiring one-use invitation under current public URL management authorization. Acceptance requires the recipient's verified email and creates an exact-URL identity grant, not team membership.
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-invitations (the `CreateVisitorInvitation` operationId).
 	CreateVisitorInvitation(ctx context.Context, publicUrlId PublicURLID, params *CreateVisitorInvitationParams, body CreateVisitorInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RevokeVisitorInvitation performs a DELETE /v1/public-urls/{public_url_id}/visitor-invitations/{invitation_id} (the `RevokeVisitorInvitation` operationId) request.
+	// RevokeVisitorInvitation Revoke a public URL invitation and its accepted identity grant
+	//
+	// Revoke the named invitation using current public URL management authorization. If it was accepted, revoke the identity grant created by that invitation as well.
+	//
+	// Corresponds with DELETE /v1/public-urls/{public_url_id}/visitor-invitations/{invitation_id} (the `RevokeVisitorInvitation` operationId).
 	RevokeVisitorInvitation(ctx context.Context, publicUrlId PublicURLID, invitationId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ClosePublishRun Close and drain a publish run without deleting its public URL
+	//
+	// Close the exact publication using its publish run token. Saved public URLs remain available for a later run; ephemeral public URLs follow their removal lifecycle instead.
 	//
 	// Corresponds with DELETE /v1/publish-runs/{publish_run_id} (the `ClosePublishRun` operationId).
 	ClosePublishRun(ctx context.Context, publishRunId PublishRunID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CheckPreviewBrowserAccessWithBody Check a browser cookie against current preview access
+	//
+	// Authenticate the publisher with the exact publish run token and check the body's browser cookie secret against current public URL and preview access. A previously issued cookie alone is not proof of current permission.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5216,12 +5404,16 @@ type ClientInterface interface {
 
 	// CheckPreviewBrowserAccess Check a browser cookie against current preview access
 	//
+	// Authenticate the publisher with the exact publish run token and check the body's browser cookie secret against current public URL and preview access. A previously issued cookie alone is not proof of current permission.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/access (the `CheckPreviewBrowserAccess` operationId).
 	CheckPreviewBrowserAccess(ctx context.Context, publishRunId PublishRunID, body CheckPreviewBrowserAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RedeemPreviewBrowserHandoffWithBody Redeem a one-time browser handoff on the publisher
+	//
+	// Authenticate the publisher with the exact publish run token and exchange the body's one-time handoff for a host-bound browser cookie secret. A visitor's control session does not replace the publisher credential.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5230,12 +5422,16 @@ type ClientInterface interface {
 
 	// RedeemPreviewBrowserHandoff Redeem a one-time browser handoff on the publisher
 	//
+	// Authenticate the publisher with the exact publish run token and exchange the body's one-time handoff for a host-bound browser cookie secret. A visitor's control session does not replace the publisher credential.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/handoff (the `RedeemPreviewBrowserHandoff` operationId).
 	RedeemPreviewBrowserHandoff(ctx context.Context, publishRunId PublishRunID, body RedeemPreviewBrowserHandoffJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RevokePreviewBrowserAccessWithBody Revoke the current browser session
+	//
+	// Authenticate the publisher with the exact publish run token and revoke the host-bound browser session named in the body. Other hosts and the person's control session remain separate.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5244,12 +5440,16 @@ type ClientInterface interface {
 
 	// RevokePreviewBrowserAccess Revoke the current browser session
 	//
+	// Authenticate the publisher with the exact publish run token and revoke the host-bound browser session named in the body. Other hosts and the person's control session remain separate.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/logout (the `RevokePreviewBrowserAccess` operationId).
 	RevokePreviewBrowserAccess(ctx context.Context, publishRunId PublishRunID, body RevokePreviewBrowserAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// MarkPublishRunCertificateInstalledWithBody Record installation of the current public URL certificate
+	//
+	// Acknowledge the exact approved public URL certificate installed by the publisher using this run's token and number. Installation alone does not establish publisher connection readiness.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5258,12 +5458,16 @@ type ClientInterface interface {
 
 	// MarkPublishRunCertificateInstalled Record installation of the current public URL certificate
 	//
+	// Acknowledge the exact approved public URL certificate installed by the publisher using this run's token and number. Installation alone does not establish publisher connection readiness.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
 	MarkPublishRunCertificateInstalled(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunCertificateInstalledJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateCertificateIssuanceWithBody Begin issuance for the publish run's certificate plan
+	//
+	// Submit the publisher's CSR under the exact publish run token and approved certificate plan. The idempotency key identifies one issuance attempt; a control session or publisher access token cannot substitute for the run token.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5272,12 +5476,16 @@ type ClientInterface interface {
 
 	// CreateCertificateIssuance Begin issuance for the publish run's certificate plan
 	//
+	// Submit the publisher's CSR under the exact publish run token and approved certificate plan. The idempotency key identifies one issuance attempt; a control session or publisher access token cannot substitute for the run token.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
 	CreateCertificateIssuance(ctx context.Context, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, body CreateCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateFeedbackReportWithBody Store a reviewer's first report for a preview page
+	//
+	// Submit the immutable first report through the exact publish run token with the reviewer's current access proof in the body. Control verifies the author and evidence; publisher authentication alone does not authorize a reviewer report.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5286,12 +5494,16 @@ type ClientInterface interface {
 
 	// CreateFeedbackReport Store a reviewer's first report for a preview page
 	//
+	// Submit the immutable first report through the exact publish run token with the reviewer's current access proof in the body. Control verifies the author and evidence; publisher authentication alone does not authorize a reviewer report.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback (the `CreateFeedbackReport` operationId).
 	CreateFeedbackReport(ctx context.Context, publishRunId PublishRunID, params *CreateFeedbackReportParams, body CreateFeedbackReportJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListPreviewPageFeedbackWithBody List feedback on one page for a reviewer
+	//
+	// Read feedback for one page through the exact publish run token and the reviewer's body access proof. The result is limited to the authorized preview context, not a team-wide management inventory.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5300,12 +5512,16 @@ type ClientInterface interface {
 
 	// ListPreviewPageFeedback List feedback on one page for a reviewer
 	//
+	// Read feedback for one page through the exact publish run token and the reviewer's body access proof. The result is limited to the authorized preview context, not a team-wide management inventory.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
 	ListPreviewPageFeedback(ctx context.Context, publishRunId PublishRunID, body ListPreviewPageFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AppendReviewerFeedbackEventWithBody Reply, resolve, or reopen feedback through preview access
+	//
+	// Append a reply, resolution, or reopening through the exact publish run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5314,12 +5530,16 @@ type ClientInterface interface {
 
 	// AppendReviewerFeedbackEvent Reply, resolve, or reopen feedback through preview access
 	//
+	// Append a reply, resolution, or reopening through the exact publish run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
 	AppendReviewerFeedbackEvent(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, body AppendReviewerFeedbackEventJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListReviewerFeedbackEventsWithBody Read thread events through a current publisher connection
+	//
+	// Read one thread's ordered follow-up history through the exact publish run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5328,12 +5548,16 @@ type ClientInterface interface {
 
 	// ListReviewerFeedbackEvents Read thread events through a current publisher connection
 	//
+	// Read one thread's ordered follow-up history through the exact publish run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
 	ListReviewerFeedbackEvents(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, body ListReviewerFeedbackEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetReviewerFeedbackThreadWithBody Read a feedback thread through a current publisher connection
+	//
+	// Read one thread through the exact publish run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5342,12 +5566,16 @@ type ClientInterface interface {
 
 	// GetReviewerFeedbackThread Read a feedback thread through a current publisher connection
 	//
+	// Read one thread through the exact publish run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
 	GetReviewerFeedbackThread(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, body GetReviewerFeedbackThreadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// HeartbeatPublishRunWithBody Renew a publish run and replace missing publisher connections
+	//
+	// Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5356,12 +5584,16 @@ type ClientInterface interface {
 
 	// HeartbeatPublishRun Renew a publish run and replace missing publisher connections
 	//
+	// Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
 	HeartbeatPublishRun(ctx context.Context, publishRunId PublishRunID, body HeartbeatPublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreatePublishRunPreviewWithBody Create feedback context for one ephemeral demo publish run
+	//
+	// Create or reuse the run-scoped preview used for an ephemeral demo's feedback. Authenticate with that exact publish run token and number; this is not ordinary project preview management.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5370,12 +5602,16 @@ type ClientInterface interface {
 
 	// CreatePublishRunPreview Create feedback context for one ephemeral demo publish run
 	//
+	// Create or reuse the run-scoped preview used for an ephemeral demo's feedback. Authenticate with that exact publish run token and number; this is not ordinary project preview management.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/preview (the `CreatePublishRunPreview` operationId).
 	CreatePublishRunPreview(ctx context.Context, publishRunId PublishRunID, body CreatePublishRunPreviewJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// MarkPublishRunReadyWithBody Mark a publish run ready after its certificate and two publisher connections are ready
+	//
+	// Ask control to mark the current run routable using its publish run token and number. First readiness requires the approved certificate and two ready publisher connections on independent relay services.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5384,12 +5620,16 @@ type ClientInterface interface {
 
 	// MarkPublishRunReady Mark a publish run ready after its certificate and two publisher connections are ready
 	//
+	// Ask control to mark the current run routable using its publish run token and number. First readiness requires the approved certificate and two ready publisher connections on independent relay services.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
 	MarkPublishRunReady(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// EnableShareAccessWithBody Enable share-aware HTTP handling for this preview publish run
+	//
+	// Report that the publisher has installed share-aware HTTP handling for this exact run and number. Authenticate with its publish run token; this does not create a share or grant visitor access by itself.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5398,12 +5638,16 @@ type ClientInterface interface {
 
 	// EnableShareAccess Enable share-aware HTTP handling for this preview publish run
 	//
+	// Report that the publisher has installed share-aware HTTP handling for this exact run and number. Authenticate with its publish run token; this does not create a share or grant visitor access by itself.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-access (the `EnableShareAccess` operationId).
 	EnableShareAccess(ctx context.Context, publishRunId PublishRunID, body EnableShareAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RedeemPublishRunShareWithBody Redeem a share link or one short-lived cross-host handoff
+	//
+	// Authenticate the publisher with its exact publish run token and redeem the body's share secret or one-time cross-host handoff. Control checks the share's captured public URL IDs, deadline, and revocation before issuing a host-only visitor session.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5412,20 +5656,34 @@ type ClientInterface interface {
 
 	// RedeemPublishRunShare Redeem a share link or one short-lived cross-host handoff
 	//
+	// Authenticate the publisher with its exact publish run token and redeem the body's share secret or one-time cross-host handoff. Control checks the share's captured public URL IDs, deadline, and revocation before issuing a host-only visitor session.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-redemptions (the `RedeemPublishRunShare` operationId).
 	RedeemPublishRunShare(ctx context.Context, publishRunId PublishRunID, body RedeemPublishRunShareJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ReportPublishRunServiceObservationsWithBody performs a POST /v1/publish-runs/{run_id}/service-observations (the `ReportPublishRunServiceObservations` operationId) request,
-	// with any type of body and a specified content type.
+	// ReportPublishRunServiceObservationsWithBody Report service observations through a public URL publish run
+	//
+	// Submit bounded connection observations using the exact publish run token. Control checks the current run and counts accepted and duplicate events; observations do not create visitor grants or authorize traffic.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{run_id}/service-observations (the `ReportPublishRunServiceObservations` operationId).
 	ReportPublishRunServiceObservationsWithBody(ctx context.Context, runId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ReportPublishRunServiceObservations performs a POST /v1/publish-runs/{run_id}/service-observations (the `ReportPublishRunServiceObservations` operationId) request.
+	// ReportPublishRunServiceObservations Report service observations through a public URL publish run
+	//
+	// Submit bounded connection observations using the exact publish run token. Control checks the current run and counts accepted and duplicate events; observations do not create visitor grants or authorize traffic.
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{run_id}/service-observations (the `ReportPublishRunServiceObservations` operationId).
 	ReportPublishRunServiceObservations(ctx context.Context, runId string, body ReportPublishRunServiceObservationsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreatePublisherEnrollmentWithBody Issue an expiring one-use publisher enrollment
+	//
+	// Issue an expiring one-use enrollment secret under current management authorization. Enrollment installs a publisher's signing key for the selected scope; it is separate from exchanging signed assertions for short-lived publisher access tokens.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5434,97 +5692,159 @@ type ClientInterface interface {
 
 	// CreatePublisherEnrollment Issue an expiring one-use publisher enrollment
 	//
+	// Issue an expiring one-use enrollment secret under current management authorization. Enrollment installs a publisher's signing key for the selected scope; it is separate from exchanging signed assertions for short-lived publisher access tokens.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/publisher-enrollments (the `CreatePublisherEnrollment` operationId).
 	CreatePublisherEnrollment(ctx context.Context, body CreatePublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AcknowledgePublisherGroupConfigurationWithBody performs a POST /v1/publisher-groups/ack (the `AcknowledgePublisherGroupConfiguration` operationId) request,
-	// with any type of body and a specified content type.
+	// AcknowledgePublisherGroupConfigurationWithBody Acknowledge the exact configuration installed by a group replica
+	//
+	// Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publisher-groups/ack (the `AcknowledgePublisherGroupConfiguration` operationId).
 	AcknowledgePublisherGroupConfigurationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AcknowledgePublisherGroupConfiguration performs a POST /v1/publisher-groups/ack (the `AcknowledgePublisherGroupConfiguration` operationId) request.
+	// AcknowledgePublisherGroupConfiguration Acknowledge the exact configuration installed by a group replica
+	//
+	// Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publisher-groups/ack (the `AcknowledgePublisherGroupConfiguration` operationId).
 	AcknowledgePublisherGroupConfiguration(ctx context.Context, body AcknowledgePublisherGroupConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetPublisherGroupAssignments performs a GET /v1/publisher-groups/assignments (the `GetPublisherGroupAssignments` operationId) request.
+	// GetPublisherGroupAssignments Read services and grants assigned to one leased group replica
+	//
+	// Authenticate with the current pgl_ group lease and read the replica's exact service assignments and publisher grant IDs. These assignments may contain targets; a pta_ publisher access token cannot read them.
+	//
+	// Corresponds with GET /v1/publisher-groups/assignments (the `GetPublisherGroupAssignments` operationId).
 	GetPublisherGroupAssignments(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RedeemPublisherGroupEnrollmentWithBody performs a POST /v1/publisher-groups/enroll (the `RedeemPublisherGroupEnrollment` operationId) request,
-	// with any type of body and a specified content type.
+	// RedeemPublisherGroupEnrollmentWithBody Enroll a replica's signing key with a group enrollment secret
 	//
-	// Each replica submits its own Ed25519 public key. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+	// Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publisher-groups/enroll (the `RedeemPublisherGroupEnrollment` operationId).
 	RedeemPublisherGroupEnrollmentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RedeemPublisherGroupEnrollment performs a POST /v1/publisher-groups/enroll (the `RedeemPublisherGroupEnrollment` operationId) request.
+	// RedeemPublisherGroupEnrollment Enroll a replica's signing key with a group enrollment secret
+	//
+	// Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+	//
 	// Takes a body of the `application/json` content type.
 	//
-	// Each replica submits its own Ed25519 public key. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+	// Corresponds with POST /v1/publisher-groups/enroll (the `RedeemPublisherGroupEnrollment` operationId).
 	RedeemPublisherGroupEnrollment(ctx context.Context, body RedeemPublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AcquirePublisherGroupLeaseWithBody performs a POST /v1/publisher-groups/lease (the `AcquirePublisherGroupLease` operationId) request,
-	// with any type of body and a specified content type.
+	// AcquirePublisherGroupLeaseWithBody Exchange a signed replica assertion for a group lease
 	//
-	// Exchange a one-use signed assertion for a short-lived group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID.
+	// Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publisher-groups/lease (the `AcquirePublisherGroupLease` operationId).
 	AcquirePublisherGroupLeaseWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AcquirePublisherGroupLease performs a POST /v1/publisher-groups/lease (the `AcquirePublisherGroupLease` operationId) request.
+	// AcquirePublisherGroupLease Exchange a signed replica assertion for a group lease
+	//
+	// Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
+	//
 	// Takes a body of the `application/json` content type.
 	//
-	// Exchange a one-use signed assertion for a short-lived group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID.
+	// Corresponds with POST /v1/publisher-groups/lease (the `AcquirePublisherGroupLease` operationId).
 	AcquirePublisherGroupLease(ctx context.Context, body AcquirePublisherGroupLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// VerifyPublisherGroupIdentityWithBody performs a POST /v1/publisher-groups/verify (the `VerifyPublisherGroupIdentity` operationId) request,
-	// with any type of body and a specified content type.
+	// VerifyPublisherGroupIdentityWithBody Verify a replica's group membership without acquiring a lease
 	//
-	// Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The one-use assertion audience is the control URL followed by this path.
+	// Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publisher-groups/verify (the `VerifyPublisherGroupIdentity` operationId).
 	VerifyPublisherGroupIdentityWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// VerifyPublisherGroupIdentity performs a POST /v1/publisher-groups/verify (the `VerifyPublisherGroupIdentity` operationId) request.
+	// VerifyPublisherGroupIdentity Verify a replica's group membership without acquiring a lease
+	//
+	// Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
+	//
 	// Takes a body of the `application/json` content type.
 	//
-	// Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The one-use assertion audience is the control URL followed by this path.
+	// Corresponds with POST /v1/publisher-groups/verify (the `VerifyPublisherGroupIdentity` operationId).
 	VerifyPublisherGroupIdentity(ctx context.Context, body VerifyPublisherGroupIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListPublisherIdentities List publisher identities and grants without secrets
+	//
+	// Read a cursor-paginated inventory of publisher identities and their grants for a manageable team. Responses omit enrollment secrets and private signing keys; an inventory entry is not a publisher credential.
 	//
 	// Corresponds with GET /v1/publisher-identities (the `ListPublisherIdentities` operationId).
 	ListPublisherIdentities(ctx context.Context, params *ListPublisherIdentitiesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RevokePublisherIdentity Revoke an identity independently of its grants
 	//
+	// Revoke an exact publisher identity under current team management authorization. Identity revocation invalidates its publishing authority independently of any individual grant record.
+	//
 	// Corresponds with DELETE /v1/publisher-identities/{publisher_identity_id} (the `RevokePublisherIdentity` operationId).
 	RevokePublisherIdentity(ctx context.Context, publisherIdentityId PublisherIdentityID, params *RevokePublisherIdentityParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreatePublisherGrantWithBody performs a POST /v1/publisher-identities/{publisher_identity_id}/grants (the `CreatePublisherGrant` operationId) request,
-	// with any type of body and a specified content type.
+	// CreatePublisherGrantWithBody Add one authorized scope to a publisher identity
+	//
+	// Create a revocable publisher grant using current management authorization for the selected scope. The grant identifies what the native publisher may serve; it is not a visitor grant or a control session.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publisher-identities/{publisher_identity_id}/grants (the `CreatePublisherGrant` operationId).
 	CreatePublisherGrantWithBody(ctx context.Context, publisherIdentityId PublisherIdentityID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreatePublisherGrant performs a POST /v1/publisher-identities/{publisher_identity_id}/grants (the `CreatePublisherGrant` operationId) request.
+	// CreatePublisherGrant Add one authorized scope to a publisher identity
+	//
+	// Create a revocable publisher grant using current management authorization for the selected scope. The grant identifies what the native publisher may serve; it is not a visitor grant or a control session.
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publisher-identities/{publisher_identity_id}/grants (the `CreatePublisherGrant` operationId).
 	CreatePublisherGrant(ctx context.Context, publisherIdentityId PublisherIdentityID, body CreatePublisherGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RevokePublisherGrant performs a DELETE /v1/publisher-identities/{publisher_identity_id}/grants/{grant_id} (the `RevokePublisherGrant` operationId) request.
+	// RevokePublisherGrant Revoke one publisher grant without revoking the identity
+	//
+	// Revoke the named grant under current team management authorization. Other grants on the identity remain separate; the revoked grant can no longer authorize current publishing work.
+	//
+	// Corresponds with DELETE /v1/publisher-identities/{publisher_identity_id}/grants/{grant_id} (the `RevokePublisherGrant` operationId).
 	RevokePublisherGrant(ctx context.Context, publisherIdentityId PublisherIdentityID, grantId ResourceID, params *RevokePublisherGrantParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ObservePublisherRuntimeWithBody performs a POST /v1/publisher-runtime (the `ObservePublisherRuntime` operationId) request,
-	// with any type of body and a specified content type.
+	// ObservePublisherRuntimeWithBody Inspect or update a signed publisher process lifetime
 	//
-	// Explicit remote runtime lifecycle, independent of enrollment, verification, and identity kind. A one-use Ed25519 assertion binds scope_id, action, process_run_id and expected_epoch through the runtime proof scope, with this path as its audience. Inspect reads the current epoch without recording an address. Start compares that epoch and installs a new process run; retries retain that run and epoch. Renew and stop require the current run and epoch. Control records only the validated request source, never a body address. Group start/renew also issue the existing group lease atomically.
+	// Explicit remote runtime lifecycle, independent of enrollment, verification, and identity kind. A one-use Ed25519 assertion binds scope_id, action, process_run_id and expected_epoch through the runtime proof scope, with this path as its audience. Inspect reads the current epoch without recording an address. Start compares that epoch and installs a new process run; retries retain that run and epoch. Renew and stop require the current run and epoch. Control records only the validated request source, never a body address. Group start/renew also issue the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publisher-runtime (the `ObservePublisherRuntime` operationId).
 	ObservePublisherRuntimeWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ObservePublisherRuntime performs a POST /v1/publisher-runtime (the `ObservePublisherRuntime` operationId) request.
+	// ObservePublisherRuntime Inspect or update a signed publisher process lifetime
+	//
+	// Explicit remote runtime lifecycle, independent of enrollment, verification, and identity kind. A one-use Ed25519 assertion binds scope_id, action, process_run_id and expected_epoch through the runtime proof scope, with this path as its audience. Inspect reads the current epoch without recording an address. Start compares that epoch and installs a new process run; retries retain that run and epoch. Renew and stop require the current run and epoch. Control records only the validated request source, never a body address. Group start/renew also issue the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	//
 	// Takes a body of the `application/json` content type.
 	//
-	// Explicit remote runtime lifecycle, independent of enrollment, verification, and identity kind. A one-use Ed25519 assertion binds scope_id, action, process_run_id and expected_epoch through the runtime proof scope, with this path as its audience. Inspect reads the current epoch without recording an address. Start compares that epoch and installs a new process run; retries retain that run and epoch. Renew and stop require the current run and epoch. Control records only the validated request source, never a body address. Group start/renew also issue the existing group lease atomically.
+	// Corresponds with POST /v1/publisher-runtime (the `ObservePublisherRuntime` operationId).
 	ObservePublisherRuntime(ctx context.Context, body ObservePublisherRuntimeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetPublisherPublicURL Read the saved URL selected by the current grant
+	//
+	// Read the single saved public URL selected by the publisher access token's exact grant. Namespace allocation grants and control sessions do not substitute for an exact public URL publisher grant.
 	//
 	// Corresponds with GET /v1/publisher/public-url (the `GetPublisherPublicURL` operationId).
 	GetPublisherPublicURL(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AllocatePublisherPublicURLWithBody Create a temporary public URL for one ad-hoc publication
+	//
+	// Allocate one ephemeral public URL inside the namespace authorized by the publisher access token. This is publisher work, not a management operation; the exact identity and grant retain ownership of the allocation.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5533,6 +5853,8 @@ type ClientInterface interface {
 
 	// AllocatePublisherPublicURL Create a temporary public URL for one ad-hoc publication
 	//
+	// Allocate one ephemeral public URL inside the namespace authorized by the publisher access token. This is publisher work, not a management operation; the exact identity and grant retain ownership of the allocation.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/publisher/public-urls (the `AllocatePublisherPublicURL` operationId).
@@ -5540,310 +5862,526 @@ type ClientInterface interface {
 
 	// DeletePublisherPublicURL Remove the exact URL allocated by this identity and grant
 	//
+	// Remove an ephemeral public URL owned by this exact publisher identity and grant. The namespace access token does not authorize deleting other identities' allocations or ordinary saved public URLs.
+	//
 	// Corresponds with DELETE /v1/publisher/public-urls/{public_url_id} (the `DeletePublisherPublicURL` operationId).
 	DeletePublisherPublicURL(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetPublisherService performs a GET /v1/publisher/service (the `GetPublisherService` operationId) request.
+	// GetPublisherService Read the saved service selected by the current publisher grant
 	//
 	// Read the exact granted service's approved protocol and public TLS trust metadata. The publisher must declare its own matching configuration when preparing a run.
+	//
+	// Corresponds with GET /v1/publisher/service (the `GetPublisherService` operationId).
 	GetPublisherService(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetReadiness Confirm that the tnld role is ready to serve
 	//
+	// Check the configured tnld role's readiness without a credential. An unready process returns the same readiness shape with HTTP 503 rather than a successful health check.
+	//
 	// Corresponds with GET /v1/ready (the `GetReadiness` operationId).
 	GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AcceptServiceInvitationWithBody performs a POST /v1/service-invitations/accept (the `AcceptServiceInvitation` operationId) request,
-	// with any type of body and a specified content type.
+	// AcceptServiceInvitationWithBody Accept an invitation for the signed-in verified email identity
+	//
+	// Exchange the one-use invitation secret under the current signed-in identity. Control verifies the recipient email and creates an exact-service identity grant; acceptance grants no management or publisher permission.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/service-invitations/accept (the `AcceptServiceInvitation` operationId).
 	AcceptServiceInvitationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AcceptServiceInvitation performs a POST /v1/service-invitations/accept (the `AcceptServiceInvitation` operationId) request.
+	// AcceptServiceInvitation Accept an invitation for the signed-in verified email identity
+	//
+	// Exchange the one-use invitation secret under the current signed-in identity. Control verifies the recipient email and creates an exact-service identity grant; acceptance grants no management or publisher permission.
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/service-invitations/accept (the `AcceptServiceInvitation` operationId).
 	AcceptServiceInvitation(ctx context.Context, body AcceptServiceInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListServices performs a GET /v1/services (the `ListServices` operationId) request.
+	// ListServices List manageable saved services in one team
 	//
 	// Team-owned saved services; never return target addresses or stream keys.
+	//
+	// Corresponds with GET /v1/services (the `ListServices` operationId).
 	ListServices(ctx context.Context, params *ListServicesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateServiceWithBody performs a POST /v1/services (the `CreateService` operationId) request,
-	// with any type of body and a specified content type.
+	// CreateServiceWithBody Create one saved service with approved protocol and placement
 	//
-	// Create a team-scoped saved name. No DNS record, public URL, certificate or dedicated visitor port is allocated.
+	// Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. This service has a separate identity and lifecycle from public URLs; creating it does not start a service run or issue a certificate.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/services (the `CreateService` operationId).
 	CreateServiceWithBody(ctx context.Context, params *CreateServiceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateService performs a POST /v1/services (the `CreateService` operationId) request.
+	// CreateService Create one saved service with approved protocol and placement
+	//
+	// Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. This service has a separate identity and lifecycle from public URLs; creating it does not start a service run or issue a certificate.
+	//
 	// Takes a body of the `application/json` content type.
 	//
-	// Create a team-scoped saved name. No DNS record, public URL, certificate or dedicated visitor port is allocated.
+	// Corresponds with POST /v1/services (the `CreateService` operationId).
 	CreateService(ctx context.Context, params *CreateServiceParams, body CreateServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DeleteService performs a DELETE /v1/services/{service_id} (the `DeleteService` operationId) request.
+	// DeleteService Delete a saved service and revoke its active publication
 	//
 	// Revoke access and close any run before tombstoning its ID-keyed ingress projection.
+	//
+	// Corresponds with DELETE /v1/services/{service_id} (the `DeleteService` operationId).
 	DeleteService(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetService performs a GET /v1/services/{service_id} (the `GetService` operationId) request.
+	// GetService Read one saved service for management
+	//
+	// Read a service's saved identity and approved protocol/TLS metadata using current management permission. For visitor-only discovery, use listAvailableServices or getProjectService instead.
+	//
+	// Corresponds with GET /v1/services/{service_id} (the `GetService` operationId).
 	GetService(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ConfigureServiceWithBody performs a PUT /v1/services/{service_id} (the `ConfigureService` operationId) request,
-	// with any type of body and a specified content type.
+	// ConfigureServiceWithBody Replace a service's approved protocol and target TLS trust
+	//
+	// Set the saved protocol, publisher pool, and target TLS trust snapshot using current service management permission. Publishers must declare matching trust when preparing later runs; this is not a target address update or a publication start.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/services/{service_id} (the `ConfigureService` operationId).
 	ConfigureServiceWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ConfigureService performs a PUT /v1/services/{service_id} (the `ConfigureService` operationId) request.
+	// ConfigureService Replace a service's approved protocol and target TLS trust
+	//
+	// Set the saved protocol, publisher pool, and target TLS trust snapshot using current service management permission. Publishers must declare matching trust when preparing later runs; this is not a target address update or a publication start.
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/services/{service_id} (the `ConfigureService` operationId).
 	ConfigureService(ctx context.Context, serviceId ServiceID, body ConfigureServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// IssueServiceClientCertificateWithBody performs a POST /v1/services/{service_id}/client-certificates (the `IssueServiceClientCertificate` operationId) request,
-	// with any type of body and a specified content type.
+	// IssueServiceClientCertificateWithBody Issue a service-scoped client certificate for an enrolled device
+	//
+	// Submit the client's CSR using the current signed-in visitor identity and an enrolled device ID. Control checks exact-service access; the private key stays with the client, and this certificate grants no management authority.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/client-certificates (the `IssueServiceClientCertificate` operationId).
 	IssueServiceClientCertificateWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// IssueServiceClientCertificate performs a POST /v1/services/{service_id}/client-certificates (the `IssueServiceClientCertificate` operationId) request.
+	// IssueServiceClientCertificate Issue a service-scoped client certificate for an enrolled device
+	//
+	// Submit the client's CSR using the current signed-in visitor identity and an enrolled device ID. Control checks exact-service access; the private key stays with the client, and this certificate grants no management authority.
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/client-certificates (the `IssueServiceClientCertificate` operationId).
 	IssueServiceClientCertificate(ctx context.Context, serviceId ServiceID, body IssueServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// PrepareConnectorPeerPairWithBody performs a POST /v1/services/{service_id}/connector-peer-pairs (the `PrepareConnectorPeerPair` operationId) request,
-	// with any type of body and a specified content type.
+	// PrepareConnectorPeerPairWithBody Prepare a signed connector pair for an exact ready service run
 	//
-	// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+	// Signed create or replace for one exact ready service run. The request signature must prove the selected device or workload key. A device source also requires its matching identity's control session bearer token. A workload source authenticates with its credential in the JSON body and must omit Authorization entirely, including empty headers. The empty security object represents body authentication, not anonymous access. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs (the `PrepareConnectorPeerPair` operationId).
 	PrepareConnectorPeerPairWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// PrepareConnectorPeerPair performs a POST /v1/services/{service_id}/connector-peer-pairs (the `PrepareConnectorPeerPair` operationId) request.
+	// PrepareConnectorPeerPair Prepare a signed connector pair for an exact ready service run
+	//
+	// Signed create or replace for one exact ready service run. The request signature must prove the selected device or workload key. A device source also requires its matching identity's control session bearer token. A workload source authenticates with its credential in the JSON body and must omit Authorization entirely, including empty headers. The empty security object represents body authentication, not anonymous access. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+	//
 	// Takes a body of the `application/json` content type.
 	//
-	// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+	// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs (the `PrepareConnectorPeerPair` operationId).
 	PrepareConnectorPeerPair(ctx context.Context, serviceId ServiceID, body PrepareConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RebindConnectorPeerPairWithBody performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind (the `RebindConnectorPeerPair` operationId) request,
-	// with any type of body and a specified content type.
+	// RebindConnectorPeerPairWithBody Inspect or change a retained connector pair's network binding
 	//
-	// Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+	// Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind (the `RebindConnectorPeerPair` operationId).
 	RebindConnectorPeerPairWithBody(ctx context.Context, serviceId ServiceID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RebindConnectorPeerPair performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind (the `RebindConnectorPeerPair` operationId) request.
+	// RebindConnectorPeerPair Inspect or change a retained connector pair's network binding
+	//
+	// Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+	//
 	// Takes a body of the `application/json` content type.
 	//
-	// Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+	// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind (the `RebindConnectorPeerPair` operationId).
 	RebindConnectorPeerPair(ctx context.Context, serviceId ServiceID, pairId string, body RebindConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RenewConnectorPeerPairWithBody performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request,
-	// with any type of body and a specified content type.
+	// RenewConnectorPeerPairWithBody Renew an exact signed connector pair and visitor permission
 	//
-	// Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
+	// Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId).
 	RenewConnectorPeerPairWithBody(ctx context.Context, serviceId ServiceID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RenewConnectorPeerPair performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request.
+	// RenewConnectorPeerPair Renew an exact signed connector pair and visitor permission
+	//
+	// Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
+	//
 	// Takes a body of the `application/json` content type.
 	//
-	// Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
+	// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId).
 	RenewConnectorPeerPair(ctx context.Context, serviceId ServiceID, pairId string, body RenewConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListServiceGrants performs a GET /v1/services/{service_id}/grants (the `ListServiceGrants` operationId) request.
+	// ListServiceGrants List a service's visitor grants and retained history
 	//
 	// Current managers may read up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent; inventory is not proof of current visitor access.
+	//
+	// Corresponds with GET /v1/services/{service_id}/grants (the `ListServiceGrants` operationId).
 	ListServiceGrants(ctx context.Context, serviceId ServiceID, params *ListServiceGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateServiceGrantWithBody performs a POST /v1/services/{service_id}/grants (the `CreateServiceGrant` operationId) request,
-	// with any type of body and a specified content type.
+	// CreateServiceGrantWithBody Grant a team or identity access to one service
+	//
+	// Create an exact-service visitor grant using current service management permission and an idempotency key. A visitor grant permits service use under current policy; it does not grant service management or publisher authority.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/grants (the `CreateServiceGrant` operationId).
 	CreateServiceGrantWithBody(ctx context.Context, serviceId ServiceID, params *CreateServiceGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateServiceGrant performs a POST /v1/services/{service_id}/grants (the `CreateServiceGrant` operationId) request.
+	// CreateServiceGrant Grant a team or identity access to one service
+	//
+	// Create an exact-service visitor grant using current service management permission and an idempotency key. A visitor grant permits service use under current policy; it does not grant service management or publisher authority.
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/grants (the `CreateServiceGrant` operationId).
 	CreateServiceGrant(ctx context.Context, serviceId ServiceID, params *CreateServiceGrantParams, body CreateServiceGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RevokeServiceGrant performs a DELETE /v1/services/{service_id}/grants/{grant_id} (the `RevokeServiceGrant` operationId) request.
+	// RevokeServiceGrant Revoke one service visitor grant
+	//
+	// Revoke the named grant using current service management permission. Later visitor authorization checks reject access through that grant; retained history can still appear in grant inventory.
+	//
+	// Corresponds with DELETE /v1/services/{service_id}/grants/{grant_id} (the `RevokeServiceGrant` operationId).
 	RevokeServiceGrant(ctx context.Context, serviceId ServiceID, grantId ServiceGrantID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListServiceHTTPGrants performs a GET /v1/services/{service_id}/http-grants (the `ListServiceHTTPGrants` operationId) request.
+	// ListServiceHTTPGrants List an HTTP service's visitor credentials without secrets
 	//
 	// Secretless credential inventory for one service HTTP service. Requires current service management permission; includes expired and revoked records.
+	//
+	// Corresponds with GET /v1/services/{service_id}/http-grants (the `ListServiceHTTPGrants` operationId).
 	ListServiceHTTPGrants(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateServiceHTTPGrantWithBody performs a POST /v1/services/{service_id}/http-grants (the `CreateServiceHTTPGrant` operationId) request,
-	// with any type of body and a specified content type.
+	// CreateServiceHTTPGrantWithBody Create a service-scoped HTTP visitor token or share
 	//
 	// Create a service-scoped HTTP token or share. Requires current service management permission. The secret is returned once and grants no management or feedback permission.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/http-grants (the `CreateServiceHTTPGrant` operationId).
 	CreateServiceHTTPGrantWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateServiceHTTPGrant performs a POST /v1/services/{service_id}/http-grants (the `CreateServiceHTTPGrant` operationId) request.
-	// Takes a body of the `application/json` content type.
+	// CreateServiceHTTPGrant Create a service-scoped HTTP visitor token or share
 	//
 	// Create a service-scoped HTTP token or share. Requires current service management permission. The secret is returned once and grants no management or feedback permission.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/http-grants (the `CreateServiceHTTPGrant` operationId).
 	CreateServiceHTTPGrant(ctx context.Context, serviceId ServiceID, body CreateServiceHTTPGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RevokeServiceHTTPGrant performs a DELETE /v1/services/{service_id}/http-grants/{grant_id} (the `RevokeServiceHTTPGrant` operationId) request.
+	// RevokeServiceHTTPGrant Revoke one service-scoped HTTP visitor credential
+	//
+	// Revoke the named token or share using current service management permission. The credential no longer authorizes new visitor permission; retained summaries remain visible without their secrets.
+	//
+	// Corresponds with DELETE /v1/services/{service_id}/http-grants/{grant_id} (the `RevokeServiceHTTPGrant` operationId).
 	RevokeServiceHTTPGrant(ctx context.Context, serviceId ServiceID, grantId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListServiceInvitations performs a GET /v1/services/{service_id}/invitations (the `ListServiceInvitations` operationId) request.
+	// ListServiceInvitations List a service's visitor invitations without secrets
 	//
 	// Current managers may read up to 100 records ordered by ID, including accepted, expired and revoked history. Follow next_cursor until absent. Never returns secrets.
+	//
+	// Corresponds with GET /v1/services/{service_id}/invitations (the `ListServiceInvitations` operationId).
 	ListServiceInvitations(ctx context.Context, serviceId ServiceID, params *ListServiceInvitationsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// InviteServiceVisitorWithBody performs a POST /v1/services/{service_id}/invitations (the `InviteServiceVisitor` operationId) request,
-	// with any type of body and a specified content type.
+	// InviteServiceVisitorWithBody Invite a verified email identity to one service
 	//
 	// A new key creates one exact-service invitation. An exact retry by the same actor returns HTTP 200 with the original ID and current state, without a secret, after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/invitations (the `InviteServiceVisitor` operationId).
 	InviteServiceVisitorWithBody(ctx context.Context, serviceId ServiceID, params *InviteServiceVisitorParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// InviteServiceVisitor performs a POST /v1/services/{service_id}/invitations (the `InviteServiceVisitor` operationId) request.
-	// Takes a body of the `application/json` content type.
+	// InviteServiceVisitor Invite a verified email identity to one service
 	//
 	// A new key creates one exact-service invitation. An exact retry by the same actor returns HTTP 200 with the original ID and current state, without a secret, after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/invitations (the `InviteServiceVisitor` operationId).
 	InviteServiceVisitor(ctx context.Context, serviceId ServiceID, params *InviteServiceVisitorParams, body InviteServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RevokeServiceInvitation performs a DELETE /v1/services/{service_id}/invitations/{invitation_id} (the `RevokeServiceInvitation` operationId) request.
+	// RevokeServiceInvitation Revoke a service invitation and its accepted grant
+	//
+	// Revoke the invitation using current service management permission, including the identity grant created if it was accepted. Revocation does not remove the retained invitation history.
+	//
+	// Corresponds with DELETE /v1/services/{service_id}/invitations/{invitation_id} (the `RevokeServiceInvitation` operationId).
 	RevokeServiceInvitation(ctx context.Context, serviceId ServiceID, invitationId ServiceInvitationID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// PrepareServiceRunWithBody performs a POST /v1/services/{service_id}/runs (the `PrepareServiceRun` operationId) request,
-	// with any type of body and a specified content type.
+	// PrepareServiceRunWithBody Reserve a service run and its approved certificate plan
 	//
 	// Reserve a new run ID and number and capture its exact managed hostname, port, domain and certificate plan under the authenticated publisher grant. Retrying the same idempotency key returns the same preparation.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs (the `PrepareServiceRun` operationId).
 	PrepareServiceRunWithBody(ctx context.Context, serviceId ServiceID, params *PrepareServiceRunParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// PrepareServiceRun performs a POST /v1/services/{service_id}/runs (the `PrepareServiceRun` operationId) request.
-	// Takes a body of the `application/json` content type.
+	// PrepareServiceRun Reserve a service run and its approved certificate plan
 	//
 	// Reserve a new run ID and number and capture its exact managed hostname, port, domain and certificate plan under the authenticated publisher grant. Retrying the same idempotency key returns the same preparation.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs (the `PrepareServiceRun` operationId).
 	PrepareServiceRun(ctx context.Context, serviceId ServiceID, params *PrepareServiceRunParams, body PrepareServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CloseServiceRun performs a DELETE /v1/services/{service_id}/runs/{service_run_id} (the `CloseServiceRun` operationId) request.
+	// CloseServiceRun Close one exact service run using its run token
 	//
 	// Close the exact run, reject stale admissions and publish a service tombstone. Managed certificates remain in the publisher's shared cache.
+	//
+	// Corresponds with DELETE /v1/services/{service_id}/runs/{service_run_id} (the `CloseServiceRun` operationId).
 	CloseServiceRun(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// HeartbeatServiceRunWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id} (the `HeartbeatServiceRun` operationId) request,
-	// with any type of body and a specified content type.
+	// HeartbeatServiceRunWithBody Renew a service run and report publisher health and capacity
 	//
 	// Renew only the current run under its exact publisher grant. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id} (the `HeartbeatServiceRun` operationId).
 	HeartbeatServiceRunWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// HeartbeatServiceRun performs a POST /v1/services/{service_id}/runs/{service_run_id} (the `HeartbeatServiceRun` operationId) request.
-	// Takes a body of the `application/json` content type.
+	// HeartbeatServiceRun Renew a service run and report publisher health and capacity
 	//
 	// Renew only the current run under its exact publisher grant. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id} (the `HeartbeatServiceRun` operationId).
 	HeartbeatServiceRun(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body HeartbeatServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AuthorizeServiceClientCertificateWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId) request,
-	// with any type of body and a specified content type.
+	// AuthorizeServiceClientCertificateWithBody Check a public endpoint visitor's client certificate and admission
 	//
 	// Authenticate a public endpoint visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId).
 	AuthorizeServiceClientCertificateWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AuthorizeServiceClientCertificate performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId) request.
-	// Takes a body of the `application/json` content type.
+	// AuthorizeServiceClientCertificate Check a public endpoint visitor's client certificate and admission
 	//
 	// Authenticate a public endpoint visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId).
 	AuthorizeServiceClientCertificate(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RedeemServiceBrowserHandoffWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff (the `RedeemServiceBrowserHandoff` operationId) request,
-	// with any type of body and a specified content type.
+	// RedeemServiceBrowserHandoffWithBody Exchange a service browser handoff through its publisher run
+	//
+	// Authenticate the publisher with the exact service run token and exchange the body's one-time handoff secret for a host-bound browser credential. A visitor's control session cannot substitute for the publisher run token.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff (the `RedeemServiceBrowserHandoff` operationId).
 	RedeemServiceBrowserHandoffWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RedeemServiceBrowserHandoff performs a POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff (the `RedeemServiceBrowserHandoff` operationId) request.
+	// RedeemServiceBrowserHandoff Exchange a service browser handoff through its publisher run
+	//
+	// Authenticate the publisher with the exact service run token and exchange the body's one-time handoff secret for a host-bound browser credential. A visitor's control session cannot substitute for the publisher run token.
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff (the `RedeemServiceBrowserHandoff` operationId).
 	RedeemServiceBrowserHandoff(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body RedeemServiceBrowserHandoffJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RevokeServiceBrowserSessionWithBody performs a DELETE /v1/services/{service_id}/runs/{service_run_id}/browser/session (the `RevokeServiceBrowserSession` operationId) request,
-	// with any type of body and a specified content type.
+	// RevokeServiceBrowserSessionWithBody Revoke a browser session through its service publisher run
+	//
+	// Authenticate the publisher with the exact service run token and revoke the body's host-bound browser session. This does not revoke the person's control session or sessions on unrelated hosts.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with DELETE /v1/services/{service_id}/runs/{service_run_id}/browser/session (the `RevokeServiceBrowserSession` operationId).
 	RevokeServiceBrowserSessionWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RevokeServiceBrowserSession performs a DELETE /v1/services/{service_id}/runs/{service_run_id}/browser/session (the `RevokeServiceBrowserSession` operationId) request.
+	// RevokeServiceBrowserSession Revoke a browser session through its service publisher run
+	//
+	// Authenticate the publisher with the exact service run token and revoke the body's host-bound browser session. This does not revoke the person's control session or sessions on unrelated hosts.
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with DELETE /v1/services/{service_id}/runs/{service_run_id}/browser/session (the `RevokeServiceBrowserSession` operationId).
 	RevokeServiceBrowserSession(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body RevokeServiceBrowserSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CheckServiceBrowserSessionWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/browser/session (the `CheckServiceBrowserSession` operationId) request,
-	// with any type of body and a specified content type.
+	// CheckServiceBrowserSessionWithBody Check a browser session through its service publisher run
+	//
+	// Authenticate the publisher with the exact service run token and recheck the host-bound browser secret in the body against current service access. The result grants visitor access, not service management permission.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/browser/session (the `CheckServiceBrowserSession` operationId).
 	CheckServiceBrowserSessionWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CheckServiceBrowserSession performs a POST /v1/services/{service_id}/runs/{service_run_id}/browser/session (the `CheckServiceBrowserSession` operationId) request.
+	// CheckServiceBrowserSession Check a browser session through its service publisher run
+	//
+	// Authenticate the publisher with the exact service run token and recheck the host-bound browser secret in the body against current service access. The result grants visitor access, not service management permission.
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/browser/session (the `CheckServiceBrowserSession` operationId).
 	CheckServiceBrowserSession(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body CheckServiceBrowserSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// MarkServiceCertificateInstalledWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/certificate-installed (the `MarkServiceCertificateInstalled` operationId) request,
-	// with any type of body and a specified content type.
+	// MarkServiceCertificateInstalledWithBody Acknowledge the certificate installed for one service run
+	//
+	// Record that the publisher installed the exact approved issuance for this run number using its service run token. The acknowledgement does not by itself prove that both publisher connections are ready.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/certificate-installed (the `MarkServiceCertificateInstalled` operationId).
 	MarkServiceCertificateInstalledWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// MarkServiceCertificateInstalled performs a POST /v1/services/{service_id}/runs/{service_run_id}/certificate-installed (the `MarkServiceCertificateInstalled` operationId) request.
+	// MarkServiceCertificateInstalled Acknowledge the certificate installed for one service run
+	//
+	// Record that the publisher installed the exact approved issuance for this run number using its service run token. The acknowledgement does not by itself prove that both publisher connections are ready.
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/certificate-installed (the `MarkServiceCertificateInstalled` operationId).
 	MarkServiceCertificateInstalled(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body MarkServiceCertificateInstalledJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateServiceCertificateIssuanceWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances (the `CreateServiceCertificateIssuance` operationId) request,
-	// with any type of body and a specified content type.
+	// CreateServiceCertificateIssuanceWithBody Begin certificate issuance for one started service run
+	//
+	// Authorize DNS-01 issuance for the service run's approved certificate plan using its exact run token and run number. Submit a CSR for the publisher's key; neither a control session nor publisher access token substitutes for the run token.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances (the `CreateServiceCertificateIssuance` operationId).
 	CreateServiceCertificateIssuanceWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *CreateServiceCertificateIssuanceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateServiceCertificateIssuance performs a POST /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances (the `CreateServiceCertificateIssuance` operationId) request.
+	// CreateServiceCertificateIssuance Begin certificate issuance for one started service run
+	//
+	// Authorize DNS-01 issuance for the service run's approved certificate plan using its exact run token and run number. Submit a CSR for the publisher's key; neither a control session nor publisher access token substitutes for the run token.
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances (the `CreateServiceCertificateIssuance` operationId).
 	CreateServiceCertificateIssuance(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *CreateServiceCertificateIssuanceParams, body CreateServiceCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetServiceCertificateIssuance performs a GET /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id} (the `GetServiceCertificateIssuance` operationId) request.
+	// GetServiceCertificateIssuance Read a service run's current certificate issuance
+	//
+	// Poll the named issuance using the exact service run token. Control checks that the service, run, and issuance still match before returning certificate material.
+	//
+	// Corresponds with GET /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id} (the `GetServiceCertificateIssuance` operationId).
 	GetServiceCertificateIssuance(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListConnectorPeerPairs performs a GET /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs (the `ListConnectorPeerPairs` operationId) request.
+	// ListConnectorPeerPairs List connector pair candidates for the current service run
 	//
 	// Reconcile unexpired pair candidates for the exact publisher run, without keys, subjects, or source addresses. An installed owner may include an independent authority observation during temporary relay loss. A candidate may still lack relay claims; prepare its delivery independently before serving it.
+	//
+	// Corresponds with GET /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs (the `ListConnectorPeerPairs` operationId).
 	ListConnectorPeerPairs(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *ListConnectorPeerPairsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DeliverConnectorPeerPairWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId) request,
-	// with any type of body and a specified content type.
+	// DeliverConnectorPeerPairWithBody Deliver an existing connector pair to its current publisher run
 	//
 	// Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId).
 	DeliverConnectorPeerPairWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DeliverConnectorPeerPair performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId) request.
-	// Takes a body of the `application/json` content type.
+	// DeliverConnectorPeerPair Deliver an existing connector pair to its current publisher run
 	//
 	// Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId).
 	DeliverConnectorPeerPair(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body DeliverConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ConfirmConnectorPeerPairPreparedWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId) request,
-	// with any type of body and a specified content type.
+	// ConfirmConnectorPeerPairPreparedWithBody Confirm an exact connector binding installed by the publisher
 	//
 	// Record the publisher's installed packet registration and inner listener under the exact run token. Recheck the delivery authority and both matching relay claims; never extend the reported binding deadline.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId).
 	ConfirmConnectorPeerPairPreparedWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ConfirmConnectorPeerPairPrepared performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId) request.
-	// Takes a body of the `application/json` content type.
+	// ConfirmConnectorPeerPairPrepared Confirm an exact connector binding installed by the publisher
 	//
 	// Record the publisher's installed packet registration and inner listener under the exact run token. Recheck the delivery authority and both matching relay claims; never extend the reported binding deadline.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId).
 	ConfirmConnectorPeerPairPrepared(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body ConfirmConnectorPeerPairPreparedJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ReportServiceRunObservationsWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId) request,
-	// with any type of body and a specified content type.
+	// ReportServiceRunObservationsWithBody Report connector connection observations for a service run
 	//
 	// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId).
 	ReportServiceRunObservationsWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ReportServiceRunObservations performs a POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId) request.
-	// Takes a body of the `application/json` content type.
+	// ReportServiceRunObservations Report connector connection observations for a service run
 	//
 	// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId).
 	ReportServiceRunObservations(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body ReportServiceRunObservationsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// StartServiceRunWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/start (the `StartServiceRun` operationId) request,
-	// with any type of body and a specified content type.
+	// StartServiceRunWithBody Start one prepared service run with its publisher grant
 	//
 	// Start one exact prepared run using its authenticated publisher identity. Visitor TLS uses the approved service certificate, without an ephemeral stream key or custom TLS proof.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/start (the `StartServiceRun` operationId).
 	StartServiceRunWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// StartServiceRun performs a POST /v1/services/{service_id}/runs/{service_run_id}/start (the `StartServiceRun` operationId) request.
-	// Takes a body of the `application/json` content type.
+	// StartServiceRun Start one prepared service run with its publisher grant
 	//
 	// Start one exact prepared run using its authenticated publisher identity. Visitor TLS uses the approved service certificate, without an ephemeral stream key or custom TLS proof.
-	StartServiceRun(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body StartServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// SelectServiceRunWithBody performs a POST /v1/services/{service_id}/select-run (the `SelectServiceRun` operationId) request,
-	// with any type of body and a specified content type.
 	//
-	// Check current visitor access and select a ready publisher run for background preparation. pair_ready is a credential-free hint containing two exact ready connections on distinct live relay services, not a grant, stream ticket or pair key. The caller never supplies an IP address.
-	SelectServiceRunWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// SelectServiceRun performs a POST /v1/services/{service_id}/select-run (the `SelectServiceRun` operationId) request.
 	// Takes a body of the `application/json` content type.
 	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/start (the `StartServiceRun` operationId).
+	StartServiceRun(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body StartServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SelectServiceRunWithBody Select a ready service run for an enrolled visitor device
+	//
 	// Check current visitor access and select a ready publisher run for background preparation. pair_ready is a credential-free hint containing two exact ready connections on distinct live relay services, not a grant, stream ticket or pair key. The caller never supplies an IP address.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/select-run (the `SelectServiceRun` operationId).
+	SelectServiceRunWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SelectServiceRun Select a ready service run for an enrolled visitor device
+	//
+	// Check current visitor access and select a ready publisher run for background preparation. pair_ready is a credential-free hint containing two exact ready connections on distinct live relay services, not a grant, stream ticket or pair key. The caller never supplies an IP address.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/select-run (the `SelectServiceRun` operationId).
 	SelectServiceRun(ctx context.Context, serviceId ServiceID, body SelectServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListTeamShares List manageable shares for one team
+	//
+	// Read a cursor-paginated share inventory under current team management authorization. Responses omit share secrets; use the original secret to construct a share link.
 	//
 	// Corresponds with GET /v1/shares (the `ListTeamShares` operationId).
 	ListTeamShares(ctx context.Context, params *ListTeamSharesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5868,96 +6406,168 @@ type ClientInterface interface {
 
 	// GetShare Read one share
 	//
+	// Read a manageable share's captured public URL IDs, deadline, and revocation state without revealing its secret. Reading the record does not redeem the share or create a visitor session.
+	//
 	// Corresponds with GET /v1/shares/{share_id} (the `GetShare` operationId).
 	GetShare(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RevokeShare Stop new access through one share
 	//
+	// Revoke the share under current management authorization so it cannot grant new visitor access. Retain the saved record and its captured public URL snapshot for subsequent reads.
+	//
 	// Corresponds with POST /v1/shares/{share_id}/revoke (the `RevokeShare` operationId).
 	RevokeShare(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListServiceAudit performs a GET /v1/teams/{team_id}/service-audit (the `ListServiceAudit` operationId) request.
+	// ListServiceAudit Read a team's service audit history
+	//
+	// Read a bounded page of service access and lifecycle events using the team's current management permission. Filter by exact service identity or time, and resume with the returned cursor; audit records do not grant visitor access.
+	//
+	// Corresponds with GET /v1/teams/{team_id}/service-audit (the `ListServiceAudit` operationId).
 	ListServiceAudit(ctx context.Context, teamId string, params *ListServiceAuditParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// EnrollVisitorDeviceWithBody performs a POST /v1/visitor-devices (the `EnrollVisitorDevice` operationId) request,
-	// with any type of body and a specified content type.
+	// EnrollVisitorDeviceWithBody Enroll an Ed25519 visitor device for the signed-in identity
+	//
+	// Bind the submitted public key to the current visitor identity using its control session. The private key remains local and signs connector peer pair requests; enrollment alone does not grant access to a service.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/visitor-devices (the `EnrollVisitorDevice` operationId).
 	EnrollVisitorDeviceWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// EnrollVisitorDevice performs a POST /v1/visitor-devices (the `EnrollVisitorDevice` operationId) request.
+	// EnrollVisitorDevice Enroll an Ed25519 visitor device for the signed-in identity
+	//
+	// Bind the submitted public key to the current visitor identity using its control session. The private key remains local and signs connector peer pair requests; enrollment alone does not grant access to a service.
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/visitor-devices (the `EnrollVisitorDevice` operationId).
 	EnrollVisitorDevice(ctx context.Context, body EnrollVisitorDeviceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RevokeVisitorDevice performs a DELETE /v1/visitor-devices/{device_id} (the `RevokeVisitorDevice` operationId) request.
+	// RevokeVisitorDevice Revoke a visitor device and its connector peer pairs
+	//
+	// Revoke the exact device belonging to the signed-in visitor identity and invalidate its connector peer pairs. This does not revoke the identity's control session or its other enrolled devices.
+	//
+	// Corresponds with DELETE /v1/visitor-devices/{device_id} (the `RevokeVisitorDevice` operationId).
 	RevokeVisitorDevice(ctx context.Context, deviceId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AcceptVisitorInvitationWithBody performs a POST /v1/visitor-invitations/accept (the `AcceptVisitorInvitation` operationId) request,
-	// with any type of body and a specified content type.
+	// AcceptVisitorInvitationWithBody Accept a public URL invitation for the signed-in identity
+	//
+	// Exchange the body's one-use secret using the current signed-in identity and matching verified email. Acceptance grants exact-URL visitor access, not management permission or team membership.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/visitor-invitations/accept (the `AcceptVisitorInvitation` operationId).
 	AcceptVisitorInvitationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AcceptVisitorInvitation performs a POST /v1/visitor-invitations/accept (the `AcceptVisitorInvitation` operationId) request.
+	// AcceptVisitorInvitation Accept a public URL invitation for the signed-in identity
+	//
+	// Exchange the body's one-use secret using the current signed-in identity and matching verified email. Acceptance grants exact-URL visitor access, not management permission or team membership.
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/visitor-invitations/accept (the `AcceptVisitorInvitation` operationId).
 	AcceptVisitorInvitation(ctx context.Context, body AcceptVisitorInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ReadPublisherVisitorPolicyWithBody performs a POST /v1/visitor-policy (the `ReadPublisherVisitorPolicy` operationId) request,
-	// with any type of body and a specified content type.
+	// ReadPublisherVisitorPolicyWithBody Refresh the current run's visitor policy and verification keys
 	//
 	// Read one current publisher run's scoped visitor policy, revocations, and public verification keys. The bearer credential is the exact run token. This background operation is independent of the publisher's process lease and of ordinary visitor admission.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/visitor-policy (the `ReadPublisherVisitorPolicy` operationId).
 	ReadPublisherVisitorPolicyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ReadPublisherVisitorPolicy performs a POST /v1/visitor-policy (the `ReadPublisherVisitorPolicy` operationId) request.
-	// Takes a body of the `application/json` content type.
+	// ReadPublisherVisitorPolicy Refresh the current run's visitor policy and verification keys
 	//
 	// Read one current publisher run's scoped visitor policy, revocations, and public verification keys. The bearer credential is the exact run token. This background operation is independent of the publisher's process lease and of ordinary visitor admission.
-	ReadPublisherVisitorPolicy(ctx context.Context, body ReadPublisherVisitorPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// IssueVisitorTokenWithBody performs a POST /v1/visitor-tokens (the `IssueVisitorToken` operationId) request,
-	// with any type of body and a specified content type.
 	//
-	// Prepare or renew one exact-resource visitor permission. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
-	IssueVisitorTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// IssueVisitorToken performs a POST /v1/visitor-tokens (the `IssueVisitorToken` operationId) request.
 	// Takes a body of the `application/json` content type.
 	//
-	// Prepare or renew one exact-resource visitor permission. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+	// Corresponds with POST /v1/visitor-policy (the `ReadPublisherVisitorPolicy` operationId).
+	ReadPublisherVisitorPolicy(ctx context.Context, body ReadPublisherVisitorPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// IssueVisitorTokenWithBody Prepare or renew an exact-resource visitor permission
+	//
+	// Prepare or renew one exact-resource visitor permission. For source.kind control_session or device, authenticate with the current control session bearer token. For browser_session, workload, share, share_session, or grant, authenticate with the source credential in the JSON body and omit Authorization entirely; even an empty Authorization header is rejected. The empty security object represents these body-authenticated branches, not anonymous issuance. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/visitor-tokens (the `IssueVisitorToken` operationId).
+	IssueVisitorTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// IssueVisitorToken Prepare or renew an exact-resource visitor permission
+	//
+	// Prepare or renew one exact-resource visitor permission. For source.kind control_session or device, authenticate with the current control session bearer token. For browser_session, workload, share, share_session, or grant, authenticate with the source credential in the JSON body and omit Authorization entirely; even an empty Authorization header is rejected. The empty security object represents these body-authenticated branches, not anonymous issuance. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/visitor-tokens (the `IssueVisitorToken` operationId).
 	IssueVisitorToken(ctx context.Context, body IssueVisitorTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListAvailablePublicURLs performs a GET /v1/visitor/public-urls (the `ListAvailablePublicURLs` operationId) request.
+	// ListAvailablePublicURLs List public URLs available to the signed-in visitor
+	//
+	// Read a cursor-paginated visitor inventory across the identity's current grants, optionally selecting one team. The response omits management policy, targets, and secrets and does not itself grant a visitor token.
+	//
+	// Corresponds with GET /v1/visitor/public-urls (the `ListAvailablePublicURLs` operationId).
 	ListAvailablePublicURLs(ctx context.Context, params *ListAvailablePublicURLsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListAvailableServices performs a GET /v1/visitor/services (the `ListAvailableServices` operationId) request.
+	// ListAvailableServices List services available to the signed-in visitor
 	//
 	// Authorized saved services for tnl connect, including offline services. Initial readiness requires two ready publisher connections; after that one surviving ready connection keeps a run available during replacement. Inventory never grants a stream ticket by itself and contains no target address, DNS or key material.
+	//
+	// Corresponds with GET /v1/visitor/services (the `ListAvailableServices` operationId).
 	ListAvailableServices(ctx context.Context, params *ListAvailableServicesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetWebhookProviderSource Read one webhook provider source policy
+	//
+	// Read the selected provider's current webhook source policy without a credential. Use ETag and If-None-Match to reuse unchanged policy; this endpoint does not register a webhook or grant access to a public URL.
 	//
 	// Corresponds with GET /v1/webhook-providers/{provider}/source (the `GetWebhookProviderSource` operationId).
 	GetWebhookProviderSource(ctx context.Context, provider WebhookProvider, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListWorkloadServices List only the workload session's currently authorized saved services
 	//
+	// Read the services currently authorized for this workload session using its visitor-only bearer credential. The inventory omits target addresses and application credentials and grants no publisher or control management authority.
+	//
 	// Corresponds with GET /v1/workload/services (the `ListWorkloadServices` operationId).
 	ListWorkloadServices(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CheckWorkloadService performs a POST /v1/workload/services/{service_id}/authorization (the `CheckWorkloadService` operationId) request.
+	// CheckWorkloadService Check a workload session's current permission for one service
+	//
+	// Recheck live workload authorization for the exact service using the workload bearer credential. The decision is bounded by both the renewable lease and the session's fixed absolute deadline; a prior inventory response is not sufficient authorization.
+	//
+	// Corresponds with POST /v1/workload/services/{service_id}/authorization (the `CheckWorkloadService` operationId).
 	CheckWorkloadService(ctx context.Context, serviceId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// IssueWorkloadServiceClientCertificateWithBody performs a POST /v1/workload/services/{service_id}/client-certificate (the `IssueWorkloadServiceClientCertificate` operationId) request,
-	// with any type of body and a specified content type.
+	// IssueWorkloadServiceClientCertificateWithBody Issue a service client certificate for a workload's existing key
+	//
+	// Submit a CSR under the visitor-only workload bearer credential for one currently authorized service. The returned certificate cannot outlive the workload's fixed absolute expiry, and later access still requires a current workload lease.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/workload/services/{service_id}/client-certificate (the `IssueWorkloadServiceClientCertificate` operationId).
 	IssueWorkloadServiceClientCertificateWithBody(ctx context.Context, serviceId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// IssueWorkloadServiceClientCertificate performs a POST /v1/workload/services/{service_id}/client-certificate (the `IssueWorkloadServiceClientCertificate` operationId) request.
+	// IssueWorkloadServiceClientCertificate Issue a service client certificate for a workload's existing key
+	//
+	// Submit a CSR under the visitor-only workload bearer credential for one currently authorized service. The returned certificate cannot outlive the workload's fixed absolute expiry, and later access still requires a current workload lease.
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/workload/services/{service_id}/client-certificate (the `IssueWorkloadServiceClientCertificate` operationId).
 	IssueWorkloadServiceClientCertificate(ctx context.Context, serviceId string, body IssueWorkloadServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// SelectWorkloadServiceRun performs a POST /v1/workload/services/{service_id}/run (the `SelectWorkloadServiceRun` operationId) request.
+	// SelectWorkloadServiceRun Select a ready service run for an authenticated workload
 	//
 	// Check the selected workload credential and current service permission. pair_ready appears only for two exact ready connections on distinct live relay services; it is a signing snapshot, not a grant or a pair key.
+	//
+	// Corresponds with POST /v1/workload/services/{service_id}/run (the `SelectWorkloadServiceRun` operationId).
 	SelectWorkloadServiceRun(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 // ListMaintenanceControls List maintenance controls
+//
+// Read the administrator-controlled gates for public URL creation, publish run creation, and certificate issuance. Reading a gate does not change it.
 //
 // Corresponds with GET /v1/admin/maintenance-controls (the `ListMaintenanceControls` operationId).
 func (c *Client) ListMaintenanceControls(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -5973,6 +6583,8 @@ func (c *Client) ListMaintenanceControls(ctx context.Context, reqEditors ...Requ
 }
 
 // SetMaintenanceControlWithBody Set one maintenance control
+//
+// Change one named maintenance gate using an administrator's control session. The gate controls new work of that kind, rather than closing all existing publications.
 //
 // Takes any type of body and a specified content type.
 //
@@ -5991,6 +6603,8 @@ func (c *Client) SetMaintenanceControlWithBody(ctx context.Context, controlName 
 
 // SetMaintenanceControl Set one maintenance control
 //
+// Change one named maintenance gate using an administrator's control session. The gate controls new work of that kind, rather than closing all existing publications.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with PUT /v1/admin/maintenance-controls/{control_name} (the `SetMaintenanceControl` operationId).
@@ -6008,6 +6622,8 @@ func (c *Client) SetMaintenanceControl(ctx context.Context, controlName Maintena
 
 // ListAdminRelays List relay leases
 //
+// Read a cursor-paginated inventory of relay process leases using an administrator's control session. Lease state describes current placement eligibility, not a guarantee that a publisher connection is ready.
+//
 // Corresponds with GET /v1/admin/relays (the `ListAdminRelays` operationId).
 func (c *Client) ListAdminRelays(ctx context.Context, params *ListAdminRelaysParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListAdminRelaysRequest(c.Server, params)
@@ -6022,6 +6638,8 @@ func (c *Client) ListAdminRelays(ctx context.Context, params *ListAdminRelaysPar
 }
 
 // DrainAdminRelayWithBody Remove a matching relay lease from placement and begin draining
+//
+// Fence the exact relay process lease identified in the request, remove it from new placement, and allow existing connections to drain until the deadline. Requires an administrator's control session.
 //
 // Takes any type of body and a specified content type.
 //
@@ -6040,6 +6658,8 @@ func (c *Client) DrainAdminRelayWithBody(ctx context.Context, relayId RelayID, c
 
 // DrainAdminRelay Remove a matching relay lease from placement and begin draining
 //
+// Fence the exact relay process lease identified in the request, remove it from new placement, and allow existing connections to drain until the deadline. Requires an administrator's control session.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/admin/relays/{relay_id}/drain (the `DrainAdminRelay` operationId).
@@ -6057,6 +6677,8 @@ func (c *Client) DrainAdminRelay(ctx context.Context, relayId RelayID, body Drai
 
 // GetAdminServerStatus Read control, ingress, and relay status
 //
+// Read control, ingress, relay, and maintenance observations using an administrator's control session. These observations do not renew process leases.
+//
 // Corresponds with GET /v1/admin/status (the `GetAdminServerStatus` operationId).
 func (c *Client) GetAdminServerStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetAdminServerStatusRequest(c.Server)
@@ -6071,6 +6693,8 @@ func (c *Client) GetAdminServerStatus(ctx context.Context, reqEditors ...Request
 }
 
 // CompletePreviewBrowserLogin Return a signed-in visitor to the preview
+//
+// Complete the identity provider callback using the pending login state and authorization code, then redirect to a one-time host-bound handoff. No bearer token is used; the callback is authenticated by the checked login flow, not by the empty security array.
 //
 // Corresponds with GET /v1/browser/callback (the `CompletePreviewBrowserLogin` operationId).
 func (c *Client) CompletePreviewBrowserLogin(ctx context.Context, params *CompletePreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -6087,6 +6711,8 @@ func (c *Client) CompletePreviewBrowserLogin(ctx context.Context, params *Comple
 
 // BeginPreviewBrowserLogin Start sign-in for a preview visitor
 //
+// Begin the configured browser sign-in flow for a public URL, optionally within a preview. No bearer credential is required to begin sign-in; current visit permission is checked before a usable browser credential is issued.
+//
 // Corresponds with GET /v1/browser/login (the `BeginPreviewBrowserLogin` operationId).
 func (c *Client) BeginPreviewBrowserLogin(ctx context.Context, params *BeginPreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewBeginPreviewBrowserLoginRequest(c.Server, params)
@@ -6100,9 +6726,11 @@ func (c *Client) BeginPreviewBrowserLogin(ctx context.Context, params *BeginPrev
 	return c.Client.Do(req)
 }
 
-// BeginServiceBrowserLogin performs a GET /v1/browser/service-login (the `BeginServiceBrowserLogin` operationId) request.
+// BeginServiceBrowserLogin Start browser sign-in for one HTTP service
 //
 // Start sign-in for one service HTTP service. Uses the common browser callback and a snapshot of ready runs; the allocated service port is retained.
+//
+// Corresponds with GET /v1/browser/service-login (the `BeginServiceBrowserLogin` operationId).
 func (c *Client) BeginServiceBrowserLogin(ctx context.Context, params *BeginServiceBrowserLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewBeginServiceBrowserLoginRequest(c.Server, params)
 	if err != nil {
@@ -6116,6 +6744,8 @@ func (c *Client) BeginServiceBrowserLogin(ctx context.Context, params *BeginServ
 }
 
 // GetCertificateIssuance Read one publish-run certificate issuance
+//
+// Poll one public URL certificate issuance using its publish run token. The token must belong to the issuance's current run; a control session alone cannot retrieve the certificate.
 //
 // Corresponds with GET /v1/certificate-issuances/{issuance_id} (the `GetCertificateIssuance` operationId).
 func (c *Client) GetCertificateIssuance(ctx context.Context, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -6132,6 +6762,8 @@ func (c *Client) GetCertificateIssuance(ctx context.Context, issuanceId Issuance
 
 // GetClientIP Return the requesting client's public IP address
 //
+// Read the request source address observed by control, after configured trusted-proxy handling. No credential is required; a caller-provided address is not accepted as source evidence.
+//
 // Corresponds with GET /v1/client-ip (the `GetClientIP` operationId).
 func (c *Client) GetClientIP(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetClientIPRequest(c.Server)
@@ -6146,6 +6778,8 @@ func (c *Client) GetClientIP(ctx context.Context, reqEditors ...RequestEditorFn)
 }
 
 // GetControlDiscovery Describe control and its authentication methods
+//
+// Read this server's public capabilities and authentication facts before choosing a client workflow. No credential is required; discover authority sign-in separately from publisher and visitor credentials.
 //
 // Corresponds with GET /v1/discovery (the `GetControlDiscovery` operationId).
 func (c *Client) GetControlDiscovery(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -6162,6 +6796,8 @@ func (c *Client) GetControlDiscovery(ctx context.Context, reqEditors ...RequestE
 
 // ListFeedbackThreads List feedback threads manageable in one team
 //
+// Read a cursor-paginated team feedback list under current management authorization. Each thread keeps its immutable first report and current state; use the event cursor to follow later changes.
+//
 // Corresponds with GET /v1/feedback (the `ListFeedbackThreads` operationId).
 func (c *Client) ListFeedbackThreads(ctx context.Context, params *ListFeedbackThreadsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListFeedbackThreadsRequest(c.Server, params)
@@ -6176,6 +6812,8 @@ func (c *Client) ListFeedbackThreads(ctx context.Context, params *ListFeedbackTh
 }
 
 // ListFeedbackEvents Resume ordered feedback events for one team
+//
+// Resume the team's ordered feedback history after after_cursor using current management authorization. Event order is independent of branch names or local staging state.
 //
 // Corresponds with GET /v1/feedback/events (the `ListFeedbackEvents` operationId).
 func (c *Client) ListFeedbackEvents(ctx context.Context, params *ListFeedbackEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -6192,6 +6830,8 @@ func (c *Client) ListFeedbackEvents(ctx context.Context, params *ListFeedbackEve
 
 // GetFeedbackThread Read one immutable report and current feedback state
 //
+// Read one manageable feedback thread, including its immutable report and current state. Follow-up replies and state changes remain in the separate ordered event history.
+//
 // Corresponds with GET /v1/feedback/{feedback_id} (the `GetFeedbackThread` operationId).
 func (c *Client) GetFeedbackThread(ctx context.Context, feedbackId FeedbackID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetFeedbackThreadRequest(c.Server, feedbackId)
@@ -6207,6 +6847,8 @@ func (c *Client) GetFeedbackThread(ctx context.Context, feedbackId FeedbackID, r
 
 // ListFeedbackThreadEvents Read ordered follow-up events for one feedback thread
 //
+// Read follow-up events after after_cursor for one manageable feedback thread. The original report is immutable and remains on the thread rather than being rewritten by later events.
+//
 // Corresponds with GET /v1/feedback/{feedback_id}/events (the `ListFeedbackThreadEvents` operationId).
 func (c *Client) ListFeedbackThreadEvents(ctx context.Context, feedbackId FeedbackID, params *ListFeedbackThreadEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListFeedbackThreadEventsRequest(c.Server, feedbackId, params)
@@ -6221,6 +6863,8 @@ func (c *Client) ListFeedbackThreadEvents(ctx context.Context, feedbackId Feedba
 }
 
 // AppendFeedbackEventWithBody Reply, record a checkout update, resolve, or reopen feedback
+//
+// Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Control derives the verified author from the current sign-in; events never edit the immutable first report.
 //
 // Takes any type of body and a specified content type.
 //
@@ -6239,6 +6883,8 @@ func (c *Client) AppendFeedbackEventWithBody(ctx context.Context, feedbackId Fee
 
 // AppendFeedbackEvent Reply, record a checkout update, resolve, or reopen feedback
 //
+// Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Control derives the verified author from the current sign-in; events never edit the immutable first report.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/feedback/{feedback_id}/events (the `AppendFeedbackEvent` operationId).
@@ -6256,6 +6902,8 @@ func (c *Client) AppendFeedbackEvent(ctx context.Context, feedbackId FeedbackID,
 
 // CreateGuestDemo Create a restricted guest credential for the built-in demo
 //
+// Create a source-address-bound guest trial when guest demos are enabled. No existing credential is required. Network issuance limits apply; the returned credential grants only restricted demo operations, not a control session.
+//
 // Corresponds with POST /v1/guest-demo (the `CreateGuestDemo` operationId).
 func (c *Client) CreateGuestDemo(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateGuestDemoRequest(c.Server)
@@ -6271,6 +6919,8 @@ func (c *Client) CreateGuestDemo(ctx context.Context, reqEditors ...RequestEdito
 
 // AllocateGuestDemoNumber Allocate a new hostname number for this guest trial
 //
+// Allocate the next demo hostname number using the guest credential returned by createGuestDemo. Control checks the trial deadline, source address, remaining allowance, and absence of an open demo publish run.
+//
 // Corresponds with POST /v1/guest-demo/number (the `AllocateGuestDemoNumber` operationId).
 func (c *Client) AllocateGuestDemoNumber(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAllocateGuestDemoNumberRequest(c.Server)
@@ -6284,8 +6934,13 @@ func (c *Client) AllocateGuestDemoNumber(ctx context.Context, reqEditors ...Requ
 	return c.Client.Do(req)
 }
 
-// EnrollGuestPublisherWithBody performs a POST /v1/guest-demo/publisher (the `EnrollGuestPublisher` operationId) request,
-// with any type of body and a specified content type.
+// EnrollGuestPublisherWithBody Enroll a publisher key for the guest trial's assigned demo URL
+//
+// Authenticate with the guest trial credential and bind an Ed25519 key to the trial's assigned public URL. Control checks the trial and validated request source; the resulting identity grants no general control session or service management permission.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/guest-demo/publisher (the `EnrollGuestPublisher` operationId).
 func (c *Client) EnrollGuestPublisherWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewEnrollGuestPublisherRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -6298,8 +6953,13 @@ func (c *Client) EnrollGuestPublisherWithBody(ctx context.Context, contentType s
 	return c.Client.Do(req)
 }
 
-// EnrollGuestPublisher performs a POST /v1/guest-demo/publisher (the `EnrollGuestPublisher` operationId) request.
+// EnrollGuestPublisher Enroll a publisher key for the guest trial's assigned demo URL
+//
+// Authenticate with the guest trial credential and bind an Ed25519 key to the trial's assigned public URL. Control checks the trial and validated request source; the resulting identity grants no general control session or service management permission.
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/guest-demo/publisher (the `EnrollGuestPublisher` operationId).
 func (c *Client) EnrollGuestPublisher(ctx context.Context, body EnrollGuestPublisherJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewEnrollGuestPublisherRequest(c.Server, body)
 	if err != nil {
@@ -6313,6 +6973,8 @@ func (c *Client) EnrollGuestPublisher(ctx context.Context, body EnrollGuestPubli
 }
 
 // GetHealth Confirm that the control HTTP server is serving
+//
+// Check that the control HTTP handler responds. No credential is required; use getReadiness to check whether the process can serve its configured role.
 //
 // Corresponds with GET /v1/health (the `GetHealth` operationId).
 func (c *Client) GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -6328,6 +6990,8 @@ func (c *Client) GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (
 }
 
 // CreatePreviewWithBody Create or reuse a preview for one team
+//
+// Save or reuse a preview identity for the selected team and idempotency key. The preview groups public URLs; creation alone does not grant visitor access or start their publish runs.
 //
 // Takes any type of body and a specified content type.
 //
@@ -6346,6 +7010,8 @@ func (c *Client) CreatePreviewWithBody(ctx context.Context, params *CreatePrevie
 
 // CreatePreview Create or reuse a preview for one team
 //
+// Save or reuse a preview identity for the selected team and idempotency key. The preview groups public URLs; creation alone does not grant visitor access or start their publish runs.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/previews (the `CreatePreview` operationId).
@@ -6363,6 +7029,8 @@ func (c *Client) CreatePreview(ctx context.Context, params *CreatePreviewParams,
 
 // GetPreview Read a preview and its public URLs
 //
+// Read one preview's saved identity, public URL membership, and team access setting under current management authorization. Active publication and visitor permission are checked separately.
+//
 // Corresponds with GET /v1/previews/{preview_id} (the `GetPreview` operationId).
 func (c *Client) GetPreview(ctx context.Context, previewId PreviewID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetPreviewRequest(c.Server, previewId)
@@ -6377,6 +7045,8 @@ func (c *Client) GetPreview(ctx context.Context, previewId PreviewID, reqEditors
 }
 
 // AddPreviewPublicURLWithBody Add an authorized public URL to a preview
+//
+// Add an existing authorized public URL to the preview. This changes future preview membership, not the immutable public URL snapshot held by an already-created share.
 //
 // Takes any type of body and a specified content type.
 //
@@ -6395,6 +7065,8 @@ func (c *Client) AddPreviewPublicURLWithBody(ctx context.Context, previewId Prev
 
 // AddPreviewPublicURL Add an authorized public URL to a preview
 //
+// Add an existing authorized public URL to the preview. This changes future preview membership, not the immutable public URL snapshot held by an already-created share.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/previews/{preview_id}/public-urls (the `AddPreviewPublicURL` operationId).
@@ -6412,6 +7084,8 @@ func (c *Client) AddPreviewPublicURL(ctx context.Context, previewId PreviewID, b
 
 // ListShares List shares for a preview
 //
+// Read a cursor-paginated inventory of the preview's manageable shares without their secrets. A stored share record does not itself function as a share link.
+//
 // Corresponds with GET /v1/previews/{preview_id}/shares (the `ListShares` operationId).
 func (c *Client) ListShares(ctx context.Context, previewId PreviewID, params *ListSharesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListSharesRequest(c.Server, previewId, params)
@@ -6426,6 +7100,8 @@ func (c *Client) ListShares(ctx context.Context, previewId PreviewID, params *Li
 }
 
 // CreateShareWithBody Store one share for a snapshot of authorized public URLs
+//
+// Store a share using current preview management authorization and an idempotency key. It captures the authorized public URL IDs now; later preview membership changes do not expand that share's access.
 //
 // Takes any type of body and a specified content type.
 //
@@ -6444,6 +7120,8 @@ func (c *Client) CreateShareWithBody(ctx context.Context, previewId PreviewID, p
 
 // CreateShare Store one share for a snapshot of authorized public URLs
 //
+// Store a share using current preview management authorization and an idempotency key. It captures the authorized public URL IDs now; later preview membership changes do not expand that share's access.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/previews/{preview_id}/shares (the `CreateShare` operationId).
@@ -6460,6 +7138,8 @@ func (c *Client) CreateShare(ctx context.Context, previewId PreviewID, params *C
 }
 
 // SetPreviewTeamAccessWithBody Enable or disable team visitor access for this preview
+//
+// Set the preview's opt-in team access grant using current management authorization. Enabled access still requires a current team member's sign-in; it does not make the included public URLs anonymous.
 //
 // Takes any type of body and a specified content type.
 //
@@ -6478,6 +7158,8 @@ func (c *Client) SetPreviewTeamAccessWithBody(ctx context.Context, previewId Pre
 
 // SetPreviewTeamAccess Enable or disable team visitor access for this preview
 //
+// Set the preview's opt-in team access grant using current management authorization. Enabled access still requires a current team member's sign-in; it does not make the included public URLs anonymous.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with PUT /v1/previews/{preview_id}/team-access (the `SetPreviewTeamAccess` operationId).
@@ -6493,7 +7175,11 @@ func (c *Client) SetPreviewTeamAccess(ctx context.Context, previewId PreviewID, 
 	return c.Client.Do(req)
 }
 
-// GetProjectConfiguration performs a GET /v1/projects/{project_key}/configuration (the `GetProjectConfiguration` operationId) request.
+// GetProjectConfiguration Read a project's applied configuration and publisher status
+//
+// Read the normalized desired configuration and observed publisher revisions for the selected team and project. Requires current project management permission; the response can include targets and must not be exposed as public project metadata.
+//
+// Corresponds with GET /v1/projects/{project_key}/configuration (the `GetProjectConfiguration` operationId).
 func (c *Client) GetProjectConfiguration(ctx context.Context, projectKey string, params *GetProjectConfigurationParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetProjectConfigurationRequest(c.Server, projectKey, params)
 	if err != nil {
@@ -6506,10 +7192,13 @@ func (c *Client) GetProjectConfiguration(ctx context.Context, projectKey string,
 	return c.Client.Do(req)
 }
 
-// ApplyProjectConfigurationWithBody performs a PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId) request,
-// with any type of body and a specified content type.
+// ApplyProjectConfigurationWithBody Apply a project's desired services and publisher groups
 //
 // Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId).
 func (c *Client) ApplyProjectConfigurationWithBody(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewApplyProjectConfigurationRequestWithBody(c.Server, projectKey, contentType, body)
 	if err != nil {
@@ -6522,10 +7211,13 @@ func (c *Client) ApplyProjectConfigurationWithBody(ctx context.Context, projectK
 	return c.Client.Do(req)
 }
 
-// ApplyProjectConfiguration performs a PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId) request.
-// Takes a body of the `application/json` content type.
+// ApplyProjectConfiguration Apply a project's desired services and publisher groups
 //
 // Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId).
 func (c *Client) ApplyProjectConfiguration(ctx context.Context, projectKey string, body ApplyProjectConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewApplyProjectConfigurationRequest(c.Server, projectKey, body)
 	if err != nil {
@@ -6538,9 +7230,11 @@ func (c *Client) ApplyProjectConfiguration(ctx context.Context, projectKey strin
 	return c.Client.Do(req)
 }
 
-// GetLocalProjectService performs a GET /v1/projects/{project_key}/local-services/{service} (the `GetLocalProjectService` operationId) request.
+// GetLocalProjectService Resolve one existing source-bound worktree service
 //
 // Read the exact service previously realized for this team, project source, service key, and worktree. Requires current ordinary private visitor access, not project management access. Returns only immutable identity and approved visitor protocol/TLS metadata, never configuration, targets, or credentials. Does not realize or adopt a service. Missing or unauthorized bindings return not found; an authorized binding with another source fingerprint returns conflict. No other team, project, worktree, or saved name is searched.
+//
+// Corresponds with GET /v1/projects/{project_key}/local-services/{service} (the `GetLocalProjectService` operationId).
 func (c *Client) GetLocalProjectService(ctx context.Context, projectKey string, service string, params *GetLocalProjectServiceParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetLocalProjectServiceRequest(c.Server, projectKey, service, params)
 	if err != nil {
@@ -6553,10 +7247,13 @@ func (c *Client) GetLocalProjectService(ctx context.Context, projectKey string, 
 	return c.Client.Do(req)
 }
 
-// RealizeLocalProjectServiceWithBody performs a PUT /v1/projects/{project_key}/local-services/{service} (the `RealizeLocalProjectService` operationId) request,
-// with any type of body and a specified content type.
+// RealizeLocalProjectServiceWithBody Realize one declared local service for a worktree
 //
 // Realize only one source-bound local service for one worktree. Private IDs are allocated here with worktree-scoped names, never adopted by name. Public IDs must be exact caller-owned app URLs already allocated by this runtime, bound to the caller's membership or to the caller's own personal team when current namespace authorization selects shared scope. Organization shared URLs and another member's or team's URLs are rejected. Records provenance before first apply; later apply reconciles that legitimate resource. When configuration has been applied the local declaration must match it. Does not apply remote group changes.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/projects/{project_key}/local-services/{service} (the `RealizeLocalProjectService` operationId).
 func (c *Client) RealizeLocalProjectServiceWithBody(ctx context.Context, projectKey string, service string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRealizeLocalProjectServiceRequestWithBody(c.Server, projectKey, service, contentType, body)
 	if err != nil {
@@ -6569,10 +7266,13 @@ func (c *Client) RealizeLocalProjectServiceWithBody(ctx context.Context, project
 	return c.Client.Do(req)
 }
 
-// RealizeLocalProjectService performs a PUT /v1/projects/{project_key}/local-services/{service} (the `RealizeLocalProjectService` operationId) request.
-// Takes a body of the `application/json` content type.
+// RealizeLocalProjectService Realize one declared local service for a worktree
 //
 // Realize only one source-bound local service for one worktree. Private IDs are allocated here with worktree-scoped names, never adopted by name. Public IDs must be exact caller-owned app URLs already allocated by this runtime, bound to the caller's membership or to the caller's own personal team when current namespace authorization selects shared scope. Organization shared URLs and another member's or team's URLs are rejected. Records provenance before first apply; later apply reconciles that legitimate resource. When configuration has been applied the local declaration must match it. Does not apply remote group changes.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/projects/{project_key}/local-services/{service} (the `RealizeLocalProjectService` operationId).
 func (c *Client) RealizeLocalProjectService(ctx context.Context, projectKey string, service string, body RealizeLocalProjectServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRealizeLocalProjectServiceRequest(c.Server, projectKey, service, body)
 	if err != nil {
@@ -6585,9 +7285,11 @@ func (c *Client) RealizeLocalProjectService(ctx context.Context, projectKey stri
 	return c.Client.Do(req)
 }
 
-// GetProjectPublicMetadata performs a GET /v1/projects/{project_key}/public-metadata (the `GetProjectPublicMetadata` operationId) request.
+// GetProjectPublicMetadata Read visitor-safe project service identities and hostnames
 //
 // Browser-safe project source and public service IDs/hostnames, including exact local worktree realizations before or after first apply. Returns only public services the caller may visit, or all public services for a project manager. A service key may appear more than once for separate worktree URLs. Never returns configuration, targets, trust, grants, or publisher data.
+//
+// Corresponds with GET /v1/projects/{project_key}/public-metadata (the `GetProjectPublicMetadata` operationId).
 func (c *Client) GetProjectPublicMetadata(ctx context.Context, projectKey string, params *GetProjectPublicMetadataParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetProjectPublicMetadataRequest(c.Server, projectKey, params)
 	if err != nil {
@@ -6600,8 +7302,13 @@ func (c *Client) GetProjectPublicMetadata(ctx context.Context, projectKey string
 	return c.Client.Do(req)
 }
 
-// CreatePublisherGroupEnrollmentWithBody performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId) request,
-// with any type of body and a specified content type.
+// CreatePublisherGroupEnrollmentWithBody Issue a bounded enrollment key for a project's publisher group
+//
+// Create an expiring bootstrap credential using current project management permission. Each enrolled replica supplies its own key; the enrollment's member limit bounds how many identities it can create.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId).
 func (c *Client) CreatePublisherGroupEnrollmentWithBody(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreatePublisherGroupEnrollmentRequestWithBody(c.Server, projectKey, groupName, contentType, body)
 	if err != nil {
@@ -6614,8 +7321,13 @@ func (c *Client) CreatePublisherGroupEnrollmentWithBody(ctx context.Context, pro
 	return c.Client.Do(req)
 }
 
-// CreatePublisherGroupEnrollment performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId) request.
+// CreatePublisherGroupEnrollment Issue a bounded enrollment key for a project's publisher group
+//
+// Create an expiring bootstrap credential using current project management permission. Each enrolled replica supplies its own key; the enrollment's member limit bounds how many identities it can create.
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId).
 func (c *Client) CreatePublisherGroupEnrollment(ctx context.Context, projectKey string, groupName string, body CreatePublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreatePublisherGroupEnrollmentRequest(c.Server, projectKey, groupName, body)
 	if err != nil {
@@ -6628,7 +7340,11 @@ func (c *Client) CreatePublisherGroupEnrollment(ctx context.Context, projectKey 
 	return c.Client.Do(req)
 }
 
-// RevokePublisherGroupMember performs a DELETE /v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id} (the `RevokePublisherGroupMember` operationId) request.
+// RevokePublisherGroupMember Revoke one enrolled publisher replica from a group
+//
+// Revoke the exact enrolled publisher identity using current project management permission. Control closes that member's public URL and service runs without revoking other group members.
+//
+// Corresponds with DELETE /v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id} (the `RevokePublisherGroupMember` operationId).
 func (c *Client) RevokePublisherGroupMember(ctx context.Context, projectKey string, groupName string, publisherIdentityId string, params *RevokePublisherGroupMemberParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokePublisherGroupMemberRequest(c.Server, projectKey, groupName, publisherIdentityId, params)
 	if err != nil {
@@ -6641,10 +7357,13 @@ func (c *Client) RevokePublisherGroupMember(ctx context.Context, projectKey stri
 	return c.Client.Do(req)
 }
 
-// RenamePublisherNamespaceWithBody performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId) request,
-// with any type of body and a specified content type.
+// RenamePublisherNamespaceWithBody Replace a publisher group's DNS namespace label
 //
 // Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId).
 func (c *Client) RenamePublisherNamespaceWithBody(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRenamePublisherNamespaceRequestWithBody(c.Server, projectKey, groupName, contentType, body)
 	if err != nil {
@@ -6657,10 +7376,13 @@ func (c *Client) RenamePublisherNamespaceWithBody(ctx context.Context, projectKe
 	return c.Client.Do(req)
 }
 
-// RenamePublisherNamespace performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId) request.
-// Takes a body of the `application/json` content type.
+// RenamePublisherNamespace Replace a publisher group's DNS namespace label
 //
 // Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId).
 func (c *Client) RenamePublisherNamespace(ctx context.Context, projectKey string, groupName string, body RenamePublisherNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRenamePublisherNamespaceRequest(c.Server, projectKey, groupName, body)
 	if err != nil {
@@ -6673,10 +7395,13 @@ func (c *Client) RenamePublisherNamespace(ctx context.Context, projectKey string
 	return c.Client.Do(req)
 }
 
-// RenamePublisherGroupWithBody performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId) request,
-// with any type of body and a specified content type.
+// RenamePublisherGroupWithBody Rename a group's configuration selector without changing endpoints
 //
 // Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId).
 func (c *Client) RenamePublisherGroupWithBody(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRenamePublisherGroupRequestWithBody(c.Server, projectKey, groupName, contentType, body)
 	if err != nil {
@@ -6689,10 +7414,13 @@ func (c *Client) RenamePublisherGroupWithBody(ctx context.Context, projectKey st
 	return c.Client.Do(req)
 }
 
-// RenamePublisherGroup performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId) request.
-// Takes a body of the `application/json` content type.
+// RenamePublisherGroup Rename a group's configuration selector without changing endpoints
 //
 // Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId).
 func (c *Client) RenamePublisherGroup(ctx context.Context, projectKey string, groupName string, body RenamePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRenamePublisherGroupRequest(c.Server, projectKey, groupName, body)
 	if err != nil {
@@ -6705,9 +7433,11 @@ func (c *Client) RenamePublisherGroup(ctx context.Context, projectKey string, gr
 	return c.Client.Do(req)
 }
 
-// GetProjectService performs a GET /v1/projects/{project_key}/services/{service} (the `GetProjectService` operationId) request.
+// GetProjectService Resolve an applied service by project source and key
 //
 // Resolve an applied service by its exact Git source and configuration key using current visitor access. Does not return targets or require project-manager permission.
+//
+// Corresponds with GET /v1/projects/{project_key}/services/{service} (the `GetProjectService` operationId).
 func (c *Client) GetProjectService(ctx context.Context, projectKey string, service ServiceName, params *GetProjectServiceParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetProjectServiceRequest(c.Server, projectKey, service, params)
 	if err != nil {
@@ -6721,6 +7451,8 @@ func (c *Client) GetProjectService(ctx context.Context, projectKey string, servi
 }
 
 // ListPublicURLs List public URLs for one team
+//
+// Read a cursor-paginated inventory of public URLs the caller may manage in one team. An exact canonical_hostname filter returns zero or one non-deleted URL and cannot be combined with a cursor.
 //
 // Corresponds with GET /v1/public-urls (the `ListPublicURLs` operationId).
 func (c *Client) ListPublicURLs(ctx context.Context, params *ListPublicURLsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -6736,6 +7468,8 @@ func (c *Client) ListPublicURLs(ctx context.Context, params *ListPublicURLsParam
 }
 
 // CreatePublicURLWithBody Create one team public URL
+//
+// Save an authorized hostname, target, and visitor policy using an idempotency key. A control session selects an authorized team scope; a guest credential can create only its assigned ephemeral demo hostname. Creation does not start a publish run.
 //
 // Takes any type of body and a specified content type.
 //
@@ -6754,6 +7488,8 @@ func (c *Client) CreatePublicURLWithBody(ctx context.Context, params *CreatePubl
 
 // CreatePublicURL Create one team public URL
 //
+// Save an authorized hostname, target, and visitor policy using an idempotency key. A control session selects an authorized team scope; a guest credential can create only its assigned ephemeral demo hostname. Creation does not start a publish run.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
@@ -6771,6 +7507,8 @@ func (c *Client) CreatePublicURL(ctx context.Context, params *CreatePublicURLPar
 
 // DeletePublicURL Delete one public URL and close its publish run
 //
+// Delete the saved public URL under current management authorization and close its active publish run. The hostname cannot keep serving through the deleted URL's old run credentials.
+//
 // Corresponds with DELETE /v1/public-urls/{public_url_id} (the `DeletePublicURL` operationId).
 func (c *Client) DeletePublicURL(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeletePublicURLRequest(c.Server, publicUrlId)
@@ -6786,6 +7524,8 @@ func (c *Client) DeletePublicURL(ctx context.Context, publicUrlId PublicURLID, r
 
 // GetPublicURL Read one public URL
 //
+// Read one saved public URL under current management authorization. Its saved policy and lifecycle are separate from whether an active publish run is routable.
+//
 // Corresponds with GET /v1/public-urls/{public_url_id} (the `GetPublicURL` operationId).
 func (c *Client) GetPublicURL(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetPublicURLRequest(c.Server, publicUrlId)
@@ -6800,6 +7540,8 @@ func (c *Client) GetPublicURL(ctx context.Context, publicUrlId PublicURLID, reqE
 }
 
 // UpdatePublicURLWithBody Update a public URL's target and IP policy
+//
+// Replace the target and IP policy, optionally changing the post-quantum requirement, under current management authorization. Use replaceVisitorAccess for complete visitor access policy replacement; this operation does not create a new publish run.
 //
 // Takes any type of body and a specified content type.
 //
@@ -6818,6 +7560,8 @@ func (c *Client) UpdatePublicURLWithBody(ctx context.Context, publicUrlId Public
 
 // UpdatePublicURL Update a public URL's target and IP policy
 //
+// Replace the target and IP policy, optionally changing the post-quantum requirement, under current management authorization. Use replaceVisitorAccess for complete visitor access policy replacement; this operation does not create a new publish run.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
@@ -6834,6 +7578,8 @@ func (c *Client) UpdatePublicURL(ctx context.Context, publicUrlId PublicURLID, b
 }
 
 // ReplaceVisitorAccessWithBody Replace the complete live visitor access policy
+//
+// Replace the complete saved visitor access policy under current public URL management authorization. Omitted optional policy members are not a partial patch; publishers must enforce the resulting current visitor policy for new work.
 //
 // Takes any type of body and a specified content type.
 //
@@ -6852,6 +7598,8 @@ func (c *Client) ReplaceVisitorAccessWithBody(ctx context.Context, publicUrlId P
 
 // ReplaceVisitorAccess Replace the complete live visitor access policy
 //
+// Replace the complete saved visitor access policy under current public URL management authorization. Omitted optional policy members are not a partial patch; publishers must enforce the resulting current visitor policy for new work.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with PUT /v1/public-urls/{public_url_id}/access (the `ReplaceVisitorAccess` operationId).
@@ -6868,6 +7616,8 @@ func (c *Client) ReplaceVisitorAccess(ctx context.Context, publicUrlId PublicURL
 }
 
 // CreatePublishRunWithBody Create a publish run and allocate its publish run number
+//
+// Start a new publication under the exact publisher grant using an idempotency key and Publisher-Run-Proof signature. The publisher access token does not replace the required proof of the signing key; the response includes the separate run token and two connection assignments.
 //
 // Takes any type of body and a specified content type.
 //
@@ -6886,6 +7636,8 @@ func (c *Client) CreatePublishRunWithBody(ctx context.Context, publicUrlId Publi
 
 // CreatePublishRun Create a publish run and allocate its publish run number
 //
+// Start a new publication under the exact publisher grant using an idempotency key and Publisher-Run-Proof signature. The publisher access token does not replace the required proof of the signing key; the response includes the separate run token and two connection assignments.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
@@ -6901,7 +7653,11 @@ func (c *Client) CreatePublishRun(ctx context.Context, publicUrlId PublicURLID, 
 	return c.Client.Do(req)
 }
 
-// ListVisitorGrants performs a GET /v1/public-urls/{public_url_id}/visitor-grants (the `ListVisitorGrants` operationId) request.
+// ListVisitorGrants List visitor grants for one manageable public URL
+//
+// Read exact-public-URL team and identity visitor grants under current management authorization. Listing a grant is not a substitute for checking the visitor's current access.
+//
+// Corresponds with GET /v1/public-urls/{public_url_id}/visitor-grants (the `ListVisitorGrants` operationId).
 func (c *Client) ListVisitorGrants(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListVisitorGrantsRequest(c.Server, publicUrlId)
 	if err != nil {
@@ -6914,8 +7670,13 @@ func (c *Client) ListVisitorGrants(ctx context.Context, publicUrlId PublicURLID,
 	return c.Client.Do(req)
 }
 
-// CreateTeamVisitorGrantWithBody performs a POST /v1/public-urls/{public_url_id}/visitor-grants (the `CreateTeamVisitorGrant` operationId) request,
-// with any type of body and a specified content type.
+// CreateTeamVisitorGrantWithBody Grant current members of a team access to one public URL
+//
+// Create an exact-public-URL grant for current members of the selected team using management authorization and an idempotency key. This grants visitor access, not public URL management or publisher authority.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-grants (the `CreateTeamVisitorGrant` operationId).
 func (c *Client) CreateTeamVisitorGrantWithBody(ctx context.Context, publicUrlId PublicURLID, params *CreateTeamVisitorGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateTeamVisitorGrantRequestWithBody(c.Server, publicUrlId, params, contentType, body)
 	if err != nil {
@@ -6928,8 +7689,13 @@ func (c *Client) CreateTeamVisitorGrantWithBody(ctx context.Context, publicUrlId
 	return c.Client.Do(req)
 }
 
-// CreateTeamVisitorGrant performs a POST /v1/public-urls/{public_url_id}/visitor-grants (the `CreateTeamVisitorGrant` operationId) request.
+// CreateTeamVisitorGrant Grant current members of a team access to one public URL
+//
+// Create an exact-public-URL grant for current members of the selected team using management authorization and an idempotency key. This grants visitor access, not public URL management or publisher authority.
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-grants (the `CreateTeamVisitorGrant` operationId).
 func (c *Client) CreateTeamVisitorGrant(ctx context.Context, publicUrlId PublicURLID, params *CreateTeamVisitorGrantParams, body CreateTeamVisitorGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateTeamVisitorGrantRequest(c.Server, publicUrlId, params, body)
 	if err != nil {
@@ -6942,7 +7708,11 @@ func (c *Client) CreateTeamVisitorGrant(ctx context.Context, publicUrlId PublicU
 	return c.Client.Do(req)
 }
 
-// RevokeVisitorGrant performs a DELETE /v1/public-urls/{public_url_id}/visitor-grants/{grant_id} (the `RevokeVisitorGrant` operationId) request.
+// RevokeVisitorGrant Revoke one public URL visitor grant
+//
+// Revoke the exact grant under current public URL management authorization. Current visitor policy determines access after revocation; other grants for the URL remain separate.
+//
+// Corresponds with DELETE /v1/public-urls/{public_url_id}/visitor-grants/{grant_id} (the `RevokeVisitorGrant` operationId).
 func (c *Client) RevokeVisitorGrant(ctx context.Context, publicUrlId PublicURLID, grantId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeVisitorGrantRequest(c.Server, publicUrlId, grantId)
 	if err != nil {
@@ -6956,6 +7726,8 @@ func (c *Client) RevokeVisitorGrant(ctx context.Context, publicUrlId PublicURLID
 }
 
 // CreateIdentityVisitorGrantWithBody Create an explicit identity grant, including for the current identity
+//
+// Create an exact-public-URL identity grant under current management authorization. Use an explicit identity grant even for the current identity when access must not depend on team membership.
 //
 // Takes any type of body and a specified content type.
 //
@@ -6974,6 +7746,8 @@ func (c *Client) CreateIdentityVisitorGrantWithBody(ctx context.Context, publicU
 
 // CreateIdentityVisitorGrant Create an explicit identity grant, including for the current identity
 //
+// Create an exact-public-URL identity grant under current management authorization. Use an explicit identity grant even for the current identity when access must not depend on team membership.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/public-urls/{public_url_id}/visitor-identity-grants (the `CreateIdentityVisitorGrant` operationId).
@@ -6989,7 +7763,11 @@ func (c *Client) CreateIdentityVisitorGrant(ctx context.Context, publicUrlId Pub
 	return c.Client.Do(req)
 }
 
-// ListVisitorInvitations performs a GET /v1/public-urls/{public_url_id}/visitor-invitations (the `ListVisitorInvitations` operationId) request.
+// ListVisitorInvitations List named visitor invitations for one public URL
+//
+// Read invitation records using current public URL management authorization. Invitation inventory does not reveal a reusable visitor credential or grant management permission to its recipients.
+//
+// Corresponds with GET /v1/public-urls/{public_url_id}/visitor-invitations (the `ListVisitorInvitations` operationId).
 func (c *Client) ListVisitorInvitations(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListVisitorInvitationsRequest(c.Server, publicUrlId)
 	if err != nil {
@@ -7002,8 +7780,13 @@ func (c *Client) ListVisitorInvitations(ctx context.Context, publicUrlId PublicU
 	return c.Client.Do(req)
 }
 
-// CreateVisitorInvitationWithBody performs a POST /v1/public-urls/{public_url_id}/visitor-invitations (the `CreateVisitorInvitation` operationId) request,
-// with any type of body and a specified content type.
+// CreateVisitorInvitationWithBody Invite a verified email identity to one public URL
+//
+// Issue an expiring one-use invitation under current public URL management authorization. Acceptance requires the recipient's verified email and creates an exact-URL identity grant, not team membership.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-invitations (the `CreateVisitorInvitation` operationId).
 func (c *Client) CreateVisitorInvitationWithBody(ctx context.Context, publicUrlId PublicURLID, params *CreateVisitorInvitationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateVisitorInvitationRequestWithBody(c.Server, publicUrlId, params, contentType, body)
 	if err != nil {
@@ -7016,8 +7799,13 @@ func (c *Client) CreateVisitorInvitationWithBody(ctx context.Context, publicUrlI
 	return c.Client.Do(req)
 }
 
-// CreateVisitorInvitation performs a POST /v1/public-urls/{public_url_id}/visitor-invitations (the `CreateVisitorInvitation` operationId) request.
+// CreateVisitorInvitation Invite a verified email identity to one public URL
+//
+// Issue an expiring one-use invitation under current public URL management authorization. Acceptance requires the recipient's verified email and creates an exact-URL identity grant, not team membership.
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-invitations (the `CreateVisitorInvitation` operationId).
 func (c *Client) CreateVisitorInvitation(ctx context.Context, publicUrlId PublicURLID, params *CreateVisitorInvitationParams, body CreateVisitorInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateVisitorInvitationRequest(c.Server, publicUrlId, params, body)
 	if err != nil {
@@ -7030,7 +7818,11 @@ func (c *Client) CreateVisitorInvitation(ctx context.Context, publicUrlId Public
 	return c.Client.Do(req)
 }
 
-// RevokeVisitorInvitation performs a DELETE /v1/public-urls/{public_url_id}/visitor-invitations/{invitation_id} (the `RevokeVisitorInvitation` operationId) request.
+// RevokeVisitorInvitation Revoke a public URL invitation and its accepted identity grant
+//
+// Revoke the named invitation using current public URL management authorization. If it was accepted, revoke the identity grant created by that invitation as well.
+//
+// Corresponds with DELETE /v1/public-urls/{public_url_id}/visitor-invitations/{invitation_id} (the `RevokeVisitorInvitation` operationId).
 func (c *Client) RevokeVisitorInvitation(ctx context.Context, publicUrlId PublicURLID, invitationId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeVisitorInvitationRequest(c.Server, publicUrlId, invitationId)
 	if err != nil {
@@ -7044,6 +7836,8 @@ func (c *Client) RevokeVisitorInvitation(ctx context.Context, publicUrlId Public
 }
 
 // ClosePublishRun Close and drain a publish run without deleting its public URL
+//
+// Close the exact publication using its publish run token. Saved public URLs remain available for a later run; ephemeral public URLs follow their removal lifecycle instead.
 //
 // Corresponds with DELETE /v1/publish-runs/{publish_run_id} (the `ClosePublishRun` operationId).
 func (c *Client) ClosePublishRun(ctx context.Context, publishRunId PublishRunID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -7059,6 +7853,8 @@ func (c *Client) ClosePublishRun(ctx context.Context, publishRunId PublishRunID,
 }
 
 // CheckPreviewBrowserAccessWithBody Check a browser cookie against current preview access
+//
+// Authenticate the publisher with the exact publish run token and check the body's browser cookie secret against current public URL and preview access. A previously issued cookie alone is not proof of current permission.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7077,6 +7873,8 @@ func (c *Client) CheckPreviewBrowserAccessWithBody(ctx context.Context, publishR
 
 // CheckPreviewBrowserAccess Check a browser cookie against current preview access
 //
+// Authenticate the publisher with the exact publish run token and check the body's browser cookie secret against current public URL and preview access. A previously issued cookie alone is not proof of current permission.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/access (the `CheckPreviewBrowserAccess` operationId).
@@ -7093,6 +7891,8 @@ func (c *Client) CheckPreviewBrowserAccess(ctx context.Context, publishRunId Pub
 }
 
 // RedeemPreviewBrowserHandoffWithBody Redeem a one-time browser handoff on the publisher
+//
+// Authenticate the publisher with the exact publish run token and exchange the body's one-time handoff for a host-bound browser cookie secret. A visitor's control session does not replace the publisher credential.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7111,6 +7911,8 @@ func (c *Client) RedeemPreviewBrowserHandoffWithBody(ctx context.Context, publis
 
 // RedeemPreviewBrowserHandoff Redeem a one-time browser handoff on the publisher
 //
+// Authenticate the publisher with the exact publish run token and exchange the body's one-time handoff for a host-bound browser cookie secret. A visitor's control session does not replace the publisher credential.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/handoff (the `RedeemPreviewBrowserHandoff` operationId).
@@ -7127,6 +7929,8 @@ func (c *Client) RedeemPreviewBrowserHandoff(ctx context.Context, publishRunId P
 }
 
 // RevokePreviewBrowserAccessWithBody Revoke the current browser session
+//
+// Authenticate the publisher with the exact publish run token and revoke the host-bound browser session named in the body. Other hosts and the person's control session remain separate.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7145,6 +7949,8 @@ func (c *Client) RevokePreviewBrowserAccessWithBody(ctx context.Context, publish
 
 // RevokePreviewBrowserAccess Revoke the current browser session
 //
+// Authenticate the publisher with the exact publish run token and revoke the host-bound browser session named in the body. Other hosts and the person's control session remain separate.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/logout (the `RevokePreviewBrowserAccess` operationId).
@@ -7161,6 +7967,8 @@ func (c *Client) RevokePreviewBrowserAccess(ctx context.Context, publishRunId Pu
 }
 
 // MarkPublishRunCertificateInstalledWithBody Record installation of the current public URL certificate
+//
+// Acknowledge the exact approved public URL certificate installed by the publisher using this run's token and number. Installation alone does not establish publisher connection readiness.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7179,6 +7987,8 @@ func (c *Client) MarkPublishRunCertificateInstalledWithBody(ctx context.Context,
 
 // MarkPublishRunCertificateInstalled Record installation of the current public URL certificate
 //
+// Acknowledge the exact approved public URL certificate installed by the publisher using this run's token and number. Installation alone does not establish publisher connection readiness.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
@@ -7195,6 +8005,8 @@ func (c *Client) MarkPublishRunCertificateInstalled(ctx context.Context, publish
 }
 
 // CreateCertificateIssuanceWithBody Begin issuance for the publish run's certificate plan
+//
+// Submit the publisher's CSR under the exact publish run token and approved certificate plan. The idempotency key identifies one issuance attempt; a control session or publisher access token cannot substitute for the run token.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7213,6 +8025,8 @@ func (c *Client) CreateCertificateIssuanceWithBody(ctx context.Context, publishR
 
 // CreateCertificateIssuance Begin issuance for the publish run's certificate plan
 //
+// Submit the publisher's CSR under the exact publish run token and approved certificate plan. The idempotency key identifies one issuance attempt; a control session or publisher access token cannot substitute for the run token.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
@@ -7229,6 +8043,8 @@ func (c *Client) CreateCertificateIssuance(ctx context.Context, publishRunId Pub
 }
 
 // CreateFeedbackReportWithBody Store a reviewer's first report for a preview page
+//
+// Submit the immutable first report through the exact publish run token with the reviewer's current access proof in the body. Control verifies the author and evidence; publisher authentication alone does not authorize a reviewer report.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7247,6 +8063,8 @@ func (c *Client) CreateFeedbackReportWithBody(ctx context.Context, publishRunId 
 
 // CreateFeedbackReport Store a reviewer's first report for a preview page
 //
+// Submit the immutable first report through the exact publish run token with the reviewer's current access proof in the body. Control verifies the author and evidence; publisher authentication alone does not authorize a reviewer report.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback (the `CreateFeedbackReport` operationId).
@@ -7263,6 +8081,8 @@ func (c *Client) CreateFeedbackReport(ctx context.Context, publishRunId PublishR
 }
 
 // ListPreviewPageFeedbackWithBody List feedback on one page for a reviewer
+//
+// Read feedback for one page through the exact publish run token and the reviewer's body access proof. The result is limited to the authorized preview context, not a team-wide management inventory.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7281,6 +8101,8 @@ func (c *Client) ListPreviewPageFeedbackWithBody(ctx context.Context, publishRun
 
 // ListPreviewPageFeedback List feedback on one page for a reviewer
 //
+// Read feedback for one page through the exact publish run token and the reviewer's body access proof. The result is limited to the authorized preview context, not a team-wide management inventory.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
@@ -7297,6 +8119,8 @@ func (c *Client) ListPreviewPageFeedback(ctx context.Context, publishRunId Publi
 }
 
 // AppendReviewerFeedbackEventWithBody Reply, resolve, or reopen feedback through preview access
+//
+// Append a reply, resolution, or reopening through the exact publish run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7315,6 +8139,8 @@ func (c *Client) AppendReviewerFeedbackEventWithBody(ctx context.Context, publis
 
 // AppendReviewerFeedbackEvent Reply, resolve, or reopen feedback through preview access
 //
+// Append a reply, resolution, or reopening through the exact publish run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
@@ -7331,6 +8157,8 @@ func (c *Client) AppendReviewerFeedbackEvent(ctx context.Context, publishRunId P
 }
 
 // ListReviewerFeedbackEventsWithBody Read thread events through a current publisher connection
+//
+// Read one thread's ordered follow-up history through the exact publish run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7349,6 +8177,8 @@ func (c *Client) ListReviewerFeedbackEventsWithBody(ctx context.Context, publish
 
 // ListReviewerFeedbackEvents Read thread events through a current publisher connection
 //
+// Read one thread's ordered follow-up history through the exact publish run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
@@ -7365,6 +8195,8 @@ func (c *Client) ListReviewerFeedbackEvents(ctx context.Context, publishRunId Pu
 }
 
 // GetReviewerFeedbackThreadWithBody Read a feedback thread through a current publisher connection
+//
+// Read one thread through the exact publish run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7383,6 +8215,8 @@ func (c *Client) GetReviewerFeedbackThreadWithBody(ctx context.Context, publishR
 
 // GetReviewerFeedbackThread Read a feedback thread through a current publisher connection
 //
+// Read one thread through the exact publish run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
@@ -7399,6 +8233,8 @@ func (c *Client) GetReviewerFeedbackThread(ctx context.Context, publishRunId Pub
 }
 
 // HeartbeatPublishRunWithBody Renew a publish run and replace missing publisher connections
+//
+// Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7417,6 +8253,8 @@ func (c *Client) HeartbeatPublishRunWithBody(ctx context.Context, publishRunId P
 
 // HeartbeatPublishRun Renew a publish run and replace missing publisher connections
 //
+// Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
@@ -7433,6 +8271,8 @@ func (c *Client) HeartbeatPublishRun(ctx context.Context, publishRunId PublishRu
 }
 
 // CreatePublishRunPreviewWithBody Create feedback context for one ephemeral demo publish run
+//
+// Create or reuse the run-scoped preview used for an ephemeral demo's feedback. Authenticate with that exact publish run token and number; this is not ordinary project preview management.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7451,6 +8291,8 @@ func (c *Client) CreatePublishRunPreviewWithBody(ctx context.Context, publishRun
 
 // CreatePublishRunPreview Create feedback context for one ephemeral demo publish run
 //
+// Create or reuse the run-scoped preview used for an ephemeral demo's feedback. Authenticate with that exact publish run token and number; this is not ordinary project preview management.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/preview (the `CreatePublishRunPreview` operationId).
@@ -7467,6 +8309,8 @@ func (c *Client) CreatePublishRunPreview(ctx context.Context, publishRunId Publi
 }
 
 // MarkPublishRunReadyWithBody Mark a publish run ready after its certificate and two publisher connections are ready
+//
+// Ask control to mark the current run routable using its publish run token and number. First readiness requires the approved certificate and two ready publisher connections on independent relay services.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7485,6 +8329,8 @@ func (c *Client) MarkPublishRunReadyWithBody(ctx context.Context, publishRunId P
 
 // MarkPublishRunReady Mark a publish run ready after its certificate and two publisher connections are ready
 //
+// Ask control to mark the current run routable using its publish run token and number. First readiness requires the approved certificate and two ready publisher connections on independent relay services.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
@@ -7501,6 +8347,8 @@ func (c *Client) MarkPublishRunReady(ctx context.Context, publishRunId PublishRu
 }
 
 // EnableShareAccessWithBody Enable share-aware HTTP handling for this preview publish run
+//
+// Report that the publisher has installed share-aware HTTP handling for this exact run and number. Authenticate with its publish run token; this does not create a share or grant visitor access by itself.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7519,6 +8367,8 @@ func (c *Client) EnableShareAccessWithBody(ctx context.Context, publishRunId Pub
 
 // EnableShareAccess Enable share-aware HTTP handling for this preview publish run
 //
+// Report that the publisher has installed share-aware HTTP handling for this exact run and number. Authenticate with its publish run token; this does not create a share or grant visitor access by itself.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/share-access (the `EnableShareAccess` operationId).
@@ -7535,6 +8385,8 @@ func (c *Client) EnableShareAccess(ctx context.Context, publishRunId PublishRunI
 }
 
 // RedeemPublishRunShareWithBody Redeem a share link or one short-lived cross-host handoff
+//
+// Authenticate the publisher with its exact publish run token and redeem the body's share secret or one-time cross-host handoff. Control checks the share's captured public URL IDs, deadline, and revocation before issuing a host-only visitor session.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7553,6 +8405,8 @@ func (c *Client) RedeemPublishRunShareWithBody(ctx context.Context, publishRunId
 
 // RedeemPublishRunShare Redeem a share link or one short-lived cross-host handoff
 //
+// Authenticate the publisher with its exact publish run token and redeem the body's share secret or one-time cross-host handoff. Control checks the share's captured public URL IDs, deadline, and revocation before issuing a host-only visitor session.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/share-redemptions (the `RedeemPublishRunShare` operationId).
@@ -7568,8 +8422,13 @@ func (c *Client) RedeemPublishRunShare(ctx context.Context, publishRunId Publish
 	return c.Client.Do(req)
 }
 
-// ReportPublishRunServiceObservationsWithBody performs a POST /v1/publish-runs/{run_id}/service-observations (the `ReportPublishRunServiceObservations` operationId) request,
-// with any type of body and a specified content type.
+// ReportPublishRunServiceObservationsWithBody Report service observations through a public URL publish run
+//
+// Submit bounded connection observations using the exact publish run token. Control checks the current run and counts accepted and duplicate events; observations do not create visitor grants or authorize traffic.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publish-runs/{run_id}/service-observations (the `ReportPublishRunServiceObservations` operationId).
 func (c *Client) ReportPublishRunServiceObservationsWithBody(ctx context.Context, runId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReportPublishRunServiceObservationsRequestWithBody(c.Server, runId, contentType, body)
 	if err != nil {
@@ -7582,8 +8441,13 @@ func (c *Client) ReportPublishRunServiceObservationsWithBody(ctx context.Context
 	return c.Client.Do(req)
 }
 
-// ReportPublishRunServiceObservations performs a POST /v1/publish-runs/{run_id}/service-observations (the `ReportPublishRunServiceObservations` operationId) request.
+// ReportPublishRunServiceObservations Report service observations through a public URL publish run
+//
+// Submit bounded connection observations using the exact publish run token. Control checks the current run and counts accepted and duplicate events; observations do not create visitor grants or authorize traffic.
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publish-runs/{run_id}/service-observations (the `ReportPublishRunServiceObservations` operationId).
 func (c *Client) ReportPublishRunServiceObservations(ctx context.Context, runId string, body ReportPublishRunServiceObservationsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReportPublishRunServiceObservationsRequest(c.Server, runId, body)
 	if err != nil {
@@ -7597,6 +8461,8 @@ func (c *Client) ReportPublishRunServiceObservations(ctx context.Context, runId 
 }
 
 // CreatePublisherEnrollmentWithBody Issue an expiring one-use publisher enrollment
+//
+// Issue an expiring one-use enrollment secret under current management authorization. Enrollment installs a publisher's signing key for the selected scope; it is separate from exchanging signed assertions for short-lived publisher access tokens.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7615,6 +8481,8 @@ func (c *Client) CreatePublisherEnrollmentWithBody(ctx context.Context, contentT
 
 // CreatePublisherEnrollment Issue an expiring one-use publisher enrollment
 //
+// Issue an expiring one-use enrollment secret under current management authorization. Enrollment installs a publisher's signing key for the selected scope; it is separate from exchanging signed assertions for short-lived publisher access tokens.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/publisher-enrollments (the `CreatePublisherEnrollment` operationId).
@@ -7630,8 +8498,13 @@ func (c *Client) CreatePublisherEnrollment(ctx context.Context, body CreatePubli
 	return c.Client.Do(req)
 }
 
-// AcknowledgePublisherGroupConfigurationWithBody performs a POST /v1/publisher-groups/ack (the `AcknowledgePublisherGroupConfiguration` operationId) request,
-// with any type of body and a specified content type.
+// AcknowledgePublisherGroupConfigurationWithBody Acknowledge the exact configuration installed by a group replica
+//
+// Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publisher-groups/ack (the `AcknowledgePublisherGroupConfiguration` operationId).
 func (c *Client) AcknowledgePublisherGroupConfigurationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAcknowledgePublisherGroupConfigurationRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -7644,8 +8517,13 @@ func (c *Client) AcknowledgePublisherGroupConfigurationWithBody(ctx context.Cont
 	return c.Client.Do(req)
 }
 
-// AcknowledgePublisherGroupConfiguration performs a POST /v1/publisher-groups/ack (the `AcknowledgePublisherGroupConfiguration` operationId) request.
+// AcknowledgePublisherGroupConfiguration Acknowledge the exact configuration installed by a group replica
+//
+// Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publisher-groups/ack (the `AcknowledgePublisherGroupConfiguration` operationId).
 func (c *Client) AcknowledgePublisherGroupConfiguration(ctx context.Context, body AcknowledgePublisherGroupConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAcknowledgePublisherGroupConfigurationRequest(c.Server, body)
 	if err != nil {
@@ -7658,7 +8536,11 @@ func (c *Client) AcknowledgePublisherGroupConfiguration(ctx context.Context, bod
 	return c.Client.Do(req)
 }
 
-// GetPublisherGroupAssignments performs a GET /v1/publisher-groups/assignments (the `GetPublisherGroupAssignments` operationId) request.
+// GetPublisherGroupAssignments Read services and grants assigned to one leased group replica
+//
+// Authenticate with the current pgl_ group lease and read the replica's exact service assignments and publisher grant IDs. These assignments may contain targets; a pta_ publisher access token cannot read them.
+//
+// Corresponds with GET /v1/publisher-groups/assignments (the `GetPublisherGroupAssignments` operationId).
 func (c *Client) GetPublisherGroupAssignments(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetPublisherGroupAssignmentsRequest(c.Server)
 	if err != nil {
@@ -7671,10 +8553,13 @@ func (c *Client) GetPublisherGroupAssignments(ctx context.Context, reqEditors ..
 	return c.Client.Do(req)
 }
 
-// RedeemPublisherGroupEnrollmentWithBody performs a POST /v1/publisher-groups/enroll (the `RedeemPublisherGroupEnrollment` operationId) request,
-// with any type of body and a specified content type.
+// RedeemPublisherGroupEnrollmentWithBody Enroll a replica's signing key with a group enrollment secret
 //
-// Each replica submits its own Ed25519 public key. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+// Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publisher-groups/enroll (the `RedeemPublisherGroupEnrollment` operationId).
 func (c *Client) RedeemPublisherGroupEnrollmentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRedeemPublisherGroupEnrollmentRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -7687,10 +8572,13 @@ func (c *Client) RedeemPublisherGroupEnrollmentWithBody(ctx context.Context, con
 	return c.Client.Do(req)
 }
 
-// RedeemPublisherGroupEnrollment performs a POST /v1/publisher-groups/enroll (the `RedeemPublisherGroupEnrollment` operationId) request.
+// RedeemPublisherGroupEnrollment Enroll a replica's signing key with a group enrollment secret
+//
+// Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+//
 // Takes a body of the `application/json` content type.
 //
-// Each replica submits its own Ed25519 public key. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+// Corresponds with POST /v1/publisher-groups/enroll (the `RedeemPublisherGroupEnrollment` operationId).
 func (c *Client) RedeemPublisherGroupEnrollment(ctx context.Context, body RedeemPublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRedeemPublisherGroupEnrollmentRequest(c.Server, body)
 	if err != nil {
@@ -7703,10 +8591,13 @@ func (c *Client) RedeemPublisherGroupEnrollment(ctx context.Context, body Redeem
 	return c.Client.Do(req)
 }
 
-// AcquirePublisherGroupLeaseWithBody performs a POST /v1/publisher-groups/lease (the `AcquirePublisherGroupLease` operationId) request,
-// with any type of body and a specified content type.
+// AcquirePublisherGroupLeaseWithBody Exchange a signed replica assertion for a group lease
 //
-// Exchange a one-use signed assertion for a short-lived group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID.
+// Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publisher-groups/lease (the `AcquirePublisherGroupLease` operationId).
 func (c *Client) AcquirePublisherGroupLeaseWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAcquirePublisherGroupLeaseRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -7719,10 +8610,13 @@ func (c *Client) AcquirePublisherGroupLeaseWithBody(ctx context.Context, content
 	return c.Client.Do(req)
 }
 
-// AcquirePublisherGroupLease performs a POST /v1/publisher-groups/lease (the `AcquirePublisherGroupLease` operationId) request.
+// AcquirePublisherGroupLease Exchange a signed replica assertion for a group lease
+//
+// Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
+//
 // Takes a body of the `application/json` content type.
 //
-// Exchange a one-use signed assertion for a short-lived group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID.
+// Corresponds with POST /v1/publisher-groups/lease (the `AcquirePublisherGroupLease` operationId).
 func (c *Client) AcquirePublisherGroupLease(ctx context.Context, body AcquirePublisherGroupLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAcquirePublisherGroupLeaseRequest(c.Server, body)
 	if err != nil {
@@ -7735,10 +8629,13 @@ func (c *Client) AcquirePublisherGroupLease(ctx context.Context, body AcquirePub
 	return c.Client.Do(req)
 }
 
-// VerifyPublisherGroupIdentityWithBody performs a POST /v1/publisher-groups/verify (the `VerifyPublisherGroupIdentity` operationId) request,
-// with any type of body and a specified content type.
+// VerifyPublisherGroupIdentityWithBody Verify a replica's group membership without acquiring a lease
 //
-// Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The one-use assertion audience is the control URL followed by this path.
+// Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publisher-groups/verify (the `VerifyPublisherGroupIdentity` operationId).
 func (c *Client) VerifyPublisherGroupIdentityWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewVerifyPublisherGroupIdentityRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -7751,10 +8648,13 @@ func (c *Client) VerifyPublisherGroupIdentityWithBody(ctx context.Context, conte
 	return c.Client.Do(req)
 }
 
-// VerifyPublisherGroupIdentity performs a POST /v1/publisher-groups/verify (the `VerifyPublisherGroupIdentity` operationId) request.
+// VerifyPublisherGroupIdentity Verify a replica's group membership without acquiring a lease
+//
+// Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
+//
 // Takes a body of the `application/json` content type.
 //
-// Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The one-use assertion audience is the control URL followed by this path.
+// Corresponds with POST /v1/publisher-groups/verify (the `VerifyPublisherGroupIdentity` operationId).
 func (c *Client) VerifyPublisherGroupIdentity(ctx context.Context, body VerifyPublisherGroupIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewVerifyPublisherGroupIdentityRequest(c.Server, body)
 	if err != nil {
@@ -7768,6 +8668,8 @@ func (c *Client) VerifyPublisherGroupIdentity(ctx context.Context, body VerifyPu
 }
 
 // ListPublisherIdentities List publisher identities and grants without secrets
+//
+// Read a cursor-paginated inventory of publisher identities and their grants for a manageable team. Responses omit enrollment secrets and private signing keys; an inventory entry is not a publisher credential.
 //
 // Corresponds with GET /v1/publisher-identities (the `ListPublisherIdentities` operationId).
 func (c *Client) ListPublisherIdentities(ctx context.Context, params *ListPublisherIdentitiesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -7784,6 +8686,8 @@ func (c *Client) ListPublisherIdentities(ctx context.Context, params *ListPublis
 
 // RevokePublisherIdentity Revoke an identity independently of its grants
 //
+// Revoke an exact publisher identity under current team management authorization. Identity revocation invalidates its publishing authority independently of any individual grant record.
+//
 // Corresponds with DELETE /v1/publisher-identities/{publisher_identity_id} (the `RevokePublisherIdentity` operationId).
 func (c *Client) RevokePublisherIdentity(ctx context.Context, publisherIdentityId PublisherIdentityID, params *RevokePublisherIdentityParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokePublisherIdentityRequest(c.Server, publisherIdentityId, params)
@@ -7797,8 +8701,13 @@ func (c *Client) RevokePublisherIdentity(ctx context.Context, publisherIdentityI
 	return c.Client.Do(req)
 }
 
-// CreatePublisherGrantWithBody performs a POST /v1/publisher-identities/{publisher_identity_id}/grants (the `CreatePublisherGrant` operationId) request,
-// with any type of body and a specified content type.
+// CreatePublisherGrantWithBody Add one authorized scope to a publisher identity
+//
+// Create a revocable publisher grant using current management authorization for the selected scope. The grant identifies what the native publisher may serve; it is not a visitor grant or a control session.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publisher-identities/{publisher_identity_id}/grants (the `CreatePublisherGrant` operationId).
 func (c *Client) CreatePublisherGrantWithBody(ctx context.Context, publisherIdentityId PublisherIdentityID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreatePublisherGrantRequestWithBody(c.Server, publisherIdentityId, contentType, body)
 	if err != nil {
@@ -7811,8 +8720,13 @@ func (c *Client) CreatePublisherGrantWithBody(ctx context.Context, publisherIden
 	return c.Client.Do(req)
 }
 
-// CreatePublisherGrant performs a POST /v1/publisher-identities/{publisher_identity_id}/grants (the `CreatePublisherGrant` operationId) request.
+// CreatePublisherGrant Add one authorized scope to a publisher identity
+//
+// Create a revocable publisher grant using current management authorization for the selected scope. The grant identifies what the native publisher may serve; it is not a visitor grant or a control session.
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publisher-identities/{publisher_identity_id}/grants (the `CreatePublisherGrant` operationId).
 func (c *Client) CreatePublisherGrant(ctx context.Context, publisherIdentityId PublisherIdentityID, body CreatePublisherGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreatePublisherGrantRequest(c.Server, publisherIdentityId, body)
 	if err != nil {
@@ -7825,7 +8739,11 @@ func (c *Client) CreatePublisherGrant(ctx context.Context, publisherIdentityId P
 	return c.Client.Do(req)
 }
 
-// RevokePublisherGrant performs a DELETE /v1/publisher-identities/{publisher_identity_id}/grants/{grant_id} (the `RevokePublisherGrant` operationId) request.
+// RevokePublisherGrant Revoke one publisher grant without revoking the identity
+//
+// Revoke the named grant under current team management authorization. Other grants on the identity remain separate; the revoked grant can no longer authorize current publishing work.
+//
+// Corresponds with DELETE /v1/publisher-identities/{publisher_identity_id}/grants/{grant_id} (the `RevokePublisherGrant` operationId).
 func (c *Client) RevokePublisherGrant(ctx context.Context, publisherIdentityId PublisherIdentityID, grantId ResourceID, params *RevokePublisherGrantParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokePublisherGrantRequest(c.Server, publisherIdentityId, grantId, params)
 	if err != nil {
@@ -7838,10 +8756,13 @@ func (c *Client) RevokePublisherGrant(ctx context.Context, publisherIdentityId P
 	return c.Client.Do(req)
 }
 
-// ObservePublisherRuntimeWithBody performs a POST /v1/publisher-runtime (the `ObservePublisherRuntime` operationId) request,
-// with any type of body and a specified content type.
+// ObservePublisherRuntimeWithBody Inspect or update a signed publisher process lifetime
 //
-// Explicit remote runtime lifecycle, independent of enrollment, verification, and identity kind. A one-use Ed25519 assertion binds scope_id, action, process_run_id and expected_epoch through the runtime proof scope, with this path as its audience. Inspect reads the current epoch without recording an address. Start compares that epoch and installs a new process run; retries retain that run and epoch. Renew and stop require the current run and epoch. Control records only the validated request source, never a body address. Group start/renew also issue the existing group lease atomically.
+// Explicit remote runtime lifecycle, independent of enrollment, verification, and identity kind. A one-use Ed25519 assertion binds scope_id, action, process_run_id and expected_epoch through the runtime proof scope, with this path as its audience. Inspect reads the current epoch without recording an address. Start compares that epoch and installs a new process run; retries retain that run and epoch. Renew and stop require the current run and epoch. Control records only the validated request source, never a body address. Group start/renew also issue the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publisher-runtime (the `ObservePublisherRuntime` operationId).
 func (c *Client) ObservePublisherRuntimeWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewObservePublisherRuntimeRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -7854,10 +8775,13 @@ func (c *Client) ObservePublisherRuntimeWithBody(ctx context.Context, contentTyp
 	return c.Client.Do(req)
 }
 
-// ObservePublisherRuntime performs a POST /v1/publisher-runtime (the `ObservePublisherRuntime` operationId) request.
+// ObservePublisherRuntime Inspect or update a signed publisher process lifetime
+//
+// Explicit remote runtime lifecycle, independent of enrollment, verification, and identity kind. A one-use Ed25519 assertion binds scope_id, action, process_run_id and expected_epoch through the runtime proof scope, with this path as its audience. Inspect reads the current epoch without recording an address. Start compares that epoch and installs a new process run; retries retain that run and epoch. Renew and stop require the current run and epoch. Control records only the validated request source, never a body address. Group start/renew also issue the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+//
 // Takes a body of the `application/json` content type.
 //
-// Explicit remote runtime lifecycle, independent of enrollment, verification, and identity kind. A one-use Ed25519 assertion binds scope_id, action, process_run_id and expected_epoch through the runtime proof scope, with this path as its audience. Inspect reads the current epoch without recording an address. Start compares that epoch and installs a new process run; retries retain that run and epoch. Renew and stop require the current run and epoch. Control records only the validated request source, never a body address. Group start/renew also issue the existing group lease atomically.
+// Corresponds with POST /v1/publisher-runtime (the `ObservePublisherRuntime` operationId).
 func (c *Client) ObservePublisherRuntime(ctx context.Context, body ObservePublisherRuntimeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewObservePublisherRuntimeRequest(c.Server, body)
 	if err != nil {
@@ -7871,6 +8795,8 @@ func (c *Client) ObservePublisherRuntime(ctx context.Context, body ObservePublis
 }
 
 // GetPublisherPublicURL Read the saved URL selected by the current grant
+//
+// Read the single saved public URL selected by the publisher access token's exact grant. Namespace allocation grants and control sessions do not substitute for an exact public URL publisher grant.
 //
 // Corresponds with GET /v1/publisher/public-url (the `GetPublisherPublicURL` operationId).
 func (c *Client) GetPublisherPublicURL(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -7886,6 +8812,8 @@ func (c *Client) GetPublisherPublicURL(ctx context.Context, reqEditors ...Reques
 }
 
 // AllocatePublisherPublicURLWithBody Create a temporary public URL for one ad-hoc publication
+//
+// Allocate one ephemeral public URL inside the namespace authorized by the publisher access token. This is publisher work, not a management operation; the exact identity and grant retain ownership of the allocation.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7904,6 +8832,8 @@ func (c *Client) AllocatePublisherPublicURLWithBody(ctx context.Context, content
 
 // AllocatePublisherPublicURL Create a temporary public URL for one ad-hoc publication
 //
+// Allocate one ephemeral public URL inside the namespace authorized by the publisher access token. This is publisher work, not a management operation; the exact identity and grant retain ownership of the allocation.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/publisher/public-urls (the `AllocatePublisherPublicURL` operationId).
@@ -7921,6 +8851,8 @@ func (c *Client) AllocatePublisherPublicURL(ctx context.Context, body AllocatePu
 
 // DeletePublisherPublicURL Remove the exact URL allocated by this identity and grant
 //
+// Remove an ephemeral public URL owned by this exact publisher identity and grant. The namespace access token does not authorize deleting other identities' allocations or ordinary saved public URLs.
+//
 // Corresponds with DELETE /v1/publisher/public-urls/{public_url_id} (the `DeletePublisherPublicURL` operationId).
 func (c *Client) DeletePublisherPublicURL(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeletePublisherPublicURLRequest(c.Server, publicUrlId)
@@ -7934,9 +8866,11 @@ func (c *Client) DeletePublisherPublicURL(ctx context.Context, publicUrlId Publi
 	return c.Client.Do(req)
 }
 
-// GetPublisherService performs a GET /v1/publisher/service (the `GetPublisherService` operationId) request.
+// GetPublisherService Read the saved service selected by the current publisher grant
 //
 // Read the exact granted service's approved protocol and public TLS trust metadata. The publisher must declare its own matching configuration when preparing a run.
+//
+// Corresponds with GET /v1/publisher/service (the `GetPublisherService` operationId).
 func (c *Client) GetPublisherService(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetPublisherServiceRequest(c.Server)
 	if err != nil {
@@ -7951,6 +8885,8 @@ func (c *Client) GetPublisherService(ctx context.Context, reqEditors ...RequestE
 
 // GetReadiness Confirm that the tnld role is ready to serve
 //
+// Check the configured tnld role's readiness without a credential. An unready process returns the same readiness shape with HTTP 503 rather than a successful health check.
+//
 // Corresponds with GET /v1/ready (the `GetReadiness` operationId).
 func (c *Client) GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetReadinessRequest(c.Server)
@@ -7964,8 +8900,13 @@ func (c *Client) GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn
 	return c.Client.Do(req)
 }
 
-// AcceptServiceInvitationWithBody performs a POST /v1/service-invitations/accept (the `AcceptServiceInvitation` operationId) request,
-// with any type of body and a specified content type.
+// AcceptServiceInvitationWithBody Accept an invitation for the signed-in verified email identity
+//
+// Exchange the one-use invitation secret under the current signed-in identity. Control verifies the recipient email and creates an exact-service identity grant; acceptance grants no management or publisher permission.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/service-invitations/accept (the `AcceptServiceInvitation` operationId).
 func (c *Client) AcceptServiceInvitationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAcceptServiceInvitationRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -7978,8 +8919,13 @@ func (c *Client) AcceptServiceInvitationWithBody(ctx context.Context, contentTyp
 	return c.Client.Do(req)
 }
 
-// AcceptServiceInvitation performs a POST /v1/service-invitations/accept (the `AcceptServiceInvitation` operationId) request.
+// AcceptServiceInvitation Accept an invitation for the signed-in verified email identity
+//
+// Exchange the one-use invitation secret under the current signed-in identity. Control verifies the recipient email and creates an exact-service identity grant; acceptance grants no management or publisher permission.
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/service-invitations/accept (the `AcceptServiceInvitation` operationId).
 func (c *Client) AcceptServiceInvitation(ctx context.Context, body AcceptServiceInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAcceptServiceInvitationRequest(c.Server, body)
 	if err != nil {
@@ -7992,9 +8938,11 @@ func (c *Client) AcceptServiceInvitation(ctx context.Context, body AcceptService
 	return c.Client.Do(req)
 }
 
-// ListServices performs a GET /v1/services (the `ListServices` operationId) request.
+// ListServices List manageable saved services in one team
 //
 // Team-owned saved services; never return target addresses or stream keys.
+//
+// Corresponds with GET /v1/services (the `ListServices` operationId).
 func (c *Client) ListServices(ctx context.Context, params *ListServicesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListServicesRequest(c.Server, params)
 	if err != nil {
@@ -8007,10 +8955,13 @@ func (c *Client) ListServices(ctx context.Context, params *ListServicesParams, r
 	return c.Client.Do(req)
 }
 
-// CreateServiceWithBody performs a POST /v1/services (the `CreateService` operationId) request,
-// with any type of body and a specified content type.
+// CreateServiceWithBody Create one saved service with approved protocol and placement
 //
-// Create a team-scoped saved name. No DNS record, public URL, certificate or dedicated visitor port is allocated.
+// Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. This service has a separate identity and lifecycle from public URLs; creating it does not start a service run or issue a certificate.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/services (the `CreateService` operationId).
 func (c *Client) CreateServiceWithBody(ctx context.Context, params *CreateServiceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateServiceRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
@@ -8023,10 +8974,13 @@ func (c *Client) CreateServiceWithBody(ctx context.Context, params *CreateServic
 	return c.Client.Do(req)
 }
 
-// CreateService performs a POST /v1/services (the `CreateService` operationId) request.
+// CreateService Create one saved service with approved protocol and placement
+//
+// Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. This service has a separate identity and lifecycle from public URLs; creating it does not start a service run or issue a certificate.
+//
 // Takes a body of the `application/json` content type.
 //
-// Create a team-scoped saved name. No DNS record, public URL, certificate or dedicated visitor port is allocated.
+// Corresponds with POST /v1/services (the `CreateService` operationId).
 func (c *Client) CreateService(ctx context.Context, params *CreateServiceParams, body CreateServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateServiceRequest(c.Server, params, body)
 	if err != nil {
@@ -8039,9 +8993,11 @@ func (c *Client) CreateService(ctx context.Context, params *CreateServiceParams,
 	return c.Client.Do(req)
 }
 
-// DeleteService performs a DELETE /v1/services/{service_id} (the `DeleteService` operationId) request.
+// DeleteService Delete a saved service and revoke its active publication
 //
 // Revoke access and close any run before tombstoning its ID-keyed ingress projection.
+//
+// Corresponds with DELETE /v1/services/{service_id} (the `DeleteService` operationId).
 func (c *Client) DeleteService(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteServiceRequest(c.Server, serviceId)
 	if err != nil {
@@ -8054,7 +9010,11 @@ func (c *Client) DeleteService(ctx context.Context, serviceId ServiceID, reqEdit
 	return c.Client.Do(req)
 }
 
-// GetService performs a GET /v1/services/{service_id} (the `GetService` operationId) request.
+// GetService Read one saved service for management
+//
+// Read a service's saved identity and approved protocol/TLS metadata using current management permission. For visitor-only discovery, use listAvailableServices or getProjectService instead.
+//
+// Corresponds with GET /v1/services/{service_id} (the `GetService` operationId).
 func (c *Client) GetService(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetServiceRequest(c.Server, serviceId)
 	if err != nil {
@@ -8067,8 +9027,13 @@ func (c *Client) GetService(ctx context.Context, serviceId ServiceID, reqEditors
 	return c.Client.Do(req)
 }
 
-// ConfigureServiceWithBody performs a PUT /v1/services/{service_id} (the `ConfigureService` operationId) request,
-// with any type of body and a specified content type.
+// ConfigureServiceWithBody Replace a service's approved protocol and target TLS trust
+//
+// Set the saved protocol, publisher pool, and target TLS trust snapshot using current service management permission. Publishers must declare matching trust when preparing later runs; this is not a target address update or a publication start.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/services/{service_id} (the `ConfigureService` operationId).
 func (c *Client) ConfigureServiceWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewConfigureServiceRequestWithBody(c.Server, serviceId, contentType, body)
 	if err != nil {
@@ -8081,8 +9046,13 @@ func (c *Client) ConfigureServiceWithBody(ctx context.Context, serviceId Service
 	return c.Client.Do(req)
 }
 
-// ConfigureService performs a PUT /v1/services/{service_id} (the `ConfigureService` operationId) request.
+// ConfigureService Replace a service's approved protocol and target TLS trust
+//
+// Set the saved protocol, publisher pool, and target TLS trust snapshot using current service management permission. Publishers must declare matching trust when preparing later runs; this is not a target address update or a publication start.
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/services/{service_id} (the `ConfigureService` operationId).
 func (c *Client) ConfigureService(ctx context.Context, serviceId ServiceID, body ConfigureServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewConfigureServiceRequest(c.Server, serviceId, body)
 	if err != nil {
@@ -8095,8 +9065,13 @@ func (c *Client) ConfigureService(ctx context.Context, serviceId ServiceID, body
 	return c.Client.Do(req)
 }
 
-// IssueServiceClientCertificateWithBody performs a POST /v1/services/{service_id}/client-certificates (the `IssueServiceClientCertificate` operationId) request,
-// with any type of body and a specified content type.
+// IssueServiceClientCertificateWithBody Issue a service-scoped client certificate for an enrolled device
+//
+// Submit the client's CSR using the current signed-in visitor identity and an enrolled device ID. Control checks exact-service access; the private key stays with the client, and this certificate grants no management authority.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/services/{service_id}/client-certificates (the `IssueServiceClientCertificate` operationId).
 func (c *Client) IssueServiceClientCertificateWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewIssueServiceClientCertificateRequestWithBody(c.Server, serviceId, contentType, body)
 	if err != nil {
@@ -8109,8 +9084,13 @@ func (c *Client) IssueServiceClientCertificateWithBody(ctx context.Context, serv
 	return c.Client.Do(req)
 }
 
-// IssueServiceClientCertificate performs a POST /v1/services/{service_id}/client-certificates (the `IssueServiceClientCertificate` operationId) request.
+// IssueServiceClientCertificate Issue a service-scoped client certificate for an enrolled device
+//
+// Submit the client's CSR using the current signed-in visitor identity and an enrolled device ID. Control checks exact-service access; the private key stays with the client, and this certificate grants no management authority.
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/services/{service_id}/client-certificates (the `IssueServiceClientCertificate` operationId).
 func (c *Client) IssueServiceClientCertificate(ctx context.Context, serviceId ServiceID, body IssueServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewIssueServiceClientCertificateRequest(c.Server, serviceId, body)
 	if err != nil {
@@ -8123,10 +9103,13 @@ func (c *Client) IssueServiceClientCertificate(ctx context.Context, serviceId Se
 	return c.Client.Do(req)
 }
 
-// PrepareConnectorPeerPairWithBody performs a POST /v1/services/{service_id}/connector-peer-pairs (the `PrepareConnectorPeerPair` operationId) request,
-// with any type of body and a specified content type.
+// PrepareConnectorPeerPairWithBody Prepare a signed connector pair for an exact ready service run
 //
-// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+// Signed create or replace for one exact ready service run. The request signature must prove the selected device or workload key. A device source also requires its matching identity's control session bearer token. A workload source authenticates with its credential in the JSON body and must omit Authorization entirely, including empty headers. The empty security object represents body authentication, not anonymous access. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs (the `PrepareConnectorPeerPair` operationId).
 func (c *Client) PrepareConnectorPeerPairWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPrepareConnectorPeerPairRequestWithBody(c.Server, serviceId, contentType, body)
 	if err != nil {
@@ -8139,10 +9122,13 @@ func (c *Client) PrepareConnectorPeerPairWithBody(ctx context.Context, serviceId
 	return c.Client.Do(req)
 }
 
-// PrepareConnectorPeerPair performs a POST /v1/services/{service_id}/connector-peer-pairs (the `PrepareConnectorPeerPair` operationId) request.
+// PrepareConnectorPeerPair Prepare a signed connector pair for an exact ready service run
+//
+// Signed create or replace for one exact ready service run. The request signature must prove the selected device or workload key. A device source also requires its matching identity's control session bearer token. A workload source authenticates with its credential in the JSON body and must omit Authorization entirely, including empty headers. The empty security object represents body authentication, not anonymous access. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+//
 // Takes a body of the `application/json` content type.
 //
-// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs (the `PrepareConnectorPeerPair` operationId).
 func (c *Client) PrepareConnectorPeerPair(ctx context.Context, serviceId ServiceID, body PrepareConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPrepareConnectorPeerPairRequest(c.Server, serviceId, body)
 	if err != nil {
@@ -8155,10 +9141,13 @@ func (c *Client) PrepareConnectorPeerPair(ctx context.Context, serviceId Service
 	return c.Client.Do(req)
 }
 
-// RebindConnectorPeerPairWithBody performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind (the `RebindConnectorPeerPair` operationId) request,
-// with any type of body and a specified content type.
+// RebindConnectorPeerPairWithBody Inspect or change a retained connector pair's network binding
 //
-// Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+// Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind (the `RebindConnectorPeerPair` operationId).
 func (c *Client) RebindConnectorPeerPairWithBody(ctx context.Context, serviceId ServiceID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRebindConnectorPeerPairRequestWithBody(c.Server, serviceId, pairId, contentType, body)
 	if err != nil {
@@ -8171,10 +9160,13 @@ func (c *Client) RebindConnectorPeerPairWithBody(ctx context.Context, serviceId 
 	return c.Client.Do(req)
 }
 
-// RebindConnectorPeerPair performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind (the `RebindConnectorPeerPair` operationId) request.
+// RebindConnectorPeerPair Inspect or change a retained connector pair's network binding
+//
+// Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+//
 // Takes a body of the `application/json` content type.
 //
-// Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind (the `RebindConnectorPeerPair` operationId).
 func (c *Client) RebindConnectorPeerPair(ctx context.Context, serviceId ServiceID, pairId string, body RebindConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRebindConnectorPeerPairRequest(c.Server, serviceId, pairId, body)
 	if err != nil {
@@ -8187,10 +9179,13 @@ func (c *Client) RebindConnectorPeerPair(ctx context.Context, serviceId ServiceI
 	return c.Client.Do(req)
 }
 
-// RenewConnectorPeerPairWithBody performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request,
-// with any type of body and a specified content type.
+// RenewConnectorPeerPairWithBody Renew an exact signed connector pair and visitor permission
 //
-// Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
+// Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId).
 func (c *Client) RenewConnectorPeerPairWithBody(ctx context.Context, serviceId ServiceID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRenewConnectorPeerPairRequestWithBody(c.Server, serviceId, pairId, contentType, body)
 	if err != nil {
@@ -8203,10 +9198,13 @@ func (c *Client) RenewConnectorPeerPairWithBody(ctx context.Context, serviceId S
 	return c.Client.Do(req)
 }
 
-// RenewConnectorPeerPair performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request.
+// RenewConnectorPeerPair Renew an exact signed connector pair and visitor permission
+//
+// Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
+//
 // Takes a body of the `application/json` content type.
 //
-// Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
+// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId).
 func (c *Client) RenewConnectorPeerPair(ctx context.Context, serviceId ServiceID, pairId string, body RenewConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRenewConnectorPeerPairRequest(c.Server, serviceId, pairId, body)
 	if err != nil {
@@ -8219,9 +9217,11 @@ func (c *Client) RenewConnectorPeerPair(ctx context.Context, serviceId ServiceID
 	return c.Client.Do(req)
 }
 
-// ListServiceGrants performs a GET /v1/services/{service_id}/grants (the `ListServiceGrants` operationId) request.
+// ListServiceGrants List a service's visitor grants and retained history
 //
 // Current managers may read up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent; inventory is not proof of current visitor access.
+//
+// Corresponds with GET /v1/services/{service_id}/grants (the `ListServiceGrants` operationId).
 func (c *Client) ListServiceGrants(ctx context.Context, serviceId ServiceID, params *ListServiceGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListServiceGrantsRequest(c.Server, serviceId, params)
 	if err != nil {
@@ -8234,8 +9234,13 @@ func (c *Client) ListServiceGrants(ctx context.Context, serviceId ServiceID, par
 	return c.Client.Do(req)
 }
 
-// CreateServiceGrantWithBody performs a POST /v1/services/{service_id}/grants (the `CreateServiceGrant` operationId) request,
-// with any type of body and a specified content type.
+// CreateServiceGrantWithBody Grant a team or identity access to one service
+//
+// Create an exact-service visitor grant using current service management permission and an idempotency key. A visitor grant permits service use under current policy; it does not grant service management or publisher authority.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/services/{service_id}/grants (the `CreateServiceGrant` operationId).
 func (c *Client) CreateServiceGrantWithBody(ctx context.Context, serviceId ServiceID, params *CreateServiceGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateServiceGrantRequestWithBody(c.Server, serviceId, params, contentType, body)
 	if err != nil {
@@ -8248,8 +9253,13 @@ func (c *Client) CreateServiceGrantWithBody(ctx context.Context, serviceId Servi
 	return c.Client.Do(req)
 }
 
-// CreateServiceGrant performs a POST /v1/services/{service_id}/grants (the `CreateServiceGrant` operationId) request.
+// CreateServiceGrant Grant a team or identity access to one service
+//
+// Create an exact-service visitor grant using current service management permission and an idempotency key. A visitor grant permits service use under current policy; it does not grant service management or publisher authority.
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/services/{service_id}/grants (the `CreateServiceGrant` operationId).
 func (c *Client) CreateServiceGrant(ctx context.Context, serviceId ServiceID, params *CreateServiceGrantParams, body CreateServiceGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateServiceGrantRequest(c.Server, serviceId, params, body)
 	if err != nil {
@@ -8262,7 +9272,11 @@ func (c *Client) CreateServiceGrant(ctx context.Context, serviceId ServiceID, pa
 	return c.Client.Do(req)
 }
 
-// RevokeServiceGrant performs a DELETE /v1/services/{service_id}/grants/{grant_id} (the `RevokeServiceGrant` operationId) request.
+// RevokeServiceGrant Revoke one service visitor grant
+//
+// Revoke the named grant using current service management permission. Later visitor authorization checks reject access through that grant; retained history can still appear in grant inventory.
+//
+// Corresponds with DELETE /v1/services/{service_id}/grants/{grant_id} (the `RevokeServiceGrant` operationId).
 func (c *Client) RevokeServiceGrant(ctx context.Context, serviceId ServiceID, grantId ServiceGrantID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeServiceGrantRequest(c.Server, serviceId, grantId)
 	if err != nil {
@@ -8275,9 +9289,11 @@ func (c *Client) RevokeServiceGrant(ctx context.Context, serviceId ServiceID, gr
 	return c.Client.Do(req)
 }
 
-// ListServiceHTTPGrants performs a GET /v1/services/{service_id}/http-grants (the `ListServiceHTTPGrants` operationId) request.
+// ListServiceHTTPGrants List an HTTP service's visitor credentials without secrets
 //
 // Secretless credential inventory for one service HTTP service. Requires current service management permission; includes expired and revoked records.
+//
+// Corresponds with GET /v1/services/{service_id}/http-grants (the `ListServiceHTTPGrants` operationId).
 func (c *Client) ListServiceHTTPGrants(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListServiceHTTPGrantsRequest(c.Server, serviceId)
 	if err != nil {
@@ -8290,10 +9306,13 @@ func (c *Client) ListServiceHTTPGrants(ctx context.Context, serviceId ServiceID,
 	return c.Client.Do(req)
 }
 
-// CreateServiceHTTPGrantWithBody performs a POST /v1/services/{service_id}/http-grants (the `CreateServiceHTTPGrant` operationId) request,
-// with any type of body and a specified content type.
+// CreateServiceHTTPGrantWithBody Create a service-scoped HTTP visitor token or share
 //
 // Create a service-scoped HTTP token or share. Requires current service management permission. The secret is returned once and grants no management or feedback permission.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/services/{service_id}/http-grants (the `CreateServiceHTTPGrant` operationId).
 func (c *Client) CreateServiceHTTPGrantWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateServiceHTTPGrantRequestWithBody(c.Server, serviceId, contentType, body)
 	if err != nil {
@@ -8306,10 +9325,13 @@ func (c *Client) CreateServiceHTTPGrantWithBody(ctx context.Context, serviceId S
 	return c.Client.Do(req)
 }
 
-// CreateServiceHTTPGrant performs a POST /v1/services/{service_id}/http-grants (the `CreateServiceHTTPGrant` operationId) request.
-// Takes a body of the `application/json` content type.
+// CreateServiceHTTPGrant Create a service-scoped HTTP visitor token or share
 //
 // Create a service-scoped HTTP token or share. Requires current service management permission. The secret is returned once and grants no management or feedback permission.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/services/{service_id}/http-grants (the `CreateServiceHTTPGrant` operationId).
 func (c *Client) CreateServiceHTTPGrant(ctx context.Context, serviceId ServiceID, body CreateServiceHTTPGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateServiceHTTPGrantRequest(c.Server, serviceId, body)
 	if err != nil {
@@ -8322,7 +9344,11 @@ func (c *Client) CreateServiceHTTPGrant(ctx context.Context, serviceId ServiceID
 	return c.Client.Do(req)
 }
 
-// RevokeServiceHTTPGrant performs a DELETE /v1/services/{service_id}/http-grants/{grant_id} (the `RevokeServiceHTTPGrant` operationId) request.
+// RevokeServiceHTTPGrant Revoke one service-scoped HTTP visitor credential
+//
+// Revoke the named token or share using current service management permission. The credential no longer authorizes new visitor permission; retained summaries remain visible without their secrets.
+//
+// Corresponds with DELETE /v1/services/{service_id}/http-grants/{grant_id} (the `RevokeServiceHTTPGrant` operationId).
 func (c *Client) RevokeServiceHTTPGrant(ctx context.Context, serviceId ServiceID, grantId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeServiceHTTPGrantRequest(c.Server, serviceId, grantId)
 	if err != nil {
@@ -8335,9 +9361,11 @@ func (c *Client) RevokeServiceHTTPGrant(ctx context.Context, serviceId ServiceID
 	return c.Client.Do(req)
 }
 
-// ListServiceInvitations performs a GET /v1/services/{service_id}/invitations (the `ListServiceInvitations` operationId) request.
+// ListServiceInvitations List a service's visitor invitations without secrets
 //
 // Current managers may read up to 100 records ordered by ID, including accepted, expired and revoked history. Follow next_cursor until absent. Never returns secrets.
+//
+// Corresponds with GET /v1/services/{service_id}/invitations (the `ListServiceInvitations` operationId).
 func (c *Client) ListServiceInvitations(ctx context.Context, serviceId ServiceID, params *ListServiceInvitationsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListServiceInvitationsRequest(c.Server, serviceId, params)
 	if err != nil {
@@ -8350,10 +9378,13 @@ func (c *Client) ListServiceInvitations(ctx context.Context, serviceId ServiceID
 	return c.Client.Do(req)
 }
 
-// InviteServiceVisitorWithBody performs a POST /v1/services/{service_id}/invitations (the `InviteServiceVisitor` operationId) request,
-// with any type of body and a specified content type.
+// InviteServiceVisitorWithBody Invite a verified email identity to one service
 //
 // A new key creates one exact-service invitation. An exact retry by the same actor returns HTTP 200 with the original ID and current state, without a secret, after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/services/{service_id}/invitations (the `InviteServiceVisitor` operationId).
 func (c *Client) InviteServiceVisitorWithBody(ctx context.Context, serviceId ServiceID, params *InviteServiceVisitorParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewInviteServiceVisitorRequestWithBody(c.Server, serviceId, params, contentType, body)
 	if err != nil {
@@ -8366,10 +9397,13 @@ func (c *Client) InviteServiceVisitorWithBody(ctx context.Context, serviceId Ser
 	return c.Client.Do(req)
 }
 
-// InviteServiceVisitor performs a POST /v1/services/{service_id}/invitations (the `InviteServiceVisitor` operationId) request.
-// Takes a body of the `application/json` content type.
+// InviteServiceVisitor Invite a verified email identity to one service
 //
 // A new key creates one exact-service invitation. An exact retry by the same actor returns HTTP 200 with the original ID and current state, without a secret, after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/services/{service_id}/invitations (the `InviteServiceVisitor` operationId).
 func (c *Client) InviteServiceVisitor(ctx context.Context, serviceId ServiceID, params *InviteServiceVisitorParams, body InviteServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewInviteServiceVisitorRequest(c.Server, serviceId, params, body)
 	if err != nil {
@@ -8382,7 +9416,11 @@ func (c *Client) InviteServiceVisitor(ctx context.Context, serviceId ServiceID, 
 	return c.Client.Do(req)
 }
 
-// RevokeServiceInvitation performs a DELETE /v1/services/{service_id}/invitations/{invitation_id} (the `RevokeServiceInvitation` operationId) request.
+// RevokeServiceInvitation Revoke a service invitation and its accepted grant
+//
+// Revoke the invitation using current service management permission, including the identity grant created if it was accepted. Revocation does not remove the retained invitation history.
+//
+// Corresponds with DELETE /v1/services/{service_id}/invitations/{invitation_id} (the `RevokeServiceInvitation` operationId).
 func (c *Client) RevokeServiceInvitation(ctx context.Context, serviceId ServiceID, invitationId ServiceInvitationID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeServiceInvitationRequest(c.Server, serviceId, invitationId)
 	if err != nil {
@@ -8395,10 +9433,13 @@ func (c *Client) RevokeServiceInvitation(ctx context.Context, serviceId ServiceI
 	return c.Client.Do(req)
 }
 
-// PrepareServiceRunWithBody performs a POST /v1/services/{service_id}/runs (the `PrepareServiceRun` operationId) request,
-// with any type of body and a specified content type.
+// PrepareServiceRunWithBody Reserve a service run and its approved certificate plan
 //
 // Reserve a new run ID and number and capture its exact managed hostname, port, domain and certificate plan under the authenticated publisher grant. Retrying the same idempotency key returns the same preparation.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs (the `PrepareServiceRun` operationId).
 func (c *Client) PrepareServiceRunWithBody(ctx context.Context, serviceId ServiceID, params *PrepareServiceRunParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPrepareServiceRunRequestWithBody(c.Server, serviceId, params, contentType, body)
 	if err != nil {
@@ -8411,10 +9452,13 @@ func (c *Client) PrepareServiceRunWithBody(ctx context.Context, serviceId Servic
 	return c.Client.Do(req)
 }
 
-// PrepareServiceRun performs a POST /v1/services/{service_id}/runs (the `PrepareServiceRun` operationId) request.
-// Takes a body of the `application/json` content type.
+// PrepareServiceRun Reserve a service run and its approved certificate plan
 //
 // Reserve a new run ID and number and capture its exact managed hostname, port, domain and certificate plan under the authenticated publisher grant. Retrying the same idempotency key returns the same preparation.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs (the `PrepareServiceRun` operationId).
 func (c *Client) PrepareServiceRun(ctx context.Context, serviceId ServiceID, params *PrepareServiceRunParams, body PrepareServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPrepareServiceRunRequest(c.Server, serviceId, params, body)
 	if err != nil {
@@ -8427,9 +9471,11 @@ func (c *Client) PrepareServiceRun(ctx context.Context, serviceId ServiceID, par
 	return c.Client.Do(req)
 }
 
-// CloseServiceRun performs a DELETE /v1/services/{service_id}/runs/{service_run_id} (the `CloseServiceRun` operationId) request.
+// CloseServiceRun Close one exact service run using its run token
 //
 // Close the exact run, reject stale admissions and publish a service tombstone. Managed certificates remain in the publisher's shared cache.
+//
+// Corresponds with DELETE /v1/services/{service_id}/runs/{service_run_id} (the `CloseServiceRun` operationId).
 func (c *Client) CloseServiceRun(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCloseServiceRunRequest(c.Server, serviceId, serviceRunId)
 	if err != nil {
@@ -8442,10 +9488,13 @@ func (c *Client) CloseServiceRun(ctx context.Context, serviceId ServiceID, servi
 	return c.Client.Do(req)
 }
 
-// HeartbeatServiceRunWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id} (the `HeartbeatServiceRun` operationId) request,
-// with any type of body and a specified content type.
+// HeartbeatServiceRunWithBody Renew a service run and report publisher health and capacity
 //
 // Renew only the current run under its exact publisher grant. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id} (the `HeartbeatServiceRun` operationId).
 func (c *Client) HeartbeatServiceRunWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewHeartbeatServiceRunRequestWithBody(c.Server, serviceId, serviceRunId, contentType, body)
 	if err != nil {
@@ -8458,10 +9507,13 @@ func (c *Client) HeartbeatServiceRunWithBody(ctx context.Context, serviceId Serv
 	return c.Client.Do(req)
 }
 
-// HeartbeatServiceRun performs a POST /v1/services/{service_id}/runs/{service_run_id} (the `HeartbeatServiceRun` operationId) request.
-// Takes a body of the `application/json` content type.
+// HeartbeatServiceRun Renew a service run and report publisher health and capacity
 //
 // Renew only the current run under its exact publisher grant. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id} (the `HeartbeatServiceRun` operationId).
 func (c *Client) HeartbeatServiceRun(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body HeartbeatServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewHeartbeatServiceRunRequest(c.Server, serviceId, serviceRunId, body)
 	if err != nil {
@@ -8474,10 +9526,13 @@ func (c *Client) HeartbeatServiceRun(ctx context.Context, serviceId ServiceID, s
 	return c.Client.Do(req)
 }
 
-// AuthorizeServiceClientCertificateWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId) request,
-// with any type of body and a specified content type.
+// AuthorizeServiceClientCertificateWithBody Check a public endpoint visitor's client certificate and admission
 //
 // Authenticate a public endpoint visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId).
 func (c *Client) AuthorizeServiceClientCertificateWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAuthorizeServiceClientCertificateRequestWithBody(c.Server, serviceId, serviceRunId, contentType, body)
 	if err != nil {
@@ -8490,10 +9545,13 @@ func (c *Client) AuthorizeServiceClientCertificateWithBody(ctx context.Context, 
 	return c.Client.Do(req)
 }
 
-// AuthorizeServiceClientCertificate performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId) request.
-// Takes a body of the `application/json` content type.
+// AuthorizeServiceClientCertificate Check a public endpoint visitor's client certificate and admission
 //
 // Authenticate a public endpoint visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId).
 func (c *Client) AuthorizeServiceClientCertificate(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAuthorizeServiceClientCertificateRequest(c.Server, serviceId, serviceRunId, body)
 	if err != nil {
@@ -8506,8 +9564,13 @@ func (c *Client) AuthorizeServiceClientCertificate(ctx context.Context, serviceI
 	return c.Client.Do(req)
 }
 
-// RedeemServiceBrowserHandoffWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff (the `RedeemServiceBrowserHandoff` operationId) request,
-// with any type of body and a specified content type.
+// RedeemServiceBrowserHandoffWithBody Exchange a service browser handoff through its publisher run
+//
+// Authenticate the publisher with the exact service run token and exchange the body's one-time handoff secret for a host-bound browser credential. A visitor's control session cannot substitute for the publisher run token.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff (the `RedeemServiceBrowserHandoff` operationId).
 func (c *Client) RedeemServiceBrowserHandoffWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRedeemServiceBrowserHandoffRequestWithBody(c.Server, serviceId, serviceRunId, contentType, body)
 	if err != nil {
@@ -8520,8 +9583,13 @@ func (c *Client) RedeemServiceBrowserHandoffWithBody(ctx context.Context, servic
 	return c.Client.Do(req)
 }
 
-// RedeemServiceBrowserHandoff performs a POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff (the `RedeemServiceBrowserHandoff` operationId) request.
+// RedeemServiceBrowserHandoff Exchange a service browser handoff through its publisher run
+//
+// Authenticate the publisher with the exact service run token and exchange the body's one-time handoff secret for a host-bound browser credential. A visitor's control session cannot substitute for the publisher run token.
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff (the `RedeemServiceBrowserHandoff` operationId).
 func (c *Client) RedeemServiceBrowserHandoff(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body RedeemServiceBrowserHandoffJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRedeemServiceBrowserHandoffRequest(c.Server, serviceId, serviceRunId, body)
 	if err != nil {
@@ -8534,8 +9602,13 @@ func (c *Client) RedeemServiceBrowserHandoff(ctx context.Context, serviceId Serv
 	return c.Client.Do(req)
 }
 
-// RevokeServiceBrowserSessionWithBody performs a DELETE /v1/services/{service_id}/runs/{service_run_id}/browser/session (the `RevokeServiceBrowserSession` operationId) request,
-// with any type of body and a specified content type.
+// RevokeServiceBrowserSessionWithBody Revoke a browser session through its service publisher run
+//
+// Authenticate the publisher with the exact service run token and revoke the body's host-bound browser session. This does not revoke the person's control session or sessions on unrelated hosts.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with DELETE /v1/services/{service_id}/runs/{service_run_id}/browser/session (the `RevokeServiceBrowserSession` operationId).
 func (c *Client) RevokeServiceBrowserSessionWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeServiceBrowserSessionRequestWithBody(c.Server, serviceId, serviceRunId, contentType, body)
 	if err != nil {
@@ -8548,8 +9621,13 @@ func (c *Client) RevokeServiceBrowserSessionWithBody(ctx context.Context, servic
 	return c.Client.Do(req)
 }
 
-// RevokeServiceBrowserSession performs a DELETE /v1/services/{service_id}/runs/{service_run_id}/browser/session (the `RevokeServiceBrowserSession` operationId) request.
+// RevokeServiceBrowserSession Revoke a browser session through its service publisher run
+//
+// Authenticate the publisher with the exact service run token and revoke the body's host-bound browser session. This does not revoke the person's control session or sessions on unrelated hosts.
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with DELETE /v1/services/{service_id}/runs/{service_run_id}/browser/session (the `RevokeServiceBrowserSession` operationId).
 func (c *Client) RevokeServiceBrowserSession(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body RevokeServiceBrowserSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeServiceBrowserSessionRequest(c.Server, serviceId, serviceRunId, body)
 	if err != nil {
@@ -8562,8 +9640,13 @@ func (c *Client) RevokeServiceBrowserSession(ctx context.Context, serviceId Serv
 	return c.Client.Do(req)
 }
 
-// CheckServiceBrowserSessionWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/browser/session (the `CheckServiceBrowserSession` operationId) request,
-// with any type of body and a specified content type.
+// CheckServiceBrowserSessionWithBody Check a browser session through its service publisher run
+//
+// Authenticate the publisher with the exact service run token and recheck the host-bound browser secret in the body against current service access. The result grants visitor access, not service management permission.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/browser/session (the `CheckServiceBrowserSession` operationId).
 func (c *Client) CheckServiceBrowserSessionWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCheckServiceBrowserSessionRequestWithBody(c.Server, serviceId, serviceRunId, contentType, body)
 	if err != nil {
@@ -8576,8 +9659,13 @@ func (c *Client) CheckServiceBrowserSessionWithBody(ctx context.Context, service
 	return c.Client.Do(req)
 }
 
-// CheckServiceBrowserSession performs a POST /v1/services/{service_id}/runs/{service_run_id}/browser/session (the `CheckServiceBrowserSession` operationId) request.
+// CheckServiceBrowserSession Check a browser session through its service publisher run
+//
+// Authenticate the publisher with the exact service run token and recheck the host-bound browser secret in the body against current service access. The result grants visitor access, not service management permission.
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/browser/session (the `CheckServiceBrowserSession` operationId).
 func (c *Client) CheckServiceBrowserSession(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body CheckServiceBrowserSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCheckServiceBrowserSessionRequest(c.Server, serviceId, serviceRunId, body)
 	if err != nil {
@@ -8590,8 +9678,13 @@ func (c *Client) CheckServiceBrowserSession(ctx context.Context, serviceId Servi
 	return c.Client.Do(req)
 }
 
-// MarkServiceCertificateInstalledWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/certificate-installed (the `MarkServiceCertificateInstalled` operationId) request,
-// with any type of body and a specified content type.
+// MarkServiceCertificateInstalledWithBody Acknowledge the certificate installed for one service run
+//
+// Record that the publisher installed the exact approved issuance for this run number using its service run token. The acknowledgement does not by itself prove that both publisher connections are ready.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/certificate-installed (the `MarkServiceCertificateInstalled` operationId).
 func (c *Client) MarkServiceCertificateInstalledWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewMarkServiceCertificateInstalledRequestWithBody(c.Server, serviceId, serviceRunId, contentType, body)
 	if err != nil {
@@ -8604,8 +9697,13 @@ func (c *Client) MarkServiceCertificateInstalledWithBody(ctx context.Context, se
 	return c.Client.Do(req)
 }
 
-// MarkServiceCertificateInstalled performs a POST /v1/services/{service_id}/runs/{service_run_id}/certificate-installed (the `MarkServiceCertificateInstalled` operationId) request.
+// MarkServiceCertificateInstalled Acknowledge the certificate installed for one service run
+//
+// Record that the publisher installed the exact approved issuance for this run number using its service run token. The acknowledgement does not by itself prove that both publisher connections are ready.
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/certificate-installed (the `MarkServiceCertificateInstalled` operationId).
 func (c *Client) MarkServiceCertificateInstalled(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body MarkServiceCertificateInstalledJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewMarkServiceCertificateInstalledRequest(c.Server, serviceId, serviceRunId, body)
 	if err != nil {
@@ -8618,8 +9716,13 @@ func (c *Client) MarkServiceCertificateInstalled(ctx context.Context, serviceId 
 	return c.Client.Do(req)
 }
 
-// CreateServiceCertificateIssuanceWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances (the `CreateServiceCertificateIssuance` operationId) request,
-// with any type of body and a specified content type.
+// CreateServiceCertificateIssuanceWithBody Begin certificate issuance for one started service run
+//
+// Authorize DNS-01 issuance for the service run's approved certificate plan using its exact run token and run number. Submit a CSR for the publisher's key; neither a control session nor publisher access token substitutes for the run token.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances (the `CreateServiceCertificateIssuance` operationId).
 func (c *Client) CreateServiceCertificateIssuanceWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *CreateServiceCertificateIssuanceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateServiceCertificateIssuanceRequestWithBody(c.Server, serviceId, serviceRunId, params, contentType, body)
 	if err != nil {
@@ -8632,8 +9735,13 @@ func (c *Client) CreateServiceCertificateIssuanceWithBody(ctx context.Context, s
 	return c.Client.Do(req)
 }
 
-// CreateServiceCertificateIssuance performs a POST /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances (the `CreateServiceCertificateIssuance` operationId) request.
+// CreateServiceCertificateIssuance Begin certificate issuance for one started service run
+//
+// Authorize DNS-01 issuance for the service run's approved certificate plan using its exact run token and run number. Submit a CSR for the publisher's key; neither a control session nor publisher access token substitutes for the run token.
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances (the `CreateServiceCertificateIssuance` operationId).
 func (c *Client) CreateServiceCertificateIssuance(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *CreateServiceCertificateIssuanceParams, body CreateServiceCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateServiceCertificateIssuanceRequest(c.Server, serviceId, serviceRunId, params, body)
 	if err != nil {
@@ -8646,7 +9754,11 @@ func (c *Client) CreateServiceCertificateIssuance(ctx context.Context, serviceId
 	return c.Client.Do(req)
 }
 
-// GetServiceCertificateIssuance performs a GET /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id} (the `GetServiceCertificateIssuance` operationId) request.
+// GetServiceCertificateIssuance Read a service run's current certificate issuance
+//
+// Poll the named issuance using the exact service run token. Control checks that the service, run, and issuance still match before returning certificate material.
+//
+// Corresponds with GET /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id} (the `GetServiceCertificateIssuance` operationId).
 func (c *Client) GetServiceCertificateIssuance(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetServiceCertificateIssuanceRequest(c.Server, serviceId, serviceRunId, issuanceId)
 	if err != nil {
@@ -8659,9 +9771,11 @@ func (c *Client) GetServiceCertificateIssuance(ctx context.Context, serviceId Se
 	return c.Client.Do(req)
 }
 
-// ListConnectorPeerPairs performs a GET /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs (the `ListConnectorPeerPairs` operationId) request.
+// ListConnectorPeerPairs List connector pair candidates for the current service run
 //
 // Reconcile unexpired pair candidates for the exact publisher run, without keys, subjects, or source addresses. An installed owner may include an independent authority observation during temporary relay loss. A candidate may still lack relay claims; prepare its delivery independently before serving it.
+//
+// Corresponds with GET /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs (the `ListConnectorPeerPairs` operationId).
 func (c *Client) ListConnectorPeerPairs(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *ListConnectorPeerPairsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListConnectorPeerPairsRequest(c.Server, serviceId, serviceRunId, params)
 	if err != nil {
@@ -8674,10 +9788,13 @@ func (c *Client) ListConnectorPeerPairs(ctx context.Context, serviceId ServiceID
 	return c.Client.Do(req)
 }
 
-// DeliverConnectorPeerPairWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId) request,
-// with any type of body and a specified content type.
+// DeliverConnectorPeerPairWithBody Deliver an existing connector pair to its current publisher run
 //
 // Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId).
 func (c *Client) DeliverConnectorPeerPairWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeliverConnectorPeerPairRequestWithBody(c.Server, serviceId, serviceRunId, pairId, contentType, body)
 	if err != nil {
@@ -8690,10 +9807,13 @@ func (c *Client) DeliverConnectorPeerPairWithBody(ctx context.Context, serviceId
 	return c.Client.Do(req)
 }
 
-// DeliverConnectorPeerPair performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId) request.
-// Takes a body of the `application/json` content type.
+// DeliverConnectorPeerPair Deliver an existing connector pair to its current publisher run
 //
 // Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId).
 func (c *Client) DeliverConnectorPeerPair(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body DeliverConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeliverConnectorPeerPairRequest(c.Server, serviceId, serviceRunId, pairId, body)
 	if err != nil {
@@ -8706,10 +9826,13 @@ func (c *Client) DeliverConnectorPeerPair(ctx context.Context, serviceId Service
 	return c.Client.Do(req)
 }
 
-// ConfirmConnectorPeerPairPreparedWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId) request,
-// with any type of body and a specified content type.
+// ConfirmConnectorPeerPairPreparedWithBody Confirm an exact connector binding installed by the publisher
 //
 // Record the publisher's installed packet registration and inner listener under the exact run token. Recheck the delivery authority and both matching relay claims; never extend the reported binding deadline.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId).
 func (c *Client) ConfirmConnectorPeerPairPreparedWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewConfirmConnectorPeerPairPreparedRequestWithBody(c.Server, serviceId, serviceRunId, pairId, contentType, body)
 	if err != nil {
@@ -8722,10 +9845,13 @@ func (c *Client) ConfirmConnectorPeerPairPreparedWithBody(ctx context.Context, s
 	return c.Client.Do(req)
 }
 
-// ConfirmConnectorPeerPairPrepared performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId) request.
-// Takes a body of the `application/json` content type.
+// ConfirmConnectorPeerPairPrepared Confirm an exact connector binding installed by the publisher
 //
 // Record the publisher's installed packet registration and inner listener under the exact run token. Recheck the delivery authority and both matching relay claims; never extend the reported binding deadline.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId).
 func (c *Client) ConfirmConnectorPeerPairPrepared(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body ConfirmConnectorPeerPairPreparedJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewConfirmConnectorPeerPairPreparedRequest(c.Server, serviceId, serviceRunId, pairId, body)
 	if err != nil {
@@ -8738,10 +9864,13 @@ func (c *Client) ConfirmConnectorPeerPairPrepared(ctx context.Context, serviceId
 	return c.Client.Do(req)
 }
 
-// ReportServiceRunObservationsWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId) request,
-// with any type of body and a specified content type.
+// ReportServiceRunObservationsWithBody Report connector connection observations for a service run
 //
 // Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId).
 func (c *Client) ReportServiceRunObservationsWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReportServiceRunObservationsRequestWithBody(c.Server, serviceId, serviceRunId, contentType, body)
 	if err != nil {
@@ -8754,10 +9883,13 @@ func (c *Client) ReportServiceRunObservationsWithBody(ctx context.Context, servi
 	return c.Client.Do(req)
 }
 
-// ReportServiceRunObservations performs a POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId) request.
-// Takes a body of the `application/json` content type.
+// ReportServiceRunObservations Report connector connection observations for a service run
 //
 // Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId).
 func (c *Client) ReportServiceRunObservations(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body ReportServiceRunObservationsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReportServiceRunObservationsRequest(c.Server, serviceId, serviceRunId, body)
 	if err != nil {
@@ -8770,10 +9902,13 @@ func (c *Client) ReportServiceRunObservations(ctx context.Context, serviceId Ser
 	return c.Client.Do(req)
 }
 
-// StartServiceRunWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/start (the `StartServiceRun` operationId) request,
-// with any type of body and a specified content type.
+// StartServiceRunWithBody Start one prepared service run with its publisher grant
 //
 // Start one exact prepared run using its authenticated publisher identity. Visitor TLS uses the approved service certificate, without an ephemeral stream key or custom TLS proof.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/start (the `StartServiceRun` operationId).
 func (c *Client) StartServiceRunWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewStartServiceRunRequestWithBody(c.Server, serviceId, serviceRunId, contentType, body)
 	if err != nil {
@@ -8786,10 +9921,13 @@ func (c *Client) StartServiceRunWithBody(ctx context.Context, serviceId ServiceI
 	return c.Client.Do(req)
 }
 
-// StartServiceRun performs a POST /v1/services/{service_id}/runs/{service_run_id}/start (the `StartServiceRun` operationId) request.
-// Takes a body of the `application/json` content type.
+// StartServiceRun Start one prepared service run with its publisher grant
 //
 // Start one exact prepared run using its authenticated publisher identity. Visitor TLS uses the approved service certificate, without an ephemeral stream key or custom TLS proof.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/start (the `StartServiceRun` operationId).
 func (c *Client) StartServiceRun(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body StartServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewStartServiceRunRequest(c.Server, serviceId, serviceRunId, body)
 	if err != nil {
@@ -8802,10 +9940,13 @@ func (c *Client) StartServiceRun(ctx context.Context, serviceId ServiceID, servi
 	return c.Client.Do(req)
 }
 
-// SelectServiceRunWithBody performs a POST /v1/services/{service_id}/select-run (the `SelectServiceRun` operationId) request,
-// with any type of body and a specified content type.
+// SelectServiceRunWithBody Select a ready service run for an enrolled visitor device
 //
 // Check current visitor access and select a ready publisher run for background preparation. pair_ready is a credential-free hint containing two exact ready connections on distinct live relay services, not a grant, stream ticket or pair key. The caller never supplies an IP address.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/services/{service_id}/select-run (the `SelectServiceRun` operationId).
 func (c *Client) SelectServiceRunWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSelectServiceRunRequestWithBody(c.Server, serviceId, contentType, body)
 	if err != nil {
@@ -8818,10 +9959,13 @@ func (c *Client) SelectServiceRunWithBody(ctx context.Context, serviceId Service
 	return c.Client.Do(req)
 }
 
-// SelectServiceRun performs a POST /v1/services/{service_id}/select-run (the `SelectServiceRun` operationId) request.
-// Takes a body of the `application/json` content type.
+// SelectServiceRun Select a ready service run for an enrolled visitor device
 //
 // Check current visitor access and select a ready publisher run for background preparation. pair_ready is a credential-free hint containing two exact ready connections on distinct live relay services, not a grant, stream ticket or pair key. The caller never supplies an IP address.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/services/{service_id}/select-run (the `SelectServiceRun` operationId).
 func (c *Client) SelectServiceRun(ctx context.Context, serviceId ServiceID, body SelectServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSelectServiceRunRequest(c.Server, serviceId, body)
 	if err != nil {
@@ -8835,6 +9979,8 @@ func (c *Client) SelectServiceRun(ctx context.Context, serviceId ServiceID, body
 }
 
 // ListTeamShares List manageable shares for one team
+//
+// Read a cursor-paginated share inventory under current team management authorization. Responses omit share secrets; use the original secret to construct a share link.
 //
 // Corresponds with GET /v1/shares (the `ListTeamShares` operationId).
 func (c *Client) ListTeamShares(ctx context.Context, params *ListTeamSharesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -8889,6 +10035,8 @@ func (c *Client) CreateURLShare(ctx context.Context, params *CreateURLShareParam
 
 // GetShare Read one share
 //
+// Read a manageable share's captured public URL IDs, deadline, and revocation state without revealing its secret. Reading the record does not redeem the share or create a visitor session.
+//
 // Corresponds with GET /v1/shares/{share_id} (the `GetShare` operationId).
 func (c *Client) GetShare(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetShareRequest(c.Server, shareId)
@@ -8904,6 +10052,8 @@ func (c *Client) GetShare(ctx context.Context, shareId ShareID, reqEditors ...Re
 
 // RevokeShare Stop new access through one share
 //
+// Revoke the share under current management authorization so it cannot grant new visitor access. Retain the saved record and its captured public URL snapshot for subsequent reads.
+//
 // Corresponds with POST /v1/shares/{share_id}/revoke (the `RevokeShare` operationId).
 func (c *Client) RevokeShare(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeShareRequest(c.Server, shareId)
@@ -8917,7 +10067,11 @@ func (c *Client) RevokeShare(ctx context.Context, shareId ShareID, reqEditors ..
 	return c.Client.Do(req)
 }
 
-// ListServiceAudit performs a GET /v1/teams/{team_id}/service-audit (the `ListServiceAudit` operationId) request.
+// ListServiceAudit Read a team's service audit history
+//
+// Read a bounded page of service access and lifecycle events using the team's current management permission. Filter by exact service identity or time, and resume with the returned cursor; audit records do not grant visitor access.
+//
+// Corresponds with GET /v1/teams/{team_id}/service-audit (the `ListServiceAudit` operationId).
 func (c *Client) ListServiceAudit(ctx context.Context, teamId string, params *ListServiceAuditParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListServiceAuditRequest(c.Server, teamId, params)
 	if err != nil {
@@ -8930,8 +10084,13 @@ func (c *Client) ListServiceAudit(ctx context.Context, teamId string, params *Li
 	return c.Client.Do(req)
 }
 
-// EnrollVisitorDeviceWithBody performs a POST /v1/visitor-devices (the `EnrollVisitorDevice` operationId) request,
-// with any type of body and a specified content type.
+// EnrollVisitorDeviceWithBody Enroll an Ed25519 visitor device for the signed-in identity
+//
+// Bind the submitted public key to the current visitor identity using its control session. The private key remains local and signs connector peer pair requests; enrollment alone does not grant access to a service.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/visitor-devices (the `EnrollVisitorDevice` operationId).
 func (c *Client) EnrollVisitorDeviceWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewEnrollVisitorDeviceRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -8944,8 +10103,13 @@ func (c *Client) EnrollVisitorDeviceWithBody(ctx context.Context, contentType st
 	return c.Client.Do(req)
 }
 
-// EnrollVisitorDevice performs a POST /v1/visitor-devices (the `EnrollVisitorDevice` operationId) request.
+// EnrollVisitorDevice Enroll an Ed25519 visitor device for the signed-in identity
+//
+// Bind the submitted public key to the current visitor identity using its control session. The private key remains local and signs connector peer pair requests; enrollment alone does not grant access to a service.
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/visitor-devices (the `EnrollVisitorDevice` operationId).
 func (c *Client) EnrollVisitorDevice(ctx context.Context, body EnrollVisitorDeviceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewEnrollVisitorDeviceRequest(c.Server, body)
 	if err != nil {
@@ -8958,7 +10122,11 @@ func (c *Client) EnrollVisitorDevice(ctx context.Context, body EnrollVisitorDevi
 	return c.Client.Do(req)
 }
 
-// RevokeVisitorDevice performs a DELETE /v1/visitor-devices/{device_id} (the `RevokeVisitorDevice` operationId) request.
+// RevokeVisitorDevice Revoke a visitor device and its connector peer pairs
+//
+// Revoke the exact device belonging to the signed-in visitor identity and invalidate its connector peer pairs. This does not revoke the identity's control session or its other enrolled devices.
+//
+// Corresponds with DELETE /v1/visitor-devices/{device_id} (the `RevokeVisitorDevice` operationId).
 func (c *Client) RevokeVisitorDevice(ctx context.Context, deviceId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeVisitorDeviceRequest(c.Server, deviceId)
 	if err != nil {
@@ -8971,8 +10139,13 @@ func (c *Client) RevokeVisitorDevice(ctx context.Context, deviceId string, reqEd
 	return c.Client.Do(req)
 }
 
-// AcceptVisitorInvitationWithBody performs a POST /v1/visitor-invitations/accept (the `AcceptVisitorInvitation` operationId) request,
-// with any type of body and a specified content type.
+// AcceptVisitorInvitationWithBody Accept a public URL invitation for the signed-in identity
+//
+// Exchange the body's one-use secret using the current signed-in identity and matching verified email. Acceptance grants exact-URL visitor access, not management permission or team membership.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/visitor-invitations/accept (the `AcceptVisitorInvitation` operationId).
 func (c *Client) AcceptVisitorInvitationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAcceptVisitorInvitationRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -8985,8 +10158,13 @@ func (c *Client) AcceptVisitorInvitationWithBody(ctx context.Context, contentTyp
 	return c.Client.Do(req)
 }
 
-// AcceptVisitorInvitation performs a POST /v1/visitor-invitations/accept (the `AcceptVisitorInvitation` operationId) request.
+// AcceptVisitorInvitation Accept a public URL invitation for the signed-in identity
+//
+// Exchange the body's one-use secret using the current signed-in identity and matching verified email. Acceptance grants exact-URL visitor access, not management permission or team membership.
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/visitor-invitations/accept (the `AcceptVisitorInvitation` operationId).
 func (c *Client) AcceptVisitorInvitation(ctx context.Context, body AcceptVisitorInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAcceptVisitorInvitationRequest(c.Server, body)
 	if err != nil {
@@ -8999,10 +10177,13 @@ func (c *Client) AcceptVisitorInvitation(ctx context.Context, body AcceptVisitor
 	return c.Client.Do(req)
 }
 
-// ReadPublisherVisitorPolicyWithBody performs a POST /v1/visitor-policy (the `ReadPublisherVisitorPolicy` operationId) request,
-// with any type of body and a specified content type.
+// ReadPublisherVisitorPolicyWithBody Refresh the current run's visitor policy and verification keys
 //
 // Read one current publisher run's scoped visitor policy, revocations, and public verification keys. The bearer credential is the exact run token. This background operation is independent of the publisher's process lease and of ordinary visitor admission.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/visitor-policy (the `ReadPublisherVisitorPolicy` operationId).
 func (c *Client) ReadPublisherVisitorPolicyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReadPublisherVisitorPolicyRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -9015,10 +10196,13 @@ func (c *Client) ReadPublisherVisitorPolicyWithBody(ctx context.Context, content
 	return c.Client.Do(req)
 }
 
-// ReadPublisherVisitorPolicy performs a POST /v1/visitor-policy (the `ReadPublisherVisitorPolicy` operationId) request.
-// Takes a body of the `application/json` content type.
+// ReadPublisherVisitorPolicy Refresh the current run's visitor policy and verification keys
 //
 // Read one current publisher run's scoped visitor policy, revocations, and public verification keys. The bearer credential is the exact run token. This background operation is independent of the publisher's process lease and of ordinary visitor admission.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/visitor-policy (the `ReadPublisherVisitorPolicy` operationId).
 func (c *Client) ReadPublisherVisitorPolicy(ctx context.Context, body ReadPublisherVisitorPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReadPublisherVisitorPolicyRequest(c.Server, body)
 	if err != nil {
@@ -9031,10 +10215,13 @@ func (c *Client) ReadPublisherVisitorPolicy(ctx context.Context, body ReadPublis
 	return c.Client.Do(req)
 }
 
-// IssueVisitorTokenWithBody performs a POST /v1/visitor-tokens (the `IssueVisitorToken` operationId) request,
-// with any type of body and a specified content type.
+// IssueVisitorTokenWithBody Prepare or renew an exact-resource visitor permission
 //
-// Prepare or renew one exact-resource visitor permission. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+// Prepare or renew one exact-resource visitor permission. For source.kind control_session or device, authenticate with the current control session bearer token. For browser_session, workload, share, share_session, or grant, authenticate with the source credential in the JSON body and omit Authorization entirely; even an empty Authorization header is rejected. The empty security object represents these body-authenticated branches, not anonymous issuance. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/visitor-tokens (the `IssueVisitorToken` operationId).
 func (c *Client) IssueVisitorTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewIssueVisitorTokenRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -9047,10 +10234,13 @@ func (c *Client) IssueVisitorTokenWithBody(ctx context.Context, contentType stri
 	return c.Client.Do(req)
 }
 
-// IssueVisitorToken performs a POST /v1/visitor-tokens (the `IssueVisitorToken` operationId) request.
+// IssueVisitorToken Prepare or renew an exact-resource visitor permission
+//
+// Prepare or renew one exact-resource visitor permission. For source.kind control_session or device, authenticate with the current control session bearer token. For browser_session, workload, share, share_session, or grant, authenticate with the source credential in the JSON body and omit Authorization entirely; even an empty Authorization header is rejected. The empty security object represents these body-authenticated branches, not anonymous issuance. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+//
 // Takes a body of the `application/json` content type.
 //
-// Prepare or renew one exact-resource visitor permission. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+// Corresponds with POST /v1/visitor-tokens (the `IssueVisitorToken` operationId).
 func (c *Client) IssueVisitorToken(ctx context.Context, body IssueVisitorTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewIssueVisitorTokenRequest(c.Server, body)
 	if err != nil {
@@ -9063,7 +10253,11 @@ func (c *Client) IssueVisitorToken(ctx context.Context, body IssueVisitorTokenJS
 	return c.Client.Do(req)
 }
 
-// ListAvailablePublicURLs performs a GET /v1/visitor/public-urls (the `ListAvailablePublicURLs` operationId) request.
+// ListAvailablePublicURLs List public URLs available to the signed-in visitor
+//
+// Read a cursor-paginated visitor inventory across the identity's current grants, optionally selecting one team. The response omits management policy, targets, and secrets and does not itself grant a visitor token.
+//
+// Corresponds with GET /v1/visitor/public-urls (the `ListAvailablePublicURLs` operationId).
 func (c *Client) ListAvailablePublicURLs(ctx context.Context, params *ListAvailablePublicURLsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListAvailablePublicURLsRequest(c.Server, params)
 	if err != nil {
@@ -9076,9 +10270,11 @@ func (c *Client) ListAvailablePublicURLs(ctx context.Context, params *ListAvaila
 	return c.Client.Do(req)
 }
 
-// ListAvailableServices performs a GET /v1/visitor/services (the `ListAvailableServices` operationId) request.
+// ListAvailableServices List services available to the signed-in visitor
 //
 // Authorized saved services for tnl connect, including offline services. Initial readiness requires two ready publisher connections; after that one surviving ready connection keeps a run available during replacement. Inventory never grants a stream ticket by itself and contains no target address, DNS or key material.
+//
+// Corresponds with GET /v1/visitor/services (the `ListAvailableServices` operationId).
 func (c *Client) ListAvailableServices(ctx context.Context, params *ListAvailableServicesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListAvailableServicesRequest(c.Server, params)
 	if err != nil {
@@ -9092,6 +10288,8 @@ func (c *Client) ListAvailableServices(ctx context.Context, params *ListAvailabl
 }
 
 // GetWebhookProviderSource Read one webhook provider source policy
+//
+// Read the selected provider's current webhook source policy without a credential. Use ETag and If-None-Match to reuse unchanged policy; this endpoint does not register a webhook or grant access to a public URL.
 //
 // Corresponds with GET /v1/webhook-providers/{provider}/source (the `GetWebhookProviderSource` operationId).
 func (c *Client) GetWebhookProviderSource(ctx context.Context, provider WebhookProvider, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -9108,6 +10306,8 @@ func (c *Client) GetWebhookProviderSource(ctx context.Context, provider WebhookP
 
 // ListWorkloadServices List only the workload session's currently authorized saved services
 //
+// Read the services currently authorized for this workload session using its visitor-only bearer credential. The inventory omits target addresses and application credentials and grants no publisher or control management authority.
+//
 // Corresponds with GET /v1/workload/services (the `ListWorkloadServices` operationId).
 func (c *Client) ListWorkloadServices(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListWorkloadServicesRequest(c.Server)
@@ -9121,7 +10321,11 @@ func (c *Client) ListWorkloadServices(ctx context.Context, reqEditors ...Request
 	return c.Client.Do(req)
 }
 
-// CheckWorkloadService performs a POST /v1/workload/services/{service_id}/authorization (the `CheckWorkloadService` operationId) request.
+// CheckWorkloadService Check a workload session's current permission for one service
+//
+// Recheck live workload authorization for the exact service using the workload bearer credential. The decision is bounded by both the renewable lease and the session's fixed absolute deadline; a prior inventory response is not sufficient authorization.
+//
+// Corresponds with POST /v1/workload/services/{service_id}/authorization (the `CheckWorkloadService` operationId).
 func (c *Client) CheckWorkloadService(ctx context.Context, serviceId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCheckWorkloadServiceRequest(c.Server, serviceId)
 	if err != nil {
@@ -9134,8 +10338,13 @@ func (c *Client) CheckWorkloadService(ctx context.Context, serviceId string, req
 	return c.Client.Do(req)
 }
 
-// IssueWorkloadServiceClientCertificateWithBody performs a POST /v1/workload/services/{service_id}/client-certificate (the `IssueWorkloadServiceClientCertificate` operationId) request,
-// with any type of body and a specified content type.
+// IssueWorkloadServiceClientCertificateWithBody Issue a service client certificate for a workload's existing key
+//
+// Submit a CSR under the visitor-only workload bearer credential for one currently authorized service. The returned certificate cannot outlive the workload's fixed absolute expiry, and later access still requires a current workload lease.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/workload/services/{service_id}/client-certificate (the `IssueWorkloadServiceClientCertificate` operationId).
 func (c *Client) IssueWorkloadServiceClientCertificateWithBody(ctx context.Context, serviceId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewIssueWorkloadServiceClientCertificateRequestWithBody(c.Server, serviceId, contentType, body)
 	if err != nil {
@@ -9148,8 +10357,13 @@ func (c *Client) IssueWorkloadServiceClientCertificateWithBody(ctx context.Conte
 	return c.Client.Do(req)
 }
 
-// IssueWorkloadServiceClientCertificate performs a POST /v1/workload/services/{service_id}/client-certificate (the `IssueWorkloadServiceClientCertificate` operationId) request.
+// IssueWorkloadServiceClientCertificate Issue a service client certificate for a workload's existing key
+//
+// Submit a CSR under the visitor-only workload bearer credential for one currently authorized service. The returned certificate cannot outlive the workload's fixed absolute expiry, and later access still requires a current workload lease.
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/workload/services/{service_id}/client-certificate (the `IssueWorkloadServiceClientCertificate` operationId).
 func (c *Client) IssueWorkloadServiceClientCertificate(ctx context.Context, serviceId string, body IssueWorkloadServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewIssueWorkloadServiceClientCertificateRequest(c.Server, serviceId, body)
 	if err != nil {
@@ -9162,9 +10376,11 @@ func (c *Client) IssueWorkloadServiceClientCertificate(ctx context.Context, serv
 	return c.Client.Do(req)
 }
 
-// SelectWorkloadServiceRun performs a POST /v1/workload/services/{service_id}/run (the `SelectWorkloadServiceRun` operationId) request.
+// SelectWorkloadServiceRun Select a ready service run for an authenticated workload
 //
 // Check the selected workload credential and current service permission. pair_ready appears only for two exact ready connections on distinct live relay services; it is a signing snapshot, not a grant or a pair key.
+//
+// Corresponds with POST /v1/workload/services/{service_id}/run (the `SelectWorkloadServiceRun` operationId).
 func (c *Client) SelectWorkloadServiceRun(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSelectWorkloadServiceRunRequest(c.Server, serviceId)
 	if err != nil {
@@ -15796,12 +17012,16 @@ type ClientWithResponsesInterface interface {
 
 	// ListMaintenanceControlsWithResponse List maintenance controls
 	//
+	// Read the administrator-controlled gates for public URL creation, publish run creation, and certificate issuance. Reading a gate does not change it.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/admin/maintenance-controls (the `ListMaintenanceControls` operationId).
 	ListMaintenanceControlsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListMaintenanceControlsResponse, error)
 
 	// SetMaintenanceControlWithBodyWithResponse Set one maintenance control
+	//
+	// Change one named maintenance gate using an administrator's control session. The gate controls new work of that kind, rather than closing all existing publications.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -15810,12 +17030,16 @@ type ClientWithResponsesInterface interface {
 
 	// SetMaintenanceControlWithResponse Set one maintenance control
 	//
+	// Change one named maintenance gate using an administrator's control session. The gate controls new work of that kind, rather than closing all existing publications.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /v1/admin/maintenance-controls/{control_name} (the `SetMaintenanceControl` operationId).
 	SetMaintenanceControlWithResponse(ctx context.Context, controlName MaintenanceControlName, body SetMaintenanceControlJSONRequestBody, reqEditors ...RequestEditorFn) (*SetMaintenanceControlResponse, error)
 
 	// ListAdminRelaysWithResponse List relay leases
+	//
+	// Read a cursor-paginated inventory of relay process leases using an administrator's control session. Lease state describes current placement eligibility, not a guarantee that a publisher connection is ready.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -15824,12 +17048,16 @@ type ClientWithResponsesInterface interface {
 
 	// DrainAdminRelayWithBodyWithResponse Remove a matching relay lease from placement and begin draining
 	//
+	// Fence the exact relay process lease identified in the request, remove it from new placement, and allow existing connections to drain until the deadline. Requires an administrator's control session.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/admin/relays/{relay_id}/drain (the `DrainAdminRelay` operationId).
 	DrainAdminRelayWithBodyWithResponse(ctx context.Context, relayId RelayID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DrainAdminRelayResponse, error)
 
 	// DrainAdminRelayWithResponse Remove a matching relay lease from placement and begin draining
+	//
+	// Fence the exact relay process lease identified in the request, remove it from new placement, and allow existing connections to drain until the deadline. Requires an administrator's control session.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -15838,12 +17066,16 @@ type ClientWithResponsesInterface interface {
 
 	// GetAdminServerStatusWithResponse Read control, ingress, and relay status
 	//
+	// Read control, ingress, relay, and maintenance observations using an administrator's control session. These observations do not renew process leases.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/admin/status (the `GetAdminServerStatus` operationId).
 	GetAdminServerStatusWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAdminServerStatusResponse, error)
 
 	// CompletePreviewBrowserLoginWithResponse Return a signed-in visitor to the preview
+	//
+	// Complete the identity provider callback using the pending login state and authorization code, then redirect to a one-time host-bound handoff. No bearer token is used; the callback is authenticated by the checked login flow, not by the empty security array.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -15852,19 +17084,25 @@ type ClientWithResponsesInterface interface {
 
 	// BeginPreviewBrowserLoginWithResponse Start sign-in for a preview visitor
 	//
+	// Begin the configured browser sign-in flow for a public URL, optionally within a preview. No bearer credential is required to begin sign-in; current visit permission is checked before a usable browser credential is issued.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/browser/login (the `BeginPreviewBrowserLogin` operationId).
 	BeginPreviewBrowserLoginWithResponse(ctx context.Context, params *BeginPreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*BeginPreviewBrowserLoginResponse, error)
 
-	// BeginServiceBrowserLoginWithResponse performs a GET /v1/browser/service-login (the `BeginServiceBrowserLogin` operationId) request.
+	// BeginServiceBrowserLoginWithResponse Start browser sign-in for one HTTP service
 	//
 	// Start sign-in for one service HTTP service. Uses the common browser callback and a snapshot of ready runs; the allocated service port is retained.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/browser/service-login (the `BeginServiceBrowserLogin` operationId).
 	BeginServiceBrowserLoginWithResponse(ctx context.Context, params *BeginServiceBrowserLoginParams, reqEditors ...RequestEditorFn) (*BeginServiceBrowserLoginResponse, error)
 
 	// GetCertificateIssuanceWithResponse Read one publish-run certificate issuance
+	//
+	// Poll one public URL certificate issuance using its publish run token. The token must belong to the issuance's current run; a control session alone cannot retrieve the certificate.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -15873,12 +17111,16 @@ type ClientWithResponsesInterface interface {
 
 	// GetClientIPWithResponse Return the requesting client's public IP address
 	//
+	// Read the request source address observed by control, after configured trusted-proxy handling. No credential is required; a caller-provided address is not accepted as source evidence.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/client-ip (the `GetClientIP` operationId).
 	GetClientIPWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetClientIPResponse, error)
 
 	// GetControlDiscoveryWithResponse Describe control and its authentication methods
+	//
+	// Read this server's public capabilities and authentication facts before choosing a client workflow. No credential is required; discover authority sign-in separately from publisher and visitor credentials.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -15887,12 +17129,16 @@ type ClientWithResponsesInterface interface {
 
 	// ListFeedbackThreadsWithResponse List feedback threads manageable in one team
 	//
+	// Read a cursor-paginated team feedback list under current management authorization. Each thread keeps its immutable first report and current state; use the event cursor to follow later changes.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/feedback (the `ListFeedbackThreads` operationId).
 	ListFeedbackThreadsWithResponse(ctx context.Context, params *ListFeedbackThreadsParams, reqEditors ...RequestEditorFn) (*ListFeedbackThreadsResponse, error)
 
 	// ListFeedbackEventsWithResponse Resume ordered feedback events for one team
+	//
+	// Resume the team's ordered feedback history after after_cursor using current management authorization. Event order is independent of branch names or local staging state.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -15901,12 +17147,16 @@ type ClientWithResponsesInterface interface {
 
 	// GetFeedbackThreadWithResponse Read one immutable report and current feedback state
 	//
+	// Read one manageable feedback thread, including its immutable report and current state. Follow-up replies and state changes remain in the separate ordered event history.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/feedback/{feedback_id} (the `GetFeedbackThread` operationId).
 	GetFeedbackThreadWithResponse(ctx context.Context, feedbackId FeedbackID, reqEditors ...RequestEditorFn) (*GetFeedbackThreadResponse, error)
 
 	// ListFeedbackThreadEventsWithResponse Read ordered follow-up events for one feedback thread
+	//
+	// Read follow-up events after after_cursor for one manageable feedback thread. The original report is immutable and remains on the thread rather than being rewritten by later events.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -15915,12 +17165,16 @@ type ClientWithResponsesInterface interface {
 
 	// AppendFeedbackEventWithBodyWithResponse Reply, record a checkout update, resolve, or reopen feedback
 	//
+	// Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Control derives the verified author from the current sign-in; events never edit the immutable first report.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/feedback/{feedback_id}/events (the `AppendFeedbackEvent` operationId).
 	AppendFeedbackEventWithBodyWithResponse(ctx context.Context, feedbackId FeedbackID, params *AppendFeedbackEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AppendFeedbackEventResponse, error)
 
 	// AppendFeedbackEventWithResponse Reply, record a checkout update, resolve, or reopen feedback
+	//
+	// Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Control derives the verified author from the current sign-in; events never edit the immutable first report.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -15929,6 +17183,8 @@ type ClientWithResponsesInterface interface {
 
 	// CreateGuestDemoWithResponse Create a restricted guest credential for the built-in demo
 	//
+	// Create a source-address-bound guest trial when guest demos are enabled. No existing credential is required. Network issuance limits apply; the returned credential grants only restricted demo operations, not a control session.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/guest-demo (the `CreateGuestDemo` operationId).
@@ -15936,22 +17192,34 @@ type ClientWithResponsesInterface interface {
 
 	// AllocateGuestDemoNumberWithResponse Allocate a new hostname number for this guest trial
 	//
+	// Allocate the next demo hostname number using the guest credential returned by createGuestDemo. Control checks the trial deadline, source address, remaining allowance, and absence of an open demo publish run.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/guest-demo/number (the `AllocateGuestDemoNumber` operationId).
 	AllocateGuestDemoNumberWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AllocateGuestDemoNumberResponse, error)
 
-	// EnrollGuestPublisherWithBodyWithResponse performs a POST /v1/guest-demo/publisher (the `EnrollGuestPublisher` operationId) request,
-	// with any type of body and a specified content type.
+	// EnrollGuestPublisherWithBodyWithResponse Enroll a publisher key for the guest trial's assigned demo URL
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Authenticate with the guest trial credential and bind an Ed25519 key to the trial's assigned public URL. Control checks the trial and validated request source; the resulting identity grants no general control session or service management permission.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/guest-demo/publisher (the `EnrollGuestPublisher` operationId).
 	EnrollGuestPublisherWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*EnrollGuestPublisherResponse, error)
 
-	// EnrollGuestPublisherWithResponse performs a POST /v1/guest-demo/publisher (the `EnrollGuestPublisher` operationId) request.
+	// EnrollGuestPublisherWithResponse Enroll a publisher key for the guest trial's assigned demo URL
+	//
+	// Authenticate with the guest trial credential and bind an Ed25519 key to the trial's assigned public URL. Control checks the trial and validated request source; the resulting identity grants no general control session or service management permission.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/guest-demo/publisher (the `EnrollGuestPublisher` operationId).
 	EnrollGuestPublisherWithResponse(ctx context.Context, body EnrollGuestPublisherJSONRequestBody, reqEditors ...RequestEditorFn) (*EnrollGuestPublisherResponse, error)
 
 	// GetHealthWithResponse Confirm that the control HTTP server is serving
+	//
+	// Check that the control HTTP handler responds. No credential is required; use getReadiness to check whether the process can serve its configured role.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -15960,12 +17228,16 @@ type ClientWithResponsesInterface interface {
 
 	// CreatePreviewWithBodyWithResponse Create or reuse a preview for one team
 	//
+	// Save or reuse a preview identity for the selected team and idempotency key. The preview groups public URLs; creation alone does not grant visitor access or start their publish runs.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/previews (the `CreatePreview` operationId).
 	CreatePreviewWithBodyWithResponse(ctx context.Context, params *CreatePreviewParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePreviewResponse, error)
 
 	// CreatePreviewWithResponse Create or reuse a preview for one team
+	//
+	// Save or reuse a preview identity for the selected team and idempotency key. The preview groups public URLs; creation alone does not grant visitor access or start their publish runs.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -15974,12 +17246,16 @@ type ClientWithResponsesInterface interface {
 
 	// GetPreviewWithResponse Read a preview and its public URLs
 	//
+	// Read one preview's saved identity, public URL membership, and team access setting under current management authorization. Active publication and visitor permission are checked separately.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/previews/{preview_id} (the `GetPreview` operationId).
 	GetPreviewWithResponse(ctx context.Context, previewId PreviewID, reqEditors ...RequestEditorFn) (*GetPreviewResponse, error)
 
 	// AddPreviewPublicURLWithBodyWithResponse Add an authorized public URL to a preview
+	//
+	// Add an existing authorized public URL to the preview. This changes future preview membership, not the immutable public URL snapshot held by an already-created share.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -15988,12 +17264,16 @@ type ClientWithResponsesInterface interface {
 
 	// AddPreviewPublicURLWithResponse Add an authorized public URL to a preview
 	//
+	// Add an existing authorized public URL to the preview. This changes future preview membership, not the immutable public URL snapshot held by an already-created share.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/previews/{preview_id}/public-urls (the `AddPreviewPublicURL` operationId).
 	AddPreviewPublicURLWithResponse(ctx context.Context, previewId PreviewID, body AddPreviewPublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*AddPreviewPublicURLResponse, error)
 
 	// ListSharesWithResponse List shares for a preview
+	//
+	// Read a cursor-paginated inventory of the preview's manageable shares without their secrets. A stored share record does not itself function as a share link.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -16002,12 +17282,16 @@ type ClientWithResponsesInterface interface {
 
 	// CreateShareWithBodyWithResponse Store one share for a snapshot of authorized public URLs
 	//
+	// Store a share using current preview management authorization and an idempotency key. It captures the authorized public URL IDs now; later preview membership changes do not expand that share's access.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/previews/{preview_id}/shares (the `CreateShare` operationId).
 	CreateShareWithBodyWithResponse(ctx context.Context, previewId PreviewID, params *CreateShareParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateShareResponse, error)
 
 	// CreateShareWithResponse Store one share for a snapshot of authorized public URLs
+	//
+	// Store a share using current preview management authorization and an idempotency key. It captures the authorized public URL IDs now; later preview membership changes do not expand that share's access.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -16016,6 +17300,8 @@ type ClientWithResponsesInterface interface {
 
 	// SetPreviewTeamAccessWithBodyWithResponse Enable or disable team visitor access for this preview
 	//
+	// Set the preview's opt-in team access grant using current management authorization. Enabled access still requires a current team member's sign-in; it does not make the included public URLs anonymous.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /v1/previews/{preview_id}/team-access (the `SetPreviewTeamAccess` operationId).
@@ -16023,109 +17309,151 @@ type ClientWithResponsesInterface interface {
 
 	// SetPreviewTeamAccessWithResponse Enable or disable team visitor access for this preview
 	//
+	// Set the preview's opt-in team access grant using current management authorization. Enabled access still requires a current team member's sign-in; it does not make the included public URLs anonymous.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /v1/previews/{preview_id}/team-access (the `SetPreviewTeamAccess` operationId).
 	SetPreviewTeamAccessWithResponse(ctx context.Context, previewId PreviewID, body SetPreviewTeamAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*SetPreviewTeamAccessResponse, error)
 
-	// GetProjectConfigurationWithResponse performs a GET /v1/projects/{project_key}/configuration (the `GetProjectConfiguration` operationId) request.
+	// GetProjectConfigurationWithResponse Read a project's applied configuration and publisher status
+	//
+	// Read the normalized desired configuration and observed publisher revisions for the selected team and project. Requires current project management permission; the response can include targets and must not be exposed as public project metadata.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/projects/{project_key}/configuration (the `GetProjectConfiguration` operationId).
 	GetProjectConfigurationWithResponse(ctx context.Context, projectKey string, params *GetProjectConfigurationParams, reqEditors ...RequestEditorFn) (*GetProjectConfigurationResponse, error)
 
-	// ApplyProjectConfigurationWithBodyWithResponse performs a PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId) request,
-	// with any type of body and a specified content type.
+	// ApplyProjectConfigurationWithBodyWithResponse Apply a project's desired services and publisher groups
 	//
 	// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId).
 	ApplyProjectConfigurationWithBodyWithResponse(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApplyProjectConfigurationResponse, error)
 
-	// ApplyProjectConfigurationWithResponse performs a PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// ApplyProjectConfigurationWithResponse Apply a project's desired services and publisher groups
 	//
 	// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId).
 	ApplyProjectConfigurationWithResponse(ctx context.Context, projectKey string, body ApplyProjectConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*ApplyProjectConfigurationResponse, error)
 
-	// GetLocalProjectServiceWithResponse performs a GET /v1/projects/{project_key}/local-services/{service} (the `GetLocalProjectService` operationId) request.
+	// GetLocalProjectServiceWithResponse Resolve one existing source-bound worktree service
 	//
 	// Read the exact service previously realized for this team, project source, service key, and worktree. Requires current ordinary private visitor access, not project management access. Returns only immutable identity and approved visitor protocol/TLS metadata, never configuration, targets, or credentials. Does not realize or adopt a service. Missing or unauthorized bindings return not found; an authorized binding with another source fingerprint returns conflict. No other team, project, worktree, or saved name is searched.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/projects/{project_key}/local-services/{service} (the `GetLocalProjectService` operationId).
 	GetLocalProjectServiceWithResponse(ctx context.Context, projectKey string, service string, params *GetLocalProjectServiceParams, reqEditors ...RequestEditorFn) (*GetLocalProjectServiceResponse, error)
 
-	// RealizeLocalProjectServiceWithBodyWithResponse performs a PUT /v1/projects/{project_key}/local-services/{service} (the `RealizeLocalProjectService` operationId) request,
-	// with any type of body and a specified content type.
+	// RealizeLocalProjectServiceWithBodyWithResponse Realize one declared local service for a worktree
 	//
 	// Realize only one source-bound local service for one worktree. Private IDs are allocated here with worktree-scoped names, never adopted by name. Public IDs must be exact caller-owned app URLs already allocated by this runtime, bound to the caller's membership or to the caller's own personal team when current namespace authorization selects shared scope. Organization shared URLs and another member's or team's URLs are rejected. Records provenance before first apply; later apply reconciles that legitimate resource. When configuration has been applied the local declaration must match it. Does not apply remote group changes.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/projects/{project_key}/local-services/{service} (the `RealizeLocalProjectService` operationId).
 	RealizeLocalProjectServiceWithBodyWithResponse(ctx context.Context, projectKey string, service string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RealizeLocalProjectServiceResponse, error)
 
-	// RealizeLocalProjectServiceWithResponse performs a PUT /v1/projects/{project_key}/local-services/{service} (the `RealizeLocalProjectService` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// RealizeLocalProjectServiceWithResponse Realize one declared local service for a worktree
 	//
 	// Realize only one source-bound local service for one worktree. Private IDs are allocated here with worktree-scoped names, never adopted by name. Public IDs must be exact caller-owned app URLs already allocated by this runtime, bound to the caller's membership or to the caller's own personal team when current namespace authorization selects shared scope. Organization shared URLs and another member's or team's URLs are rejected. Records provenance before first apply; later apply reconciles that legitimate resource. When configuration has been applied the local declaration must match it. Does not apply remote group changes.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/projects/{project_key}/local-services/{service} (the `RealizeLocalProjectService` operationId).
 	RealizeLocalProjectServiceWithResponse(ctx context.Context, projectKey string, service string, body RealizeLocalProjectServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*RealizeLocalProjectServiceResponse, error)
 
-	// GetProjectPublicMetadataWithResponse performs a GET /v1/projects/{project_key}/public-metadata (the `GetProjectPublicMetadata` operationId) request.
+	// GetProjectPublicMetadataWithResponse Read visitor-safe project service identities and hostnames
 	//
 	// Browser-safe project source and public service IDs/hostnames, including exact local worktree realizations before or after first apply. Returns only public services the caller may visit, or all public services for a project manager. A service key may appear more than once for separate worktree URLs. Never returns configuration, targets, trust, grants, or publisher data.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/projects/{project_key}/public-metadata (the `GetProjectPublicMetadata` operationId).
 	GetProjectPublicMetadataWithResponse(ctx context.Context, projectKey string, params *GetProjectPublicMetadataParams, reqEditors ...RequestEditorFn) (*GetProjectPublicMetadataResponse, error)
 
-	// CreatePublisherGroupEnrollmentWithBodyWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId) request,
-	// with any type of body and a specified content type.
+	// CreatePublisherGroupEnrollmentWithBodyWithResponse Issue a bounded enrollment key for a project's publisher group
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Create an expiring bootstrap credential using current project management permission. Each enrolled replica supplies its own key; the enrollment's member limit bounds how many identities it can create.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId).
 	CreatePublisherGroupEnrollmentWithBodyWithResponse(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublisherGroupEnrollmentResponse, error)
 
-	// CreatePublisherGroupEnrollmentWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId) request.
+	// CreatePublisherGroupEnrollmentWithResponse Issue a bounded enrollment key for a project's publisher group
+	//
+	// Create an expiring bootstrap credential using current project management permission. Each enrolled replica supplies its own key; the enrollment's member limit bounds how many identities it can create.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId).
 	CreatePublisherGroupEnrollmentWithResponse(ctx context.Context, projectKey string, groupName string, body CreatePublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublisherGroupEnrollmentResponse, error)
 
-	// RevokePublisherGroupMemberWithResponse performs a DELETE /v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id} (the `RevokePublisherGroupMember` operationId) request.
+	// RevokePublisherGroupMemberWithResponse Revoke one enrolled publisher replica from a group
+	//
+	// Revoke the exact enrolled publisher identity using current project management permission. Control closes that member's public URL and service runs without revoking other group members.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id} (the `RevokePublisherGroupMember` operationId).
 	RevokePublisherGroupMemberWithResponse(ctx context.Context, projectKey string, groupName string, publisherIdentityId string, params *RevokePublisherGroupMemberParams, reqEditors ...RequestEditorFn) (*RevokePublisherGroupMemberResponse, error)
 
-	// RenamePublisherNamespaceWithBodyWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId) request,
-	// with any type of body and a specified content type.
+	// RenamePublisherNamespaceWithBodyWithResponse Replace a publisher group's DNS namespace label
 	//
 	// Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId).
 	RenamePublisherNamespaceWithBodyWithResponse(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenamePublisherNamespaceResponse, error)
 
-	// RenamePublisherNamespaceWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// RenamePublisherNamespaceWithResponse Replace a publisher group's DNS namespace label
 	//
 	// Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
-	RenamePublisherNamespaceWithResponse(ctx context.Context, projectKey string, groupName string, body RenamePublisherNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*RenamePublisherNamespaceResponse, error)
-
-	// RenamePublisherGroupWithBodyWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId) request,
-	// with any type of body and a specified content type.
 	//
-	// Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	RenamePublisherGroupWithBodyWithResponse(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenamePublisherGroupResponse, error)
-
-	// RenamePublisherGroupWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
+	// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId).
+	RenamePublisherNamespaceWithResponse(ctx context.Context, projectKey string, groupName string, body RenamePublisherNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*RenamePublisherNamespaceResponse, error)
+
+	// RenamePublisherGroupWithBodyWithResponse Rename a group's configuration selector without changing endpoints
+	//
 	// Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId).
+	RenamePublisherGroupWithBodyWithResponse(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenamePublisherGroupResponse, error)
+
+	// RenamePublisherGroupWithResponse Rename a group's configuration selector without changing endpoints
+	//
+	// Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId).
 	RenamePublisherGroupWithResponse(ctx context.Context, projectKey string, groupName string, body RenamePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*RenamePublisherGroupResponse, error)
 
-	// GetProjectServiceWithResponse performs a GET /v1/projects/{project_key}/services/{service} (the `GetProjectService` operationId) request.
+	// GetProjectServiceWithResponse Resolve an applied service by project source and key
 	//
 	// Resolve an applied service by its exact Git source and configuration key using current visitor access. Does not return targets or require project-manager permission.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/projects/{project_key}/services/{service} (the `GetProjectService` operationId).
 	GetProjectServiceWithResponse(ctx context.Context, projectKey string, service ServiceName, params *GetProjectServiceParams, reqEditors ...RequestEditorFn) (*GetProjectServiceResponse, error)
 
 	// ListPublicURLsWithResponse List public URLs for one team
+	//
+	// Read a cursor-paginated inventory of public URLs the caller may manage in one team. An exact canonical_hostname filter returns zero or one non-deleted URL and cannot be combined with a cursor.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -16134,12 +17462,16 @@ type ClientWithResponsesInterface interface {
 
 	// CreatePublicURLWithBodyWithResponse Create one team public URL
 	//
+	// Save an authorized hostname, target, and visitor policy using an idempotency key. A control session selects an authorized team scope; a guest credential can create only its assigned ephemeral demo hostname. Creation does not start a publish run.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
 	CreatePublicURLWithBodyWithResponse(ctx context.Context, params *CreatePublicURLParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublicURLResponse, error)
 
 	// CreatePublicURLWithResponse Create one team public URL
+	//
+	// Save an authorized hostname, target, and visitor policy using an idempotency key. A control session selects an authorized team scope; a guest credential can create only its assigned ephemeral demo hostname. Creation does not start a publish run.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -16148,12 +17480,16 @@ type ClientWithResponsesInterface interface {
 
 	// DeletePublicURLWithResponse Delete one public URL and close its publish run
 	//
+	// Delete the saved public URL under current management authorization and close its active publish run. The hostname cannot keep serving through the deleted URL's old run credentials.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /v1/public-urls/{public_url_id} (the `DeletePublicURL` operationId).
 	DeletePublicURLWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*DeletePublicURLResponse, error)
 
 	// GetPublicURLWithResponse Read one public URL
+	//
+	// Read one saved public URL under current management authorization. Its saved policy and lifecycle are separate from whether an active publish run is routable.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -16162,12 +17498,16 @@ type ClientWithResponsesInterface interface {
 
 	// UpdatePublicURLWithBodyWithResponse Update a public URL's target and IP policy
 	//
+	// Replace the target and IP policy, optionally changing the post-quantum requirement, under current management authorization. Use replaceVisitorAccess for complete visitor access policy replacement; this operation does not create a new publish run.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
 	UpdatePublicURLWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdatePublicURLResponse, error)
 
 	// UpdatePublicURLWithResponse Update a public URL's target and IP policy
+	//
+	// Replace the target and IP policy, optionally changing the post-quantum requirement, under current management authorization. Use replaceVisitorAccess for complete visitor access policy replacement; this operation does not create a new publish run.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -16176,12 +17516,16 @@ type ClientWithResponsesInterface interface {
 
 	// ReplaceVisitorAccessWithBodyWithResponse Replace the complete live visitor access policy
 	//
+	// Replace the complete saved visitor access policy under current public URL management authorization. Omitted optional policy members are not a partial patch; publishers must enforce the resulting current visitor policy for new work.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /v1/public-urls/{public_url_id}/access (the `ReplaceVisitorAccess` operationId).
 	ReplaceVisitorAccessWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReplaceVisitorAccessResponse, error)
 
 	// ReplaceVisitorAccessWithResponse Replace the complete live visitor access policy
+	//
+	// Replace the complete saved visitor access policy under current public URL management authorization. Omitted optional policy members are not a partial patch; publishers must enforce the resulting current visitor policy for new work.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -16190,6 +17534,8 @@ type ClientWithResponsesInterface interface {
 
 	// CreatePublishRunWithBodyWithResponse Create a publish run and allocate its publish run number
 	//
+	// Start a new publication under the exact publisher grant using an idempotency key and Publisher-Run-Proof signature. The publisher access token does not replace the required proof of the signing key; the response includes the separate run token and two connection assignments.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
@@ -16197,32 +17543,52 @@ type ClientWithResponsesInterface interface {
 
 	// CreatePublishRunWithResponse Create a publish run and allocate its publish run number
 	//
+	// Start a new publication under the exact publisher grant using an idempotency key and Publisher-Run-Proof signature. The publisher access token does not replace the required proof of the signing key; the response includes the separate run token and two connection assignments.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
 	CreatePublishRunWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, body CreatePublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublishRunResponse, error)
 
-	// ListVisitorGrantsWithResponse performs a GET /v1/public-urls/{public_url_id}/visitor-grants (the `ListVisitorGrants` operationId) request.
+	// ListVisitorGrantsWithResponse List visitor grants for one manageable public URL
+	//
+	// Read exact-public-URL team and identity visitor grants under current management authorization. Listing a grant is not a substitute for checking the visitor's current access.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/public-urls/{public_url_id}/visitor-grants (the `ListVisitorGrants` operationId).
 	ListVisitorGrantsWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*ListVisitorGrantsResponse, error)
 
-	// CreateTeamVisitorGrantWithBodyWithResponse performs a POST /v1/public-urls/{public_url_id}/visitor-grants (the `CreateTeamVisitorGrant` operationId) request,
-	// with any type of body and a specified content type.
+	// CreateTeamVisitorGrantWithBodyWithResponse Grant current members of a team access to one public URL
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Create an exact-public-URL grant for current members of the selected team using management authorization and an idempotency key. This grants visitor access, not public URL management or publisher authority.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-grants (the `CreateTeamVisitorGrant` operationId).
 	CreateTeamVisitorGrantWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateTeamVisitorGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateTeamVisitorGrantResponse, error)
 
-	// CreateTeamVisitorGrantWithResponse performs a POST /v1/public-urls/{public_url_id}/visitor-grants (the `CreateTeamVisitorGrant` operationId) request.
+	// CreateTeamVisitorGrantWithResponse Grant current members of a team access to one public URL
+	//
+	// Create an exact-public-URL grant for current members of the selected team using management authorization and an idempotency key. This grants visitor access, not public URL management or publisher authority.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-grants (the `CreateTeamVisitorGrant` operationId).
 	CreateTeamVisitorGrantWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateTeamVisitorGrantParams, body CreateTeamVisitorGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateTeamVisitorGrantResponse, error)
 
-	// RevokeVisitorGrantWithResponse performs a DELETE /v1/public-urls/{public_url_id}/visitor-grants/{grant_id} (the `RevokeVisitorGrant` operationId) request.
+	// RevokeVisitorGrantWithResponse Revoke one public URL visitor grant
+	//
+	// Revoke the exact grant under current public URL management authorization. Current visitor policy determines access after revocation; other grants for the URL remain separate.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/public-urls/{public_url_id}/visitor-grants/{grant_id} (the `RevokeVisitorGrant` operationId).
 	RevokeVisitorGrantWithResponse(ctx context.Context, publicUrlId PublicURLID, grantId string, reqEditors ...RequestEditorFn) (*RevokeVisitorGrantResponse, error)
 
 	// CreateIdentityVisitorGrantWithBodyWithResponse Create an explicit identity grant, including for the current identity
+	//
+	// Create an exact-public-URL identity grant under current management authorization. Use an explicit identity grant even for the current identity when access must not depend on team membership.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -16231,32 +17597,52 @@ type ClientWithResponsesInterface interface {
 
 	// CreateIdentityVisitorGrantWithResponse Create an explicit identity grant, including for the current identity
 	//
+	// Create an exact-public-URL identity grant under current management authorization. Use an explicit identity grant even for the current identity when access must not depend on team membership.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-identity-grants (the `CreateIdentityVisitorGrant` operationId).
 	CreateIdentityVisitorGrantWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateIdentityVisitorGrantParams, body CreateIdentityVisitorGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateIdentityVisitorGrantResponse, error)
 
-	// ListVisitorInvitationsWithResponse performs a GET /v1/public-urls/{public_url_id}/visitor-invitations (the `ListVisitorInvitations` operationId) request.
+	// ListVisitorInvitationsWithResponse List named visitor invitations for one public URL
+	//
+	// Read invitation records using current public URL management authorization. Invitation inventory does not reveal a reusable visitor credential or grant management permission to its recipients.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/public-urls/{public_url_id}/visitor-invitations (the `ListVisitorInvitations` operationId).
 	ListVisitorInvitationsWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*ListVisitorInvitationsResponse, error)
 
-	// CreateVisitorInvitationWithBodyWithResponse performs a POST /v1/public-urls/{public_url_id}/visitor-invitations (the `CreateVisitorInvitation` operationId) request,
-	// with any type of body and a specified content type.
+	// CreateVisitorInvitationWithBodyWithResponse Invite a verified email identity to one public URL
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Issue an expiring one-use invitation under current public URL management authorization. Acceptance requires the recipient's verified email and creates an exact-URL identity grant, not team membership.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-invitations (the `CreateVisitorInvitation` operationId).
 	CreateVisitorInvitationWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateVisitorInvitationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateVisitorInvitationResponse, error)
 
-	// CreateVisitorInvitationWithResponse performs a POST /v1/public-urls/{public_url_id}/visitor-invitations (the `CreateVisitorInvitation` operationId) request.
+	// CreateVisitorInvitationWithResponse Invite a verified email identity to one public URL
+	//
+	// Issue an expiring one-use invitation under current public URL management authorization. Acceptance requires the recipient's verified email and creates an exact-URL identity grant, not team membership.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-invitations (the `CreateVisitorInvitation` operationId).
 	CreateVisitorInvitationWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateVisitorInvitationParams, body CreateVisitorInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVisitorInvitationResponse, error)
 
-	// RevokeVisitorInvitationWithResponse performs a DELETE /v1/public-urls/{public_url_id}/visitor-invitations/{invitation_id} (the `RevokeVisitorInvitation` operationId) request.
+	// RevokeVisitorInvitationWithResponse Revoke a public URL invitation and its accepted identity grant
+	//
+	// Revoke the named invitation using current public URL management authorization. If it was accepted, revoke the identity grant created by that invitation as well.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/public-urls/{public_url_id}/visitor-invitations/{invitation_id} (the `RevokeVisitorInvitation` operationId).
 	RevokeVisitorInvitationWithResponse(ctx context.Context, publicUrlId PublicURLID, invitationId string, reqEditors ...RequestEditorFn) (*RevokeVisitorInvitationResponse, error)
 
 	// ClosePublishRunWithResponse Close and drain a publish run without deleting its public URL
+	//
+	// Close the exact publication using its publish run token. Saved public URLs remain available for a later run; ephemeral public URLs follow their removal lifecycle instead.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -16265,12 +17651,16 @@ type ClientWithResponsesInterface interface {
 
 	// CheckPreviewBrowserAccessWithBodyWithResponse Check a browser cookie against current preview access
 	//
+	// Authenticate the publisher with the exact publish run token and check the body's browser cookie secret against current public URL and preview access. A previously issued cookie alone is not proof of current permission.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/access (the `CheckPreviewBrowserAccess` operationId).
 	CheckPreviewBrowserAccessWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CheckPreviewBrowserAccessResponse, error)
 
 	// CheckPreviewBrowserAccessWithResponse Check a browser cookie against current preview access
+	//
+	// Authenticate the publisher with the exact publish run token and check the body's browser cookie secret against current public URL and preview access. A previously issued cookie alone is not proof of current permission.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -16279,12 +17669,16 @@ type ClientWithResponsesInterface interface {
 
 	// RedeemPreviewBrowserHandoffWithBodyWithResponse Redeem a one-time browser handoff on the publisher
 	//
+	// Authenticate the publisher with the exact publish run token and exchange the body's one-time handoff for a host-bound browser cookie secret. A visitor's control session does not replace the publisher credential.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/handoff (the `RedeemPreviewBrowserHandoff` operationId).
 	RedeemPreviewBrowserHandoffWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemPreviewBrowserHandoffResponse, error)
 
 	// RedeemPreviewBrowserHandoffWithResponse Redeem a one-time browser handoff on the publisher
+	//
+	// Authenticate the publisher with the exact publish run token and exchange the body's one-time handoff for a host-bound browser cookie secret. A visitor's control session does not replace the publisher credential.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -16293,12 +17687,16 @@ type ClientWithResponsesInterface interface {
 
 	// RevokePreviewBrowserAccessWithBodyWithResponse Revoke the current browser session
 	//
+	// Authenticate the publisher with the exact publish run token and revoke the host-bound browser session named in the body. Other hosts and the person's control session remain separate.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/logout (the `RevokePreviewBrowserAccess` operationId).
 	RevokePreviewBrowserAccessWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RevokePreviewBrowserAccessResponse, error)
 
 	// RevokePreviewBrowserAccessWithResponse Revoke the current browser session
+	//
+	// Authenticate the publisher with the exact publish run token and revoke the host-bound browser session named in the body. Other hosts and the person's control session remain separate.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -16307,12 +17705,16 @@ type ClientWithResponsesInterface interface {
 
 	// MarkPublishRunCertificateInstalledWithBodyWithResponse Record installation of the current public URL certificate
 	//
+	// Acknowledge the exact approved public URL certificate installed by the publisher using this run's token and number. Installation alone does not establish publisher connection readiness.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
 	MarkPublishRunCertificateInstalledWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkPublishRunCertificateInstalledResponse, error)
 
 	// MarkPublishRunCertificateInstalledWithResponse Record installation of the current public URL certificate
+	//
+	// Acknowledge the exact approved public URL certificate installed by the publisher using this run's token and number. Installation alone does not establish publisher connection readiness.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -16321,12 +17723,16 @@ type ClientWithResponsesInterface interface {
 
 	// CreateCertificateIssuanceWithBodyWithResponse Begin issuance for the publish run's certificate plan
 	//
+	// Submit the publisher's CSR under the exact publish run token and approved certificate plan. The idempotency key identifies one issuance attempt; a control session or publisher access token cannot substitute for the run token.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
 	CreateCertificateIssuanceWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCertificateIssuanceResponse, error)
 
 	// CreateCertificateIssuanceWithResponse Begin issuance for the publish run's certificate plan
+	//
+	// Submit the publisher's CSR under the exact publish run token and approved certificate plan. The idempotency key identifies one issuance attempt; a control session or publisher access token cannot substitute for the run token.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -16335,12 +17741,16 @@ type ClientWithResponsesInterface interface {
 
 	// CreateFeedbackReportWithBodyWithResponse Store a reviewer's first report for a preview page
 	//
+	// Submit the immutable first report through the exact publish run token with the reviewer's current access proof in the body. Control verifies the author and evidence; publisher authentication alone does not authorize a reviewer report.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback (the `CreateFeedbackReport` operationId).
 	CreateFeedbackReportWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, params *CreateFeedbackReportParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateFeedbackReportResponse, error)
 
 	// CreateFeedbackReportWithResponse Store a reviewer's first report for a preview page
+	//
+	// Submit the immutable first report through the exact publish run token with the reviewer's current access proof in the body. Control verifies the author and evidence; publisher authentication alone does not authorize a reviewer report.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -16349,12 +17759,16 @@ type ClientWithResponsesInterface interface {
 
 	// ListPreviewPageFeedbackWithBodyWithResponse List feedback on one page for a reviewer
 	//
+	// Read feedback for one page through the exact publish run token and the reviewer's body access proof. The result is limited to the authorized preview context, not a team-wide management inventory.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
 	ListPreviewPageFeedbackWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ListPreviewPageFeedbackResponse, error)
 
 	// ListPreviewPageFeedbackWithResponse List feedback on one page for a reviewer
+	//
+	// Read feedback for one page through the exact publish run token and the reviewer's body access proof. The result is limited to the authorized preview context, not a team-wide management inventory.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -16363,12 +17777,16 @@ type ClientWithResponsesInterface interface {
 
 	// AppendReviewerFeedbackEventWithBodyWithResponse Reply, resolve, or reopen feedback through preview access
 	//
+	// Append a reply, resolution, or reopening through the exact publish run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
 	AppendReviewerFeedbackEventWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AppendReviewerFeedbackEventResponse, error)
 
 	// AppendReviewerFeedbackEventWithResponse Reply, resolve, or reopen feedback through preview access
+	//
+	// Append a reply, resolution, or reopening through the exact publish run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -16377,12 +17795,16 @@ type ClientWithResponsesInterface interface {
 
 	// ListReviewerFeedbackEventsWithBodyWithResponse Read thread events through a current publisher connection
 	//
+	// Read one thread's ordered follow-up history through the exact publish run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
 	ListReviewerFeedbackEventsWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ListReviewerFeedbackEventsResponse, error)
 
 	// ListReviewerFeedbackEventsWithResponse Read thread events through a current publisher connection
+	//
+	// Read one thread's ordered follow-up history through the exact publish run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -16391,12 +17813,16 @@ type ClientWithResponsesInterface interface {
 
 	// GetReviewerFeedbackThreadWithBodyWithResponse Read a feedback thread through a current publisher connection
 	//
+	// Read one thread through the exact publish run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
 	GetReviewerFeedbackThreadWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*GetReviewerFeedbackThreadResponse, error)
 
 	// GetReviewerFeedbackThreadWithResponse Read a feedback thread through a current publisher connection
+	//
+	// Read one thread through the exact publish run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -16405,12 +17831,16 @@ type ClientWithResponsesInterface interface {
 
 	// HeartbeatPublishRunWithBodyWithResponse Renew a publish run and replace missing publisher connections
 	//
+	// Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
 	HeartbeatPublishRunWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*HeartbeatPublishRunResponse, error)
 
 	// HeartbeatPublishRunWithResponse Renew a publish run and replace missing publisher connections
+	//
+	// Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -16419,12 +17849,16 @@ type ClientWithResponsesInterface interface {
 
 	// CreatePublishRunPreviewWithBodyWithResponse Create feedback context for one ephemeral demo publish run
 	//
+	// Create or reuse the run-scoped preview used for an ephemeral demo's feedback. Authenticate with that exact publish run token and number; this is not ordinary project preview management.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/preview (the `CreatePublishRunPreview` operationId).
 	CreatePublishRunPreviewWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublishRunPreviewResponse, error)
 
 	// CreatePublishRunPreviewWithResponse Create feedback context for one ephemeral demo publish run
+	//
+	// Create or reuse the run-scoped preview used for an ephemeral demo's feedback. Authenticate with that exact publish run token and number; this is not ordinary project preview management.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -16433,12 +17867,16 @@ type ClientWithResponsesInterface interface {
 
 	// MarkPublishRunReadyWithBodyWithResponse Mark a publish run ready after its certificate and two publisher connections are ready
 	//
+	// Ask control to mark the current run routable using its publish run token and number. First readiness requires the approved certificate and two ready publisher connections on independent relay services.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
 	MarkPublishRunReadyWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkPublishRunReadyResponse, error)
 
 	// MarkPublishRunReadyWithResponse Mark a publish run ready after its certificate and two publisher connections are ready
+	//
+	// Ask control to mark the current run routable using its publish run token and number. First readiness requires the approved certificate and two ready publisher connections on independent relay services.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -16447,12 +17885,16 @@ type ClientWithResponsesInterface interface {
 
 	// EnableShareAccessWithBodyWithResponse Enable share-aware HTTP handling for this preview publish run
 	//
+	// Report that the publisher has installed share-aware HTTP handling for this exact run and number. Authenticate with its publish run token; this does not create a share or grant visitor access by itself.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-access (the `EnableShareAccess` operationId).
 	EnableShareAccessWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*EnableShareAccessResponse, error)
 
 	// EnableShareAccessWithResponse Enable share-aware HTTP handling for this preview publish run
+	//
+	// Report that the publisher has installed share-aware HTTP handling for this exact run and number. Authenticate with its publish run token; this does not create a share or grant visitor access by itself.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -16461,6 +17903,8 @@ type ClientWithResponsesInterface interface {
 
 	// RedeemPublishRunShareWithBodyWithResponse Redeem a share link or one short-lived cross-host handoff
 	//
+	// Authenticate the publisher with its exact publish run token and redeem the body's share secret or one-time cross-host handoff. Control checks the share's captured public URL IDs, deadline, and revocation before issuing a host-only visitor session.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-redemptions (the `RedeemPublishRunShare` operationId).
@@ -16468,22 +17912,34 @@ type ClientWithResponsesInterface interface {
 
 	// RedeemPublishRunShareWithResponse Redeem a share link or one short-lived cross-host handoff
 	//
+	// Authenticate the publisher with its exact publish run token and redeem the body's share secret or one-time cross-host handoff. Control checks the share's captured public URL IDs, deadline, and revocation before issuing a host-only visitor session.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-redemptions (the `RedeemPublishRunShare` operationId).
 	RedeemPublishRunShareWithResponse(ctx context.Context, publishRunId PublishRunID, body RedeemPublishRunShareJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemPublishRunShareResponse, error)
 
-	// ReportPublishRunServiceObservationsWithBodyWithResponse performs a POST /v1/publish-runs/{run_id}/service-observations (the `ReportPublishRunServiceObservations` operationId) request,
-	// with any type of body and a specified content type.
+	// ReportPublishRunServiceObservationsWithBodyWithResponse Report service observations through a public URL publish run
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Submit bounded connection observations using the exact publish run token. Control checks the current run and counts accepted and duplicate events; observations do not create visitor grants or authorize traffic.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{run_id}/service-observations (the `ReportPublishRunServiceObservations` operationId).
 	ReportPublishRunServiceObservationsWithBodyWithResponse(ctx context.Context, runId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReportPublishRunServiceObservationsResponse, error)
 
-	// ReportPublishRunServiceObservationsWithResponse performs a POST /v1/publish-runs/{run_id}/service-observations (the `ReportPublishRunServiceObservations` operationId) request.
+	// ReportPublishRunServiceObservationsWithResponse Report service observations through a public URL publish run
+	//
+	// Submit bounded connection observations using the exact publish run token. Control checks the current run and counts accepted and duplicate events; observations do not create visitor grants or authorize traffic.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{run_id}/service-observations (the `ReportPublishRunServiceObservations` operationId).
 	ReportPublishRunServiceObservationsWithResponse(ctx context.Context, runId string, body ReportPublishRunServiceObservationsJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportPublishRunServiceObservationsResponse, error)
 
 	// CreatePublisherEnrollmentWithBodyWithResponse Issue an expiring one-use publisher enrollment
+	//
+	// Issue an expiring one-use enrollment secret under current management authorization. Enrollment installs a publisher's signing key for the selected scope; it is separate from exchanging signed assertions for short-lived publisher access tokens.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -16492,69 +17948,97 @@ type ClientWithResponsesInterface interface {
 
 	// CreatePublisherEnrollmentWithResponse Issue an expiring one-use publisher enrollment
 	//
+	// Issue an expiring one-use enrollment secret under current management authorization. Enrollment installs a publisher's signing key for the selected scope; it is separate from exchanging signed assertions for short-lived publisher access tokens.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/publisher-enrollments (the `CreatePublisherEnrollment` operationId).
 	CreatePublisherEnrollmentWithResponse(ctx context.Context, body CreatePublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublisherEnrollmentResponse, error)
 
-	// AcknowledgePublisherGroupConfigurationWithBodyWithResponse performs a POST /v1/publisher-groups/ack (the `AcknowledgePublisherGroupConfiguration` operationId) request,
-	// with any type of body and a specified content type.
+	// AcknowledgePublisherGroupConfigurationWithBodyWithResponse Acknowledge the exact configuration installed by a group replica
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher-groups/ack (the `AcknowledgePublisherGroupConfiguration` operationId).
 	AcknowledgePublisherGroupConfigurationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcknowledgePublisherGroupConfigurationResponse, error)
 
-	// AcknowledgePublisherGroupConfigurationWithResponse performs a POST /v1/publisher-groups/ack (the `AcknowledgePublisherGroupConfiguration` operationId) request.
+	// AcknowledgePublisherGroupConfigurationWithResponse Acknowledge the exact configuration installed by a group replica
+	//
+	// Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher-groups/ack (the `AcknowledgePublisherGroupConfiguration` operationId).
 	AcknowledgePublisherGroupConfigurationWithResponse(ctx context.Context, body AcknowledgePublisherGroupConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcknowledgePublisherGroupConfigurationResponse, error)
 
-	// GetPublisherGroupAssignmentsWithResponse performs a GET /v1/publisher-groups/assignments (the `GetPublisherGroupAssignments` operationId) request.
+	// GetPublisherGroupAssignmentsWithResponse Read services and grants assigned to one leased group replica
+	//
+	// Authenticate with the current pgl_ group lease and read the replica's exact service assignments and publisher grant IDs. These assignments may contain targets; a pta_ publisher access token cannot read them.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/publisher-groups/assignments (the `GetPublisherGroupAssignments` operationId).
 	GetPublisherGroupAssignmentsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetPublisherGroupAssignmentsResponse, error)
 
-	// RedeemPublisherGroupEnrollmentWithBodyWithResponse performs a POST /v1/publisher-groups/enroll (the `RedeemPublisherGroupEnrollment` operationId) request,
-	// with any type of body and a specified content type.
+	// RedeemPublisherGroupEnrollmentWithBodyWithResponse Enroll a replica's signing key with a group enrollment secret
 	//
-	// Each replica submits its own Ed25519 public key. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+	// Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher-groups/enroll (the `RedeemPublisherGroupEnrollment` operationId).
 	RedeemPublisherGroupEnrollmentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemPublisherGroupEnrollmentResponse, error)
 
-	// RedeemPublisherGroupEnrollmentWithResponse performs a POST /v1/publisher-groups/enroll (the `RedeemPublisherGroupEnrollment` operationId) request.
+	// RedeemPublisherGroupEnrollmentWithResponse Enroll a replica's signing key with a group enrollment secret
+	//
+	// Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Each replica submits its own Ed25519 public key. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+	// Corresponds with POST /v1/publisher-groups/enroll (the `RedeemPublisherGroupEnrollment` operationId).
 	RedeemPublisherGroupEnrollmentWithResponse(ctx context.Context, body RedeemPublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemPublisherGroupEnrollmentResponse, error)
 
-	// AcquirePublisherGroupLeaseWithBodyWithResponse performs a POST /v1/publisher-groups/lease (the `AcquirePublisherGroupLease` operationId) request,
-	// with any type of body and a specified content type.
+	// AcquirePublisherGroupLeaseWithBodyWithResponse Exchange a signed replica assertion for a group lease
 	//
-	// Exchange a one-use signed assertion for a short-lived group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID.
+	// Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher-groups/lease (the `AcquirePublisherGroupLease` operationId).
 	AcquirePublisherGroupLeaseWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcquirePublisherGroupLeaseResponse, error)
 
-	// AcquirePublisherGroupLeaseWithResponse performs a POST /v1/publisher-groups/lease (the `AcquirePublisherGroupLease` operationId) request.
+	// AcquirePublisherGroupLeaseWithResponse Exchange a signed replica assertion for a group lease
+	//
+	// Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Exchange a one-use signed assertion for a short-lived group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID.
+	// Corresponds with POST /v1/publisher-groups/lease (the `AcquirePublisherGroupLease` operationId).
 	AcquirePublisherGroupLeaseWithResponse(ctx context.Context, body AcquirePublisherGroupLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*AcquirePublisherGroupLeaseResponse, error)
 
-	// VerifyPublisherGroupIdentityWithBodyWithResponse performs a POST /v1/publisher-groups/verify (the `VerifyPublisherGroupIdentity` operationId) request,
-	// with any type of body and a specified content type.
+	// VerifyPublisherGroupIdentityWithBodyWithResponse Verify a replica's group membership without acquiring a lease
 	//
-	// Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The one-use assertion audience is the control URL followed by this path.
+	// Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher-groups/verify (the `VerifyPublisherGroupIdentity` operationId).
 	VerifyPublisherGroupIdentityWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*VerifyPublisherGroupIdentityResponse, error)
 
-	// VerifyPublisherGroupIdentityWithResponse performs a POST /v1/publisher-groups/verify (the `VerifyPublisherGroupIdentity` operationId) request.
+	// VerifyPublisherGroupIdentityWithResponse Verify a replica's group membership without acquiring a lease
+	//
+	// Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The one-use assertion audience is the control URL followed by this path.
+	// Corresponds with POST /v1/publisher-groups/verify (the `VerifyPublisherGroupIdentity` operationId).
 	VerifyPublisherGroupIdentityWithResponse(ctx context.Context, body VerifyPublisherGroupIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*VerifyPublisherGroupIdentityResponse, error)
 
 	// ListPublisherIdentitiesWithResponse List publisher identities and grants without secrets
+	//
+	// Read a cursor-paginated inventory of publisher identities and their grants for a manageable team. Responses omit enrollment secrets and private signing keys; an inventory entry is not a publisher credential.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -16563,41 +18047,61 @@ type ClientWithResponsesInterface interface {
 
 	// RevokePublisherIdentityWithResponse Revoke an identity independently of its grants
 	//
+	// Revoke an exact publisher identity under current team management authorization. Identity revocation invalidates its publishing authority independently of any individual grant record.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /v1/publisher-identities/{publisher_identity_id} (the `RevokePublisherIdentity` operationId).
 	RevokePublisherIdentityWithResponse(ctx context.Context, publisherIdentityId PublisherIdentityID, params *RevokePublisherIdentityParams, reqEditors ...RequestEditorFn) (*RevokePublisherIdentityResponse, error)
 
-	// CreatePublisherGrantWithBodyWithResponse performs a POST /v1/publisher-identities/{publisher_identity_id}/grants (the `CreatePublisherGrant` operationId) request,
-	// with any type of body and a specified content type.
+	// CreatePublisherGrantWithBodyWithResponse Add one authorized scope to a publisher identity
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Create a revocable publisher grant using current management authorization for the selected scope. The grant identifies what the native publisher may serve; it is not a visitor grant or a control session.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher-identities/{publisher_identity_id}/grants (the `CreatePublisherGrant` operationId).
 	CreatePublisherGrantWithBodyWithResponse(ctx context.Context, publisherIdentityId PublisherIdentityID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublisherGrantResponse, error)
 
-	// CreatePublisherGrantWithResponse performs a POST /v1/publisher-identities/{publisher_identity_id}/grants (the `CreatePublisherGrant` operationId) request.
+	// CreatePublisherGrantWithResponse Add one authorized scope to a publisher identity
+	//
+	// Create a revocable publisher grant using current management authorization for the selected scope. The grant identifies what the native publisher may serve; it is not a visitor grant or a control session.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher-identities/{publisher_identity_id}/grants (the `CreatePublisherGrant` operationId).
 	CreatePublisherGrantWithResponse(ctx context.Context, publisherIdentityId PublisherIdentityID, body CreatePublisherGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublisherGrantResponse, error)
 
-	// RevokePublisherGrantWithResponse performs a DELETE /v1/publisher-identities/{publisher_identity_id}/grants/{grant_id} (the `RevokePublisherGrant` operationId) request.
+	// RevokePublisherGrantWithResponse Revoke one publisher grant without revoking the identity
+	//
+	// Revoke the named grant under current team management authorization. Other grants on the identity remain separate; the revoked grant can no longer authorize current publishing work.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/publisher-identities/{publisher_identity_id}/grants/{grant_id} (the `RevokePublisherGrant` operationId).
 	RevokePublisherGrantWithResponse(ctx context.Context, publisherIdentityId PublisherIdentityID, grantId ResourceID, params *RevokePublisherGrantParams, reqEditors ...RequestEditorFn) (*RevokePublisherGrantResponse, error)
 
-	// ObservePublisherRuntimeWithBodyWithResponse performs a POST /v1/publisher-runtime (the `ObservePublisherRuntime` operationId) request,
-	// with any type of body and a specified content type.
+	// ObservePublisherRuntimeWithBodyWithResponse Inspect or update a signed publisher process lifetime
 	//
-	// Explicit remote runtime lifecycle, independent of enrollment, verification, and identity kind. A one-use Ed25519 assertion binds scope_id, action, process_run_id and expected_epoch through the runtime proof scope, with this path as its audience. Inspect reads the current epoch without recording an address. Start compares that epoch and installs a new process run; retries retain that run and epoch. Renew and stop require the current run and epoch. Control records only the validated request source, never a body address. Group start/renew also issue the existing group lease atomically.
+	// Explicit remote runtime lifecycle, independent of enrollment, verification, and identity kind. A one-use Ed25519 assertion binds scope_id, action, process_run_id and expected_epoch through the runtime proof scope, with this path as its audience. Inspect reads the current epoch without recording an address. Start compares that epoch and installs a new process run; retries retain that run and epoch. Renew and stop require the current run and epoch. Control records only the validated request source, never a body address. Group start/renew also issue the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher-runtime (the `ObservePublisherRuntime` operationId).
 	ObservePublisherRuntimeWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ObservePublisherRuntimeResponse, error)
 
-	// ObservePublisherRuntimeWithResponse performs a POST /v1/publisher-runtime (the `ObservePublisherRuntime` operationId) request.
+	// ObservePublisherRuntimeWithResponse Inspect or update a signed publisher process lifetime
+	//
+	// Explicit remote runtime lifecycle, independent of enrollment, verification, and identity kind. A one-use Ed25519 assertion binds scope_id, action, process_run_id and expected_epoch through the runtime proof scope, with this path as its audience. Inspect reads the current epoch without recording an address. Start compares that epoch and installs a new process run; retries retain that run and epoch. Renew and stop require the current run and epoch. Control records only the validated request source, never a body address. Group start/renew also issue the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Explicit remote runtime lifecycle, independent of enrollment, verification, and identity kind. A one-use Ed25519 assertion binds scope_id, action, process_run_id and expected_epoch through the runtime proof scope, with this path as its audience. Inspect reads the current epoch without recording an address. Start compares that epoch and installs a new process run; retries retain that run and epoch. Renew and stop require the current run and epoch. Control records only the validated request source, never a body address. Group start/renew also issue the existing group lease atomically.
+	// Corresponds with POST /v1/publisher-runtime (the `ObservePublisherRuntime` operationId).
 	ObservePublisherRuntimeWithResponse(ctx context.Context, body ObservePublisherRuntimeJSONRequestBody, reqEditors ...RequestEditorFn) (*ObservePublisherRuntimeResponse, error)
 
 	// GetPublisherPublicURLWithResponse Read the saved URL selected by the current grant
+	//
+	// Read the single saved public URL selected by the publisher access token's exact grant. Namespace allocation grants and control sessions do not substitute for an exact public URL publisher grant.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -16606,12 +18110,16 @@ type ClientWithResponsesInterface interface {
 
 	// AllocatePublisherPublicURLWithBodyWithResponse Create a temporary public URL for one ad-hoc publication
 	//
+	// Allocate one ephemeral public URL inside the namespace authorized by the publisher access token. This is publisher work, not a management operation; the exact identity and grant retain ownership of the allocation.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/publisher/public-urls (the `AllocatePublisherPublicURL` operationId).
 	AllocatePublisherPublicURLWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AllocatePublisherPublicURLResponse, error)
 
 	// AllocatePublisherPublicURLWithResponse Create a temporary public URL for one ad-hoc publication
+	//
+	// Allocate one ephemeral public URL inside the namespace authorized by the publisher access token. This is publisher work, not a management operation; the exact identity and grant retain ownership of the allocation.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -16620,386 +18128,556 @@ type ClientWithResponsesInterface interface {
 
 	// DeletePublisherPublicURLWithResponse Remove the exact URL allocated by this identity and grant
 	//
+	// Remove an ephemeral public URL owned by this exact publisher identity and grant. The namespace access token does not authorize deleting other identities' allocations or ordinary saved public URLs.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /v1/publisher/public-urls/{public_url_id} (the `DeletePublisherPublicURL` operationId).
 	DeletePublisherPublicURLWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*DeletePublisherPublicURLResponse, error)
 
-	// GetPublisherServiceWithResponse performs a GET /v1/publisher/service (the `GetPublisherService` operationId) request.
+	// GetPublisherServiceWithResponse Read the saved service selected by the current publisher grant
 	//
 	// Read the exact granted service's approved protocol and public TLS trust metadata. The publisher must declare its own matching configuration when preparing a run.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/publisher/service (the `GetPublisherService` operationId).
 	GetPublisherServiceWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetPublisherServiceResponse, error)
 
 	// GetReadinessWithResponse Confirm that the tnld role is ready to serve
+	//
+	// Check the configured tnld role's readiness without a credential. An unready process returns the same readiness shape with HTTP 503 rather than a successful health check.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/ready (the `GetReadiness` operationId).
 	GetReadinessWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReadinessResponse, error)
 
-	// AcceptServiceInvitationWithBodyWithResponse performs a POST /v1/service-invitations/accept (the `AcceptServiceInvitation` operationId) request,
-	// with any type of body and a specified content type.
+	// AcceptServiceInvitationWithBodyWithResponse Accept an invitation for the signed-in verified email identity
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Exchange the one-use invitation secret under the current signed-in identity. Control verifies the recipient email and creates an exact-service identity grant; acceptance grants no management or publisher permission.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/service-invitations/accept (the `AcceptServiceInvitation` operationId).
 	AcceptServiceInvitationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcceptServiceInvitationResponse, error)
 
-	// AcceptServiceInvitationWithResponse performs a POST /v1/service-invitations/accept (the `AcceptServiceInvitation` operationId) request.
+	// AcceptServiceInvitationWithResponse Accept an invitation for the signed-in verified email identity
+	//
+	// Exchange the one-use invitation secret under the current signed-in identity. Control verifies the recipient email and creates an exact-service identity grant; acceptance grants no management or publisher permission.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/service-invitations/accept (the `AcceptServiceInvitation` operationId).
 	AcceptServiceInvitationWithResponse(ctx context.Context, body AcceptServiceInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcceptServiceInvitationResponse, error)
 
-	// ListServicesWithResponse performs a GET /v1/services (the `ListServices` operationId) request.
+	// ListServicesWithResponse List manageable saved services in one team
 	//
 	// Team-owned saved services; never return target addresses or stream keys.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/services (the `ListServices` operationId).
 	ListServicesWithResponse(ctx context.Context, params *ListServicesParams, reqEditors ...RequestEditorFn) (*ListServicesResponse, error)
 
-	// CreateServiceWithBodyWithResponse performs a POST /v1/services (the `CreateService` operationId) request,
-	// with any type of body and a specified content type.
+	// CreateServiceWithBodyWithResponse Create one saved service with approved protocol and placement
 	//
-	// Create a team-scoped saved name. No DNS record, public URL, certificate or dedicated visitor port is allocated.
+	// Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. This service has a separate identity and lifecycle from public URLs; creating it does not start a service run or issue a certificate.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services (the `CreateService` operationId).
 	CreateServiceWithBodyWithResponse(ctx context.Context, params *CreateServiceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateServiceResponse, error)
 
-	// CreateServiceWithResponse performs a POST /v1/services (the `CreateService` operationId) request.
+	// CreateServiceWithResponse Create one saved service with approved protocol and placement
+	//
+	// Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. This service has a separate identity and lifecycle from public URLs; creating it does not start a service run or issue a certificate.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Create a team-scoped saved name. No DNS record, public URL, certificate or dedicated visitor port is allocated.
+	// Corresponds with POST /v1/services (the `CreateService` operationId).
 	CreateServiceWithResponse(ctx context.Context, params *CreateServiceParams, body CreateServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateServiceResponse, error)
 
-	// DeleteServiceWithResponse performs a DELETE /v1/services/{service_id} (the `DeleteService` operationId) request.
+	// DeleteServiceWithResponse Delete a saved service and revoke its active publication
 	//
 	// Revoke access and close any run before tombstoning its ID-keyed ingress projection.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/services/{service_id} (the `DeleteService` operationId).
 	DeleteServiceWithResponse(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*DeleteServiceResponse, error)
 
-	// GetServiceWithResponse performs a GET /v1/services/{service_id} (the `GetService` operationId) request.
+	// GetServiceWithResponse Read one saved service for management
+	//
+	// Read a service's saved identity and approved protocol/TLS metadata using current management permission. For visitor-only discovery, use listAvailableServices or getProjectService instead.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/services/{service_id} (the `GetService` operationId).
 	GetServiceWithResponse(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*GetServiceResponse, error)
 
-	// ConfigureServiceWithBodyWithResponse performs a PUT /v1/services/{service_id} (the `ConfigureService` operationId) request,
-	// with any type of body and a specified content type.
+	// ConfigureServiceWithBodyWithResponse Replace a service's approved protocol and target TLS trust
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Set the saved protocol, publisher pool, and target TLS trust snapshot using current service management permission. Publishers must declare matching trust when preparing later runs; this is not a target address update or a publication start.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/services/{service_id} (the `ConfigureService` operationId).
 	ConfigureServiceWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ConfigureServiceResponse, error)
 
-	// ConfigureServiceWithResponse performs a PUT /v1/services/{service_id} (the `ConfigureService` operationId) request.
+	// ConfigureServiceWithResponse Replace a service's approved protocol and target TLS trust
+	//
+	// Set the saved protocol, publisher pool, and target TLS trust snapshot using current service management permission. Publishers must declare matching trust when preparing later runs; this is not a target address update or a publication start.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/services/{service_id} (the `ConfigureService` operationId).
 	ConfigureServiceWithResponse(ctx context.Context, serviceId ServiceID, body ConfigureServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*ConfigureServiceResponse, error)
 
-	// IssueServiceClientCertificateWithBodyWithResponse performs a POST /v1/services/{service_id}/client-certificates (the `IssueServiceClientCertificate` operationId) request,
-	// with any type of body and a specified content type.
+	// IssueServiceClientCertificateWithBodyWithResponse Issue a service-scoped client certificate for an enrolled device
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Submit the client's CSR using the current signed-in visitor identity and an enrolled device ID. Control checks exact-service access; the private key stays with the client, and this certificate grants no management authority.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/client-certificates (the `IssueServiceClientCertificate` operationId).
 	IssueServiceClientCertificateWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueServiceClientCertificateResponse, error)
 
-	// IssueServiceClientCertificateWithResponse performs a POST /v1/services/{service_id}/client-certificates (the `IssueServiceClientCertificate` operationId) request.
+	// IssueServiceClientCertificateWithResponse Issue a service-scoped client certificate for an enrolled device
+	//
+	// Submit the client's CSR using the current signed-in visitor identity and an enrolled device ID. Control checks exact-service access; the private key stays with the client, and this certificate grants no management authority.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/client-certificates (the `IssueServiceClientCertificate` operationId).
 	IssueServiceClientCertificateWithResponse(ctx context.Context, serviceId ServiceID, body IssueServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueServiceClientCertificateResponse, error)
 
-	// PrepareConnectorPeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs (the `PrepareConnectorPeerPair` operationId) request,
-	// with any type of body and a specified content type.
+	// PrepareConnectorPeerPairWithBodyWithResponse Prepare a signed connector pair for an exact ready service run
 	//
-	// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+	// Signed create or replace for one exact ready service run. The request signature must prove the selected device or workload key. A device source also requires its matching identity's control session bearer token. A workload source authenticates with its credential in the JSON body and must omit Authorization entirely, including empty headers. The empty security object represents body authentication, not anonymous access. The selection snapshot is not a grant; current permission and both relay leases are checked again.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs (the `PrepareConnectorPeerPair` operationId).
 	PrepareConnectorPeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PrepareConnectorPeerPairResponse, error)
 
-	// PrepareConnectorPeerPairWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs (the `PrepareConnectorPeerPair` operationId) request.
+	// PrepareConnectorPeerPairWithResponse Prepare a signed connector pair for an exact ready service run
+	//
+	// Signed create or replace for one exact ready service run. The request signature must prove the selected device or workload key. A device source also requires its matching identity's control session bearer token. A workload source authenticates with its credential in the JSON body and must omit Authorization entirely, including empty headers. The empty security object represents body authentication, not anonymous access. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+	// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs (the `PrepareConnectorPeerPair` operationId).
 	PrepareConnectorPeerPairWithResponse(ctx context.Context, serviceId ServiceID, body PrepareConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*PrepareConnectorPeerPairResponse, error)
 
-	// RebindConnectorPeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind (the `RebindConnectorPeerPair` operationId) request,
-	// with any type of body and a specified content type.
+	// RebindConnectorPeerPairWithBodyWithResponse Inspect or change a retained connector pair's network binding
 	//
-	// Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+	// Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind (the `RebindConnectorPeerPair` operationId).
 	RebindConnectorPeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RebindConnectorPeerPairResponse, error)
 
-	// RebindConnectorPeerPairWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind (the `RebindConnectorPeerPair` operationId) request.
+	// RebindConnectorPeerPairWithResponse Inspect or change a retained connector pair's network binding
+	//
+	// Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+	// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind (the `RebindConnectorPeerPair` operationId).
 	RebindConnectorPeerPairWithResponse(ctx context.Context, serviceId ServiceID, pairId string, body RebindConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*RebindConnectorPeerPairResponse, error)
 
-	// RenewConnectorPeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request,
-	// with any type of body and a specified content type.
+	// RenewConnectorPeerPairWithBodyWithResponse Renew an exact signed connector pair and visitor permission
 	//
-	// Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
+	// Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId).
 	RenewConnectorPeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewConnectorPeerPairResponse, error)
 
-	// RenewConnectorPeerPairWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request.
+	// RenewConnectorPeerPairWithResponse Renew an exact signed connector pair and visitor permission
+	//
+	// Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
+	// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId).
 	RenewConnectorPeerPairWithResponse(ctx context.Context, serviceId ServiceID, pairId string, body RenewConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewConnectorPeerPairResponse, error)
 
-	// ListServiceGrantsWithResponse performs a GET /v1/services/{service_id}/grants (the `ListServiceGrants` operationId) request.
+	// ListServiceGrantsWithResponse List a service's visitor grants and retained history
 	//
 	// Current managers may read up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent; inventory is not proof of current visitor access.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/services/{service_id}/grants (the `ListServiceGrants` operationId).
 	ListServiceGrantsWithResponse(ctx context.Context, serviceId ServiceID, params *ListServiceGrantsParams, reqEditors ...RequestEditorFn) (*ListServiceGrantsResponse, error)
 
-	// CreateServiceGrantWithBodyWithResponse performs a POST /v1/services/{service_id}/grants (the `CreateServiceGrant` operationId) request,
-	// with any type of body and a specified content type.
+	// CreateServiceGrantWithBodyWithResponse Grant a team or identity access to one service
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Create an exact-service visitor grant using current service management permission and an idempotency key. A visitor grant permits service use under current policy; it does not grant service management or publisher authority.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/grants (the `CreateServiceGrant` operationId).
 	CreateServiceGrantWithBodyWithResponse(ctx context.Context, serviceId ServiceID, params *CreateServiceGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateServiceGrantResponse, error)
 
-	// CreateServiceGrantWithResponse performs a POST /v1/services/{service_id}/grants (the `CreateServiceGrant` operationId) request.
+	// CreateServiceGrantWithResponse Grant a team or identity access to one service
+	//
+	// Create an exact-service visitor grant using current service management permission and an idempotency key. A visitor grant permits service use under current policy; it does not grant service management or publisher authority.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/grants (the `CreateServiceGrant` operationId).
 	CreateServiceGrantWithResponse(ctx context.Context, serviceId ServiceID, params *CreateServiceGrantParams, body CreateServiceGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateServiceGrantResponse, error)
 
-	// RevokeServiceGrantWithResponse performs a DELETE /v1/services/{service_id}/grants/{grant_id} (the `RevokeServiceGrant` operationId) request.
+	// RevokeServiceGrantWithResponse Revoke one service visitor grant
+	//
+	// Revoke the named grant using current service management permission. Later visitor authorization checks reject access through that grant; retained history can still appear in grant inventory.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/services/{service_id}/grants/{grant_id} (the `RevokeServiceGrant` operationId).
 	RevokeServiceGrantWithResponse(ctx context.Context, serviceId ServiceID, grantId ServiceGrantID, reqEditors ...RequestEditorFn) (*RevokeServiceGrantResponse, error)
 
-	// ListServiceHTTPGrantsWithResponse performs a GET /v1/services/{service_id}/http-grants (the `ListServiceHTTPGrants` operationId) request.
+	// ListServiceHTTPGrantsWithResponse List an HTTP service's visitor credentials without secrets
 	//
 	// Secretless credential inventory for one service HTTP service. Requires current service management permission; includes expired and revoked records.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/services/{service_id}/http-grants (the `ListServiceHTTPGrants` operationId).
 	ListServiceHTTPGrantsWithResponse(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*ListServiceHTTPGrantsResponse, error)
 
-	// CreateServiceHTTPGrantWithBodyWithResponse performs a POST /v1/services/{service_id}/http-grants (the `CreateServiceHTTPGrant` operationId) request,
-	// with any type of body and a specified content type.
+	// CreateServiceHTTPGrantWithBodyWithResponse Create a service-scoped HTTP visitor token or share
 	//
 	// Create a service-scoped HTTP token or share. Requires current service management permission. The secret is returned once and grants no management or feedback permission.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/http-grants (the `CreateServiceHTTPGrant` operationId).
 	CreateServiceHTTPGrantWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateServiceHTTPGrantResponse, error)
 
-	// CreateServiceHTTPGrantWithResponse performs a POST /v1/services/{service_id}/http-grants (the `CreateServiceHTTPGrant` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// CreateServiceHTTPGrantWithResponse Create a service-scoped HTTP visitor token or share
 	//
 	// Create a service-scoped HTTP token or share. Requires current service management permission. The secret is returned once and grants no management or feedback permission.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/http-grants (the `CreateServiceHTTPGrant` operationId).
 	CreateServiceHTTPGrantWithResponse(ctx context.Context, serviceId ServiceID, body CreateServiceHTTPGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateServiceHTTPGrantResponse, error)
 
-	// RevokeServiceHTTPGrantWithResponse performs a DELETE /v1/services/{service_id}/http-grants/{grant_id} (the `RevokeServiceHTTPGrant` operationId) request.
+	// RevokeServiceHTTPGrantWithResponse Revoke one service-scoped HTTP visitor credential
+	//
+	// Revoke the named token or share using current service management permission. The credential no longer authorizes new visitor permission; retained summaries remain visible without their secrets.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/services/{service_id}/http-grants/{grant_id} (the `RevokeServiceHTTPGrant` operationId).
 	RevokeServiceHTTPGrantWithResponse(ctx context.Context, serviceId ServiceID, grantId string, reqEditors ...RequestEditorFn) (*RevokeServiceHTTPGrantResponse, error)
 
-	// ListServiceInvitationsWithResponse performs a GET /v1/services/{service_id}/invitations (the `ListServiceInvitations` operationId) request.
+	// ListServiceInvitationsWithResponse List a service's visitor invitations without secrets
 	//
 	// Current managers may read up to 100 records ordered by ID, including accepted, expired and revoked history. Follow next_cursor until absent. Never returns secrets.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/services/{service_id}/invitations (the `ListServiceInvitations` operationId).
 	ListServiceInvitationsWithResponse(ctx context.Context, serviceId ServiceID, params *ListServiceInvitationsParams, reqEditors ...RequestEditorFn) (*ListServiceInvitationsResponse, error)
 
-	// InviteServiceVisitorWithBodyWithResponse performs a POST /v1/services/{service_id}/invitations (the `InviteServiceVisitor` operationId) request,
-	// with any type of body and a specified content type.
+	// InviteServiceVisitorWithBodyWithResponse Invite a verified email identity to one service
 	//
 	// A new key creates one exact-service invitation. An exact retry by the same actor returns HTTP 200 with the original ID and current state, without a secret, after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/invitations (the `InviteServiceVisitor` operationId).
 	InviteServiceVisitorWithBodyWithResponse(ctx context.Context, serviceId ServiceID, params *InviteServiceVisitorParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*InviteServiceVisitorResponse, error)
 
-	// InviteServiceVisitorWithResponse performs a POST /v1/services/{service_id}/invitations (the `InviteServiceVisitor` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// InviteServiceVisitorWithResponse Invite a verified email identity to one service
 	//
 	// A new key creates one exact-service invitation. An exact retry by the same actor returns HTTP 200 with the original ID and current state, without a secret, after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
-	InviteServiceVisitorWithResponse(ctx context.Context, serviceId ServiceID, params *InviteServiceVisitorParams, body InviteServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*InviteServiceVisitorResponse, error)
-
-	// RevokeServiceInvitationWithResponse performs a DELETE /v1/services/{service_id}/invitations/{invitation_id} (the `RevokeServiceInvitation` operationId) request.
 	//
-	// Returns a wrapper object for the known response body format(s).
-	RevokeServiceInvitationWithResponse(ctx context.Context, serviceId ServiceID, invitationId ServiceInvitationID, reqEditors ...RequestEditorFn) (*RevokeServiceInvitationResponse, error)
-
-	// PrepareServiceRunWithBodyWithResponse performs a POST /v1/services/{service_id}/runs (the `PrepareServiceRun` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Reserve a new run ID and number and capture its exact managed hostname, port, domain and certificate plan under the authenticated publisher grant. Retrying the same idempotency key returns the same preparation.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	PrepareServiceRunWithBodyWithResponse(ctx context.Context, serviceId ServiceID, params *PrepareServiceRunParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PrepareServiceRunResponse, error)
-
-	// PrepareServiceRunWithResponse performs a POST /v1/services/{service_id}/runs (the `PrepareServiceRun` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
+	// Corresponds with POST /v1/services/{service_id}/invitations (the `InviteServiceVisitor` operationId).
+	InviteServiceVisitorWithResponse(ctx context.Context, serviceId ServiceID, params *InviteServiceVisitorParams, body InviteServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*InviteServiceVisitorResponse, error)
+
+	// RevokeServiceInvitationWithResponse Revoke a service invitation and its accepted grant
+	//
+	// Revoke the invitation using current service management permission, including the identity grant created if it was accepted. Revocation does not remove the retained invitation history.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/services/{service_id}/invitations/{invitation_id} (the `RevokeServiceInvitation` operationId).
+	RevokeServiceInvitationWithResponse(ctx context.Context, serviceId ServiceID, invitationId ServiceInvitationID, reqEditors ...RequestEditorFn) (*RevokeServiceInvitationResponse, error)
+
+	// PrepareServiceRunWithBodyWithResponse Reserve a service run and its approved certificate plan
+	//
 	// Reserve a new run ID and number and capture its exact managed hostname, port, domain and certificate plan under the authenticated publisher grant. Retrying the same idempotency key returns the same preparation.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs (the `PrepareServiceRun` operationId).
+	PrepareServiceRunWithBodyWithResponse(ctx context.Context, serviceId ServiceID, params *PrepareServiceRunParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PrepareServiceRunResponse, error)
+
+	// PrepareServiceRunWithResponse Reserve a service run and its approved certificate plan
+	//
+	// Reserve a new run ID and number and capture its exact managed hostname, port, domain and certificate plan under the authenticated publisher grant. Retrying the same idempotency key returns the same preparation.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs (the `PrepareServiceRun` operationId).
 	PrepareServiceRunWithResponse(ctx context.Context, serviceId ServiceID, params *PrepareServiceRunParams, body PrepareServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*PrepareServiceRunResponse, error)
 
-	// CloseServiceRunWithResponse performs a DELETE /v1/services/{service_id}/runs/{service_run_id} (the `CloseServiceRun` operationId) request.
+	// CloseServiceRunWithResponse Close one exact service run using its run token
 	//
 	// Close the exact run, reject stale admissions and publish a service tombstone. Managed certificates remain in the publisher's shared cache.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/services/{service_id}/runs/{service_run_id} (the `CloseServiceRun` operationId).
 	CloseServiceRunWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, reqEditors ...RequestEditorFn) (*CloseServiceRunResponse, error)
 
-	// HeartbeatServiceRunWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id} (the `HeartbeatServiceRun` operationId) request,
-	// with any type of body and a specified content type.
+	// HeartbeatServiceRunWithBodyWithResponse Renew a service run and report publisher health and capacity
 	//
 	// Renew only the current run under its exact publisher grant. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id} (the `HeartbeatServiceRun` operationId).
 	HeartbeatServiceRunWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*HeartbeatServiceRunResponse, error)
 
-	// HeartbeatServiceRunWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id} (the `HeartbeatServiceRun` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// HeartbeatServiceRunWithResponse Renew a service run and report publisher health and capacity
 	//
 	// Renew only the current run under its exact publisher grant. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id} (the `HeartbeatServiceRun` operationId).
 	HeartbeatServiceRunWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body HeartbeatServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*HeartbeatServiceRunResponse, error)
 
-	// AuthorizeServiceClientCertificateWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId) request,
-	// with any type of body and a specified content type.
+	// AuthorizeServiceClientCertificateWithBodyWithResponse Check a public endpoint visitor's client certificate and admission
 	//
 	// Authenticate a public endpoint visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId).
 	AuthorizeServiceClientCertificateWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeServiceClientCertificateResponse, error)
 
-	// AuthorizeServiceClientCertificateWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// AuthorizeServiceClientCertificateWithResponse Check a public endpoint visitor's client certificate and admission
 	//
 	// Authenticate a public endpoint visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId).
 	AuthorizeServiceClientCertificateWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeServiceClientCertificateResponse, error)
 
-	// RedeemServiceBrowserHandoffWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff (the `RedeemServiceBrowserHandoff` operationId) request,
-	// with any type of body and a specified content type.
+	// RedeemServiceBrowserHandoffWithBodyWithResponse Exchange a service browser handoff through its publisher run
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Authenticate the publisher with the exact service run token and exchange the body's one-time handoff secret for a host-bound browser credential. A visitor's control session cannot substitute for the publisher run token.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff (the `RedeemServiceBrowserHandoff` operationId).
 	RedeemServiceBrowserHandoffWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemServiceBrowserHandoffResponse, error)
 
-	// RedeemServiceBrowserHandoffWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff (the `RedeemServiceBrowserHandoff` operationId) request.
+	// RedeemServiceBrowserHandoffWithResponse Exchange a service browser handoff through its publisher run
+	//
+	// Authenticate the publisher with the exact service run token and exchange the body's one-time handoff secret for a host-bound browser credential. A visitor's control session cannot substitute for the publisher run token.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff (the `RedeemServiceBrowserHandoff` operationId).
 	RedeemServiceBrowserHandoffWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body RedeemServiceBrowserHandoffJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemServiceBrowserHandoffResponse, error)
 
-	// RevokeServiceBrowserSessionWithBodyWithResponse performs a DELETE /v1/services/{service_id}/runs/{service_run_id}/browser/session (the `RevokeServiceBrowserSession` operationId) request,
-	// with any type of body and a specified content type.
+	// RevokeServiceBrowserSessionWithBodyWithResponse Revoke a browser session through its service publisher run
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Authenticate the publisher with the exact service run token and revoke the body's host-bound browser session. This does not revoke the person's control session or sessions on unrelated hosts.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/services/{service_id}/runs/{service_run_id}/browser/session (the `RevokeServiceBrowserSession` operationId).
 	RevokeServiceBrowserSessionWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RevokeServiceBrowserSessionResponse, error)
 
-	// RevokeServiceBrowserSessionWithResponse performs a DELETE /v1/services/{service_id}/runs/{service_run_id}/browser/session (the `RevokeServiceBrowserSession` operationId) request.
+	// RevokeServiceBrowserSessionWithResponse Revoke a browser session through its service publisher run
+	//
+	// Authenticate the publisher with the exact service run token and revoke the body's host-bound browser session. This does not revoke the person's control session or sessions on unrelated hosts.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/services/{service_id}/runs/{service_run_id}/browser/session (the `RevokeServiceBrowserSession` operationId).
 	RevokeServiceBrowserSessionWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body RevokeServiceBrowserSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*RevokeServiceBrowserSessionResponse, error)
 
-	// CheckServiceBrowserSessionWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/browser/session (the `CheckServiceBrowserSession` operationId) request,
-	// with any type of body and a specified content type.
+	// CheckServiceBrowserSessionWithBodyWithResponse Check a browser session through its service publisher run
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Authenticate the publisher with the exact service run token and recheck the host-bound browser secret in the body against current service access. The result grants visitor access, not service management permission.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/browser/session (the `CheckServiceBrowserSession` operationId).
 	CheckServiceBrowserSessionWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CheckServiceBrowserSessionResponse, error)
 
-	// CheckServiceBrowserSessionWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/browser/session (the `CheckServiceBrowserSession` operationId) request.
+	// CheckServiceBrowserSessionWithResponse Check a browser session through its service publisher run
+	//
+	// Authenticate the publisher with the exact service run token and recheck the host-bound browser secret in the body against current service access. The result grants visitor access, not service management permission.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/browser/session (the `CheckServiceBrowserSession` operationId).
 	CheckServiceBrowserSessionWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body CheckServiceBrowserSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*CheckServiceBrowserSessionResponse, error)
 
-	// MarkServiceCertificateInstalledWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/certificate-installed (the `MarkServiceCertificateInstalled` operationId) request,
-	// with any type of body and a specified content type.
+	// MarkServiceCertificateInstalledWithBodyWithResponse Acknowledge the certificate installed for one service run
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Record that the publisher installed the exact approved issuance for this run number using its service run token. The acknowledgement does not by itself prove that both publisher connections are ready.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/certificate-installed (the `MarkServiceCertificateInstalled` operationId).
 	MarkServiceCertificateInstalledWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkServiceCertificateInstalledResponse, error)
 
-	// MarkServiceCertificateInstalledWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/certificate-installed (the `MarkServiceCertificateInstalled` operationId) request.
+	// MarkServiceCertificateInstalledWithResponse Acknowledge the certificate installed for one service run
+	//
+	// Record that the publisher installed the exact approved issuance for this run number using its service run token. The acknowledgement does not by itself prove that both publisher connections are ready.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/certificate-installed (the `MarkServiceCertificateInstalled` operationId).
 	MarkServiceCertificateInstalledWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body MarkServiceCertificateInstalledJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkServiceCertificateInstalledResponse, error)
 
-	// CreateServiceCertificateIssuanceWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances (the `CreateServiceCertificateIssuance` operationId) request,
-	// with any type of body and a specified content type.
+	// CreateServiceCertificateIssuanceWithBodyWithResponse Begin certificate issuance for one started service run
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Authorize DNS-01 issuance for the service run's approved certificate plan using its exact run token and run number. Submit a CSR for the publisher's key; neither a control session nor publisher access token substitutes for the run token.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances (the `CreateServiceCertificateIssuance` operationId).
 	CreateServiceCertificateIssuanceWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *CreateServiceCertificateIssuanceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateServiceCertificateIssuanceResponse, error)
 
-	// CreateServiceCertificateIssuanceWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances (the `CreateServiceCertificateIssuance` operationId) request.
+	// CreateServiceCertificateIssuanceWithResponse Begin certificate issuance for one started service run
+	//
+	// Authorize DNS-01 issuance for the service run's approved certificate plan using its exact run token and run number. Submit a CSR for the publisher's key; neither a control session nor publisher access token substitutes for the run token.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances (the `CreateServiceCertificateIssuance` operationId).
 	CreateServiceCertificateIssuanceWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *CreateServiceCertificateIssuanceParams, body CreateServiceCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateServiceCertificateIssuanceResponse, error)
 
-	// GetServiceCertificateIssuanceWithResponse performs a GET /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id} (the `GetServiceCertificateIssuance` operationId) request.
+	// GetServiceCertificateIssuanceWithResponse Read a service run's current certificate issuance
+	//
+	// Poll the named issuance using the exact service run token. Control checks that the service, run, and issuance still match before returning certificate material.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id} (the `GetServiceCertificateIssuance` operationId).
 	GetServiceCertificateIssuanceWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*GetServiceCertificateIssuanceResponse, error)
 
-	// ListConnectorPeerPairsWithResponse performs a GET /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs (the `ListConnectorPeerPairs` operationId) request.
+	// ListConnectorPeerPairsWithResponse List connector pair candidates for the current service run
 	//
 	// Reconcile unexpired pair candidates for the exact publisher run, without keys, subjects, or source addresses. An installed owner may include an independent authority observation during temporary relay loss. A candidate may still lack relay claims; prepare its delivery independently before serving it.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs (the `ListConnectorPeerPairs` operationId).
 	ListConnectorPeerPairsWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *ListConnectorPeerPairsParams, reqEditors ...RequestEditorFn) (*ListConnectorPeerPairsResponse, error)
 
-	// DeliverConnectorPeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId) request,
-	// with any type of body and a specified content type.
+	// DeliverConnectorPeerPairWithBodyWithResponse Deliver an existing connector pair to its current publisher run
 	//
 	// Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId).
 	DeliverConnectorPeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DeliverConnectorPeerPairResponse, error)
 
-	// DeliverConnectorPeerPairWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// DeliverConnectorPeerPairWithResponse Deliver an existing connector pair to its current publisher run
 	//
 	// Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId).
 	DeliverConnectorPeerPairWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body DeliverConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*DeliverConnectorPeerPairResponse, error)
 
-	// ConfirmConnectorPeerPairPreparedWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId) request,
-	// with any type of body and a specified content type.
+	// ConfirmConnectorPeerPairPreparedWithBodyWithResponse Confirm an exact connector binding installed by the publisher
 	//
 	// Record the publisher's installed packet registration and inner listener under the exact run token. Recheck the delivery authority and both matching relay claims; never extend the reported binding deadline.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId).
 	ConfirmConnectorPeerPairPreparedWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ConfirmConnectorPeerPairPreparedResponse, error)
 
-	// ConfirmConnectorPeerPairPreparedWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// ConfirmConnectorPeerPairPreparedWithResponse Confirm an exact connector binding installed by the publisher
 	//
 	// Record the publisher's installed packet registration and inner listener under the exact run token. Recheck the delivery authority and both matching relay claims; never extend the reported binding deadline.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId).
 	ConfirmConnectorPeerPairPreparedWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body ConfirmConnectorPeerPairPreparedJSONRequestBody, reqEditors ...RequestEditorFn) (*ConfirmConnectorPeerPairPreparedResponse, error)
 
-	// ReportServiceRunObservationsWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId) request,
-	// with any type of body and a specified content type.
+	// ReportServiceRunObservationsWithBodyWithResponse Report connector connection observations for a service run
 	//
 	// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId).
 	ReportServiceRunObservationsWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReportServiceRunObservationsResponse, error)
 
-	// ReportServiceRunObservationsWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// ReportServiceRunObservationsWithResponse Report connector connection observations for a service run
 	//
 	// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId).
 	ReportServiceRunObservationsWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body ReportServiceRunObservationsJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportServiceRunObservationsResponse, error)
 
-	// StartServiceRunWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/start (the `StartServiceRun` operationId) request,
-	// with any type of body and a specified content type.
+	// StartServiceRunWithBodyWithResponse Start one prepared service run with its publisher grant
 	//
 	// Start one exact prepared run using its authenticated publisher identity. Visitor TLS uses the approved service certificate, without an ephemeral stream key or custom TLS proof.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/start (the `StartServiceRun` operationId).
 	StartServiceRunWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartServiceRunResponse, error)
 
-	// StartServiceRunWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/start (the `StartServiceRun` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// StartServiceRunWithResponse Start one prepared service run with its publisher grant
 	//
 	// Start one exact prepared run using its authenticated publisher identity. Visitor TLS uses the approved service certificate, without an ephemeral stream key or custom TLS proof.
-	StartServiceRunWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body StartServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*StartServiceRunResponse, error)
-
-	// SelectServiceRunWithBodyWithResponse performs a POST /v1/services/{service_id}/select-run (the `SelectServiceRun` operationId) request,
-	// with any type of body and a specified content type.
 	//
-	// Check current visitor access and select a ready publisher run for background preparation. pair_ready is a credential-free hint containing two exact ready connections on distinct live relay services, not a grant, stream ticket or pair key. The caller never supplies an IP address.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	SelectServiceRunWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SelectServiceRunResponse, error)
-
-	// SelectServiceRunWithResponse performs a POST /v1/services/{service_id}/select-run (the `SelectServiceRun` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/start (the `StartServiceRun` operationId).
+	StartServiceRunWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body StartServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*StartServiceRunResponse, error)
+
+	// SelectServiceRunWithBodyWithResponse Select a ready service run for an enrolled visitor device
+	//
 	// Check current visitor access and select a ready publisher run for background preparation. pair_ready is a credential-free hint containing two exact ready connections on distinct live relay services, not a grant, stream ticket or pair key. The caller never supplies an IP address.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/select-run (the `SelectServiceRun` operationId).
+	SelectServiceRunWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SelectServiceRunResponse, error)
+
+	// SelectServiceRunWithResponse Select a ready service run for an enrolled visitor device
+	//
+	// Check current visitor access and select a ready publisher run for background preparation. pair_ready is a credential-free hint containing two exact ready connections on distinct live relay services, not a grant, stream ticket or pair key. The caller never supplies an IP address.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/select-run (the `SelectServiceRun` operationId).
 	SelectServiceRunWithResponse(ctx context.Context, serviceId ServiceID, body SelectServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*SelectServiceRunResponse, error)
 
 	// ListTeamSharesWithResponse List manageable shares for one team
+	//
+	// Read a cursor-paginated share inventory under current team management authorization. Responses omit share secrets; use the original secret to construct a share link.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -17026,6 +18704,8 @@ type ClientWithResponsesInterface interface {
 
 	// GetShareWithResponse Read one share
 	//
+	// Read a manageable share's captured public URL IDs, deadline, and revocation state without revealing its secret. Reading the record does not redeem the share or create a visitor session.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/shares/{share_id} (the `GetShare` operationId).
@@ -17033,82 +18713,124 @@ type ClientWithResponsesInterface interface {
 
 	// RevokeShareWithResponse Stop new access through one share
 	//
+	// Revoke the share under current management authorization so it cannot grant new visitor access. Retain the saved record and its captured public URL snapshot for subsequent reads.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/shares/{share_id}/revoke (the `RevokeShare` operationId).
 	RevokeShareWithResponse(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*RevokeShareResponse, error)
 
-	// ListServiceAuditWithResponse performs a GET /v1/teams/{team_id}/service-audit (the `ListServiceAudit` operationId) request.
+	// ListServiceAuditWithResponse Read a team's service audit history
+	//
+	// Read a bounded page of service access and lifecycle events using the team's current management permission. Filter by exact service identity or time, and resume with the returned cursor; audit records do not grant visitor access.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/teams/{team_id}/service-audit (the `ListServiceAudit` operationId).
 	ListServiceAuditWithResponse(ctx context.Context, teamId string, params *ListServiceAuditParams, reqEditors ...RequestEditorFn) (*ListServiceAuditResponse, error)
 
-	// EnrollVisitorDeviceWithBodyWithResponse performs a POST /v1/visitor-devices (the `EnrollVisitorDevice` operationId) request,
-	// with any type of body and a specified content type.
+	// EnrollVisitorDeviceWithBodyWithResponse Enroll an Ed25519 visitor device for the signed-in identity
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Bind the submitted public key to the current visitor identity using its control session. The private key remains local and signs connector peer pair requests; enrollment alone does not grant access to a service.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/visitor-devices (the `EnrollVisitorDevice` operationId).
 	EnrollVisitorDeviceWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*EnrollVisitorDeviceResponse, error)
 
-	// EnrollVisitorDeviceWithResponse performs a POST /v1/visitor-devices (the `EnrollVisitorDevice` operationId) request.
+	// EnrollVisitorDeviceWithResponse Enroll an Ed25519 visitor device for the signed-in identity
+	//
+	// Bind the submitted public key to the current visitor identity using its control session. The private key remains local and signs connector peer pair requests; enrollment alone does not grant access to a service.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/visitor-devices (the `EnrollVisitorDevice` operationId).
 	EnrollVisitorDeviceWithResponse(ctx context.Context, body EnrollVisitorDeviceJSONRequestBody, reqEditors ...RequestEditorFn) (*EnrollVisitorDeviceResponse, error)
 
-	// RevokeVisitorDeviceWithResponse performs a DELETE /v1/visitor-devices/{device_id} (the `RevokeVisitorDevice` operationId) request.
+	// RevokeVisitorDeviceWithResponse Revoke a visitor device and its connector peer pairs
+	//
+	// Revoke the exact device belonging to the signed-in visitor identity and invalidate its connector peer pairs. This does not revoke the identity's control session or its other enrolled devices.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/visitor-devices/{device_id} (the `RevokeVisitorDevice` operationId).
 	RevokeVisitorDeviceWithResponse(ctx context.Context, deviceId string, reqEditors ...RequestEditorFn) (*RevokeVisitorDeviceResponse, error)
 
-	// AcceptVisitorInvitationWithBodyWithResponse performs a POST /v1/visitor-invitations/accept (the `AcceptVisitorInvitation` operationId) request,
-	// with any type of body and a specified content type.
+	// AcceptVisitorInvitationWithBodyWithResponse Accept a public URL invitation for the signed-in identity
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Exchange the body's one-use secret using the current signed-in identity and matching verified email. Acceptance grants exact-URL visitor access, not management permission or team membership.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/visitor-invitations/accept (the `AcceptVisitorInvitation` operationId).
 	AcceptVisitorInvitationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcceptVisitorInvitationResponse, error)
 
-	// AcceptVisitorInvitationWithResponse performs a POST /v1/visitor-invitations/accept (the `AcceptVisitorInvitation` operationId) request.
+	// AcceptVisitorInvitationWithResponse Accept a public URL invitation for the signed-in identity
+	//
+	// Exchange the body's one-use secret using the current signed-in identity and matching verified email. Acceptance grants exact-URL visitor access, not management permission or team membership.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/visitor-invitations/accept (the `AcceptVisitorInvitation` operationId).
 	AcceptVisitorInvitationWithResponse(ctx context.Context, body AcceptVisitorInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcceptVisitorInvitationResponse, error)
 
-	// ReadPublisherVisitorPolicyWithBodyWithResponse performs a POST /v1/visitor-policy (the `ReadPublisherVisitorPolicy` operationId) request,
-	// with any type of body and a specified content type.
+	// ReadPublisherVisitorPolicyWithBodyWithResponse Refresh the current run's visitor policy and verification keys
 	//
 	// Read one current publisher run's scoped visitor policy, revocations, and public verification keys. The bearer credential is the exact run token. This background operation is independent of the publisher's process lease and of ordinary visitor admission.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/visitor-policy (the `ReadPublisherVisitorPolicy` operationId).
 	ReadPublisherVisitorPolicyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReadPublisherVisitorPolicyResponse, error)
 
-	// ReadPublisherVisitorPolicyWithResponse performs a POST /v1/visitor-policy (the `ReadPublisherVisitorPolicy` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// ReadPublisherVisitorPolicyWithResponse Refresh the current run's visitor policy and verification keys
 	//
 	// Read one current publisher run's scoped visitor policy, revocations, and public verification keys. The bearer credential is the exact run token. This background operation is independent of the publisher's process lease and of ordinary visitor admission.
-	ReadPublisherVisitorPolicyWithResponse(ctx context.Context, body ReadPublisherVisitorPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*ReadPublisherVisitorPolicyResponse, error)
-
-	// IssueVisitorTokenWithBodyWithResponse performs a POST /v1/visitor-tokens (the `IssueVisitorToken` operationId) request,
-	// with any type of body and a specified content type.
 	//
-	// Prepare or renew one exact-resource visitor permission. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	IssueVisitorTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueVisitorTokenResponse, error)
-
-	// IssueVisitorTokenWithResponse performs a POST /v1/visitor-tokens (the `IssueVisitorToken` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Prepare or renew one exact-resource visitor permission. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+	// Corresponds with POST /v1/visitor-policy (the `ReadPublisherVisitorPolicy` operationId).
+	ReadPublisherVisitorPolicyWithResponse(ctx context.Context, body ReadPublisherVisitorPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*ReadPublisherVisitorPolicyResponse, error)
+
+	// IssueVisitorTokenWithBodyWithResponse Prepare or renew an exact-resource visitor permission
+	//
+	// Prepare or renew one exact-resource visitor permission. For source.kind control_session or device, authenticate with the current control session bearer token. For browser_session, workload, share, share_session, or grant, authenticate with the source credential in the JSON body and omit Authorization entirely; even an empty Authorization header is rejected. The empty security object represents these body-authenticated branches, not anonymous issuance. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/visitor-tokens (the `IssueVisitorToken` operationId).
+	IssueVisitorTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueVisitorTokenResponse, error)
+
+	// IssueVisitorTokenWithResponse Prepare or renew an exact-resource visitor permission
+	//
+	// Prepare or renew one exact-resource visitor permission. For source.kind control_session or device, authenticate with the current control session bearer token. For browser_session, workload, share, share_session, or grant, authenticate with the source credential in the JSON body and omit Authorization entirely; even an empty Authorization header is rejected. The empty security object represents these body-authenticated branches, not anonymous issuance. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/visitor-tokens (the `IssueVisitorToken` operationId).
 	IssueVisitorTokenWithResponse(ctx context.Context, body IssueVisitorTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueVisitorTokenResponse, error)
 
-	// ListAvailablePublicURLsWithResponse performs a GET /v1/visitor/public-urls (the `ListAvailablePublicURLs` operationId) request.
+	// ListAvailablePublicURLsWithResponse List public URLs available to the signed-in visitor
+	//
+	// Read a cursor-paginated visitor inventory across the identity's current grants, optionally selecting one team. The response omits management policy, targets, and secrets and does not itself grant a visitor token.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/visitor/public-urls (the `ListAvailablePublicURLs` operationId).
 	ListAvailablePublicURLsWithResponse(ctx context.Context, params *ListAvailablePublicURLsParams, reqEditors ...RequestEditorFn) (*ListAvailablePublicURLsResponse, error)
 
-	// ListAvailableServicesWithResponse performs a GET /v1/visitor/services (the `ListAvailableServices` operationId) request.
+	// ListAvailableServicesWithResponse List services available to the signed-in visitor
 	//
 	// Authorized saved services for tnl connect, including offline services. Initial readiness requires two ready publisher connections; after that one surviving ready connection keeps a run available during replacement. Inventory never grants a stream ticket by itself and contains no target address, DNS or key material.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/visitor/services (the `ListAvailableServices` operationId).
 	ListAvailableServicesWithResponse(ctx context.Context, params *ListAvailableServicesParams, reqEditors ...RequestEditorFn) (*ListAvailableServicesResponse, error)
 
 	// GetWebhookProviderSourceWithResponse Read one webhook provider source policy
+	//
+	// Read the selected provider's current webhook source policy without a credential. Use ETag and If-None-Match to reuse unchanged policy; this endpoint does not register a webhook or grant access to a public URL.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -17117,31 +18839,47 @@ type ClientWithResponsesInterface interface {
 
 	// ListWorkloadServicesWithResponse List only the workload session's currently authorized saved services
 	//
+	// Read the services currently authorized for this workload session using its visitor-only bearer credential. The inventory omits target addresses and application credentials and grants no publisher or control management authority.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/workload/services (the `ListWorkloadServices` operationId).
 	ListWorkloadServicesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListWorkloadServicesResponse, error)
 
-	// CheckWorkloadServiceWithResponse performs a POST /v1/workload/services/{service_id}/authorization (the `CheckWorkloadService` operationId) request.
+	// CheckWorkloadServiceWithResponse Check a workload session's current permission for one service
+	//
+	// Recheck live workload authorization for the exact service using the workload bearer credential. The decision is bounded by both the renewable lease and the session's fixed absolute deadline; a prior inventory response is not sufficient authorization.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/workload/services/{service_id}/authorization (the `CheckWorkloadService` operationId).
 	CheckWorkloadServiceWithResponse(ctx context.Context, serviceId string, reqEditors ...RequestEditorFn) (*CheckWorkloadServiceResponse, error)
 
-	// IssueWorkloadServiceClientCertificateWithBodyWithResponse performs a POST /v1/workload/services/{service_id}/client-certificate (the `IssueWorkloadServiceClientCertificate` operationId) request,
-	// with any type of body and a specified content type.
+	// IssueWorkloadServiceClientCertificateWithBodyWithResponse Issue a service client certificate for a workload's existing key
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Submit a CSR under the visitor-only workload bearer credential for one currently authorized service. The returned certificate cannot outlive the workload's fixed absolute expiry, and later access still requires a current workload lease.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/workload/services/{service_id}/client-certificate (the `IssueWorkloadServiceClientCertificate` operationId).
 	IssueWorkloadServiceClientCertificateWithBodyWithResponse(ctx context.Context, serviceId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueWorkloadServiceClientCertificateResponse, error)
 
-	// IssueWorkloadServiceClientCertificateWithResponse performs a POST /v1/workload/services/{service_id}/client-certificate (the `IssueWorkloadServiceClientCertificate` operationId) request.
+	// IssueWorkloadServiceClientCertificateWithResponse Issue a service client certificate for a workload's existing key
+	//
+	// Submit a CSR under the visitor-only workload bearer credential for one currently authorized service. The returned certificate cannot outlive the workload's fixed absolute expiry, and later access still requires a current workload lease.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/workload/services/{service_id}/client-certificate (the `IssueWorkloadServiceClientCertificate` operationId).
 	IssueWorkloadServiceClientCertificateWithResponse(ctx context.Context, serviceId string, body IssueWorkloadServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueWorkloadServiceClientCertificateResponse, error)
 
-	// SelectWorkloadServiceRunWithResponse performs a POST /v1/workload/services/{service_id}/run (the `SelectWorkloadServiceRun` operationId) request.
+	// SelectWorkloadServiceRunWithResponse Select a ready service run for an authenticated workload
 	//
 	// Check the selected workload credential and current service permission. pair_ready appears only for two exact ready connections on distinct live relay services; it is a signing snapshot, not a grant or a pair key.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/workload/services/{service_id}/run (the `SelectWorkloadServiceRun` operationId).
 	SelectWorkloadServiceRunWithResponse(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*SelectWorkloadServiceRunResponse, error)
 }
 
@@ -23488,6 +25226,8 @@ func (r SelectWorkloadServiceRunResponse) ContentType() string {
 
 // ListMaintenanceControlsWithResponse List maintenance controls
 //
+// Read the administrator-controlled gates for public URL creation, publish run creation, and certificate issuance. Reading a gate does not change it.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/admin/maintenance-controls (the `ListMaintenanceControls` operationId).
@@ -23500,6 +25240,8 @@ func (c *ClientWithResponses) ListMaintenanceControlsWithResponse(ctx context.Co
 }
 
 // SetMaintenanceControlWithBodyWithResponse Set one maintenance control
+//
+// Change one named maintenance gate using an administrator's control session. The gate controls new work of that kind, rather than closing all existing publications.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -23514,6 +25256,8 @@ func (c *ClientWithResponses) SetMaintenanceControlWithBodyWithResponse(ctx cont
 
 // SetMaintenanceControlWithResponse Set one maintenance control
 //
+// Change one named maintenance gate using an administrator's control session. The gate controls new work of that kind, rather than closing all existing publications.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /v1/admin/maintenance-controls/{control_name} (the `SetMaintenanceControl` operationId).
@@ -23526,6 +25270,8 @@ func (c *ClientWithResponses) SetMaintenanceControlWithResponse(ctx context.Cont
 }
 
 // ListAdminRelaysWithResponse List relay leases
+//
+// Read a cursor-paginated inventory of relay process leases using an administrator's control session. Lease state describes current placement eligibility, not a guarantee that a publisher connection is ready.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -23540,6 +25286,8 @@ func (c *ClientWithResponses) ListAdminRelaysWithResponse(ctx context.Context, p
 
 // DrainAdminRelayWithBodyWithResponse Remove a matching relay lease from placement and begin draining
 //
+// Fence the exact relay process lease identified in the request, remove it from new placement, and allow existing connections to drain until the deadline. Requires an administrator's control session.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/admin/relays/{relay_id}/drain (the `DrainAdminRelay` operationId).
@@ -23552,6 +25300,8 @@ func (c *ClientWithResponses) DrainAdminRelayWithBodyWithResponse(ctx context.Co
 }
 
 // DrainAdminRelayWithResponse Remove a matching relay lease from placement and begin draining
+//
+// Fence the exact relay process lease identified in the request, remove it from new placement, and allow existing connections to drain until the deadline. Requires an administrator's control session.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -23566,6 +25316,8 @@ func (c *ClientWithResponses) DrainAdminRelayWithResponse(ctx context.Context, r
 
 // GetAdminServerStatusWithResponse Read control, ingress, and relay status
 //
+// Read control, ingress, relay, and maintenance observations using an administrator's control session. These observations do not renew process leases.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/admin/status (the `GetAdminServerStatus` operationId).
@@ -23578,6 +25330,8 @@ func (c *ClientWithResponses) GetAdminServerStatusWithResponse(ctx context.Conte
 }
 
 // CompletePreviewBrowserLoginWithResponse Return a signed-in visitor to the preview
+//
+// Complete the identity provider callback using the pending login state and authorization code, then redirect to a one-time host-bound handoff. No bearer token is used; the callback is authenticated by the checked login flow, not by the empty security array.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -23592,6 +25346,8 @@ func (c *ClientWithResponses) CompletePreviewBrowserLoginWithResponse(ctx contex
 
 // BeginPreviewBrowserLoginWithResponse Start sign-in for a preview visitor
 //
+// Begin the configured browser sign-in flow for a public URL, optionally within a preview. No bearer credential is required to begin sign-in; current visit permission is checked before a usable browser credential is issued.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/browser/login (the `BeginPreviewBrowserLogin` operationId).
@@ -23603,11 +25359,13 @@ func (c *ClientWithResponses) BeginPreviewBrowserLoginWithResponse(ctx context.C
 	return ParseBeginPreviewBrowserLoginResponse(rsp)
 }
 
-// BeginServiceBrowserLoginWithResponse performs a GET /v1/browser/service-login (the `BeginServiceBrowserLogin` operationId) request.
+// BeginServiceBrowserLoginWithResponse Start browser sign-in for one HTTP service
 //
 // Start sign-in for one service HTTP service. Uses the common browser callback and a snapshot of ready runs; the allocated service port is retained.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/browser/service-login (the `BeginServiceBrowserLogin` operationId).
 func (c *ClientWithResponses) BeginServiceBrowserLoginWithResponse(ctx context.Context, params *BeginServiceBrowserLoginParams, reqEditors ...RequestEditorFn) (*BeginServiceBrowserLoginResponse, error) {
 	rsp, err := c.BeginServiceBrowserLogin(ctx, params, reqEditors...)
 	if err != nil {
@@ -23617,6 +25375,8 @@ func (c *ClientWithResponses) BeginServiceBrowserLoginWithResponse(ctx context.C
 }
 
 // GetCertificateIssuanceWithResponse Read one publish-run certificate issuance
+//
+// Poll one public URL certificate issuance using its publish run token. The token must belong to the issuance's current run; a control session alone cannot retrieve the certificate.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -23631,6 +25391,8 @@ func (c *ClientWithResponses) GetCertificateIssuanceWithResponse(ctx context.Con
 
 // GetClientIPWithResponse Return the requesting client's public IP address
 //
+// Read the request source address observed by control, after configured trusted-proxy handling. No credential is required; a caller-provided address is not accepted as source evidence.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/client-ip (the `GetClientIP` operationId).
@@ -23643,6 +25405,8 @@ func (c *ClientWithResponses) GetClientIPWithResponse(ctx context.Context, reqEd
 }
 
 // GetControlDiscoveryWithResponse Describe control and its authentication methods
+//
+// Read this server's public capabilities and authentication facts before choosing a client workflow. No credential is required; discover authority sign-in separately from publisher and visitor credentials.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -23657,6 +25421,8 @@ func (c *ClientWithResponses) GetControlDiscoveryWithResponse(ctx context.Contex
 
 // ListFeedbackThreadsWithResponse List feedback threads manageable in one team
 //
+// Read a cursor-paginated team feedback list under current management authorization. Each thread keeps its immutable first report and current state; use the event cursor to follow later changes.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/feedback (the `ListFeedbackThreads` operationId).
@@ -23669,6 +25435,8 @@ func (c *ClientWithResponses) ListFeedbackThreadsWithResponse(ctx context.Contex
 }
 
 // ListFeedbackEventsWithResponse Resume ordered feedback events for one team
+//
+// Resume the team's ordered feedback history after after_cursor using current management authorization. Event order is independent of branch names or local staging state.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -23683,6 +25451,8 @@ func (c *ClientWithResponses) ListFeedbackEventsWithResponse(ctx context.Context
 
 // GetFeedbackThreadWithResponse Read one immutable report and current feedback state
 //
+// Read one manageable feedback thread, including its immutable report and current state. Follow-up replies and state changes remain in the separate ordered event history.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/feedback/{feedback_id} (the `GetFeedbackThread` operationId).
@@ -23695,6 +25465,8 @@ func (c *ClientWithResponses) GetFeedbackThreadWithResponse(ctx context.Context,
 }
 
 // ListFeedbackThreadEventsWithResponse Read ordered follow-up events for one feedback thread
+//
+// Read follow-up events after after_cursor for one manageable feedback thread. The original report is immutable and remains on the thread rather than being rewritten by later events.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -23709,6 +25481,8 @@ func (c *ClientWithResponses) ListFeedbackThreadEventsWithResponse(ctx context.C
 
 // AppendFeedbackEventWithBodyWithResponse Reply, record a checkout update, resolve, or reopen feedback
 //
+// Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Control derives the verified author from the current sign-in; events never edit the immutable first report.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/feedback/{feedback_id}/events (the `AppendFeedbackEvent` operationId).
@@ -23721,6 +25495,8 @@ func (c *ClientWithResponses) AppendFeedbackEventWithBodyWithResponse(ctx contex
 }
 
 // AppendFeedbackEventWithResponse Reply, record a checkout update, resolve, or reopen feedback
+//
+// Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Control derives the verified author from the current sign-in; events never edit the immutable first report.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -23735,6 +25511,8 @@ func (c *ClientWithResponses) AppendFeedbackEventWithResponse(ctx context.Contex
 
 // CreateGuestDemoWithResponse Create a restricted guest credential for the built-in demo
 //
+// Create a source-address-bound guest trial when guest demos are enabled. No existing credential is required. Network issuance limits apply; the returned credential grants only restricted demo operations, not a control session.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/guest-demo (the `CreateGuestDemo` operationId).
@@ -23748,6 +25526,8 @@ func (c *ClientWithResponses) CreateGuestDemoWithResponse(ctx context.Context, r
 
 // AllocateGuestDemoNumberWithResponse Allocate a new hostname number for this guest trial
 //
+// Allocate the next demo hostname number using the guest credential returned by createGuestDemo. Control checks the trial deadline, source address, remaining allowance, and absence of an open demo publish run.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/guest-demo/number (the `AllocateGuestDemoNumber` operationId).
@@ -23759,10 +25539,13 @@ func (c *ClientWithResponses) AllocateGuestDemoNumberWithResponse(ctx context.Co
 	return ParseAllocateGuestDemoNumberResponse(rsp)
 }
 
-// EnrollGuestPublisherWithBodyWithResponse performs a POST /v1/guest-demo/publisher (the `EnrollGuestPublisher` operationId) request,
-// with any type of body and a specified content type.
+// EnrollGuestPublisherWithBodyWithResponse Enroll a publisher key for the guest trial's assigned demo URL
 //
-// Returns a wrapper object for the known response body format(s).
+// Authenticate with the guest trial credential and bind an Ed25519 key to the trial's assigned public URL. Control checks the trial and validated request source; the resulting identity grants no general control session or service management permission.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/guest-demo/publisher (the `EnrollGuestPublisher` operationId).
 func (c *ClientWithResponses) EnrollGuestPublisherWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*EnrollGuestPublisherResponse, error) {
 	rsp, err := c.EnrollGuestPublisherWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
@@ -23771,8 +25554,13 @@ func (c *ClientWithResponses) EnrollGuestPublisherWithBodyWithResponse(ctx conte
 	return ParseEnrollGuestPublisherResponse(rsp)
 }
 
-// EnrollGuestPublisherWithResponse performs a POST /v1/guest-demo/publisher (the `EnrollGuestPublisher` operationId) request.
+// EnrollGuestPublisherWithResponse Enroll a publisher key for the guest trial's assigned demo URL
+//
+// Authenticate with the guest trial credential and bind an Ed25519 key to the trial's assigned public URL. Control checks the trial and validated request source; the resulting identity grants no general control session or service management permission.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/guest-demo/publisher (the `EnrollGuestPublisher` operationId).
 func (c *ClientWithResponses) EnrollGuestPublisherWithResponse(ctx context.Context, body EnrollGuestPublisherJSONRequestBody, reqEditors ...RequestEditorFn) (*EnrollGuestPublisherResponse, error) {
 	rsp, err := c.EnrollGuestPublisher(ctx, body, reqEditors...)
 	if err != nil {
@@ -23782,6 +25570,8 @@ func (c *ClientWithResponses) EnrollGuestPublisherWithResponse(ctx context.Conte
 }
 
 // GetHealthWithResponse Confirm that the control HTTP server is serving
+//
+// Check that the control HTTP handler responds. No credential is required; use getReadiness to check whether the process can serve its configured role.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -23796,6 +25586,8 @@ func (c *ClientWithResponses) GetHealthWithResponse(ctx context.Context, reqEdit
 
 // CreatePreviewWithBodyWithResponse Create or reuse a preview for one team
 //
+// Save or reuse a preview identity for the selected team and idempotency key. The preview groups public URLs; creation alone does not grant visitor access or start their publish runs.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/previews (the `CreatePreview` operationId).
@@ -23808,6 +25600,8 @@ func (c *ClientWithResponses) CreatePreviewWithBodyWithResponse(ctx context.Cont
 }
 
 // CreatePreviewWithResponse Create or reuse a preview for one team
+//
+// Save or reuse a preview identity for the selected team and idempotency key. The preview groups public URLs; creation alone does not grant visitor access or start their publish runs.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -23822,6 +25616,8 @@ func (c *ClientWithResponses) CreatePreviewWithResponse(ctx context.Context, par
 
 // GetPreviewWithResponse Read a preview and its public URLs
 //
+// Read one preview's saved identity, public URL membership, and team access setting under current management authorization. Active publication and visitor permission are checked separately.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/previews/{preview_id} (the `GetPreview` operationId).
@@ -23834,6 +25630,8 @@ func (c *ClientWithResponses) GetPreviewWithResponse(ctx context.Context, previe
 }
 
 // AddPreviewPublicURLWithBodyWithResponse Add an authorized public URL to a preview
+//
+// Add an existing authorized public URL to the preview. This changes future preview membership, not the immutable public URL snapshot held by an already-created share.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -23848,6 +25646,8 @@ func (c *ClientWithResponses) AddPreviewPublicURLWithBodyWithResponse(ctx contex
 
 // AddPreviewPublicURLWithResponse Add an authorized public URL to a preview
 //
+// Add an existing authorized public URL to the preview. This changes future preview membership, not the immutable public URL snapshot held by an already-created share.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/previews/{preview_id}/public-urls (the `AddPreviewPublicURL` operationId).
@@ -23860,6 +25660,8 @@ func (c *ClientWithResponses) AddPreviewPublicURLWithResponse(ctx context.Contex
 }
 
 // ListSharesWithResponse List shares for a preview
+//
+// Read a cursor-paginated inventory of the preview's manageable shares without their secrets. A stored share record does not itself function as a share link.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -23874,6 +25676,8 @@ func (c *ClientWithResponses) ListSharesWithResponse(ctx context.Context, previe
 
 // CreateShareWithBodyWithResponse Store one share for a snapshot of authorized public URLs
 //
+// Store a share using current preview management authorization and an idempotency key. It captures the authorized public URL IDs now; later preview membership changes do not expand that share's access.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/previews/{preview_id}/shares (the `CreateShare` operationId).
@@ -23886,6 +25690,8 @@ func (c *ClientWithResponses) CreateShareWithBodyWithResponse(ctx context.Contex
 }
 
 // CreateShareWithResponse Store one share for a snapshot of authorized public URLs
+//
+// Store a share using current preview management authorization and an idempotency key. It captures the authorized public URL IDs now; later preview membership changes do not expand that share's access.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -23900,6 +25706,8 @@ func (c *ClientWithResponses) CreateShareWithResponse(ctx context.Context, previ
 
 // SetPreviewTeamAccessWithBodyWithResponse Enable or disable team visitor access for this preview
 //
+// Set the preview's opt-in team access grant using current management authorization. Enabled access still requires a current team member's sign-in; it does not make the included public URLs anonymous.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /v1/previews/{preview_id}/team-access (the `SetPreviewTeamAccess` operationId).
@@ -23913,6 +25721,8 @@ func (c *ClientWithResponses) SetPreviewTeamAccessWithBodyWithResponse(ctx conte
 
 // SetPreviewTeamAccessWithResponse Enable or disable team visitor access for this preview
 //
+// Set the preview's opt-in team access grant using current management authorization. Enabled access still requires a current team member's sign-in; it does not make the included public URLs anonymous.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /v1/previews/{preview_id}/team-access (the `SetPreviewTeamAccess` operationId).
@@ -23924,9 +25734,13 @@ func (c *ClientWithResponses) SetPreviewTeamAccessWithResponse(ctx context.Conte
 	return ParseSetPreviewTeamAccessResponse(rsp)
 }
 
-// GetProjectConfigurationWithResponse performs a GET /v1/projects/{project_key}/configuration (the `GetProjectConfiguration` operationId) request.
+// GetProjectConfigurationWithResponse Read a project's applied configuration and publisher status
+//
+// Read the normalized desired configuration and observed publisher revisions for the selected team and project. Requires current project management permission; the response can include targets and must not be exposed as public project metadata.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/projects/{project_key}/configuration (the `GetProjectConfiguration` operationId).
 func (c *ClientWithResponses) GetProjectConfigurationWithResponse(ctx context.Context, projectKey string, params *GetProjectConfigurationParams, reqEditors ...RequestEditorFn) (*GetProjectConfigurationResponse, error) {
 	rsp, err := c.GetProjectConfiguration(ctx, projectKey, params, reqEditors...)
 	if err != nil {
@@ -23935,12 +25749,13 @@ func (c *ClientWithResponses) GetProjectConfigurationWithResponse(ctx context.Co
 	return ParseGetProjectConfigurationResponse(rsp)
 }
 
-// ApplyProjectConfigurationWithBodyWithResponse performs a PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId) request,
-// with any type of body and a specified content type.
+// ApplyProjectConfigurationWithBodyWithResponse Apply a project's desired services and publisher groups
 //
 // Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId).
 func (c *ClientWithResponses) ApplyProjectConfigurationWithBodyWithResponse(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApplyProjectConfigurationResponse, error) {
 	rsp, err := c.ApplyProjectConfigurationWithBody(ctx, projectKey, contentType, body, reqEditors...)
 	if err != nil {
@@ -23949,10 +25764,13 @@ func (c *ClientWithResponses) ApplyProjectConfigurationWithBodyWithResponse(ctx 
 	return ParseApplyProjectConfigurationResponse(rsp)
 }
 
-// ApplyProjectConfigurationWithResponse performs a PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// ApplyProjectConfigurationWithResponse Apply a project's desired services and publisher groups
 //
 // Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId).
 func (c *ClientWithResponses) ApplyProjectConfigurationWithResponse(ctx context.Context, projectKey string, body ApplyProjectConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*ApplyProjectConfigurationResponse, error) {
 	rsp, err := c.ApplyProjectConfiguration(ctx, projectKey, body, reqEditors...)
 	if err != nil {
@@ -23961,11 +25779,13 @@ func (c *ClientWithResponses) ApplyProjectConfigurationWithResponse(ctx context.
 	return ParseApplyProjectConfigurationResponse(rsp)
 }
 
-// GetLocalProjectServiceWithResponse performs a GET /v1/projects/{project_key}/local-services/{service} (the `GetLocalProjectService` operationId) request.
+// GetLocalProjectServiceWithResponse Resolve one existing source-bound worktree service
 //
 // Read the exact service previously realized for this team, project source, service key, and worktree. Requires current ordinary private visitor access, not project management access. Returns only immutable identity and approved visitor protocol/TLS metadata, never configuration, targets, or credentials. Does not realize or adopt a service. Missing or unauthorized bindings return not found; an authorized binding with another source fingerprint returns conflict. No other team, project, worktree, or saved name is searched.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/projects/{project_key}/local-services/{service} (the `GetLocalProjectService` operationId).
 func (c *ClientWithResponses) GetLocalProjectServiceWithResponse(ctx context.Context, projectKey string, service string, params *GetLocalProjectServiceParams, reqEditors ...RequestEditorFn) (*GetLocalProjectServiceResponse, error) {
 	rsp, err := c.GetLocalProjectService(ctx, projectKey, service, params, reqEditors...)
 	if err != nil {
@@ -23974,12 +25794,13 @@ func (c *ClientWithResponses) GetLocalProjectServiceWithResponse(ctx context.Con
 	return ParseGetLocalProjectServiceResponse(rsp)
 }
 
-// RealizeLocalProjectServiceWithBodyWithResponse performs a PUT /v1/projects/{project_key}/local-services/{service} (the `RealizeLocalProjectService` operationId) request,
-// with any type of body and a specified content type.
+// RealizeLocalProjectServiceWithBodyWithResponse Realize one declared local service for a worktree
 //
 // Realize only one source-bound local service for one worktree. Private IDs are allocated here with worktree-scoped names, never adopted by name. Public IDs must be exact caller-owned app URLs already allocated by this runtime, bound to the caller's membership or to the caller's own personal team when current namespace authorization selects shared scope. Organization shared URLs and another member's or team's URLs are rejected. Records provenance before first apply; later apply reconciles that legitimate resource. When configuration has been applied the local declaration must match it. Does not apply remote group changes.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/projects/{project_key}/local-services/{service} (the `RealizeLocalProjectService` operationId).
 func (c *ClientWithResponses) RealizeLocalProjectServiceWithBodyWithResponse(ctx context.Context, projectKey string, service string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RealizeLocalProjectServiceResponse, error) {
 	rsp, err := c.RealizeLocalProjectServiceWithBody(ctx, projectKey, service, contentType, body, reqEditors...)
 	if err != nil {
@@ -23988,10 +25809,13 @@ func (c *ClientWithResponses) RealizeLocalProjectServiceWithBodyWithResponse(ctx
 	return ParseRealizeLocalProjectServiceResponse(rsp)
 }
 
-// RealizeLocalProjectServiceWithResponse performs a PUT /v1/projects/{project_key}/local-services/{service} (the `RealizeLocalProjectService` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// RealizeLocalProjectServiceWithResponse Realize one declared local service for a worktree
 //
 // Realize only one source-bound local service for one worktree. Private IDs are allocated here with worktree-scoped names, never adopted by name. Public IDs must be exact caller-owned app URLs already allocated by this runtime, bound to the caller's membership or to the caller's own personal team when current namespace authorization selects shared scope. Organization shared URLs and another member's or team's URLs are rejected. Records provenance before first apply; later apply reconciles that legitimate resource. When configuration has been applied the local declaration must match it. Does not apply remote group changes.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/projects/{project_key}/local-services/{service} (the `RealizeLocalProjectService` operationId).
 func (c *ClientWithResponses) RealizeLocalProjectServiceWithResponse(ctx context.Context, projectKey string, service string, body RealizeLocalProjectServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*RealizeLocalProjectServiceResponse, error) {
 	rsp, err := c.RealizeLocalProjectService(ctx, projectKey, service, body, reqEditors...)
 	if err != nil {
@@ -24000,11 +25824,13 @@ func (c *ClientWithResponses) RealizeLocalProjectServiceWithResponse(ctx context
 	return ParseRealizeLocalProjectServiceResponse(rsp)
 }
 
-// GetProjectPublicMetadataWithResponse performs a GET /v1/projects/{project_key}/public-metadata (the `GetProjectPublicMetadata` operationId) request.
+// GetProjectPublicMetadataWithResponse Read visitor-safe project service identities and hostnames
 //
 // Browser-safe project source and public service IDs/hostnames, including exact local worktree realizations before or after first apply. Returns only public services the caller may visit, or all public services for a project manager. A service key may appear more than once for separate worktree URLs. Never returns configuration, targets, trust, grants, or publisher data.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/projects/{project_key}/public-metadata (the `GetProjectPublicMetadata` operationId).
 func (c *ClientWithResponses) GetProjectPublicMetadataWithResponse(ctx context.Context, projectKey string, params *GetProjectPublicMetadataParams, reqEditors ...RequestEditorFn) (*GetProjectPublicMetadataResponse, error) {
 	rsp, err := c.GetProjectPublicMetadata(ctx, projectKey, params, reqEditors...)
 	if err != nil {
@@ -24013,10 +25839,13 @@ func (c *ClientWithResponses) GetProjectPublicMetadataWithResponse(ctx context.C
 	return ParseGetProjectPublicMetadataResponse(rsp)
 }
 
-// CreatePublisherGroupEnrollmentWithBodyWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId) request,
-// with any type of body and a specified content type.
+// CreatePublisherGroupEnrollmentWithBodyWithResponse Issue a bounded enrollment key for a project's publisher group
 //
-// Returns a wrapper object for the known response body format(s).
+// Create an expiring bootstrap credential using current project management permission. Each enrolled replica supplies its own key; the enrollment's member limit bounds how many identities it can create.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId).
 func (c *ClientWithResponses) CreatePublisherGroupEnrollmentWithBodyWithResponse(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublisherGroupEnrollmentResponse, error) {
 	rsp, err := c.CreatePublisherGroupEnrollmentWithBody(ctx, projectKey, groupName, contentType, body, reqEditors...)
 	if err != nil {
@@ -24025,8 +25854,13 @@ func (c *ClientWithResponses) CreatePublisherGroupEnrollmentWithBodyWithResponse
 	return ParseCreatePublisherGroupEnrollmentResponse(rsp)
 }
 
-// CreatePublisherGroupEnrollmentWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId) request.
+// CreatePublisherGroupEnrollmentWithResponse Issue a bounded enrollment key for a project's publisher group
+//
+// Create an expiring bootstrap credential using current project management permission. Each enrolled replica supplies its own key; the enrollment's member limit bounds how many identities it can create.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId).
 func (c *ClientWithResponses) CreatePublisherGroupEnrollmentWithResponse(ctx context.Context, projectKey string, groupName string, body CreatePublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublisherGroupEnrollmentResponse, error) {
 	rsp, err := c.CreatePublisherGroupEnrollment(ctx, projectKey, groupName, body, reqEditors...)
 	if err != nil {
@@ -24035,9 +25869,13 @@ func (c *ClientWithResponses) CreatePublisherGroupEnrollmentWithResponse(ctx con
 	return ParseCreatePublisherGroupEnrollmentResponse(rsp)
 }
 
-// RevokePublisherGroupMemberWithResponse performs a DELETE /v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id} (the `RevokePublisherGroupMember` operationId) request.
+// RevokePublisherGroupMemberWithResponse Revoke one enrolled publisher replica from a group
+//
+// Revoke the exact enrolled publisher identity using current project management permission. Control closes that member's public URL and service runs without revoking other group members.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id} (the `RevokePublisherGroupMember` operationId).
 func (c *ClientWithResponses) RevokePublisherGroupMemberWithResponse(ctx context.Context, projectKey string, groupName string, publisherIdentityId string, params *RevokePublisherGroupMemberParams, reqEditors ...RequestEditorFn) (*RevokePublisherGroupMemberResponse, error) {
 	rsp, err := c.RevokePublisherGroupMember(ctx, projectKey, groupName, publisherIdentityId, params, reqEditors...)
 	if err != nil {
@@ -24046,12 +25884,13 @@ func (c *ClientWithResponses) RevokePublisherGroupMemberWithResponse(ctx context
 	return ParseRevokePublisherGroupMemberResponse(rsp)
 }
 
-// RenamePublisherNamespaceWithBodyWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId) request,
-// with any type of body and a specified content type.
+// RenamePublisherNamespaceWithBodyWithResponse Replace a publisher group's DNS namespace label
 //
 // Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId).
 func (c *ClientWithResponses) RenamePublisherNamespaceWithBodyWithResponse(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenamePublisherNamespaceResponse, error) {
 	rsp, err := c.RenamePublisherNamespaceWithBody(ctx, projectKey, groupName, contentType, body, reqEditors...)
 	if err != nil {
@@ -24060,10 +25899,13 @@ func (c *ClientWithResponses) RenamePublisherNamespaceWithBodyWithResponse(ctx c
 	return ParseRenamePublisherNamespaceResponse(rsp)
 }
 
-// RenamePublisherNamespaceWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// RenamePublisherNamespaceWithResponse Replace a publisher group's DNS namespace label
 //
 // Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId).
 func (c *ClientWithResponses) RenamePublisherNamespaceWithResponse(ctx context.Context, projectKey string, groupName string, body RenamePublisherNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*RenamePublisherNamespaceResponse, error) {
 	rsp, err := c.RenamePublisherNamespace(ctx, projectKey, groupName, body, reqEditors...)
 	if err != nil {
@@ -24072,12 +25914,13 @@ func (c *ClientWithResponses) RenamePublisherNamespaceWithResponse(ctx context.C
 	return ParseRenamePublisherNamespaceResponse(rsp)
 }
 
-// RenamePublisherGroupWithBodyWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId) request,
-// with any type of body and a specified content type.
+// RenamePublisherGroupWithBodyWithResponse Rename a group's configuration selector without changing endpoints
 //
 // Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId).
 func (c *ClientWithResponses) RenamePublisherGroupWithBodyWithResponse(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenamePublisherGroupResponse, error) {
 	rsp, err := c.RenamePublisherGroupWithBody(ctx, projectKey, groupName, contentType, body, reqEditors...)
 	if err != nil {
@@ -24086,10 +25929,13 @@ func (c *ClientWithResponses) RenamePublisherGroupWithBodyWithResponse(ctx conte
 	return ParseRenamePublisherGroupResponse(rsp)
 }
 
-// RenamePublisherGroupWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// RenamePublisherGroupWithResponse Rename a group's configuration selector without changing endpoints
 //
 // Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId).
 func (c *ClientWithResponses) RenamePublisherGroupWithResponse(ctx context.Context, projectKey string, groupName string, body RenamePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*RenamePublisherGroupResponse, error) {
 	rsp, err := c.RenamePublisherGroup(ctx, projectKey, groupName, body, reqEditors...)
 	if err != nil {
@@ -24098,11 +25944,13 @@ func (c *ClientWithResponses) RenamePublisherGroupWithResponse(ctx context.Conte
 	return ParseRenamePublisherGroupResponse(rsp)
 }
 
-// GetProjectServiceWithResponse performs a GET /v1/projects/{project_key}/services/{service} (the `GetProjectService` operationId) request.
+// GetProjectServiceWithResponse Resolve an applied service by project source and key
 //
 // Resolve an applied service by its exact Git source and configuration key using current visitor access. Does not return targets or require project-manager permission.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/projects/{project_key}/services/{service} (the `GetProjectService` operationId).
 func (c *ClientWithResponses) GetProjectServiceWithResponse(ctx context.Context, projectKey string, service ServiceName, params *GetProjectServiceParams, reqEditors ...RequestEditorFn) (*GetProjectServiceResponse, error) {
 	rsp, err := c.GetProjectService(ctx, projectKey, service, params, reqEditors...)
 	if err != nil {
@@ -24112,6 +25960,8 @@ func (c *ClientWithResponses) GetProjectServiceWithResponse(ctx context.Context,
 }
 
 // ListPublicURLsWithResponse List public URLs for one team
+//
+// Read a cursor-paginated inventory of public URLs the caller may manage in one team. An exact canonical_hostname filter returns zero or one non-deleted URL and cannot be combined with a cursor.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -24126,6 +25976,8 @@ func (c *ClientWithResponses) ListPublicURLsWithResponse(ctx context.Context, pa
 
 // CreatePublicURLWithBodyWithResponse Create one team public URL
 //
+// Save an authorized hostname, target, and visitor policy using an idempotency key. A control session selects an authorized team scope; a guest credential can create only its assigned ephemeral demo hostname. Creation does not start a publish run.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
@@ -24138,6 +25990,8 @@ func (c *ClientWithResponses) CreatePublicURLWithBodyWithResponse(ctx context.Co
 }
 
 // CreatePublicURLWithResponse Create one team public URL
+//
+// Save an authorized hostname, target, and visitor policy using an idempotency key. A control session selects an authorized team scope; a guest credential can create only its assigned ephemeral demo hostname. Creation does not start a publish run.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -24152,6 +26006,8 @@ func (c *ClientWithResponses) CreatePublicURLWithResponse(ctx context.Context, p
 
 // DeletePublicURLWithResponse Delete one public URL and close its publish run
 //
+// Delete the saved public URL under current management authorization and close its active publish run. The hostname cannot keep serving through the deleted URL's old run credentials.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with DELETE /v1/public-urls/{public_url_id} (the `DeletePublicURL` operationId).
@@ -24164,6 +26020,8 @@ func (c *ClientWithResponses) DeletePublicURLWithResponse(ctx context.Context, p
 }
 
 // GetPublicURLWithResponse Read one public URL
+//
+// Read one saved public URL under current management authorization. Its saved policy and lifecycle are separate from whether an active publish run is routable.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -24178,6 +26036,8 @@ func (c *ClientWithResponses) GetPublicURLWithResponse(ctx context.Context, publ
 
 // UpdatePublicURLWithBodyWithResponse Update a public URL's target and IP policy
 //
+// Replace the target and IP policy, optionally changing the post-quantum requirement, under current management authorization. Use replaceVisitorAccess for complete visitor access policy replacement; this operation does not create a new publish run.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
@@ -24190,6 +26050,8 @@ func (c *ClientWithResponses) UpdatePublicURLWithBodyWithResponse(ctx context.Co
 }
 
 // UpdatePublicURLWithResponse Update a public URL's target and IP policy
+//
+// Replace the target and IP policy, optionally changing the post-quantum requirement, under current management authorization. Use replaceVisitorAccess for complete visitor access policy replacement; this operation does not create a new publish run.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -24204,6 +26066,8 @@ func (c *ClientWithResponses) UpdatePublicURLWithResponse(ctx context.Context, p
 
 // ReplaceVisitorAccessWithBodyWithResponse Replace the complete live visitor access policy
 //
+// Replace the complete saved visitor access policy under current public URL management authorization. Omitted optional policy members are not a partial patch; publishers must enforce the resulting current visitor policy for new work.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /v1/public-urls/{public_url_id}/access (the `ReplaceVisitorAccess` operationId).
@@ -24216,6 +26080,8 @@ func (c *ClientWithResponses) ReplaceVisitorAccessWithBodyWithResponse(ctx conte
 }
 
 // ReplaceVisitorAccessWithResponse Replace the complete live visitor access policy
+//
+// Replace the complete saved visitor access policy under current public URL management authorization. Omitted optional policy members are not a partial patch; publishers must enforce the resulting current visitor policy for new work.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -24230,6 +26096,8 @@ func (c *ClientWithResponses) ReplaceVisitorAccessWithResponse(ctx context.Conte
 
 // CreatePublishRunWithBodyWithResponse Create a publish run and allocate its publish run number
 //
+// Start a new publication under the exact publisher grant using an idempotency key and Publisher-Run-Proof signature. The publisher access token does not replace the required proof of the signing key; the response includes the separate run token and two connection assignments.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
@@ -24243,6 +26111,8 @@ func (c *ClientWithResponses) CreatePublishRunWithBodyWithResponse(ctx context.C
 
 // CreatePublishRunWithResponse Create a publish run and allocate its publish run number
 //
+// Start a new publication under the exact publisher grant using an idempotency key and Publisher-Run-Proof signature. The publisher access token does not replace the required proof of the signing key; the response includes the separate run token and two connection assignments.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
@@ -24254,9 +26124,13 @@ func (c *ClientWithResponses) CreatePublishRunWithResponse(ctx context.Context, 
 	return ParseCreatePublishRunResponse(rsp)
 }
 
-// ListVisitorGrantsWithResponse performs a GET /v1/public-urls/{public_url_id}/visitor-grants (the `ListVisitorGrants` operationId) request.
+// ListVisitorGrantsWithResponse List visitor grants for one manageable public URL
+//
+// Read exact-public-URL team and identity visitor grants under current management authorization. Listing a grant is not a substitute for checking the visitor's current access.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/public-urls/{public_url_id}/visitor-grants (the `ListVisitorGrants` operationId).
 func (c *ClientWithResponses) ListVisitorGrantsWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*ListVisitorGrantsResponse, error) {
 	rsp, err := c.ListVisitorGrants(ctx, publicUrlId, reqEditors...)
 	if err != nil {
@@ -24265,10 +26139,13 @@ func (c *ClientWithResponses) ListVisitorGrantsWithResponse(ctx context.Context,
 	return ParseListVisitorGrantsResponse(rsp)
 }
 
-// CreateTeamVisitorGrantWithBodyWithResponse performs a POST /v1/public-urls/{public_url_id}/visitor-grants (the `CreateTeamVisitorGrant` operationId) request,
-// with any type of body and a specified content type.
+// CreateTeamVisitorGrantWithBodyWithResponse Grant current members of a team access to one public URL
 //
-// Returns a wrapper object for the known response body format(s).
+// Create an exact-public-URL grant for current members of the selected team using management authorization and an idempotency key. This grants visitor access, not public URL management or publisher authority.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-grants (the `CreateTeamVisitorGrant` operationId).
 func (c *ClientWithResponses) CreateTeamVisitorGrantWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateTeamVisitorGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateTeamVisitorGrantResponse, error) {
 	rsp, err := c.CreateTeamVisitorGrantWithBody(ctx, publicUrlId, params, contentType, body, reqEditors...)
 	if err != nil {
@@ -24277,8 +26154,13 @@ func (c *ClientWithResponses) CreateTeamVisitorGrantWithBodyWithResponse(ctx con
 	return ParseCreateTeamVisitorGrantResponse(rsp)
 }
 
-// CreateTeamVisitorGrantWithResponse performs a POST /v1/public-urls/{public_url_id}/visitor-grants (the `CreateTeamVisitorGrant` operationId) request.
+// CreateTeamVisitorGrantWithResponse Grant current members of a team access to one public URL
+//
+// Create an exact-public-URL grant for current members of the selected team using management authorization and an idempotency key. This grants visitor access, not public URL management or publisher authority.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-grants (the `CreateTeamVisitorGrant` operationId).
 func (c *ClientWithResponses) CreateTeamVisitorGrantWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateTeamVisitorGrantParams, body CreateTeamVisitorGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateTeamVisitorGrantResponse, error) {
 	rsp, err := c.CreateTeamVisitorGrant(ctx, publicUrlId, params, body, reqEditors...)
 	if err != nil {
@@ -24287,9 +26169,13 @@ func (c *ClientWithResponses) CreateTeamVisitorGrantWithResponse(ctx context.Con
 	return ParseCreateTeamVisitorGrantResponse(rsp)
 }
 
-// RevokeVisitorGrantWithResponse performs a DELETE /v1/public-urls/{public_url_id}/visitor-grants/{grant_id} (the `RevokeVisitorGrant` operationId) request.
+// RevokeVisitorGrantWithResponse Revoke one public URL visitor grant
+//
+// Revoke the exact grant under current public URL management authorization. Current visitor policy determines access after revocation; other grants for the URL remain separate.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/public-urls/{public_url_id}/visitor-grants/{grant_id} (the `RevokeVisitorGrant` operationId).
 func (c *ClientWithResponses) RevokeVisitorGrantWithResponse(ctx context.Context, publicUrlId PublicURLID, grantId string, reqEditors ...RequestEditorFn) (*RevokeVisitorGrantResponse, error) {
 	rsp, err := c.RevokeVisitorGrant(ctx, publicUrlId, grantId, reqEditors...)
 	if err != nil {
@@ -24299,6 +26185,8 @@ func (c *ClientWithResponses) RevokeVisitorGrantWithResponse(ctx context.Context
 }
 
 // CreateIdentityVisitorGrantWithBodyWithResponse Create an explicit identity grant, including for the current identity
+//
+// Create an exact-public-URL identity grant under current management authorization. Use an explicit identity grant even for the current identity when access must not depend on team membership.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -24313,6 +26201,8 @@ func (c *ClientWithResponses) CreateIdentityVisitorGrantWithBodyWithResponse(ctx
 
 // CreateIdentityVisitorGrantWithResponse Create an explicit identity grant, including for the current identity
 //
+// Create an exact-public-URL identity grant under current management authorization. Use an explicit identity grant even for the current identity when access must not depend on team membership.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/public-urls/{public_url_id}/visitor-identity-grants (the `CreateIdentityVisitorGrant` operationId).
@@ -24324,9 +26214,13 @@ func (c *ClientWithResponses) CreateIdentityVisitorGrantWithResponse(ctx context
 	return ParseCreateIdentityVisitorGrantResponse(rsp)
 }
 
-// ListVisitorInvitationsWithResponse performs a GET /v1/public-urls/{public_url_id}/visitor-invitations (the `ListVisitorInvitations` operationId) request.
+// ListVisitorInvitationsWithResponse List named visitor invitations for one public URL
+//
+// Read invitation records using current public URL management authorization. Invitation inventory does not reveal a reusable visitor credential or grant management permission to its recipients.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/public-urls/{public_url_id}/visitor-invitations (the `ListVisitorInvitations` operationId).
 func (c *ClientWithResponses) ListVisitorInvitationsWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*ListVisitorInvitationsResponse, error) {
 	rsp, err := c.ListVisitorInvitations(ctx, publicUrlId, reqEditors...)
 	if err != nil {
@@ -24335,10 +26229,13 @@ func (c *ClientWithResponses) ListVisitorInvitationsWithResponse(ctx context.Con
 	return ParseListVisitorInvitationsResponse(rsp)
 }
 
-// CreateVisitorInvitationWithBodyWithResponse performs a POST /v1/public-urls/{public_url_id}/visitor-invitations (the `CreateVisitorInvitation` operationId) request,
-// with any type of body and a specified content type.
+// CreateVisitorInvitationWithBodyWithResponse Invite a verified email identity to one public URL
 //
-// Returns a wrapper object for the known response body format(s).
+// Issue an expiring one-use invitation under current public URL management authorization. Acceptance requires the recipient's verified email and creates an exact-URL identity grant, not team membership.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-invitations (the `CreateVisitorInvitation` operationId).
 func (c *ClientWithResponses) CreateVisitorInvitationWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateVisitorInvitationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateVisitorInvitationResponse, error) {
 	rsp, err := c.CreateVisitorInvitationWithBody(ctx, publicUrlId, params, contentType, body, reqEditors...)
 	if err != nil {
@@ -24347,8 +26244,13 @@ func (c *ClientWithResponses) CreateVisitorInvitationWithBodyWithResponse(ctx co
 	return ParseCreateVisitorInvitationResponse(rsp)
 }
 
-// CreateVisitorInvitationWithResponse performs a POST /v1/public-urls/{public_url_id}/visitor-invitations (the `CreateVisitorInvitation` operationId) request.
+// CreateVisitorInvitationWithResponse Invite a verified email identity to one public URL
+//
+// Issue an expiring one-use invitation under current public URL management authorization. Acceptance requires the recipient's verified email and creates an exact-URL identity grant, not team membership.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-invitations (the `CreateVisitorInvitation` operationId).
 func (c *ClientWithResponses) CreateVisitorInvitationWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateVisitorInvitationParams, body CreateVisitorInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVisitorInvitationResponse, error) {
 	rsp, err := c.CreateVisitorInvitation(ctx, publicUrlId, params, body, reqEditors...)
 	if err != nil {
@@ -24357,9 +26259,13 @@ func (c *ClientWithResponses) CreateVisitorInvitationWithResponse(ctx context.Co
 	return ParseCreateVisitorInvitationResponse(rsp)
 }
 
-// RevokeVisitorInvitationWithResponse performs a DELETE /v1/public-urls/{public_url_id}/visitor-invitations/{invitation_id} (the `RevokeVisitorInvitation` operationId) request.
+// RevokeVisitorInvitationWithResponse Revoke a public URL invitation and its accepted identity grant
+//
+// Revoke the named invitation using current public URL management authorization. If it was accepted, revoke the identity grant created by that invitation as well.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/public-urls/{public_url_id}/visitor-invitations/{invitation_id} (the `RevokeVisitorInvitation` operationId).
 func (c *ClientWithResponses) RevokeVisitorInvitationWithResponse(ctx context.Context, publicUrlId PublicURLID, invitationId string, reqEditors ...RequestEditorFn) (*RevokeVisitorInvitationResponse, error) {
 	rsp, err := c.RevokeVisitorInvitation(ctx, publicUrlId, invitationId, reqEditors...)
 	if err != nil {
@@ -24369,6 +26275,8 @@ func (c *ClientWithResponses) RevokeVisitorInvitationWithResponse(ctx context.Co
 }
 
 // ClosePublishRunWithResponse Close and drain a publish run without deleting its public URL
+//
+// Close the exact publication using its publish run token. Saved public URLs remain available for a later run; ephemeral public URLs follow their removal lifecycle instead.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -24383,6 +26291,8 @@ func (c *ClientWithResponses) ClosePublishRunWithResponse(ctx context.Context, p
 
 // CheckPreviewBrowserAccessWithBodyWithResponse Check a browser cookie against current preview access
 //
+// Authenticate the publisher with the exact publish run token and check the body's browser cookie secret against current public URL and preview access. A previously issued cookie alone is not proof of current permission.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/access (the `CheckPreviewBrowserAccess` operationId).
@@ -24395,6 +26305,8 @@ func (c *ClientWithResponses) CheckPreviewBrowserAccessWithBodyWithResponse(ctx 
 }
 
 // CheckPreviewBrowserAccessWithResponse Check a browser cookie against current preview access
+//
+// Authenticate the publisher with the exact publish run token and check the body's browser cookie secret against current public URL and preview access. A previously issued cookie alone is not proof of current permission.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -24409,6 +26321,8 @@ func (c *ClientWithResponses) CheckPreviewBrowserAccessWithResponse(ctx context.
 
 // RedeemPreviewBrowserHandoffWithBodyWithResponse Redeem a one-time browser handoff on the publisher
 //
+// Authenticate the publisher with the exact publish run token and exchange the body's one-time handoff for a host-bound browser cookie secret. A visitor's control session does not replace the publisher credential.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/handoff (the `RedeemPreviewBrowserHandoff` operationId).
@@ -24421,6 +26335,8 @@ func (c *ClientWithResponses) RedeemPreviewBrowserHandoffWithBodyWithResponse(ct
 }
 
 // RedeemPreviewBrowserHandoffWithResponse Redeem a one-time browser handoff on the publisher
+//
+// Authenticate the publisher with the exact publish run token and exchange the body's one-time handoff for a host-bound browser cookie secret. A visitor's control session does not replace the publisher credential.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -24435,6 +26351,8 @@ func (c *ClientWithResponses) RedeemPreviewBrowserHandoffWithResponse(ctx contex
 
 // RevokePreviewBrowserAccessWithBodyWithResponse Revoke the current browser session
 //
+// Authenticate the publisher with the exact publish run token and revoke the host-bound browser session named in the body. Other hosts and the person's control session remain separate.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/browser/logout (the `RevokePreviewBrowserAccess` operationId).
@@ -24447,6 +26365,8 @@ func (c *ClientWithResponses) RevokePreviewBrowserAccessWithBodyWithResponse(ctx
 }
 
 // RevokePreviewBrowserAccessWithResponse Revoke the current browser session
+//
+// Authenticate the publisher with the exact publish run token and revoke the host-bound browser session named in the body. Other hosts and the person's control session remain separate.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -24461,6 +26381,8 @@ func (c *ClientWithResponses) RevokePreviewBrowserAccessWithResponse(ctx context
 
 // MarkPublishRunCertificateInstalledWithBodyWithResponse Record installation of the current public URL certificate
 //
+// Acknowledge the exact approved public URL certificate installed by the publisher using this run's token and number. Installation alone does not establish publisher connection readiness.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-installed (the `MarkPublishRunCertificateInstalled` operationId).
@@ -24473,6 +26395,8 @@ func (c *ClientWithResponses) MarkPublishRunCertificateInstalledWithBodyWithResp
 }
 
 // MarkPublishRunCertificateInstalledWithResponse Record installation of the current public URL certificate
+//
+// Acknowledge the exact approved public URL certificate installed by the publisher using this run's token and number. Installation alone does not establish publisher connection readiness.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -24487,6 +26411,8 @@ func (c *ClientWithResponses) MarkPublishRunCertificateInstalledWithResponse(ctx
 
 // CreateCertificateIssuanceWithBodyWithResponse Begin issuance for the publish run's certificate plan
 //
+// Submit the publisher's CSR under the exact publish run token and approved certificate plan. The idempotency key identifies one issuance attempt; a control session or publisher access token cannot substitute for the run token.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
@@ -24499,6 +26425,8 @@ func (c *ClientWithResponses) CreateCertificateIssuanceWithBodyWithResponse(ctx 
 }
 
 // CreateCertificateIssuanceWithResponse Begin issuance for the publish run's certificate plan
+//
+// Submit the publisher's CSR under the exact publish run token and approved certificate plan. The idempotency key identifies one issuance attempt; a control session or publisher access token cannot substitute for the run token.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -24513,6 +26441,8 @@ func (c *ClientWithResponses) CreateCertificateIssuanceWithResponse(ctx context.
 
 // CreateFeedbackReportWithBodyWithResponse Store a reviewer's first report for a preview page
 //
+// Submit the immutable first report through the exact publish run token with the reviewer's current access proof in the body. Control verifies the author and evidence; publisher authentication alone does not authorize a reviewer report.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback (the `CreateFeedbackReport` operationId).
@@ -24525,6 +26455,8 @@ func (c *ClientWithResponses) CreateFeedbackReportWithBodyWithResponse(ctx conte
 }
 
 // CreateFeedbackReportWithResponse Store a reviewer's first report for a preview page
+//
+// Submit the immutable first report through the exact publish run token with the reviewer's current access proof in the body. Control verifies the author and evidence; publisher authentication alone does not authorize a reviewer report.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -24539,6 +26471,8 @@ func (c *ClientWithResponses) CreateFeedbackReportWithResponse(ctx context.Conte
 
 // ListPreviewPageFeedbackWithBodyWithResponse List feedback on one page for a reviewer
 //
+// Read feedback for one page through the exact publish run token and the reviewer's body access proof. The result is limited to the authorized preview context, not a team-wide management inventory.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
@@ -24551,6 +26485,8 @@ func (c *ClientWithResponses) ListPreviewPageFeedbackWithBodyWithResponse(ctx co
 }
 
 // ListPreviewPageFeedbackWithResponse List feedback on one page for a reviewer
+//
+// Read feedback for one page through the exact publish run token and the reviewer's body access proof. The result is limited to the authorized preview context, not a team-wide management inventory.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -24565,6 +26501,8 @@ func (c *ClientWithResponses) ListPreviewPageFeedbackWithResponse(ctx context.Co
 
 // AppendReviewerFeedbackEventWithBodyWithResponse Reply, resolve, or reopen feedback through preview access
 //
+// Append a reply, resolution, or reopening through the exact publish run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
@@ -24577,6 +26515,8 @@ func (c *ClientWithResponses) AppendReviewerFeedbackEventWithBodyWithResponse(ct
 }
 
 // AppendReviewerFeedbackEventWithResponse Reply, resolve, or reopen feedback through preview access
+//
+// Append a reply, resolution, or reopening through the exact publish run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -24591,6 +26531,8 @@ func (c *ClientWithResponses) AppendReviewerFeedbackEventWithResponse(ctx contex
 
 // ListReviewerFeedbackEventsWithBodyWithResponse Read thread events through a current publisher connection
 //
+// Read one thread's ordered follow-up history through the exact publish run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
@@ -24603,6 +26545,8 @@ func (c *ClientWithResponses) ListReviewerFeedbackEventsWithBodyWithResponse(ctx
 }
 
 // ListReviewerFeedbackEventsWithResponse Read thread events through a current publisher connection
+//
+// Read one thread's ordered follow-up history through the exact publish run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -24617,6 +26561,8 @@ func (c *ClientWithResponses) ListReviewerFeedbackEventsWithResponse(ctx context
 
 // GetReviewerFeedbackThreadWithBodyWithResponse Read a feedback thread through a current publisher connection
 //
+// Read one thread through the exact publish run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
@@ -24629,6 +26575,8 @@ func (c *ClientWithResponses) GetReviewerFeedbackThreadWithBodyWithResponse(ctx 
 }
 
 // GetReviewerFeedbackThreadWithResponse Read a feedback thread through a current publisher connection
+//
+// Read one thread through the exact publish run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -24643,6 +26591,8 @@ func (c *ClientWithResponses) GetReviewerFeedbackThreadWithResponse(ctx context.
 
 // HeartbeatPublishRunWithBodyWithResponse Renew a publish run and replace missing publisher connections
 //
+// Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
@@ -24655,6 +26605,8 @@ func (c *ClientWithResponses) HeartbeatPublishRunWithBodyWithResponse(ctx contex
 }
 
 // HeartbeatPublishRunWithResponse Renew a publish run and replace missing publisher connections
+//
+// Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -24669,6 +26621,8 @@ func (c *ClientWithResponses) HeartbeatPublishRunWithResponse(ctx context.Contex
 
 // CreatePublishRunPreviewWithBodyWithResponse Create feedback context for one ephemeral demo publish run
 //
+// Create or reuse the run-scoped preview used for an ephemeral demo's feedback. Authenticate with that exact publish run token and number; this is not ordinary project preview management.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/preview (the `CreatePublishRunPreview` operationId).
@@ -24681,6 +26635,8 @@ func (c *ClientWithResponses) CreatePublishRunPreviewWithBodyWithResponse(ctx co
 }
 
 // CreatePublishRunPreviewWithResponse Create feedback context for one ephemeral demo publish run
+//
+// Create or reuse the run-scoped preview used for an ephemeral demo's feedback. Authenticate with that exact publish run token and number; this is not ordinary project preview management.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -24695,6 +26651,8 @@ func (c *ClientWithResponses) CreatePublishRunPreviewWithResponse(ctx context.Co
 
 // MarkPublishRunReadyWithBodyWithResponse Mark a publish run ready after its certificate and two publisher connections are ready
 //
+// Ask control to mark the current run routable using its publish run token and number. First readiness requires the approved certificate and two ready publisher connections on independent relay services.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
@@ -24707,6 +26665,8 @@ func (c *ClientWithResponses) MarkPublishRunReadyWithBodyWithResponse(ctx contex
 }
 
 // MarkPublishRunReadyWithResponse Mark a publish run ready after its certificate and two publisher connections are ready
+//
+// Ask control to mark the current run routable using its publish run token and number. First readiness requires the approved certificate and two ready publisher connections on independent relay services.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -24721,6 +26681,8 @@ func (c *ClientWithResponses) MarkPublishRunReadyWithResponse(ctx context.Contex
 
 // EnableShareAccessWithBodyWithResponse Enable share-aware HTTP handling for this preview publish run
 //
+// Report that the publisher has installed share-aware HTTP handling for this exact run and number. Authenticate with its publish run token; this does not create a share or grant visitor access by itself.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/share-access (the `EnableShareAccess` operationId).
@@ -24733,6 +26695,8 @@ func (c *ClientWithResponses) EnableShareAccessWithBodyWithResponse(ctx context.
 }
 
 // EnableShareAccessWithResponse Enable share-aware HTTP handling for this preview publish run
+//
+// Report that the publisher has installed share-aware HTTP handling for this exact run and number. Authenticate with its publish run token; this does not create a share or grant visitor access by itself.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -24747,6 +26711,8 @@ func (c *ClientWithResponses) EnableShareAccessWithResponse(ctx context.Context,
 
 // RedeemPublishRunShareWithBodyWithResponse Redeem a share link or one short-lived cross-host handoff
 //
+// Authenticate the publisher with its exact publish run token and redeem the body's share secret or one-time cross-host handoff. Control checks the share's captured public URL IDs, deadline, and revocation before issuing a host-only visitor session.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/share-redemptions (the `RedeemPublishRunShare` operationId).
@@ -24760,6 +26726,8 @@ func (c *ClientWithResponses) RedeemPublishRunShareWithBodyWithResponse(ctx cont
 
 // RedeemPublishRunShareWithResponse Redeem a share link or one short-lived cross-host handoff
 //
+// Authenticate the publisher with its exact publish run token and redeem the body's share secret or one-time cross-host handoff. Control checks the share's captured public URL IDs, deadline, and revocation before issuing a host-only visitor session.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/share-redemptions (the `RedeemPublishRunShare` operationId).
@@ -24771,10 +26739,13 @@ func (c *ClientWithResponses) RedeemPublishRunShareWithResponse(ctx context.Cont
 	return ParseRedeemPublishRunShareResponse(rsp)
 }
 
-// ReportPublishRunServiceObservationsWithBodyWithResponse performs a POST /v1/publish-runs/{run_id}/service-observations (the `ReportPublishRunServiceObservations` operationId) request,
-// with any type of body and a specified content type.
+// ReportPublishRunServiceObservationsWithBodyWithResponse Report service observations through a public URL publish run
 //
-// Returns a wrapper object for the known response body format(s).
+// Submit bounded connection observations using the exact publish run token. Control checks the current run and counts accepted and duplicate events; observations do not create visitor grants or authorize traffic.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{run_id}/service-observations (the `ReportPublishRunServiceObservations` operationId).
 func (c *ClientWithResponses) ReportPublishRunServiceObservationsWithBodyWithResponse(ctx context.Context, runId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReportPublishRunServiceObservationsResponse, error) {
 	rsp, err := c.ReportPublishRunServiceObservationsWithBody(ctx, runId, contentType, body, reqEditors...)
 	if err != nil {
@@ -24783,8 +26754,13 @@ func (c *ClientWithResponses) ReportPublishRunServiceObservationsWithBodyWithRes
 	return ParseReportPublishRunServiceObservationsResponse(rsp)
 }
 
-// ReportPublishRunServiceObservationsWithResponse performs a POST /v1/publish-runs/{run_id}/service-observations (the `ReportPublishRunServiceObservations` operationId) request.
+// ReportPublishRunServiceObservationsWithResponse Report service observations through a public URL publish run
+//
+// Submit bounded connection observations using the exact publish run token. Control checks the current run and counts accepted and duplicate events; observations do not create visitor grants or authorize traffic.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{run_id}/service-observations (the `ReportPublishRunServiceObservations` operationId).
 func (c *ClientWithResponses) ReportPublishRunServiceObservationsWithResponse(ctx context.Context, runId string, body ReportPublishRunServiceObservationsJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportPublishRunServiceObservationsResponse, error) {
 	rsp, err := c.ReportPublishRunServiceObservations(ctx, runId, body, reqEditors...)
 	if err != nil {
@@ -24794,6 +26770,8 @@ func (c *ClientWithResponses) ReportPublishRunServiceObservationsWithResponse(ct
 }
 
 // CreatePublisherEnrollmentWithBodyWithResponse Issue an expiring one-use publisher enrollment
+//
+// Issue an expiring one-use enrollment secret under current management authorization. Enrollment installs a publisher's signing key for the selected scope; it is separate from exchanging signed assertions for short-lived publisher access tokens.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -24808,6 +26786,8 @@ func (c *ClientWithResponses) CreatePublisherEnrollmentWithBodyWithResponse(ctx 
 
 // CreatePublisherEnrollmentWithResponse Issue an expiring one-use publisher enrollment
 //
+// Issue an expiring one-use enrollment secret under current management authorization. Enrollment installs a publisher's signing key for the selected scope; it is separate from exchanging signed assertions for short-lived publisher access tokens.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/publisher-enrollments (the `CreatePublisherEnrollment` operationId).
@@ -24819,10 +26799,13 @@ func (c *ClientWithResponses) CreatePublisherEnrollmentWithResponse(ctx context.
 	return ParseCreatePublisherEnrollmentResponse(rsp)
 }
 
-// AcknowledgePublisherGroupConfigurationWithBodyWithResponse performs a POST /v1/publisher-groups/ack (the `AcknowledgePublisherGroupConfiguration` operationId) request,
-// with any type of body and a specified content type.
+// AcknowledgePublisherGroupConfigurationWithBodyWithResponse Acknowledge the exact configuration installed by a group replica
 //
-// Returns a wrapper object for the known response body format(s).
+// Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher-groups/ack (the `AcknowledgePublisherGroupConfiguration` operationId).
 func (c *ClientWithResponses) AcknowledgePublisherGroupConfigurationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcknowledgePublisherGroupConfigurationResponse, error) {
 	rsp, err := c.AcknowledgePublisherGroupConfigurationWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
@@ -24831,8 +26814,13 @@ func (c *ClientWithResponses) AcknowledgePublisherGroupConfigurationWithBodyWith
 	return ParseAcknowledgePublisherGroupConfigurationResponse(rsp)
 }
 
-// AcknowledgePublisherGroupConfigurationWithResponse performs a POST /v1/publisher-groups/ack (the `AcknowledgePublisherGroupConfiguration` operationId) request.
+// AcknowledgePublisherGroupConfigurationWithResponse Acknowledge the exact configuration installed by a group replica
+//
+// Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher-groups/ack (the `AcknowledgePublisherGroupConfiguration` operationId).
 func (c *ClientWithResponses) AcknowledgePublisherGroupConfigurationWithResponse(ctx context.Context, body AcknowledgePublisherGroupConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcknowledgePublisherGroupConfigurationResponse, error) {
 	rsp, err := c.AcknowledgePublisherGroupConfiguration(ctx, body, reqEditors...)
 	if err != nil {
@@ -24841,9 +26829,13 @@ func (c *ClientWithResponses) AcknowledgePublisherGroupConfigurationWithResponse
 	return ParseAcknowledgePublisherGroupConfigurationResponse(rsp)
 }
 
-// GetPublisherGroupAssignmentsWithResponse performs a GET /v1/publisher-groups/assignments (the `GetPublisherGroupAssignments` operationId) request.
+// GetPublisherGroupAssignmentsWithResponse Read services and grants assigned to one leased group replica
+//
+// Authenticate with the current pgl_ group lease and read the replica's exact service assignments and publisher grant IDs. These assignments may contain targets; a pta_ publisher access token cannot read them.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/publisher-groups/assignments (the `GetPublisherGroupAssignments` operationId).
 func (c *ClientWithResponses) GetPublisherGroupAssignmentsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetPublisherGroupAssignmentsResponse, error) {
 	rsp, err := c.GetPublisherGroupAssignments(ctx, reqEditors...)
 	if err != nil {
@@ -24852,12 +26844,13 @@ func (c *ClientWithResponses) GetPublisherGroupAssignmentsWithResponse(ctx conte
 	return ParseGetPublisherGroupAssignmentsResponse(rsp)
 }
 
-// RedeemPublisherGroupEnrollmentWithBodyWithResponse performs a POST /v1/publisher-groups/enroll (the `RedeemPublisherGroupEnrollment` operationId) request,
-// with any type of body and a specified content type.
+// RedeemPublisherGroupEnrollmentWithBodyWithResponse Enroll a replica's signing key with a group enrollment secret
 //
-// Each replica submits its own Ed25519 public key. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+// Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher-groups/enroll (the `RedeemPublisherGroupEnrollment` operationId).
 func (c *ClientWithResponses) RedeemPublisherGroupEnrollmentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemPublisherGroupEnrollmentResponse, error) {
 	rsp, err := c.RedeemPublisherGroupEnrollmentWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
@@ -24866,10 +26859,13 @@ func (c *ClientWithResponses) RedeemPublisherGroupEnrollmentWithBodyWithResponse
 	return ParseRedeemPublisherGroupEnrollmentResponse(rsp)
 }
 
-// RedeemPublisherGroupEnrollmentWithResponse performs a POST /v1/publisher-groups/enroll (the `RedeemPublisherGroupEnrollment` operationId) request.
+// RedeemPublisherGroupEnrollmentWithResponse Enroll a replica's signing key with a group enrollment secret
+//
+// Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Each replica submits its own Ed25519 public key. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+// Corresponds with POST /v1/publisher-groups/enroll (the `RedeemPublisherGroupEnrollment` operationId).
 func (c *ClientWithResponses) RedeemPublisherGroupEnrollmentWithResponse(ctx context.Context, body RedeemPublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemPublisherGroupEnrollmentResponse, error) {
 	rsp, err := c.RedeemPublisherGroupEnrollment(ctx, body, reqEditors...)
 	if err != nil {
@@ -24878,12 +26874,13 @@ func (c *ClientWithResponses) RedeemPublisherGroupEnrollmentWithResponse(ctx con
 	return ParseRedeemPublisherGroupEnrollmentResponse(rsp)
 }
 
-// AcquirePublisherGroupLeaseWithBodyWithResponse performs a POST /v1/publisher-groups/lease (the `AcquirePublisherGroupLease` operationId) request,
-// with any type of body and a specified content type.
+// AcquirePublisherGroupLeaseWithBodyWithResponse Exchange a signed replica assertion for a group lease
 //
-// Exchange a one-use signed assertion for a short-lived group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID.
+// Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher-groups/lease (the `AcquirePublisherGroupLease` operationId).
 func (c *ClientWithResponses) AcquirePublisherGroupLeaseWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcquirePublisherGroupLeaseResponse, error) {
 	rsp, err := c.AcquirePublisherGroupLeaseWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
@@ -24892,10 +26889,13 @@ func (c *ClientWithResponses) AcquirePublisherGroupLeaseWithBodyWithResponse(ctx
 	return ParseAcquirePublisherGroupLeaseResponse(rsp)
 }
 
-// AcquirePublisherGroupLeaseWithResponse performs a POST /v1/publisher-groups/lease (the `AcquirePublisherGroupLease` operationId) request.
+// AcquirePublisherGroupLeaseWithResponse Exchange a signed replica assertion for a group lease
+//
+// Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Exchange a one-use signed assertion for a short-lived group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID.
+// Corresponds with POST /v1/publisher-groups/lease (the `AcquirePublisherGroupLease` operationId).
 func (c *ClientWithResponses) AcquirePublisherGroupLeaseWithResponse(ctx context.Context, body AcquirePublisherGroupLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*AcquirePublisherGroupLeaseResponse, error) {
 	rsp, err := c.AcquirePublisherGroupLease(ctx, body, reqEditors...)
 	if err != nil {
@@ -24904,12 +26904,13 @@ func (c *ClientWithResponses) AcquirePublisherGroupLeaseWithResponse(ctx context
 	return ParseAcquirePublisherGroupLeaseResponse(rsp)
 }
 
-// VerifyPublisherGroupIdentityWithBodyWithResponse performs a POST /v1/publisher-groups/verify (the `VerifyPublisherGroupIdentity` operationId) request,
-// with any type of body and a specified content type.
+// VerifyPublisherGroupIdentityWithBodyWithResponse Verify a replica's group membership without acquiring a lease
 //
-// Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The one-use assertion audience is the control URL followed by this path.
+// Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher-groups/verify (the `VerifyPublisherGroupIdentity` operationId).
 func (c *ClientWithResponses) VerifyPublisherGroupIdentityWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*VerifyPublisherGroupIdentityResponse, error) {
 	rsp, err := c.VerifyPublisherGroupIdentityWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
@@ -24918,10 +26919,13 @@ func (c *ClientWithResponses) VerifyPublisherGroupIdentityWithBodyWithResponse(c
 	return ParseVerifyPublisherGroupIdentityResponse(rsp)
 }
 
-// VerifyPublisherGroupIdentityWithResponse performs a POST /v1/publisher-groups/verify (the `VerifyPublisherGroupIdentity` operationId) request.
+// VerifyPublisherGroupIdentityWithResponse Verify a replica's group membership without acquiring a lease
+//
+// Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The one-use assertion audience is the control URL followed by this path.
+// Corresponds with POST /v1/publisher-groups/verify (the `VerifyPublisherGroupIdentity` operationId).
 func (c *ClientWithResponses) VerifyPublisherGroupIdentityWithResponse(ctx context.Context, body VerifyPublisherGroupIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*VerifyPublisherGroupIdentityResponse, error) {
 	rsp, err := c.VerifyPublisherGroupIdentity(ctx, body, reqEditors...)
 	if err != nil {
@@ -24931,6 +26935,8 @@ func (c *ClientWithResponses) VerifyPublisherGroupIdentityWithResponse(ctx conte
 }
 
 // ListPublisherIdentitiesWithResponse List publisher identities and grants without secrets
+//
+// Read a cursor-paginated inventory of publisher identities and their grants for a manageable team. Responses omit enrollment secrets and private signing keys; an inventory entry is not a publisher credential.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -24945,6 +26951,8 @@ func (c *ClientWithResponses) ListPublisherIdentitiesWithResponse(ctx context.Co
 
 // RevokePublisherIdentityWithResponse Revoke an identity independently of its grants
 //
+// Revoke an exact publisher identity under current team management authorization. Identity revocation invalidates its publishing authority independently of any individual grant record.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with DELETE /v1/publisher-identities/{publisher_identity_id} (the `RevokePublisherIdentity` operationId).
@@ -24956,10 +26964,13 @@ func (c *ClientWithResponses) RevokePublisherIdentityWithResponse(ctx context.Co
 	return ParseRevokePublisherIdentityResponse(rsp)
 }
 
-// CreatePublisherGrantWithBodyWithResponse performs a POST /v1/publisher-identities/{publisher_identity_id}/grants (the `CreatePublisherGrant` operationId) request,
-// with any type of body and a specified content type.
+// CreatePublisherGrantWithBodyWithResponse Add one authorized scope to a publisher identity
 //
-// Returns a wrapper object for the known response body format(s).
+// Create a revocable publisher grant using current management authorization for the selected scope. The grant identifies what the native publisher may serve; it is not a visitor grant or a control session.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher-identities/{publisher_identity_id}/grants (the `CreatePublisherGrant` operationId).
 func (c *ClientWithResponses) CreatePublisherGrantWithBodyWithResponse(ctx context.Context, publisherIdentityId PublisherIdentityID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublisherGrantResponse, error) {
 	rsp, err := c.CreatePublisherGrantWithBody(ctx, publisherIdentityId, contentType, body, reqEditors...)
 	if err != nil {
@@ -24968,8 +26979,13 @@ func (c *ClientWithResponses) CreatePublisherGrantWithBodyWithResponse(ctx conte
 	return ParseCreatePublisherGrantResponse(rsp)
 }
 
-// CreatePublisherGrantWithResponse performs a POST /v1/publisher-identities/{publisher_identity_id}/grants (the `CreatePublisherGrant` operationId) request.
+// CreatePublisherGrantWithResponse Add one authorized scope to a publisher identity
+//
+// Create a revocable publisher grant using current management authorization for the selected scope. The grant identifies what the native publisher may serve; it is not a visitor grant or a control session.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher-identities/{publisher_identity_id}/grants (the `CreatePublisherGrant` operationId).
 func (c *ClientWithResponses) CreatePublisherGrantWithResponse(ctx context.Context, publisherIdentityId PublisherIdentityID, body CreatePublisherGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublisherGrantResponse, error) {
 	rsp, err := c.CreatePublisherGrant(ctx, publisherIdentityId, body, reqEditors...)
 	if err != nil {
@@ -24978,9 +26994,13 @@ func (c *ClientWithResponses) CreatePublisherGrantWithResponse(ctx context.Conte
 	return ParseCreatePublisherGrantResponse(rsp)
 }
 
-// RevokePublisherGrantWithResponse performs a DELETE /v1/publisher-identities/{publisher_identity_id}/grants/{grant_id} (the `RevokePublisherGrant` operationId) request.
+// RevokePublisherGrantWithResponse Revoke one publisher grant without revoking the identity
+//
+// Revoke the named grant under current team management authorization. Other grants on the identity remain separate; the revoked grant can no longer authorize current publishing work.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/publisher-identities/{publisher_identity_id}/grants/{grant_id} (the `RevokePublisherGrant` operationId).
 func (c *ClientWithResponses) RevokePublisherGrantWithResponse(ctx context.Context, publisherIdentityId PublisherIdentityID, grantId ResourceID, params *RevokePublisherGrantParams, reqEditors ...RequestEditorFn) (*RevokePublisherGrantResponse, error) {
 	rsp, err := c.RevokePublisherGrant(ctx, publisherIdentityId, grantId, params, reqEditors...)
 	if err != nil {
@@ -24989,12 +27009,13 @@ func (c *ClientWithResponses) RevokePublisherGrantWithResponse(ctx context.Conte
 	return ParseRevokePublisherGrantResponse(rsp)
 }
 
-// ObservePublisherRuntimeWithBodyWithResponse performs a POST /v1/publisher-runtime (the `ObservePublisherRuntime` operationId) request,
-// with any type of body and a specified content type.
+// ObservePublisherRuntimeWithBodyWithResponse Inspect or update a signed publisher process lifetime
 //
-// Explicit remote runtime lifecycle, independent of enrollment, verification, and identity kind. A one-use Ed25519 assertion binds scope_id, action, process_run_id and expected_epoch through the runtime proof scope, with this path as its audience. Inspect reads the current epoch without recording an address. Start compares that epoch and installs a new process run; retries retain that run and epoch. Renew and stop require the current run and epoch. Control records only the validated request source, never a body address. Group start/renew also issue the existing group lease atomically.
+// Explicit remote runtime lifecycle, independent of enrollment, verification, and identity kind. A one-use Ed25519 assertion binds scope_id, action, process_run_id and expected_epoch through the runtime proof scope, with this path as its audience. Inspect reads the current epoch without recording an address. Start compares that epoch and installs a new process run; retries retain that run and epoch. Renew and stop require the current run and epoch. Control records only the validated request source, never a body address. Group start/renew also issue the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher-runtime (the `ObservePublisherRuntime` operationId).
 func (c *ClientWithResponses) ObservePublisherRuntimeWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ObservePublisherRuntimeResponse, error) {
 	rsp, err := c.ObservePublisherRuntimeWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
@@ -25003,10 +27024,13 @@ func (c *ClientWithResponses) ObservePublisherRuntimeWithBodyWithResponse(ctx co
 	return ParseObservePublisherRuntimeResponse(rsp)
 }
 
-// ObservePublisherRuntimeWithResponse performs a POST /v1/publisher-runtime (the `ObservePublisherRuntime` operationId) request.
+// ObservePublisherRuntimeWithResponse Inspect or update a signed publisher process lifetime
+//
+// Explicit remote runtime lifecycle, independent of enrollment, verification, and identity kind. A one-use Ed25519 assertion binds scope_id, action, process_run_id and expected_epoch through the runtime proof scope, with this path as its audience. Inspect reads the current epoch without recording an address. Start compares that epoch and installs a new process run; retries retain that run and epoch. Renew and stop require the current run and epoch. Control records only the validated request source, never a body address. Group start/renew also issue the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Explicit remote runtime lifecycle, independent of enrollment, verification, and identity kind. A one-use Ed25519 assertion binds scope_id, action, process_run_id and expected_epoch through the runtime proof scope, with this path as its audience. Inspect reads the current epoch without recording an address. Start compares that epoch and installs a new process run; retries retain that run and epoch. Renew and stop require the current run and epoch. Control records only the validated request source, never a body address. Group start/renew also issue the existing group lease atomically.
+// Corresponds with POST /v1/publisher-runtime (the `ObservePublisherRuntime` operationId).
 func (c *ClientWithResponses) ObservePublisherRuntimeWithResponse(ctx context.Context, body ObservePublisherRuntimeJSONRequestBody, reqEditors ...RequestEditorFn) (*ObservePublisherRuntimeResponse, error) {
 	rsp, err := c.ObservePublisherRuntime(ctx, body, reqEditors...)
 	if err != nil {
@@ -25016,6 +27040,8 @@ func (c *ClientWithResponses) ObservePublisherRuntimeWithResponse(ctx context.Co
 }
 
 // GetPublisherPublicURLWithResponse Read the saved URL selected by the current grant
+//
+// Read the single saved public URL selected by the publisher access token's exact grant. Namespace allocation grants and control sessions do not substitute for an exact public URL publisher grant.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -25030,6 +27056,8 @@ func (c *ClientWithResponses) GetPublisherPublicURLWithResponse(ctx context.Cont
 
 // AllocatePublisherPublicURLWithBodyWithResponse Create a temporary public URL for one ad-hoc publication
 //
+// Allocate one ephemeral public URL inside the namespace authorized by the publisher access token. This is publisher work, not a management operation; the exact identity and grant retain ownership of the allocation.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/publisher/public-urls (the `AllocatePublisherPublicURL` operationId).
@@ -25042,6 +27070,8 @@ func (c *ClientWithResponses) AllocatePublisherPublicURLWithBodyWithResponse(ctx
 }
 
 // AllocatePublisherPublicURLWithResponse Create a temporary public URL for one ad-hoc publication
+//
+// Allocate one ephemeral public URL inside the namespace authorized by the publisher access token. This is publisher work, not a management operation; the exact identity and grant retain ownership of the allocation.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -25056,6 +27086,8 @@ func (c *ClientWithResponses) AllocatePublisherPublicURLWithResponse(ctx context
 
 // DeletePublisherPublicURLWithResponse Remove the exact URL allocated by this identity and grant
 //
+// Remove an ephemeral public URL owned by this exact publisher identity and grant. The namespace access token does not authorize deleting other identities' allocations or ordinary saved public URLs.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with DELETE /v1/publisher/public-urls/{public_url_id} (the `DeletePublisherPublicURL` operationId).
@@ -25067,11 +27099,13 @@ func (c *ClientWithResponses) DeletePublisherPublicURLWithResponse(ctx context.C
 	return ParseDeletePublisherPublicURLResponse(rsp)
 }
 
-// GetPublisherServiceWithResponse performs a GET /v1/publisher/service (the `GetPublisherService` operationId) request.
+// GetPublisherServiceWithResponse Read the saved service selected by the current publisher grant
 //
 // Read the exact granted service's approved protocol and public TLS trust metadata. The publisher must declare its own matching configuration when preparing a run.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/publisher/service (the `GetPublisherService` operationId).
 func (c *ClientWithResponses) GetPublisherServiceWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetPublisherServiceResponse, error) {
 	rsp, err := c.GetPublisherService(ctx, reqEditors...)
 	if err != nil {
@@ -25081,6 +27115,8 @@ func (c *ClientWithResponses) GetPublisherServiceWithResponse(ctx context.Contex
 }
 
 // GetReadinessWithResponse Confirm that the tnld role is ready to serve
+//
+// Check the configured tnld role's readiness without a credential. An unready process returns the same readiness shape with HTTP 503 rather than a successful health check.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -25093,10 +27129,13 @@ func (c *ClientWithResponses) GetReadinessWithResponse(ctx context.Context, reqE
 	return ParseGetReadinessResponse(rsp)
 }
 
-// AcceptServiceInvitationWithBodyWithResponse performs a POST /v1/service-invitations/accept (the `AcceptServiceInvitation` operationId) request,
-// with any type of body and a specified content type.
+// AcceptServiceInvitationWithBodyWithResponse Accept an invitation for the signed-in verified email identity
 //
-// Returns a wrapper object for the known response body format(s).
+// Exchange the one-use invitation secret under the current signed-in identity. Control verifies the recipient email and creates an exact-service identity grant; acceptance grants no management or publisher permission.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/service-invitations/accept (the `AcceptServiceInvitation` operationId).
 func (c *ClientWithResponses) AcceptServiceInvitationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcceptServiceInvitationResponse, error) {
 	rsp, err := c.AcceptServiceInvitationWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
@@ -25105,8 +27144,13 @@ func (c *ClientWithResponses) AcceptServiceInvitationWithBodyWithResponse(ctx co
 	return ParseAcceptServiceInvitationResponse(rsp)
 }
 
-// AcceptServiceInvitationWithResponse performs a POST /v1/service-invitations/accept (the `AcceptServiceInvitation` operationId) request.
+// AcceptServiceInvitationWithResponse Accept an invitation for the signed-in verified email identity
+//
+// Exchange the one-use invitation secret under the current signed-in identity. Control verifies the recipient email and creates an exact-service identity grant; acceptance grants no management or publisher permission.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/service-invitations/accept (the `AcceptServiceInvitation` operationId).
 func (c *ClientWithResponses) AcceptServiceInvitationWithResponse(ctx context.Context, body AcceptServiceInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcceptServiceInvitationResponse, error) {
 	rsp, err := c.AcceptServiceInvitation(ctx, body, reqEditors...)
 	if err != nil {
@@ -25115,11 +27159,13 @@ func (c *ClientWithResponses) AcceptServiceInvitationWithResponse(ctx context.Co
 	return ParseAcceptServiceInvitationResponse(rsp)
 }
 
-// ListServicesWithResponse performs a GET /v1/services (the `ListServices` operationId) request.
+// ListServicesWithResponse List manageable saved services in one team
 //
 // Team-owned saved services; never return target addresses or stream keys.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/services (the `ListServices` operationId).
 func (c *ClientWithResponses) ListServicesWithResponse(ctx context.Context, params *ListServicesParams, reqEditors ...RequestEditorFn) (*ListServicesResponse, error) {
 	rsp, err := c.ListServices(ctx, params, reqEditors...)
 	if err != nil {
@@ -25128,12 +27174,13 @@ func (c *ClientWithResponses) ListServicesWithResponse(ctx context.Context, para
 	return ParseListServicesResponse(rsp)
 }
 
-// CreateServiceWithBodyWithResponse performs a POST /v1/services (the `CreateService` operationId) request,
-// with any type of body and a specified content type.
+// CreateServiceWithBodyWithResponse Create one saved service with approved protocol and placement
 //
-// Create a team-scoped saved name. No DNS record, public URL, certificate or dedicated visitor port is allocated.
+// Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. This service has a separate identity and lifecycle from public URLs; creating it does not start a service run or issue a certificate.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services (the `CreateService` operationId).
 func (c *ClientWithResponses) CreateServiceWithBodyWithResponse(ctx context.Context, params *CreateServiceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateServiceResponse, error) {
 	rsp, err := c.CreateServiceWithBody(ctx, params, contentType, body, reqEditors...)
 	if err != nil {
@@ -25142,10 +27189,13 @@ func (c *ClientWithResponses) CreateServiceWithBodyWithResponse(ctx context.Cont
 	return ParseCreateServiceResponse(rsp)
 }
 
-// CreateServiceWithResponse performs a POST /v1/services (the `CreateService` operationId) request.
+// CreateServiceWithResponse Create one saved service with approved protocol and placement
+//
+// Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. This service has a separate identity and lifecycle from public URLs; creating it does not start a service run or issue a certificate.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Create a team-scoped saved name. No DNS record, public URL, certificate or dedicated visitor port is allocated.
+// Corresponds with POST /v1/services (the `CreateService` operationId).
 func (c *ClientWithResponses) CreateServiceWithResponse(ctx context.Context, params *CreateServiceParams, body CreateServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateServiceResponse, error) {
 	rsp, err := c.CreateService(ctx, params, body, reqEditors...)
 	if err != nil {
@@ -25154,11 +27204,13 @@ func (c *ClientWithResponses) CreateServiceWithResponse(ctx context.Context, par
 	return ParseCreateServiceResponse(rsp)
 }
 
-// DeleteServiceWithResponse performs a DELETE /v1/services/{service_id} (the `DeleteService` operationId) request.
+// DeleteServiceWithResponse Delete a saved service and revoke its active publication
 //
 // Revoke access and close any run before tombstoning its ID-keyed ingress projection.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/services/{service_id} (the `DeleteService` operationId).
 func (c *ClientWithResponses) DeleteServiceWithResponse(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*DeleteServiceResponse, error) {
 	rsp, err := c.DeleteService(ctx, serviceId, reqEditors...)
 	if err != nil {
@@ -25167,9 +27219,13 @@ func (c *ClientWithResponses) DeleteServiceWithResponse(ctx context.Context, ser
 	return ParseDeleteServiceResponse(rsp)
 }
 
-// GetServiceWithResponse performs a GET /v1/services/{service_id} (the `GetService` operationId) request.
+// GetServiceWithResponse Read one saved service for management
+//
+// Read a service's saved identity and approved protocol/TLS metadata using current management permission. For visitor-only discovery, use listAvailableServices or getProjectService instead.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/services/{service_id} (the `GetService` operationId).
 func (c *ClientWithResponses) GetServiceWithResponse(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*GetServiceResponse, error) {
 	rsp, err := c.GetService(ctx, serviceId, reqEditors...)
 	if err != nil {
@@ -25178,10 +27234,13 @@ func (c *ClientWithResponses) GetServiceWithResponse(ctx context.Context, servic
 	return ParseGetServiceResponse(rsp)
 }
 
-// ConfigureServiceWithBodyWithResponse performs a PUT /v1/services/{service_id} (the `ConfigureService` operationId) request,
-// with any type of body and a specified content type.
+// ConfigureServiceWithBodyWithResponse Replace a service's approved protocol and target TLS trust
 //
-// Returns a wrapper object for the known response body format(s).
+// Set the saved protocol, publisher pool, and target TLS trust snapshot using current service management permission. Publishers must declare matching trust when preparing later runs; this is not a target address update or a publication start.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/services/{service_id} (the `ConfigureService` operationId).
 func (c *ClientWithResponses) ConfigureServiceWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ConfigureServiceResponse, error) {
 	rsp, err := c.ConfigureServiceWithBody(ctx, serviceId, contentType, body, reqEditors...)
 	if err != nil {
@@ -25190,8 +27249,13 @@ func (c *ClientWithResponses) ConfigureServiceWithBodyWithResponse(ctx context.C
 	return ParseConfigureServiceResponse(rsp)
 }
 
-// ConfigureServiceWithResponse performs a PUT /v1/services/{service_id} (the `ConfigureService` operationId) request.
+// ConfigureServiceWithResponse Replace a service's approved protocol and target TLS trust
+//
+// Set the saved protocol, publisher pool, and target TLS trust snapshot using current service management permission. Publishers must declare matching trust when preparing later runs; this is not a target address update or a publication start.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/services/{service_id} (the `ConfigureService` operationId).
 func (c *ClientWithResponses) ConfigureServiceWithResponse(ctx context.Context, serviceId ServiceID, body ConfigureServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*ConfigureServiceResponse, error) {
 	rsp, err := c.ConfigureService(ctx, serviceId, body, reqEditors...)
 	if err != nil {
@@ -25200,10 +27264,13 @@ func (c *ClientWithResponses) ConfigureServiceWithResponse(ctx context.Context, 
 	return ParseConfigureServiceResponse(rsp)
 }
 
-// IssueServiceClientCertificateWithBodyWithResponse performs a POST /v1/services/{service_id}/client-certificates (the `IssueServiceClientCertificate` operationId) request,
-// with any type of body and a specified content type.
+// IssueServiceClientCertificateWithBodyWithResponse Issue a service-scoped client certificate for an enrolled device
 //
-// Returns a wrapper object for the known response body format(s).
+// Submit the client's CSR using the current signed-in visitor identity and an enrolled device ID. Control checks exact-service access; the private key stays with the client, and this certificate grants no management authority.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/client-certificates (the `IssueServiceClientCertificate` operationId).
 func (c *ClientWithResponses) IssueServiceClientCertificateWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueServiceClientCertificateResponse, error) {
 	rsp, err := c.IssueServiceClientCertificateWithBody(ctx, serviceId, contentType, body, reqEditors...)
 	if err != nil {
@@ -25212,8 +27279,13 @@ func (c *ClientWithResponses) IssueServiceClientCertificateWithBodyWithResponse(
 	return ParseIssueServiceClientCertificateResponse(rsp)
 }
 
-// IssueServiceClientCertificateWithResponse performs a POST /v1/services/{service_id}/client-certificates (the `IssueServiceClientCertificate` operationId) request.
+// IssueServiceClientCertificateWithResponse Issue a service-scoped client certificate for an enrolled device
+//
+// Submit the client's CSR using the current signed-in visitor identity and an enrolled device ID. Control checks exact-service access; the private key stays with the client, and this certificate grants no management authority.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/client-certificates (the `IssueServiceClientCertificate` operationId).
 func (c *ClientWithResponses) IssueServiceClientCertificateWithResponse(ctx context.Context, serviceId ServiceID, body IssueServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueServiceClientCertificateResponse, error) {
 	rsp, err := c.IssueServiceClientCertificate(ctx, serviceId, body, reqEditors...)
 	if err != nil {
@@ -25222,12 +27294,13 @@ func (c *ClientWithResponses) IssueServiceClientCertificateWithResponse(ctx cont
 	return ParseIssueServiceClientCertificateResponse(rsp)
 }
 
-// PrepareConnectorPeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs (the `PrepareConnectorPeerPair` operationId) request,
-// with any type of body and a specified content type.
+// PrepareConnectorPeerPairWithBodyWithResponse Prepare a signed connector pair for an exact ready service run
 //
-// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+// Signed create or replace for one exact ready service run. The request signature must prove the selected device or workload key. A device source also requires its matching identity's control session bearer token. A workload source authenticates with its credential in the JSON body and must omit Authorization entirely, including empty headers. The empty security object represents body authentication, not anonymous access. The selection snapshot is not a grant; current permission and both relay leases are checked again.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs (the `PrepareConnectorPeerPair` operationId).
 func (c *ClientWithResponses) PrepareConnectorPeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PrepareConnectorPeerPairResponse, error) {
 	rsp, err := c.PrepareConnectorPeerPairWithBody(ctx, serviceId, contentType, body, reqEditors...)
 	if err != nil {
@@ -25236,10 +27309,13 @@ func (c *ClientWithResponses) PrepareConnectorPeerPairWithBodyWithResponse(ctx c
 	return ParsePrepareConnectorPeerPairResponse(rsp)
 }
 
-// PrepareConnectorPeerPairWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs (the `PrepareConnectorPeerPair` operationId) request.
+// PrepareConnectorPeerPairWithResponse Prepare a signed connector pair for an exact ready service run
+//
+// Signed create or replace for one exact ready service run. The request signature must prove the selected device or workload key. A device source also requires its matching identity's control session bearer token. A workload source authenticates with its credential in the JSON body and must omit Authorization entirely, including empty headers. The empty security object represents body authentication, not anonymous access. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs (the `PrepareConnectorPeerPair` operationId).
 func (c *ClientWithResponses) PrepareConnectorPeerPairWithResponse(ctx context.Context, serviceId ServiceID, body PrepareConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*PrepareConnectorPeerPairResponse, error) {
 	rsp, err := c.PrepareConnectorPeerPair(ctx, serviceId, body, reqEditors...)
 	if err != nil {
@@ -25248,12 +27324,13 @@ func (c *ClientWithResponses) PrepareConnectorPeerPairWithResponse(ctx context.C
 	return ParsePrepareConnectorPeerPairResponse(rsp)
 }
 
-// RebindConnectorPeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind (the `RebindConnectorPeerPair` operationId) request,
-// with any type of body and a specified content type.
+// RebindConnectorPeerPairWithBodyWithResponse Inspect or change a retained connector pair's network binding
 //
-// Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+// Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind (the `RebindConnectorPeerPair` operationId).
 func (c *ClientWithResponses) RebindConnectorPeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RebindConnectorPeerPairResponse, error) {
 	rsp, err := c.RebindConnectorPeerPairWithBody(ctx, serviceId, pairId, contentType, body, reqEditors...)
 	if err != nil {
@@ -25262,10 +27339,13 @@ func (c *ClientWithResponses) RebindConnectorPeerPairWithBodyWithResponse(ctx co
 	return ParseRebindConnectorPeerPairResponse(rsp)
 }
 
-// RebindConnectorPeerPairWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind (the `RebindConnectorPeerPair` operationId) request.
+// RebindConnectorPeerPairWithResponse Inspect or change a retained connector pair's network binding
+//
+// Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind (the `RebindConnectorPeerPair` operationId).
 func (c *ClientWithResponses) RebindConnectorPeerPairWithResponse(ctx context.Context, serviceId ServiceID, pairId string, body RebindConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*RebindConnectorPeerPairResponse, error) {
 	rsp, err := c.RebindConnectorPeerPair(ctx, serviceId, pairId, body, reqEditors...)
 	if err != nil {
@@ -25274,12 +27354,13 @@ func (c *ClientWithResponses) RebindConnectorPeerPairWithResponse(ctx context.Co
 	return ParseRebindConnectorPeerPairResponse(rsp)
 }
 
-// RenewConnectorPeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request,
-// with any type of body and a specified content type.
+// RenewConnectorPeerPairWithBodyWithResponse Renew an exact signed connector pair and visitor permission
 //
-// Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
+// Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId).
 func (c *ClientWithResponses) RenewConnectorPeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewConnectorPeerPairResponse, error) {
 	rsp, err := c.RenewConnectorPeerPairWithBody(ctx, serviceId, pairId, contentType, body, reqEditors...)
 	if err != nil {
@@ -25288,10 +27369,13 @@ func (c *ClientWithResponses) RenewConnectorPeerPairWithBodyWithResponse(ctx con
 	return ParseRenewConnectorPeerPairResponse(rsp)
 }
 
-// RenewConnectorPeerPairWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request.
+// RenewConnectorPeerPairWithResponse Renew an exact signed connector pair and visitor permission
+//
+// Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
+// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId).
 func (c *ClientWithResponses) RenewConnectorPeerPairWithResponse(ctx context.Context, serviceId ServiceID, pairId string, body RenewConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewConnectorPeerPairResponse, error) {
 	rsp, err := c.RenewConnectorPeerPair(ctx, serviceId, pairId, body, reqEditors...)
 	if err != nil {
@@ -25300,11 +27384,13 @@ func (c *ClientWithResponses) RenewConnectorPeerPairWithResponse(ctx context.Con
 	return ParseRenewConnectorPeerPairResponse(rsp)
 }
 
-// ListServiceGrantsWithResponse performs a GET /v1/services/{service_id}/grants (the `ListServiceGrants` operationId) request.
+// ListServiceGrantsWithResponse List a service's visitor grants and retained history
 //
 // Current managers may read up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent; inventory is not proof of current visitor access.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/services/{service_id}/grants (the `ListServiceGrants` operationId).
 func (c *ClientWithResponses) ListServiceGrantsWithResponse(ctx context.Context, serviceId ServiceID, params *ListServiceGrantsParams, reqEditors ...RequestEditorFn) (*ListServiceGrantsResponse, error) {
 	rsp, err := c.ListServiceGrants(ctx, serviceId, params, reqEditors...)
 	if err != nil {
@@ -25313,10 +27399,13 @@ func (c *ClientWithResponses) ListServiceGrantsWithResponse(ctx context.Context,
 	return ParseListServiceGrantsResponse(rsp)
 }
 
-// CreateServiceGrantWithBodyWithResponse performs a POST /v1/services/{service_id}/grants (the `CreateServiceGrant` operationId) request,
-// with any type of body and a specified content type.
+// CreateServiceGrantWithBodyWithResponse Grant a team or identity access to one service
 //
-// Returns a wrapper object for the known response body format(s).
+// Create an exact-service visitor grant using current service management permission and an idempotency key. A visitor grant permits service use under current policy; it does not grant service management or publisher authority.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/grants (the `CreateServiceGrant` operationId).
 func (c *ClientWithResponses) CreateServiceGrantWithBodyWithResponse(ctx context.Context, serviceId ServiceID, params *CreateServiceGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateServiceGrantResponse, error) {
 	rsp, err := c.CreateServiceGrantWithBody(ctx, serviceId, params, contentType, body, reqEditors...)
 	if err != nil {
@@ -25325,8 +27414,13 @@ func (c *ClientWithResponses) CreateServiceGrantWithBodyWithResponse(ctx context
 	return ParseCreateServiceGrantResponse(rsp)
 }
 
-// CreateServiceGrantWithResponse performs a POST /v1/services/{service_id}/grants (the `CreateServiceGrant` operationId) request.
+// CreateServiceGrantWithResponse Grant a team or identity access to one service
+//
+// Create an exact-service visitor grant using current service management permission and an idempotency key. A visitor grant permits service use under current policy; it does not grant service management or publisher authority.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/grants (the `CreateServiceGrant` operationId).
 func (c *ClientWithResponses) CreateServiceGrantWithResponse(ctx context.Context, serviceId ServiceID, params *CreateServiceGrantParams, body CreateServiceGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateServiceGrantResponse, error) {
 	rsp, err := c.CreateServiceGrant(ctx, serviceId, params, body, reqEditors...)
 	if err != nil {
@@ -25335,9 +27429,13 @@ func (c *ClientWithResponses) CreateServiceGrantWithResponse(ctx context.Context
 	return ParseCreateServiceGrantResponse(rsp)
 }
 
-// RevokeServiceGrantWithResponse performs a DELETE /v1/services/{service_id}/grants/{grant_id} (the `RevokeServiceGrant` operationId) request.
+// RevokeServiceGrantWithResponse Revoke one service visitor grant
+//
+// Revoke the named grant using current service management permission. Later visitor authorization checks reject access through that grant; retained history can still appear in grant inventory.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/services/{service_id}/grants/{grant_id} (the `RevokeServiceGrant` operationId).
 func (c *ClientWithResponses) RevokeServiceGrantWithResponse(ctx context.Context, serviceId ServiceID, grantId ServiceGrantID, reqEditors ...RequestEditorFn) (*RevokeServiceGrantResponse, error) {
 	rsp, err := c.RevokeServiceGrant(ctx, serviceId, grantId, reqEditors...)
 	if err != nil {
@@ -25346,11 +27444,13 @@ func (c *ClientWithResponses) RevokeServiceGrantWithResponse(ctx context.Context
 	return ParseRevokeServiceGrantResponse(rsp)
 }
 
-// ListServiceHTTPGrantsWithResponse performs a GET /v1/services/{service_id}/http-grants (the `ListServiceHTTPGrants` operationId) request.
+// ListServiceHTTPGrantsWithResponse List an HTTP service's visitor credentials without secrets
 //
 // Secretless credential inventory for one service HTTP service. Requires current service management permission; includes expired and revoked records.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/services/{service_id}/http-grants (the `ListServiceHTTPGrants` operationId).
 func (c *ClientWithResponses) ListServiceHTTPGrantsWithResponse(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*ListServiceHTTPGrantsResponse, error) {
 	rsp, err := c.ListServiceHTTPGrants(ctx, serviceId, reqEditors...)
 	if err != nil {
@@ -25359,12 +27459,13 @@ func (c *ClientWithResponses) ListServiceHTTPGrantsWithResponse(ctx context.Cont
 	return ParseListServiceHTTPGrantsResponse(rsp)
 }
 
-// CreateServiceHTTPGrantWithBodyWithResponse performs a POST /v1/services/{service_id}/http-grants (the `CreateServiceHTTPGrant` operationId) request,
-// with any type of body and a specified content type.
+// CreateServiceHTTPGrantWithBodyWithResponse Create a service-scoped HTTP visitor token or share
 //
 // Create a service-scoped HTTP token or share. Requires current service management permission. The secret is returned once and grants no management or feedback permission.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/http-grants (the `CreateServiceHTTPGrant` operationId).
 func (c *ClientWithResponses) CreateServiceHTTPGrantWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateServiceHTTPGrantResponse, error) {
 	rsp, err := c.CreateServiceHTTPGrantWithBody(ctx, serviceId, contentType, body, reqEditors...)
 	if err != nil {
@@ -25373,10 +27474,13 @@ func (c *ClientWithResponses) CreateServiceHTTPGrantWithBodyWithResponse(ctx con
 	return ParseCreateServiceHTTPGrantResponse(rsp)
 }
 
-// CreateServiceHTTPGrantWithResponse performs a POST /v1/services/{service_id}/http-grants (the `CreateServiceHTTPGrant` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// CreateServiceHTTPGrantWithResponse Create a service-scoped HTTP visitor token or share
 //
 // Create a service-scoped HTTP token or share. Requires current service management permission. The secret is returned once and grants no management or feedback permission.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/http-grants (the `CreateServiceHTTPGrant` operationId).
 func (c *ClientWithResponses) CreateServiceHTTPGrantWithResponse(ctx context.Context, serviceId ServiceID, body CreateServiceHTTPGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateServiceHTTPGrantResponse, error) {
 	rsp, err := c.CreateServiceHTTPGrant(ctx, serviceId, body, reqEditors...)
 	if err != nil {
@@ -25385,9 +27489,13 @@ func (c *ClientWithResponses) CreateServiceHTTPGrantWithResponse(ctx context.Con
 	return ParseCreateServiceHTTPGrantResponse(rsp)
 }
 
-// RevokeServiceHTTPGrantWithResponse performs a DELETE /v1/services/{service_id}/http-grants/{grant_id} (the `RevokeServiceHTTPGrant` operationId) request.
+// RevokeServiceHTTPGrantWithResponse Revoke one service-scoped HTTP visitor credential
+//
+// Revoke the named token or share using current service management permission. The credential no longer authorizes new visitor permission; retained summaries remain visible without their secrets.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/services/{service_id}/http-grants/{grant_id} (the `RevokeServiceHTTPGrant` operationId).
 func (c *ClientWithResponses) RevokeServiceHTTPGrantWithResponse(ctx context.Context, serviceId ServiceID, grantId string, reqEditors ...RequestEditorFn) (*RevokeServiceHTTPGrantResponse, error) {
 	rsp, err := c.RevokeServiceHTTPGrant(ctx, serviceId, grantId, reqEditors...)
 	if err != nil {
@@ -25396,11 +27504,13 @@ func (c *ClientWithResponses) RevokeServiceHTTPGrantWithResponse(ctx context.Con
 	return ParseRevokeServiceHTTPGrantResponse(rsp)
 }
 
-// ListServiceInvitationsWithResponse performs a GET /v1/services/{service_id}/invitations (the `ListServiceInvitations` operationId) request.
+// ListServiceInvitationsWithResponse List a service's visitor invitations without secrets
 //
 // Current managers may read up to 100 records ordered by ID, including accepted, expired and revoked history. Follow next_cursor until absent. Never returns secrets.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/services/{service_id}/invitations (the `ListServiceInvitations` operationId).
 func (c *ClientWithResponses) ListServiceInvitationsWithResponse(ctx context.Context, serviceId ServiceID, params *ListServiceInvitationsParams, reqEditors ...RequestEditorFn) (*ListServiceInvitationsResponse, error) {
 	rsp, err := c.ListServiceInvitations(ctx, serviceId, params, reqEditors...)
 	if err != nil {
@@ -25409,12 +27519,13 @@ func (c *ClientWithResponses) ListServiceInvitationsWithResponse(ctx context.Con
 	return ParseListServiceInvitationsResponse(rsp)
 }
 
-// InviteServiceVisitorWithBodyWithResponse performs a POST /v1/services/{service_id}/invitations (the `InviteServiceVisitor` operationId) request,
-// with any type of body and a specified content type.
+// InviteServiceVisitorWithBodyWithResponse Invite a verified email identity to one service
 //
 // A new key creates one exact-service invitation. An exact retry by the same actor returns HTTP 200 with the original ID and current state, without a secret, after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/invitations (the `InviteServiceVisitor` operationId).
 func (c *ClientWithResponses) InviteServiceVisitorWithBodyWithResponse(ctx context.Context, serviceId ServiceID, params *InviteServiceVisitorParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*InviteServiceVisitorResponse, error) {
 	rsp, err := c.InviteServiceVisitorWithBody(ctx, serviceId, params, contentType, body, reqEditors...)
 	if err != nil {
@@ -25423,10 +27534,13 @@ func (c *ClientWithResponses) InviteServiceVisitorWithBodyWithResponse(ctx conte
 	return ParseInviteServiceVisitorResponse(rsp)
 }
 
-// InviteServiceVisitorWithResponse performs a POST /v1/services/{service_id}/invitations (the `InviteServiceVisitor` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// InviteServiceVisitorWithResponse Invite a verified email identity to one service
 //
 // A new key creates one exact-service invitation. An exact retry by the same actor returns HTTP 200 with the original ID and current state, without a secret, after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/invitations (the `InviteServiceVisitor` operationId).
 func (c *ClientWithResponses) InviteServiceVisitorWithResponse(ctx context.Context, serviceId ServiceID, params *InviteServiceVisitorParams, body InviteServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*InviteServiceVisitorResponse, error) {
 	rsp, err := c.InviteServiceVisitor(ctx, serviceId, params, body, reqEditors...)
 	if err != nil {
@@ -25435,9 +27549,13 @@ func (c *ClientWithResponses) InviteServiceVisitorWithResponse(ctx context.Conte
 	return ParseInviteServiceVisitorResponse(rsp)
 }
 
-// RevokeServiceInvitationWithResponse performs a DELETE /v1/services/{service_id}/invitations/{invitation_id} (the `RevokeServiceInvitation` operationId) request.
+// RevokeServiceInvitationWithResponse Revoke a service invitation and its accepted grant
+//
+// Revoke the invitation using current service management permission, including the identity grant created if it was accepted. Revocation does not remove the retained invitation history.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/services/{service_id}/invitations/{invitation_id} (the `RevokeServiceInvitation` operationId).
 func (c *ClientWithResponses) RevokeServiceInvitationWithResponse(ctx context.Context, serviceId ServiceID, invitationId ServiceInvitationID, reqEditors ...RequestEditorFn) (*RevokeServiceInvitationResponse, error) {
 	rsp, err := c.RevokeServiceInvitation(ctx, serviceId, invitationId, reqEditors...)
 	if err != nil {
@@ -25446,12 +27564,13 @@ func (c *ClientWithResponses) RevokeServiceInvitationWithResponse(ctx context.Co
 	return ParseRevokeServiceInvitationResponse(rsp)
 }
 
-// PrepareServiceRunWithBodyWithResponse performs a POST /v1/services/{service_id}/runs (the `PrepareServiceRun` operationId) request,
-// with any type of body and a specified content type.
+// PrepareServiceRunWithBodyWithResponse Reserve a service run and its approved certificate plan
 //
 // Reserve a new run ID and number and capture its exact managed hostname, port, domain and certificate plan under the authenticated publisher grant. Retrying the same idempotency key returns the same preparation.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs (the `PrepareServiceRun` operationId).
 func (c *ClientWithResponses) PrepareServiceRunWithBodyWithResponse(ctx context.Context, serviceId ServiceID, params *PrepareServiceRunParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PrepareServiceRunResponse, error) {
 	rsp, err := c.PrepareServiceRunWithBody(ctx, serviceId, params, contentType, body, reqEditors...)
 	if err != nil {
@@ -25460,10 +27579,13 @@ func (c *ClientWithResponses) PrepareServiceRunWithBodyWithResponse(ctx context.
 	return ParsePrepareServiceRunResponse(rsp)
 }
 
-// PrepareServiceRunWithResponse performs a POST /v1/services/{service_id}/runs (the `PrepareServiceRun` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// PrepareServiceRunWithResponse Reserve a service run and its approved certificate plan
 //
 // Reserve a new run ID and number and capture its exact managed hostname, port, domain and certificate plan under the authenticated publisher grant. Retrying the same idempotency key returns the same preparation.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs (the `PrepareServiceRun` operationId).
 func (c *ClientWithResponses) PrepareServiceRunWithResponse(ctx context.Context, serviceId ServiceID, params *PrepareServiceRunParams, body PrepareServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*PrepareServiceRunResponse, error) {
 	rsp, err := c.PrepareServiceRun(ctx, serviceId, params, body, reqEditors...)
 	if err != nil {
@@ -25472,11 +27594,13 @@ func (c *ClientWithResponses) PrepareServiceRunWithResponse(ctx context.Context,
 	return ParsePrepareServiceRunResponse(rsp)
 }
 
-// CloseServiceRunWithResponse performs a DELETE /v1/services/{service_id}/runs/{service_run_id} (the `CloseServiceRun` operationId) request.
+// CloseServiceRunWithResponse Close one exact service run using its run token
 //
 // Close the exact run, reject stale admissions and publish a service tombstone. Managed certificates remain in the publisher's shared cache.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/services/{service_id}/runs/{service_run_id} (the `CloseServiceRun` operationId).
 func (c *ClientWithResponses) CloseServiceRunWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, reqEditors ...RequestEditorFn) (*CloseServiceRunResponse, error) {
 	rsp, err := c.CloseServiceRun(ctx, serviceId, serviceRunId, reqEditors...)
 	if err != nil {
@@ -25485,12 +27609,13 @@ func (c *ClientWithResponses) CloseServiceRunWithResponse(ctx context.Context, s
 	return ParseCloseServiceRunResponse(rsp)
 }
 
-// HeartbeatServiceRunWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id} (the `HeartbeatServiceRun` operationId) request,
-// with any type of body and a specified content type.
+// HeartbeatServiceRunWithBodyWithResponse Renew a service run and report publisher health and capacity
 //
 // Renew only the current run under its exact publisher grant. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id} (the `HeartbeatServiceRun` operationId).
 func (c *ClientWithResponses) HeartbeatServiceRunWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*HeartbeatServiceRunResponse, error) {
 	rsp, err := c.HeartbeatServiceRunWithBody(ctx, serviceId, serviceRunId, contentType, body, reqEditors...)
 	if err != nil {
@@ -25499,10 +27624,13 @@ func (c *ClientWithResponses) HeartbeatServiceRunWithBodyWithResponse(ctx contex
 	return ParseHeartbeatServiceRunResponse(rsp)
 }
 
-// HeartbeatServiceRunWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id} (the `HeartbeatServiceRun` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// HeartbeatServiceRunWithResponse Renew a service run and report publisher health and capacity
 //
 // Renew only the current run under its exact publisher grant. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id} (the `HeartbeatServiceRun` operationId).
 func (c *ClientWithResponses) HeartbeatServiceRunWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body HeartbeatServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*HeartbeatServiceRunResponse, error) {
 	rsp, err := c.HeartbeatServiceRun(ctx, serviceId, serviceRunId, body, reqEditors...)
 	if err != nil {
@@ -25511,12 +27639,13 @@ func (c *ClientWithResponses) HeartbeatServiceRunWithResponse(ctx context.Contex
 	return ParseHeartbeatServiceRunResponse(rsp)
 }
 
-// AuthorizeServiceClientCertificateWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId) request,
-// with any type of body and a specified content type.
+// AuthorizeServiceClientCertificateWithBodyWithResponse Check a public endpoint visitor's client certificate and admission
 //
 // Authenticate a public endpoint visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId).
 func (c *ClientWithResponses) AuthorizeServiceClientCertificateWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeServiceClientCertificateResponse, error) {
 	rsp, err := c.AuthorizeServiceClientCertificateWithBody(ctx, serviceId, serviceRunId, contentType, body, reqEditors...)
 	if err != nil {
@@ -25525,10 +27654,13 @@ func (c *ClientWithResponses) AuthorizeServiceClientCertificateWithBodyWithRespo
 	return ParseAuthorizeServiceClientCertificateResponse(rsp)
 }
 
-// AuthorizeServiceClientCertificateWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// AuthorizeServiceClientCertificateWithResponse Check a public endpoint visitor's client certificate and admission
 //
 // Authenticate a public endpoint visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId).
 func (c *ClientWithResponses) AuthorizeServiceClientCertificateWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeServiceClientCertificateResponse, error) {
 	rsp, err := c.AuthorizeServiceClientCertificate(ctx, serviceId, serviceRunId, body, reqEditors...)
 	if err != nil {
@@ -25537,10 +27669,13 @@ func (c *ClientWithResponses) AuthorizeServiceClientCertificateWithResponse(ctx 
 	return ParseAuthorizeServiceClientCertificateResponse(rsp)
 }
 
-// RedeemServiceBrowserHandoffWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff (the `RedeemServiceBrowserHandoff` operationId) request,
-// with any type of body and a specified content type.
+// RedeemServiceBrowserHandoffWithBodyWithResponse Exchange a service browser handoff through its publisher run
 //
-// Returns a wrapper object for the known response body format(s).
+// Authenticate the publisher with the exact service run token and exchange the body's one-time handoff secret for a host-bound browser credential. A visitor's control session cannot substitute for the publisher run token.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff (the `RedeemServiceBrowserHandoff` operationId).
 func (c *ClientWithResponses) RedeemServiceBrowserHandoffWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemServiceBrowserHandoffResponse, error) {
 	rsp, err := c.RedeemServiceBrowserHandoffWithBody(ctx, serviceId, serviceRunId, contentType, body, reqEditors...)
 	if err != nil {
@@ -25549,8 +27684,13 @@ func (c *ClientWithResponses) RedeemServiceBrowserHandoffWithBodyWithResponse(ct
 	return ParseRedeemServiceBrowserHandoffResponse(rsp)
 }
 
-// RedeemServiceBrowserHandoffWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff (the `RedeemServiceBrowserHandoff` operationId) request.
+// RedeemServiceBrowserHandoffWithResponse Exchange a service browser handoff through its publisher run
+//
+// Authenticate the publisher with the exact service run token and exchange the body's one-time handoff secret for a host-bound browser credential. A visitor's control session cannot substitute for the publisher run token.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff (the `RedeemServiceBrowserHandoff` operationId).
 func (c *ClientWithResponses) RedeemServiceBrowserHandoffWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body RedeemServiceBrowserHandoffJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemServiceBrowserHandoffResponse, error) {
 	rsp, err := c.RedeemServiceBrowserHandoff(ctx, serviceId, serviceRunId, body, reqEditors...)
 	if err != nil {
@@ -25559,10 +27699,13 @@ func (c *ClientWithResponses) RedeemServiceBrowserHandoffWithResponse(ctx contex
 	return ParseRedeemServiceBrowserHandoffResponse(rsp)
 }
 
-// RevokeServiceBrowserSessionWithBodyWithResponse performs a DELETE /v1/services/{service_id}/runs/{service_run_id}/browser/session (the `RevokeServiceBrowserSession` operationId) request,
-// with any type of body and a specified content type.
+// RevokeServiceBrowserSessionWithBodyWithResponse Revoke a browser session through its service publisher run
 //
-// Returns a wrapper object for the known response body format(s).
+// Authenticate the publisher with the exact service run token and revoke the body's host-bound browser session. This does not revoke the person's control session or sessions on unrelated hosts.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/services/{service_id}/runs/{service_run_id}/browser/session (the `RevokeServiceBrowserSession` operationId).
 func (c *ClientWithResponses) RevokeServiceBrowserSessionWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RevokeServiceBrowserSessionResponse, error) {
 	rsp, err := c.RevokeServiceBrowserSessionWithBody(ctx, serviceId, serviceRunId, contentType, body, reqEditors...)
 	if err != nil {
@@ -25571,8 +27714,13 @@ func (c *ClientWithResponses) RevokeServiceBrowserSessionWithBodyWithResponse(ct
 	return ParseRevokeServiceBrowserSessionResponse(rsp)
 }
 
-// RevokeServiceBrowserSessionWithResponse performs a DELETE /v1/services/{service_id}/runs/{service_run_id}/browser/session (the `RevokeServiceBrowserSession` operationId) request.
+// RevokeServiceBrowserSessionWithResponse Revoke a browser session through its service publisher run
+//
+// Authenticate the publisher with the exact service run token and revoke the body's host-bound browser session. This does not revoke the person's control session or sessions on unrelated hosts.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/services/{service_id}/runs/{service_run_id}/browser/session (the `RevokeServiceBrowserSession` operationId).
 func (c *ClientWithResponses) RevokeServiceBrowserSessionWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body RevokeServiceBrowserSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*RevokeServiceBrowserSessionResponse, error) {
 	rsp, err := c.RevokeServiceBrowserSession(ctx, serviceId, serviceRunId, body, reqEditors...)
 	if err != nil {
@@ -25581,10 +27729,13 @@ func (c *ClientWithResponses) RevokeServiceBrowserSessionWithResponse(ctx contex
 	return ParseRevokeServiceBrowserSessionResponse(rsp)
 }
 
-// CheckServiceBrowserSessionWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/browser/session (the `CheckServiceBrowserSession` operationId) request,
-// with any type of body and a specified content type.
+// CheckServiceBrowserSessionWithBodyWithResponse Check a browser session through its service publisher run
 //
-// Returns a wrapper object for the known response body format(s).
+// Authenticate the publisher with the exact service run token and recheck the host-bound browser secret in the body against current service access. The result grants visitor access, not service management permission.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/browser/session (the `CheckServiceBrowserSession` operationId).
 func (c *ClientWithResponses) CheckServiceBrowserSessionWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CheckServiceBrowserSessionResponse, error) {
 	rsp, err := c.CheckServiceBrowserSessionWithBody(ctx, serviceId, serviceRunId, contentType, body, reqEditors...)
 	if err != nil {
@@ -25593,8 +27744,13 @@ func (c *ClientWithResponses) CheckServiceBrowserSessionWithBodyWithResponse(ctx
 	return ParseCheckServiceBrowserSessionResponse(rsp)
 }
 
-// CheckServiceBrowserSessionWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/browser/session (the `CheckServiceBrowserSession` operationId) request.
+// CheckServiceBrowserSessionWithResponse Check a browser session through its service publisher run
+//
+// Authenticate the publisher with the exact service run token and recheck the host-bound browser secret in the body against current service access. The result grants visitor access, not service management permission.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/browser/session (the `CheckServiceBrowserSession` operationId).
 func (c *ClientWithResponses) CheckServiceBrowserSessionWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body CheckServiceBrowserSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*CheckServiceBrowserSessionResponse, error) {
 	rsp, err := c.CheckServiceBrowserSession(ctx, serviceId, serviceRunId, body, reqEditors...)
 	if err != nil {
@@ -25603,10 +27759,13 @@ func (c *ClientWithResponses) CheckServiceBrowserSessionWithResponse(ctx context
 	return ParseCheckServiceBrowserSessionResponse(rsp)
 }
 
-// MarkServiceCertificateInstalledWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/certificate-installed (the `MarkServiceCertificateInstalled` operationId) request,
-// with any type of body and a specified content type.
+// MarkServiceCertificateInstalledWithBodyWithResponse Acknowledge the certificate installed for one service run
 //
-// Returns a wrapper object for the known response body format(s).
+// Record that the publisher installed the exact approved issuance for this run number using its service run token. The acknowledgement does not by itself prove that both publisher connections are ready.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/certificate-installed (the `MarkServiceCertificateInstalled` operationId).
 func (c *ClientWithResponses) MarkServiceCertificateInstalledWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkServiceCertificateInstalledResponse, error) {
 	rsp, err := c.MarkServiceCertificateInstalledWithBody(ctx, serviceId, serviceRunId, contentType, body, reqEditors...)
 	if err != nil {
@@ -25615,8 +27774,13 @@ func (c *ClientWithResponses) MarkServiceCertificateInstalledWithBodyWithRespons
 	return ParseMarkServiceCertificateInstalledResponse(rsp)
 }
 
-// MarkServiceCertificateInstalledWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/certificate-installed (the `MarkServiceCertificateInstalled` operationId) request.
+// MarkServiceCertificateInstalledWithResponse Acknowledge the certificate installed for one service run
+//
+// Record that the publisher installed the exact approved issuance for this run number using its service run token. The acknowledgement does not by itself prove that both publisher connections are ready.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/certificate-installed (the `MarkServiceCertificateInstalled` operationId).
 func (c *ClientWithResponses) MarkServiceCertificateInstalledWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body MarkServiceCertificateInstalledJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkServiceCertificateInstalledResponse, error) {
 	rsp, err := c.MarkServiceCertificateInstalled(ctx, serviceId, serviceRunId, body, reqEditors...)
 	if err != nil {
@@ -25625,10 +27789,13 @@ func (c *ClientWithResponses) MarkServiceCertificateInstalledWithResponse(ctx co
 	return ParseMarkServiceCertificateInstalledResponse(rsp)
 }
 
-// CreateServiceCertificateIssuanceWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances (the `CreateServiceCertificateIssuance` operationId) request,
-// with any type of body and a specified content type.
+// CreateServiceCertificateIssuanceWithBodyWithResponse Begin certificate issuance for one started service run
 //
-// Returns a wrapper object for the known response body format(s).
+// Authorize DNS-01 issuance for the service run's approved certificate plan using its exact run token and run number. Submit a CSR for the publisher's key; neither a control session nor publisher access token substitutes for the run token.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances (the `CreateServiceCertificateIssuance` operationId).
 func (c *ClientWithResponses) CreateServiceCertificateIssuanceWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *CreateServiceCertificateIssuanceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateServiceCertificateIssuanceResponse, error) {
 	rsp, err := c.CreateServiceCertificateIssuanceWithBody(ctx, serviceId, serviceRunId, params, contentType, body, reqEditors...)
 	if err != nil {
@@ -25637,8 +27804,13 @@ func (c *ClientWithResponses) CreateServiceCertificateIssuanceWithBodyWithRespon
 	return ParseCreateServiceCertificateIssuanceResponse(rsp)
 }
 
-// CreateServiceCertificateIssuanceWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances (the `CreateServiceCertificateIssuance` operationId) request.
+// CreateServiceCertificateIssuanceWithResponse Begin certificate issuance for one started service run
+//
+// Authorize DNS-01 issuance for the service run's approved certificate plan using its exact run token and run number. Submit a CSR for the publisher's key; neither a control session nor publisher access token substitutes for the run token.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances (the `CreateServiceCertificateIssuance` operationId).
 func (c *ClientWithResponses) CreateServiceCertificateIssuanceWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *CreateServiceCertificateIssuanceParams, body CreateServiceCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateServiceCertificateIssuanceResponse, error) {
 	rsp, err := c.CreateServiceCertificateIssuance(ctx, serviceId, serviceRunId, params, body, reqEditors...)
 	if err != nil {
@@ -25647,9 +27819,13 @@ func (c *ClientWithResponses) CreateServiceCertificateIssuanceWithResponse(ctx c
 	return ParseCreateServiceCertificateIssuanceResponse(rsp)
 }
 
-// GetServiceCertificateIssuanceWithResponse performs a GET /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id} (the `GetServiceCertificateIssuance` operationId) request.
+// GetServiceCertificateIssuanceWithResponse Read a service run's current certificate issuance
+//
+// Poll the named issuance using the exact service run token. Control checks that the service, run, and issuance still match before returning certificate material.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id} (the `GetServiceCertificateIssuance` operationId).
 func (c *ClientWithResponses) GetServiceCertificateIssuanceWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*GetServiceCertificateIssuanceResponse, error) {
 	rsp, err := c.GetServiceCertificateIssuance(ctx, serviceId, serviceRunId, issuanceId, reqEditors...)
 	if err != nil {
@@ -25658,11 +27834,13 @@ func (c *ClientWithResponses) GetServiceCertificateIssuanceWithResponse(ctx cont
 	return ParseGetServiceCertificateIssuanceResponse(rsp)
 }
 
-// ListConnectorPeerPairsWithResponse performs a GET /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs (the `ListConnectorPeerPairs` operationId) request.
+// ListConnectorPeerPairsWithResponse List connector pair candidates for the current service run
 //
 // Reconcile unexpired pair candidates for the exact publisher run, without keys, subjects, or source addresses. An installed owner may include an independent authority observation during temporary relay loss. A candidate may still lack relay claims; prepare its delivery independently before serving it.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs (the `ListConnectorPeerPairs` operationId).
 func (c *ClientWithResponses) ListConnectorPeerPairsWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *ListConnectorPeerPairsParams, reqEditors ...RequestEditorFn) (*ListConnectorPeerPairsResponse, error) {
 	rsp, err := c.ListConnectorPeerPairs(ctx, serviceId, serviceRunId, params, reqEditors...)
 	if err != nil {
@@ -25671,12 +27849,13 @@ func (c *ClientWithResponses) ListConnectorPeerPairsWithResponse(ctx context.Con
 	return ParseListConnectorPeerPairsResponse(rsp)
 }
 
-// DeliverConnectorPeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId) request,
-// with any type of body and a specified content type.
+// DeliverConnectorPeerPairWithBodyWithResponse Deliver an existing connector pair to its current publisher run
 //
 // Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId).
 func (c *ClientWithResponses) DeliverConnectorPeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DeliverConnectorPeerPairResponse, error) {
 	rsp, err := c.DeliverConnectorPeerPairWithBody(ctx, serviceId, serviceRunId, pairId, contentType, body, reqEditors...)
 	if err != nil {
@@ -25685,10 +27864,13 @@ func (c *ClientWithResponses) DeliverConnectorPeerPairWithBodyWithResponse(ctx c
 	return ParseDeliverConnectorPeerPairResponse(rsp)
 }
 
-// DeliverConnectorPeerPairWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// DeliverConnectorPeerPairWithResponse Deliver an existing connector pair to its current publisher run
 //
 // Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId).
 func (c *ClientWithResponses) DeliverConnectorPeerPairWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body DeliverConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*DeliverConnectorPeerPairResponse, error) {
 	rsp, err := c.DeliverConnectorPeerPair(ctx, serviceId, serviceRunId, pairId, body, reqEditors...)
 	if err != nil {
@@ -25697,12 +27879,13 @@ func (c *ClientWithResponses) DeliverConnectorPeerPairWithResponse(ctx context.C
 	return ParseDeliverConnectorPeerPairResponse(rsp)
 }
 
-// ConfirmConnectorPeerPairPreparedWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId) request,
-// with any type of body and a specified content type.
+// ConfirmConnectorPeerPairPreparedWithBodyWithResponse Confirm an exact connector binding installed by the publisher
 //
 // Record the publisher's installed packet registration and inner listener under the exact run token. Recheck the delivery authority and both matching relay claims; never extend the reported binding deadline.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId).
 func (c *ClientWithResponses) ConfirmConnectorPeerPairPreparedWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ConfirmConnectorPeerPairPreparedResponse, error) {
 	rsp, err := c.ConfirmConnectorPeerPairPreparedWithBody(ctx, serviceId, serviceRunId, pairId, contentType, body, reqEditors...)
 	if err != nil {
@@ -25711,10 +27894,13 @@ func (c *ClientWithResponses) ConfirmConnectorPeerPairPreparedWithBodyWithRespon
 	return ParseConfirmConnectorPeerPairPreparedResponse(rsp)
 }
 
-// ConfirmConnectorPeerPairPreparedWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// ConfirmConnectorPeerPairPreparedWithResponse Confirm an exact connector binding installed by the publisher
 //
 // Record the publisher's installed packet registration and inner listener under the exact run token. Recheck the delivery authority and both matching relay claims; never extend the reported binding deadline.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId).
 func (c *ClientWithResponses) ConfirmConnectorPeerPairPreparedWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body ConfirmConnectorPeerPairPreparedJSONRequestBody, reqEditors ...RequestEditorFn) (*ConfirmConnectorPeerPairPreparedResponse, error) {
 	rsp, err := c.ConfirmConnectorPeerPairPrepared(ctx, serviceId, serviceRunId, pairId, body, reqEditors...)
 	if err != nil {
@@ -25723,12 +27909,13 @@ func (c *ClientWithResponses) ConfirmConnectorPeerPairPreparedWithResponse(ctx c
 	return ParseConfirmConnectorPeerPairPreparedResponse(rsp)
 }
 
-// ReportServiceRunObservationsWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId) request,
-// with any type of body and a specified content type.
+// ReportServiceRunObservationsWithBodyWithResponse Report connector connection observations for a service run
 //
 // Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId).
 func (c *ClientWithResponses) ReportServiceRunObservationsWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReportServiceRunObservationsResponse, error) {
 	rsp, err := c.ReportServiceRunObservationsWithBody(ctx, serviceId, serviceRunId, contentType, body, reqEditors...)
 	if err != nil {
@@ -25737,10 +27924,13 @@ func (c *ClientWithResponses) ReportServiceRunObservationsWithBodyWithResponse(c
 	return ParseReportServiceRunObservationsResponse(rsp)
 }
 
-// ReportServiceRunObservationsWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// ReportServiceRunObservationsWithResponse Report connector connection observations for a service run
 //
 // Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId).
 func (c *ClientWithResponses) ReportServiceRunObservationsWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body ReportServiceRunObservationsJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportServiceRunObservationsResponse, error) {
 	rsp, err := c.ReportServiceRunObservations(ctx, serviceId, serviceRunId, body, reqEditors...)
 	if err != nil {
@@ -25749,12 +27939,13 @@ func (c *ClientWithResponses) ReportServiceRunObservationsWithResponse(ctx conte
 	return ParseReportServiceRunObservationsResponse(rsp)
 }
 
-// StartServiceRunWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/start (the `StartServiceRun` operationId) request,
-// with any type of body and a specified content type.
+// StartServiceRunWithBodyWithResponse Start one prepared service run with its publisher grant
 //
 // Start one exact prepared run using its authenticated publisher identity. Visitor TLS uses the approved service certificate, without an ephemeral stream key or custom TLS proof.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/start (the `StartServiceRun` operationId).
 func (c *ClientWithResponses) StartServiceRunWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartServiceRunResponse, error) {
 	rsp, err := c.StartServiceRunWithBody(ctx, serviceId, serviceRunId, contentType, body, reqEditors...)
 	if err != nil {
@@ -25763,10 +27954,13 @@ func (c *ClientWithResponses) StartServiceRunWithBodyWithResponse(ctx context.Co
 	return ParseStartServiceRunResponse(rsp)
 }
 
-// StartServiceRunWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/start (the `StartServiceRun` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// StartServiceRunWithResponse Start one prepared service run with its publisher grant
 //
 // Start one exact prepared run using its authenticated publisher identity. Visitor TLS uses the approved service certificate, without an ephemeral stream key or custom TLS proof.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/start (the `StartServiceRun` operationId).
 func (c *ClientWithResponses) StartServiceRunWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body StartServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*StartServiceRunResponse, error) {
 	rsp, err := c.StartServiceRun(ctx, serviceId, serviceRunId, body, reqEditors...)
 	if err != nil {
@@ -25775,12 +27969,13 @@ func (c *ClientWithResponses) StartServiceRunWithResponse(ctx context.Context, s
 	return ParseStartServiceRunResponse(rsp)
 }
 
-// SelectServiceRunWithBodyWithResponse performs a POST /v1/services/{service_id}/select-run (the `SelectServiceRun` operationId) request,
-// with any type of body and a specified content type.
+// SelectServiceRunWithBodyWithResponse Select a ready service run for an enrolled visitor device
 //
 // Check current visitor access and select a ready publisher run for background preparation. pair_ready is a credential-free hint containing two exact ready connections on distinct live relay services, not a grant, stream ticket or pair key. The caller never supplies an IP address.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/select-run (the `SelectServiceRun` operationId).
 func (c *ClientWithResponses) SelectServiceRunWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SelectServiceRunResponse, error) {
 	rsp, err := c.SelectServiceRunWithBody(ctx, serviceId, contentType, body, reqEditors...)
 	if err != nil {
@@ -25789,10 +27984,13 @@ func (c *ClientWithResponses) SelectServiceRunWithBodyWithResponse(ctx context.C
 	return ParseSelectServiceRunResponse(rsp)
 }
 
-// SelectServiceRunWithResponse performs a POST /v1/services/{service_id}/select-run (the `SelectServiceRun` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// SelectServiceRunWithResponse Select a ready service run for an enrolled visitor device
 //
 // Check current visitor access and select a ready publisher run for background preparation. pair_ready is a credential-free hint containing two exact ready connections on distinct live relay services, not a grant, stream ticket or pair key. The caller never supplies an IP address.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/select-run (the `SelectServiceRun` operationId).
 func (c *ClientWithResponses) SelectServiceRunWithResponse(ctx context.Context, serviceId ServiceID, body SelectServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*SelectServiceRunResponse, error) {
 	rsp, err := c.SelectServiceRun(ctx, serviceId, body, reqEditors...)
 	if err != nil {
@@ -25802,6 +28000,8 @@ func (c *ClientWithResponses) SelectServiceRunWithResponse(ctx context.Context, 
 }
 
 // ListTeamSharesWithResponse List manageable shares for one team
+//
+// Read a cursor-paginated share inventory under current team management authorization. Responses omit share secrets; use the original secret to construct a share link.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -25846,6 +28046,8 @@ func (c *ClientWithResponses) CreateURLShareWithResponse(ctx context.Context, pa
 
 // GetShareWithResponse Read one share
 //
+// Read a manageable share's captured public URL IDs, deadline, and revocation state without revealing its secret. Reading the record does not redeem the share or create a visitor session.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/shares/{share_id} (the `GetShare` operationId).
@@ -25859,6 +28061,8 @@ func (c *ClientWithResponses) GetShareWithResponse(ctx context.Context, shareId 
 
 // RevokeShareWithResponse Stop new access through one share
 //
+// Revoke the share under current management authorization so it cannot grant new visitor access. Retain the saved record and its captured public URL snapshot for subsequent reads.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/shares/{share_id}/revoke (the `RevokeShare` operationId).
@@ -25870,9 +28074,13 @@ func (c *ClientWithResponses) RevokeShareWithResponse(ctx context.Context, share
 	return ParseRevokeShareResponse(rsp)
 }
 
-// ListServiceAuditWithResponse performs a GET /v1/teams/{team_id}/service-audit (the `ListServiceAudit` operationId) request.
+// ListServiceAuditWithResponse Read a team's service audit history
+//
+// Read a bounded page of service access and lifecycle events using the team's current management permission. Filter by exact service identity or time, and resume with the returned cursor; audit records do not grant visitor access.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/teams/{team_id}/service-audit (the `ListServiceAudit` operationId).
 func (c *ClientWithResponses) ListServiceAuditWithResponse(ctx context.Context, teamId string, params *ListServiceAuditParams, reqEditors ...RequestEditorFn) (*ListServiceAuditResponse, error) {
 	rsp, err := c.ListServiceAudit(ctx, teamId, params, reqEditors...)
 	if err != nil {
@@ -25881,10 +28089,13 @@ func (c *ClientWithResponses) ListServiceAuditWithResponse(ctx context.Context, 
 	return ParseListServiceAuditResponse(rsp)
 }
 
-// EnrollVisitorDeviceWithBodyWithResponse performs a POST /v1/visitor-devices (the `EnrollVisitorDevice` operationId) request,
-// with any type of body and a specified content type.
+// EnrollVisitorDeviceWithBodyWithResponse Enroll an Ed25519 visitor device for the signed-in identity
 //
-// Returns a wrapper object for the known response body format(s).
+// Bind the submitted public key to the current visitor identity using its control session. The private key remains local and signs connector peer pair requests; enrollment alone does not grant access to a service.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/visitor-devices (the `EnrollVisitorDevice` operationId).
 func (c *ClientWithResponses) EnrollVisitorDeviceWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*EnrollVisitorDeviceResponse, error) {
 	rsp, err := c.EnrollVisitorDeviceWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
@@ -25893,8 +28104,13 @@ func (c *ClientWithResponses) EnrollVisitorDeviceWithBodyWithResponse(ctx contex
 	return ParseEnrollVisitorDeviceResponse(rsp)
 }
 
-// EnrollVisitorDeviceWithResponse performs a POST /v1/visitor-devices (the `EnrollVisitorDevice` operationId) request.
+// EnrollVisitorDeviceWithResponse Enroll an Ed25519 visitor device for the signed-in identity
+//
+// Bind the submitted public key to the current visitor identity using its control session. The private key remains local and signs connector peer pair requests; enrollment alone does not grant access to a service.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/visitor-devices (the `EnrollVisitorDevice` operationId).
 func (c *ClientWithResponses) EnrollVisitorDeviceWithResponse(ctx context.Context, body EnrollVisitorDeviceJSONRequestBody, reqEditors ...RequestEditorFn) (*EnrollVisitorDeviceResponse, error) {
 	rsp, err := c.EnrollVisitorDevice(ctx, body, reqEditors...)
 	if err != nil {
@@ -25903,9 +28119,13 @@ func (c *ClientWithResponses) EnrollVisitorDeviceWithResponse(ctx context.Contex
 	return ParseEnrollVisitorDeviceResponse(rsp)
 }
 
-// RevokeVisitorDeviceWithResponse performs a DELETE /v1/visitor-devices/{device_id} (the `RevokeVisitorDevice` operationId) request.
+// RevokeVisitorDeviceWithResponse Revoke a visitor device and its connector peer pairs
+//
+// Revoke the exact device belonging to the signed-in visitor identity and invalidate its connector peer pairs. This does not revoke the identity's control session or its other enrolled devices.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/visitor-devices/{device_id} (the `RevokeVisitorDevice` operationId).
 func (c *ClientWithResponses) RevokeVisitorDeviceWithResponse(ctx context.Context, deviceId string, reqEditors ...RequestEditorFn) (*RevokeVisitorDeviceResponse, error) {
 	rsp, err := c.RevokeVisitorDevice(ctx, deviceId, reqEditors...)
 	if err != nil {
@@ -25914,10 +28134,13 @@ func (c *ClientWithResponses) RevokeVisitorDeviceWithResponse(ctx context.Contex
 	return ParseRevokeVisitorDeviceResponse(rsp)
 }
 
-// AcceptVisitorInvitationWithBodyWithResponse performs a POST /v1/visitor-invitations/accept (the `AcceptVisitorInvitation` operationId) request,
-// with any type of body and a specified content type.
+// AcceptVisitorInvitationWithBodyWithResponse Accept a public URL invitation for the signed-in identity
 //
-// Returns a wrapper object for the known response body format(s).
+// Exchange the body's one-use secret using the current signed-in identity and matching verified email. Acceptance grants exact-URL visitor access, not management permission or team membership.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/visitor-invitations/accept (the `AcceptVisitorInvitation` operationId).
 func (c *ClientWithResponses) AcceptVisitorInvitationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcceptVisitorInvitationResponse, error) {
 	rsp, err := c.AcceptVisitorInvitationWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
@@ -25926,8 +28149,13 @@ func (c *ClientWithResponses) AcceptVisitorInvitationWithBodyWithResponse(ctx co
 	return ParseAcceptVisitorInvitationResponse(rsp)
 }
 
-// AcceptVisitorInvitationWithResponse performs a POST /v1/visitor-invitations/accept (the `AcceptVisitorInvitation` operationId) request.
+// AcceptVisitorInvitationWithResponse Accept a public URL invitation for the signed-in identity
+//
+// Exchange the body's one-use secret using the current signed-in identity and matching verified email. Acceptance grants exact-URL visitor access, not management permission or team membership.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/visitor-invitations/accept (the `AcceptVisitorInvitation` operationId).
 func (c *ClientWithResponses) AcceptVisitorInvitationWithResponse(ctx context.Context, body AcceptVisitorInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcceptVisitorInvitationResponse, error) {
 	rsp, err := c.AcceptVisitorInvitation(ctx, body, reqEditors...)
 	if err != nil {
@@ -25936,12 +28164,13 @@ func (c *ClientWithResponses) AcceptVisitorInvitationWithResponse(ctx context.Co
 	return ParseAcceptVisitorInvitationResponse(rsp)
 }
 
-// ReadPublisherVisitorPolicyWithBodyWithResponse performs a POST /v1/visitor-policy (the `ReadPublisherVisitorPolicy` operationId) request,
-// with any type of body and a specified content type.
+// ReadPublisherVisitorPolicyWithBodyWithResponse Refresh the current run's visitor policy and verification keys
 //
 // Read one current publisher run's scoped visitor policy, revocations, and public verification keys. The bearer credential is the exact run token. This background operation is independent of the publisher's process lease and of ordinary visitor admission.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/visitor-policy (the `ReadPublisherVisitorPolicy` operationId).
 func (c *ClientWithResponses) ReadPublisherVisitorPolicyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReadPublisherVisitorPolicyResponse, error) {
 	rsp, err := c.ReadPublisherVisitorPolicyWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
@@ -25950,10 +28179,13 @@ func (c *ClientWithResponses) ReadPublisherVisitorPolicyWithBodyWithResponse(ctx
 	return ParseReadPublisherVisitorPolicyResponse(rsp)
 }
 
-// ReadPublisherVisitorPolicyWithResponse performs a POST /v1/visitor-policy (the `ReadPublisherVisitorPolicy` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// ReadPublisherVisitorPolicyWithResponse Refresh the current run's visitor policy and verification keys
 //
 // Read one current publisher run's scoped visitor policy, revocations, and public verification keys. The bearer credential is the exact run token. This background operation is independent of the publisher's process lease and of ordinary visitor admission.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/visitor-policy (the `ReadPublisherVisitorPolicy` operationId).
 func (c *ClientWithResponses) ReadPublisherVisitorPolicyWithResponse(ctx context.Context, body ReadPublisherVisitorPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*ReadPublisherVisitorPolicyResponse, error) {
 	rsp, err := c.ReadPublisherVisitorPolicy(ctx, body, reqEditors...)
 	if err != nil {
@@ -25962,12 +28194,13 @@ func (c *ClientWithResponses) ReadPublisherVisitorPolicyWithResponse(ctx context
 	return ParseReadPublisherVisitorPolicyResponse(rsp)
 }
 
-// IssueVisitorTokenWithBodyWithResponse performs a POST /v1/visitor-tokens (the `IssueVisitorToken` operationId) request,
-// with any type of body and a specified content type.
+// IssueVisitorTokenWithBodyWithResponse Prepare or renew an exact-resource visitor permission
 //
-// Prepare or renew one exact-resource visitor permission. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+// Prepare or renew one exact-resource visitor permission. For source.kind control_session or device, authenticate with the current control session bearer token. For browser_session, workload, share, share_session, or grant, authenticate with the source credential in the JSON body and omit Authorization entirely; even an empty Authorization header is rejected. The empty security object represents these body-authenticated branches, not anonymous issuance. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/visitor-tokens (the `IssueVisitorToken` operationId).
 func (c *ClientWithResponses) IssueVisitorTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueVisitorTokenResponse, error) {
 	rsp, err := c.IssueVisitorTokenWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
@@ -25976,10 +28209,13 @@ func (c *ClientWithResponses) IssueVisitorTokenWithBodyWithResponse(ctx context.
 	return ParseIssueVisitorTokenResponse(rsp)
 }
 
-// IssueVisitorTokenWithResponse performs a POST /v1/visitor-tokens (the `IssueVisitorToken` operationId) request.
+// IssueVisitorTokenWithResponse Prepare or renew an exact-resource visitor permission
+//
+// Prepare or renew one exact-resource visitor permission. For source.kind control_session or device, authenticate with the current control session bearer token. For browser_session, workload, share, share_session, or grant, authenticate with the source credential in the JSON body and omit Authorization entirely; even an empty Authorization header is rejected. The empty security object represents these body-authenticated branches, not anonymous issuance. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Prepare or renew one exact-resource visitor permission. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+// Corresponds with POST /v1/visitor-tokens (the `IssueVisitorToken` operationId).
 func (c *ClientWithResponses) IssueVisitorTokenWithResponse(ctx context.Context, body IssueVisitorTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueVisitorTokenResponse, error) {
 	rsp, err := c.IssueVisitorToken(ctx, body, reqEditors...)
 	if err != nil {
@@ -25988,9 +28224,13 @@ func (c *ClientWithResponses) IssueVisitorTokenWithResponse(ctx context.Context,
 	return ParseIssueVisitorTokenResponse(rsp)
 }
 
-// ListAvailablePublicURLsWithResponse performs a GET /v1/visitor/public-urls (the `ListAvailablePublicURLs` operationId) request.
+// ListAvailablePublicURLsWithResponse List public URLs available to the signed-in visitor
+//
+// Read a cursor-paginated visitor inventory across the identity's current grants, optionally selecting one team. The response omits management policy, targets, and secrets and does not itself grant a visitor token.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/visitor/public-urls (the `ListAvailablePublicURLs` operationId).
 func (c *ClientWithResponses) ListAvailablePublicURLsWithResponse(ctx context.Context, params *ListAvailablePublicURLsParams, reqEditors ...RequestEditorFn) (*ListAvailablePublicURLsResponse, error) {
 	rsp, err := c.ListAvailablePublicURLs(ctx, params, reqEditors...)
 	if err != nil {
@@ -25999,11 +28239,13 @@ func (c *ClientWithResponses) ListAvailablePublicURLsWithResponse(ctx context.Co
 	return ParseListAvailablePublicURLsResponse(rsp)
 }
 
-// ListAvailableServicesWithResponse performs a GET /v1/visitor/services (the `ListAvailableServices` operationId) request.
+// ListAvailableServicesWithResponse List services available to the signed-in visitor
 //
 // Authorized saved services for tnl connect, including offline services. Initial readiness requires two ready publisher connections; after that one surviving ready connection keeps a run available during replacement. Inventory never grants a stream ticket by itself and contains no target address, DNS or key material.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/visitor/services (the `ListAvailableServices` operationId).
 func (c *ClientWithResponses) ListAvailableServicesWithResponse(ctx context.Context, params *ListAvailableServicesParams, reqEditors ...RequestEditorFn) (*ListAvailableServicesResponse, error) {
 	rsp, err := c.ListAvailableServices(ctx, params, reqEditors...)
 	if err != nil {
@@ -26013,6 +28255,8 @@ func (c *ClientWithResponses) ListAvailableServicesWithResponse(ctx context.Cont
 }
 
 // GetWebhookProviderSourceWithResponse Read one webhook provider source policy
+//
+// Read the selected provider's current webhook source policy without a credential. Use ETag and If-None-Match to reuse unchanged policy; this endpoint does not register a webhook or grant access to a public URL.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -26027,6 +28271,8 @@ func (c *ClientWithResponses) GetWebhookProviderSourceWithResponse(ctx context.C
 
 // ListWorkloadServicesWithResponse List only the workload session's currently authorized saved services
 //
+// Read the services currently authorized for this workload session using its visitor-only bearer credential. The inventory omits target addresses and application credentials and grants no publisher or control management authority.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/workload/services (the `ListWorkloadServices` operationId).
@@ -26038,9 +28284,13 @@ func (c *ClientWithResponses) ListWorkloadServicesWithResponse(ctx context.Conte
 	return ParseListWorkloadServicesResponse(rsp)
 }
 
-// CheckWorkloadServiceWithResponse performs a POST /v1/workload/services/{service_id}/authorization (the `CheckWorkloadService` operationId) request.
+// CheckWorkloadServiceWithResponse Check a workload session's current permission for one service
+//
+// Recheck live workload authorization for the exact service using the workload bearer credential. The decision is bounded by both the renewable lease and the session's fixed absolute deadline; a prior inventory response is not sufficient authorization.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/workload/services/{service_id}/authorization (the `CheckWorkloadService` operationId).
 func (c *ClientWithResponses) CheckWorkloadServiceWithResponse(ctx context.Context, serviceId string, reqEditors ...RequestEditorFn) (*CheckWorkloadServiceResponse, error) {
 	rsp, err := c.CheckWorkloadService(ctx, serviceId, reqEditors...)
 	if err != nil {
@@ -26049,10 +28299,13 @@ func (c *ClientWithResponses) CheckWorkloadServiceWithResponse(ctx context.Conte
 	return ParseCheckWorkloadServiceResponse(rsp)
 }
 
-// IssueWorkloadServiceClientCertificateWithBodyWithResponse performs a POST /v1/workload/services/{service_id}/client-certificate (the `IssueWorkloadServiceClientCertificate` operationId) request,
-// with any type of body and a specified content type.
+// IssueWorkloadServiceClientCertificateWithBodyWithResponse Issue a service client certificate for a workload's existing key
 //
-// Returns a wrapper object for the known response body format(s).
+// Submit a CSR under the visitor-only workload bearer credential for one currently authorized service. The returned certificate cannot outlive the workload's fixed absolute expiry, and later access still requires a current workload lease.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/workload/services/{service_id}/client-certificate (the `IssueWorkloadServiceClientCertificate` operationId).
 func (c *ClientWithResponses) IssueWorkloadServiceClientCertificateWithBodyWithResponse(ctx context.Context, serviceId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueWorkloadServiceClientCertificateResponse, error) {
 	rsp, err := c.IssueWorkloadServiceClientCertificateWithBody(ctx, serviceId, contentType, body, reqEditors...)
 	if err != nil {
@@ -26061,8 +28314,13 @@ func (c *ClientWithResponses) IssueWorkloadServiceClientCertificateWithBodyWithR
 	return ParseIssueWorkloadServiceClientCertificateResponse(rsp)
 }
 
-// IssueWorkloadServiceClientCertificateWithResponse performs a POST /v1/workload/services/{service_id}/client-certificate (the `IssueWorkloadServiceClientCertificate` operationId) request.
+// IssueWorkloadServiceClientCertificateWithResponse Issue a service client certificate for a workload's existing key
+//
+// Submit a CSR under the visitor-only workload bearer credential for one currently authorized service. The returned certificate cannot outlive the workload's fixed absolute expiry, and later access still requires a current workload lease.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/workload/services/{service_id}/client-certificate (the `IssueWorkloadServiceClientCertificate` operationId).
 func (c *ClientWithResponses) IssueWorkloadServiceClientCertificateWithResponse(ctx context.Context, serviceId string, body IssueWorkloadServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueWorkloadServiceClientCertificateResponse, error) {
 	rsp, err := c.IssueWorkloadServiceClientCertificate(ctx, serviceId, body, reqEditors...)
 	if err != nil {
@@ -26071,11 +28329,13 @@ func (c *ClientWithResponses) IssueWorkloadServiceClientCertificateWithResponse(
 	return ParseIssueWorkloadServiceClientCertificateResponse(rsp)
 }
 
-// SelectWorkloadServiceRunWithResponse performs a POST /v1/workload/services/{service_id}/run (the `SelectWorkloadServiceRun` operationId) request.
+// SelectWorkloadServiceRunWithResponse Select a ready service run for an authenticated workload
 //
 // Check the selected workload credential and current service permission. pair_ready appears only for two exact ready connections on distinct live relay services; it is a signing snapshot, not a grant or a pair key.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/workload/services/{service_id}/run (the `SelectWorkloadServiceRun` operationId).
 func (c *ClientWithResponses) SelectWorkloadServiceRunWithResponse(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*SelectWorkloadServiceRunResponse, error) {
 	rsp, err := c.SelectWorkloadServiceRun(ctx, serviceId, reqEditors...)
 	if err != nil {
@@ -30507,7 +32767,7 @@ type ServerInterface interface {
 	// BeginPreviewBrowserLogin Start sign-in for a preview visitor
 	// (GET /v1/browser/login)
 	BeginPreviewBrowserLogin(w http.ResponseWriter, r *http.Request, params BeginPreviewBrowserLoginParams)
-
+	// BeginServiceBrowserLogin Start browser sign-in for one HTTP service
 	// (GET /v1/browser/service-login)
 	BeginServiceBrowserLogin(w http.ResponseWriter, r *http.Request, params BeginServiceBrowserLoginParams)
 	// GetCertificateIssuance Read one publish-run certificate issuance
@@ -30540,7 +32800,7 @@ type ServerInterface interface {
 	// AllocateGuestDemoNumber Allocate a new hostname number for this guest trial
 	// (POST /v1/guest-demo/number)
 	AllocateGuestDemoNumber(w http.ResponseWriter, r *http.Request)
-
+	// EnrollGuestPublisher Enroll a publisher key for the guest trial's assigned demo URL
 	// (POST /v1/guest-demo/publisher)
 	EnrollGuestPublisher(w http.ResponseWriter, r *http.Request)
 	// GetHealth Confirm that the control HTTP server is serving
@@ -30564,34 +32824,34 @@ type ServerInterface interface {
 	// SetPreviewTeamAccess Enable or disable team visitor access for this preview
 	// (PUT /v1/previews/{preview_id}/team-access)
 	SetPreviewTeamAccess(w http.ResponseWriter, r *http.Request, previewId PreviewID)
-
+	// GetProjectConfiguration Read a project's applied configuration and publisher status
 	// (GET /v1/projects/{project_key}/configuration)
 	GetProjectConfiguration(w http.ResponseWriter, r *http.Request, projectKey string, params GetProjectConfigurationParams)
-
+	// ApplyProjectConfiguration Apply a project's desired services and publisher groups
 	// (PUT /v1/projects/{project_key}/configuration)
 	ApplyProjectConfiguration(w http.ResponseWriter, r *http.Request, projectKey string)
-
+	// GetLocalProjectService Resolve one existing source-bound worktree service
 	// (GET /v1/projects/{project_key}/local-services/{service})
 	GetLocalProjectService(w http.ResponseWriter, r *http.Request, projectKey string, service string, params GetLocalProjectServiceParams)
-
+	// RealizeLocalProjectService Realize one declared local service for a worktree
 	// (PUT /v1/projects/{project_key}/local-services/{service})
 	RealizeLocalProjectService(w http.ResponseWriter, r *http.Request, projectKey string, service string)
-
+	// GetProjectPublicMetadata Read visitor-safe project service identities and hostnames
 	// (GET /v1/projects/{project_key}/public-metadata)
 	GetProjectPublicMetadata(w http.ResponseWriter, r *http.Request, projectKey string, params GetProjectPublicMetadataParams)
-
+	// CreatePublisherGroupEnrollment Issue a bounded enrollment key for a project's publisher group
 	// (POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments)
 	CreatePublisherGroupEnrollment(w http.ResponseWriter, r *http.Request, projectKey string, groupName string)
-
+	// RevokePublisherGroupMember Revoke one enrolled publisher replica from a group
 	// (DELETE /v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id})
 	RevokePublisherGroupMember(w http.ResponseWriter, r *http.Request, projectKey string, groupName string, publisherIdentityId string, params RevokePublisherGroupMemberParams)
-
+	// RenamePublisherNamespace Replace a publisher group's DNS namespace label
 	// (POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename)
 	RenamePublisherNamespace(w http.ResponseWriter, r *http.Request, projectKey string, groupName string)
-
+	// RenamePublisherGroup Rename a group's configuration selector without changing endpoints
 	// (POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename)
 	RenamePublisherGroup(w http.ResponseWriter, r *http.Request, projectKey string, groupName string)
-
+	// GetProjectService Resolve an applied service by project source and key
 	// (GET /v1/projects/{project_key}/services/{service})
 	GetProjectService(w http.ResponseWriter, r *http.Request, projectKey string, service ServiceName, params GetProjectServiceParams)
 	// ListPublicURLs List public URLs for one team
@@ -30615,25 +32875,25 @@ type ServerInterface interface {
 	// CreatePublishRun Create a publish run and allocate its publish run number
 	// (POST /v1/public-urls/{public_url_id}/publish-runs)
 	CreatePublishRun(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, params CreatePublishRunParams)
-
+	// ListVisitorGrants List visitor grants for one manageable public URL
 	// (GET /v1/public-urls/{public_url_id}/visitor-grants)
 	ListVisitorGrants(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
-
+	// CreateTeamVisitorGrant Grant current members of a team access to one public URL
 	// (POST /v1/public-urls/{public_url_id}/visitor-grants)
 	CreateTeamVisitorGrant(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, params CreateTeamVisitorGrantParams)
-
+	// RevokeVisitorGrant Revoke one public URL visitor grant
 	// (DELETE /v1/public-urls/{public_url_id}/visitor-grants/{grant_id})
 	RevokeVisitorGrant(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, grantId string)
 	// CreateIdentityVisitorGrant Create an explicit identity grant, including for the current identity
 	// (POST /v1/public-urls/{public_url_id}/visitor-identity-grants)
 	CreateIdentityVisitorGrant(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, params CreateIdentityVisitorGrantParams)
-
+	// ListVisitorInvitations List named visitor invitations for one public URL
 	// (GET /v1/public-urls/{public_url_id}/visitor-invitations)
 	ListVisitorInvitations(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
-
+	// CreateVisitorInvitation Invite a verified email identity to one public URL
 	// (POST /v1/public-urls/{public_url_id}/visitor-invitations)
 	CreateVisitorInvitation(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, params CreateVisitorInvitationParams)
-
+	// RevokeVisitorInvitation Revoke a public URL invitation and its accepted identity grant
 	// (DELETE /v1/public-urls/{public_url_id}/visitor-invitations/{invitation_id})
 	RevokeVisitorInvitation(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, invitationId string)
 	// ClosePublishRun Close and drain a publish run without deleting its public URL
@@ -30684,25 +32944,25 @@ type ServerInterface interface {
 	// RedeemPublishRunShare Redeem a share link or one short-lived cross-host handoff
 	// (POST /v1/publish-runs/{publish_run_id}/share-redemptions)
 	RedeemPublishRunShare(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
-
+	// ReportPublishRunServiceObservations Report service observations through a public URL publish run
 	// (POST /v1/publish-runs/{run_id}/service-observations)
 	ReportPublishRunServiceObservations(w http.ResponseWriter, r *http.Request, runId string)
 	// CreatePublisherEnrollment Issue an expiring one-use publisher enrollment
 	// (POST /v1/publisher-enrollments)
 	CreatePublisherEnrollment(w http.ResponseWriter, r *http.Request)
-
+	// AcknowledgePublisherGroupConfiguration Acknowledge the exact configuration installed by a group replica
 	// (POST /v1/publisher-groups/ack)
 	AcknowledgePublisherGroupConfiguration(w http.ResponseWriter, r *http.Request)
-
+	// GetPublisherGroupAssignments Read services and grants assigned to one leased group replica
 	// (GET /v1/publisher-groups/assignments)
 	GetPublisherGroupAssignments(w http.ResponseWriter, r *http.Request)
-
+	// RedeemPublisherGroupEnrollment Enroll a replica's signing key with a group enrollment secret
 	// (POST /v1/publisher-groups/enroll)
 	RedeemPublisherGroupEnrollment(w http.ResponseWriter, r *http.Request)
-
+	// AcquirePublisherGroupLease Exchange a signed replica assertion for a group lease
 	// (POST /v1/publisher-groups/lease)
 	AcquirePublisherGroupLease(w http.ResponseWriter, r *http.Request)
-
+	// VerifyPublisherGroupIdentity Verify a replica's group membership without acquiring a lease
 	// (POST /v1/publisher-groups/verify)
 	VerifyPublisherGroupIdentity(w http.ResponseWriter, r *http.Request)
 	// ListPublisherIdentities List publisher identities and grants without secrets
@@ -30711,13 +32971,13 @@ type ServerInterface interface {
 	// RevokePublisherIdentity Revoke an identity independently of its grants
 	// (DELETE /v1/publisher-identities/{publisher_identity_id})
 	RevokePublisherIdentity(w http.ResponseWriter, r *http.Request, publisherIdentityId PublisherIdentityID, params RevokePublisherIdentityParams)
-
+	// CreatePublisherGrant Add one authorized scope to a publisher identity
 	// (POST /v1/publisher-identities/{publisher_identity_id}/grants)
 	CreatePublisherGrant(w http.ResponseWriter, r *http.Request, publisherIdentityId PublisherIdentityID)
-
+	// RevokePublisherGrant Revoke one publisher grant without revoking the identity
 	// (DELETE /v1/publisher-identities/{publisher_identity_id}/grants/{grant_id})
 	RevokePublisherGrant(w http.ResponseWriter, r *http.Request, publisherIdentityId PublisherIdentityID, grantId ResourceID, params RevokePublisherGrantParams)
-
+	// ObservePublisherRuntime Inspect or update a signed publisher process lifetime
 	// (POST /v1/publisher-runtime)
 	ObservePublisherRuntime(w http.ResponseWriter, r *http.Request)
 	// GetPublisherPublicURL Read the saved URL selected by the current grant
@@ -30729,115 +32989,115 @@ type ServerInterface interface {
 	// DeletePublisherPublicURL Remove the exact URL allocated by this identity and grant
 	// (DELETE /v1/publisher/public-urls/{public_url_id})
 	DeletePublisherPublicURL(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
-
+	// GetPublisherService Read the saved service selected by the current publisher grant
 	// (GET /v1/publisher/service)
 	GetPublisherService(w http.ResponseWriter, r *http.Request)
 	// GetReadiness Confirm that the tnld role is ready to serve
 	// (GET /v1/ready)
 	GetReadiness(w http.ResponseWriter, r *http.Request)
-
+	// AcceptServiceInvitation Accept an invitation for the signed-in verified email identity
 	// (POST /v1/service-invitations/accept)
 	AcceptServiceInvitation(w http.ResponseWriter, r *http.Request)
-
+	// ListServices List manageable saved services in one team
 	// (GET /v1/services)
 	ListServices(w http.ResponseWriter, r *http.Request, params ListServicesParams)
-
+	// CreateService Create one saved service with approved protocol and placement
 	// (POST /v1/services)
 	CreateService(w http.ResponseWriter, r *http.Request, params CreateServiceParams)
-
+	// DeleteService Delete a saved service and revoke its active publication
 	// (DELETE /v1/services/{service_id})
 	DeleteService(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
-
+	// GetService Read one saved service for management
 	// (GET /v1/services/{service_id})
 	GetService(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
-
+	// ConfigureService Replace a service's approved protocol and target TLS trust
 	// (PUT /v1/services/{service_id})
 	ConfigureService(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
-
+	// IssueServiceClientCertificate Issue a service-scoped client certificate for an enrolled device
 	// (POST /v1/services/{service_id}/client-certificates)
 	IssueServiceClientCertificate(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
-
+	// PrepareConnectorPeerPair Prepare a signed connector pair for an exact ready service run
 	// (POST /v1/services/{service_id}/connector-peer-pairs)
 	PrepareConnectorPeerPair(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
-
+	// RebindConnectorPeerPair Inspect or change a retained connector pair's network binding
 	// (POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind)
 	RebindConnectorPeerPair(w http.ResponseWriter, r *http.Request, serviceId ServiceID, pairId string)
-
+	// RenewConnectorPeerPair Renew an exact signed connector pair and visitor permission
 	// (POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew)
 	RenewConnectorPeerPair(w http.ResponseWriter, r *http.Request, serviceId ServiceID, pairId string)
-
+	// ListServiceGrants List a service's visitor grants and retained history
 	// (GET /v1/services/{service_id}/grants)
 	ListServiceGrants(w http.ResponseWriter, r *http.Request, serviceId ServiceID, params ListServiceGrantsParams)
-
+	// CreateServiceGrant Grant a team or identity access to one service
 	// (POST /v1/services/{service_id}/grants)
 	CreateServiceGrant(w http.ResponseWriter, r *http.Request, serviceId ServiceID, params CreateServiceGrantParams)
-
+	// RevokeServiceGrant Revoke one service visitor grant
 	// (DELETE /v1/services/{service_id}/grants/{grant_id})
 	RevokeServiceGrant(w http.ResponseWriter, r *http.Request, serviceId ServiceID, grantId ServiceGrantID)
-
+	// ListServiceHTTPGrants List an HTTP service's visitor credentials without secrets
 	// (GET /v1/services/{service_id}/http-grants)
 	ListServiceHTTPGrants(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
-
+	// CreateServiceHTTPGrant Create a service-scoped HTTP visitor token or share
 	// (POST /v1/services/{service_id}/http-grants)
 	CreateServiceHTTPGrant(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
-
+	// RevokeServiceHTTPGrant Revoke one service-scoped HTTP visitor credential
 	// (DELETE /v1/services/{service_id}/http-grants/{grant_id})
 	RevokeServiceHTTPGrant(w http.ResponseWriter, r *http.Request, serviceId ServiceID, grantId string)
-
+	// ListServiceInvitations List a service's visitor invitations without secrets
 	// (GET /v1/services/{service_id}/invitations)
 	ListServiceInvitations(w http.ResponseWriter, r *http.Request, serviceId ServiceID, params ListServiceInvitationsParams)
-
+	// InviteServiceVisitor Invite a verified email identity to one service
 	// (POST /v1/services/{service_id}/invitations)
 	InviteServiceVisitor(w http.ResponseWriter, r *http.Request, serviceId ServiceID, params InviteServiceVisitorParams)
-
+	// RevokeServiceInvitation Revoke a service invitation and its accepted grant
 	// (DELETE /v1/services/{service_id}/invitations/{invitation_id})
 	RevokeServiceInvitation(w http.ResponseWriter, r *http.Request, serviceId ServiceID, invitationId ServiceInvitationID)
-
+	// PrepareServiceRun Reserve a service run and its approved certificate plan
 	// (POST /v1/services/{service_id}/runs)
 	PrepareServiceRun(w http.ResponseWriter, r *http.Request, serviceId ServiceID, params PrepareServiceRunParams)
-
+	// CloseServiceRun Close one exact service run using its run token
 	// (DELETE /v1/services/{service_id}/runs/{service_run_id})
 	CloseServiceRun(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
-
+	// HeartbeatServiceRun Renew a service run and report publisher health and capacity
 	// (POST /v1/services/{service_id}/runs/{service_run_id})
 	HeartbeatServiceRun(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
-
+	// AuthorizeServiceClientCertificate Check a public endpoint visitor's client certificate and admission
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate)
 	AuthorizeServiceClientCertificate(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
-
+	// RedeemServiceBrowserHandoff Exchange a service browser handoff through its publisher run
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff)
 	RedeemServiceBrowserHandoff(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
-
+	// RevokeServiceBrowserSession Revoke a browser session through its service publisher run
 	// (DELETE /v1/services/{service_id}/runs/{service_run_id}/browser/session)
 	RevokeServiceBrowserSession(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
-
+	// CheckServiceBrowserSession Check a browser session through its service publisher run
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/browser/session)
 	CheckServiceBrowserSession(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
-
+	// MarkServiceCertificateInstalled Acknowledge the certificate installed for one service run
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/certificate-installed)
 	MarkServiceCertificateInstalled(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
-
+	// CreateServiceCertificateIssuance Begin certificate issuance for one started service run
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances)
 	CreateServiceCertificateIssuance(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID, params CreateServiceCertificateIssuanceParams)
-
+	// GetServiceCertificateIssuance Read a service run's current certificate issuance
 	// (GET /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id})
 	GetServiceCertificateIssuance(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID, issuanceId IssuanceID)
-
+	// ListConnectorPeerPairs List connector pair candidates for the current service run
 	// (GET /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs)
 	ListConnectorPeerPairs(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID, params ListConnectorPeerPairsParams)
-
+	// DeliverConnectorPeerPair Deliver an existing connector pair to its current publisher run
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery)
 	DeliverConnectorPeerPair(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID, pairId string)
-
+	// ConfirmConnectorPeerPairPrepared Confirm an exact connector binding installed by the publisher
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared)
 	ConfirmConnectorPeerPairPrepared(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID, pairId string)
-
+	// ReportServiceRunObservations Report connector connection observations for a service run
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/service-observations)
 	ReportServiceRunObservations(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
-
+	// StartServiceRun Start one prepared service run with its publisher grant
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/start)
 	StartServiceRun(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
-
+	// SelectServiceRun Select a ready service run for an enrolled visitor device
 	// (POST /v1/services/{service_id}/select-run)
 	SelectServiceRun(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
 	// ListTeamShares List manageable shares for one team
@@ -30852,28 +33112,28 @@ type ServerInterface interface {
 	// RevokeShare Stop new access through one share
 	// (POST /v1/shares/{share_id}/revoke)
 	RevokeShare(w http.ResponseWriter, r *http.Request, shareId ShareID)
-
+	// ListServiceAudit Read a team's service audit history
 	// (GET /v1/teams/{team_id}/service-audit)
 	ListServiceAudit(w http.ResponseWriter, r *http.Request, teamId string, params ListServiceAuditParams)
-
+	// EnrollVisitorDevice Enroll an Ed25519 visitor device for the signed-in identity
 	// (POST /v1/visitor-devices)
 	EnrollVisitorDevice(w http.ResponseWriter, r *http.Request)
-
+	// RevokeVisitorDevice Revoke a visitor device and its connector peer pairs
 	// (DELETE /v1/visitor-devices/{device_id})
 	RevokeVisitorDevice(w http.ResponseWriter, r *http.Request, deviceId string)
-
+	// AcceptVisitorInvitation Accept a public URL invitation for the signed-in identity
 	// (POST /v1/visitor-invitations/accept)
 	AcceptVisitorInvitation(w http.ResponseWriter, r *http.Request)
-
+	// ReadPublisherVisitorPolicy Refresh the current run's visitor policy and verification keys
 	// (POST /v1/visitor-policy)
 	ReadPublisherVisitorPolicy(w http.ResponseWriter, r *http.Request)
-
+	// IssueVisitorToken Prepare or renew an exact-resource visitor permission
 	// (POST /v1/visitor-tokens)
 	IssueVisitorToken(w http.ResponseWriter, r *http.Request)
-
+	// ListAvailablePublicURLs List public URLs available to the signed-in visitor
 	// (GET /v1/visitor/public-urls)
 	ListAvailablePublicURLs(w http.ResponseWriter, r *http.Request, params ListAvailablePublicURLsParams)
-
+	// ListAvailableServices List services available to the signed-in visitor
 	// (GET /v1/visitor/services)
 	ListAvailableServices(w http.ResponseWriter, r *http.Request, params ListAvailableServicesParams)
 	// GetWebhookProviderSource Read one webhook provider source policy
@@ -30882,13 +33142,13 @@ type ServerInterface interface {
 	// ListWorkloadServices List only the workload session's currently authorized saved services
 	// (GET /v1/workload/services)
 	ListWorkloadServices(w http.ResponseWriter, r *http.Request)
-
+	// CheckWorkloadService Check a workload session's current permission for one service
 	// (POST /v1/workload/services/{service_id}/authorization)
 	CheckWorkloadService(w http.ResponseWriter, r *http.Request, serviceId string)
-
+	// IssueWorkloadServiceClientCertificate Issue a service client certificate for a workload's existing key
 	// (POST /v1/workload/services/{service_id}/client-certificate)
 	IssueWorkloadServiceClientCertificate(w http.ResponseWriter, r *http.Request, serviceId string)
-
+	// SelectWorkloadServiceRun Select a ready service run for an authenticated workload
 	// (POST /v1/workload/services/{service_id}/run)
 	SelectWorkloadServiceRun(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
 }
