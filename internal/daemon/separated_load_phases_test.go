@@ -14,6 +14,9 @@ import (
 
 func activateSeparatedPublishers(t *testing.T, database *sql.DB, routes int) separatedPublishers {
 	t.Helper()
+	plan := planSeparatedPublisherActivation(routes, len(separatedPublisherComponents()), *runtimeLoadStartParallel)
+	separatedResult(t, "activation-plan", plan)
+	t.Logf("separated_activation_plan requested_parallel=%d effective_parallel=%d waves=%d", plan.RequestedParallel, plan.EffectiveParallel, plan.Waves)
 	activationBefore := separatedCapture(t, database, "activation-before")
 	activation := time.Now()
 	stopTrace := func() {}
@@ -24,11 +27,9 @@ func activateSeparatedPublishers(t *testing.T, database *sql.DB, routes int) sep
 	separatedWrite(t, "publish.start", activation)
 	publishers := separatedPublishers{URLs: make([]string, routes), Ready: make([]publisher.Event, routes)}
 	// each publisher retains its own readiness deadline, starting at launch.
-	parallel := min(routes, *runtimeLoadStartParallel)
-	waves := (routes + parallel - 1) / parallel
-	for shard := range separatedPublisherComponents() {
+	for shard := range plan.Shards {
 		var result separatedPublishers
-		separatedWait(t, separatedPublisherShardKey(shard, "ready"), time.Duration(waves)*(*runtimeLoadReadyTimeout)+10*time.Second, &result)
+		separatedWait(t, separatedPublisherShardKey(shard, "ready"), plan.readinessTimeout(*runtimeLoadReadyTimeout), &result)
 		if len(result.URLs) != routes || len(result.Ready) != routes {
 			t.Fatalf("publisher shard %d has incomplete route slots", shard+1)
 		}
@@ -74,8 +75,9 @@ func activateSeparatedPublishers(t *testing.T, database *sql.DB, routes int) sep
 		t.Fatal("incomplete activation timings")
 	}
 	t.Logf("separated_activation_summary routes=%d parallel=%d min=%s p50=%s p95=%s max=%s publishers_ready=%s verified=%s",
-		routes, parallel, durations[0], durations[(routes-1)/2], durations[(95*routes+99)/100-1], durations[routes-1], publishers.ActivationDuration, activationElapsed)
-	separatedArtifact(t, "activation", map[string]any{"parallel": parallel, "certificate_workers": *runtimeLoadCertificateWorkers, "launch_to_ready": durations,
+		routes, plan.EffectiveParallel, durations[0], durations[(routes-1)/2], durations[(95*routes+99)/100-1], durations[routes-1], publishers.ActivationDuration, activationElapsed)
+	separatedArtifact(t, "activation", map[string]any{"parallel": plan.EffectiveParallel, "requested_parallel": plan.RequestedParallel, "waves": plan.Waves,
+		"certificate_workers": *runtimeLoadCertificateWorkers, "launch_to_ready": durations,
 		"publishers_ready": publishers.ActivationDuration, "verified": activationElapsed, "ca_orders": caOrders, "certificate_work_attempts": workerAttempts})
 	separatedReportResources(t, "activation", activationBefore, separatedCapture(t, database, "activation-after"))
 	if orders != routes || installed != routes || distinctPublicURLs != routes || caOrders != int64(routes) {
