@@ -193,6 +193,19 @@ type ControlBrowserSessionRunBinding struct {
 	PublishRunID  string
 }
 
+type ControlCollection struct {
+	ID                               string
+	TeamID                           string
+	ProjectKey                       string
+	Name                             string
+	DefaultDefinitionRevision        int64
+	InitialDefaultDefinitionRevision int64
+	MutationRevision                 int64
+	CreatedByIdentityID              string
+	CreatedAt                        pgtype.Timestamptz
+	UpdatedAt                        pgtype.Timestamptz
+}
+
 type ControlCompanyAccessAudit struct {
 	ID                   int64
 	TeamID               string
@@ -427,6 +440,7 @@ type ControlEnvironment struct {
 	ID                        string
 	TeamID                    string
 	ProjectKey                string
+	CollectionID              pgtype.Text
 	Name                      string
 	GroupID                   string
 	AppliedDefinitionRevision int64

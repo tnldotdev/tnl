@@ -1,0 +1,82 @@
+paths:
+  /v1/projects/{project_key}/collections:
+    parameters:
+      - { name: project_key, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: createCollection
+      security: [{ bearerAuth: [] }]
+      description: Create a collection in this project as a current team manager, selecting an existing scoped definition as its default. Names select resources and grant no access. The same name and original default revision return the saved collection after current authorization; changed creation intent conflicts. Creation grants no publisher or visitor permission.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/CreateCollectionRequest" }
+      responses:
+        "200":
+          description: Saved collection, not a publisher or visitor credential
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/Collection" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+    get:
+      operationId: listCollections
+      security: [{ bearerAuth: [] }]
+      description: List saved collections in this project as a current team manager. An empty or absent project in the authorized team returns an empty array.
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
+      responses:
+        "200":
+          description: Saved collections ordered by collection ID
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "../openapi.yaml#/components/schemas/Collection" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/projects/{project_key}/collections/{collection_id}:
+    parameters:
+      - { name: project_key, in: path, required: true, schema: { type: string } }
+      - {
+          name: collection_id,
+          in: path,
+          required: true,
+          schema: { $ref: "../openapi.yaml#/components/schemas/CollectionID" },
+        }
+    get:
+      operationId: getCollection
+      security: [{ bearerAuth: [] }]
+      description: Read this exact collection in the authorized team and project as a current team manager. Neither its name nor its reference authorizes access; no other scope is searched.
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
+      responses:
+        "200":
+          description: Saved collection
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/Collection" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/projects/{project_key}/collections/{collection_id}/default:
+    put:
+      operationId: updateCollectionDefault
+      security: [{ bearerAuth: [] }]
+      description: Replace the collection default as a current team manager, requiring its current mutation revision. The new default applies only to newly created environments. Existing members keep their applied definitions, mutation revisions, approved targets, service IDs, grants, and runs. Selecting an older default still advances the collection mutation revision.
+      parameters:
+        - { name: project_key, in: path, required: true, schema: { type: string } }
+        - {
+            name: collection_id,
+            in: path,
+            required: true,
+            schema: { $ref: "../openapi.yaml#/components/schemas/CollectionID" },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/UpdateCollectionDefaultRequest" }
+      responses:
+        "200":
+          description: Saved collection after its default update
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/Collection" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

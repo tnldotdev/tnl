@@ -112,6 +112,7 @@ schemas:
       team_id: { type: string }
       project_key: { type: string }
       name: { type: string, minLength: 1, maxLength: 128 }
+      collection_id: { $ref: "../openapi.yaml#/components/schemas/CollectionID" }
       applied_definition_revision: { type: integer, format: int64, minimum: 1 }
       mutation_revision: { type: integer, format: int64, minimum: 1 }
       configuration_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
@@ -123,7 +124,17 @@ schemas:
   CreateEnvironmentRequest:
     type: object
     additionalProperties: false
-    required: [team_id, source_fingerprint, name, definition_revision, targets, idempotency_key]
+    description: Require a positive definition_revision unless a collection is selected. collection_id and expected_collection_revision must appear together. Omit definition_revision to select the collection default; an explicit positive revision overrides it. Literal zero and null are invalid. Exact retries keep the original collection revision as creation intent, even after its default changes; changing that precondition with a used key conflicts.
+    required: [team_id, source_fingerprint, name, targets, idempotency_key]
+    dependentRequired:
+      collection_id: [expected_collection_revision]
+      expected_collection_revision: [collection_id]
+    if:
+      required: [collection_id]
+    then:
+      required: [expected_collection_revision]
+    else:
+      required: [definition_revision]
     properties:
       team_id: { type: string }
       source_fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
@@ -131,6 +142,8 @@ schemas:
         { type: string, minLength: 1, maxLength: 63, pattern: "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$" }
       name: { type: string, minLength: 1, maxLength: 128 }
       definition_revision: { type: integer, format: int64, minimum: 1 }
+      collection_id: { $ref: "../openapi.yaml#/components/schemas/CollectionID" }
+      expected_collection_revision: { type: integer, format: int64, minimum: 1 }
       targets: { $ref: "../openapi.yaml#/components/schemas/EnvironmentTargets" }
       idempotency_key: { type: string, minLength: 1, maxLength: 256 }
   ApplyEnvironmentRequest:

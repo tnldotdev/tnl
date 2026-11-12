@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/config"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -38,8 +39,12 @@ func (h *handler) environmentStore(w http.ResponseWriter) (EnvironmentStore, boo
 
 func environmentProblem(ctx context.Context, w http.ResponseWriter, operation string, err error) {
 	switch {
-	case errors.Is(err, controlstate.ErrEnvironmentInvalid), errors.Is(err, controlstate.ErrServiceDefinitionInvalid), errors.Is(err, controlstate.ErrProjectConfigurationInvalid):
+	case errors.Is(err, controlstate.ErrEnvironmentInvalid), errors.Is(err, controlstate.ErrServiceDefinitionInvalid), errors.Is(err, controlstate.ErrProjectConfigurationInvalid), errors.Is(err, controlstate.ErrCollectionInvalid):
 		writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, "invalid service definition or environment targets; protocol changes require complete replacement targets")
+	case errors.Is(err, controlstate.ErrCollectionStale):
+		writeProblem(w, http.StatusConflict, controlv1.Conflict, "collection changed; read its current mutation revision and use a new environment creation request")
+	case errors.Is(err, controlstate.ErrCollectionNotFound):
+		writeProblem(w, http.StatusNotFound, controlv1.NotFound, "collection or service definition not found in this project")
 	case errors.Is(err, controlstate.ErrEnvironmentStale):
 		writeProblem(w, http.StatusConflict, controlv1.Conflict, "environment changed; read its current mutation revision and apply again")
 	case errors.Is(err, controlstate.ErrEnvironmentRetired):
@@ -125,20 +130,14 @@ func (h *handler) CreateEnvironment(w http.ResponseWriter, r *http.Request, proj
 	if !ok {
 		return
 	}
-	if body.IdempotencyKey == "" {
-		environmentProblem(r.Context(), w, "validate environment creation", controlstate.ErrEnvironmentInvalid)
-		return
-	}
-	targets, err := environmentTargetsFromAPI(r.Context(), body.Targets)
+	request, err := environmentCreationFromAPI(r.Context(), body)
 	if err != nil {
-		environmentProblem(r.Context(), w, "validate environment targets", err)
+		environmentProblem(r.Context(), w, "validate environment creation", err)
 		return
 	}
-	result, err := store.CreateEnvironment(r.Context(), controlstate.CreateEnvironmentRequest{
-		TeamID: body.TeamId, ProjectKey: project, ActorID: actor, SourceFingerprint: body.SourceFingerprint,
-		ProjectLabel: optionalFeedbackString(body.ProjectLabel), Name: body.Name, IdempotencyKey: body.IdempotencyKey,
-		DefinitionRevision: body.DefinitionRevision, Targets: targets, DNSAutomation: h.config.DNSAutomation, Now: time.Now(),
-	})
+	request.ProjectKey, request.ActorID = project, actor
+	request.DNSAutomation, request.Now = h.config.DNSAutomation, time.Now()
+	result, err := store.CreateEnvironment(r.Context(), request)
 	if err != nil {
 		environmentProblem(r.Context(), w, "create environment", err)
 		return
@@ -280,6 +279,26 @@ func (h *handler) RetireEnvironment(w http.ResponseWriter, r *http.Request, proj
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func environmentCreationFromAPI(ctx context.Context, input controlv1.CreateEnvironmentRequest) (controlstate.CreateEnvironmentRequest, error) {
+	if input.IdempotencyKey == "" || input.Targets == nil || (input.CollectionId == nil) != (input.ExpectedCollectionRevision == nil) || input.DefinitionRevision != nil && *input.DefinitionRevision < 1 || input.CollectionId == nil && input.DefinitionRevision == nil {
+		return controlstate.CreateEnvironmentRequest{}, controlstate.ErrEnvironmentInvalid
+	}
+	result := controlstate.CreateEnvironmentRequest{TeamID: input.TeamId, SourceFingerprint: input.SourceFingerprint, ProjectLabel: optionalFeedbackString(input.ProjectLabel), Name: input.Name, IdempotencyKey: input.IdempotencyKey}
+	if input.CollectionId != nil {
+		if !opaqueid.Valid(*input.CollectionId, opaqueid.CollectionPrefix) || *input.ExpectedCollectionRevision < 1 {
+			return result, controlstate.ErrEnvironmentInvalid
+		}
+		result.CollectionID, result.ExpectedCollectionRevision = *input.CollectionId, *input.ExpectedCollectionRevision
+	}
+	// only wire omission with a collection maps to the state default selector.
+	if input.DefinitionRevision != nil {
+		result.DefinitionRevision = *input.DefinitionRevision
+	}
+	var err error
+	result.Targets, err = environmentTargetsFromAPI(ctx, input.Targets)
+	return result, err
+}
+
 func environmentApplicationFromAPI(ctx context.Context, input controlv1.EnvironmentApplication) (controlstate.EnvironmentApplication, error) {
 	result := controlstate.EnvironmentApplication{EnvironmentID: input.EnvironmentId, DefinitionRevision: input.DefinitionRevision, ExpectedRevision: input.ExpectedRevision}
 	if input.Targets != nil {
@@ -363,6 +382,9 @@ func (h *handler) environmentResponse(input controlstate.Environment) controlv1.
 		AppliedDefinitionRevision: input.AppliedDefinitionRevision, MutationRevision: input.MutationRevision, ConfigurationHash: input.ConfigurationHash,
 		Ref:     controlv1.EnvironmentReference{Server: h.config.ControlURL, ProjectKey: input.ProjectKey, EnvironmentId: input.ID},
 		Targets: make(controlv1.EnvironmentTargets, len(input.Targets)), Services: make([]controlv1.EnvironmentService, 0, len(input.Services)),
+	}
+	if input.CollectionID != "" {
+		result.CollectionId = new(input.CollectionID)
 	}
 	for _, service := range input.Services {
 		result.Services = append(result.Services, controlv1.EnvironmentService{

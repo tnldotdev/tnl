@@ -112,7 +112,7 @@ func environmentHTTPTargets(host string, port string) controlv1.EnvironmentTarge
 func (f environmentHTTPFixture) create(name string, definition int64, targets controlv1.EnvironmentTargets) controlv1.Environment {
 	f.t.Helper()
 	result, err := f.client.CreateEnvironmentWithResponse(f.t.Context(), f.project, controlv1.CreateEnvironmentRequest{
-		TeamId: f.team, SourceFingerprint: f.source, Name: name, DefinitionRevision: definition,
+		TeamId: f.team, SourceFingerprint: f.source, Name: name, DefinitionRevision: new(definition),
 		Targets: targets, IdempotencyKey: "environment:" + name,
 	})
 	if err != nil || result == nil || result.JSON200 == nil {
@@ -293,7 +293,7 @@ func TestIntegrationEnvironmentHTTPIdempotencyAndRetirement(t *testing.T) {
 	if err != nil || list == nil || list.JSON200 == nil || len(*list.JSON200) != 1 {
 		t.Fatal("creation replay allocated another environment", list, err)
 	}
-	changed, err := f.client.CreateEnvironmentWithResponse(t.Context(), f.project, controlv1.CreateEnvironmentRequest{TeamId: f.team, SourceFingerprint: f.source, Name: "different-customer", DefinitionRevision: d1.Revision, Targets: targets, IdempotencyKey: "environment:customer_42"})
+	changed, err := f.client.CreateEnvironmentWithResponse(t.Context(), f.project, controlv1.CreateEnvironmentRequest{TeamId: f.team, SourceFingerprint: f.source, Name: "different-customer", DefinitionRevision: new(d1.Revision), Targets: targets, IdempotencyKey: "environment:customer_42"})
 	if err != nil || changed == nil {
 		t.Fatal("changed creation retry failed without an HTTP response", err)
 	}
@@ -310,7 +310,7 @@ func TestIntegrationEnvironmentHTTPIdempotencyAndRetirement(t *testing.T) {
 	if err != nil || retired == nil || retired.StatusCode() != http.StatusNoContent {
 		t.Fatal("retire environment", retired, err)
 	}
-	conflict, err := f.client.CreateEnvironmentWithResponse(t.Context(), f.project, controlv1.CreateEnvironmentRequest{TeamId: f.team, SourceFingerprint: f.source, Name: "customer_42", DefinitionRevision: d1.Revision, Targets: targets, IdempotencyKey: "environment:customer_42"})
+	conflict, err := f.client.CreateEnvironmentWithResponse(t.Context(), f.project, controlv1.CreateEnvironmentRequest{TeamId: f.team, SourceFingerprint: f.source, Name: "customer_42", DefinitionRevision: new(d1.Revision), Targets: targets, IdempotencyKey: "environment:customer_42"})
 	if err != nil || conflict == nil || conflict.StatusCode() != http.StatusConflict || conflict.JSON200 != nil {
 		t.Fatal("retired creation key recreated an environment", conflict, err)
 	}

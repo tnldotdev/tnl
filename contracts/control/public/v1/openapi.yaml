@@ -9,6 +9,12 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example.com
 paths:
+  /v1/projects/{project_key}/collections:
+    $ref: "./paths/collections.yaml#/paths/~1v1~1projects~1{project_key}~1collections"
+  /v1/projects/{project_key}/collections/{collection_id}:
+    $ref: "./paths/collections.yaml#/paths/~1v1~1projects~1{project_key}~1collections~1{collection_id}"
+  /v1/projects/{project_key}/collections/{collection_id}/default:
+    $ref: "./paths/collections.yaml#/paths/~1v1~1projects~1{project_key}~1collections~1{collection_id}~1default"
   /v1/projects/{project_key}/service-definitions:
     $ref: "./paths/environments.yaml#/paths/~1v1~1projects~1{project_key}~1service-definitions"
   /v1/projects/{project_key}/environments:
@@ -314,6 +320,16 @@ components:
     Problem:
       $ref: "./schemas/common.yaml#/responses/Problem"
   schemas:
+    CollectionID:
+      $ref: "./schemas/collections.yaml#/schemas/CollectionID"
+    CollectionReference:
+      $ref: "./schemas/collections.yaml#/schemas/CollectionReference"
+    Collection:
+      $ref: "./schemas/collections.yaml#/schemas/Collection"
+    CreateCollectionRequest:
+      $ref: "./schemas/collections.yaml#/schemas/CreateCollectionRequest"
+    UpdateCollectionDefaultRequest:
+      $ref: "./schemas/collections.yaml#/schemas/UpdateCollectionDefaultRequest"
     EnvironmentPublication:
       $ref: "./schemas/environments.yaml#/schemas/EnvironmentPublication"
     ServiceDefinition:

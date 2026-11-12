@@ -1,0 +1,51 @@
+schemas:
+  CollectionID:
+    type: string
+    pattern: "^coll_[A-Za-z0-9]{22}$"
+  CollectionReference:
+    type: object
+    additionalProperties: false
+    description: Nonsecret selection of one collection on one control server. Possession grants no access.
+    required: [server, project_key, collection_id]
+    properties:
+      server: { type: string, format: uri }
+      project_key: { type: string }
+      collection_id: { $ref: "../openapi.yaml#/components/schemas/CollectionID" }
+  Collection:
+    type: object
+    additionalProperties: false
+    description: Manager-only saved collection. Its default selects a definition only for new environments; this record grants no permission and does not reconcile installed members.
+    required:
+      [
+        collection_id,
+        ref,
+        team_id,
+        project_key,
+        name,
+        default_definition_revision,
+        mutation_revision,
+      ]
+    properties:
+      collection_id: { $ref: "../openapi.yaml#/components/schemas/CollectionID" }
+      ref: { $ref: "../openapi.yaml#/components/schemas/CollectionReference" }
+      team_id: { $ref: "../openapi.yaml#/components/schemas/TeamID" }
+      project_key: { type: string }
+      name: { type: string, minLength: 1, maxLength: 128 }
+      default_definition_revision: { type: integer, format: int64, minimum: 1 }
+      mutation_revision: { type: integer, format: int64, minimum: 1 }
+  CreateCollectionRequest:
+    type: object
+    additionalProperties: false
+    required: [team_id, name, default_definition_revision]
+    properties:
+      team_id: { $ref: "../openapi.yaml#/components/schemas/TeamID" }
+      name: { type: string, minLength: 1, maxLength: 128 }
+      default_definition_revision: { type: integer, format: int64, minimum: 1 }
+  UpdateCollectionDefaultRequest:
+    type: object
+    additionalProperties: false
+    required: [team_id, expected_revision, definition_revision]
+    properties:
+      team_id: { $ref: "../openapi.yaml#/components/schemas/TeamID" }
+      expected_revision: { type: integer, format: int64, minimum: 1, maximum: 9223372036854775806 }
+      definition_revision: { type: integer, format: int64, minimum: 1 }

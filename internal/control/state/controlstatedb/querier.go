@@ -111,6 +111,7 @@ type Querier interface {
 	CountRelayActiveConnections(ctx context.Context, arg CountRelayActiveConnectionsParams) (int64, error)
 	CountTeamOwners(ctx context.Context, teamID string) (int64, error)
 	CreateActiveSlugReservation(ctx context.Context, arg CreateActiveSlugReservationParams) error
+	CreateCollection(ctx context.Context, arg CreateCollectionParams) (ControlCollection, error)
 	CreateControlSession(ctx context.Context, arg CreateControlSessionParams) error
 	CreateCustomDNSAuthority(ctx context.Context, arg CreateCustomDNSAuthorityParams) error
 	CreateCustomDomain(ctx context.Context, arg CreateCustomDomainParams) (ControlDomain, error)
@@ -185,6 +186,8 @@ type Querier interface {
 	GetAuthorizedPublicURLByHostname(ctx context.Context, arg GetAuthorizedPublicURLByHostnameParams) (GetAuthorizedPublicURLByHostnameRow, error)
 	GetBrowserAccessSession(ctx context.Context, tokenDigest []byte) (ControlBrowserAccessSession, error)
 	GetCertificateOrderDomainKind(ctx context.Context, publicUrlID string) (string, error)
+	GetCollection(ctx context.Context, arg GetCollectionParams) (ControlCollection, error)
+	GetCollectionByName(ctx context.Context, arg GetCollectionByNameParams) (ControlCollection, error)
 	GetCompanyAuthenticationDeadline(ctx context.Context, sessionID string) (pgtype.Timestamptz, error)
 	GetCompanyEligibility(ctx context.Context, arg GetCompanyEligibilityParams) (ControlCompanyEligibility, error)
 	GetConnectorPeerPairForOwner(ctx context.Context, arg GetConnectorPeerPairForOwnerParams) (ControlConnectorPeerPair, error)
@@ -332,6 +335,7 @@ type Querier interface {
 	// that, one surviving slot keeps a ready run available during replacement.
 	// do not include target addresses or credentials.
 	ListAvailableServices(ctx context.Context, arg ListAvailableServicesParams) ([]ListAvailableServicesRow, error)
+	ListCollections(ctx context.Context, arg ListCollectionsParams) ([]ControlCollection, error)
 	// candidates convey no delivery authority. the publisher checks each delivery
 	// separately after the exact relay claims have been accepted.
 	ListConnectorPeerPairCandidates(ctx context.Context, arg ListConnectorPeerPairCandidatesParams) ([]ListConnectorPeerPairCandidatesRow, error)
@@ -388,6 +392,7 @@ type Querier interface {
 	LockAppliedProject(ctx context.Context, arg LockAppliedProjectParams) (ControlAppliedProject, error)
 	LockBrowserAccessSession(ctx context.Context, tokenDigest []byte) (ControlBrowserAccessSession, error)
 	LockCertificateIssuanceControl(ctx context.Context) (bool, error)
+	LockCollection(ctx context.Context, arg LockCollectionParams) (ControlCollection, error)
 	LockCompanyLoginIntent(ctx context.Context, id string) (ControlCompanyLoginIntent, error)
 	LockConnectorPeerPairForLegClaim(ctx context.Context, id string) (ControlConnectorPeerPair, error)
 	LockControlSessionByRefreshID(ctx context.Context, refreshTokenID string) (LockControlSessionByRefreshIDRow, error)
@@ -642,6 +647,7 @@ type Querier interface {
 	// cleanup-only coordination; do not take public URL, placement, lease, or routing clock locks.
 	TryLockIngressRoutingHistoryCleanup(ctx context.Context) (bool, error)
 	UpdateACMEAccountRegistration(ctx context.Context, arg UpdateACMEAccountRegistrationParams) (ControlAcmeAccount, error)
+	UpdateCollectionDefault(ctx context.Context, arg UpdateCollectionDefaultParams) (ControlCollection, error)
 	UpdateDeviceLogin(ctx context.Context, arg UpdateDeviceLoginParams) error
 	UpdateFeedbackThreadState(ctx context.Context, arg UpdateFeedbackThreadStateParams) (ControlFeedbackThread, error)
 	// retain issued ready authority after closure so an offline owner cannot overlap

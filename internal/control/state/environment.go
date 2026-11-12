@@ -62,10 +62,12 @@ type EnvironmentService struct {
 }
 
 type Environment struct {
-	ID                        string                       `json:"id"`
-	TeamID                    string                       `json:"team_id"`
-	ProjectKey                string                       `json:"project_key"`
-	Name                      string                       `json:"name"`
+	ID         string `json:"id"`
+	TeamID     string `json:"team_id"`
+	ProjectKey string `json:"project_key"`
+	Name       string `json:"name"`
+	// state-only until the collection API shape is reviewed.
+	CollectionID              string                       `json:"-"`
 	AppliedDefinitionRevision int64                        `json:"applied_definition_revision"`
 	MutationRevision          int64                        `json:"mutation_revision"`
 	ConfigurationHash         string                       `json:"configuration_hash"`
@@ -78,10 +80,15 @@ type Environment struct {
 type CreateEnvironmentRequest struct {
 	TeamID, ProjectKey, SourceFingerprint, ProjectLabel, ActorID string
 	Name, IdempotencyKey                                         string
-	DefinitionRevision                                           int64
-	Targets                                                      EnvironmentTargets
-	DNSAutomation                                                bool
-	Now                                                          time.Time
+	CollectionID                                                 string
+	// required with CollectionID for new creation; identical retries retain their
+	// original selection even after the collection's default or revision changes.
+	ExpectedCollectionRevision int64
+	// zero uses the collection default; an explicit revision takes precedence.
+	DefinitionRevision int64
+	Targets            EnvironmentTargets
+	DNSAutomation      bool
+	Now                time.Time
 }
 
 type EnvironmentApplication struct {
@@ -180,15 +187,22 @@ func environmentConfigurationHash(definition ServiceDefinition, bindings Publish
 	return hex.EncodeToString(hash[:])
 }
 
-func environmentCreationDigest(name string, revision int64, bindings PublisherGroupBindings) []byte {
-	data, _ := json.Marshal([]any{name, revision, environmentTargets(bindings)})
+func environmentCreationDigest(name string, revision int64, bindings PublisherGroupBindings, collection string, expectedCollectionRevision int64) []byte {
+	data, _ := json.Marshal([]any{name, revision, environmentTargets(bindings), collection, expectedCollectionRevision})
 	digest := sha256.Sum256(data)
 	return digest[:]
 }
 
 func (d *Database) CreateEnvironment(ctx context.Context, r CreateEnvironmentRequest) (result Environment, retErr error) {
 	defer func() { retErr = environmentOperationError(retErr) }()
-	if !naming.ValidProjectKey(r.ProjectKey) || !fingerprintPattern.MatchString(r.SourceFingerprint) || !validEnvironmentName(r.Name) || !validEnvironmentKey(r.IdempotencyKey) || r.DefinitionRevision < 1 {
+	if !naming.ValidProjectKey(r.ProjectKey) || !fingerprintPattern.MatchString(r.SourceFingerprint) || !validEnvironmentName(r.Name) || !validEnvironmentKey(r.IdempotencyKey) || r.DefinitionRevision < 0 {
+		return result, ErrProjectConfigurationInvalid
+	}
+	if r.CollectionID == "" {
+		if r.DefinitionRevision == 0 || r.ExpectedCollectionRevision != 0 {
+			return result, ErrProjectConfigurationInvalid
+		}
+	} else if !opaqueid.Valid(r.CollectionID, opaqueid.CollectionPrefix) || r.ExpectedCollectionRevision < 1 {
 		return result, ErrProjectConfigurationInvalid
 	}
 	tx, err := d.pool.Begin(ctx)
@@ -202,6 +216,13 @@ func (d *Database) CreateEnvironment(ctx context.Context, r CreateEnvironmentReq
 	project, err := d.ensureDefinitionProject(ctx, tx, r.TeamID, r.ProjectKey, r.SourceFingerprint, r.ProjectLabel, r.ActorID, r.Now)
 	if err != nil {
 		return result, err
+	}
+	var collection controlstatedb.ControlCollection
+	if r.CollectionID != "" {
+		collection, err = controlstatedb.New(tx).LockCollection(ctx, controlstatedb.LockCollectionParams{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ID: r.CollectionID})
+		if err != nil {
+			return result, collectionOperationError(err)
+		}
 	}
 	var previous string
 	err = tx.QueryRow(ctx, `SELECT environment.id FROM control.environments environment WHERE environment.team_id=$1 AND environment.project_key=$2 AND (environment.name=$3 OR EXISTS(SELECT 1 FROM control.environment_creations creation WHERE creation.environment_id=environment.id AND creation.idempotency_key=$4)) ORDER BY environment.id LIMIT 1`, r.TeamID, r.ProjectKey, r.Name, r.IdempotencyKey).Scan(&previous)
@@ -217,7 +238,7 @@ func (d *Database) CreateEnvironment(ctx context.Context, r CreateEnvironmentReq
 			return result, e
 		}
 		bindings, e := normalizeEnvironmentTargets(r.Targets, definition.Definition)
-		if e != nil || r.DefinitionRevision != row.InitialDefinitionRevision || !bytes.Equal(environmentCreationDigest(r.Name, r.DefinitionRevision, bindings), row.CreationDigest) {
+		if e != nil || row.CollectionID.String != r.CollectionID || !bytes.Equal(environmentCreationDigest(r.Name, r.DefinitionRevision, bindings, r.CollectionID, r.ExpectedCollectionRevision), row.CreationDigest) {
 			return result, ErrServiceConflict
 		}
 		if row.RetiredAt.Valid {
@@ -238,7 +259,16 @@ func (d *Database) CreateEnvironment(ctx context.Context, r CreateEnvironmentReq
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return result, err
 	}
-	definition, err := loadServiceDefinition(ctx, tx, r.TeamID, r.ProjectKey, r.DefinitionRevision)
+	revision := r.DefinitionRevision
+	if r.CollectionID != "" {
+		if collection.MutationRevision != r.ExpectedCollectionRevision {
+			return result, ErrCollectionStale
+		}
+		if revision == 0 {
+			revision = collection.DefaultDefinitionRevision
+		}
+	}
+	definition, err := loadServiceDefinition(ctx, tx, r.TeamID, r.ProjectKey, revision)
 	if err != nil {
 		return result, err
 	}
@@ -282,7 +312,7 @@ func (d *Database) CreateEnvironment(ctx context.Context, r CreateEnvironmentReq
 		return result, err
 	}
 	hash := environmentConfigurationHash(definition.Definition, bindings)
-	_, err = tx.Exec(ctx, `INSERT INTO control.environments(id,team_id,project_key,name,group_id,applied_definition_revision,mutation_revision,configuration_hash,initial_definition_revision,creation_digest,created_by_identity_id,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,1,$7,$6,$8,$9,$10,$10)`, id, r.TeamID, r.ProjectKey, r.Name, group, r.DefinitionRevision, hash, environmentCreationDigest(r.Name, r.DefinitionRevision, bindings), r.ActorID, r.Now)
+	_, err = tx.Exec(ctx, `INSERT INTO control.environments(id,team_id,project_key,name,group_id,applied_definition_revision,mutation_revision,configuration_hash,initial_definition_revision,creation_digest,created_by_identity_id,created_at,updated_at,collection_id) VALUES($1,$2,$3,$4,$5,$6,1,$7,$6,$8,$9,$10,$10,NULLIF($11,''))`, id, r.TeamID, r.ProjectKey, r.Name, group, revision, hash, environmentCreationDigest(r.Name, r.DefinitionRevision, bindings, r.CollectionID, r.ExpectedCollectionRevision), r.ActorID, r.Now, r.CollectionID)
 	if err != nil {
 		return result, err
 	}
@@ -597,7 +627,7 @@ func (d *Database) environmentStatus(ctx context.Context, tx pgx.Tx, row control
 	if err != nil {
 		return Environment{}, err
 	}
-	result := Environment{ID: row.ID, TeamID: row.TeamID, ProjectKey: row.ProjectKey, Name: row.Name, AppliedDefinitionRevision: row.AppliedDefinitionRevision, MutationRevision: row.MutationRevision, ConfigurationHash: row.ConfigurationHash, Retired: row.RetiredAt.Valid, Targets: environmentTargets(bindings), Services: []EnvironmentService{}, Members: []PublisherGroupMemberStatus{}}
+	result := Environment{ID: row.ID, TeamID: row.TeamID, ProjectKey: row.ProjectKey, Name: row.Name, CollectionID: row.CollectionID.String, AppliedDefinitionRevision: row.AppliedDefinitionRevision, MutationRevision: row.MutationRevision, ConfigurationHash: row.ConfigurationHash, Retired: row.RetiredAt.Valid, Targets: environmentTargets(bindings), Services: []EnvironmentService{}, Members: []PublisherGroupMemberStatus{}}
 	rows, err := tx.Query(ctx, `SELECT binding.service,service.id,service.protocol,service.certificate_hostname,service.service_port,service.public,service.trust_revision FROM control.applied_project_services binding JOIN control.services service ON service.id=binding.service_id WHERE binding.group_id=$1 ORDER BY binding.service`, row.GroupID)
 	if err != nil {
 		return result, err
