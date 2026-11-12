@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "installation_id": "inst_AAAAAAAAAAAAAAAAAAAAAA",
+  "client": { "version": "test", "os": "linux", "arch": "amd64", "ci": true },
+  "events": [
+    {
+      "event_id": "tev_AAAAAAAAAAAAAAAAAAAAAA",
+      "event_version": 1,
+      "name": "command.outcome",
+      "payload": { "command": "publish", "outcome": "failed", "failure_stage": "authentication" }
+    },
+    {
+      "event_id": "tev_BBBBBBBBBBBBBBBBBBBBBB",
+      "event_version": 1,
+      "name": "publisher.report",
+      "payload": {
+        "kind": "public_ingress",
+        "active_duration": "lt_1h",
+        "paths": [
+          {
+            "path": "public_udp",
+            "active_duration": "lt_10m",
+            "sent": "lt_1mib",
+            "received": "lt_16mib",
+            "rtt": [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+          },
+          { "path": "public_tcp", "active_duration": "lt_1m", "sent": "lt_64kib" }
+        ],
+        "fallbacks": [{ "reason": "udp_blocked", "count": 1 }]
+      }
+    },
+    {
+      "event_id": "tev_CCCCCCCCCCCCCCCCCCCCCC",
+      "event_version": 1,
+      "name": "publisher.report",
+      "payload": {
+        "kind": "native_peer",
+        "active_duration": "lt_10m",
+        "paths": [
+          {
+            "path": "native_direct",
+            "active_duration": "lt_1m",
+            "sent": "lt_1mib",
+            "received": "lt_1mib"
+          },
+          {
+            "path": "native_relay_tcp",
+            "active_duration": "lt_1m",
+            "rtt": [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+          }
+        ],
+        "direct_setup_attempts": 2,
+        "direct_setup_successes": 1,
+        "direct_establishment": [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0]
+      }
+    }
+  ]
+}

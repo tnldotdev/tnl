@@ -20,6 +20,12 @@ export const contracts = {
   localpublisherv1: "contracts/publisher/local/v1/openapi.yaml",
 } as const;
 
+// the website serves this contract; bundle it without adding a native HTTP server.
+export const bundledContracts = {
+  ...contracts,
+  telemetryv1: "contracts/integrations/telemetry/v1/openapi.yaml",
+} as const;
+
 export const packagePaths: Record<keyof typeof contracts, string> = {
   controlv1: "control/public/v1",
   authorityv1: "control/authority/v1",
@@ -292,7 +298,9 @@ export class ContractGraph {
 
 export async function repositoryGraph(): Promise<ContractGraph> {
   return new ContractGraph(
-    Object.fromEntries(Object.entries(contracts).map(([name, file]) => [name, join(root, file)])),
+    Object.fromEntries(
+      Object.entries(bundledContracts).map(([name, file]) => [name, join(root, file)]),
+    ),
   ).load();
 }
 
@@ -303,7 +311,7 @@ async function main(): Promise<void> {
     if (!directory || requested.length !== 2) throw new Error("expected --bundle-dir DIRECTORY");
     const graph = await repositoryGraph();
     await mkdir(directory, { recursive: true });
-    for (const name of Object.keys(contracts)) {
+    for (const name of Object.keys(bundledContracts)) {
       await writeFile(
         join(directory, `${name}.yaml`),
         `${JSON.stringify(graph.bundle(name), null, 2)}\n`,

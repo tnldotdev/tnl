@@ -1,0 +1,40 @@
+openapi: 3.1.0
+info:
+  title: tnl telemetry API
+  version: 1.0.0
+  license: { name: BSD-3-Clause, identifier: BSD-3-Clause }
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+servers: [{ url: https://tnl.dev }]
+paths:
+  /api/telemetry:
+    $ref: "./paths/events.yaml#/paths/~1api~1telemetry"
+components:
+  schemas:
+    Version: { $ref: "./schemas/events.yaml#/components/schemas/Version" }
+    EventID: { $ref: "./schemas/events.yaml#/components/schemas/EventID" }
+    InstallationID: { $ref: "./schemas/events.yaml#/components/schemas/InstallationID" }
+    Client: { $ref: "./schemas/events.yaml#/components/schemas/Client" }
+    Batch: { $ref: "./schemas/events.yaml#/components/schemas/Batch" }
+    EventHeader: { $ref: "./schemas/events.yaml#/components/schemas/EventHeader" }
+    Event: { $ref: "./schemas/events.yaml#/components/schemas/Event" }
+    CommandEvent: { $ref: "./schemas/events.yaml#/components/schemas/CommandEvent" }
+    CommandOutcome: { $ref: "./schemas/events.yaml#/components/schemas/CommandOutcome" }
+    ReadyEvent: { $ref: "./schemas/events.yaml#/components/schemas/ReadyEvent" }
+    PublicationReady: { $ref: "./schemas/events.yaml#/components/schemas/PublicationReady" }
+    DemoEvent: { $ref: "./schemas/events.yaml#/components/schemas/DemoEvent" }
+    IntegrationEvent: { $ref: "./schemas/events.yaml#/components/schemas/IntegrationEvent" }
+    IntegrationOutcome: { $ref: "./schemas/events.yaml#/components/schemas/IntegrationOutcome" }
+    PublisherEvent: { $ref: "./schemas/events.yaml#/components/schemas/PublisherEvent" }
+    PublisherReport: { $ref: "./schemas/events.yaml#/components/schemas/PublisherReport" }
+    Report: { $ref: "./schemas/events.yaml#/components/schemas/Report" }
+    PublicReport: { $ref: "./schemas/events.yaml#/components/schemas/PublicReport" }
+    NativeReport: { $ref: "./schemas/events.yaml#/components/schemas/NativeReport" }
+    PublicPathAggregate: { $ref: "./schemas/events.yaml#/components/schemas/PublicPathAggregate" }
+    NativePathAggregate: { $ref: "./schemas/events.yaml#/components/schemas/NativePathAggregate" }
+    PathObservation: { $ref: "./schemas/events.yaml#/components/schemas/PathObservation" }
+    Histogram: { $ref: "./schemas/events.yaml#/components/schemas/Histogram" }
+    Count: { $ref: "./schemas/events.yaml#/components/schemas/Count" }
+    VolumeBucket: { $ref: "./schemas/events.yaml#/components/schemas/VolumeBucket" }
+    DurationBucket: { $ref: "./schemas/events.yaml#/components/schemas/DurationBucket" }
+    FallbackCount: { $ref: "./schemas/events.yaml#/components/schemas/FallbackCount" }
+    ProblemCode: { $ref: "./schemas/events.yaml#/components/schemas/ProblemCode" }
