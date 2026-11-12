@@ -94,6 +94,7 @@ func (d *Database) ListAdminRelayLeases(ctx context.Context, cursor string, now 
 	page := AdminRelayPage{Relays: make([]RelayLease, min(len(rows), adminRelayPageSize))}
 	for index, row := range rows[:len(page.Relays)] {
 		page.Relays[index], err = relayLease(relayLeaseValues{
+			region:  row.Region,
 			relayID: row.RelayID, relayServiceID: row.RelayServiceID, relayRunID: row.RelayRunID,
 			relayLeaseRevision: row.RelayLeaseRevision, protocolVersion: row.ProtocolVersion,
 			internalRelayAddress: row.InternalRelayAddress, observedAddress: row.ObservedAddress,
@@ -157,6 +158,7 @@ func (d *Database) BeginAdminRelayDrain(
 		return RelayLease{}, err
 	}
 	result, err = relayLease(relayLeaseValues{
+		region:  row.Region,
 		relayID: row.RelayID, relayServiceID: row.RelayServiceID, relayRunID: row.RelayRunID,
 		relayLeaseRevision: row.RelayLeaseRevision, protocolVersion: row.ProtocolVersion,
 		internalRelayAddress: row.InternalRelayAddress, observedAddress: row.ObservedAddress,

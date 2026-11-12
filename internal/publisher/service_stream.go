@@ -411,6 +411,7 @@ func (s ServiceStream) guardVisitor(ctx context.Context, client net.Conn, target
 		return next, err
 	}
 	_, connector := s.Visitor.(ConnectorVisitor)
+	var expiredObservation time.Time
 	for {
 		if connector {
 			// admission owns renewable connector authority. a cached deadline may
@@ -423,6 +424,13 @@ func (s ServiceStream) guardVisitor(ctx context.Context, client net.Conn, target
 		}
 		remaining := time.Until(decision.ValidUntil)
 		if remaining <= 0 {
+			// renewal can overtake CheckUse after it releases the admission lock.
+			// recheck an elapsed observation without granting authority; an
+			// unchanged expired deadline or current denial still closes the stream.
+			if connector && decision.ValidUntil.After(expiredObservation) {
+				expiredObservation = decision.ValidUntil
+				continue
+			}
 			return
 		}
 		delay := max(time.Millisecond, min(30*time.Second, remaining/2))

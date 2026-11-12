@@ -56,7 +56,7 @@ func (s *guestEnrollmentStub) ExchangePublisherAssertion(_ context.Context, clie
 	return "guest-publisher-access", nil
 }
 
-func (s *guestEnrollmentStub) CreatePublisherRun(_ context.Context, id, retry, token, proof string, selection *trafficlimits.Selection) (controlv1.PublishRunSetup, error) {
+func (s *guestEnrollmentStub) CreatePublisherRun(_ context.Context, id, retry, token, proof string, selection *trafficlimits.Selection, _ ...string) (controlv1.PublishRunSetup, error) {
 	if selection != nil {
 		if err := selection.Validate(); err != nil {
 			return controlv1.PublishRunSetup{}, err
