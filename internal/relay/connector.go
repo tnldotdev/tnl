@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"errors"
 	"sync"
 	"time"
 
@@ -89,14 +90,23 @@ func (a *ConnectorAcceptor) currentLease(proof tunnelv1.ConnectorPairLegProof) (
 }
 
 func (a *ConnectorAcceptor) claim(ctx context.Context, outer muxsession.Session, proof tunnelv1.ConnectorPairLegProof) (connectorClaim, error) {
+	return a.claimLeg(ctx, outer, proof, nil)
+}
+
+// a renewal must check its retained binding before cancellation can classify a
+// successful control reply. neither caller receives authority on a spent call.
+func (a *ConnectorAcceptor) claimLeg(ctx context.Context, outer muxsession.Session, proof tunnelv1.ConnectorPairLegProof, renewal *connectorDelivery) (connectorClaim, error) {
 	denied := &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
+	reject := func(err error) (connectorClaim, error) {
+		return connectorClaim{}, connectorClaimError(errors.Join(err, context.Cause(ctx)))
+	}
 	accepted, ok := outer.(muxsession.AcceptedPeer)
 	if !ok || proof.Validate() != nil {
-		return connectorClaim{}, denied
+		return reject(denied)
 	}
 	observed, err := newConnectorSocketSource(accepted)
 	if err != nil {
-		return connectorClaim{}, denied
+		return reject(denied)
 	}
 	source := observed.ip
 	lease, valid := a.currentLease(proof)
@@ -104,16 +114,16 @@ func (a *ConnectorAcceptor) claim(ctx context.Context, outer muxsession.Session,
 		// a restarted relay can receive a proof for its predecessor before the
 		// connector observes replacement assignments. reject this path without
 		// claiming that control revoked the retained subject's authority.
-		return connectorClaim{}, &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
+		return reject(&tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment})
 	}
 	message, err := proof.RelayClaimMessage(source)
 	if err != nil {
-		return connectorClaim{}, denied
+		return reject(denied)
 	}
 	started := time.Now()
 	claim, err := a.Claim.ClaimConnectorPeerPairLegFromAcceptedSocket(ctx, lease, source, proof, ed25519.Sign(a.SigningKey, message))
 	if err != nil {
-		return connectorClaim{}, connectorClaimError(err)
+		return reject(err)
 	}
 	key, keyErr := base64.RawURLEncoding.Strict().DecodeString(claim.Key)
 	defer clear(key)
@@ -124,20 +134,28 @@ func (a *ConnectorAcceptor) claim(ctx context.Context, outer muxsession.Session,
 	if claim.PairId != proof.PairID || claim.DeliveryGeneration != proof.DeliveryGeneration || claim.ConnectionSlot != proof.ConnectionSlot || claim.SourceIp != source.String() ||
 		(state != tunnelv1.ConnectorPeerLegBindingActive && state != tunnelv1.ConnectorPeerLegBindingPrepared && (state != "" || claim.DeliveryGeneration != 1)) ||
 		state == tunnelv1.ConnectorPeerLegBindingPrepared && duration > 10*time.Second ||
-		keyErr != nil || len(key) != 32 || idErr != nil || claim.ObservedAt.IsZero() || duration <= 0 || duration > 5*time.Minute || !until.After(time.Now()) || ctx.Err() != nil {
-		return connectorClaim{}, denied
+		keyErr != nil || len(key) != 32 || idErr != nil || claim.ObservedAt.IsZero() || duration <= 0 || duration > 5*time.Minute || !until.After(time.Now()) {
+		return reject(denied)
 	}
 	if _, current := a.currentLease(proof); !current {
-		return connectorClaim{}, &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
+		return reject(&tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment})
 	}
 	if err := observed.check(); err != nil {
-		return connectorClaim{}, err
+		return reject(err)
 	}
 	r := connectorClaim{source: observed, receipt: tunnelv1.ConnectorPairLegAccepted{PairID: claim.PairId, DeliveryID: claim.DeliveryId, DeliveryGeneration: claim.DeliveryGeneration, BindingState: state, ConnectionSlot: claim.ConnectionSlot, SourceIP: claim.SourceIp, ObservedAt: time.Now(), ExpiresAt: until},
 		ref: tunnelv1.ServicePublisherConnectionRef{ServiceID: proof.ServiceID, ServiceRunID: proof.ServiceRunID, RunNumber: uint64(proof.RunNumber), PublisherConnectionID: proof.PublisherConnectionID, ConnectionSlot: uint8(proof.ConnectionSlot), ConnectionAssignmentRevision: uint64(proof.AssignmentRevision), RelayServiceID: proof.RelayServiceID}}
 	copy(r.key[:], key)
 	if r.key == [32]byte{} {
-		return connectorClaim{}, denied
+		return reject(denied)
+	}
+	if renewal != nil {
+		if err := renewal.checkRenewal(r, proof); err != nil {
+			return reject(err)
+		}
+	}
+	if cause := context.Cause(ctx); cause != nil {
+		return connectorClaim{}, connectorClaimError(cause)
 	}
 	return r, nil
 }

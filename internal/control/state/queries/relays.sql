@@ -8,12 +8,14 @@ WITH service_guard AS MATERIALIZED (
     SELECT pg_advisory_xact_lock(hashtextextended('tnl:relay-service:' || sqlc.arg(relay_service_id)::text, 0))
 ), relay_service AS (
     INSERT INTO control.relay_services (
+        region,
         relay_service_id,
         relay_address,
         tls_server_name,
         created_at,
         updated_at
     ) SELECT
+        sqlc.arg(region),
         sqlc.arg(relay_service_id),
         sqlc.arg(relay_address),
         sqlc.arg(tls_server_name),
@@ -25,10 +27,12 @@ WITH service_guard AS MATERIALIZED (
         updated_at = EXCLUDED.updated_at
     WHERE control.relay_services.relay_address = EXCLUDED.relay_address
       AND control.relay_services.tls_server_name = EXCLUDED.tls_server_name
+      AND control.relay_services.region = EXCLUDED.region
       AND control.relay_services.enabled
 	RETURNING relay_service_id, relay_address, tls_server_name
 ), relay_lease AS (
 INSERT INTO control.relay_leases (
+    region,
     relay_id,
     relay_service_id,
     relay_run_id,
@@ -44,6 +48,7 @@ INSERT INTO control.relay_leases (
     lease_expires_at
 )
 SELECT
+    sqlc.arg(region),
     sqlc.arg(relay_id),
     relay_service.relay_service_id,
     sqlc.arg(relay_run_id),
@@ -59,6 +64,7 @@ SELECT
     sqlc.arg(lease_expires_at)
 FROM relay_service
 ON CONFLICT (relay_id) DO UPDATE SET
+    region = EXCLUDED.region,
     relay_service_id = EXCLUDED.relay_service_id,
     relay_run_id = EXCLUDED.relay_run_id,
     relay_lease_revision = CASE
@@ -118,6 +124,7 @@ ON CONFLICT (relay_id) DO UPDATE SET
         ELSE EXCLUDED.lease_expires_at
     END
 WHERE ((control.relay_leases.relay_run_id = EXCLUDED.relay_run_id
+    AND control.relay_leases.region = EXCLUDED.region
     AND control.relay_leases.peer_signing_public_key IS NOT DISTINCT FROM EXCLUDED.peer_signing_public_key)
     OR (control.relay_leases.relay_run_id <> EXCLUDED.relay_run_id
         AND (control.relay_leases.peer_signing_public_key IS NULL

@@ -129,31 +129,37 @@ func (d *connectorDelivery) renew(ctx context.Context, a *ConnectorAcceptor, out
 	d.mu.Lock()
 	until := d.until
 	d.mu.Unlock()
-	if d.ctx.Err() != nil || !until.After(time.Now()) {
-		return tunnelv1.ConnectorPairLegAccepted{}, denied
+	if !until.After(time.Now()) {
+		return tunnelv1.ConnectorPairLegAccepted{}, connectorClaimError(errors.Join(denied, context.Cause(d.ctx), context.Cause(ctx)))
+	}
+	// publisher packet teardown can cancel delivery while a renewal is already
+	// being read. that local loss supplies no authorization decision, and must
+	// not terminate the connector's retained inner connection as a subject denial.
+	if cause := context.Cause(d.ctx); cause != nil {
+		return tunnelv1.ConnectorPairLegAccepted{}, connectorClaimError(cause)
 	}
 	if err := d.claim.source.check(); err != nil {
-		return tunnelv1.ConnectorPairLegAccepted{}, err
+		return tunnelv1.ConnectorPairLegAccepted{}, connectorClaimError(errors.Join(err, context.Cause(d.ctx), context.Cause(ctx)))
 	}
 	call, stop := context.WithTimeout(ctx, min(2*time.Second, time.Until(until)))
 	defer stop()
-	next, err := a.claim(call, outer, proof)
+	next, err := a.claimLeg(call, outer, proof, d)
 	if err != nil {
 		return tunnelv1.ConnectorPairLegAccepted{}, err
 	}
-	if !d.proof.SameLeg(proof) || next.ref != d.claim.ref || next.key != d.claim.key || next.receipt.DeliveryID != d.claim.receipt.DeliveryID || next.receipt.SourceIP != d.claim.receipt.SourceIP {
-		return tunnelv1.ConnectorPairLegAccepted{}, denied
-	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.ctx.Err() != nil || !d.until.After(time.Now()) || !next.receipt.ExpiresAt.After(time.Now()) || call.Err() != nil {
-		return tunnelv1.ConnectorPairLegAccepted{}, denied
+	var bridgeCause error
+	if d.bridge != nil {
+		d.bridge.mu.Lock()
+		defer d.bridge.mu.Unlock()
+		bridgeCause = context.Cause(d.bridge.ctx)
 	}
-	if err := d.claim.source.check(); err != nil {
-		return tunnelv1.ConnectorPairLegAccepted{}, err
+	if err := d.checkRenewalLocked(next, proof); err != nil {
+		return tunnelv1.ConnectorPairLegAccepted{}, connectorClaimError(errors.Join(err, context.Cause(d.ctx), context.Cause(call), bridgeCause))
 	}
-	if d.claim.receipt.BindingState == tunnelv1.ConnectorPeerLegBindingActive && next.receipt.BindingState != tunnelv1.ConnectorPeerLegBindingActive {
-		return tunnelv1.ConnectorPairLegAccepted{}, denied
+	if cause := errors.Join(context.Cause(d.ctx), context.Cause(call), bridgeCause); cause != nil {
+		return tunnelv1.ConnectorPairLegAccepted{}, connectorClaimError(cause)
 	}
 	// repeating a pending claim spends its original preparation deadline. only
 	// a revalidated, explicit active claim can open data and renew its authority.
@@ -161,11 +167,6 @@ func (d *connectorDelivery) renew(ctx context.Context, a *ConnectorAcceptor, out
 		next.receipt.ExpiresAt = d.until
 	}
 	if d.bridge != nil {
-		d.bridge.mu.Lock()
-		defer d.bridge.mu.Unlock()
-		if d.bridge.active != d || d.bridge.ctx.Err() != nil || !d.bridge.until.After(time.Now()) {
-			return tunnelv1.ConnectorPairLegAccepted{}, denied
-		}
 		d.bridge.until = next.receipt.ExpiresAt
 	}
 	d.until = next.receipt.ExpiresAt
@@ -176,6 +177,34 @@ func (d *connectorDelivery) renew(ctx context.Context, a *ConnectorAcceptor, out
 	close(d.changed)
 	d.changed = make(chan struct{})
 	return next.receipt, nil
+}
+
+func (d *connectorDelivery) checkRenewal(next connectorClaim, proof tunnelv1.ConnectorPairLegProof) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.bridge != nil {
+		d.bridge.mu.Lock()
+		defer d.bridge.mu.Unlock()
+	}
+	return d.checkRenewalLocked(next, proof)
+}
+
+// the delivery and its bridge, when present, are locked. these exact-binding
+// checks precede cancellation classification and repeat before installation.
+func (d *connectorDelivery) checkRenewalLocked(next connectorClaim, proof tunnelv1.ConnectorPairLegProof) error {
+	denied := &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
+	if !d.proof.SameLeg(proof) || next.ref != d.claim.ref || next.key != d.claim.key || next.receipt.DeliveryID != d.claim.receipt.DeliveryID || next.receipt.SourceIP != d.claim.receipt.SourceIP ||
+		!d.until.After(time.Now()) || !next.receipt.ExpiresAt.After(time.Now()) ||
+		d.claim.receipt.BindingState == tunnelv1.ConnectorPeerLegBindingActive && next.receipt.BindingState != tunnelv1.ConnectorPeerLegBindingActive {
+		return denied
+	}
+	if err := d.claim.source.check(); err != nil {
+		return err
+	}
+	if d.bridge != nil && (d.bridge.active != d || !d.bridge.until.After(time.Now())) {
+		return denied
+	}
+	return nil
 }
 
 // connectorBridge retains the publisher registration and replay state while a

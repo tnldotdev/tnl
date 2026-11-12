@@ -43,7 +43,7 @@ func (q *Queries) GetActivePublishRunMembership(ctx context.Context, arg GetActi
 }
 
 const getOpenPublishRun = `-- name: GetOpenPublishRun :one
-SELECT id, public_url_id, team_id, membership_id, acting_identity_id, acting_machine_id, publisher_identity_id, publisher_grant_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
+SELECT preferred_regions, id, public_url_id, team_id, membership_id, acting_identity_id, acting_machine_id, publisher_identity_id, publisher_grant_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
 FROM control.publish_runs
 WHERE public_url_id = $1
   AND closed_at IS NULL ORDER BY publish_run_number DESC LIMIT 1
@@ -53,6 +53,7 @@ func (q *Queries) GetOpenPublishRun(ctx context.Context, publicUrlID string) (Co
 	row := q.db.QueryRow(ctx, getOpenPublishRun, publicUrlID)
 	var i ControlPublishRun
 	err := row.Scan(
+		&i.PreferredRegions,
 		&i.ID,
 		&i.PublicURLID,
 		&i.TeamID,
@@ -90,7 +91,7 @@ func (q *Queries) GetOpenPublishRun(ctx context.Context, publicUrlID string) (Co
 }
 
 const getPublishRunByIdempotency = `-- name: GetPublishRunByIdempotency :one
-SELECT id, public_url_id, team_id, membership_id, acting_identity_id, acting_machine_id, publisher_identity_id, publisher_grant_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
+SELECT preferred_regions, id, public_url_id, team_id, membership_id, acting_identity_id, acting_machine_id, publisher_identity_id, publisher_grant_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
 FROM control.publish_runs
 WHERE public_url_id = $1
   AND idempotency_key = $2
@@ -105,6 +106,7 @@ func (q *Queries) GetPublishRunByIdempotency(ctx context.Context, arg GetPublish
 	row := q.db.QueryRow(ctx, getPublishRunByIdempotency, arg.PublicURLID, arg.IdempotencyKey)
 	var i ControlPublishRun
 	err := row.Scan(
+		&i.PreferredRegions,
 		&i.ID,
 		&i.PublicURLID,
 		&i.TeamID,
@@ -146,15 +148,16 @@ WITH version AS (
 UPDATE control.public_urls
 SET next_publish_run_number = next_publish_run_number + 1,
     mutation_revision = mutation_revision + 1,
-    updated_at = $20
-WHERE id = $2
+    updated_at = $21
+WHERE id = $3
   AND next_publish_run_number < 9223372036854775807
-  AND mutation_revision = $23
+  AND mutation_revision = $24
   AND mutation_revision < 9223372036854775807
   AND lifecycle_state = 'enabled'
 RETURNING (next_publish_run_number - 1)::bigint AS publish_run_number, service_protocol
 )
 INSERT INTO control.publish_runs (
+    preferred_regions,
     id,
     public_url_id,
     team_id,
@@ -188,27 +191,29 @@ INSERT INTO control.publish_runs (
     $6,
     $7,
     $8,
-    version.publish_run_number,
     $9,
+    version.publish_run_number,
     $10,
     $11,
     $12,
     $13,
     $14,
-    $15::text,
+    $15,
     $16::text,
-    $17::text[],
-    $18::text,
-    convert_from($19::bytea, 'UTF8')::jsonb,
+    $17::text,
+    $18::text[],
+    $19::text,
+    convert_from($20::bytea, 'UTF8')::jsonb,
     'starting',
-    $20,
     $21,
-    $22
+    $22,
+    $23
 FROM version
-RETURNING id, public_url_id, team_id, membership_id, acting_identity_id, acting_machine_id, publisher_identity_id, publisher_grant_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
+RETURNING preferred_regions, id, public_url_id, team_id, membership_id, acting_identity_id, acting_machine_id, publisher_identity_id, publisher_grant_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
 `
 
 type InsertPublishRunParams struct {
+	PreferredRegions           []string
 	ID                         string
 	PublicURLID                string
 	TeamID                     string
@@ -236,6 +241,7 @@ type InsertPublishRunParams struct {
 
 func (q *Queries) InsertPublishRun(ctx context.Context, arg InsertPublishRunParams) (ControlPublishRun, error) {
 	row := q.db.QueryRow(ctx, insertPublishRun,
+		arg.PreferredRegions,
 		arg.ID,
 		arg.PublicURLID,
 		arg.TeamID,
@@ -262,6 +268,7 @@ func (q *Queries) InsertPublishRun(ctx context.Context, arg InsertPublishRunPara
 	)
 	var i ControlPublishRun
 	err := row.Scan(
+		&i.PreferredRegions,
 		&i.ID,
 		&i.PublicURLID,
 		&i.TeamID,
@@ -440,7 +447,7 @@ func (q *Queries) InsertPublishRunConnections(ctx context.Context, arg InsertPub
 }
 
 const listOpenPublishRuns = `-- name: ListOpenPublishRuns :many
-SELECT id, public_url_id, team_id, membership_id, acting_identity_id, acting_machine_id, publisher_identity_id, publisher_grant_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open FROM control.publish_runs WHERE public_url_id=$1
+SELECT preferred_regions, id, public_url_id, team_id, membership_id, acting_identity_id, acting_machine_id, publisher_identity_id, publisher_grant_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open FROM control.publish_runs WHERE public_url_id=$1
   AND closed_at IS NULL ORDER BY publish_run_number FOR UPDATE
 `
 
@@ -454,6 +461,7 @@ func (q *Queries) ListOpenPublishRuns(ctx context.Context, publicUrlID string) (
 	for rows.Next() {
 		var i ControlPublishRun
 		if err := rows.Scan(
+			&i.PreferredRegions,
 			&i.ID,
 			&i.PublicURLID,
 			&i.TeamID,

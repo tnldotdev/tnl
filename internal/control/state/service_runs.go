@@ -60,7 +60,7 @@ func (d *Database) StartServiceRun(ctx context.Context, service, id string, numb
 		if err != nil || key.RetiredAt.Valid || !run.PreparationExpiresAt.Time.After(now) {
 			return result, errors.Join(ErrServiceAccess, err)
 		}
-		placements, err := selectRelayServicePlacements(ctx, q, now)
+		placements, err := selectRelayServicePlacements(ctx, q, now, run.PreferredRegions...)
 		if err != nil {
 			return result, err
 		}

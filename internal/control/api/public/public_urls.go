@@ -329,7 +329,7 @@ func (h *handler) CreatePublishRun(
 		return
 	}
 	idempotencyKey := request.Header.Get("Idempotency-Key")
-	traffic, ok := publishRunTrafficSelection(response, request)
+	traffic, preferences, ok := publishRunTrafficSelection(response, request)
 	if !ok {
 		return
 	}
@@ -362,7 +362,8 @@ func (h *handler) CreatePublishRun(
 		return
 	}
 	setup, err := h.store.CreatePublishRun(request.Context(), controlstate.PublishRunRequest{
-		PublicURLID: publicURL.ID, TeamID: publicURL.TeamID, MembershipID: publicURL.MembershipID,
+		PreferredRegions: preferences,
+		PublicURLID:      publicURL.ID, TeamID: publicURL.TeamID, MembershipID: publicURL.MembershipID,
 		ActingIdentityID: publisher.CreatorID, ActingMachineID: publisher.CreatorMachineID, GuestID: publisher.GuestID,
 		IdempotencyKey: idempotencyKey, RequestDigest: [32]byte(digest),
 		PolicyRevision: uint64(publicURL.PolicyRevision), CertificateCacheKey: plan.CacheKey,

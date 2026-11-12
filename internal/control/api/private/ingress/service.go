@@ -9,6 +9,7 @@ import (
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
+	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
@@ -41,6 +42,9 @@ func newService(config DirectConfig) (*service, error) {
 }
 
 func (s *service) RegisterIngress(ctx context.Context, body ingressv1.IngressRegistration) (ingressv1.IngressLease, error) {
+	if !region.ID(body.Region).Valid() {
+		return ingressv1.IngressLease{}, serviceapi.NewProblemError(http.StatusBadRequest, "invalid_request", "ingress region must be an exact catalog provider:region ID or local")
+	}
 	if !serviceapi.ValidIdentifiers(body.IngressPoolId) || body.ServicePorts == nil || len(body.ServicePorts) > 256 {
 		return ingressv1.IngressLease{}, serviceapi.NewProblemError(http.StatusBadRequest, "invalid_request", "ingress service port inventory is invalid")
 	}
@@ -62,6 +66,7 @@ func (s *service) RegisterIngress(ctx context.Context, body ingressv1.IngressReg
 		)
 	}
 	lease, err := s.store.RegisterIngress(ctx, controlstate.IngressRegistration{
+		Region:    region.ID(body.Region),
 		IngressID: body.IngressId, IngressRunID: body.IngressRunId,
 		ProtocolVersion: protocolVersion, ConnectionCapacity: connectionCapacity,
 		IngressPoolID: body.IngressPoolId, ServicePorts: servicePorts(body.ServicePorts),
