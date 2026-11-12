@@ -567,10 +567,23 @@ func newQUICPairWithConfig(t *testing.T, serverConfig, clientConfig *quic.Config
 			<-ctx.Done()
 		}
 	}()
-	client, err := (QUICConnector{TLSConfig: clientTLS, Config: QUICConfig{Config: clientConfig}, Dialer: testQUICTransport(t)}).Connect(ctx, Endpoint{
+	dialer := testQUICTransport(t)
+	client, err := (QUICConnector{TLSConfig: clientTLS, Config: QUICConfig{Config: clientConfig}, Dialer: dialer}).Connect(ctx, Endpoint{
 		Address: listener.Addr().String(), ServerName: "relay.test",
 	})
 	if err != nil {
+		deadline, _ := ctx.Deadline()
+		var networkError net.Error
+		errors.As(err, &networkError)
+		t.Logf("QUIC fixture listener=%s dialer=%s deadline=%s remaining=%s context_error=%.256s context_cause=%.256s",
+			listener.Addr(), dialer.LocalAddr(), deadline.Format(time.RFC3339Nano), time.Until(deadline), fmt.Sprint(ctx.Err()), fmt.Sprint(context.Cause(ctx)))
+		t.Logf("QUIC fixture dial error_type=%T network_error_type=%T error=%.1024s", err, networkError, err.Error())
+		select {
+		case result := <-accepted:
+			t.Logf("QUIC fixture accept session=%t error_type=%T error=%.1024s", result.session != nil, result.err, fmt.Sprint(result.err))
+		default:
+			t.Log("QUIC fixture accept result=pending")
+		}
 		t.Fatalf("connect QUIC: %v", err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
