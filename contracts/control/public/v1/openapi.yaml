@@ -804,6 +804,10 @@ components:
       $ref: "./schemas/feedback.yaml#/schemas/AppendReviewerFeedbackEventRequest"
     ReviewerFeedbackReadRequest:
       $ref: "./schemas/feedback.yaml#/schemas/ReviewerFeedbackReadRequest"
+    UpdateServiceRequest:
+      $ref: "./schemas/services.yaml#/schemas/UpdateServiceRequest"
+    ServiceSummary:
+      $ref: "./schemas/services.yaml#/schemas/ServiceSummary"
     UpdatePublicURLRequest:
       $ref: "./schemas/public-urls.yaml#/schemas/UpdatePublicURLRequest"
     CertificateChallengeMethod:

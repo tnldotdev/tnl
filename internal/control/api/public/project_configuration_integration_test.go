@@ -160,7 +160,7 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 			t.Fatalf("managed conflict lost its code, cause or authored problem: %v", err)
 		}
 	}
-	_, managedErr := owner.ConfigureService(ctx, web.ServiceId, controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocolHTTP, PublisherPool: true, TrustRevision: web.TrustRevision})
+	_, managedErr := owner.ConfigureService(ctx, web.ServiceId, controlv1.UpdateServiceRequest{Protocol: controlv1.ServiceProtocolHTTP, PublisherPool: true, ExpectedTrustRevision: web.TrustRevision})
 	assertManaged(managedErr)
 	assertManaged(owner.DeleteService(ctx, web.ServiceId))
 	assertManaged(owner.RevokePublisherGrant(ctx, team, member.PublisherIdentityId, web.GrantId))

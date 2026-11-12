@@ -95,7 +95,7 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceMetadata" }
+            schema: { $ref: "../openapi.yaml#/components/schemas/UpdateServiceRequest" }
       responses:
         "200":
           description: Approved protocol, publisher pool and immutable TLS trust snapshot

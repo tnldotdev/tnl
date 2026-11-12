@@ -1,4 +1,15 @@
 schemas:
+  UpdateServiceRequest:
+    type: object
+    additionalProperties: false
+    required: [protocol, publisher_pool, expected_trust_revision]
+    description: Replace approved protocol, publisher pool and target trust. Omit target_tls to remove it. Copy trust_revision from the service into expected_trust_revision; stale revisions return conflict. Endpoint and placement are not writable here.
+    properties:
+      expected_trust_revision:
+        { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+      protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
+      target_tls: { $ref: "../openapi.yaml#/components/schemas/ServiceTargetTLS" }
+      publisher_pool: { type: boolean }
   ServiceInvitationCredential:
     type: object
     additionalProperties: false
@@ -123,6 +134,30 @@ schemas:
           minimum: 1,
           description: Present only alongside service_run_id.,
         }
+  ServiceSummary:
+    type: object
+    additionalProperties: false
+    description: Inventory identity, placement and selection hints. Never includes target trust, targets, credentials or publisher HTTP limits.
+    required: [id, team_id, name, enabled, created_at, protocol, publisher_pool, trust_revision]
+    dependentRequired:
+      service_run_id: [run_number]
+      run_number: [service_run_id]
+    properties:
+      id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      team_id: { $ref: "../openapi.yaml#/components/schemas/TeamID" }
+      domain_id: { $ref: "../openapi.yaml#/components/schemas/DomainID" }
+      placement: { $ref: "../openapi.yaml#/components/schemas/ServicePlacement" }
+      source: { $ref: "../openapi.yaml#/components/schemas/LocalServiceSource" }
+      name: { $ref: "../openapi.yaml#/components/schemas/ServiceName" }
+      enabled: { type: boolean }
+      endpoint: { $ref: "../openapi.yaml#/components/schemas/ServiceEndpoint" }
+      protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
+      kubernetes_auth: { $ref: "../openapi.yaml#/components/schemas/KubernetesAuth" }
+      publisher_pool: { type: boolean }
+      trust_revision: { type: integer, format: int64, minimum: 1 }
+      created_at: { type: string, format: date-time }
+      service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
+      run_number: { type: integer, format: int64, minimum: 1 }
   ServicePage:
     type: object
     additionalProperties: false
@@ -133,7 +168,7 @@ schemas:
         {
           type: array,
           maxItems: 100,
-          items: { $ref: "../openapi.yaml#/components/schemas/Service" },
+          items: { $ref: "../openapi.yaml#/components/schemas/ServiceSummary" },
         }
       next_cursor: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
   CreateServiceGrantRequest:

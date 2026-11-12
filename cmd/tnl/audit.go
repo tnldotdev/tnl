@@ -63,11 +63,11 @@ func runAuditList(ctx context.Context, flags auditListCommand, output, diagnosti
 	}
 	params := controlv1.ListServiceAuditParams{Since: &since}
 	if flags.After != "" {
-		after, err := auditCursor(flags.After)
+		_, err := auditCursor(flags.After)
 		if err != nil {
 			return failure.Wrap("select audit cursor", failure.InvalidTunnelFlags, err)
 		}
-		params.After = &after
+		params.After = &flags.After
 	}
 	if flags.Service != "" {
 		if len(flags.Service) > 253 || strings.TrimSpace(flags.Service) != flags.Service || strings.ContainsAny(flags.Service, "\x00\r\n") {
@@ -107,7 +107,7 @@ func readServiceAudit(ctx context.Context, reader serviceAuditReader, team strin
 	}
 	previous := int64(0)
 	if params.After != nil {
-		previous = *params.After
+		previous, _ = auditCursor(*params.After)
 	}
 	invalid := func() (controlv1.ServiceAuditPage, error) {
 		return controlv1.ServiceAuditPage{}, failure.Wrap("read service audit", failure.ServerResponseInvalid, errors.New("control returned a nonadvancing or invalid service audit page"))
@@ -134,14 +134,14 @@ func readServiceAudit(ctx context.Context, reader serviceAuditReader, team strin
 			return result, nil
 		}
 		next, err := auditCursor(*page.NextCursor)
-		if err != nil || len(page.Events) == 0 || next != previous || params.After != nil && next <= *params.After {
+		if err != nil || len(page.Events) == 0 || next != previous {
 			return invalid()
 		}
 		result.NextCursor = page.NextCursor
 		if len(result.Events) == limit {
 			return result, nil
 		}
-		params.After = &next
+		params.After = page.NextCursor
 		result.NextCursor = nil
 	}
 	return result, nil

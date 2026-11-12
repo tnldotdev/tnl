@@ -2,6 +2,7 @@ package public
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -182,21 +183,39 @@ func (h *handler) UpdatePublicURL(response http.ResponseWriter, request *http.Re
 		return
 	}
 	var body struct {
-		RequirePostQuantum *bool     `json:"require_post_quantum"`
-		Target             *string   `json:"target"`
-		AllowedIPPrefixes  *[]string `json:"allowed_ip_prefixes"`
+		ExpectedMutationRevision int64           `json:"expected_mutation_revision"`
+		Target                   json.RawMessage `json:"target"`
+		AllowedIPPrefixes        json.RawMessage `json:"allowed_ip_prefixes"`
+		RequirePostQuantum       json.RawMessage `json:"require_post_quantum"`
 	}
-	if err := decodeJSONLimited(response, request, &body, 1<<20); err != nil || body.Target == nil || body.AllowedIPPrefixes == nil {
+	if err := decodeJSONLimited(response, request, &body, 1<<20); err != nil ||
+		body.ExpectedMutationRevision < 1 || body.ExpectedMutationRevision > 9007199254740991 ||
+		len(body.Target) == 0 && len(body.AllowedIPPrefixes) == 0 && len(body.RequirePostQuantum) == 0 ||
+		string(body.Target) == "null" || string(body.AllowedIPPrefixes) == "null" || string(body.RequirePostQuantum) == "null" {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 		return
 	}
-	if *body.Target != "" && authorization.ValidateTarget(*body.Target) != nil {
+	var target string
+	if len(body.Target) > 0 && (json.Unmarshal(body.Target, &target) != nil || target != "" && authorization.ValidateTarget(target) != nil) {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid target")
 		return
 	}
-	allowedIPPrefixes, err := authorization.CanonicalizeIPPrefixes(*body.AllowedIPPrefixes)
-	if err != nil {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid IP policy")
+	allowedIPPrefixes := []string{}
+	if len(body.AllowedIPPrefixes) > 0 {
+		if json.Unmarshal(body.AllowedIPPrefixes, &allowedIPPrefixes) != nil {
+			writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid IP policy")
+			return
+		}
+		canonical, err := authorization.CanonicalizeIPPrefixes(allowedIPPrefixes)
+		if err != nil {
+			writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid IP policy")
+			return
+		}
+		allowedIPPrefixes = canonical
+	}
+	var requirePostQuantum *bool
+	if len(body.RequirePostQuantum) > 0 && json.Unmarshal(body.RequirePostQuantum, &requirePostQuantum) != nil {
+		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid post-quantum requirement")
 		return
 	}
 	principal, ok := h.authorizeReads(response, request)
@@ -212,9 +231,17 @@ func (h *handler) UpdatePublicURL(response http.ResponseWriter, request *http.Re
 		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
 		return
 	}
+	if len(body.Target) == 0 {
+		target = publicURL.Target
+	}
+	if len(body.AllowedIPPrefixes) == 0 {
+		for _, prefix := range publicURL.AllowedIPPrefixes {
+			allowedIPPrefixes = append(allowedIPPrefixes, prefix.String())
+		}
+	}
 	storedProtocol := publicURL.ServiceProtocol
-	if !storedProtocol.ValidCreateTarget(publicURL.Purpose, *body.Target, publicURL.Ephemeral) ||
-		*body.Target == "" && publicURL.Target != "" {
+	if !storedProtocol.ValidCreateTarget(publicURL.Purpose, target, publicURL.Ephemeral) ||
+		target == "" && publicURL.Target != "" {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid target")
 		return
 	}
@@ -222,18 +249,18 @@ func (h *handler) UpdatePublicURL(response http.ResponseWriter, request *http.Re
 		Operation: authorization.OperationPublicURLUpdate, TeamID: publicURL.TeamID,
 		PublicURLMembershipID: publicURL.MembershipID, DomainID: publicURL.DomainID,
 		CanonicalHostname: publicURL.CanonicalHostname, PublicURLScope: authorization.PublicURLScope(publicURL.PublicURLScope),
-		Target: *body.Target, AllowedIPPrefixes: allowedIPPrefixes, Ephemeral: publicURL.Ephemeral, PublicURLID: publicURL.ID,
-		PublicURLMutationRevision: publicURL.MutationRevision,
+		Target: target, AllowedIPPrefixes: allowedIPPrefixes, Ephemeral: publicURL.Ephemeral, PublicURLID: publicURL.ID,
+		PublicURLMutationRevision: uint64(body.ExpectedMutationRevision),
 	})
 	if !ok {
 		return
 	}
 	updated, err := h.store.UpdateAuthorizedPublicURL(request.Context(), controlstate.AuthorizedPublicURLUpdateRequest{
 		PublicURLID: publicURL.ID, TeamID: decision.TeamID, ActingIdentityID: decision.IdentityID,
-		Target: *body.Target, AllowedIPPrefixes: allowedIPPrefixes,
-		RequirePostQuantum:       body.RequirePostQuantum,
+		Target: target, AllowedIPPrefixes: allowedIPPrefixes,
+		RequirePostQuantum:       requirePostQuantum,
 		PolicyRevision:           decision.PolicyRevision,
-		ExpectedMutationRevision: publicURL.MutationRevision,
+		ExpectedMutationRevision: uint64(body.ExpectedMutationRevision),
 	}, time.Now())
 	if err != nil {
 		writeControlStateProblem(request.Context(), response, "update public URL", err)

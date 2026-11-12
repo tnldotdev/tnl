@@ -50,9 +50,12 @@ func Service(record controlstate.ServiceRecord) controlv1.Service {
 
 // Summary preserves service identity and selection fields without publisher-only
 // target trust or HTTP limits. callers needing approved trust fetch one service.
-func Summary(record controlstate.ServiceRecord) controlv1.Service {
-	record.TLS, record.HTTPLimits = nil, nil
-	return Service(record)
+func Summary(record controlstate.ServiceRecord) controlv1.ServiceSummary {
+	s := Service(record)
+	return controlv1.ServiceSummary{Id: s.Id, TeamId: s.TeamId, DomainId: s.DomainId, Name: s.Name,
+		Placement: s.Placement, Source: s.Source, Enabled: s.Enabled, Endpoint: s.Endpoint,
+		Protocol: s.Protocol, KubernetesAuth: s.KubernetesAuth, PublisherPool: s.PublisherPool,
+		TrustRevision: s.TrustRevision, CreatedAt: s.CreatedAt, ServiceRunId: s.ServiceRunId, RunNumber: s.RunNumber}
 }
 
 func Grant(grant controlstate.ServiceGrant) controlv1.ServiceGrant {

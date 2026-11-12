@@ -56,7 +56,7 @@ func TestCreateOrLoadRouteReconcilesTargetAndIPPolicy(t *testing.T) {
 	control := &publisherControlStub{allowed: []string{"lookup", "update"}, routes: []controlv1.PublicURL{{
 		Id: "public_url_existing", TeamId: "team_1", DomainId: "domain_1", MembershipId: pointer("membership_1"),
 		CanonicalHostname: "demo.example", PublicUrlScope: controlv1.Member, Purpose: controlv1.App, Target: "http://127.0.0.1:3000",
-		AllowedIpPrefixes: &existingPolicy, LifecycleState: controlv1.Enabled,
+		AllowedIpPrefixes: &existingPolicy, LifecycleState: controlv1.Enabled, MutationRevision: 4,
 	}}}
 	wantPolicy := []string{"198.51.100.0/24"}
 	got, created, err := createOrLoadPublicURL(t.Context(), Config{
@@ -67,8 +67,8 @@ func TestCreateOrLoadRouteReconcilesTargetAndIPPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created || control.updated == nil || control.updated.Target != "http://127.0.0.1:4000" ||
-		!slices.Equal(control.updated.AllowedIpPrefixes, wantPolicy) ||
+	if created || control.updated == nil || control.updated.ExpectedMutationRevision != 4 || control.updated.Target == nil || *control.updated.Target != "http://127.0.0.1:4000" ||
+		control.updated.AllowedIpPrefixes == nil || !slices.Equal(*control.updated.AllowedIpPrefixes, wantPolicy) ||
 		got.Target != "http://127.0.0.1:4000" {
 		t.Fatalf("route = %#v, update request = %#v", got, control.updated)
 	}
@@ -540,11 +540,15 @@ func (s *publisherControlStub) UpdatePublicURL(_ context.Context, id string, bod
 	}
 	for index := range s.routes {
 		if s.routes[index].Id == id {
-			s.routes[index].Target = body.Target
+			if body.Target != nil {
+				s.routes[index].Target = *body.Target
+			}
 			if body.RequirePostQuantum != nil {
 				s.routes[index].RequirePostQuantum = *body.RequirePostQuantum
 			}
-			s.routes[index].AllowedIpPrefixes = &body.AllowedIpPrefixes
+			if body.AllowedIpPrefixes != nil {
+				s.routes[index].AllowedIpPrefixes = body.AllowedIpPrefixes
+			}
 			return s.routes[index], nil
 		}
 	}

@@ -90,7 +90,7 @@ func reserveConfiguredURL(ctx context.Context, services publisherServices, cfg p
 		if cfg.AccessMode == "" && cfg.AllowedIPPrefixes != nil {
 			prefixes = cfg.AllowedIPPrefixes
 		}
-		return services.routes.UpdatePublicURL(ctx, publicURL.Id, controlv1.UpdatePublicURLRequest{Target: "", AllowedIpPrefixes: slices.Clone(prefixes), RequirePostQuantum: cfg.RequirePostQuantum})
+		return services.routes.UpdatePublicURL(ctx, publicURL.Id, controlv1.UpdatePublicURLRequest{AllowedIpPrefixes: new(append([]string{}, prefixes...)), RequirePostQuantum: cfg.RequirePostQuantum, ExpectedMutationRevision: publicURL.MutationRevision})
 	}
 	return publicURL, nil
 }

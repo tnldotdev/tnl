@@ -36,12 +36,12 @@ func TestServiceRunUsesSeparatePersonPublisherAndRunCredentials(t *testing.T) {
 			if r.Header.Get("Authorization") != "Bearer person-token" || r.URL.Query().Get("team_id") != "team" {
 				t.Error("private inventory used publisher credentials")
 			}
-			_ = json.NewEncoder(w).Encode(controlv1.ServicePage{Services: []controlv1.Service{{Id: "svc_service", TeamId: "team", Name: "orders"}}})
+			_ = json.NewEncoder(w).Encode(controlv1.ServicePage{Services: []controlv1.ServiceSummary{{Id: "svc_service", TeamId: "team", Name: "orders"}}})
 		case "GET /v1/visitor/services":
 			if r.Header.Get("Authorization") != "Bearer person-token" || r.URL.Query().Has("team_id") {
 				t.Error("visitor inventory used publisher scope or selected an administrator team")
 			}
-			_ = json.NewEncoder(w).Encode(controlv1.ServicePage{Services: []controlv1.Service{{Id: "svc_service", TeamId: "team", Name: "orders"}}})
+			_ = json.NewEncoder(w).Encode(controlv1.ServicePage{Services: []controlv1.ServiceSummary{{Id: "svc_service", TeamId: "team", Name: "orders"}}})
 		case "POST /v1/services/svc_service/runs":
 			if r.Header.Get("Authorization") != "Bearer publisher-token" || r.Header.Get("Idempotency-Key") != "one-run" {
 				t.Error("prepare used a person or run credential")
@@ -105,5 +105,24 @@ func TestServiceRunUsesSeparatePersonPublisherAndRunCredentials(t *testing.T) {
 	}
 	if len(seen) != 7 {
 		t.Fatalf("missing a private run boundary: %+v", seen)
+	}
+}
+
+func TestServiceAuditCursorIsCopiedVerbatim(t *testing.T) {
+	cursor := "9007199254740993"
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("after") != cursor {
+			t.Errorf("audit cursor changed: %s", r.URL)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"events":[]}`))
+	}))
+	defer server.Close()
+	client, err := New(server.URL, server.Client(), "person-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ListServiceAudit(t.Context(), "team", controlv1.ListServiceAuditParams{After: &cursor}); err != nil {
+		t.Fatal(err)
 	}
 }

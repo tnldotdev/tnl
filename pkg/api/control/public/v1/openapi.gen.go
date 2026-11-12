@@ -3644,8 +3644,8 @@ type ServiceObservationResult struct {
 
 // ServicePage At most 100 service summaries. Inventory preserves identity, placement, source and selection hints but never includes publisher-only target_tls or http_limits. Fetch an exact service for its approved publisher trust and limits.
 type ServicePage struct {
-	NextCursor *ServiceID `json:"next_cursor,omitempty"`
-	Services   []Service  `json:"services"`
+	NextCursor *ServiceID       `json:"next_cursor,omitempty"`
+	Services   []ServiceSummary `json:"services"`
 }
 
 // ServicePlacement defines model for ServicePlacement.
@@ -3743,6 +3743,29 @@ type ServiceSelection struct {
 	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
 	Subject       VisitorSubject `json:"subject"`
 	TrustRevision int64          `json:"trust_revision"`
+}
+
+// ServiceSummary Inventory identity, placement and selection hints. Never includes target trust, targets, credentials or publisher HTTP limits.
+type ServiceSummary struct {
+	CreatedAt time.Time `json:"created_at"`
+	DomainId  *DomainID `json:"domain_id,omitempty"`
+	Enabled   bool      `json:"enabled"`
+
+	// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
+	Endpoint *ServiceEndpoint `json:"endpoint,omitempty"`
+	Id       ServiceID        `json:"id"`
+
+	// KubernetesAuth Approved nonsecret native client authentication hint. Contains no publisher target address, CA, or credentials.
+	KubernetesAuth *KubernetesAuth     `json:"kubernetes_auth,omitempty"`
+	Name           ServiceName         `json:"name"`
+	Placement      *ServicePlacement   `json:"placement,omitempty"`
+	Protocol       ServiceProtocol     `json:"protocol"`
+	PublisherPool  bool                `json:"publisher_pool"`
+	RunNumber      *int64              `json:"run_number,omitempty"`
+	ServiceRunId   *ServiceRunID       `json:"service_run_id,omitempty"`
+	Source         *LocalServiceSource `json:"source,omitempty"`
+	TeamId         TeamID              `json:"team_id"`
+	TrustRevision  int64               `json:"trust_revision"`
 }
 
 // ServiceTargetTLS Approved publisher-to-target trust. This never selects or disables visitor TLS.
@@ -3882,15 +3905,26 @@ type TrafficSelection struct {
 	UploadBytes *int64 `json:"upload_bytes,omitempty"`
 }
 
-// UpdatePublicURLRequest defines model for UpdatePublicURLRequest.
+// UpdatePublicURLRequest Change only supplied fields. Omission preserves the saved value; an empty IP list clears the IP policy. Null values and updates without a writable field are rejected. A stale revision returns conflict.
 type UpdatePublicURLRequest struct {
-	AllowedIpPrefixes []string `json:"allowed_ip_prefixes"`
+	AllowedIpPrefixes        *[]string `json:"allowed_ip_prefixes,omitempty"`
+	ExpectedMutationRevision int64     `json:"expected_mutation_revision"`
 
 	// RequirePostQuantum Omit to preserve the saved public URL's requirement.
 	RequirePostQuantum *bool `json:"require_post_quantum,omitempty"`
 
 	// Target Must remain empty for OAuth and webhook URLs. May be empty when keeping a saved app or alias public URL targetless.
-	Target string `json:"target"`
+	Target *string `json:"target,omitempty"`
+}
+
+// UpdateServiceRequest Replace approved protocol, publisher pool and target trust. Omit target_tls to remove it. Copy trust_revision from the service into expected_trust_revision; stale revisions return conflict. Endpoint and placement are not writable here.
+type UpdateServiceRequest struct {
+	ExpectedTrustRevision int64           `json:"expected_trust_revision"`
+	Protocol              ServiceProtocol `json:"protocol"`
+	PublisherPool         bool            `json:"publisher_pool"`
+
+	// TargetTls Approved publisher-to-target trust. This never selects or disables visitor TLS.
+	TargetTls *ServiceTargetTLS `json:"target_tls,omitempty"`
 }
 
 // VisitorAccessMode defines model for VisitorAccessMode.
@@ -4428,11 +4462,13 @@ type CreateURLShareParams struct {
 
 // ListServiceAuditParams defines parameters for ListServiceAudit.
 type ListServiceAuditParams struct {
-	ServiceId *string    `form:"service_id,omitempty" json:"service_id,omitempty"`
-	Service   *string    `form:"service,omitempty" json:"service,omitempty"`
-	After     *int64     `form:"after,omitempty" json:"after,omitempty"`
-	Since     *time.Time `form:"since,omitempty" json:"since,omitempty"`
-	Limit     *int       `form:"limit,omitempty" json:"limit,omitempty"`
+	ServiceId *string `form:"service_id,omitempty" json:"service_id,omitempty"`
+	Service   *string `form:"service,omitempty" json:"service,omitempty"`
+
+	// After Copy next_cursor verbatim from the previous page.
+	After *string    `form:"after,omitempty" json:"after,omitempty"`
+	Since *time.Time `form:"since,omitempty" json:"since,omitempty"`
+	Limit *int       `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // EnrollVisitorDeviceJSONBody defines parameters for EnrollVisitorDevice.
@@ -4609,7 +4645,7 @@ type AcceptServiceInvitationJSONRequestBody = ServiceInvitationCredential
 type CreateServiceJSONRequestBody = CreateServiceRequest
 
 // ConfigureServiceJSONRequestBody defines body for ConfigureService for application/json ContentType.
-type ConfigureServiceJSONRequestBody = ServiceMetadata
+type ConfigureServiceJSONRequestBody = UpdateServiceRequest
 
 // IssueServiceClientCertificateJSONRequestBody defines body for IssueServiceClientCertificate for application/json ContentType.
 type IssueServiceClientCertificateJSONRequestBody = IssueServiceClientCertificateRequest
@@ -16753,7 +16789,7 @@ func NewListServiceAuditRequest(server string, teamId string, params *ListServic
 
 		if params.After != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "after", *params.After, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "after", *params.After, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -38208,7 +38244,7 @@ func (siw *ServerInterfaceWrapper) ListServiceAudit(w http.ResponseWriter, r *ht
 
 	// ------------- Optional query parameter "after" -------------
 
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "after", r.URL.Query(), &params.After, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "after", r.URL.Query(), &params.After, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
 	if err != nil {
 		var requiredError *runtime.RequiredParameterError
 		if errors.As(err, &requiredError) {

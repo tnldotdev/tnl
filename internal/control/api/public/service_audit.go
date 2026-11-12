@@ -3,7 +3,6 @@ package public
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -46,7 +45,7 @@ func (h *handler) ListServiceAudit(w http.ResponseWriter, r *http.Request, team 
 		f.Service = *p.Service
 	}
 	if p.After != nil {
-		f.After = fmt.Sprint(*p.After)
+		f.After = *p.After
 	}
 	if p.Limit != nil {
 		f.Limit = *p.Limit
