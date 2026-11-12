@@ -333,7 +333,6 @@ type TelemetryOutbox struct {
 	EventID        string
 	CreatedAt      int64
 	EventJson      string
-	ClientJson     string
 	TelemetryEpoch int64
 }
 

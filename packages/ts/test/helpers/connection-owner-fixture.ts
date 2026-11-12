@@ -41,7 +41,7 @@ export async function runConnectionOwnerFixture(root: string): Promise<void> {
     if (entry === undefined) throw new Error("missing fixture entry");
     const { stdout } = await promisify(execFile)(
       process.execPath,
-      [entry, "--no-telemetry", "runtime", "connections", ...arguments_],
+      [entry, "runtime", "connections", ...arguments_],
       { timeout: 25_000 },
     );
     return stdout;
@@ -234,7 +234,7 @@ export async function runConnectionOwnerFixture(root: string): Promise<void> {
       );
       return;
     }
-    const operation = args[3];
+    const operation = args[2];
     if (
       operation === "sdk-prepare" ||
       operation === "fixture-rollback" ||

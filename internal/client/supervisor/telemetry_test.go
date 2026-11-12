@@ -2,13 +2,11 @@ package supervisor
 
 import (
 	"testing"
-
-	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 )
 
-func TestTelemetryInstallationCapturesOptOutForEveryJobKind(t *testing.T) {
+func TestTelemetryInstallationPreservesInstallerChoiceForEveryJobKind(t *testing.T) {
 	for _, kind := range []Kind{KindPublicURL, KindService, KindConnector, KindGroup} {
-		for _, choice := range []string{"default", "job", "invocation", "preference"} {
+		for _, choice := range []string{"default", "disabled"} {
 			t.Run(string(kind)+"/"+choice, func(t *testing.T) {
 				options := testOptions(t)
 				options.User = true
@@ -18,12 +16,11 @@ func TestTelemetryInstallationCapturesOptOutForEveryJobKind(t *testing.T) {
 				}
 				t.Cleanup(func() { _ = registry.Close() })
 				job, identity, key := kindFixture(t, kind)
-				ctx := clienttelemetry.WithDisabled(t.Context(), choice == "invocation")
-				job.TelemetryDisabled = choice == "job"
-				if choice == "preference" {
-					if err := registry.database.SetTelemetryEnabled(ctx, false); err != nil {
-						t.Fatal(err)
-					}
+				ctx := t.Context()
+				job.TelemetryDisabled = choice == "disabled"
+				// the receiving registry's preference is not the installer's choice.
+				if err := registry.database.SetTelemetryEnabled(ctx, job.TelemetryDisabled); err != nil {
+					t.Fatal(err)
 				}
 				switch kind {
 				case KindGroup:
@@ -66,7 +63,8 @@ func TestTelemetryFixedGroupsCaptureInvocationOptOut(t *testing.T) {
 	defer registry.Close()
 	job, _, key := kindFixture(t, KindGroup)
 	job.ID = JobKey(job.Server, "group", job.GroupMember.GroupId+":"+job.GroupInstance)
-	ctx := clienttelemetry.WithDisabled(t.Context(), true)
+	ctx := t.Context()
+	job.TelemetryDisabled = true
 	if err := registry.ReplaceGroups(ctx, []GroupInstall{{Job: job, Private: key}}); err != nil {
 		t.Fatal(err)
 	}

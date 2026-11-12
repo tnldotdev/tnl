@@ -97,7 +97,10 @@ func launchOwner(ctx context.Context, options OwnerStartOptions, request connect
 	if err != nil {
 		return err
 	}
-	args := []string{"--no-telemetry", "runtime", "connections", "serve", "--directory", scope.Directory, "--owner-directory", directory}
+	args := []string{"runtime", "connections", "serve", "--directory", scope.Directory, "--owner-directory", directory}
+	if options.TelemetryDisabled {
+		args = append([]string{"--no-telemetry"}, args...)
+	}
 	if options.Workload != "" {
 		args = append(args, "--workload", options.Workload)
 	}

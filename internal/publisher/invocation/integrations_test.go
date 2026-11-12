@@ -110,7 +110,7 @@ func TestWebhookReadyTelemetryRequiresPublishedURLAndSelectedReceiver(t *testing
 	if err := state.MarkIntegrationURLReady(t.Context(), server, hostname, "owner"); err != nil {
 		t.Fatal(err)
 	}
-	if mode := readyWebhookDelivery(t.Context(), state, server, group, hostname, map[string]config.Webhook{"fanout": fanout}); mode != telemetryFanout {
+	if mode := readyWebhookDelivery(t.Context(), state, server, group, hostname, map[string]config.Webhook{"fanout": fanout}); mode != "fanout" {
 		t.Fatalf("ready fanout endpoint = %q", mode)
 	}
 	if mode := readyWebhookDelivery(t.Context(), state, server, group, hostname, definitions); mode != "" {
@@ -119,7 +119,7 @@ func TestWebhookReadyTelemetryRequiresPublishedURLAndSelectedReceiver(t *testing
 	if err := state.ClaimWebhookReceiver(t.Context(), server, group, "event", tunnel.ID(), digest, false); err != nil {
 		t.Fatal(err)
 	}
-	if mode := readyWebhookDelivery(t.Context(), state, server, group, hostname, definitions); mode != telemetrySelected {
+	if mode := readyWebhookDelivery(t.Context(), state, server, group, hostname, definitions); mode != "selected" {
 		t.Fatalf("ready exclusive endpoint = %q", mode)
 	}
 	if err := tunnel.SetProvisioning(t.Context(), 2); err != nil {

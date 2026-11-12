@@ -91,11 +91,11 @@ func TestTelemetryRetriesKeepIDsAndCollectedMetadata(t *testing.T) {
 		t.Fatalf("unstable/invalid batches: %q", bodies)
 	}
 	var batch api.Batch
-	if json.Unmarshal(bodies[0], &batch) != nil || batch.Client.Version != "collected-version" || len(batch.Events) != 2 {
+	if json.Unmarshal(bodies[0], &batch) != nil || len(batch.Events) != 2 || batch.Events[0].Client.Version != "collected-version" {
 		t.Fatalf("batch: %s", bodies[0])
 	}
-	first, _ := batch.Events[0].AsCommandEvent()
-	second, _ := batch.Events[1].AsReadyEvent()
+	first, _ := batch.Events[0].Event.AsCommandEvent()
+	second, _ := batch.Events[1].Event.AsReadyEvent()
 	if first.EventId == second.EventId {
 		t.Fatal("events shared an ID")
 	}
@@ -132,17 +132,17 @@ func TestTelemetryLaterSenderKeepsOriginalMetadata(t *testing.T) {
 	next.Report(Demo())
 	flushForTest(t, next)
 	flushForTest(t, next)
-	if len(batches) != 2 || batches[0].Client != old || batches[1].Client != current {
+	if len(batches) != 1 || len(batches[0].Events) != 2 || batches[0].Events[0].Client != old || batches[0].Events[1].Client != current {
 		t.Fatalf("relabelled queued events: %+v", batches)
 	}
 }
 
 func TestTelemetryPreferenceFencesRapidOffOnAndScopeCounters(t *testing.T) {
 	c := collectorForTest(t, Config{})
-	scope := c.BeginScope("publisher", false)
+	scope := c.BeginScope("publisher")
 	defer scope.Close()
 	scope.Record(api.RelayConnect, api.Quic, api.Succeeded, time.Second)
-	old, _ := json.Marshal(Demo())
+	old, _ := c.encode(Demo(), 0)
 	if err := c.state.SetTelemetryEnabled(t.Context(), false); err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestTelemetryPreferenceFencesRapidOffOnAndScopeCounters(t *testing.T) {
 		t.Fatal(err)
 	}
 	// neither a stale in-memory event nor an old scope can refill the cleared queue.
-	c.store(queuedEvent{old, 0})
+	c.store(old)
 	scope.flush()
 	flushForTest(t, c)
 	rows, err := c.state.PendingTelemetryEvents(t.Context(), 25)
@@ -205,7 +205,7 @@ func TestTelemetryOffCancelsInflightAndCloseJoins(t *testing.T) {
 func TestTelemetryCollectionIsBoundedAndDoesNotWaitForIO(t *testing.T) {
 	// no state handle, HTTP client or worker exists: collection must only fill
 	// the bounded channel and drop overflow, without attempting external I/O.
-	c := &Collector{queue: make(chan queuedEvent, 64)}
+	c := &Collector{queue: make(chan queuedEvent, 64), metadata: api.Client{Version: "test", Os: "linux", Arch: "arm64"}}
 	c.preference.Store(&clientstate.TelemetryPreference{Enabled: true})
 	var work sync.WaitGroup
 	for range 4 {
@@ -247,8 +247,9 @@ func TestTelemetrySetupCanRetryAfterInvalidRoot(t *testing.T) {
 
 func TestTelemetrySiblingScopesStaySeparate(t *testing.T) {
 	c := collectorForTest(t, Config{})
-	optedOut := c.BeginScope("publisher", true)
-	optedIn := c.BeginScope("publisher", false)
+	var disabled *Collector
+	optedOut := disabled.BeginScope("publisher")
+	optedIn := c.BeginScope("publisher")
 	defer optedIn.Close()
 	for range 10 {
 		optedOut.Record(api.RelayConnect, api.Quic, api.Succeeded, time.Second)
@@ -261,9 +262,9 @@ func TestTelemetrySiblingScopesStaySeparate(t *testing.T) {
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("sibling reports: %+v %v", rows, err)
 	}
-	var event api.Event
+	var event api.CollectedEvent
 	_ = json.Unmarshal(rows[0].JSON, &event)
-	report, _ := event.AsTransportEvent()
+	report, _ := event.Event.AsTransportEvent()
 	if len(report.Payload.Measurements) != 1 || report.Payload.Measurements[0].Count != 1 || report.Payload.Measurements[0].Path != api.TlsTcp {
 		t.Fatalf("mixed siblings: %+v", report)
 	}

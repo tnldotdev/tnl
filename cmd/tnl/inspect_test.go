@@ -48,13 +48,11 @@ func TestInspectCommandsScopeTypedJSONToCurrentProject(t *testing.T) {
 	stateRoot := filepath.Join(t.TempDir(), "state")
 	t.Setenv("TNL_STATE_DIR", stateRoot)
 	var stdout, stderr bytes.Buffer
-	var events []telemetryPayload
-	factory := func(string) telemetryReporter {
-		return telemetryReporterFunc(func(event telemetryPayload) { events = append(events, event) })
-	}
-	if err := run(t.Context(), []string{"inspect", "list", "--output=json"}, &stdout, &stderr, factory); err != nil {
+	r := recordTelemetry(t)
+	if err := run(t.Context(), []string{"inspect", "list", "--output=json"}, &stdout, &stderr, r.factory); err != nil {
 		t.Fatal(err)
 	}
+	events := r.events()
 	if len(events) != 1 {
 		t.Fatalf("list telemetry = %+v", events)
 	}
@@ -70,10 +68,11 @@ func TestInspectCommandsScopeTypedJSONToCurrentProject(t *testing.T) {
 		t.Fatalf("list = %+v, %v", list, err)
 	}
 	stdout.Reset()
-	events = nil
-	if err := run(t.Context(), []string{"inspect", "show", "1", "--output=json"}, &stdout, &stderr, factory); err == nil {
+	r = recordTelemetry(t)
+	if err := run(t.Context(), []string{"inspect", "show", "1", "--output=json"}, &stdout, &stderr, r.factory); err == nil {
 		t.Fatal("unknown inspection was found")
 	}
+	events = r.events()
 	if len(events) != 1 {
 		t.Fatalf("show telemetry = %+v", events)
 	}
@@ -81,7 +80,7 @@ func TestInspectCommandsScopeTypedJSONToCurrentProject(t *testing.T) {
 	if shown.Payload.Action == nil || *shown.Payload.Action != "show" || shown.Payload.Outcome != "failed" {
 		t.Fatalf("show telemetry = %+v", shown)
 	}
-	if err := run(t.Context(), []string{"requests", "list"}, &stdout, &stderr, factory); err == nil {
+	if err := run(t.Context(), []string{"requests", "list"}, &stdout, &stderr, r.factory); err == nil {
 		t.Fatal("retired requests command is still accepted")
 	}
 }

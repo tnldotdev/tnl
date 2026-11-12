@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
-
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/client/supervisor"
@@ -42,7 +40,6 @@ func SigningIdentity(ctx context.Context, profile *clientstate.Store, id string)
 // private publication never reserves a hostname or asks for a visitor certificate.
 // only the person's session creates saved state; runs use the exact signed grant.
 func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePresentation) (result error) {
-	ctx = clienttelemetry.WithDisabled(ctx, flags.TelemetryDisabled)
 	project := projectConfiguration{Project: flags.Project, targetResolver: flags.Resolver}
 	protocol, err := privatePublishProtocol(flags.Protocol)
 	if err != nil {
@@ -360,7 +357,7 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 		}
 		defer func() { result = errors.Join(result, stopRuntime()) }()
 	}
-	err = targetplan.PublishPrivate(ctx, job.TargetPlan(), publisherservice.RunConfig{Control: native, State: profile, Access: native.Access, Identity: identity, ServiceID: job.ServiceID, Target: target, Metadata: publisheridentity.ServiceMetadata(approved), StreamCapacity: int32(job.Limits.Concurrency),
+	err = targetplan.PublishPrivate(ctx, job.TargetPlan(), publisherservice.RunConfig{Telemetry: flags.Telemetry, Control: native, State: profile, Access: native.Access, Identity: identity, ServiceID: job.ServiceID, Target: target, Metadata: publisheridentity.ServiceMetadata(approved), StreamCapacity: int32(job.Limits.Concurrency),
 		Ready: func() error {
 			if output.Ready != nil {
 				output.Ready()

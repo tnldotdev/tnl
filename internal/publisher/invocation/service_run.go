@@ -139,7 +139,7 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 			return nil
 		}
 		publish := func() error {
-			return targetplan.PublishPrivate(ctx, plan, publisherservice.RunConfig{Control: control, State: profile, Access: native.Access, Identity: identity, ServiceID: saved.Id, Target: plan.Target, Metadata: publisheridentity.ServiceMetadata(saved),
+			return targetplan.PublishPrivate(ctx, plan, publisherservice.RunConfig{Telemetry: a.Telemetry, Control: control, State: profile, Access: native.Access, Identity: identity, ServiceID: saved.Id, Target: plan.Target, Metadata: publisheridentity.ServiceMetadata(saved),
 				Healthy: func(probe context.Context) bool {
 					current := service
 					current.RunNumber = control.number.Load()

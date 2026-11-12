@@ -34,10 +34,9 @@ vi.mock("../../src/internal/connector/connection_ipc.js", async () => {
     ownerIPC: async (file: string) => ({
       async prepare(name: string, assertion?: string, selection?: object) {
         if (selection !== undefined)
-          return response(
-            ["--no-telemetry", "runtime", "connections", "sdk-prepare", "--selected-service", name],
-            { assertion },
-          );
+          return response(["runtime", "connections", "sdk-prepare", "--selected-service", name], {
+            assertion,
+          });
         fixture.ipc.push({ file, name, assertion });
         const binding = assertion === undefined ? undefined : fixture.binding(assertion);
         if (fixture.dead.has(file) || binding === undefined || fixture.owners.get(file) !== binding)
@@ -53,7 +52,7 @@ vi.mock("../../src/internal/connector/connection_ipc.js", async () => {
           fixture.prepared.add(serviceKey);
         }
         const raw = response(
-          ["--no-telemetry", "runtime", "connections", "read", "--handle", file, "--service", name],
+          ["runtime", "connections", "read", "--handle", file, "--service", name],
           undefined,
         ) as object;
         return {
@@ -98,7 +97,7 @@ vi.mock("node:child_process", () => ({
               callback(new Error("native operation rejected"));
             }
           };
-          if (args[3] === "recover" && fixture.dead.size > 0 && ++fixture.recoveries > 1)
+          if (args[2] === "recover" && fixture.dead.size > 0 && ++fixture.recoveries > 1)
             setTimeout(complete, 25);
           else queueMicrotask(complete);
         },
@@ -111,7 +110,7 @@ vi.mock("node:child_process", () => ({
 }));
 
 function response(args: string[], input: unknown): unknown {
-  const operation = args[3];
+  const operation = args[2];
   const body = input as { assertion?: string };
   if (operation === "context") return { schema: 1, config_digest: "c".repeat(64) };
   const binding = body?.assertion === undefined ? undefined : fixture.binding(body.assertion);
@@ -130,7 +129,7 @@ function response(args: string[], input: unknown): unknown {
       ([file, owner]) => owner === binding && !fixture.dead.has(file),
     )?.[0];
     if (file === undefined) {
-      const started = response(["--no-telemetry", "runtime", "connections", "start"], input) as {
+      const started = response(["runtime", "connections", "start"], input) as {
         connection_handle: string;
       };
       file = started.connection_handle;
@@ -155,7 +154,7 @@ function response(args: string[], input: unknown): unknown {
         connection_handle: file,
       },
       prepared: response(
-        ["--no-telemetry", "runtime", "connections", "read", "--handle", file, "--service", name],
+        ["runtime", "connections", "read", "--handle", file, "--service", name],
         undefined,
       ),
     };
@@ -291,7 +290,7 @@ test("all protocols share a verified native identity owner and assertions travel
   );
   expect(snapshots).toHaveLength(5);
   expect(fixture.owners.size).toBe(1);
-  expect(fixture.calls.every((c) => c.args[3] === "sdk-prepare")).toBe(true);
+  expect(fixture.calls.every((c) => c.args[2] === "sdk-prepare")).toBe(true);
   expect(fixture.calls.every((c) => !c.args.includes("first"))).toBe(true);
   fixture.assertion = "rotated";
   await connectionHandle("db", vi.fn());
@@ -316,7 +315,7 @@ test("control rejection cannot select a cached owner, and one service denial lea
     12345,
   );
   expect(fixture.owners.size).toBe(1);
-  expect(fixture.calls.some((c) => c.args[3] === "stop")).toBe(false);
+  expect(fixture.calls.some((c) => c.args[2] === "stop")).toBe(false);
 });
 
 test("a returned fetch resolves the caller's current verified owner rather than capturing its original file", async () => {
@@ -371,14 +370,14 @@ test("a late concurrent death proof adopts the recovered owner instead of starti
 test("cold and warm helper/control budgets are explicit; rotation revalidates before reuse", async () => {
   const { connectionHandle } = await import("../../src/internal/connector/connection.js");
   await connectionHandle("api", vi.fn());
-  expect(fixture.calls.map((c) => c.args[3])).toEqual(["sdk-prepare"]);
+  expect(fixture.calls.map((c) => c.args[2])).toEqual(["sdk-prepare"]);
   expect(Object.values(fixture.control).reduce((a, b) => a + b, 0)).toBe(5);
   for (let i = 0; i < 10; i++) await connectionHandle("api", vi.fn());
   expect(fixture.calls).toHaveLength(1);
   expect(Object.values(fixture.control).reduce((a, b) => a + b, 0)).toBe(5);
   fixture.assertion = "rotated";
   await connectionHandle("api", vi.fn());
-  expect(fixture.calls.map((c) => c.args[3])).toEqual(["sdk-prepare"]);
+  expect(fixture.calls.map((c) => c.args[2])).toEqual(["sdk-prepare"]);
   expect(fixture.control.attach).toBe(1);
   expect(fixture.control.identity).toBe(3);
 });

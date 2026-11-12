@@ -19,6 +19,8 @@ import (
 	"syscall"
 	"time"
 
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
+
 	"github.com/tnldotdev/tnl/internal/client/project/meta"
 	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	"github.com/tnldotdev/tnl/internal/config"
@@ -33,7 +35,8 @@ import (
 )
 
 type connectorConnectionBackend struct {
-	sdk *SDKOptions
+	telemetry *clienttelemetry.Collector
+	sdk       *SDKOptions
 	connectorConnectionSession
 	openSession                                            SessionOpener
 	project                                                projectConfiguration

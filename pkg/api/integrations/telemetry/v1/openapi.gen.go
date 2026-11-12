@@ -663,8 +663,7 @@ func (e TransportReportRole) Valid() bool {
 
 // Batch defines model for Batch.
 type Batch struct {
-	Client         Client             `json:"client"`
-	Events         []Event            `json:"events"`
+	Events         []CollectedEvent   `json:"events"`
 	InstallationId string             `json:"installation_id"`
 	SchemaVersion  BatchSchemaVersion `json:"schema_version"`
 }
@@ -685,6 +684,12 @@ type ClientArch string
 
 // ClientOs defines model for Client.Os.
 type ClientOs string
+
+// CollectedEvent defines model for CollectedEvent.
+type CollectedEvent struct {
+	Client Client `json:"client"`
+	Event  Event  `json:"event"`
+}
 
 // CommandEvent defines model for CommandEvent.
 type CommandEvent struct {

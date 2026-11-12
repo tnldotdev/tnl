@@ -29,6 +29,7 @@ type Config struct {
 }
 
 type queuedEvent struct {
+	id    string
 	data  json.RawMessage
 	epoch int64
 }
@@ -39,7 +40,7 @@ type Collector struct {
 	state        *clientstate.Database
 	client       *http.Client
 	endpoint     string
-	metadata     json.RawMessage
+	metadata     api.Client
 	ctx          context.Context
 	cancel       context.CancelFunc
 	preference   atomic.Pointer[clientstate.TelemetryPreference]
@@ -50,6 +51,8 @@ type Collector struct {
 	once         sync.Once
 	flightMu     sync.Mutex
 	flightCancel context.CancelFunc
+	scopesMu     sync.Mutex
+	scopes       map[*Scope]struct{}
 }
 
 func New(parent context.Context, cfg Config) (*Collector, error) {
@@ -91,7 +94,7 @@ func New(parent context.Context, cfg Config) (*Collector, error) {
 		cfg.Interval = 5 * time.Second
 	}
 	ctx, cancel := context.WithCancel(parent)
-	c := &Collector{state: state, client: cfg.Client, endpoint: cfg.Endpoint, metadata: encoded, ctx: ctx, cancel: cancel, queue: make(chan queuedEvent, 64), flush: make(chan chan struct{}, 1), done: make(chan struct{})}
+	c := &Collector{state: state, client: cfg.Client, endpoint: cfg.Endpoint, metadata: metadata, ctx: ctx, cancel: cancel, queue: make(chan queuedEvent, 64), flush: make(chan chan struct{}, 1), done: make(chan struct{}), scopes: make(map[*Scope]struct{})}
 	c.preference.Store(&preference)
 	var workers sync.WaitGroup
 	workers.Go(func() { c.run(cfg.Interval) })
@@ -108,14 +111,35 @@ func (c *Collector) Report(event api.Event) {
 	if p == nil || !p.Enabled {
 		return
 	}
-	data, err := json.Marshal(event)
-	if err != nil || len(data) > api.MaximumEventBytes {
+	c.enqueue(event, p.Epoch)
+}
+
+// encode once, including the metadata and preference epoch from collection.
+func (c *Collector) enqueue(event api.Event, epoch int64) {
+	queued, ok := c.encode(event, epoch)
+	if !ok {
 		return
 	}
 	select {
-	case c.queue <- queuedEvent{data, p.Epoch}:
+	case c.queue <- queued:
 	default:
 	}
+}
+
+func (c *Collector) encode(event api.Event, epoch int64) (queuedEvent, bool) {
+	data, err := json.Marshal(api.CollectedEvent{Client: c.metadata, Event: event})
+	if err != nil || len(data) > api.MaximumEventBytes {
+		return queuedEvent{}, false
+	}
+	var header struct {
+		Event struct {
+			ID string `json:"event_id"`
+		} `json:"event"`
+	}
+	if json.Unmarshal(data, &header) != nil {
+		return queuedEvent{}, false
+	}
+	return queuedEvent{id: header.Event.ID, data: data, epoch: epoch}, true
 }
 
 func (c *Collector) Flush() {
@@ -188,6 +212,8 @@ func (c *Collector) refreshPreference() {
 func (c *Collector) run(interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	scopeTicker := time.NewTicker(time.Minute)
+	defer scopeTicker.Stop()
 	for c.ctx.Err() == nil {
 		select {
 		case <-c.ctx.Done():
@@ -195,6 +221,7 @@ func (c *Collector) run(interval time.Duration) {
 		case event := <-c.queue:
 			c.store(event)
 		case ack := <-c.flush:
+			c.flushScopes()
 			c.drain()
 			c.send()
 			if ack != nil {
@@ -203,7 +230,27 @@ func (c *Collector) run(interval time.Duration) {
 		case <-ticker.C:
 			c.drain()
 			c.send()
+		case <-scopeTicker.C:
+			c.flushScopes()
+			c.drain()
+			c.send()
 		}
+	}
+}
+
+func (c *Collector) flushScopes() {
+	c.scopesMu.Lock()
+	scopes := make([]*Scope, 0, len(c.scopes))
+	for scope := range c.scopes {
+		scopes = append(scopes, scope)
+	}
+	c.scopesMu.Unlock()
+	for _, scope := range scopes {
+		scope.flushTo(func(event api.Event, epoch int64) {
+			if queued, ok := c.encode(event, epoch); ok {
+				c.store(queued)
+			}
+		})
 	}
 }
 
@@ -222,18 +269,12 @@ func (c *Collector) drain() {
 }
 
 func (c *Collector) store(event queuedEvent) {
-	if api.ValidateEvent(event.data) != nil {
-		return
-	}
-	var header struct {
-		ID string `json:"event_id"`
-	}
-	if json.Unmarshal(event.data, &header) != nil {
+	if api.ValidateCollectedEvent(event.data) != nil {
 		return
 	}
 	call, stop := context.WithTimeout(c.ctx, RequestTimeout)
 	defer stop()
-	_ = c.state.QueueTelemetryEvent(call, header.ID, event.data, c.metadata, event.epoch)
+	_ = c.state.QueueTelemetryEvent(call, event.id, event.data, event.epoch)
 }
 
 func (c *Collector) send() {
@@ -256,16 +297,12 @@ func (c *Collector) send() {
 	var selected, invalid []clientstate.TelemetryOutboxEvent
 	bytesUsed := 1024
 	for _, row := range rows {
-		var event api.Event
-		var metadata api.Client
-		if api.ValidateEvent(row.JSON) != nil || api.ValidateClient(row.ClientJSON) != nil || json.Unmarshal(row.JSON, &event) != nil || json.Unmarshal(row.ClientJSON, &metadata) != nil {
+		var event api.CollectedEvent
+		if api.ValidateCollectedEvent(row.JSON) != nil || json.Unmarshal(row.JSON, &event) != nil {
 			invalid = append(invalid, row)
 			continue
 		}
-		if len(selected) == 0 {
-			batch.Client = metadata
-		}
-		if metadata != batch.Client || bytesUsed+len(row.JSON) > api.MaximumBatchBytes {
+		if bytesUsed+len(row.JSON) > api.MaximumBatchBytes {
 			continue
 		}
 		selected = append(selected, row)

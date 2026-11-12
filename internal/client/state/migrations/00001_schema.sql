@@ -202,7 +202,6 @@ CREATE TABLE telemetry_outbox (
     event_id TEXT PRIMARY KEY CHECK (length(event_id) = 26 AND substr(event_id, 1, 4) = 'tev_'),
     created_at INTEGER NOT NULL,
     event_json TEXT NOT NULL CHECK (json_valid(event_json)),
-    client_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(client_json)),
     telemetry_epoch INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 CREATE INDEX telemetry_outbox_oldest_idx ON telemetry_outbox (created_at, event_id);

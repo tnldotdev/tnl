@@ -31,6 +31,7 @@ import (
 )
 
 type Options struct {
+	Telemetry         *clienttelemetry.Collector
 	Directory         string
 	StateDir          string
 	Snapshot          io.Reader
@@ -210,6 +211,7 @@ type appPreparation struct {
 }
 
 type appRuntime struct {
+	Telemetry      *clienttelemetry.Collector
 	manager        *publisherapp.Manager
 	workers        *publisherapp.Workers
 	capabilities   *publisherprotocol.Capabilities
@@ -293,7 +295,7 @@ func Serve(ctx context.Context, options Options) (result error) {
 		return err
 	}
 	defer state.Close()
-	a := &appRuntime{project: project, state: state, capabilities: capabilities, prepared: map[string]appPreparation{}, TargetResolver: options.TargetResolver, AttachPublication: options.AttachPublication}
+	a := &appRuntime{Telemetry: options.Telemetry, project: project, state: state, capabilities: capabilities, prepared: map[string]appPreparation{}, TargetResolver: options.TargetResolver, AttachPublication: options.AttachPublication}
 	a.workers = &publisherapp.Workers{Database: state, Configure: a.workerConfiguration, AutomaticReadiness: true}
 	a.manager, err = publisherapp.New(observability.Independent(ctx), project.Root, state, publisherapp.ConfiguredServices(project), a.workers.Run)
 	if err != nil {
@@ -463,15 +465,20 @@ func (a *appRuntime) workerConfiguration(ctx context.Context, service publishera
 	if !found {
 		return publisherapp.Configuration{}, publisherapp.ErrRegistrationStale
 	}
-	ctx = clienttelemetry.WithDisabled(ctx, preparation.telemetryDisabled)
-	defer func() { configuration.TelemetryDisabled = preparation.telemetryDisabled }()
+	operations := a.operations(preparation.project)
+	if !preparation.telemetryDisabled {
+		operations.Telemetry = a.Telemetry
+	}
 	if definition, configured := preparation.project.Config.Services[service.Name]; configured && !config.IsPublicService(definition) {
-		return a.operations(preparation.project).ServiceConfiguration(ctx, service)
+		return operations.ServiceConfiguration(ctx, service)
 	}
 	if preparation.configuration.Publisher.Control != nil {
+		if !preparation.telemetryDisabled {
+			preparation.configuration.Publisher.Telemetry = a.Telemetry
+		}
 		return preparation.configuration, nil
 	}
-	return a.operations(preparation.project).PublicConfiguration(ctx, service)
+	return operations.PublicConfiguration(ctx, service)
 }
 
 func (a *appRuntime) operations(project clientproject.Project) *invocation.ProjectRuntime {

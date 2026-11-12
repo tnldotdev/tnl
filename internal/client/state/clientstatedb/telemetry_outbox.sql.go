@@ -38,16 +38,15 @@ func (q *Queries) DeleteExpiredTelemetryEvents(ctx context.Context, before int64
 }
 
 const insertTelemetryEvent = `-- name: InsertTelemetryEvent :exec
-INSERT INTO telemetry_outbox (event_id, created_at, event_json, client_json, telemetry_epoch)
-SELECT ?1, ?2, ?3, ?4, ?5
-FROM installation_settings WHERE id = 1 AND telemetry_enabled = 1 AND telemetry_epoch = ?5
+INSERT INTO telemetry_outbox (event_id, created_at, event_json, telemetry_epoch)
+SELECT ?1, ?2, ?3, ?4
+FROM installation_settings WHERE id = 1 AND telemetry_enabled = 1 AND telemetry_epoch = ?4
 `
 
 type InsertTelemetryEventParams struct {
 	EventID        string
 	CreatedAt      int64
 	EventJson      string
-	ClientJson     string
 	TelemetryEpoch int64
 }
 
@@ -56,7 +55,6 @@ func (q *Queries) InsertTelemetryEvent(ctx context.Context, arg InsertTelemetryE
 		arg.EventID,
 		arg.CreatedAt,
 		arg.EventJson,
-		arg.ClientJson,
 		arg.TelemetryEpoch,
 	)
 	return err
@@ -73,7 +71,7 @@ func (q *Queries) PruneTelemetryEventsToLimit(ctx context.Context, maxEvents int
 }
 
 const selectPendingTelemetryEvents = `-- name: SelectPendingTelemetryEvents :many
-SELECT event_id, event_json, client_json, telemetry_epoch FROM telemetry_outbox
+SELECT event_id, event_json, telemetry_epoch FROM telemetry_outbox
 WHERE telemetry_epoch = (SELECT telemetry_epoch FROM installation_settings WHERE id = 1 AND telemetry_enabled = 1)
 ORDER BY created_at, event_id LIMIT ?1
 `
@@ -81,7 +79,6 @@ ORDER BY created_at, event_id LIMIT ?1
 type SelectPendingTelemetryEventsRow struct {
 	EventID        string
 	EventJson      string
-	ClientJson     string
 	TelemetryEpoch int64
 }
 
@@ -94,12 +91,7 @@ func (q *Queries) SelectPendingTelemetryEvents(ctx context.Context, maxEvents in
 	var items []SelectPendingTelemetryEventsRow
 	for rows.Next() {
 		var i SelectPendingTelemetryEventsRow
-		if err := rows.Scan(
-			&i.EventID,
-			&i.EventJson,
-			&i.ClientJson,
-			&i.TelemetryEpoch,
-		); err != nil {
+		if err := rows.Scan(&i.EventID, &i.EventJson, &i.TelemetryEpoch); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

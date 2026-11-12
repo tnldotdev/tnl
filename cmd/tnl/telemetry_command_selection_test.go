@@ -13,11 +13,13 @@ import (
 func TestTelemetryCommandsUseOnlyParsedCommandNodes(t *testing.T) {
 	for _, test := range []struct {
 		args    []string
-		command telemetryTrackedCommand
-		action  telemetryCommandAction
+		command api.CommandOutcomeCommand
+		action  api.CommandOutcomeAction
 		tracked bool
 	}{
-		{[]string{"publish"}, telemetryPublish, "", true},
+		{[]string{"publish"}, "publish", "", true},
+		{[]string{"auth", "login"}, "login", "", true},
+		{[]string{"auth", "logout"}, "logout", "", true},
 		{[]string{"team", "invite", "revoke", "ivt_secret"}, "team", "revoke", true},
 		{[]string{"feedback", "inspect", "fb_secret"}, "feedback", "inspect", true},
 		{[]string{"version"}, "", "", false},

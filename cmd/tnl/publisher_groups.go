@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/tnldotdev/tnl/internal/client/supervisor"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 )
@@ -122,16 +123,19 @@ func runFixedPublisherGroups(ctx context.Context, flags publisherServeCommand, d
 			return err
 		}
 		input.job.IdentityDir = profile.IdentityDirectory()
+		input.job.TelemetryDisabled = flags.telemetryDisabled
 		jobs = append(jobs, supervisor.GroupInstall{Job: input.job, Private: private})
 		runners[input.job.ID] = input.runner
 	}
 	var outputMu sync.Mutex
-	engine := supervisor.Engine{Registry: registry, Initialize: func(ctx context.Context) error { return registry.ReplaceGroups(ctx, jobs) }, Group: func(ctx context.Context, job supervisor.Job, observe func(int64, bool) error) error {
+	engine := supervisor.Engine{Telemetry: flags.telemetry, Registry: registry, Initialize: func(ctx context.Context) error { return registry.ReplaceGroups(ctx, jobs) }, Group: func(ctx context.Context, job supervisor.Job, telemetry *clienttelemetry.Collector, observe func(int64, bool) error) error {
 		_, private, profile, err := registry.GroupIdentity(ctx, job)
 		if err != nil {
 			return err
 		}
-		return runners[job.ID].Serve(ctx, job, profile, private, observe)
+		runner := runners[job.ID]
+		runner.Telemetry = telemetry
+		return runner.Serve(ctx, job, profile, private, observe)
 	}, Observe: func(job supervisor.Job, status supervisor.Status) error {
 		outputMu.Lock()
 		defer outputMu.Unlock()

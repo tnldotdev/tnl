@@ -102,7 +102,7 @@ func connectorTemporary(err error) bool {
 }
 
 func prepareConnectorConnection(ctx, setup context.Context, config Config, signer Signer) (_ *connectorConnection, result error) {
-	config.telemetry = clienttelemetry.BeginScope(ctx, "connector", false)
+	config.telemetry = config.Telemetry.BeginScope("connector")
 	config.Connectivity = config.telemetry.Connectivity(config.Connectivity)
 	life, cancel := context.WithCancelCause(ctx)
 	p := &connectorConnection{ctx: life, cancel: cancel, config: config, signer: signer, changed: make(chan struct{}), refill: make(chan struct{}, 1), recover: make(chan struct{}, 1), active: make(map[*connectorUse]struct{})}

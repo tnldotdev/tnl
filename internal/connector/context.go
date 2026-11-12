@@ -32,6 +32,7 @@ type ContextOptions struct {
 }
 
 type OwnerStartOptions struct {
+	TelemetryDisabled bool
 	ContextOptions
 	RunnerTemp                                         string
 	ParentPID                                          int
@@ -225,6 +226,7 @@ func (o Operations) ServeOwner(ctx context.Context, options OwnerServeOptions, i
 		return err
 	}
 	backend := &connectorConnectionBackend{openSession: o.OpenSession, project: project, scope: scope, stateDir: options.StateDir, assertion: request.Assertion, directory: options.OwnerDirectory, runnerTemp: options.RunnerTemp, parentPID: options.ParentPID}
+	backend.telemetry = o.Telemetry
 	if request.Refresh != nil {
 		if scope.Workload == "" || workload.ValidateRefreshSource(*request.Refresh) != nil {
 			return connectorruntime.ErrInvalid

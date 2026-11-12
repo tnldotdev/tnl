@@ -8,8 +8,6 @@ import (
 	"slices"
 	"time"
 
-	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
-
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
@@ -49,7 +47,6 @@ var _ publisher.PublicURLControlClient = (*publisheridentity.Native)(nil)
 
 // runEnrolledPublish uses only its scoped identity for URL and run operations.
 func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection EnrolledSelection, output *Presentation, input io.Reader) (result error) {
-	ctx = clienttelemetry.WithDisabled(ctx, flags.TelemetryDisabled)
 	project := projectConfiguration{Project: flags.Project, targetResolver: flags.Resolver}
 	selected := 0
 	for _, value := range []string{selection.EnrollmentKey, selection.PublisherIdentityID, selection.PublisherCredentialFile} {
@@ -264,7 +261,7 @@ func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection Enrol
 	if err != nil {
 		return err
 	}
-	cfg := publisher.Config{Control: native, ControlURL: server, State: profile, TeamID: publicURL.TeamId, DomainID: publicURL.DomainId, MembershipID: membership, PolicyRevision: uint64(publicURL.PolicyRevision), PublicURLScope: publicURL.PublicUrlScope, Purpose: publicURL.Purpose, Hostname: publicURL.CanonicalHostname, Target: target, AllowedIPPrefixes: prefixes, ServiceProtocol: publicURL.ServiceProtocol, TargetTLSName: flags.TargetTLSName, TargetOptions: options, PreserveSavedPublicURLTarget: publicURL.Target == "", Limits: flags.Limits, InspectionMode: inspection.Mode(flags.InspectionMode), TransportTLS: transportTLS}
+	cfg := publisher.Config{Telemetry: flags.Telemetry, Control: native, ControlURL: server, State: profile, TeamID: publicURL.TeamId, DomainID: publicURL.DomainId, MembershipID: membership, PolicyRevision: uint64(publicURL.PolicyRevision), PublicURLScope: publicURL.PublicUrlScope, Purpose: publicURL.Purpose, Hostname: publicURL.CanonicalHostname, Target: target, AllowedIPPrefixes: prefixes, ServiceProtocol: publicURL.ServiceProtocol, TargetTLSName: flags.TargetTLSName, TargetOptions: options, PreserveSavedPublicURLTarget: publicURL.Target == "", Limits: flags.Limits, InspectionMode: inspection.Mode(flags.InspectionMode), TransportTLS: transportTLS}
 	if flags.Enrolled {
 		discovery, err := control.Discovery(ctx)
 		if err != nil {

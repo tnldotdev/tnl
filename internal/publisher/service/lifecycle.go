@@ -44,6 +44,7 @@ type RunControl interface {
 type SlotSession = tunnel.SlotSession
 
 type RunConfig struct {
+	Telemetry         *clienttelemetry.Collector
 	Control           RunControl
 	State             *clientstate.Store
 	Access            func(context.Context) (string, error)
@@ -82,7 +83,7 @@ func (RunConfig) GoString() string { return "private publisher configuration" }
 // Publish keeps the managed certificate lifecycle, two independently claimed
 // relay slots and current control heartbeat together. live bytes are never replayed.
 func Publish(ctx context.Context, config RunConfig) (result error) {
-	telemetry := clienttelemetry.BeginScope(ctx, "publisher", false)
+	telemetry := config.Telemetry.BeginScope("publisher")
 	defer telemetry.Close()
 	if config.Control == nil || config.Access == nil || !config.Metadata.Protocol.Valid() || config.Identity.ServiceId == nil ||
 		config.Identity.Kind != authorityv1.Service || *config.Identity.ServiceId != config.ServiceID {

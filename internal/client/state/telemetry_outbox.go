@@ -16,14 +16,13 @@ const telemetryOutboxMax = 1000
 const telemetryOutboxLifetime = 7 * 24 * time.Hour
 
 type TelemetryOutboxEvent struct {
-	ID         string
-	JSON       json.RawMessage
-	ClientJSON json.RawMessage
-	Epoch      int64
+	ID    string
+	JSON  json.RawMessage
+	Epoch int64
 }
 
-func (d *Database) QueueTelemetryEvent(ctx context.Context, id string, event, client json.RawMessage, epoch int64) error {
-	if !opaqueid.Valid(id, opaqueid.TelemetryEventPrefix) || !json.Valid(event) || len(event) > 16<<10 || !json.Valid(client) || len(client) > 512 || epoch < 0 {
+func (d *Database) QueueTelemetryEvent(ctx context.Context, id string, event json.RawMessage, epoch int64) error {
+	if !opaqueid.Valid(id, opaqueid.TelemetryEventPrefix) || !json.Valid(event) || len(event) > 16<<10 || epoch < 0 {
 		return errors.New("clientstate: invalid telemetry event")
 	}
 	tx, err := d.db.BeginTx(ctx, nil)
@@ -33,7 +32,7 @@ func (d *Database) QueueTelemetryEvent(ctx context.Context, id string, event, cl
 	defer tx.Rollback()
 	if err := clientstatedb.New(tx).InsertTelemetryEvent(ctx, clientstatedb.InsertTelemetryEventParams{
 		EventID: id, CreatedAt: d.now().UTC().UnixNano(), EventJson: string(event),
-		ClientJson: string(client), TelemetryEpoch: epoch,
+		TelemetryEpoch: epoch,
 	}); err != nil {
 		return fmt.Errorf("clientstate: queue telemetry: %w", err)
 	}
@@ -73,7 +72,7 @@ func (d *Database) PendingTelemetryEvents(ctx context.Context, limit int) ([]Tel
 	}
 	result := make([]TelemetryOutboxEvent, 0, limit)
 	for _, row := range rows {
-		result = append(result, TelemetryOutboxEvent{ID: row.EventID, JSON: json.RawMessage(row.EventJson), ClientJSON: json.RawMessage(row.ClientJson), Epoch: row.TelemetryEpoch})
+		result = append(result, TelemetryOutboxEvent{ID: row.EventID, JSON: json.RawMessage(row.EventJson), Epoch: row.TelemetryEpoch})
 	}
 	return result, nil
 }

@@ -14,7 +14,7 @@ import (
 
 func TestTelemetryTransportAdaptersKeepBoundedFactsAndExistingObservers(t *testing.T) {
 	c := collectorForTest(t, Config{})
-	s := c.BeginScope("connector", false)
+	s := c.BeginScope("connector")
 	defer s.Close()
 	attempts, fallbacks := 0, 0
 	options := s.Connectivity(peer.ConnectivityOptions{ObserveAttempt: func(peer.ConnectivityAttempt) { attempts++ }, ObserveFallback: func() { fallbacks++ }})
@@ -32,9 +32,9 @@ func TestTelemetryTransportAdaptersKeepBoundedFactsAndExistingObservers(t *testi
 	if err != nil || len(rows) != 1 || attempts != 2 || fallbacks != 1 {
 		t.Fatalf("rows=%d attempts=%d fallbacks=%d err=%v", len(rows), attempts, fallbacks, err)
 	}
-	var event api.Event
+	var event api.CollectedEvent
 	_ = json.Unmarshal(rows[0].JSON, &event)
-	report, _ := event.AsTransportEvent()
+	report, _ := event.Event.AsTransportEvent()
 	if len(report.Payload.Measurements) != 6 {
 		t.Fatalf("measurements=%+v", report.Payload.Measurements)
 	}
@@ -43,7 +43,7 @@ func TestTelemetryTransportAdaptersKeepBoundedFactsAndExistingObservers(t *testi
 			t.Fatal("invented a fallback duration")
 		}
 	}
-	if api.ValidateEvent(rows[0].JSON) != nil {
+	if api.ValidateCollectedEvent(rows[0].JSON) != nil {
 		t.Fatalf("invalid report: %s", rows[0].JSON)
 	}
 }

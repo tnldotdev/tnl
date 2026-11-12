@@ -4,38 +4,11 @@
 package telemetry
 
 import (
-	"context"
-
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	api "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 )
 
-type Reporter interface {
-	Report(api.Event)
-	Flush()
-	BeginScope(api.TransportReportRole, bool) *Scope
-}
-
-type reporterKey struct{}
-type disabledKey struct{}
-
-func WithDisabled(ctx context.Context, disabled bool) context.Context {
-	return context.WithValue(ctx, disabledKey{}, disabled || Disabled(ctx))
-}
-
-func Disabled(ctx context.Context) bool { value, _ := ctx.Value(disabledKey{}).(bool); return value }
-
-func WithReporter(ctx context.Context, reporter Reporter) context.Context {
-	return context.WithValue(ctx, reporterKey{}, reporter)
-}
-
-func BeginScope(ctx context.Context, role api.TransportReportRole, disabled bool) *Scope {
-	r, _ := ctx.Value(reporterKey{}).(Reporter)
-	if r == nil || disabled || Disabled(ctx) {
-		return nil
-	}
-	return r.BeginScope(role, disabled)
-}
+func eventID() string { id, _ := opaqueid.New(opaqueid.TelemetryEventPrefix); return id }
 
 // event constructors use generated payloads directly. validation remains at the
 // queue and receiver boundaries, rather than maintaining another payload model.

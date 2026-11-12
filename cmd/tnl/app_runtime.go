@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/publisher/app"
 	"github.com/tnldotdev/tnl/internal/publisher/local"
 )
@@ -18,6 +19,7 @@ type runtimeCommand struct {
 }
 
 type runtimeOptions struct {
+	telemetry     *clienttelemetry.Collector
 	Directory     string `name:"directory" required:"" type:"path"`
 	StateDir      string `name:"state-dir" env:"TNL_STATE_DIR" type:"path"`
 	SnapshotStdin bool   `name:"snapshot-stdin" hidden:""`
@@ -30,7 +32,7 @@ type runtimeEndpointOptions struct {
 }
 
 func (o runtimeOptions) settings() local.Options {
-	settings := local.Options{Directory: o.Directory, StateDir: o.StateDir}
+	settings := local.Options{Telemetry: o.telemetry, Directory: o.Directory, StateDir: o.StateDir}
 	if o.SnapshotStdin {
 		settings.Snapshot = os.Stdin
 	}

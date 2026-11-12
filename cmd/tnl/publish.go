@@ -5,14 +5,13 @@ import (
 	"errors"
 	"io"
 	"os"
-	"sync"
 
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	"github.com/tnldotdev/tnl/internal/publisher/demo"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -40,12 +39,13 @@ type publishCommand struct {
 	demoNameFromCLI   bool
 	Service           string `kong:"-"`
 	TelemetryDisabled bool   `kong:"-"`
+	telemetry         *clienttelemetry.Collector
 	project           projectConfiguration
 	service           bool
 	namedOverrides    bool
 }
 
-func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Writer, telemetry telemetryReporter) (result error) {
+func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Writer) (result error) {
 	if flags.Enrolled {
 		var err error
 		flags, err = retainedPublishFlags(ctx, flags)
@@ -106,7 +106,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	output.detachedCtx = ctx
 	defer func() { result = output.finish(ctx, result) }()
 	if credentialOwned {
-		return runEnrolledPublish(ctx, flags, selection, output, telemetry, os.Stdin)
+		return runEnrolledPublish(ctx, flags, selection, output, os.Stdin)
 	}
 	protocol, err := publishProtocol(flags.Protocol)
 	if err != nil {
@@ -139,12 +139,12 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	}
 	options := publicOptions(flags)
 	options.Authenticate = publisherAuthentication(stderr)
-	presentation := publicationPresentation(ctx, flags, output, telemetry)
+	presentation := publicationPresentation(ctx, flags, output)
 	return invocation.PublishHTTP(ctx, options, presentation)
 }
 
 func publicOptions(flags publishCommand) invocation.PublicOptions {
-	return invocation.PublicOptions{TelemetryDisabled: flags.TelemetryDisabled, RequirePostQuantum: flags.RequirePostQuantum, Target: flags.Target, TargetCAFile: flags.TargetCAFile, TargetTLSName: flags.TargetTLSName, ProjectRoot: flags.projectRoot, Project: flags.project.Project, Service: flags.Service, StateDir: flags.StateDir, ServerURL: flags.ServerURL, AccessToken: flags.AccessToken, PublicURL: flags.PublicURL, Name: flags.Name, Domain: flags.Domain, Team: flags.Team, SelectedTeam: flags.selectedTeam, Ephemeral: flags.Ephemeral, Demo: flags.Demo, Anonymous: flags.Anonymous, IP: flags.IP, Access: flags.access, Limits: flags.limits(), InspectionMode: flags.InspectionMode, Inspection: flags.inspection, Resolver: runtimeTargetResolver}
+	return invocation.PublicOptions{Telemetry: flags.telemetry, TelemetryDisabled: flags.TelemetryDisabled, RequirePostQuantum: flags.RequirePostQuantum, Target: flags.Target, TargetCAFile: flags.TargetCAFile, TargetTLSName: flags.TargetTLSName, ProjectRoot: flags.projectRoot, Project: flags.project.Project, Service: flags.Service, StateDir: flags.StateDir, ServerURL: flags.ServerURL, AccessToken: flags.AccessToken, PublicURL: flags.PublicURL, Name: flags.Name, Domain: flags.Domain, Team: flags.Team, SelectedTeam: flags.selectedTeam, Ephemeral: flags.Ephemeral, Demo: flags.Demo, Anonymous: flags.Anonymous, IP: flags.IP, Access: flags.access, Limits: flags.limits(), InspectionMode: flags.InspectionMode, Inspection: flags.inspection, Resolver: runtimeTargetResolver}
 }
 
 func publisherAuthentication(stderr io.Writer) func(context.Context, *clientstate.Database, string, string) (*auth.Client, error) {
@@ -153,10 +153,8 @@ func publisherAuthentication(stderr io.Writer) func(context.Context, *clientstat
 	}
 }
 
-func publicationPresentation(ctx context.Context, flags publishCommand, output *publishOutput, telemetry telemetryReporter) *invocation.Presentation {
-	var observe func(publisher.Event) error
-	var observing sync.Once
-	presentation := &invocation.Presentation{
+func publicationPresentation(ctx context.Context, flags publishCommand, output *publishOutput) *invocation.Presentation {
+	return &invocation.Presentation{
 		Starting: output.starting, Provisioning: output.provisioning, Ready: output.ready, Stopped: output.stopped,
 		Progress: func(p invocation.Progress) error { return output.integrationURLMessage(p.State, p.Hint, p.Details...) },
 		Warning: func(message string) error {
@@ -168,31 +166,9 @@ func publicationPresentation(ctx context.Context, flags publishCommand, output *
 			return writeHumanFrame(output.stderr, output.command, "warning", "", clioutput.Text(message))
 		},
 		ConfigureBrowser: func(automated bool) { output.openURL = browserOpener(ctx, flags.Open, automated) },
-		Demo:             output.setDemo, GuestDemo: output.setGuestDemo, GuestShare: output.setGuestShare, DemoPing: demoPingHandler(output, telemetry), Logf: output.logf,
+		Demo:             output.setDemo, GuestDemo: output.setGuestDemo, GuestShare: output.setGuestShare, DemoPing: output.demoPing, Logf: output.logf,
 		PublisherEvent: func(ctx context.Context, tunnel *clientstate.Tunnel, server string, event publisher.Event) error {
-			observing.Do(func() {
-				observe = withTelemetryObserver(telemetry, telemetryPublish, server, nil, func(event publisher.Event) error { return handlePublisherEvent(ctx, tunnel, output, event) })
-			})
-			return observe(event)
+			return handlePublisherEvent(ctx, tunnel, output, event)
 		},
-	}
-	if telemetry != nil {
-		presentation.Observe = func(event invocation.IntegrationObservation) {
-			telemetry.Report(newIntegrationTelemetry(telemetryEventName(event.Event), telemetryWebhookDelivery(event.Delivery)))
-		}
-	}
-	return presentation
-}
-
-func demoPingHandler(output *publishOutput, telemetry telemetryReporter) func(demo.State) error {
-	var reportedPing sync.Once
-	return func(state demo.State) error {
-		if err := output.demoPing(state); err != nil {
-			return err
-		}
-		if telemetry != nil {
-			reportedPing.Do(func() { telemetry.Report(newTelemetryDemoPing()) })
-		}
-		return nil
 	}
 }

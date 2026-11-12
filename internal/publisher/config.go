@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	telemetryv1 "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 )
 
 const defaultProvisioningStalledDelay = 2 * time.Minute
@@ -59,6 +60,8 @@ type VisitorAccessManagementClient interface {
 }
 
 type Config struct {
+	Telemetry                    *clienttelemetry.Collector
+	TelemetryFramework           telemetryv1.PublicationReadyFramework
 	telemetry                    *clienttelemetry.Scope
 	RequirePostQuantum           *bool
 	PublisherIdentityID          string

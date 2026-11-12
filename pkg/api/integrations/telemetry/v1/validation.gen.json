@@ -37,7 +37,7 @@
       "Batch": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["schema_version", "installation_id", "client", "events"],
+        "required": ["schema_version", "installation_id", "events"],
         "properties": {
           "schema_version": {
             "type": "integer",
@@ -47,15 +47,12 @@
             "type": "string",
             "pattern": "^inst_[A-Za-z0-9]{22}$"
           },
-          "client": {
-            "$ref": "#/components/schemas/Client"
-          },
           "events": {
             "type": "array",
             "minItems": 1,
             "maxItems": 25,
             "items": {
-              "$ref": "#/components/schemas/Event"
+              "$ref": "#/components/schemas/CollectedEvent"
             }
           }
         }
@@ -80,6 +77,19 @@
           },
           "ci": {
             "type": "boolean"
+          }
+        }
+      },
+      "CollectedEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["client", "event"],
+        "properties": {
+          "client": {
+            "$ref": "#/components/schemas/Client"
+          },
+          "event": {
+            "$ref": "#/components/schemas/Event"
           }
         }
       },

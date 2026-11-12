@@ -4,45 +4,40 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	api "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 )
 
-// each publication owns its scope and joins it after its transport workers.
+// each publication owns its scope and closes it after its transport workers.
 // only fixed-size counters are touched by transport and recovery callbacks.
 type Scope struct {
-	collector *Collector
-	role      api.TransportReportRole
-	mu        sync.Mutex
-	epoch     int64
-	counts    [4][3][3][4]int64
-	stop      chan struct{}
-	done      chan struct{}
-	once      sync.Once
-	closed    bool
+	collector    *Collector
+	role         api.TransportReportRole
+	mu           sync.Mutex
+	epoch        int64
+	counts       [4][3][3][4]int64
+	closed       bool
+	once         sync.Once
+	ready        *api.PublicationReady
+	demo         bool
+	seenReady    bool
+	seenDemo     bool
+	integrations [4]struct {
+		seen, pending bool
+		payload       api.IntegrationOutcome
+	}
 }
 
-func (c *Collector) BeginScope(role api.TransportReportRole, disabled bool) *Scope {
-	if c == nil || c.closed.Load() || disabled || !role.Valid() {
+func (c *Collector) BeginScope(role api.TransportReportRole) *Scope {
+	if c == nil || !role.Valid() {
 		return nil
 	}
-	s := &Scope{collector: c, role: role, epoch: c.preference.Load().Epoch, stop: make(chan struct{}), done: make(chan struct{})}
-	go func() {
-		defer close(s.done)
-		ticker := time.NewTicker(time.Minute)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-c.ctx.Done():
-				return
-			case <-s.stop:
-				s.flush()
-				return
-			case <-ticker.C:
-				s.flush()
-			}
-		}
-	}()
+	c.scopesMu.Lock()
+	defer c.scopesMu.Unlock()
+	if c.closed.Load() {
+		return nil
+	}
+	s := &Scope{collector: c, role: role, epoch: c.preference.Load().Epoch}
+	c.scopes[s] = struct{}{}
 	return s
 }
 
@@ -79,12 +74,7 @@ func (s *Scope) Record(operation api.Operation, path api.Path, outcome api.Outco
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	p := s.collector.preference.Load()
-	if p.Epoch != s.epoch {
-		s.counts = [4][3][3][4]int64{}
-		s.epoch = p.Epoch
-	}
-	if s.closed || !p.Enabled || s.collector.closed.Load() {
+	if !s.enabled() {
 		return
 	}
 	count := &s.counts[i][j][k][bucket]
@@ -93,8 +83,80 @@ func (s *Scope) Record(operation api.Operation, path api.Path, outcome api.Outco
 	}
 }
 
-func (s *Scope) flush() {
+// enabled is called with mu held; an epoch change drops every pending fact.
+func (s *Scope) enabled() bool {
+	p := s.collector.preference.Load()
+	if p.Epoch != s.epoch {
+		s.counts = [4][3][3][4]int64{}
+		s.ready, s.demo, s.seenReady, s.seenDemo = nil, false, false, false
+		clear(s.integrations[:])
+		s.epoch = p.Epoch
+	}
+	return !s.closed && p.Enabled && !s.collector.closed.Load()
+}
+
+func (s *Scope) Ready(payload api.PublicationReady) {
+	if s == nil {
+		return
+	}
+	if payload.Framework != nil {
+		framework := *payload.Framework
+		payload.Framework = &framework
+	}
 	s.mu.Lock()
+	if s.enabled() && !s.seenReady {
+		s.ready, s.seenReady = &payload, true
+	}
+	s.mu.Unlock()
+	s.collector.Flush()
+}
+
+// request callbacks only retain bounded facts; the collector encodes them.
+func (s *Scope) Demo() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.enabled() && !s.seenDemo {
+		s.demo, s.seenDemo = true, true
+	}
+}
+
+func (s *Scope) Integration(payload api.IntegrationOutcome) {
+	if s == nil {
+		return
+	}
+	index := 0
+	switch {
+	case payload.Kind == "oauth" && payload.Outcome == api.Ready:
+	case payload.Kind == "oauth" && payload.Outcome == api.Redirected:
+		index = 1
+	case payload.Kind == "webhook" && payload.Outcome == api.Ready:
+		index = 2
+	case payload.Kind == "webhook" && payload.Outcome == api.ReachedReceiver:
+		index = 3
+	default:
+		return
+	}
+	if payload.Delivery != nil {
+		delivery := *payload.Delivery
+		payload.Delivery = &delivery
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.enabled() && !s.integrations[index].seen {
+		s.integrations[index].seen, s.integrations[index].pending, s.integrations[index].payload = true, true, payload
+	}
+}
+
+func (s *Scope) flush() {
+	s.flushTo(s.collector.enqueue)
+}
+
+func (s *Scope) flushTo(emit func(api.Event, int64)) {
+	s.mu.Lock()
+	var events []api.Event
 	p := s.collector.preference.Load()
 	report := api.TransportReport{Role: s.role}
 	if p.Enabled && p.Epoch == s.epoch {
@@ -115,28 +177,48 @@ func (s *Scope) flush() {
 		}
 	}
 	s.counts = [4][3][3][4]int64{}
-	epoch := s.epoch
-	s.mu.Unlock()
-	if len(report.Measurements) == 0 {
-		return
-	}
-	id, _ := opaqueid.New(opaqueid.TelemetryEventPrefix)
-	var event api.Event
-	_ = event.FromTransportEvent(api.TransportEvent{EventId: id, EventVersion: 1, Name: "transport.report", Payload: report})
-	// retain the measurement epoch; Report would capture a potentially newer one.
-	data, err := event.MarshalJSON()
-	if err == nil {
-		select {
-		case s.collector.queue <- queuedEvent{data, epoch}:
-		default:
+	if p.Enabled && p.Epoch == s.epoch {
+		if s.ready != nil {
+			events = append(events, Ready(*s.ready))
+		}
+		if s.demo {
+			events = append(events, Demo())
+		}
+		for _, observation := range s.integrations {
+			if observation.pending {
+				events = append(events, Integration(observation.payload))
+			}
+		}
+		if len(report.Measurements) != 0 {
+			var event api.Event
+			id := eventID()
+			_ = event.FromTransportEvent(api.TransportEvent{EventId: id, EventVersion: 1, Name: "transport.report", Payload: report})
+			events = append(events, event)
 		}
 	}
-	s.collector.Flush()
+	s.ready, s.demo = nil, false
+	for i := range s.integrations {
+		s.integrations[i].pending = false
+	}
+	epoch := s.epoch
+	s.mu.Unlock()
+	for _, event := range events {
+		emit(event, epoch)
+	}
 }
 
 func (s *Scope) Close() {
 	if s == nil {
 		return
 	}
-	s.once.Do(func() { s.mu.Lock(); s.closed = true; s.mu.Unlock(); close(s.stop); <-s.done })
+	s.once.Do(func() {
+		s.mu.Lock()
+		s.closed = true
+		s.mu.Unlock()
+		s.collector.scopesMu.Lock()
+		delete(s.collector.scopes, s)
+		s.collector.scopesMu.Unlock()
+		s.flush()
+		s.collector.Flush()
+	})
 }

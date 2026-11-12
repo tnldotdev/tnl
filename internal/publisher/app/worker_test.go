@@ -28,7 +28,9 @@ func TestPublicationTelemetryOptOutDoesNotDisableSiblingWorker(t *testing.T) {
 	configure := w.Configure
 	w.Configure = func(ctx context.Context, service Service) (Configuration, error) {
 		configuration, err := configure(ctx, service)
-		configuration.TelemetryDisabled = service.Name == "web"
+		if service.Name != "web" {
+			configuration.Publisher.Telemetry = &clienttelemetry.Collector{}
+		}
 		return configuration, err
 	}
 	type observation struct {
@@ -37,7 +39,7 @@ func TestPublicationTelemetryOptOutDoesNotDisableSiblingWorker(t *testing.T) {
 	}
 	observed := make(chan observation, 2)
 	w.RunPublisher = func(ctx context.Context, cfg publisher.Config) error {
-		observed <- observation{cfg.Service, clienttelemetry.Disabled(ctx)}
+		observed <- observation{cfg.Service, cfg.Telemetry == nil}
 		<-ctx.Done()
 		return nil
 	}

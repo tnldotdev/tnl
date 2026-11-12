@@ -9,23 +9,22 @@ import (
 	"time"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
+	telemetryv1 "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 )
 
 type Configuration struct {
-	TelemetryDisabled bool
-	RunPrivate        func(context.Context, func(uint64, bool) error) error
-	CheckPrivate      func(context.Context, Service) Observation
-	Publisher         publisher.Config
-	Inspection        inspection.Policy
-	PrimaryRoot       string
-	SharedRoot        string
-	IntegrationScope  clientstate.IntegrationScope
-	TargetBinding     *target.TargetBinding
+	RunPrivate       func(context.Context, func(uint64, bool) error) error
+	CheckPrivate     func(context.Context, Service) Observation
+	Publisher        publisher.Config
+	Inspection       inspection.Policy
+	PrimaryRoot      string
+	SharedRoot       string
+	IntegrationScope clientstate.IntegrationScope
+	TargetBinding    *target.TargetBinding
 	// cleanup owns resources allocated before the worker starts, including when
 	// target capture or local tunnel creation fails. it runs after drain/join.
 	Cleanup func() error
@@ -64,11 +63,16 @@ func (w *Workers) Run(ctx context.Context, service Service, observe func(uint64,
 	if configuration.Cleanup != nil {
 		defer func() { result = errors.Join(result, configuration.Cleanup()) }()
 	}
-	ctx = clienttelemetry.WithDisabled(ctx, configuration.TelemetryDisabled)
 	if configuration.RunPrivate != nil {
 		return w.runPrivate(ctx, service, configuration, observe)
 	}
 	cfg := configuration.Publisher
+	if service.Framework != "" {
+		cfg.TelemetryFramework = telemetryv1.PublicationReadyFramework(service.Framework)
+		if !cfg.TelemetryFramework.Valid() {
+			cfg.TelemetryFramework = telemetryv1.PublicationReadyFrameworkOther
+		}
+	}
 	var captured target.TargetSnapshot
 	if configuration.TargetBinding != nil {
 		previous := configuration.TargetBinding.Changed

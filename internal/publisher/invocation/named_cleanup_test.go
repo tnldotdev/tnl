@@ -53,7 +53,7 @@ func TestNamedPublicationRetainsLeaseCleanupFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	outputFailure := errors.New("output failed")
-	err = PublishNamed(t.Context(), project, "web", filepath.Join(t.TempDir(), "state"), func(context.Context, clientproject.Project, string) (publisherprotocol.Endpoint, error) {
+	err = PublishNamed(t.Context(), project, "web", filepath.Join(t.TempDir(), "state"), false, func(context.Context, clientproject.Project, string) (publisherprotocol.Endpoint, error) {
 		return capabilities.Owner(), nil
 	}, &Presentation{Starting: func(string, string) error { return outputFailure }})
 	var cleanup *publisherprotocol.ResponseError

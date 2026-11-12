@@ -9,6 +9,7 @@ components:
   schemas:
     Batch: { $ref: schemas/events.yaml#/schemas/Batch }
     Client: { $ref: schemas/events.yaml#/schemas/Client }
+    CollectedEvent: { $ref: schemas/events.yaml#/schemas/CollectedEvent }
     Event: { $ref: schemas/events.yaml#/schemas/Event }
     CommandEvent: { $ref: schemas/events.yaml#/schemas/CommandEvent }
     ReadyEvent: { $ref: schemas/events.yaml#/schemas/ReadyEvent }

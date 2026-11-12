@@ -175,12 +175,14 @@ export const Event = z.discriminatedUnion("name", [
   TransportEvent.extend({ name: z.literal("transport.report") }),
 ]);
 
+export type CollectedEvent = z.infer<typeof CollectedEvent>;
+export const CollectedEvent = z.strictObject({ client: Client, event: Event });
+
 export type Batch = z.infer<typeof Batch>;
 export const Batch = z.strictObject({
   schema_version: z.literal(1),
   installation_id: z.string().regex(new RegExp("^inst_[A-Za-z0-9]{22}$")),
-  client: Client,
-  events: z.array(Event).min(1).max(25),
+  events: z.array(CollectedEvent).min(1).max(25),
 });
 
 // </Schemas>

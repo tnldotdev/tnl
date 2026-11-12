@@ -7,6 +7,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/project/meta"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
@@ -21,6 +22,7 @@ type projectConfiguration struct {
 // ProjectRuntime composes publication operations with an app registration owner.
 // it never starts a process or serves the private native API.
 type ProjectRuntime struct {
+	Telemetry         *clienttelemetry.Collector
 	project           projectConfiguration
 	state             *clientstate.Database
 	manager           *publisherapp.Manager

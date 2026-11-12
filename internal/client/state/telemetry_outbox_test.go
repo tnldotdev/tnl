@@ -16,7 +16,7 @@ func TestTelemetryOutboxSurvivesOpenAndOptOutClears(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := "tev_0123456789abcdefghijkl"
-	if err := state.QueueTelemetryEvent(context.Background(), id, json.RawMessage(`{"event_id":"tev_0123456789abcdefghijkl"}`), json.RawMessage(`{}`), 0); err != nil {
+	if err := state.QueueTelemetryEvent(context.Background(), id, json.RawMessage(`{"event_id":"tev_0123456789abcdefghijkl"}`), 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := state.Close(); err != nil {
@@ -58,7 +58,7 @@ func TestTelemetryNoWaitDoesNotHoldShutdownBehindWriter(t *testing.T) {
 	}
 	defer tx.Rollback()
 	started := time.Now()
-	if err := optional.QueueTelemetryEvent(t.Context(), "tev_0123456789abcdefghijkl", json.RawMessage(`{}`), json.RawMessage(`{}`), 0); err == nil {
+	if err := optional.QueueTelemetryEvent(t.Context(), "tev_0123456789abcdefghijkl", json.RawMessage(`{}`), 0); err == nil {
 		t.Fatal("optional write bypassed active writer")
 	}
 	if time.Since(started) > time.Second {
@@ -78,7 +78,7 @@ func TestTelemetryOutboxRejectsStaleCollectionEpoch(t *testing.T) {
 	if err := database.SetTelemetryEnabled(t.Context(), true); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.QueueTelemetryEvent(t.Context(), "tev_0123456789abcdefghijkl", json.RawMessage(`{}`), json.RawMessage(`{}`), 0); err != nil {
+	if err := database.QueueTelemetryEvent(t.Context(), "tev_0123456789abcdefghijkl", json.RawMessage(`{}`), 0); err != nil {
 		t.Fatal(err)
 	}
 	var count int
@@ -133,7 +133,7 @@ func TestTelemetryOutboxDeletesAcknowledgedEventsTogether(t *testing.T) {
 	defer state.Close()
 	ids := []string{"tev_0123456789abcdefghijkl", "tev_abcdefghijklmnopqrstuv", "tev_ABCDEFGHIJKLMNOPQRSTUV"}
 	for _, id := range ids {
-		if err := state.QueueTelemetryEvent(ctx, id, json.RawMessage(`{"name":"command.outcome"}`), json.RawMessage(`{}`), 0); err != nil {
+		if err := state.QueueTelemetryEvent(ctx, id, json.RawMessage(`{"name":"command.outcome"}`), 0); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -162,7 +162,7 @@ func TestTelemetryQueueRollsBackWhenPruningFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := "tev_0123456789abcdefghijkl"
-	if err := state.QueueTelemetryEvent(ctx, id, json.RawMessage(`{"name":"command.outcome"}`), json.RawMessage(`{}`), 0); err == nil {
+	if err := state.QueueTelemetryEvent(ctx, id, json.RawMessage(`{"name":"command.outcome"}`), 0); err == nil {
 		t.Fatal("queue succeeded after pruning failed")
 	}
 	var count int

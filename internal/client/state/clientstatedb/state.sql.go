@@ -432,7 +432,7 @@ func (q *Queries) SetSelectedTeam(ctx context.Context, arg SetSelectedTeamParams
 const setTelemetryEnabled = `-- name: SetTelemetryEnabled :exec
 UPDATE installation_settings
 SET telemetry_enabled = ?1, telemetry_epoch = telemetry_epoch + 1
-WHERE id = 1
+WHERE id = 1 AND telemetry_enabled != ?1
 `
 
 func (q *Queries) SetTelemetryEnabled(ctx context.Context, enabled int64) error {

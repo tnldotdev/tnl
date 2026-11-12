@@ -28,7 +28,7 @@ var schemas = func() map[string]*jsonschema.Schema {
 		panic(err)
 	}
 	result := map[string]*jsonschema.Schema{}
-	for _, name := range []string{"Batch", "Event", "Client"} {
+	for _, name := range []string{"Batch", "Event", "Client", "CollectedEvent"} {
 		definition, err := compiler.Compile("urn:tnl:telemetry#/components/schemas/" + name)
 		if err != nil {
 			panic(err)
@@ -53,6 +53,9 @@ func validate(data []byte, name string, limit int) error {
 
 func ValidateClient(data []byte) error { return validate(data, "Client", 512) }
 func ValidateEvent(data []byte) error  { return validate(data, "Event", MaximumEventBytes) }
+func ValidateCollectedEvent(data []byte) error {
+	return validate(data, "CollectedEvent", MaximumEventBytes)
+}
 func ValidateBatch(data []byte) error {
 	if err := validate(data, "Batch", MaximumBatchBytes); err != nil {
 		return err
@@ -65,16 +68,18 @@ func ValidateBatch(data []byte) error {
 	}
 	seen := map[string]bool{}
 	for _, event := range batch.Events {
-		if ValidateEvent(event) != nil {
+		if ValidateCollectedEvent(event) != nil {
 			return ErrInvalid
 		}
 		var header struct {
-			ID string `json:"event_id"`
+			Event struct {
+				ID string `json:"event_id"`
+			} `json:"event"`
 		}
-		if json.Unmarshal(event, &header) != nil || seen[header.ID] {
+		if json.Unmarshal(event, &header) != nil || seen[header.Event.ID] {
 			return ErrInvalid
 		}
-		seen[header.ID] = true
+		seen[header.Event.ID] = true
 	}
 	return nil
 }

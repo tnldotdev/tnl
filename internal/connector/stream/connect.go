@@ -66,6 +66,7 @@ type Control interface {
 }
 
 type Config struct {
+	Telemetry                       *clienttelemetry.Collector
 	telemetry                       *clienttelemetry.Scope
 	Control                         Control
 	ServiceID, IdentityID, Protocol string

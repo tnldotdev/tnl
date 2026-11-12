@@ -15,7 +15,6 @@ import (
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/client/filelock"
-	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -60,15 +59,15 @@ func Clients(job Job) (PublisherClients, publisheridentity.EnrollmentAuthority, 
 }
 
 type Engine struct {
-	CollectTelemetry bool
-	Registry         *Registry
+	Telemetry *clienttelemetry.Collector
+	Registry  *Registry
 	// UserJobs lets the user-login supervisor host another job kind with its
 	// own registry and credentials. the system publisher service leaves it empty.
 	UserJobs []UserJobRunner
 	Clients  ClientFactory
 	Publish  func(context.Context, publisher.Config) error
-	Connect  func(context.Context, Job, func() error) error
-	Group    func(context.Context, Job, func(int64, bool) error) error
+	Connect  func(context.Context, Job, *clienttelemetry.Collector, func() error) error
+	Group    func(context.Context, Job, *clienttelemetry.Collector, func(int64, bool) error) error
 	Observe  func(Job, Status) error
 	// Initialize runs local desired-state setup while holding service.lock,
 	// before any worker starts. it must not contact remote services.
@@ -95,17 +94,6 @@ type worker struct {
 func (e Engine) Serve(ctx context.Context) error {
 	if e.Registry == nil {
 		return ErrUnsafeState
-	}
-	if e.CollectTelemetry && !clienttelemetry.Disabled(ctx) {
-		collector, err := clienttelemetry.New(context.WithoutCancel(ctx), clienttelemetry.Config{Root: e.Registry.root, Protection: clientstate.ProtectionFile})
-		if err == nil {
-			ctx = clienttelemetry.WithReporter(ctx, collector)
-			defer func() {
-				finish, stop := context.WithTimeout(context.Background(), clienttelemetry.RequestTimeout)
-				defer stop()
-				collector.Close(finish)
-			}()
-		}
 	}
 	if e.Clients == nil {
 		e.Clients = Clients
@@ -229,7 +217,9 @@ func (e Engine) Serve(ctx context.Context) error {
 }
 
 func (e Engine) run(ctx context.Context, job Job) {
-	ctx = clienttelemetry.WithDisabled(ctx, job.TelemetryDisabled)
+	if job.TelemetryDisabled {
+		e.Telemetry = nil
+	}
 	var runtime *publisherruntime.Owner
 	defer func() {
 		if runtime != nil {
@@ -312,7 +302,7 @@ func (e Engine) attempt(ctx context.Context, job Job, attempts uint64, runtime *
 			return false, ErrScope
 		}
 		var ready atomic.Bool
-		err := e.Group(ctx, job, func(revision int64, healthy bool) error {
+		err := e.Group(ctx, job, e.Telemetry, func(revision int64, healthy bool) error {
 			ready.Store(healthy)
 			state := JobReconciling
 			if healthy {
@@ -327,7 +317,7 @@ func (e Engine) attempt(ctx context.Context, job Job, attempts uint64, runtime *
 			return false, ErrScope
 		}
 		var ready atomic.Bool
-		err := e.Connect(ctx, job, func() error {
+		err := e.Connect(ctx, job, e.Telemetry, func() error {
 			ready.Store(true)
 			return e.Registry.status(ctx, job.ID, job.Revision, Status{State: JobReady, Attempts: attempts})
 		})
@@ -371,7 +361,8 @@ func (e Engine) attempt(ctx context.Context, job Job, attempts uint64, runtime *
 		}
 		var ready atomic.Bool
 		err = targetplan.PublishPrivate(ctx, job.TargetPlan(), publisherservice.RunConfig{
-			Control: native, State: profile, Access: native.Access, Identity: identity, Metadata: publisheridentity.ServiceMetadata(service), StreamCapacity: int32(job.Limits.Concurrency),
+			Telemetry: e.Telemetry,
+			Control:   native, State: profile, Access: native.Access, Identity: identity, Metadata: publisheridentity.ServiceMetadata(service), StreamCapacity: int32(job.Limits.Concurrency),
 			ServiceID: job.ServiceID, Target: job.Target,
 			Ready: func() error {
 				ready.Store(true)
@@ -389,6 +380,7 @@ func (e Engine) attempt(ctx context.Context, job Job, attempts uint64, runtime *
 		return false, err
 	}
 	cfg.Control, cfg.State, cfg.DrainTime = native, profile, e.DrainTime
+	cfg.Telemetry = e.Telemetry
 	cfg.Identity, cfg.Audit, cfg.VisitorControl = native, native, control.PublicURLControl
 	cfg.BrowserControl = control.PublicURLControl
 	cfg.Shares, cfg.Previews, cfg.FeedbackControl = control.PublicURLControl, control.PublicURLControl, control.PublicURLControl

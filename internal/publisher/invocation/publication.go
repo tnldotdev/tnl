@@ -11,8 +11,6 @@ import (
 	"strconv"
 	"time"
 
-	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
-
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
@@ -28,13 +26,22 @@ import (
 )
 
 func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation) (result error) {
-	ctx = clienttelemetry.WithDisabled(ctx, flags.TelemetryDisabled)
+	telemetry := flags.Telemetry.BeginScope("publisher")
+	defer telemetry.Close()
 	protocol := controlv1.Http
 	project := projectConfiguration{Project: flags.Project, targetResolver: flags.Resolver}
 	var err error
 	var localDemo *demo.Server
 	if flags.Demo {
-		localDemo, err = demo.Start(output.DemoPing)
+		localDemo, err = demo.Start(func(state demo.State) error {
+			if output.DemoPing != nil {
+				if err := output.DemoPing(state); err != nil {
+					return err
+				}
+			}
+			telemetry.Demo()
+			return nil
+		})
 		if err != nil {
 			return failure.Wrap("start local demo", failure.DemoLocalServiceUnavailable, err)
 		}
@@ -168,15 +175,16 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 		if resolveErr != nil {
 			return resolveErr
 		}
-		stopCallbacks := startOAuthIntegrationURL(ctx, state, oauthServices, oauth, tunnel, output, telemetryReporter(output.Observe))
+		stopCallbacks := startOAuthIntegrationURL(ctx, state, oauthServices, oauth, tunnel, output, telemetry)
 		defer stopCallbacks()
 		oauthHostname = oauth.Hostname
 	}
 	if protocol == controlv1.Http && !flags.Demo && len(project.Config.Webhooks) > 0 {
-		stopWebhooks := startWebhookIntegrationURL(ctx, state, services, project.Project, tunnel, flags.Service, integrationScope, output, telemetryReporter(output.Observe))
+		stopWebhooks := startWebhookIntegrationURL(ctx, state, services, project.Project, tunnel, flags.Service, integrationScope, output, telemetry)
 		defer stopWebhooks()
 	}
 	publisherConfig := services.config(target, policy.prefixes, flags.Limits)
+	publisherConfig.Telemetry = flags.Telemetry
 	publisherConfig.RequirePostQuantum = flags.RequirePostQuantum
 	if policy.explicit {
 		publisherConfig.AccessMode = policy.access

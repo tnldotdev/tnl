@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/project/meta"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/failure"
 )
 
@@ -42,7 +43,10 @@ func TestGenerateTypesWithoutGitOriginOrRuntimeValues(t *testing.T) {
 			t.Setenv("TNL_PROJECT_RUNTIME", "invalid-runtime-must-not-be-read")
 			t.Setenv("TNL_STATE_DIR", filepath.Join(root, "unused-state"))
 			for _, args := range [][]string{{"check"}, {"generate"}, {"generate", "--check"}} {
-				if err := run(t.Context(), args, &bytes.Buffer{}, &bytes.Buffer{}, func(string) telemetryReporter { t.Fatal("offline command opened telemetry"); return nil }); err != nil {
+				if err := run(t.Context(), args, &bytes.Buffer{}, &bytes.Buffer{}, func(clienttelemetry.Config) *clienttelemetry.Collector {
+					t.Fatal("offline command opened telemetry")
+					return nil
+				}); err != nil {
 					t.Fatal(args, err)
 				}
 			}
@@ -87,7 +91,10 @@ func TestGenerateOfflineAcrossWorktreesAndReadOnlyCheck(t *testing.T) {
 		t.Chdir(directory)
 		var stdout, stderr bytes.Buffer
 		runCommand := func(args ...string) error {
-			return run(t.Context(), args, &stdout, &stderr, func(string) telemetryReporter { t.Fatal("generation opened telemetry"); return nil })
+			return run(t.Context(), args, &stdout, &stderr, func(clienttelemetry.Config) *clienttelemetry.Collector {
+				t.Fatal("generation opened telemetry")
+				return nil
+			})
 		}
 		if err := runCommand("generate", "--check"); err == nil {
 			t.Fatal("check accepted missing artifacts")

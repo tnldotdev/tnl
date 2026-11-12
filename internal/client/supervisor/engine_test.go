@@ -44,10 +44,10 @@ func TestInstalledTelemetryOptOutSurvivesSupervisorRestart(t *testing.T) {
 			}
 			for range 2 {
 				observed := make(chan bool, 1)
-				engine := Engine{Registry: registry, PollInterval: 5 * time.Millisecond, Clients: func(Job) (PublisherClients, publisheridentity.EnrollmentAuthority, error) {
+				engine := Engine{Telemetry: &clienttelemetry.Collector{}, Registry: registry, PollInterval: 5 * time.Millisecond, Clients: func(Job) (PublisherClients, publisheridentity.EnrollmentAuthority, error) {
 					return jobClients(control), authority, nil
-				}, Publish: func(ctx context.Context, _ publisher.Config) error {
-					observed <- clienttelemetry.Disabled(ctx)
+				}, Publish: func(ctx context.Context, cfg publisher.Config) error {
+					observed <- cfg.Telemetry == nil
 					<-ctx.Done()
 					return nil
 				}}

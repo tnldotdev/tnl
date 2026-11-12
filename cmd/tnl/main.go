@@ -26,6 +26,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
+	telemetryv1 "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 	"golang.org/x/term"
 )
 
@@ -154,11 +155,8 @@ func main() {
 	var telemetry *clienttelemetry.Collector
 	launchCtx := observability.ExtractLaunch(ctx, os.Getenv(observability.LaunchTraceparent))
 	_ = os.Unsetenv(observability.LaunchTraceparent)
-	err := run(context.WithValue(launchCtx, nativeProcessKey{}, true), os.Args[1:], os.Stdout, os.Stderr, func(root string) telemetryReporter {
-		telemetry, _ = clienttelemetry.New(context.WithoutCancel(launchCtx), clienttelemetry.Config{Root: root})
-		if telemetry == nil {
-			return nil
-		}
+	err := run(context.WithValue(launchCtx, nativeProcessKey{}, true), os.Args[1:], os.Stdout, os.Stderr, func(config clienttelemetry.Config) *clienttelemetry.Collector {
+		telemetry, _ = clienttelemetry.New(context.WithoutCancel(launchCtx), config)
 		return telemetry
 	})
 	if telemetry != nil {
@@ -327,7 +325,7 @@ func classifyCommandError(err error) error {
 	return err
 }
 
-func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterFactories ...telemetryReporterFactory) (result error) {
+func run(ctx context.Context, args []string, stdout, stderr io.Writer, factories ...telemetryFactory) (result error) {
 	command := ""
 	machineIntent := false
 	defer func() {
@@ -406,6 +404,43 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		var finishInstall func(error)
 		ctx, finishInstall = observability.ClientOperation(ctx, "client.install")
 		defer func() { finishInstall(result) }()
+	}
+	telemetryCommand, telemetryAction, tracked := selectedTelemetryCommand(parsed)
+	serving := parsedCommand == "runtime serve" || parsedCommand == "runtime connections serve" || parsedCommand == "service serve" || parsedCommand == "publisher serve" || parsedCommand == "publish <service-or-target>" || parsedCommand == "connect start <name>"
+	root, stateErr := commandStateRoot(parsed)
+	enabled, preferenceErr := false, stateErr
+	if stateErr == nil && (tracked || serving) {
+		enabled, preferenceErr = clientstate.TelemetryEnabledAt(ctx, root)
+	}
+	disabled := flags.NoTelemetry || preferenceErr != nil || !enabled
+	flags.Publish.TelemetryDisabled = flags.NoTelemetry || flags.Publish.Install && disabled
+	flags.Connect.Start.telemetryDisabled = flags.NoTelemetry || flags.Connect.Start.Install && disabled
+	flags.Publisher.Serve.telemetryDisabled = flags.NoTelemetry || flags.Publisher.Serve.Install && disabled
+	config := clienttelemetry.Config{Root: root}
+	if parsedCommand == "service serve" {
+		options, err := flags.Service.Serve.options()
+		if err != nil {
+			return err
+		}
+		config.Root, config.Protection = options.Root, clientstate.ProtectionFile
+	}
+	var collector *clienttelemetry.Collector
+	if !flags.NoTelemetry && stateErr == nil && (tracked || serving) && (enabled || serving) && len(factories) != 0 && factories[0] != nil {
+		collector = factories[0](config)
+	}
+	flags.Publish.telemetry, flags.Connect.Start.telemetry = collector, collector
+	flags.Publisher.Serve.telemetry, flags.Service.Serve.telemetry = collector, collector
+	flags.Runtime.Serve.telemetry, flags.Runtime.Connections.telemetry = collector, collector
+	flags.Runtime.Connections.disabled = flags.NoTelemetry
+	failureStage := telemetryv1.Setup
+	if collector != nil && tracked && !flags.Publish.Install && !flags.Publish.Detach {
+		defer func() {
+			outcome := result
+			if outcome == nil && ctx.Err() != nil {
+				outcome = context.Cause(ctx)
+			}
+			collector.Report(clienttelemetry.Command(commandOutcome(telemetryCommand, telemetryAction, failureStage, classifyCommandError(outcome))))
+		}()
 	}
 	if strings.HasPrefix(parsedCommand, "runtime connections ") {
 		return runConnections(ctx, parsedCommand, flags.Runtime.Connections, stdout)
@@ -530,53 +565,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 			return err
 		}
 	}
-	telemetryCommand, telemetryAction, collectTelemetry := selectedTelemetryCommand(parsed)
-	if flags.Publish.Install || flags.Publish.Detach {
-		collectTelemetry = false
-	}
-	var telemetry *telemetryInvocation
-	flags.Publish.TelemetryDisabled = flags.NoTelemetry
-	if flags.Publish.Install {
-		root, err := commandStateRoot(parsed)
-		if err != nil {
-			flags.Publish.TelemetryDisabled = true
-		} else if enabled, err := clientstate.TelemetryEnabledAt(ctx, root); err != nil || !enabled {
-			flags.Publish.TelemetryDisabled = true
-		}
-	}
-	ctx = clienttelemetry.WithDisabled(ctx, flags.NoTelemetry)
-	runtimeTelemetry := parsedCommand == "runtime serve" || strings.HasPrefix(parsedCommand, "runtime connections")
-	if !flags.NoTelemetry && (collectTelemetry || runtimeTelemetry) &&
-		len(reporterFactories) != 0 && reporterFactories[0] != nil {
-		if root, stateErr := commandStateRoot(parsed); stateErr == nil {
-			if enabled, preferenceErr := clientstate.TelemetryEnabledAt(ctx, root); preferenceErr == nil && (enabled || runtimeTelemetry || telemetryCommand == telemetryPublish) {
-				if reporter := reporterFactories[0](root); reporter != nil {
-					ctx = clienttelemetry.WithReporter(ctx, reporter)
-					if collectTelemetry {
-						telemetry = newTelemetryInvocation(reporter)
-						telemetry.action = telemetryAction
-						if telemetryCommand == telemetryPublish {
-							mode := telemetryPublishApp
-							if flags.Publish.Demo {
-								mode = telemetryPublishDemo
-							}
-							telemetry.SetPublishMode(mode)
-						}
-					}
-				}
-			}
-		}
-	}
-	failureStage := telemetrySetupStage
-	if telemetry != nil {
-		defer func() {
-			outcome := result
-			if outcome == nil && ctx.Err() != nil {
-				outcome = context.Cause(ctx)
-			}
-			telemetry.finished(telemetryCommand, failureStage, classifyCommandError(outcome))
-		}()
-	}
 	var project projectConfiguration
 	projectStateRoot := ""
 	switch parsedCommand {
@@ -657,7 +645,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 			}
 		}
 	}
-	failureStage = telemetryCommandStage
+	failureStage = telemetryv1.Command
 	switch parsedCommand {
 	case "init":
 		return runInit(ctx, flags.Init, stdout, stderr)
@@ -691,11 +679,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		_, err := fmt.Fprintln(stdout, buildinfo.Line("tnl"))
 		return err
 	case "publish <service-or-target>":
-		var reporter telemetryReporter
-		if telemetry != nil {
-			reporter = telemetry
-		}
-		return runPublish(ctx, flags.Publish, stdout, stderr, reporter)
+		return runPublish(ctx, flags.Publish, stdout, stderr)
 	case "connect available":
 		return runConnectAvailable(ctx, flags.Connect.Available, stdout, stderr)
 	case "connect start <name>":

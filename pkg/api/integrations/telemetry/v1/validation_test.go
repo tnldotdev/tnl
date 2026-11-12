@@ -7,6 +7,7 @@ import (
 )
 
 const validEvent = `{"event_id":"tev_0123456789abcdefghijkl","event_version":1,"name":"command.outcome","payload":{"command":"publish","outcome":"succeeded"}}`
+const validCollectedEvent = `{"client":{"version":"test","os":"darwin","arch":"arm64","ci":false},"event":` + validEvent + `}`
 
 func TestTelemetryStrictContract(t *testing.T) {
 	if ValidateEvent([]byte(validEvent)) != nil {
@@ -30,21 +31,21 @@ func TestTelemetryStrictContract(t *testing.T) {
 }
 
 func TestTelemetryBatchBoundsAndDuplicateIDs(t *testing.T) {
-	prefix := `{"schema_version":1,"installation_id":"inst_0123456789abcdefghijkl","client":{"version":"test","os":"darwin","arch":"arm64","ci":false},"events":[`
-	if ValidateBatch([]byte(prefix+validEvent+`]:0}`)) == nil {
+	prefix := `{"schema_version":1,"installation_id":"inst_0123456789abcdefghijkl","events":[`
+	if ValidateBatch([]byte(prefix+validCollectedEvent+`]:0}`)) == nil {
 		t.Fatal("invalid JSON accepted")
 	}
-	if err := ValidateBatch([]byte(prefix + validEvent + `]} `)); err != nil {
+	if err := ValidateBatch([]byte(prefix + validCollectedEvent + `]} `)); err != nil {
 		t.Fatal(err)
 	}
-	if ValidateBatch([]byte(prefix+validEvent+`,`+validEvent+`]} `)) == nil {
+	if ValidateBatch([]byte(prefix+validCollectedEvent+`,`+validCollectedEvent+`]} `)) == nil {
 		t.Fatal("duplicate IDs accepted")
 	}
 	if ValidateBatch([]byte(prefix+`]} `)) == nil {
 		t.Fatal("empty batch accepted")
 	}
 	for _, field := range []string{`"path":"secret",`, `"ip":"192.0.2.1",`, `"token":"secret",`} {
-		if ValidateBatch([]byte(strings.Replace(prefix+validEvent+`]}`, `"ci":false`, field+`"ci":false`, 1))) == nil {
+		if ValidateBatch([]byte(strings.Replace(prefix+validCollectedEvent+`]}`, `"ci":false`, field+`"ci":false`, 1))) == nil {
 			t.Fatal("private metadata accepted")
 		}
 	}
