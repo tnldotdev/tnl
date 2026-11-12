@@ -6,7 +6,7 @@
   <br/>
   by <a href="https://github.com/0xcadams">@0xcadams</a>
   <br/><br/>
-  <i>tnl.dev is in private beta. <a href="mailto:beta@tnl.dev?subject=tnl.dev%20beta%20access&amp;body=I'd%20like%20to%20try%20tnl.dev.%0AMy%20sign-in%20email%20is%3A%20">email beta@tnl.dev for access</a>.</i>
+  <i>tnl.dev is in private beta. <a href="mailto:beta@tnl.dev?subject=tnl.dev%20beta%20access&amp;body=I'd%20like%20to%20try%20tnl.%20My%20sign-in%20email%20is%3A">email beta@tnl.dev for access</a>.</i>
 </p>
 <br/>
 
