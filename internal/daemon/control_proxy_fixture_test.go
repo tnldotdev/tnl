@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"sync"
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/serviceapi"
@@ -13,7 +14,7 @@ import (
 
 // this fixture is the deployment proxy: it terminates verified public TLS and
 // overwrites source metadata before forwarding HTTP to the private backend.
-func serveIntegrationControlProxy(t *testing.T, owner *runtimeTopology, listener net.Listener, backend string, certificate *tls.Config) {
+func serveIntegrationControlProxy(t *testing.T, owner *runtimeTopology, listener net.Listener, backend string, certificate *tls.Config) func() {
 	t.Helper()
 	origin := &url.URL{Scheme: "http", Host: backend}
 	transport := &http.Transport{}
@@ -33,12 +34,13 @@ func serveIntegrationControlProxy(t *testing.T, owner *runtimeTopology, listener
 	server := controlHTTPServer(proxy, certificate)
 	done := make(chan error, 1)
 	go func() { done <- serveTLS(server, listener) }()
-	cleanup := func() {
+	stop := sync.OnceFunc(func() {
 		_ = server.Close()
 		transport.CloseIdleConnections()
 		if err := <-done; err != nil {
 			t.Errorf("control proxy shutdown: %v", err)
 		}
-	}
-	owner.cleanupResource(t, cleanup)
+	})
+	owner.cleanupResource(t, stop)
+	return stop
 }

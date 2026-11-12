@@ -87,7 +87,13 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 		options := integrationProcessOptions{acmeHTTPClient: client,
 			serviceHTTPClient: splitTestServiceHTTPClient(t, separatedRoots(t, "roots.pem"), "control:9443", owner),
 			relayClientTLS:    separatedRelayTLS(t), owner: owner}
-		if cfg.Role.RunsControl() {
+		// stop each control incarnation's accepting front door with its backend.
+		startProcess := func() (*integrationProcess, func()) {
+			process := startIntegrationProcessWithOptions(t, cfg, options)
+			waitForProcessReady(t, process)
+			if !cfg.Role.RunsControl() {
+				return process, func() { stopIntegrationProcess(t, process) }
+			}
 			secure, err := staticServerTLS(cfg.ControlTLSCertificateFile, cfg.ControlTLSPrivateKeyFile)
 			if err != nil {
 				t.Fatal(err)
@@ -96,11 +102,14 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			serveIntegrationControlProxy(t, owner, listener, cfg.ControlListen, secure)
+			stopProxy := serveIntegrationControlProxy(t, owner, listener, cfg.ControlListen, secure)
+			return process, func() {
+				stopProxy()
+				stopIntegrationProcess(t, process)
+			}
 		}
-		process := startIntegrationProcessWithOptions(t, cfg, options)
+		process, stopProcess := startProcess()
 		defer captureSeparatedFailure(t, component)
-		waitForProcessReady(t, process)
 		readyName := component + ".ready"
 		faultTarget := slices.Contains(plan["fault-targets"], component)
 		if faultTarget && *runtimeLoadScenario == "relay-kill" {
@@ -129,11 +138,10 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 				return
 			}
 			stopped := separatedRestart{Started: time.Now()}
-			stopIntegrationProcess(t, process)
+			stopProcess()
 			stopped.Exited = time.Now()
 			separatedWrite(t, component+".stopped", stopped)
-			process = startIntegrationProcessWithOptions(t, cfg, options)
-			waitForProcessReady(t, process)
+			process, stopProcess = startProcess()
 			separatedWrite(t, component+".restarted", time.Now())
 		}
 		if faultTarget && *runtimeLoadScenario == "control-restart" {
@@ -141,7 +149,7 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 				return
 			}
 			stopped := separatedRestart{Started: time.Now()}
-			stopIntegrationProcess(t, process)
+			stopProcess()
 			stopped.Exited = time.Now()
 			separatedWrite(t, component+".stopped", stopped)
 			// keep one control unavailable beyond a process lease while the
@@ -153,8 +161,7 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 				return
 			case <-wait.C:
 			}
-			process = startIntegrationProcessWithOptions(t, cfg, options)
-			waitForProcessReady(t, process)
+			process, stopProcess = startProcess()
 			separatedWrite(t, component+".restarted", time.Now())
 		}
 		select {
