@@ -360,6 +360,14 @@ func (e *Endpoint) sendLoop(index int, p *path) {
 			if slot, ok := p.carrier.(*CarrierSlot); ok {
 				var entered *installedCarrier
 				entered, err = slot.enter(ctx, frame.revision)
+				if entered == nil && err == context.DeadlineExceeded && ctx.Err() == context.DeadlineExceeded && e.ctx.Err() == nil {
+					// admission spent only this packet's budget; no physical send
+					// entered, so keep the replaceable path and its worker alive.
+					p.stats.DroppedFrames++
+					e.mu.Unlock()
+					cancel()
+					continue
+				}
 				e.mu.Unlock()
 				if entered != nil {
 					err = slot.sendEntered(ctx, frame.data, frame.revision, entered)
