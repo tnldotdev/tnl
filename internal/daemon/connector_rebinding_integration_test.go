@@ -18,6 +18,7 @@ import (
 	quic "github.com/quic-go/quic-go"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/testutil"
@@ -204,7 +205,7 @@ func restartRebindingRelay(t *testing.T, f *privateSeparatedFixture, id string) 
 	if previous == nil {
 		t.Fatal("missing selected relay process", id)
 	}
-	if err := previous.stop(); err != nil && !errors.Is(err, context.DeadlineExceeded) {
+	if err := previous.stop(); err != nil && !failure.Only(err, context.DeadlineExceeded) {
 		t.Fatal(err)
 	}
 	settings := previous.settings
@@ -388,7 +389,7 @@ func qualifyConnectorRebinding(t *testing.T, standalone, tcp bool, fault string)
 	case "relay-process":
 		restartRebindingRelay(t, f, before.relayID)
 	case "relay-assignment":
-		if err := f.relayProcesses[before.relayID].stop(); err != nil && !errors.Is(err, context.DeadlineExceeded) {
+		if err := f.relayProcesses[before.relayID].stop(); err != nil && !failure.Only(err, context.DeadlineExceeded) {
 			t.Fatal(err)
 		}
 	default:
