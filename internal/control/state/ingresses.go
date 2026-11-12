@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/region"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
@@ -19,6 +20,7 @@ var (
 
 // IngressRegistration describes one ingress process run.
 type IngressRegistration struct {
+	Region             region.ID
 	IngressID          string
 	IngressRunID       string
 	ProtocolVersion    uint64
@@ -53,6 +55,7 @@ type IngressPublicRunObservation struct {
 // IngressLease is the control-issued lease for one ingress process.
 type IngressLease struct {
 	IngressLeaseIdentity
+	Region               region.ID
 	ProtocolVersion      uint64
 	ConnectionCapacity   uint64
 	ReportedConnections  uint64
@@ -71,6 +74,12 @@ func (d *Database) RegisterIngress(
 	now time.Time,
 	leaseDuration time.Duration,
 ) (result IngressLease, retErr error) {
+	if registration.Region == "" {
+		registration.Region = region.Local
+	}
+	if !registration.Region.Valid() {
+		return result, region.ErrPreference
+	}
 	if err := validateIngressRegistration(registration, leaseDuration); err != nil {
 		return IngressLease{}, err
 	}
@@ -89,6 +98,7 @@ func (d *Database) RegisterIngress(
 		return IngressLease{}, fmt.Errorf("lock ingress pool membership: %w", err)
 	}
 	row, err := queries.RegisterIngress(ctx, controlstatedb.RegisterIngressParams{
+		Region:    string(registration.Region),
 		IngressID: registration.IngressID, IngressRunID: registration.IngressRunID,
 		ProtocolVersion: protocolVersion, ConnectionCapacity: connectionCapacity,
 		IngressPoolID: registration.IngressPoolID, ServicePorts: append([]int32{}, registration.ServicePorts...),
@@ -314,6 +324,9 @@ func lockCurrentIngressLease(
 }
 
 func ingressLease(row controlstatedb.ControlIngressLease) (IngressLease, error) {
+	if !region.ID(row.Region).Valid() {
+		return IngressLease{}, region.ErrPreference
+	}
 	if row.IngressLeaseRevision <= 0 || row.ProtocolVersion <= 0 || row.ConnectionCapacity < 0 ||
 		row.ReportedConnections < 0 || row.RoutingTableRevision < 0 || !row.RegisteredAt.Valid ||
 		!row.RenewedAt.Valid || !row.LeaseExpiresAt.Valid {
@@ -325,6 +338,7 @@ func ingressLease(row controlstatedb.ControlIngressLease) (IngressLease, error) 
 		drainDeadline = &value
 	}
 	return IngressLease{
+		Region: region.ID(row.Region),
 		IngressLeaseIdentity: IngressLeaseIdentity{
 			IngressID: row.IngressID, IngressRunID: row.IngressRunID,
 			IngressLeaseRevision: uint64(row.IngressLeaseRevision),

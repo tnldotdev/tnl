@@ -104,6 +104,7 @@ type ingressRuntimeConfig struct {
 }
 
 type ingressSettings struct {
+	region                           string
 	clientHelloConnectionLimit       int
 	standaloneControlConnectionLimit int
 	standaloneRelayConnectionLimit   int
@@ -127,6 +128,7 @@ func ingressSettingsFrom(cfg daemonconfig.Config) ingressSettings {
 	}
 	peers, _ := proxyproto.TrustedPeers(cfg.IngressTrustedProxies)
 	return ingressSettings{
+		region:                           string(cfg.ServingRegion()),
 		clientHelloConnectionLimit:       cfg.ClientHelloConnectionLimit,
 		standaloneControlConnectionLimit: cfg.StandaloneControlConnectionLimit,
 		standaloneRelayConnectionLimit:   cfg.StandaloneRelayConnectionLimit,
@@ -176,6 +178,7 @@ func (d *daemon) startIngressRuntime(
 	routingTable := new(ingress.RoutingTable)
 	var publicServer *ingress.Server
 	registration := ingressv1.IngressRegistration{IngressId: runtimeConfig.ingressID, IngressRunId: runID, ProtocolVersion: tunnelv1.Version, ConnectionCapacity: settings.visitorConnectionLimit}
+	registration.Region = settings.region
 	registration.IngressPoolId, registration.ServicePorts = string(settings.ingressPoolID), settings.servicePortRanges.Ports()
 	controller, err := ingress.NewController(ingress.ControllerConfig{
 		Report: func(err error) {

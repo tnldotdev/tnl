@@ -1,11 +1,14 @@
 post:
-  operationId: receiveTelemetry
+  operationId: recordTelemetryBatch
+  summary: Accept bounded pseudonymous native client outcomes
   requestBody:
     required: true
     content:
       application/json:
         schema: { $ref: ../openapi.yaml#/components/schemas/Batch }
   responses:
-    "204": { description: accepted }
-    "400": { description: invalid batch }
-    "429": { description: retry later }
+    "204": { description: Accepted, including already-received event IDs }
+    "400": { description: Invalid telemetry batch }
+    "413": { description: Batch exceeds 64 KiB }
+    "429": { description: Retry later }
+    "500": { description: Telemetry could not be saved }

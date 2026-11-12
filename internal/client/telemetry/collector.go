@@ -116,6 +116,9 @@ func (c *Collector) Report(event api.Event) {
 
 // encode once, including the metadata and preference epoch from collection.
 func (c *Collector) enqueue(event api.Event, epoch int64) {
+	if c.closed.Load() {
+		return
+	}
 	queued, ok := c.encode(event, epoch)
 	if !ok {
 		return

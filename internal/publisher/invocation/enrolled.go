@@ -262,6 +262,7 @@ func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection Enrol
 		return err
 	}
 	cfg := publisher.Config{Telemetry: flags.Telemetry, Control: native, ControlURL: server, State: profile, TeamID: publicURL.TeamId, DomainID: publicURL.DomainId, MembershipID: membership, PolicyRevision: uint64(publicURL.PolicyRevision), PublicURLScope: publicURL.PublicUrlScope, Purpose: publicURL.Purpose, Hostname: publicURL.CanonicalHostname, Target: target, AllowedIPPrefixes: prefixes, ServiceProtocol: publicURL.ServiceProtocol, TargetTLSName: flags.TargetTLSName, TargetOptions: options, PreserveSavedPublicURLTarget: publicURL.Target == "", Limits: flags.Limits, InspectionMode: inspection.Mode(flags.InspectionMode), TransportTLS: transportTLS}
+	cfg.PreferredRegions = slices.Clone(flags.PreferredRegions)
 	if flags.Enrolled {
 		discovery, err := control.Discovery(ctx)
 		if err != nil {

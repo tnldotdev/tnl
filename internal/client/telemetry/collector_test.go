@@ -245,6 +245,31 @@ func TestTelemetrySetupCanRetryAfterInvalidRoot(t *testing.T) {
 	}
 }
 
+func TestTelemetryRejectsPrivateContextBeforePersistence(t *testing.T) {
+	c := collectorForTest(t, Config{})
+	for _, raw := range []string{
+		`{"event_id":"tev_0123456789abcdefghijkl","event_version":1,"name":"command.outcome","payload":{"command":"publish","outcome":"failed","target":"https://private.invalid"}}`,
+		`{"event_id":"tev_0123456789abcdefghijkl","event_version":1,"name":"command.outcome","payload":{"command":"secret-project","outcome":"failed"}}`,
+	} {
+		var event api.Event
+		if err := json.Unmarshal([]byte(raw), &event); err != nil {
+			t.Fatal(err)
+		}
+		c.Report(event)
+	}
+	flushForTest(t, c)
+	rows, err := c.state.PendingTelemetryEvents(t.Context(), 25)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("private context entered the outbox: %d %v", len(rows), err)
+	}
+	c.Report(Demo())
+	flushForTest(t, c)
+	rows, err = c.state.PendingTelemetryEvents(t.Context(), 25)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("invalid event wedged collection: %d %v", len(rows), err)
+	}
+}
+
 func TestTelemetrySiblingScopesStaySeparate(t *testing.T) {
 	c := collectorForTest(t, Config{})
 	var disabled *Collector

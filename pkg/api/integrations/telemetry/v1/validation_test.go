@@ -68,6 +68,10 @@ func TestTelemetryTransportBounds(t *testing.T) {
 	if err := ValidateEvent(data); err != nil {
 		t.Fatalf("maximum report rejected (%d bytes): %v", len(data), err)
 	}
+	collected, _ := json.Marshal(CollectedEvent{Client: Client{Version: strings.Repeat("v", 64), Os: ClientOsWindows, Arch: ClientArchAmd64}, Event: event})
+	if err := ValidateCollectedEvent(collected); err != nil {
+		t.Fatalf("maximum collected report rejected (%d bytes): %v", len(collected), err)
+	}
 	payload.Measurements[0].Count++
 	_ = event.FromTransportEvent(TransportEvent{EventId: "tev_0123456789abcdefghijkl", EventVersion: 1, Name: "transport.report", Payload: payload})
 	data, _ = json.Marshal(event)

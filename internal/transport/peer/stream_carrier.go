@@ -10,8 +10,10 @@ import (
 // deadline. open selects the stream initiator; the other endpoint accepts. the
 // first send establishes an initiated stream. reads stay passive until then,
 // so preparation cannot race an introduction ahead of the remote registration.
-// Close retires the registration
-// and interrupts setup without closing the borrowed outer session.
+// the accepting side drops sends until its reader accepts the introduction;
+// waiting for the initiator must not spend a packet's write deadline.
+// Close retires the registration and interrupts setup without closing the
+// borrowed outer session.
 func (p *StreamPair) Carrier(open bool) *registeredStreamCarrier {
 	return &registeredStreamCarrier{pair: p, open: open, ready: make(chan struct{})}
 }
@@ -28,6 +30,16 @@ type registeredStreamCarrier struct {
 func (c *registeredStreamCarrier) carrier(ctx context.Context, send bool) (*SharedStreamCarrier, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if !c.open && send {
+		select {
+		case <-c.pair.done:
+			return nil, net.ErrClosed
+		case <-c.ready:
+			return c.live, c.err
+		default:
+			return nil, nil
+		}
 	}
 	if !c.open || send {
 		c.once.Do(func() {
@@ -51,7 +63,7 @@ func (c *registeredStreamCarrier) carrier(ctx context.Context, send bool) (*Shar
 
 func (c *registeredStreamCarrier) Send(ctx context.Context, frame []byte) error {
 	live, err := c.carrier(ctx, true)
-	if err != nil {
+	if err != nil || live == nil {
 		return err
 	}
 	return live.Send(ctx, frame)

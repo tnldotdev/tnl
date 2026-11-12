@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "installation_id": "inst_AAAAAAAAAAAAAAAAAAAAAA",
+  "events": [
+    {
+      "client": { "version": "test", "os": "linux", "arch": "amd64", "ci": true },
+      "event": {
+        "event_id": "tev_AAAAAAAAAAAAAAAAAAAAAA",
+        "event_version": 1,
+        "name": "command.outcome",
+        "payload": { "command": "publish", "outcome": "failed", "failure_stage": "authentication" }
+      }
+    },
+    {
+      "client": { "version": "test", "os": "linux", "arch": "amd64", "ci": true },
+      "event": {
+        "event_id": "tev_BBBBBBBBBBBBBBBBBBBBBB",
+        "event_version": 1,
+        "name": "tunnel.ready",
+        "payload": { "server_kind": "hosted", "publish_mode": "app", "framework": "vite" }
+      }
+    },
+    {
+      "client": { "version": "test", "os": "linux", "arch": "amd64", "ci": true },
+      "event": {
+        "event_id": "tev_CCCCCCCCCCCCCCCCCCCCCC",
+        "event_version": 1,
+        "name": "demo.first_ping",
+        "payload": {}
+      }
+    },
+    {
+      "client": { "version": "test", "os": "linux", "arch": "amd64", "ci": true },
+      "event": {
+        "event_id": "tev_DDDDDDDDDDDDDDDDDDDDDD",
+        "event_version": 1,
+        "name": "integration.outcome",
+        "payload": { "kind": "webhook", "outcome": "reached_receiver", "delivery": "selected" }
+      }
+    },
+    {
+      "client": { "version": "later", "os": "darwin", "arch": "arm64", "ci": false },
+      "event": {
+        "event_id": "tev_EEEEEEEEEEEEEEEEEEEEEE",
+        "event_version": 1,
+        "name": "transport.report",
+        "payload": {
+          "role": "connector",
+          "measurements": [
+            {
+              "operation": "direct_connect",
+              "path": "direct_udp",
+              "outcome": "succeeded",
+              "duration": "lt_1s",
+              "count": 1
+            },
+            { "operation": "fallback", "path": "direct_udp", "outcome": "succeeded", "count": 1 },
+            {
+              "operation": "recovery",
+              "path": "quic",
+              "outcome": "succeeded",
+              "duration": "lt_10s",
+              "count": 1
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

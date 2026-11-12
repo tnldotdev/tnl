@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
@@ -149,6 +150,7 @@ func InstallBackgroundJob(ctx context.Context, registry *supervisor.Registry, fl
 	job := supervisor.Job{TelemetryDisabled: flags.TelemetryDisabled, Kind: supervisor.KindPublicURL, Name: background.ServiceName, Server: flags.ServerURL, Target: flags.Target, Protocol: config.ProtocolName(flags.Protocol), TargetTLSName: flags.TargetTLSName}
 	job.ReadinessPath = flags.ReadinessPath
 	job.Limits = flags.Limits
+	job.PreferredRegions = slices.Clone(flags.PreferredRegions)
 	var err error
 	job.Server, err = clientstate.CanonicalServer(job.Server)
 	if err != nil {

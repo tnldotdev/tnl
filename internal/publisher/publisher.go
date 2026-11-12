@@ -12,11 +12,16 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
+	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func Run(ctx context.Context, config Config) (result error) {
+	config.PreferredRegions, result = region.Preferences(config.PreferredRegions)
+	if result != nil {
+		return result
+	}
 	config.telemetry = config.Telemetry.BeginScope("publisher")
 	defer config.telemetry.Close()
 	if config.Control == nil {

@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/tcptarget"
+	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
@@ -45,6 +46,7 @@ type SlotSession = tunnel.SlotSession
 
 type RunConfig struct {
 	Telemetry         *clienttelemetry.Collector
+	PreferredRegions  []string
 	Control           RunControl
 	State             *clientstate.Store
 	Access            func(context.Context) (string, error)
@@ -83,6 +85,10 @@ func (RunConfig) GoString() string { return "private publisher configuration" }
 // Publish keeps the managed certificate lifecycle, two independently claimed
 // relay slots and current control heartbeat together. live bytes are never replayed.
 func Publish(ctx context.Context, config RunConfig) (result error) {
+	config.PreferredRegions, result = region.Preferences(config.PreferredRegions)
+	if result != nil {
+		return result
+	}
 	telemetry := config.Telemetry.BeginScope("publisher")
 	defer telemetry.Close()
 	if config.Control == nil || config.Access == nil || !config.Metadata.Protocol.Valid() || config.Identity.ServiceId == nil ||
@@ -174,6 +180,9 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		return err
 	}
 	declaration := controlv1.ServiceRunDeclaration{Protocol: config.Metadata.Protocol, TargetTls: config.Metadata.TargetTls, TrustRevision: approved.TrustRevision}
+	if len(config.PreferredRegions) != 0 {
+		declaration.PreferredRegions = &config.PreferredRegions
+	}
 	if config.StreamCapacity == 0 {
 		config.StreamCapacity = 64
 	}

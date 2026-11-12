@@ -361,8 +361,9 @@ func (e Engine) attempt(ctx context.Context, job Job, attempts uint64, runtime *
 		}
 		var ready atomic.Bool
 		err = targetplan.PublishPrivate(ctx, job.TargetPlan(), publisherservice.RunConfig{
-			Telemetry: e.Telemetry,
-			Control:   native, State: profile, Access: native.Access, Identity: identity, Metadata: publisheridentity.ServiceMetadata(service), StreamCapacity: int32(job.Limits.Concurrency),
+			Telemetry:        e.Telemetry,
+			PreferredRegions: slices.Clone(job.PreferredRegions),
+			Control:          native, State: profile, Access: native.Access, Identity: identity, Metadata: publisheridentity.ServiceMetadata(service), StreamCapacity: int32(job.Limits.Concurrency),
 			ServiceID: job.ServiceID, Target: job.Target,
 			Ready: func() error {
 				ready.Store(true)
@@ -461,6 +462,7 @@ func publicationConfig(job Job, publicURL controlv1.PublicURL) (publisher.Config
 	}
 	cfg := publisher.Config{ControlURL: job.Server, TeamID: publicURL.TeamId, DomainID: publicURL.DomainId, PolicyRevision: uint64(publicURL.PolicyRevision), PublicURLScope: publicURL.PublicUrlScope, Purpose: publicURL.Purpose, Hostname: publicURL.CanonicalHostname, Target: job.Target, ServiceProtocol: controlv1.Http, TargetTLSName: job.TargetTLSName, TargetOptions: publisherproxy.TargetOptions{RootCAs: roots, ServerName: job.TargetTLSName}, PreserveSavedPublicURLTarget: publicURL.Target == "", InspectionMode: inspection.Mode("none")}
 	cfg.Limits = job.Limits
+	cfg.PreferredRegions = slices.Clone(job.PreferredRegions)
 	if publicURL.MembershipId != nil {
 		cfg.MembershipID = *publicURL.MembershipId
 	}

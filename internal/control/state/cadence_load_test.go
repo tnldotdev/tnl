@@ -112,7 +112,7 @@ func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-
 		metrics := observability.New("ingress")
 		controller, err := ingress.NewController(ingress.ControllerConfig{
 			Client: client, RoutingTable: new(ingress.RoutingTable),
-			Registration:    ingressv1.IngressRegistration{IngressId: fmt.Sprintf("cadence-ingress-%d", index), IngressRunId: "cadence-run", ProtocolVersion: 1, ConnectionCapacity: int64(f.routes), IngressPoolId: PrimaryIngressPoolID, ServicePorts: []int{}},
+			Registration:    ingressv1.IngressRegistration{Region: "local", IngressId: fmt.Sprintf("cadence-ingress-%d", index), IngressRunId: "cadence-run", ProtocolVersion: 1, ConnectionCapacity: int64(f.routes), IngressPoolId: PrimaryIngressPoolID, ServicePorts: []int{}},
 			RenewalInterval: cadenceRenewalInterval, RetryInterval: time.Second, RoutingWait: 25 * time.Second,
 			Now: now, Observer: metrics, Report: func(err error) { fail(fmt.Errorf("ingress control: %w", err)) },
 		})

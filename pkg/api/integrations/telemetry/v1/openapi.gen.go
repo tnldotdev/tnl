@@ -851,8 +851,8 @@ type TransportReport struct {
 // TransportReportRole defines model for TransportReport.Role.
 type TransportReportRole string
 
-// ReceiveTelemetryJSONRequestBody defines body for ReceiveTelemetry for application/json ContentType.
-type ReceiveTelemetryJSONRequestBody = Batch
+// RecordTelemetryBatchJSONRequestBody defines body for RecordTelemetryBatch for application/json ContentType.
+type RecordTelemetryBatchJSONRequestBody = Batch
 
 // AsCommandEvent returns the union data inside the Event as a CommandEvent
 func (t Event) AsCommandEvent() (CommandEvent, error) {

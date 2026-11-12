@@ -20,6 +20,7 @@ func TestRelayLeaseMutationContracts(t *testing.T) {
 	wantIdentity := controlstate.RelayLeaseIdentity{RelayServiceID: "service-1", RelayID: "relay-1", RelayRunID: "run-1", RelayLeaseRevision: 7}
 	// the store result deliberately differs from the submitted identity and counters.
 	lease := controlstate.RelayLease{
+		Region:             "aws:us-west-1",
 		RelayLeaseIdentity: controlstate.RelayLeaseIdentity{RelayServiceID: "service-result", RelayID: "relay-result", RelayRunID: "run-result", RelayLeaseRevision: 9},
 		ProtocolVersion:    1, RelayAddress: "relay.example.test:443", TLSServerName: "relay.example.test", InternalRelayAddress: "10.0.0.10:8443",
 		InternalNetworks: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/24")}, ConnectionCapacity: 100, StreamCapacity: 200,
@@ -27,6 +28,7 @@ func TestRelayLeaseMutationContracts(t *testing.T) {
 		LeaseExpiresAt: now.Add(30 * time.Second), Draining: true, DrainDeadline: &deadline,
 	}
 	wantLease := relayv1.RelayLease{
+		Region:         "aws:us-west-1",
 		RelayServiceId: "service-result", RelayId: "relay-result", RelayRunId: "run-result", RelayLeaseRevision: 9,
 		ProtocolVersion: 1, RelayAddress: "relay.example.test:443", TlsServerName: "relay.example.test", InternalRelayAddress: "10.0.0.10:8443",
 		InternalNetworks: []string{"10.0.0.0/24"}, ConnectionCapacity: 100, StreamCapacity: 200, ReportedConnections: 11, ReportedStreams: 12,

@@ -19,6 +19,7 @@ import (
 type PublicOptions struct {
 	Telemetry          *clienttelemetry.Collector
 	TelemetryDisabled  bool
+	PreferredRegions   []string
 	RequirePostQuantum *bool
 	Target             string
 	TargetCAFile       string

@@ -7,7 +7,8 @@
   "paths": {
     "/api/telemetry": {
       "post": {
-        "operationId": "receiveTelemetry",
+        "operationId": "recordTelemetryBatch",
+        "summary": "Accept bounded pseudonymous native client outcomes",
         "requestBody": {
           "required": true,
           "content": {
@@ -20,13 +21,20 @@
         },
         "responses": {
           "204": {
-            "description": "accepted"
+            "description": "Accepted",
+            "including already-received event IDs": null
           },
           "400": {
-            "description": "invalid batch"
+            "description": "Invalid telemetry batch"
+          },
+          "413": {
+            "description": "Batch exceeds 64 KiB"
           },
           "429": {
-            "description": "retry later"
+            "description": "Retry later"
+          },
+          "500": {
+            "description": "Telemetry could not be saved"
           }
         }
       }

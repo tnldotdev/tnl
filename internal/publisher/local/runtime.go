@@ -466,16 +466,15 @@ func (a *appRuntime) workerConfiguration(ctx context.Context, service publishera
 		return publisherapp.Configuration{}, publisherapp.ErrRegistrationStale
 	}
 	operations := a.operations(preparation.project)
-	if !preparation.telemetryDisabled {
-		operations.Telemetry = a.Telemetry
+	operations.Telemetry = a.Telemetry
+	if preparation.telemetryDisabled {
+		operations.Telemetry = nil
 	}
+	defer func() { configuration.Publisher.Telemetry = operations.Telemetry }()
 	if definition, configured := preparation.project.Config.Services[service.Name]; configured && !config.IsPublicService(definition) {
 		return operations.ServiceConfiguration(ctx, service)
 	}
 	if preparation.configuration.Publisher.Control != nil {
-		if !preparation.telemetryDisabled {
-			preparation.configuration.Publisher.Telemetry = a.Telemetry
-		}
 		return preparation.configuration, nil
 	}
 	return operations.PublicConfiguration(ctx, service)

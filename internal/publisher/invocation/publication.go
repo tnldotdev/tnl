@@ -185,6 +185,7 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 	}
 	publisherConfig := services.config(target, policy.prefixes, flags.Limits)
 	publisherConfig.Telemetry = flags.Telemetry
+	publisherConfig.PreferredRegions = flags.PreferredRegions
 	publisherConfig.RequirePostQuantum = flags.RequirePostQuantum
 	if policy.explicit {
 		publisherConfig.AccessMode = policy.access

@@ -228,7 +228,7 @@ func TestInstalledRunConflictRetriesOnlyWhileRuntimeIsCurrent(t *testing.T) {
 func (c *jobControl) PublisherPublicURL(context.Context, string) (controlv1.PublicURL, error) {
 	return c.publicURL, nil
 }
-func (c *jobControl) CreatePublisherRun(_ context.Context, url, retry, access, proof string, selection *trafficlimits.Selection) (controlv1.PublishRunSetup, error) {
+func (c *jobControl) CreatePublisherRun(_ context.Context, url, retry, access, proof string, selection *trafficlimits.Selection, _ ...string) (controlv1.PublishRunSetup, error) {
 	if selection != nil {
 		if err := selection.Validate(); err != nil {
 			return controlv1.PublishRunSetup{}, err

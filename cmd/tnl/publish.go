@@ -14,10 +14,12 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
+	"github.com/tnldotdev/tnl/internal/region"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type publishCommand struct {
+	PreferredRegions        []string `name:"prefer-region" env:"TNL_PREFERRED_REGIONS" help:"Prefer an exact provider:region, such as fly:sjc; repeat in priority order. Nearby capacity is a fallback, not a hard provider constraint."`
 	openOptions             `embed:""`
 	remoteFlags             `embed:""`
 	tunnelFlags             `embed:""`
@@ -46,6 +48,11 @@ type publishCommand struct {
 }
 
 func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Writer) (result error) {
+	var err error
+	flags.PreferredRegions, err = region.Preferences(flags.PreferredRegions)
+	if err != nil {
+		return failure.Wrap("select publisher regions", failure.InvalidTunnelFlags, err)
+	}
 	if flags.Enrolled {
 		var err error
 		flags, err = retainedPublishFlags(ctx, flags)
@@ -61,6 +68,9 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		return publisherCLIError("--install and --detach cannot be combined")
 	}
 	credentialOwned := flags.EnrollmentKey != "" || flags.PublisherIdentityID != "" || flags.PublisherCredentialFile != ""
+	if len(flags.PreferredRegions) != 0 && flags.Service != "" && !credentialOwned {
+		return publisherCLIError("--prefer-region requires an ad-hoc target or scoped publisher credentials; named publications use the project owner")
+	}
 	if credentialOwned && flags.Service != "" {
 		resolved, err := target.ResolveTarget(ctx, flags.project.Project, flags.Service, runtimeTargetResolver)
 		if err != nil {
@@ -144,7 +154,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 }
 
 func publicOptions(flags publishCommand) invocation.PublicOptions {
-	return invocation.PublicOptions{Telemetry: flags.telemetry, TelemetryDisabled: flags.TelemetryDisabled, RequirePostQuantum: flags.RequirePostQuantum, Target: flags.Target, TargetCAFile: flags.TargetCAFile, TargetTLSName: flags.TargetTLSName, ProjectRoot: flags.projectRoot, Project: flags.project.Project, Service: flags.Service, StateDir: flags.StateDir, ServerURL: flags.ServerURL, AccessToken: flags.AccessToken, PublicURL: flags.PublicURL, Name: flags.Name, Domain: flags.Domain, Team: flags.Team, SelectedTeam: flags.selectedTeam, Ephemeral: flags.Ephemeral, Demo: flags.Demo, Anonymous: flags.Anonymous, IP: flags.IP, Access: flags.access, Limits: flags.limits(), InspectionMode: flags.InspectionMode, Inspection: flags.inspection, Resolver: runtimeTargetResolver}
+	return invocation.PublicOptions{Telemetry: flags.telemetry, TelemetryDisabled: flags.TelemetryDisabled, PreferredRegions: flags.PreferredRegions, RequirePostQuantum: flags.RequirePostQuantum, Target: flags.Target, TargetCAFile: flags.TargetCAFile, TargetTLSName: flags.TargetTLSName, ProjectRoot: flags.projectRoot, Project: flags.project.Project, Service: flags.Service, StateDir: flags.StateDir, ServerURL: flags.ServerURL, AccessToken: flags.AccessToken, PublicURL: flags.PublicURL, Name: flags.Name, Domain: flags.Domain, Team: flags.Team, SelectedTeam: flags.selectedTeam, Ephemeral: flags.Ephemeral, Demo: flags.Demo, Anonymous: flags.Anonymous, IP: flags.IP, Access: flags.access, Limits: flags.limits(), InspectionMode: flags.InspectionMode, Inspection: flags.inspection, Resolver: runtimeTargetResolver}
 }
 
 func publisherAuthentication(stderr io.Writer) func(context.Context, *clientstate.Database, string, string) (*auth.Client, error) {
