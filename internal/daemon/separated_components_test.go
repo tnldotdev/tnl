@@ -161,7 +161,7 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 				return
 			case <-wait.C:
 			}
-			process, stopProcess = startProcess()
+			process, _ = startProcess()
 			separatedWrite(t, component+".restarted", time.Now())
 		}
 		select {
