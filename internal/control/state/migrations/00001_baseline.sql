@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-explicit-capabilities-environment-revisions-provider-regions')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-explicit-capabilities-environment-collections-provider-regions')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-explicit-capabilities-environment-revisions-provider-regions');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-explicit-capabilities-environment-collections-provider-regions');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -2170,10 +2170,29 @@ END;
 $$;
 -- +goose StatementEnd
 CREATE TRIGGER service_definition_immutable BEFORE UPDATE OR DELETE ON control.service_definitions FOR EACH ROW EXECUTE FUNCTION control.reject_service_definition_mutation();
+-- a collection default selects a definition only when an environment is created.
+-- membership is saved with that environment, never inferred from its name or shape.
+CREATE TABLE control.collections (
+    id text PRIMARY KEY,
+    team_id text NOT NULL,
+    project_key text NOT NULL,
+    name text NOT NULL CHECK (length(name) BETWEEN 1 AND 128),
+    default_definition_revision bigint NOT NULL,
+    initial_default_definition_revision bigint NOT NULL,
+    mutation_revision bigint NOT NULL CHECK (mutation_revision>0),
+    created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
+    created_at timestamptz NOT NULL,
+    updated_at timestamptz NOT NULL,
+    UNIQUE(id,team_id,project_key),
+    UNIQUE(team_id,project_key,name),
+    FOREIGN KEY(team_id,project_key,default_definition_revision) REFERENCES control.service_definitions(team_id,project_key,revision) ON DELETE RESTRICT,
+    FOREIGN KEY(team_id,project_key,initial_default_definition_revision) REFERENCES control.service_definitions(team_id,project_key,revision) ON DELETE RESTRICT
+);
 CREATE TABLE control.environments (
     id text PRIMARY KEY,
     team_id text NOT NULL,
     project_key text NOT NULL,
+    collection_id text,
     name text NOT NULL CHECK (length(name) BETWEEN 1 AND 128),
     group_id text NOT NULL UNIQUE,
     applied_definition_revision bigint NOT NULL,
@@ -2188,10 +2207,25 @@ CREATE TABLE control.environments (
     UNIQUE(id,team_id,project_key),
     UNIQUE(id,team_id),
     UNIQUE(team_id,project_key,name),
+    FOREIGN KEY(collection_id,team_id,project_key) REFERENCES control.collections(id,team_id,project_key) ON DELETE RESTRICT,
     FOREIGN KEY(group_id,team_id,project_key) REFERENCES control.project_publisher_groups(id,team_id,project_key) ON DELETE RESTRICT,
     FOREIGN KEY(team_id,project_key,applied_definition_revision) REFERENCES control.service_definitions(team_id,project_key,revision) ON DELETE RESTRICT,
     FOREIGN KEY(team_id,project_key,initial_definition_revision) REFERENCES control.service_definitions(team_id,project_key,revision) ON DELETE RESTRICT
 );
+CREATE INDEX environments_collection ON control.environments(collection_id) WHERE collection_id IS NOT NULL;
+-- existing resources cannot be attached, detached or transferred until their
+-- authorization revocation semantics have an owning operation.
+-- +goose StatementBegin
+CREATE FUNCTION control.reject_environment_collection_move() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.collection_id IS DISTINCT FROM OLD.collection_id THEN
+        RAISE EXCEPTION 'environment collection membership is immutable' USING ERRCODE='23514';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+-- +goose StatementEnd
+CREATE TRIGGER environment_collection_pinned BEFORE UPDATE OF collection_id ON control.environments FOR EACH ROW EXECUTE FUNCTION control.reject_environment_collection_move();
 CREATE TABLE control.environment_creations (
     team_id text NOT NULL,
     project_key text NOT NULL,

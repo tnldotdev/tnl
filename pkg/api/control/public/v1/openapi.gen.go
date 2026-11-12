@@ -2035,6 +2035,29 @@ type ClientIPResponse struct {
 	Ip string `json:"ip"`
 }
 
+// Collection Manager-only saved collection. Its default selects a definition only for new environments; this record grants no permission and does not reconcile installed members.
+type Collection struct {
+	CollectionId              CollectionID `json:"collection_id"`
+	DefaultDefinitionRevision int64        `json:"default_definition_revision"`
+	MutationRevision          int64        `json:"mutation_revision"`
+	Name                      string       `json:"name"`
+	ProjectKey                string       `json:"project_key"`
+
+	// Ref Nonsecret selection of one collection on one control server. Possession grants no access.
+	Ref    CollectionReference `json:"ref"`
+	TeamId TeamID              `json:"team_id"`
+}
+
+// CollectionID defines model for CollectionID.
+type CollectionID = string
+
+// CollectionReference Nonsecret selection of one collection on one control server. Possession grants no access.
+type CollectionReference struct {
+	CollectionId CollectionID `json:"collection_id"`
+	ProjectKey   string       `json:"project_key"`
+	Server       string       `json:"server"`
+}
+
 // ConnectionAssignment defines model for ConnectionAssignment.
 type ConnectionAssignment struct {
 	ConnectionAssignmentRevision           int64                    `json:"connection_assignment_revision"`
@@ -2324,13 +2347,22 @@ type CreateCertificateIssuanceRequest struct {
 	PublishRunNumber int64  `json:"publish_run_number"`
 }
 
-// CreateEnvironmentRequest defines model for CreateEnvironmentRequest.
+// CreateCollectionRequest defines model for CreateCollectionRequest.
+type CreateCollectionRequest struct {
+	DefaultDefinitionRevision int64  `json:"default_definition_revision"`
+	Name                      string `json:"name"`
+	TeamId                    TeamID `json:"team_id"`
+}
+
+// CreateEnvironmentRequest Require a positive definition_revision unless a collection is selected. collection_id and expected_collection_revision must appear together. Omit definition_revision to select the collection default; an explicit positive revision overrides it. Literal zero and null are invalid. Exact retries keep the original collection revision as creation intent, even after its default changes; changing that precondition with a used key conflicts.
 type CreateEnvironmentRequest struct {
-	DefinitionRevision int64   `json:"definition_revision"`
-	IdempotencyKey     string  `json:"idempotency_key"`
-	Name               string  `json:"name"`
-	ProjectLabel       *string `json:"project_label,omitempty"`
-	SourceFingerprint  string  `json:"source_fingerprint"`
+	CollectionId               *CollectionID `json:"collection_id,omitempty"`
+	DefinitionRevision         *int64        `json:"definition_revision,omitempty"`
+	ExpectedCollectionRevision *int64        `json:"expected_collection_revision,omitempty"`
+	IdempotencyKey             string        `json:"idempotency_key"`
+	Name                       string        `json:"name"`
+	ProjectLabel               *string       `json:"project_label,omitempty"`
+	SourceFingerprint          string        `json:"source_fingerprint"`
 
 	// Targets Complete approved targets keyed by logical service name. Unknown services and missing assigned services are rejected. This has the same target shape for creation and replacement.
 	Targets EnvironmentTargets `json:"targets"`
@@ -2532,12 +2564,13 @@ type EnrollGuestPublisherRequest struct {
 
 // Environment Manager-only saved environment and its applied resources. Targets are sensitive management data, not browser metadata or connection credentials. Definition rollback increases mutation_revision and never restores revoked authorization.
 type Environment struct {
-	AppliedDefinitionRevision int64  `json:"applied_definition_revision"`
-	ConfigurationHash         string `json:"configuration_hash"`
-	Id                        string `json:"id"`
-	MutationRevision          int64  `json:"mutation_revision"`
-	Name                      string `json:"name"`
-	ProjectKey                string `json:"project_key"`
+	AppliedDefinitionRevision int64         `json:"applied_definition_revision"`
+	CollectionId              *CollectionID `json:"collection_id,omitempty"`
+	ConfigurationHash         string        `json:"configuration_hash"`
+	Id                        string        `json:"id"`
+	MutationRevision          int64         `json:"mutation_revision"`
+	Name                      string        `json:"name"`
+	ProjectKey                string        `json:"project_key"`
 
 	// Ref Nonsecret selection of one immutable environment on one control server. Possession of this reference grants no access.
 	Ref      EnvironmentReference `json:"ref"`
@@ -4158,6 +4191,13 @@ type TrafficSelection struct {
 	UploadBytes *int64 `json:"upload_bytes,omitempty"`
 }
 
+// UpdateCollectionDefaultRequest defines model for UpdateCollectionDefaultRequest.
+type UpdateCollectionDefaultRequest struct {
+	DefinitionRevision int64  `json:"definition_revision"`
+	ExpectedRevision   int64  `json:"expected_revision"`
+	TeamId             TeamID `json:"team_id"`
+}
+
 // UpdatePublicURLRequest defines model for UpdatePublicURLRequest.
 type UpdatePublicURLRequest struct {
 	AllowedIpPrefixes []string `json:"allowed_ip_prefixes"`
@@ -4562,6 +4602,16 @@ type CreateShareParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
+// ListCollectionsParams defines parameters for ListCollections.
+type ListCollectionsParams struct {
+	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
+}
+
+// GetCollectionParams defines parameters for GetCollection.
+type GetCollectionParams struct {
+	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
+}
+
 // GetProjectConfigurationParams defines parameters for GetProjectConfiguration.
 type GetProjectConfigurationParams struct {
 	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
@@ -4830,6 +4880,12 @@ type CreateShareJSONRequestBody = CreateShareRequest
 
 // SetPreviewTeamAccessJSONRequestBody defines body for SetPreviewTeamAccess for application/json ContentType.
 type SetPreviewTeamAccessJSONRequestBody = SetPreviewTeamAccessRequest
+
+// CreateCollectionJSONRequestBody defines body for CreateCollection for application/json ContentType.
+type CreateCollectionJSONRequestBody = CreateCollectionRequest
+
+// UpdateCollectionDefaultJSONRequestBody defines body for UpdateCollectionDefault for application/json ContentType.
+type UpdateCollectionDefaultJSONRequestBody = UpdateCollectionDefaultRequest
 
 // ApplyProjectConfigurationJSONRequestBody defines body for ApplyProjectConfiguration for application/json ContentType.
 type ApplyProjectConfigurationJSONRequestBody = ApplyProjectConfigurationRequest
@@ -5379,6 +5435,40 @@ type ClientInterface interface {
 	// Corresponds with PUT /v1/previews/{preview_id}/team-access (the `SetPreviewTeamAccess` operationId).
 	SetPreviewTeamAccess(ctx context.Context, previewId PreviewID, body SetPreviewTeamAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListCollections performs a GET /v1/projects/{project_key}/collections (the `ListCollections` operationId) request.
+	//
+	// List saved collections in this project as a current team manager. An empty or absent project in the authorized team returns an empty array.
+	ListCollections(ctx context.Context, projectKey string, params *ListCollectionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateCollectionWithBody performs a POST /v1/projects/{project_key}/collections (the `CreateCollection` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Create a collection in this project as a current team manager, selecting an existing scoped definition as its default. Names select resources and grant no access. The same name and original default revision return the saved collection after current authorization; changed creation intent conflicts. Creation grants no publisher or visitor permission.
+	CreateCollectionWithBody(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateCollection performs a POST /v1/projects/{project_key}/collections (the `CreateCollection` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Create a collection in this project as a current team manager, selecting an existing scoped definition as its default. Names select resources and grant no access. The same name and original default revision return the saved collection after current authorization; changed creation intent conflicts. Creation grants no publisher or visitor permission.
+	CreateCollection(ctx context.Context, projectKey string, body CreateCollectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetCollection performs a GET /v1/projects/{project_key}/collections/{collection_id} (the `GetCollection` operationId) request.
+	//
+	// Read this exact collection in the authorized team and project as a current team manager. Neither its name nor its reference authorizes access; no other scope is searched.
+	GetCollection(ctx context.Context, projectKey string, collectionId CollectionID, params *GetCollectionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateCollectionDefaultWithBody performs a PUT /v1/projects/{project_key}/collections/{collection_id}/default (the `UpdateCollectionDefault` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Replace the collection default as a current team manager, requiring its current mutation revision. The new default applies only to newly created environments. Existing members keep their applied definitions, mutation revisions, approved targets, service IDs, grants, and runs. Selecting an older default still advances the collection mutation revision.
+	UpdateCollectionDefaultWithBody(ctx context.Context, projectKey string, collectionId CollectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateCollectionDefault performs a PUT /v1/projects/{project_key}/collections/{collection_id}/default (the `UpdateCollectionDefault` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Replace the collection default as a current team manager, requiring its current mutation revision. The new default applies only to newly created environments. Existing members keep their applied definitions, mutation revisions, approved targets, service IDs, grants, and runs. Selecting an older default still advances the collection mutation revision.
+	UpdateCollectionDefault(ctx context.Context, projectKey string, collectionId CollectionID, body UpdateCollectionDefaultJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetProjectConfiguration performs a GET /v1/projects/{project_key}/configuration (the `GetProjectConfiguration` operationId) request.
 	GetProjectConfiguration(ctx context.Context, projectKey string, params *GetProjectConfigurationParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -5402,13 +5492,13 @@ type ClientInterface interface {
 	// CreateEnvironmentWithBody performs a POST /v1/projects/{project_key}/environments (the `CreateEnvironment` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Materialize one environment from an immutable definition and complete approved targets as a current team manager. Creation grants no visitor or workload permission. Authorized identical retries return the same environment; changed requests or retired creation keys conflict. The name does not select a target, publisher identity, or authorization scope.
+	// Materialize one environment from an immutable definition and complete approved targets as a current team manager. With a collection, require its expected mutation revision and save membership atomically; an explicit definition revision overrides its default. Creation grants no visitor or workload permission. Authorized identical retries return the saved environment without following a changed default; changing the original collection precondition or other creation intent with a used key conflicts, as do retired keys. Names and references select resources, not authorization scope.
 	CreateEnvironmentWithBody(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateEnvironment performs a POST /v1/projects/{project_key}/environments (the `CreateEnvironment` operationId) request.
 	// Takes a body of the `application/json` content type.
 	//
-	// Materialize one environment from an immutable definition and complete approved targets as a current team manager. Creation grants no visitor or workload permission. Authorized identical retries return the same environment; changed requests or retired creation keys conflict. The name does not select a target, publisher identity, or authorization scope.
+	// Materialize one environment from an immutable definition and complete approved targets as a current team manager. With a collection, require its expected mutation revision and save membership atomically; an explicit definition revision overrides its default. Creation grants no visitor or workload permission. Authorized identical retries return the saved environment without following a changed default; changing the original collection precondition or other creation intent with a used key conflicts, as do retired keys. Names and references select resources, not authorization scope.
 	CreateEnvironment(ctx context.Context, projectKey string, body CreateEnvironmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ApplyEnvironmentsWithBody performs a POST /v1/projects/{project_key}/environments/apply (the `ApplyEnvironments` operationId) request,
@@ -6980,6 +7070,100 @@ func (c *Client) SetPreviewTeamAccess(ctx context.Context, previewId PreviewID, 
 	return c.Client.Do(req)
 }
 
+// ListCollections performs a GET /v1/projects/{project_key}/collections (the `ListCollections` operationId) request.
+//
+// List saved collections in this project as a current team manager. An empty or absent project in the authorized team returns an empty array.
+func (c *Client) ListCollections(ctx context.Context, projectKey string, params *ListCollectionsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListCollectionsRequest(c.Server, projectKey, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateCollectionWithBody performs a POST /v1/projects/{project_key}/collections (the `CreateCollection` operationId) request,
+// with any type of body and a specified content type.
+//
+// Create a collection in this project as a current team manager, selecting an existing scoped definition as its default. Names select resources and grant no access. The same name and original default revision return the saved collection after current authorization; changed creation intent conflicts. Creation grants no publisher or visitor permission.
+func (c *Client) CreateCollectionWithBody(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateCollectionRequestWithBody(c.Server, projectKey, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateCollection performs a POST /v1/projects/{project_key}/collections (the `CreateCollection` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Create a collection in this project as a current team manager, selecting an existing scoped definition as its default. Names select resources and grant no access. The same name and original default revision return the saved collection after current authorization; changed creation intent conflicts. Creation grants no publisher or visitor permission.
+func (c *Client) CreateCollection(ctx context.Context, projectKey string, body CreateCollectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateCollectionRequest(c.Server, projectKey, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetCollection performs a GET /v1/projects/{project_key}/collections/{collection_id} (the `GetCollection` operationId) request.
+//
+// Read this exact collection in the authorized team and project as a current team manager. Neither its name nor its reference authorizes access; no other scope is searched.
+func (c *Client) GetCollection(ctx context.Context, projectKey string, collectionId CollectionID, params *GetCollectionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCollectionRequest(c.Server, projectKey, collectionId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateCollectionDefaultWithBody performs a PUT /v1/projects/{project_key}/collections/{collection_id}/default (the `UpdateCollectionDefault` operationId) request,
+// with any type of body and a specified content type.
+//
+// Replace the collection default as a current team manager, requiring its current mutation revision. The new default applies only to newly created environments. Existing members keep their applied definitions, mutation revisions, approved targets, service IDs, grants, and runs. Selecting an older default still advances the collection mutation revision.
+func (c *Client) UpdateCollectionDefaultWithBody(ctx context.Context, projectKey string, collectionId CollectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateCollectionDefaultRequestWithBody(c.Server, projectKey, collectionId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateCollectionDefault performs a PUT /v1/projects/{project_key}/collections/{collection_id}/default (the `UpdateCollectionDefault` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Replace the collection default as a current team manager, requiring its current mutation revision. The new default applies only to newly created environments. Existing members keep their applied definitions, mutation revisions, approved targets, service IDs, grants, and runs. Selecting an older default still advances the collection mutation revision.
+func (c *Client) UpdateCollectionDefault(ctx context.Context, projectKey string, collectionId CollectionID, body UpdateCollectionDefaultJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateCollectionDefaultRequest(c.Server, projectKey, collectionId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetProjectConfiguration performs a GET /v1/projects/{project_key}/configuration (the `GetProjectConfiguration` operationId) request.
 func (c *Client) GetProjectConfiguration(ctx context.Context, projectKey string, params *GetProjectConfigurationParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetProjectConfigurationRequest(c.Server, projectKey, params)
@@ -7043,7 +7227,7 @@ func (c *Client) ListEnvironments(ctx context.Context, projectKey string, params
 // CreateEnvironmentWithBody performs a POST /v1/projects/{project_key}/environments (the `CreateEnvironment` operationId) request,
 // with any type of body and a specified content type.
 //
-// Materialize one environment from an immutable definition and complete approved targets as a current team manager. Creation grants no visitor or workload permission. Authorized identical retries return the same environment; changed requests or retired creation keys conflict. The name does not select a target, publisher identity, or authorization scope.
+// Materialize one environment from an immutable definition and complete approved targets as a current team manager. With a collection, require its expected mutation revision and save membership atomically; an explicit definition revision overrides its default. Creation grants no visitor or workload permission. Authorized identical retries return the saved environment without following a changed default; changing the original collection precondition or other creation intent with a used key conflicts, as do retired keys. Names and references select resources, not authorization scope.
 func (c *Client) CreateEnvironmentWithBody(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateEnvironmentRequestWithBody(c.Server, projectKey, contentType, body)
 	if err != nil {
@@ -7059,7 +7243,7 @@ func (c *Client) CreateEnvironmentWithBody(ctx context.Context, projectKey strin
 // CreateEnvironment performs a POST /v1/projects/{project_key}/environments (the `CreateEnvironment` operationId) request.
 // Takes a body of the `application/json` content type.
 //
-// Materialize one environment from an immutable definition and complete approved targets as a current team manager. Creation grants no visitor or workload permission. Authorized identical retries return the same environment; changed requests or retired creation keys conflict. The name does not select a target, publisher identity, or authorization scope.
+// Materialize one environment from an immutable definition and complete approved targets as a current team manager. With a collection, require its expected mutation revision and save membership atomically; an explicit definition revision overrides its default. Creation grants no visitor or workload permission. Authorized identical retries return the saved environment without following a changed default; changing the original collection precondition or other creation intent with a used key conflicts, as do retired keys. Names and references select resources, not authorization scope.
 func (c *Client) CreateEnvironment(ctx context.Context, projectKey string, body CreateEnvironmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateEnvironmentRequest(c.Server, projectKey, body)
 	if err != nil {
@@ -11187,6 +11371,228 @@ func NewSetPreviewTeamAccessRequestWithBody(server string, previewId PreviewID, 
 	}
 
 	operationPath := fmt.Sprintf("/v1/previews/%s/team-access", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListCollectionsRequest constructs an http.Request for the ListCollections method
+func NewListCollectionsRequest(server string, projectKey string, params *ListCollectionsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/collections", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateCollectionRequest calls the generic CreateCollection builder with application/json body
+func NewCreateCollectionRequest(server string, projectKey string, body CreateCollectionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateCollectionRequestWithBody(server, projectKey, "application/json", bodyReader)
+}
+
+// NewCreateCollectionRequestWithBody constructs an http.Request for the CreateCollection method, with any body, and a specified content type
+func NewCreateCollectionRequestWithBody(server string, projectKey string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/collections", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetCollectionRequest constructs an http.Request for the GetCollection method
+func NewGetCollectionRequest(server string, projectKey string, collectionId CollectionID, params *GetCollectionParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "collection_id", collectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/collections/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateCollectionDefaultRequest calls the generic UpdateCollectionDefault builder with application/json body
+func NewUpdateCollectionDefaultRequest(server string, projectKey string, collectionId CollectionID, body UpdateCollectionDefaultJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateCollectionDefaultRequestWithBody(server, projectKey, collectionId, "application/json", bodyReader)
+}
+
+// NewUpdateCollectionDefaultRequestWithBody constructs an http.Request for the UpdateCollectionDefault method, with any body, and a specified content type
+func NewUpdateCollectionDefaultRequestWithBody(server string, projectKey string, collectionId CollectionID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "collection_id", collectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/collections/%s/default", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -17731,6 +18137,48 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /v1/previews/{preview_id}/team-access (the `SetPreviewTeamAccess` operationId).
 	SetPreviewTeamAccessWithResponse(ctx context.Context, previewId PreviewID, body SetPreviewTeamAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*SetPreviewTeamAccessResponse, error)
 
+	// ListCollectionsWithResponse performs a GET /v1/projects/{project_key}/collections (the `ListCollections` operationId) request.
+	//
+	// List saved collections in this project as a current team manager. An empty or absent project in the authorized team returns an empty array.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ListCollectionsWithResponse(ctx context.Context, projectKey string, params *ListCollectionsParams, reqEditors ...RequestEditorFn) (*ListCollectionsResponse, error)
+
+	// CreateCollectionWithBodyWithResponse performs a POST /v1/projects/{project_key}/collections (the `CreateCollection` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Create a collection in this project as a current team manager, selecting an existing scoped definition as its default. Names select resources and grant no access. The same name and original default revision return the saved collection after current authorization; changed creation intent conflicts. Creation grants no publisher or visitor permission.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CreateCollectionWithBodyWithResponse(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCollectionResponse, error)
+
+	// CreateCollectionWithResponse performs a POST /v1/projects/{project_key}/collections (the `CreateCollection` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Create a collection in this project as a current team manager, selecting an existing scoped definition as its default. Names select resources and grant no access. The same name and original default revision return the saved collection after current authorization; changed creation intent conflicts. Creation grants no publisher or visitor permission.
+	CreateCollectionWithResponse(ctx context.Context, projectKey string, body CreateCollectionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCollectionResponse, error)
+
+	// GetCollectionWithResponse performs a GET /v1/projects/{project_key}/collections/{collection_id} (the `GetCollection` operationId) request.
+	//
+	// Read this exact collection in the authorized team and project as a current team manager. Neither its name nor its reference authorizes access; no other scope is searched.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	GetCollectionWithResponse(ctx context.Context, projectKey string, collectionId CollectionID, params *GetCollectionParams, reqEditors ...RequestEditorFn) (*GetCollectionResponse, error)
+
+	// UpdateCollectionDefaultWithBodyWithResponse performs a PUT /v1/projects/{project_key}/collections/{collection_id}/default (the `UpdateCollectionDefault` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Replace the collection default as a current team manager, requiring its current mutation revision. The new default applies only to newly created environments. Existing members keep their applied definitions, mutation revisions, approved targets, service IDs, grants, and runs. Selecting an older default still advances the collection mutation revision.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	UpdateCollectionDefaultWithBodyWithResponse(ctx context.Context, projectKey string, collectionId CollectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateCollectionDefaultResponse, error)
+
+	// UpdateCollectionDefaultWithResponse performs a PUT /v1/projects/{project_key}/collections/{collection_id}/default (the `UpdateCollectionDefault` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Replace the collection default as a current team manager, requiring its current mutation revision. The new default applies only to newly created environments. Existing members keep their applied definitions, mutation revisions, approved targets, service IDs, grants, and runs. Selecting an older default still advances the collection mutation revision.
+	UpdateCollectionDefaultWithResponse(ctx context.Context, projectKey string, collectionId CollectionID, body UpdateCollectionDefaultJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateCollectionDefaultResponse, error)
+
 	// GetProjectConfigurationWithResponse performs a GET /v1/projects/{project_key}/configuration (the `GetProjectConfiguration` operationId) request.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -17760,7 +18208,7 @@ type ClientWithResponsesInterface interface {
 	// CreateEnvironmentWithBodyWithResponse performs a POST /v1/projects/{project_key}/environments (the `CreateEnvironment` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Materialize one environment from an immutable definition and complete approved targets as a current team manager. Creation grants no visitor or workload permission. Authorized identical retries return the same environment; changed requests or retired creation keys conflict. The name does not select a target, publisher identity, or authorization scope.
+	// Materialize one environment from an immutable definition and complete approved targets as a current team manager. With a collection, require its expected mutation revision and save membership atomically; an explicit definition revision overrides its default. Creation grants no visitor or workload permission. Authorized identical retries return the saved environment without following a changed default; changing the original collection precondition or other creation intent with a used key conflicts, as do retired keys. Names and references select resources, not authorization scope.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	CreateEnvironmentWithBodyWithResponse(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateEnvironmentResponse, error)
@@ -17768,7 +18216,7 @@ type ClientWithResponsesInterface interface {
 	// CreateEnvironmentWithResponse performs a POST /v1/projects/{project_key}/environments (the `CreateEnvironment` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Materialize one environment from an immutable definition and complete approved targets as a current team manager. Creation grants no visitor or workload permission. Authorized identical retries return the same environment; changed requests or retired creation keys conflict. The name does not select a target, publisher identity, or authorization scope.
+	// Materialize one environment from an immutable definition and complete approved targets as a current team manager. With a collection, require its expected mutation revision and save membership atomically; an explicit definition revision overrides its default. Creation grants no visitor or workload permission. Authorized identical retries return the saved environment without following a changed default; changing the original collection precondition or other creation intent with a used key conflicts, as do retired keys. Names and references select resources, not authorization scope.
 	CreateEnvironmentWithResponse(ctx context.Context, projectKey string, body CreateEnvironmentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateEnvironmentResponse, error)
 
 	// ApplyEnvironmentsWithBodyWithResponse performs a POST /v1/projects/{project_key}/environments/apply (the `ApplyEnvironments` operationId) request,
@@ -20219,6 +20667,198 @@ func (r SetPreviewTeamAccessResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r SetPreviewTeamAccessResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListCollectionsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]Collection
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListCollectionsResponse) GetJSON200() *[]Collection {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListCollectionsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListCollectionsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListCollectionsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListCollectionsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListCollectionsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateCollectionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Collection
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CreateCollectionResponse) GetJSON200() *Collection {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateCollectionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateCollectionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateCollectionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateCollectionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateCollectionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetCollectionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Collection
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetCollectionResponse) GetJSON200() *Collection {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetCollectionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetCollectionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetCollectionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetCollectionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetCollectionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdateCollectionDefaultResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Collection
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateCollectionDefaultResponse) GetJSON200() *Collection {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UpdateCollectionDefaultResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateCollectionDefaultResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateCollectionDefaultResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateCollectionDefaultResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateCollectionDefaultResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -26483,6 +27123,84 @@ func (c *ClientWithResponses) SetPreviewTeamAccessWithResponse(ctx context.Conte
 	return ParseSetPreviewTeamAccessResponse(rsp)
 }
 
+// ListCollectionsWithResponse performs a GET /v1/projects/{project_key}/collections (the `ListCollections` operationId) request.
+//
+// List saved collections in this project as a current team manager. An empty or absent project in the authorized team returns an empty array.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ListCollectionsWithResponse(ctx context.Context, projectKey string, params *ListCollectionsParams, reqEditors ...RequestEditorFn) (*ListCollectionsResponse, error) {
+	rsp, err := c.ListCollections(ctx, projectKey, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListCollectionsResponse(rsp)
+}
+
+// CreateCollectionWithBodyWithResponse performs a POST /v1/projects/{project_key}/collections (the `CreateCollection` operationId) request,
+// with any type of body and a specified content type.
+//
+// Create a collection in this project as a current team manager, selecting an existing scoped definition as its default. Names select resources and grant no access. The same name and original default revision return the saved collection after current authorization; changed creation intent conflicts. Creation grants no publisher or visitor permission.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreateCollectionWithBodyWithResponse(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCollectionResponse, error) {
+	rsp, err := c.CreateCollectionWithBody(ctx, projectKey, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateCollectionResponse(rsp)
+}
+
+// CreateCollectionWithResponse performs a POST /v1/projects/{project_key}/collections (the `CreateCollection` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Create a collection in this project as a current team manager, selecting an existing scoped definition as its default. Names select resources and grant no access. The same name and original default revision return the saved collection after current authorization; changed creation intent conflicts. Creation grants no publisher or visitor permission.
+func (c *ClientWithResponses) CreateCollectionWithResponse(ctx context.Context, projectKey string, body CreateCollectionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCollectionResponse, error) {
+	rsp, err := c.CreateCollection(ctx, projectKey, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateCollectionResponse(rsp)
+}
+
+// GetCollectionWithResponse performs a GET /v1/projects/{project_key}/collections/{collection_id} (the `GetCollection` operationId) request.
+//
+// Read this exact collection in the authorized team and project as a current team manager. Neither its name nor its reference authorizes access; no other scope is searched.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) GetCollectionWithResponse(ctx context.Context, projectKey string, collectionId CollectionID, params *GetCollectionParams, reqEditors ...RequestEditorFn) (*GetCollectionResponse, error) {
+	rsp, err := c.GetCollection(ctx, projectKey, collectionId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetCollectionResponse(rsp)
+}
+
+// UpdateCollectionDefaultWithBodyWithResponse performs a PUT /v1/projects/{project_key}/collections/{collection_id}/default (the `UpdateCollectionDefault` operationId) request,
+// with any type of body and a specified content type.
+//
+// Replace the collection default as a current team manager, requiring its current mutation revision. The new default applies only to newly created environments. Existing members keep their applied definitions, mutation revisions, approved targets, service IDs, grants, and runs. Selecting an older default still advances the collection mutation revision.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) UpdateCollectionDefaultWithBodyWithResponse(ctx context.Context, projectKey string, collectionId CollectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateCollectionDefaultResponse, error) {
+	rsp, err := c.UpdateCollectionDefaultWithBody(ctx, projectKey, collectionId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateCollectionDefaultResponse(rsp)
+}
+
+// UpdateCollectionDefaultWithResponse performs a PUT /v1/projects/{project_key}/collections/{collection_id}/default (the `UpdateCollectionDefault` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Replace the collection default as a current team manager, requiring its current mutation revision. The new default applies only to newly created environments. Existing members keep their applied definitions, mutation revisions, approved targets, service IDs, grants, and runs. Selecting an older default still advances the collection mutation revision.
+func (c *ClientWithResponses) UpdateCollectionDefaultWithResponse(ctx context.Context, projectKey string, collectionId CollectionID, body UpdateCollectionDefaultJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateCollectionDefaultResponse, error) {
+	rsp, err := c.UpdateCollectionDefault(ctx, projectKey, collectionId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateCollectionDefaultResponse(rsp)
+}
+
 // GetProjectConfigurationWithResponse performs a GET /v1/projects/{project_key}/configuration (the `GetProjectConfiguration` operationId) request.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -26536,7 +27254,7 @@ func (c *ClientWithResponses) ListEnvironmentsWithResponse(ctx context.Context, 
 // CreateEnvironmentWithBodyWithResponse performs a POST /v1/projects/{project_key}/environments (the `CreateEnvironment` operationId) request,
 // with any type of body and a specified content type.
 //
-// Materialize one environment from an immutable definition and complete approved targets as a current team manager. Creation grants no visitor or workload permission. Authorized identical retries return the same environment; changed requests or retired creation keys conflict. The name does not select a target, publisher identity, or authorization scope.
+// Materialize one environment from an immutable definition and complete approved targets as a current team manager. With a collection, require its expected mutation revision and save membership atomically; an explicit definition revision overrides its default. Creation grants no visitor or workload permission. Authorized identical retries return the saved environment without following a changed default; changing the original collection precondition or other creation intent with a used key conflicts, as do retired keys. Names and references select resources, not authorization scope.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) CreateEnvironmentWithBodyWithResponse(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateEnvironmentResponse, error) {
@@ -26550,7 +27268,7 @@ func (c *ClientWithResponses) CreateEnvironmentWithBodyWithResponse(ctx context.
 // CreateEnvironmentWithResponse performs a POST /v1/projects/{project_key}/environments (the `CreateEnvironment` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Materialize one environment from an immutable definition and complete approved targets as a current team manager. Creation grants no visitor or workload permission. Authorized identical retries return the same environment; changed requests or retired creation keys conflict. The name does not select a target, publisher identity, or authorization scope.
+// Materialize one environment from an immutable definition and complete approved targets as a current team manager. With a collection, require its expected mutation revision and save membership atomically; an explicit definition revision overrides its default. Creation grants no visitor or workload permission. Authorized identical retries return the saved environment without following a changed default; changing the original collection precondition or other creation intent with a used key conflicts, as do retired keys. Names and references select resources, not authorization scope.
 func (c *ClientWithResponses) CreateEnvironmentWithResponse(ctx context.Context, projectKey string, body CreateEnvironmentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateEnvironmentResponse, error) {
 	rsp, err := c.CreateEnvironment(ctx, projectKey, body, reqEditors...)
 	if err != nil {
@@ -29754,6 +30472,138 @@ func ParseSetPreviewTeamAccessResponse(rsp *http.Response) (*SetPreviewTeamAcces
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest Preview
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListCollectionsResponse parses an HTTP response from a ListCollectionsWithResponse call
+func ParseListCollectionsResponse(rsp *http.Response) (*ListCollectionsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListCollectionsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []Collection
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateCollectionResponse parses an HTTP response from a CreateCollectionWithResponse call
+func ParseCreateCollectionResponse(rsp *http.Response) (*CreateCollectionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateCollectionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Collection
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetCollectionResponse parses an HTTP response from a GetCollectionWithResponse call
+func ParseGetCollectionResponse(rsp *http.Response) (*GetCollectionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetCollectionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Collection
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateCollectionDefaultResponse parses an HTTP response from a UpdateCollectionDefaultWithResponse call
+func ParseUpdateCollectionDefaultResponse(rsp *http.Response) (*UpdateCollectionDefaultResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateCollectionDefaultResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Collection
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -33893,6 +34743,18 @@ type ServerInterface interface {
 	// (PUT /v1/previews/{preview_id}/team-access)
 	SetPreviewTeamAccess(w http.ResponseWriter, r *http.Request, previewId PreviewID)
 
+	// (GET /v1/projects/{project_key}/collections)
+	ListCollections(w http.ResponseWriter, r *http.Request, projectKey string, params ListCollectionsParams)
+
+	// (POST /v1/projects/{project_key}/collections)
+	CreateCollection(w http.ResponseWriter, r *http.Request, projectKey string)
+
+	// (GET /v1/projects/{project_key}/collections/{collection_id})
+	GetCollection(w http.ResponseWriter, r *http.Request, projectKey string, collectionId CollectionID, params GetCollectionParams)
+
+	// (PUT /v1/projects/{project_key}/collections/{collection_id}/default)
+	UpdateCollectionDefault(w http.ResponseWriter, r *http.Request, projectKey string, collectionId CollectionID)
+
 	// (GET /v1/projects/{project_key}/configuration)
 	GetProjectConfiguration(w http.ResponseWriter, r *http.Request, projectKey string, params GetProjectConfigurationParams)
 
@@ -35099,6 +35961,160 @@ func (siw *ServerInterfaceWrapper) SetPreviewTeamAccess(w http.ResponseWriter, r
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SetPreviewTeamAccess(w, r, previewId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListCollections operation middleware
+func (siw *ServerInterfaceWrapper) ListCollections(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListCollectionsParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListCollections(w, r, projectKey, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateCollection operation middleware
+func (siw *ServerInterfaceWrapper) CreateCollection(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateCollection(w, r, projectKey)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetCollection operation middleware
+func (siw *ServerInterfaceWrapper) GetCollection(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "collection_id" -------------
+	var collectionId CollectionID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "collection_id", r.PathValue("collection_id"), &collectionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "collection_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetCollectionParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCollection(w, r, projectKey, collectionId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateCollectionDefault operation middleware
+func (siw *ServerInterfaceWrapper) UpdateCollectionDefault(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "collection_id" -------------
+	var collectionId CollectionID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "collection_id", r.PathValue("collection_id"), &collectionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "collection_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateCollectionDefault(w, r, projectKey, collectionId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -39595,6 +40611,10 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/collections", wrapper.ListCollections)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/collections", wrapper.CreateCollection)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/collections/{collection_id}", wrapper.GetCollection)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/projects/{project_key}/collections/{collection_id}/default", wrapper.UpdateCollectionDefault)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/service-definitions", wrapper.CreateServiceDefinition)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/environments", wrapper.ListEnvironments)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/environments", wrapper.CreateEnvironment)

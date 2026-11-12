@@ -24,7 +24,7 @@ paths:
     post:
       operationId: createEnvironment
       security: [{ bearerAuth: [] }]
-      description: Materialize one environment from an immutable definition and complete approved targets as a current team manager. Creation grants no visitor or workload permission. Authorized identical retries return the same environment; changed requests or retired creation keys conflict. The name does not select a target, publisher identity, or authorization scope.
+      description: Materialize one environment from an immutable definition and complete approved targets as a current team manager. With a collection, require its expected mutation revision and save membership atomically; an explicit definition revision overrides its default. Creation grants no visitor or workload permission. Authorized identical retries return the saved environment without following a changed default; changing the original collection precondition or other creation intent with a used key conflicts, as do retired keys. Names and references select resources, not authorization scope.
       requestBody:
         required: true
         content:

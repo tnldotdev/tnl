@@ -229,6 +229,7 @@ func NewHandler(
 	}
 	mux := http.NewServeMux()
 	parameterError := func(response http.ResponseWriter, _ *http.Request, _ error) {
+		response.Header().Set("Cache-Control", "no-store")
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 	}
 	controlv1.HandlerWithOptions(h, controlv1.StdHTTPServerOptions{

@@ -117,7 +117,7 @@ func TestEnvironmentTargetsRequireCompleteProtocolApproval(t *testing.T) {
 	if environmentConfigurationHash(d1, bindings) == environmentConfigurationHash(d2, approved) {
 		t.Fatal("effective application hash ignored target/protocol changes")
 	}
-	if bytes.Equal(environmentCreationDigest("staging", 1, bindings), environmentCreationDigest("staging", 2, bindings)) {
+	if bytes.Equal(environmentCreationDigest("staging", 1, bindings, "", 0), environmentCreationDigest("staging", 2, bindings, "", 0)) {
 		t.Fatal("creation digest ignored original definition")
 	}
 }

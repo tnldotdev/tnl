@@ -15,6 +15,14 @@ func TestEnvironmentJSONRejectsExplicitNull(t *testing.T) {
 		target     any
 	}{
 		{"root", `null`, &controlv1.CreateEnvironmentRequest{}},
+		{"collection create root", `null`, &controlv1.CreateCollectionRequest{}},
+		{"collection name", `{"name":null}`, &controlv1.CreateCollectionRequest{}},
+		{"collection default", `{"default_definition_revision":null}`, &controlv1.CreateCollectionRequest{}},
+		{"collection update expected", `{"expected_revision":null}`, &controlv1.UpdateCollectionDefaultRequest{}},
+		{"collection update definition", `{"definition_revision":null}`, &controlv1.UpdateCollectionDefaultRequest{}},
+		{"environment collection", `{"collection_id":null}`, &controlv1.CreateEnvironmentRequest{}},
+		{"environment expected collection", `{"expected_collection_revision":null}`, &controlv1.CreateEnvironmentRequest{}},
+		{"environment definition", `{"definition_revision":null}`, &controlv1.CreateEnvironmentRequest{}},
 		{"definition", `{"definition":null}`, &controlv1.CreateServiceDefinitionRequest{}},
 		{"service", `{"definition":{"services":{"database":null}}}`, &controlv1.CreateServiceDefinitionRequest{}},
 		{"protocol", `{"definition":{"services":{"database":{"protocol":null}}}}`, &controlv1.CreateServiceDefinitionRequest{}},
@@ -36,6 +44,63 @@ func TestEnvironmentJSONRejectsExplicitNull(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(test.body))
 			if err := decodeEnvironmentJSON(httptest.NewRecorder(), request, test.target); err == nil {
 				t.Fatal("explicit null was accepted as an omitted or zero value")
+			}
+		})
+	}
+}
+
+func TestEnvironmentCreationCollectionSelectionPreservesWirePresence(t *testing.T) {
+	for _, test := range []struct {
+		name, selection      string
+		valid                bool
+		definition, expected int64
+		collection           string
+	}{
+		{"independent", `"definition_revision":3`, true, 3, 0, ""},
+		{"default", `"collection_id":"coll_AAAAAAAAAAAAAAAAAAAAAA","expected_collection_revision":1`, true, 0, 1, "coll_AAAAAAAAAAAAAAAAAAAAAA"},
+		{"explicit override", `"collection_id":"coll_AAAAAAAAAAAAAAAAAAAAAA","expected_collection_revision":1,"definition_revision":3`, true, 3, 1, "coll_AAAAAAAAAAAAAAAAAAAAAA"},
+		{name: "missing selection", selection: `"project_label":"environment"`},
+		{name: "zero independent", selection: `"definition_revision":0`},
+		{name: "zero with collection", selection: `"collection_id":"coll_AAAAAAAAAAAAAAAAAAAAAA","expected_collection_revision":1,"definition_revision":0`},
+		{name: "negative", selection: `"definition_revision":-1`},
+		{name: "collection alone", selection: `"collection_id":"coll_AAAAAAAAAAAAAAAAAAAAAA"`},
+		{name: "expected alone", selection: `"expected_collection_revision":1`},
+		{name: "expected with independent", selection: `"definition_revision":3,"expected_collection_revision":1`},
+		{name: "zero expected", selection: `"collection_id":"coll_AAAAAAAAAAAAAAAAAAAAAA","expected_collection_revision":0`},
+		{name: "negative expected", selection: `"collection_id":"coll_AAAAAAAAAAAAAAAAAAAAAA","expected_collection_revision":-1`},
+		{name: "empty collection", selection: `"collection_id":"","expected_collection_revision":1`},
+		{name: "wrong ID kind", selection: `"collection_id":"env_AAAAAAAAAAAAAAAAAAAAAA","expected_collection_revision":1`},
+		{name: "null definition", selection: `"definition_revision":null`},
+		{name: "null collection", selection: `"collection_id":null,"expected_collection_revision":1`},
+		{name: "null expected", selection: `"collection_id":"coll_AAAAAAAAAAAAAAAAAAAAAA","expected_collection_revision":null`},
+		{name: "string revision", selection: `"definition_revision":"3"`},
+		{name: "fractional revision", selection: `"definition_revision":1.5`},
+		{name: "overflow revision", selection: `"definition_revision":9223372036854775808`},
+		{name: "numeric collection", selection: `"collection_id":3,"expected_collection_revision":1`},
+		{name: "string expected", selection: `"collection_id":"coll_AAAAAAAAAAAAAAAAAAAAAA","expected_collection_revision":"1"`},
+		{name: "fractional expected", selection: `"collection_id":"coll_AAAAAAAAAAAAAAAAAAAAAA","expected_collection_revision":1.5`},
+		{name: "overflow expected", selection: `"collection_id":"coll_AAAAAAAAAAAAAAAAAAAAAA","expected_collection_revision":9223372036854775808`},
+		{name: "unknown field", selection: `"definition_revision":3,"membership":"sensitive-marker"`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body := `{"team_id":"team","source_fingerprint":"` + strings.Repeat("a", 64) + `","name":"environment","idempotency_key":"K","targets":{"api":{"address":"api.internal:3000"}},` + test.selection + `}`
+			var input controlv1.CreateEnvironmentRequest
+			err := decodeEnvironmentJSON(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), &input)
+			if err != nil {
+				if test.valid {
+					t.Fatal(err)
+				}
+				return
+			}
+			result, err := environmentCreationFromAPI(t.Context(), input)
+			if !test.valid {
+				if err == nil {
+					t.Fatal("invalid wire selection reached state conversion", result)
+				}
+				return
+			}
+			if err != nil || result.DefinitionRevision != test.definition || result.CollectionID != test.collection || result.ExpectedCollectionRevision != test.expected || result.Targets["api"].Address != "api.internal:3000" {
+				t.Fatal("wire selection lost presence, exact revision or approved target", result, err)
 			}
 		})
 	}

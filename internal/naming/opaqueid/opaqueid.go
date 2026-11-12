@@ -18,6 +18,7 @@ const (
 	ACMEAuthorizationPrefix          = "aau_"
 	ACMEPresentationPrefix           = "ap_"
 	ClaimPrefix                      = "cl_"
+	CollectionPrefix                 = "coll_"
 	ControlSessionPrefix             = "cs_"
 	DNSAuthorityPrefix               = "da_"
 	DNSWorkerPrefix                  = "dw_"
