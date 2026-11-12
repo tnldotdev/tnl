@@ -11,6 +11,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -133,7 +134,7 @@ func TestQUICWinnerCleanupSurvivesStaleAssignmentAndRunStop(t *testing.T) {
 		t.Run(fmt.Sprintf("stale=%t", stale), func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			certificate := publicURLTestCertificate(t, "relay.example")
+			certificate := visitorfixture.Certificate(t, "relay.example")
 			listener, err := muxsession.ListenQUIC("127.0.0.1:0", &tls.Config{Certificates: []tls.Certificate{certificate}}, muxsession.QUICConfig{})
 			if err != nil {
 				t.Fatal(err)
@@ -156,7 +157,7 @@ func TestQUICWinnerCleanupSurvivesStaleAssignmentAndRunStop(t *testing.T) {
 			}()
 			closeErr := errors.New("owned QUIC winner cleanup failed")
 			clients := make(chan *publisherQUICCloseFailure, 1)
-			owned := muxsession.OwnedQUICConnector{TLSConfig: &tls.Config{RootCAs: rootsForCertificate(t, certificate)}}
+			owned := muxsession.OwnedQUICConnector{TLSConfig: &tls.Config{RootCAs: visitorfixture.Roots(t, certificate)}}
 			var manager *publisherConnectionManager
 			quic := muxsession.ConnectorFunc(func(ctx context.Context, endpoint muxsession.Endpoint) (muxsession.Session, error) {
 				native, err := owned.Connect(ctx, endpoint)
