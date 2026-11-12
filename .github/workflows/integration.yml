@@ -9,14 +9,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   postgres:
     name: PostgreSQL (${{ matrix.suite }}, ${{ matrix.shard }})
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: ${{ matrix.suite == 'runtime:workload' && 14 || 12 }}
     strategy:
       fail-fast: false
       matrix:
@@ -28,6 +28,8 @@ jobs:
           - suite: runtime:leases
             shard: 1/1
           - suite: runtime:workload
+            shard: 1/1
+          - suite: runtime:workload:closure
             shard: 1/1
           - suite: connector-rebinding
             shard: 1/1
@@ -174,50 +176,17 @@ jobs:
       - name: Run DNS integration test
         run: task go:test:integration:dns
 
-  postgres-result:
-    name: PostgreSQL integration
-    if: always()
-    needs: [postgres]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions: {}
-    steps:
-      - name: Verify every PostgreSQL shard passed
-        env:
-          RESULT: ${{ needs.postgres.result }}
-        run: test "$RESULT" = success
-
-  binary-result:
-    name: Binary integration
-    if: always()
-    needs: [binary]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions: {}
-    steps:
-      - name: Verify every binary boundary passed
-        env:
-          RESULT: ${{ needs.binary.result }}
-        run: test "$RESULT" = success
-
   integration:
     name: Go integration
-    if: always()
-    needs: [postgres-result, clients, binary-result, compose, dns]
+    if: ${{ !cancelled() }}
+    needs: [postgres, clients, binary, compose, dns]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
     steps:
       - name: Verify integration jobs passed
         env:
-          POSTGRES_RESULT: ${{ needs.postgres-result.result }}
-          CLIENTS_RESULT: ${{ needs.clients.result }}
-          BINARY_RESULT: ${{ needs.binary-result.result }}
-          COMPOSE_RESULT: ${{ needs.compose.result }}
-          DNS_RESULT: ${{ needs.dns.result }}
+          RESULTS: ${{ toJSON(needs) }}
         run: |
-          test "$POSTGRES_RESULT" = success
-          test "$CLIENTS_RESULT" = success
-          test "$BINARY_RESULT" = success
-          test "$COMPOSE_RESULT" = success
-          test "$DNS_RESULT" = success
+          jq -r 'to_entries[] | "- \(.key): \(.value.result)"' <<< "$RESULTS" | tee -a "$GITHUB_STEP_SUMMARY"
+          jq --exit-status 'all(.[]; .result == "success")' <<< "$RESULTS" > /dev/null

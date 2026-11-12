@@ -19,16 +19,18 @@ import (
 
 func TestIntegrationControlProxyDeviceBrowserFlow(t *testing.T) {
 	databaseURL, _ := standaloneTestDatabase(t)
+	owner := newRuntimeTopology(t)
 	ca := newIntegrationTestCA(t)
-	certificate := ca.issueServer(t, "control.proxy.test")
-	issuerCertificate := ca.issueServer(t, "localhost")
+	certificate := ca.issueServer(t, "control.proxy.test", owner)
+	issuerCertificate := ca.issueServer(t, "localhost", owner)
 	const origin = "https://control.proxy.test"
 	issuer := binaryOIDCProvider(t, issuerCertificate, origin)
-	acme := standaloneTestACMEServer(t)
-	cfg := splitTestConfig(daemonconfig.RoleControl, unusedTCPAddress(t))
+	acme := standaloneTestACMEServer(t, owner)
+	listeners := runtimeListeners{control: serviceRuntimeListener(t, owner), privateControl: serviceRuntimeListener(t, owner), metrics: serviceRuntimeListener(t, owner)}
+	cfg := splitTestConfig(daemonconfig.RoleControl, listeners.metrics.Addr().String())
 	cfg.DatabaseURL, cfg.StorageKey, cfg.ClusterSecret = databaseURL, testStorageKey, testClusterSecret
 	cfg.ServerDomain, cfg.ManagedDomain = "proxy.test", "apps.proxy.test"
-	cfg.ControlListen, cfg.PrivateControlListen = unusedTCPAddress(t), unusedTCPAddress(t)
+	cfg.ControlListen, cfg.PrivateControlListen = listeners.control.Addr().String(), listeners.privateControl.Addr().String()
 	cfg.ControlTLSCertificateFile, cfg.ControlTLSPrivateKeyFile = certificate.certificateFile, certificate.privateKeyFile
 	cfg.ACMEDirectoryURL, cfg.ACMEEmail, cfg.ACMEAcceptTerms, cfg.ACMEProfile = acme.URL+"/directory", "operator@example.test", true, "tlsserver"
 	cfg.AccessTokenLifetime, cfg.RefreshTokenLifetime = 5*time.Minute, time.Hour
@@ -36,14 +38,15 @@ func TestIntegrationControlProxyDeviceBrowserFlow(t *testing.T) {
 	cfg.InitialAdministrators, cfg.InitialTeamOwners = []string{"developer"}, map[string]string{"local": "developer"}
 	cfg.OIDCAdmissionFile = filepath.Join("..", "..", "development", "local", "oidc-admission.json")
 	serviceTransport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: ca.roots, MinVersion: tls.VersionTLS13}}
-	t.Cleanup(serviceTransport.CloseIdleConnections)
-	public := unusedTCPAddress(t)
+	owner.cleanupResource(t, serviceTransport.CloseIdleConnections)
+	controlProxy := serviceRuntimeListener(t, owner)
+	public := controlProxy.Addr().String()
 	secure, err := staticServerTLS(certificate.certificateFile, certificate.privateKeyFile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	startIntegrationControlProxy(t, nil, public, cfg.ControlListen, secure)
-	process := startIntegrationProcess(t, cfg, acme.Client(), &http.Client{Transport: serviceTransport, Timeout: 10 * time.Second})
+	serveIntegrationControlProxy(t, owner, controlProxy, cfg.ControlListen, secure)
+	process := startIntegrationProcessWithOptions(t, cfg, integrationProcessOptions{owner: owner, listeners: listeners, acmeHTTPClient: acme.Client(), serviceHTTPClient: &http.Client{Transport: serviceTransport, Timeout: 10 * time.Second}})
 	waitForProcessReady(t, process)
 	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: ca.roots, MinVersion: tls.VersionTLS13}, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 		if address == "control.proxy.test:443" {

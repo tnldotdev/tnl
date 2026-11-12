@@ -3,7 +3,6 @@ package daemon
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -59,14 +59,12 @@ func startSeparatedPrivateIngress(t *testing.T, f *privateSeparatedFixture, inde
 		t.Fatal(err)
 	}
 	d := &daemon{serviceHTTP: f.serviceHTTP, relayClientTLS: f.roots, clusterSecret: serviceRuntimeClusterSecret, clusterSecrets: secrets, cancel: cancel, componentDone: make(chan error, 1), startedAt: time.Now()}
+	f.owner.ownDaemon(daemonconfig.RoleIngress, d)
 	client, err := newIngressControlClient(f.controlConfig.PrivateControlEndpoint(), serviceRuntimeClusterSecret, f.serviceHTTP, f.controlConfig.PrivateControlListen)
 	if err != nil {
 		t.Fatal(err)
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	listener := serviceRuntimeListener(t, f.owner)
 	id := fmt.Sprintf("private-ingress-%d", index)
 	if err := d.startIngressRuntime(ctx, ingressSettingsFrom(f.controlConfig), metrics, ingressRuntimeConfig{
 		client: client, ingressID: id, listener: listener, clusterSecret: serviceRuntimeClusterSecret,
@@ -80,16 +78,8 @@ func startSeparatedPrivateIngress(t *testing.T, f *privateSeparatedFixture, inde
 			config.Forwarder = observingServiceForwarder{ServiceForwarder: config.Forwarder, id: id, opened: opened}
 		},
 	}); err != nil {
-		cancel()
-		_ = listener.Close()
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		err := d.shutdown(time.Second)
-		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			t.Errorf("private ingress shutdown: %v", err)
-		}
-	})
 	privateWait(t, 10*time.Second, func(context.Context) (bool, error) {
 		select {
 		case err := <-d.componentDone:
@@ -109,16 +99,17 @@ type privateEchoTarget struct {
 	closedOn   map[net.Conn]<-chan struct{}
 }
 
-func startPrivateEchoTarget(t *testing.T) *privateEchoTarget {
+func startPrivateEchoTarget(t *testing.T, owner *runtimeTopology) *privateEchoTarget {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(t.Context())
 	target := &privateEchoTarget{address: listener.Addr().String(), received: make(map[string]int), receivedOn: make(map[string]net.Conn), closedOn: make(map[net.Conn]<-chan struct{})}
 	var workers sync.WaitGroup
+	acceptDone := make(chan struct{})
 	workers.Go(func() {
+		defer close(acceptDone)
 		for {
 			connection, err := listener.Accept()
 			if err != nil {
@@ -131,8 +122,6 @@ func startPrivateEchoTarget(t *testing.T) *privateEchoTarget {
 			workers.Go(func() {
 				defer close(closed)
 				defer connection.Close()
-				stop := context.AfterFunc(ctx, func() { _ = connection.Close() })
-				defer stop()
 				reader := bufio.NewReader(connection)
 				for {
 					line, err := reader.ReadString('\n')
@@ -150,7 +139,14 @@ func startPrivateEchoTarget(t *testing.T) *privateEchoTarget {
 			})
 		}
 	})
-	t.Cleanup(func() { cancel(); _ = listener.Close(); workers.Wait() })
+	owner.cleanupResource(t, func() {
+		_ = listener.Close()
+		<-acceptDone
+		for connection := range target.closedOn {
+			_ = connection.Close()
+		}
+		workers.Wait()
+	})
 	return target
 }
 
@@ -167,7 +163,7 @@ func serviceRuntimeLifecycle(t *testing.T, standalone bool) {
 	for _, transport := range []string{"quic", "tls-tcp"} {
 		t.Run(transport, func(t *testing.T) {
 			f := newServiceRuntimeFixture(t, standalone, nil)
-			target := startPrivateEchoTarget(t)
+			target := startPrivateEchoTarget(t, f.owner)
 			key, _ := opaqueid.New(opaqueid.IdempotencyPrefix)
 			service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "native-lifecycle", key, controlv1.ServiceMetadata{Protocol: controlv1.Tcp})
 			if err != nil {

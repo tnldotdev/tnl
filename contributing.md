@@ -43,11 +43,31 @@ for per-run budgets, and `internal/publisher/service/http.go` for service fronte
 composition. See [package dependencies](architecture.md#how-packages-fit-together)
 for those boundaries.
 
+Repeat a race-sensitive case without changing its test tier:
+
+```sh
+mise exec -- task go:test:focused PACKAGES=./internal/connector/stream RUN='^TestPreparedConnector' FLAGS='-race -shuffle=on -cpu=1,2,4' COUNT=50
+```
+
+`COUNT` defaults to one; use it instead of putting `-count` in `FLAGS`.
+Keep real-clock lease and network tests out of high-count repetitions. Prove
+their ordering rules with synchronized owner tests, then run the real boundary.
+
 Find integration, race, load, and packaging checks with
 `mise exec -- task --list-all`. Integration tests use Docker, Pebble, and kind
 as needed; mise installs Pebble and kind. Tasks that need test databases create
 and clean up their own. Some CLI integration tests need Linux. The full CI matrix
 lives in [the workflows](.github/workflows/).
+
+PostgreSQL-backed suites and the connector suite compile their test executables
+before starting disposable services, then discover, shard, and run those same
+executables. CLI and connector
+suites also build the native client once and pass it with `-tnl-cli-binary`;
+individual tests do not rebuild it.
+
+CI downloads and verifies both Go modules before running checks. Only transient
+dependency downloads retry; tests do not. Go module caches are shared across
+build variants, while compiled caches stay separate for ordinary and race builds.
 
 For warm PostgreSQL latency, run `mise exec -- task go:test:load:postgres`.
 It compares a direct database connection with the connector/publisher path using

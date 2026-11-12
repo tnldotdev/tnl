@@ -50,10 +50,64 @@ type QUICConnector struct {
 }
 
 func (c QUICConnector) Connect(ctx context.Context, endpoint Endpoint) (Session, error) {
-	return connectQUIC(ctx, endpoint, c.TLSConfig, c.Config, c.Dialer, ALPN)
+	session, err := connectQUIC(ctx, endpoint, c.TLSConfig, c.Config, c.Dialer, ALPN)
+	if err != nil {
+		return nil, err
+	}
+	return session, nil
 }
 
-func connectQUIC(ctx context.Context, endpoint Endpoint, roots *tls.Config, transport QUICConfig, dialer QUICDialer, alpn string) (Session, error) {
+// OwnedQUICConnector gives each attempt its own UDP socket. a failed dial closes
+// it before returning; a successful native session owns it until Close. callers
+// that need a shared source socket use QUICConnector with a borrowed dialer.
+type OwnedQUICConnector struct {
+	TLSConfig *tls.Config
+	Config    QUICConfig
+}
+
+// QUICTransportCloseError keeps failed-dial cleanup distinct from an ordinary
+// dial failure, which a caller may recover from through another transport.
+type QUICTransportCloseError struct{ Err error }
+
+func (e *QUICTransportCloseError) Error() string {
+	return "muxsession: close owned QUIC transport: " + e.Err.Error()
+}
+func (e *QUICTransportCloseError) Unwrap() error { return e.Err }
+
+func (c OwnedQUICConnector) Connect(ctx context.Context, endpoint Endpoint) (Session, error) {
+	if cause := context.Cause(ctx); cause != nil {
+		return nil, errors.Join(ctx.Err(), cause)
+	}
+	transport, err := ListenQUICTransport("udp", ":0")
+	if err != nil {
+		return nil, err
+	}
+	session, err := c.connect(ctx, endpoint, transport)
+	if err != nil {
+		return nil, err
+	}
+	return session, nil
+}
+
+// connect consumes the concrete transport, including when validation or dialing
+// fails. keeping ownership on quicSession preserves every native capability.
+func (c OwnedQUICConnector) connect(ctx context.Context, endpoint Endpoint, transport *QUICTransport) (*quicSession, error) {
+	session, err := connectQUIC(ctx, endpoint, c.TLSConfig, c.Config, transport, ALPN)
+	if err != nil {
+		var cleanup error
+		if closeErr := transport.Close(); closeErr != nil {
+			cleanup = &QUICTransportCloseError{Err: closeErr}
+		}
+		return nil, errors.Join(err, ctx.Err(), context.Cause(ctx), cleanup)
+	}
+	session.owned = transport
+	if cause := context.Cause(ctx); cause != nil {
+		return nil, errors.Join(ctx.Err(), cause, session.Close())
+	}
+	return session, nil
+}
+
+func connectQUIC(ctx context.Context, endpoint Endpoint, roots *tls.Config, transport QUICConfig, dialer QUICDialer, alpn string) (*quicSession, error) {
 	if dialer == nil {
 		return nil, errors.New("muxsession: QUIC requires an owner-supplied dialer")
 	}
@@ -260,6 +314,9 @@ func quicConfig(config *quic.Config) *quic.Config {
 
 type quicSession struct {
 	connection    *quic.Conn
+	owned         *QUICTransport
+	closeOnce     sync.Once
+	closeErr      error
 	packetOnce    sync.Once
 	packets       *quicDatagramSender
 	remoteIPBound bool
@@ -343,14 +400,21 @@ func (s *quicSession) AcceptStream(ctx context.Context) (Stream, error) {
 }
 
 func (s *quicSession) Close() error {
-	err := normalizeQUICError(s.connection.CloseWithError(0, ""))
-	// stop the transport before joining its possibly blocked datagram enqueue.
-	// seal lazy startup too, including concurrent sends after session closure.
-	s.packetOnce.Do(func() {})
-	if s.packets != nil {
-		<-s.packets.done
-	}
-	return err
+	s.closeOnce.Do(func() {
+		s.closeErr = normalizeQUICError(s.connection.CloseWithError(0, ""))
+		// stop the connection before joining its possibly blocked datagram enqueue.
+		// seal lazy startup too, including concurrent sends after session closure.
+		s.packetOnce.Do(func() {})
+		if s.packets != nil {
+			<-s.packets.done
+		}
+		if s.owned != nil {
+			if err := s.owned.Close(); err != nil {
+				s.closeErr = errors.Join(s.closeErr, &QUICTransportCloseError{Err: err})
+			}
+		}
+	})
+	return s.closeErr
 }
 
 func (s *quicSession) Done() <-chan struct{} { return s.connection.Context().Done() }

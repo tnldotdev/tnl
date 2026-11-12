@@ -53,6 +53,9 @@ func TestIntegrationWorkloadIdentityExpiryAndRefresh(t *testing.T) {
 	if retry, err := attach(fresh, now.Add(65*time.Second)); err != nil || !reflect.DeepEqual(retry, refreshed) {
 		t.Fatal("replayed platform proof moved the accepted renewal clock", err)
 	}
+	if replayed, err := d.ExchangeWorkload(ctx, fresh, now.Add(65*time.Second)); err != nil || !reflect.DeepEqual(replayed, refreshed) {
+		t.Fatal("exchanging an attached rotated proof changed the session or extended its lease", err)
+	}
 	wrong := fresh
 	wrong.Execution.GitHub = new(*fresh.Execution.GitHub)
 	wrong.Execution.GitHub.CheckRunID, wrong.Execution.GitHub.JTI = "999", "other-execution"

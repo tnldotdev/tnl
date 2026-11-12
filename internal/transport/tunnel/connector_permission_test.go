@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
@@ -314,6 +315,20 @@ type heldPermissionReset struct {
 	once             sync.Once
 }
 
+type heldPermissionSession struct {
+	muxsession.Session
+	stream *heldPermissionReset
+}
+
+func (s *heldPermissionSession) OpenStream(ctx context.Context) (muxsession.Stream, error) {
+	stream, err := s.Session.OpenStream(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.stream.Stream = stream
+	return s.stream, nil
+}
+
 func (s *heldPermissionReset) Write(p []byte) (int, error) {
 	if s.writeEntered != nil {
 		close(s.writeEntered)
@@ -322,49 +337,65 @@ func (s *heldPermissionReset) Write(p []byte) (int, error) {
 }
 
 func (s *heldPermissionReset) Reset(code uint32) error {
+	hold := false
+	s.once.Do(func() { hold = true })
 	err := s.Stream.Reset(code)
-	s.once.Do(func() { close(s.entered) })
-	<-s.release
+	if hold {
+		close(s.entered)
+		<-s.release
+	}
 	return err
 }
 
 func TestConnectorPermissionCancellationJoinsPhysicalCallback(t *testing.T) {
 	for _, writing := range []bool{false, true} {
 		t.Run(map[bool]string{false: "reader", true: "writer"}[writing], func(t *testing.T) {
-			client, server := newMemoryPair(t)
-			writer, control := permissionControlPair(t, client, server)
-			held := &heldPermissionReset{Stream: control, entered: make(chan struct{}), release: make(chan struct{})}
-			release := sync.OnceFunc(func() { close(held.release) })
-			defer release()
-			ctx, cancel := context.WithCancel(tunnelContext(t))
-			defer cancel()
-			var done <-chan error
-			if writing {
-				held.Stream = writer.stream
-				held.writeEntered = make(chan struct{})
-				done = tunnelWorker(t, release, func() error {
-					var gate ConnectorPermissionGate
-					_, err := gate.write(ctx, held, make(chan struct{}, 1), func(w io.Writer) error {
-						return tunnelv1.WriteConnectorPermissionUpdate(w, connectorPermissionFixture())
+			synctest.Test(t, func(t *testing.T) {
+				client, server := newMemoryPair(t)
+				held := &heldPermissionReset{entered: make(chan struct{}), release: make(chan struct{})}
+				release := sync.OnceFunc(func() { close(held.release) })
+				defer release()
+				ctx, cancel := context.WithCancel(tunnelContext(t))
+				defer cancel()
+				var done <-chan error
+				var renewal <-chan error
+				var stopOwner func()
+				if writing {
+					writer, _ := permissionControlPair(t, &heldPermissionSession{Session: client, stream: held}, server)
+					held.writeEntered = make(chan struct{})
+					renewal = tunnelWorker(t, release, func() error { return writer.Renew(tunnelContext(t), connectorPermissionFixture()) })
+					await(t, held.writeEntered)
+					stopOwner = func() { writer.cancel(context.Canceled) }
+					done = tunnelWorker(t, release, func() error {
+						<-writer.Done()
+						writer.Close()
+						return nil
 					})
-					return err
-				})
-				await(t, held.writeEntered)
-			} else {
-				var permissionGate ConnectorPermissionGate
-				done = tunnelWorker(t, release, func() error {
-					return ServeConnectorPermissionControl(ctx, held, func(tunnelv1.ConnectorPermissionUpdate, *ConnectorPermissionResponder) {}, func() {}, &permissionGate)
-				})
-			}
-			cancel()
-			await(t, held.entered)
-			select {
-			case <-done:
-				t.Fatal("control returned before its callback joined")
-			default:
-			}
-			release()
-			_ = await(t, done)
+				} else {
+					_, control := permissionControlPair(t, client, server)
+					held.Stream = control
+					stopOwner = cancel
+					var permissionGate ConnectorPermissionGate
+					done = tunnelWorker(t, release, func() error {
+						return ServeConnectorPermissionControl(ctx, held, func(tunnelv1.ConnectorPermissionUpdate, *ConnectorPermissionResponder) {}, func() {}, &permissionGate)
+					})
+				}
+				stopOwner()
+				await(t, held.entered)
+				if renewal != nil {
+					if err := await(t, renewal); err == nil {
+						t.Fatal("blocked renewal did not observe owner cancellation")
+					}
+				}
+				synctest.Wait()
+				select {
+				case <-done:
+					t.Fatal("control returned before its callback joined")
+				default:
+				}
+				release()
+				_ = await(t, done)
+			})
 		})
 	}
 }

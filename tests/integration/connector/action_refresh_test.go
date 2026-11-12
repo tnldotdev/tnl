@@ -30,19 +30,9 @@ import (
 // may outlive that call; SDK callbacks and static assertions remain finite.
 func TestIntegrationConnectionConnectorOwnerActionBackgroundRefresh(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	directory, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	binary := filepath.Join(directory, "tnl")
-	build := exec.CommandContext(t.Context(), "go", "build", "-race", "-o", binary, "./cmd/tnl")
-	build.Dir = "../../.."
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("native build: %v %s", err, output)
-	}
 	for _, source := range []string{"fresh", "unavailable", "stalled", "redirect", "replacement-job", "static", "wrong-audience", "wrong-provider"} {
 		t.Run(source, func(t *testing.T) {
-			runConnectionNativeOwnerBinary(t, "http", true, "action-"+source, binary)
+			runConnectionNativeOwnerStartup(t, "http", "action-"+source)
 		})
 	}
 }

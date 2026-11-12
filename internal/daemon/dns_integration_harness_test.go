@@ -33,11 +33,12 @@ func integrationDNSSubprocess(t *testing.T) bool {
 		return false
 	}
 	postgresURL := testutil.PostgresURL(t)
+	topology := newRuntimeTopology(t)
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("rejected nonlocal integration request: %s %s", r.Method, r.Host)
 		http.Error(w, "integration tests forbid nonlocal API requests", http.StatusForbidden)
 	}))
-	cleanupIntegrationHTTPServer(t, proxy, nil)
+	cleanupIntegrationHTTPServer(t, proxy, topology)
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -126,7 +127,7 @@ type integrationRoute53 struct {
 	beforeChange func(context.Context, integrationDNSChange) error
 }
 
-func newIntegrationRoute53(t *testing.T, zoneID, domain string) *integrationRoute53 {
+func newIntegrationRoute53(t *testing.T, zoneID, domain string, owner *runtimeTopology) *integrationRoute53 {
 	t.Helper()
 	testutil.RequireOneOfTestTiers(t, testutil.TestTierDNS, testutil.TestTierBinary)
 	f := &integrationRoute53{
@@ -140,22 +141,22 @@ func newIntegrationRoute53(t *testing.T, zoneID, domain string) *integrationRout
 	if err != nil {
 		t.Fatalf("authoritative DNS integration requires free TCP/UDP port 53 on localhost (CI permits unprivileged port 53): %v", err)
 	}
-	t.Cleanup(func() { _ = listener.Close() })
+	owner.cleanupResource(t, func() { _ = listener.Close() })
 	packet, err := net.ListenPacket("udp", f.address)
 	if err != nil {
 		t.Fatalf("authoritative DNS integration requires free UDP port 53 on localhost: %v", err)
 	}
-	t.Cleanup(func() { _ = packet.Close() })
+	owner.cleanupResource(t, func() { _ = packet.Close() })
 	for _, server := range []*dns.Server{
 		{Listener: listener, Handler: dns.HandlerFunc(f.serveDNS)},
 		{PacketConn: packet, Handler: dns.HandlerFunc(f.serveDNS)},
 	} {
-		startOwnedDNSServer(t, server)
+		startOwnedDNSServer(t, server, owner)
 	}
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.serveRoute53(t, w, r)
 	}))
-	cleanupIntegrationHTTPServer(t, f.server, nil)
+	cleanupIntegrationHTTPServer(t, f.server, owner)
 	t.Setenv("AWS_ENDPOINT_URL_ROUTE_53", f.server.URL)
 	t.Setenv("AWS_ACCESS_KEY_ID", "tnl-integration-only")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "tnl-integration-only")

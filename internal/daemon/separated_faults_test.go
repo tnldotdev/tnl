@@ -28,16 +28,18 @@ func separatedProbe(t *testing.T, sequence *int, phase benchworkload.Phase) {
 	*sequence = *sequence + 1
 	var results []separatedVisitorResult
 	held := 0
-	timeout := time.Duration((len(phase.URLs)+3)/4+2)*5*time.Second + time.Second
+	visitors := separatedNames("visitors")
+	sources := len(visitors)
+	timeout := time.Duration((len(phase.URLs)+sources-1)/sources+2)*5*time.Second + time.Second
 	heldTotal := phase.HeldStreams
 	if phase.OpenHeld {
 		heldTotal = min(8, len(phase.URLs))
 	}
-	heldTimeout := time.Duration(benchworkload.Assignment(heldTotal, 4, 0))*time.Second/500 + 10*time.Second
-	timeout = max(timeout, heldTimeout+time.Duration(benchworkload.Assignment(heldTotal, 4, 0))*100*time.Millisecond)
-	for i := 1; i <= 4; i++ {
+	heldTimeout := time.Duration(benchworkload.Assignment(heldTotal, sources, 0))*time.Second/500 + 10*time.Second
+	timeout = max(timeout, heldTimeout+time.Duration(benchworkload.Assignment(heldTotal, sources, 0))*100*time.Millisecond)
+	for _, visitor := range visitors {
 		var result separatedVisitorResult
-		separatedWait(t, fmt.Sprintf("%s.visitor-%d", phase.Name, i), timeout, &result)
+		separatedWait(t, phase.Name+"."+visitor, timeout, &result)
 		results = append(results, result)
 		held += result.HeldSurviving
 		for _, row := range result.Requests {
@@ -46,7 +48,7 @@ func separatedProbe(t *testing.T, sequence *int, phase benchworkload.Phase) {
 			}
 		}
 		if phase.OpenHeld && result.HealthyHeld == 0 {
-			t.Errorf("%s: visitor-%d opened no healthy held stream", phase.Name, i)
+			t.Errorf("%s: %s opened no healthy held stream", phase.Name, visitor)
 		}
 	}
 	if phase.HeldStreams > 0 && held != phase.HeldStreams {
@@ -80,7 +82,7 @@ func separatedWaitForRecovery(t *testing.T, database *sql.DB, publishers separat
 	}
 	// ordinary public URL updates are acknowledged at the 10-second ingress
 	// lease-renewal cadence; allow the next renewal plus scheduling headroom.
-	waitForIngressRoutingCurrentWithin(t, database, len(separatedIngresses()), separatedRoutingAcknowledgmentTimeout)
+	waitForIngressRoutingCurrentWithin(t, database, len(separatedNames("ingresses")), separatedRoutingAcknowledgmentTimeout)
 	for _, ready := range publishers.Ready {
 		assertPublishRunNumber(t, database, ready.PublicURLID, ready.PublishRunNumber)
 	}

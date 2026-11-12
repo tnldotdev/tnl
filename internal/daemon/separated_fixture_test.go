@@ -35,77 +35,18 @@ const separatedRoutingAcknowledgmentTimeout = 2 * separatedLeaseRenewalInterval
 
 var separatedComponent = flag.String("tnl-separated-component", "", "separated runtime load component")
 
-var separatedComponents = []string{"control-a", "ingress-a", "relay-a", "relay-b", "publishers", "publishers-2", "publishers-3", "publishers-4", "visitor-1", "visitor-2", "visitor-3", "visitor-4", "app", "app-2", "app-3", "app-4", "pebble"}
-
-func separatedPublisherComponents() []string {
-	if *runtimeLoadWorkload == "postgres" {
-		return []string{"publishers"}
-	}
-	return []string{"publishers", "publishers-2", "publishers-3", "publishers-4"}
-}
-
-func separatedAppComponents() []string {
-	if *runtimeLoadWorkload == "postgres" {
-		return nil
-	}
-	return []string{"app", "app-2", "app-3", "app-4"}
-}
-
-func separatedConnectVisitors() []string {
-	if *runtimeLoadWorkload == "postgres" {
-		return []string{"visitor-1"}
-	}
-	return []string{"visitor-1", "visitor-2", "visitor-3", "visitor-4"}
-}
-
 func separatedAppPublisher(component string) string {
-	return "publishers" + strings.TrimPrefix(component, "app")
+	return separatedNames("app-publisher." + component)[0]
 }
 
 func separatedPublisherShardKey(index int, event string) string {
 	return fmt.Sprintf("publishers-%d.%s", index+1, event)
 }
 
-func separatedIngresses() []string {
-	if *runtimeLoadHATopology {
-		return []string{"ingress-a", "ingress-b"}
-	}
-	return []string{"ingress-a"}
-}
-
-func separatedControls() []string {
-	if *runtimeLoadHATopology {
-		return []string{"control-a", "control-b"}
-	}
-	return []string{"control-a"}
-}
-
-func separatedServerRoles() []string {
-	roles := append(append(separatedControls(), separatedIngresses()...), "relay-a", "relay-b")
-	if *runtimeLoadScenario == "control-restart" {
-		roles = append(roles, "relay-a-2", "relay-b-2")
-	}
-	return roles
-}
-
-func separatedActiveComponents() []string {
-	components := slices.Clone(separatedComponents)
-	if *runtimeLoadWorkload == "postgres" {
-		components = []string{"control-a", "ingress-a", "relay-a", "relay-b", "publishers", "visitor-1", "pebble"}
-	}
-	if *runtimeLoadHATopology {
-		components = append(components, "control-b", "ingress-b")
-	}
-	if *runtimeLoadScenario == "control-restart" {
-		components = append(components, "relay-a-2", "relay-b-2")
-	}
-	return components
-}
-
 func separatedCAOrders(t *testing.T) int64 {
 	t.Helper()
 	var orders int64
-	for _, name := range separatedControls() {
+	for _, name := range separatedNames("controls") {
 		orders += separatedResource(t, name).CAOrders
 	}
 	return orders
@@ -183,8 +124,8 @@ func separatedRoots(t *testing.T, path string) *x509.CertPool {
 	return roots
 }
 
-func separatedHTTP(t *testing.T) *http.Client {
-	client, _ := newIntegrationHTTPSClient(t, separatedRoots(t, "roots.pem"), "", false)
+func separatedHTTP(t *testing.T, owner *runtimeTopology) *http.Client {
+	client, _ := newIntegrationHTTPSClient(t, separatedRoots(t, "roots.pem"), "", false, owner)
 	return client
 }
 
@@ -193,6 +134,11 @@ func TestSeparatedRuntimeSetup(t *testing.T) {
 	if *separatedComponent != "setup" {
 		t.Skip("run task go:test:load:runtime")
 	}
+	plan, err := newSeparatedPlan(*runtimeLoadWorkload, *runtimeLoadScenario, *runtimeLoadNetworkPath, *runtimeLoadPublicURLs, *runtimeLoadHATopology)
+	if err != nil {
+		t.Fatal(err)
+	}
+	separatedResult(t, "runtime-plan", plan)
 	if err := controlstate.Migrate(t.Context(), testutil.PostgresURL(t)); err != nil {
 		t.Fatal(err)
 	}
@@ -227,13 +173,13 @@ func TestSeparatedRuntimeSetup(t *testing.T) {
 func separatedConfig(t *testing.T, component string) daemonconfig.Config {
 	t.Helper()
 	role := daemonconfig.Role(component)
-	if component == "control-a" || component == "control-b" {
+	if slices.Contains(separatedNames("controls"), component) {
 		role = daemonconfig.RoleControl
 	}
-	if component == "ingress-a" || component == "ingress-b" {
+	if slices.Contains(separatedNames("ingresses"), component) {
 		role = daemonconfig.RoleIngress
 	}
-	if strings.HasPrefix(component, "relay-") {
+	if slices.Contains(separatedNames("relays"), component) {
 		role = daemonconfig.RoleRelay
 	}
 	cfg := splitTestConfig(role, "0.0.0.0:9090")
@@ -291,11 +237,8 @@ func separatedConfig(t *testing.T, component string) daemonconfig.Config {
 		cfg.IngressListen = "0.0.0.0:443"
 	case daemonconfig.RoleRelay:
 		cfg.ControlHostname = "control." + separatedDomain
-		serviceID := strings.TrimSuffix(component, "-2")
-		cfg.RelayServiceID, cfg.RelayID = serviceID, serviceID+"-1"
-		if serviceID != component {
-			cfg.RelayID = serviceID + "-2"
-		}
+		serviceID := separatedPlan(t)["relay-service."+component][0]
+		cfg.RelayServiceID, cfg.RelayID = serviceID, separatedPlan(t)["relay-id."+component][0]
 		cfg.RelayAddress = serviceID + "." + separatedDomain + ":443"
 		cfg.RelayTLSCertificateFile, cfg.RelayTLSPrivateKeyFile = "/load/"+serviceID+".pem", "/load/"+serviceID+".key"
 		cfg.RelayTCPListen, cfg.RelayUDPListen = "0.0.0.0:443", "0.0.0.0:443"
@@ -429,7 +372,7 @@ func serveSeparatedResources(t *testing.T, orders func() int64) {
 	t.Helper()
 	component := *separatedComponent
 	address := ":9091"
-	if slices.Contains(separatedAppComponents(), component) {
+	if slices.Contains(separatedNames("apps"), component) {
 		address = ":9092"
 	}
 	listener, err := net.Listen("tcp", address)
@@ -457,7 +400,7 @@ func serveSeparatedResources(t *testing.T, orders func() int64) {
 		}
 		value.CAOrders = orders()
 		value.NetworkNamespace = component
-		if slices.Contains(separatedAppComponents(), component) {
+		if slices.Contains(separatedNames("apps"), component) {
 			value.NetworkNamespace = separatedAppPublisher(component)
 		}
 		_ = json.NewEncoder(w).Encode(value)

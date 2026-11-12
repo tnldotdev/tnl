@@ -12,7 +12,7 @@ import (
 
 // QUICTransport owns one UDP socket shared by borrowed QUIC connections and a
 // non-QUIC packet view. its caller closes it after joining connections and drain;
-// canceling a dial or closing a session never closes this transport.
+// canceling a borrowed dial or closing a borrowed session never closes it.
 type QUICTransport struct {
 	transport *quic.Transport
 	packet    net.PacketConn

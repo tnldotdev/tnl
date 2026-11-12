@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -31,11 +32,12 @@ type databaseTLSFixture struct {
 	directory string
 }
 
-func (f *databaseTLSFixture) Close() {
+func (f *databaseTLSFixture) Close() error {
+	var err error
 	if f.container != nil {
-		terminate(f.container)
+		err = terminate(f.container)
 	}
-	_ = os.RemoveAll(f.directory)
+	return errors.Join(err, os.RemoveAll(f.directory))
 }
 
 // startDatabaseTLS provides real protocol negotiation and password auth. the
@@ -56,7 +58,7 @@ func startDatabaseTLS(ctx context.Context, service string) (_ *databaseTLSFixtur
 	fixture := &databaseTLSFixture{directory: directory}
 	defer func() {
 		if retErr != nil {
-			fixture.Close()
+			retErr = errors.Join(retErr, fixture.Close())
 		}
 	}()
 	if err := writeDatabaseCertificates(directory); err != nil {

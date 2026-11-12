@@ -17,6 +17,7 @@ import (
 )
 
 type integrationBinaryStandalone struct {
+	dependencies   *runtimeTopology
 	repositoryRoot string
 	tnlPath        string
 	databaseURL    string
@@ -45,13 +46,14 @@ func startIntegrationBinaryStandaloneWithBind(t *testing.T, containerReachable b
 	buildIntegrationBinary(t, repositoryRoot, tnldPath, "./cmd/tnld")
 	buildIntegrationBinary(t, repositoryRoot, tnlPath, "./cmd/tnl")
 	databaseURL := testutil.NewDisposablePostgresDatabaseURL(t, "standalone")
+	dependencies := newRuntimeTopology(t)
 	trustRoot := newIntegrationTestCA(t)
-	serverCertificate := trustRoot.issueServer(t, "*.127.0.0.1.nip.io")
+	serverCertificate := trustRoot.issueServer(t, "*.127.0.0.1.nip.io", dependencies)
 	const controlOrigin = "https://control.127.0.0.1.nip.io:8445"
-	oidcIssuer := binaryOIDCProvider(t, trustRoot.issueServer(t, "localhost"), controlOrigin)
-	dns := newIntegrationRoute53(t, "binary", "routes.127.0.0.1.nip.io")
-	pebble := startIntegrationPebble(t, 443, dns.address)
-	trustFile := filepath.Join(t.TempDir(), "integration-roots.pem")
+	oidcIssuer := binaryOIDCProvider(t, trustRoot.issueServer(t, "localhost", dependencies), controlOrigin)
+	dns := newIntegrationRoute53(t, "binary", "routes.127.0.0.1.nip.io", dependencies)
+	pebble := startIntegrationPebble(t, 443, dns.address, dependencies)
+	trustFile := filepath.Join(dependencies.tempDir(t), "integration-roots.pem")
 	trustedCertificates := append([]byte{}, trustRoot.certificatePEM...)
 	trustedCertificates = append(trustedCertificates, pebble.apiRootPEM...)
 	trustedCertificates = append(trustedCertificates, pebble.rootPEM...)
@@ -77,7 +79,11 @@ func startIntegrationBinaryStandaloneWithBind(t *testing.T, containerReachable b
 	if containerReachable {
 		controlBind = "0.0.0.0:8445"
 	}
-	startIntegrationControlProxy(t, nil, controlBind, controlBackend, controlTLS)
+	controlProxy, err := net.Listen("tcp", controlBind)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serveIntegrationControlProxy(t, dependencies, controlProxy, controlBackend, controlTLS)
 	// standalone creates its own internal listeners. the unused split-role
 	// addresses below only need to satisfy configuration validation.
 	publicListen := "127.0.0.1:443"
@@ -143,7 +149,7 @@ func startIntegrationBinaryStandaloneWithBind(t *testing.T, containerReachable b
 		"TNL_SERVER": controlOrigin, "TNL_STATE_DIR": stateDirectory,
 	})
 	binaryOIDCLogin(t, repositoryRoot, clientEnvironment, tnlPath, trustFile)
-	return &integrationBinaryStandalone{repositoryRoot: repositoryRoot, tnlPath: tnlPath, databaseURL: databaseURL, trustFile: trustFile,
+	return &integrationBinaryStandalone{dependencies: dependencies, repositoryRoot: repositoryRoot, tnlPath: tnlPath, databaseURL: databaseURL, trustFile: trustFile,
 		stateDirectory: stateDirectory, environment: clientEnvironment, server: server, pebble: pebble}
 }
 

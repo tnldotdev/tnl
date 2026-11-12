@@ -35,7 +35,7 @@ tasks:
     requires:
       vars: [SHARD]
     cmds:
-      - go -C tools/testharness run . --tnl-test-shard='{{.SHARD}}' postgres -- go test -race -v ./internal/daemon -run='^TestIntegration' -skip='^TestIntegration(ConnectorDirect|WorkloadTransportLifecycle$|PrivateDefaultLeaseCycles$|ConnectorRebindingRetainsApplicationAndTarget$|ConnectorSourceRebindingRetainsApplicationAndTarget$|ConnectorRebindingRetainsPostgresTransaction$)' -count=1 -timeout=8m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . --tnl-test-shard='{{.SHARD}}' postgres -- go test -race -v ./internal/daemon -run='^TestIntegration' -skip='^TestIntegration(ConnectorDirect|WorkloadTransport(Lifecycle|Closure)$|PrivateDefaultLeaseCycles$|ConnectorRebindingRetainsApplicationAndTarget$|ConnectorSourceRebindingRetainsApplicationAndTarget$|ConnectorRebindingRetainsPostgresTransaction$)' -count=1 -timeout=8m -args -tnl-test-tier=integration
 
   runtime:leases:
     desc: Cross production private visitor lease cycles and outage deadlines on real sockets
@@ -43,9 +43,14 @@ tasks:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='^TestIntegrationPrivateDefaultLeaseCycles$' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
   runtime:workload:
-    desc: Cross workload renewal and fixed expiry on real QUIC and TLS/TCP paths
+    desc: Retain capped and uncapped workload streams across real lease, proof, and hard deadlines
     cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='^TestIntegrationWorkloadTransportLifecycle$' -count=1 -timeout=8m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='^TestIntegrationWorkloadTransportLifecycle$' -count=1 -timeout=10m -args -tnl-test-tier=integration
+
+  runtime:workload:closure:
+    desc: Close workload TCP, HTTP, and PostgreSQL streams after revocation or an unrenewed lease
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='^TestIntegrationWorkloadTransportClosure$' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
   connector-direct:
     desc: Check relay-first ICE upgrades, repeated direct fallback, and retained application sessions with disposable PostgreSQL
@@ -80,12 +85,7 @@ tasks:
       - sh: test "$(uname -s)" = Linux
         msg: CLI integration requires Linux for isolated credential protection
     cmds:
-      - |
-        set -eu
-        build_dir="$(mktemp -d "${TMPDIR:-/tmp}/tnl-cli.XXXXXXXX")"
-        trap 'rm -rf "$build_dir"' EXIT
-        go build -buildvcs=false -o "$build_dir/tnl" ./cmd/tnl
-        go -C tools/testharness run . --tnl-test-shard='{{.SHARD}}' postgres -- go test -race -v ./cmd/tnl -run='{{.RUN}}' -skip='{{.SKIP}}' -count=1 -timeout='{{.TIMEOUT}}' -args -tnl-test-tier=integration -tnl-cli-binary="$build_dir/tnl"
+      - go -C tools/testharness run . --tnl-test-shard='{{.SHARD}}' postgres -- go test -race -v ./cmd/tnl -run='{{.RUN}}' -skip='{{.SKIP}}' -count=1 -timeout='{{.TIMEOUT}}' -args -tnl-test-tier=integration
 
   cli:shard:
     desc: Run an ordinary CLI shard, excluding the separately scheduled real-clock identity proof
@@ -111,7 +111,7 @@ tasks:
     vars:
       RUN: '{{default "^TestIntegration" .RUN}}'
     cmds:
-      - go test -race -v ./tests/integration/connector -run='{{.RUN}}' -count=1 -timeout=8m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . connections -- go test -race -v ./tests/integration/connector -run='{{.RUN}}' -count=1 -timeout=8m -args -tnl-test-tier=integration
 
   owner-lifecycle:
     desc: Check shared HTTP/PostgreSQL owner isolation with disposable PostgreSQL

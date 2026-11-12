@@ -10,8 +10,6 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
-	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -44,6 +42,7 @@ type serviceRuntimeIdentity struct {
 }
 
 type privateSeparatedFixture struct {
+	owner                       *runtimeTopology
 	relayTransport              *muxsession.QUICTransport
 	publicControlAddress        string
 	publicHTTP                  *http.Client
@@ -88,6 +87,7 @@ func newServiceRuntimeFixtureTiming(t *testing.T, standalone bool, opened chan<-
 func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<- privateObservation, defaults bool, processContext func(string) context.Context, configure ...func(*daemonconfig.Config, *http.Transport, *testCertificateAuthority)) *privateSeparatedFixture {
 	t.Helper()
 	databaseURL := testutil.NewDisposablePostgresDatabaseURL(t, "service-runtime")
+	owner := newRuntimeTopology(t)
 	if err := controlstate.Migrate(t.Context(), databaseURL); err != nil {
 		t.Fatal(err)
 	}
@@ -95,11 +95,14 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 	if err != nil {
 		t.Fatal(err)
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	control := &daemon{database: database, cancel: cancel, componentDone: make(chan error, 1), startedAt: time.Now()}
+	owner.ownDaemon(daemonconfig.RoleControl, control)
 	inspect, err := sql.Open("pgx", databaseURL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = inspect.Close() })
+	owner.cleanupResource(t, func() { _ = inspect.Close() })
 	ca := newTestCertificateAuthority(t)
 	const hostname = "control.private.integration.test"
 	controlTLS := serviceRuntimeTLS(t, ca, hostname)
@@ -108,14 +111,10 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 		IngressLeaseDuration: 5 * time.Second, RelayLeaseDuration: 5 * time.Second, LeaseRenewalInterval: 500 * time.Millisecond, ControlRetryInterval: 50 * time.Millisecond, RoutingTableWait: time.Second,
 		VisitorConnectionLimit: 128, PublisherConnectionLimit: 64, RelayStreamCapacity: 128, QUICMaxIncomingStreams: 128, QUICIdleTimeout: time.Minute, DrainTimeout: time.Second,
 		ClientHelloConnectionLimit: 128}
-	controlListener, privateControlListener := serviceRuntimeListener(t), serviceRuntimeListener(t)
+	controlListener, privateControlListener := serviceRuntimeListener(t, owner), serviceRuntimeListener(t, owner)
 	config.ControlListen, config.PrivateControlListen = controlListener.Addr().String(), privateControlListener.Addr().String()
-	var serviceListeners []net.Listener
-	if standalone {
-		config.ServicePortRanges, serviceListeners = reserveIntegrationServicePorts(t)
-	} else {
-		config.ServicePortRanges = integrationServicePorts(t)
-	}
+	serviceListeners := newServicePortListeners(t, owner)
+	config.ServicePortRanges = serviceListeners.inventory()
 	ports, err := config.ServicePortInventory()
 	if err != nil {
 		t.Fatal(err)
@@ -124,10 +123,10 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 		t.Fatal(err)
 	}
 	config.ControlTrustedProxies, config.ControlClientIPHeader = []string{"127.0.0.1/32"}, "X-Forwarded-For"
-	publicControlListener := serviceRuntimeListener(t)
+	publicControlListener := serviceRuntimeListener(t, owner)
 	publicControlAddress := publicControlListener.Addr().String()
-	serveIntegrationControlProxy(t, nil, publicControlListener, config.ControlListen, controlTLS)
-	pebble, dnsProvider := privateFixtureACME(t, database, &config)
+	serveIntegrationControlProxy(t, owner, publicControlListener, config.ControlListen, controlTLS)
+	pebble, dnsProvider := privateFixtureACME(t, owner, database, &config)
 	if defaults {
 		config.IngressLeaseDuration, config.RelayLeaseDuration = 30*time.Second, 30*time.Second
 		config.LeaseRenewalInterval, config.ControlRetryInterval = 10*time.Second, time.Second
@@ -135,11 +134,7 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 	var publicListener net.Listener
 	if standalone {
 		config.Role = daemonconfig.RoleStandalone
-		publicListener, err = net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = publicListener.Close() })
+		publicListener = serviceRuntimeListener(t, owner)
 		config.IngressListen = publicListener.Addr().String()
 		config.RelayUDPListen = "127.0.0.1:0"
 	}
@@ -151,13 +146,14 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 		t.Fatal(err)
 	}
 	serviceHTTP := &http.Client{Transport: serviceTransport, Timeout: 10 * time.Second}
-	t.Cleanup(serviceTransport.CloseIdleConnections)
+	owner.cleanupResource(t, serviceTransport.CloseIdleConnections)
 	secrets, err := serverhttp.NewBearerSecrets(serviceRuntimeClusterSecret, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	control := &daemon{database: database, controlTLS: controlTLS, serviceHTTP: serviceHTTP, clusterSecret: serviceRuntimeClusterSecret, clusterSecrets: secrets, cancel: cancel, componentDone: make(chan error, 1), startedAt: time.Now(), relayClientTLS: &tls.Config{RootCAs: ca.roots, MinVersion: tls.VersionTLS13}}
+	control.controlTLS, control.serviceHTTP = controlTLS, serviceHTTP
+	control.clusterSecret, control.clusterSecrets = serviceRuntimeClusterSecret, secrets
+	control.relayClientTLS = &tls.Config{RootCAs: ca.roots, MinVersion: tls.VersionTLS13}
 	metrics := observability.New("control")
 	if processContext != nil {
 		ctx = observability.WithMetrics(ctx, observability.FromContext(processContext("control")))
@@ -165,8 +161,6 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 	}
 	handler, err := newPublicAPIHandler(config, time.Now(), serviceHTTP, database, metrics, control, nil)
 	if err != nil {
-		cancel()
-		database.Close()
 		t.Fatal(err)
 	}
 	startPrivateFixtureWorkers(t, ctx, control, database, config, pebble, dnsProvider)
@@ -177,7 +171,7 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 		if !config.RequireProxyHeader {
 			settings.publicListener = combineIngressListeners(append([]net.Listener{publicListener}, serviceListeners...))
 		}
-		t.Cleanup(func() { _ = settings.publicListener.Close() })
+		owner.cleanupResource(t, func() { _ = settings.publicListener.Close() })
 		settings.relayTransportTLS = serviceRuntimeTLS(t, ca, settings.relayHostname)
 		settings.configurePublicServices = func(config *ingress.PublicServicesConfig) {
 			if !defaults {
@@ -186,8 +180,6 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 			config.Forwarder = observingServiceForwarder{ServiceForwarder: config.Forwarder, id: standaloneIngressID, opened: opened}
 		}
 		if err := control.startStandalone(ctx, settings, metrics, handler); err != nil {
-			cancel()
-			database.Close()
 			t.Fatal(err)
 		}
 		privateWait(t, 10*time.Second, func(ctx context.Context) (bool, error) {
@@ -197,34 +189,25 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 		settings := controlSettingsFrom(config)
 		settings.listener = controlListener
 		if err := control.startControl(settings, handler); err != nil {
-			cancel()
-			database.Close()
 			t.Fatal(err)
 		}
 		privateSettings := privateControlSettingsFrom(config)
 		privateSettings.listener = privateControlListener
 		if err := control.startPrivateControlAPIs(ctx, privateSettings, metrics); err != nil {
-			cancel()
-			database.Close()
 			t.Fatal(err)
 		}
 	}
-	t.Cleanup(func() {
-		if err := control.shutdown(time.Second); err != nil {
-			t.Errorf("private control shutdown: %v", err)
-		}
-	})
 	publicTransport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: ca.roots, MinVersion: tls.VersionTLS13}, DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, network, publicControlAddress)
 	}}
-	t.Cleanup(publicTransport.CloseIdleConnections)
+	owner.cleanupResource(t, publicTransport.CloseIdleConnections)
 	// runtime fixtures keep credentials in private temporary files, never the
 	// machine's login keychain; key protection is tested by the state owner.
-	state, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
+	state, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(owner.directory, "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = state.Close() })
+	owner.cleanupResource(t, func() { _ = state.Close() })
 	saveRuntimeOIDCSession(t, state, "https://"+hostname, databaseURL, config.ManagedDomain)
 	authenticated, err := auth.Authenticate(t.Context(), auth.Config{ServerEndpoint: "https://" + hostname, State: state, HTTPClient: &http.Client{Transport: publicTransport, Timeout: 10 * time.Second}, Diagnostics: io.Discard})
 	if err != nil {
@@ -238,7 +221,7 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &privateSeparatedFixture{relayTransport: transporttest.QUICTransport(t), publicControlAddress: publicControlAddress, publicHTTP: &http.Client{Transport: publicTransport, Timeout: 10 * time.Second}, databaseURL: databaseURL, inspect: inspect, roots: &tls.Config{RootCAs: ca.roots, MinVersion: tls.VersionTLS13}, controlConfig: config, serviceHTTP: serviceHTTP,
+	f := &privateSeparatedFixture{owner: owner, relayTransport: owner.quicTransport(t), publicControlAddress: publicControlAddress, publicHTTP: &http.Client{Transport: publicTransport, Timeout: 10 * time.Second}, databaseURL: databaseURL, inspect: inspect, roots: &tls.Config{RootCAs: ca.roots, MinVersion: tls.VersionTLS13}, controlConfig: config, serviceHTTP: serviceHTTP,
 		database: database, certificateAuthority: ca,
 		identity: serviceRuntimeIdentity{teamID: identity.PersonalTeamId, state: profile, routes: authenticated.Control, authority: authenticated.Authority}, tcpAddresses: make(map[string]string), quicAddresses: make(map[string]string)}
 	f.defaultTiming = defaults
@@ -262,40 +245,17 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 func (f *privateSeparatedFixture) startFixtureRelay(t *testing.T, id string) *privateRelayFixture {
 	t.Helper()
 	name := id + ".private.integration.test"
-	internal := serviceRuntimeListener(t)
+	internal := serviceRuntimeListener(t, f.owner)
 	// relay discovery uses the same advertised address for TCP, QUIC and STUN.
-	publisher, packet, err := reserveServiceRuntimeRelayListeners(net.Listen, net.ListenPacket)
+	publisher, packet, err := transporttest.ListenTCPUDP()
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = publisher.Close() })
-	t.Cleanup(func() { _ = packet.Close() })
+	f.owner.cleanupResource(t, func() { _ = publisher.Close(); _ = packet.Close() })
 	settings := relayProcessSettings{controlEndpoint: f.controlConfig.PrivateControlEndpoint(), controlAddress: f.controlConfig.PrivateControlListen, clusterSecret: serviceRuntimeClusterSecret,
 		relayServiceID: id, relayID: id, relayAddress: publisher.Addr().String(), tlsServerName: name, transportTLS: serviceRuntimeTLS(t, f.certificateAuthority, name), internalListener: internal, internalAddress: internal.Addr().String(),
 		tcpListener: publisher, udpPacket: packet, udpListen: packet.LocalAddr().String(), quic: f.controlConfig.RelayQUICConfig(), runtime: relaySettingsFrom(f.controlConfig)}
 	return f.runFixtureRelay(t, settings)
-}
-
-// TCP's ephemeral allocator cannot see occupied UDP ports. hold both sockets
-// through relay startup, releasing a partial reservation before choosing again.
-func reserveServiceRuntimeRelayListeners(listen func(string, string) (net.Listener, error), packet func(string, string) (net.PacketConn, error)) (net.Listener, net.PacketConn, error) {
-	var collision error
-	for range 16 {
-		listener, err := listen("tcp4", "127.0.0.1:0")
-		if err != nil {
-			return nil, nil, err
-		}
-		packets, err := packet("udp4", listener.Addr().String())
-		if err == nil {
-			return listener, packets, nil
-		}
-		closed := listener.Close()
-		if closed != nil || !errors.Is(err, syscall.EADDRINUSE) {
-			return nil, nil, errors.Join(err, closed)
-		}
-		collision = err
-	}
-	return nil, nil, collision
 }
 
 func (f *privateSeparatedFixture) runFixtureRelay(t *testing.T, settings relayProcessSettings) *privateRelayFixture {
@@ -312,16 +272,11 @@ func (f *privateSeparatedFixture) runFixtureRelay(t *testing.T, settings relayPr
 		t.Fatal(err)
 	}
 	relay := &daemon{serviceHTTP: f.serviceHTTP, clusterSecret: serviceRuntimeClusterSecret, clusterSecrets: secrets, cancel: cancel, componentDone: make(chan error, 1), startedAt: time.Now()}
+	fixture := &privateRelayFixture{process: relay, settings: settings, stop: f.owner.ownDaemon(daemonconfig.RoleRelay, relay)}
 	if err := relay.startRelay(lifetime, settings, metrics); err != nil {
-		cancel()
 		t.Fatal(err)
 	}
-	fixture := &privateRelayFixture{process: relay, settings: settings, stop: sync.OnceValue(func() error { return relay.shutdown(time.Second) })}
-	t.Cleanup(func() {
-		if err := fixture.stop(); err != nil && !errors.Is(err, context.DeadlineExceeded) {
-			t.Errorf("private relay shutdown: %v", err)
-		}
-	})
+	fixture.settings.internalListener, fixture.settings.tcpListener, fixture.settings.udpPacket = nil, nil, nil
 	privateWait(t, 10*time.Second, func(context.Context) (bool, error) {
 		return relay.readyRelays(daemonconfig.RoleRelay, time.Now()) == nil, nil
 	})
@@ -368,13 +323,13 @@ func serviceRuntimeTLS(t *testing.T, ca *testCertificateAuthority, hostname stri
 	return &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate}}
 }
 
-func serviceRuntimeListener(t *testing.T) net.Listener {
+func serviceRuntimeListener(t *testing.T, owner *runtimeTopology) net.Listener {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = listener.Close() })
+	owner.cleanupResource(t, func() { _ = listener.Close() })
 	return listener
 }
 

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"errors"
 	"sync"
 	"time"
 
@@ -89,6 +90,17 @@ func (a *ConnectorAcceptor) currentLease(proof tunnelv1.ConnectorPairLegProof) (
 }
 
 func (a *ConnectorAcceptor) claim(ctx context.Context, outer muxsession.Session, proof tunnelv1.ConnectorPairLegProof) (connectorClaim, error) {
+	claim, err := a.claimFromControl(ctx, outer, proof)
+	if err = errors.Join(err, context.Cause(ctx)); err != nil {
+		return connectorClaim{}, connectorClaimError(err)
+	}
+	return claim, nil
+}
+
+// validate the control reply independently of cancellation. claim checks its
+// caller before returning authority; renew first checks the retained binding,
+// so concurrent cancellation cannot hide a changed key or an expired deadline.
+func (a *ConnectorAcceptor) claimFromControl(ctx context.Context, outer muxsession.Session, proof tunnelv1.ConnectorPairLegProof) (connectorClaim, error) {
 	denied := &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 	accepted, ok := outer.(muxsession.AcceptedPeer)
 	if !ok || proof.Validate() != nil {
@@ -113,7 +125,7 @@ func (a *ConnectorAcceptor) claim(ctx context.Context, outer muxsession.Session,
 	started := time.Now()
 	claim, err := a.Claim.ClaimConnectorPeerPairLegFromAcceptedSocket(ctx, lease, source, proof, ed25519.Sign(a.SigningKey, message))
 	if err != nil {
-		return connectorClaim{}, connectorClaimError(err)
+		return connectorClaim{}, err
 	}
 	key, keyErr := base64.RawURLEncoding.Strict().DecodeString(claim.Key)
 	defer clear(key)
@@ -122,9 +134,9 @@ func (a *ConnectorAcceptor) claim(ctx context.Context, outer muxsession.Session,
 	state := tunnelv1.ConnectorPeerLegBindingState(claim.BindingState)
 	_, idErr := tunnelv1.ParsePeerDeliveryIdentifier(claim.DeliveryId)
 	if claim.PairId != proof.PairID || claim.DeliveryGeneration != proof.DeliveryGeneration || claim.ConnectionSlot != proof.ConnectionSlot || claim.SourceIp != source.String() ||
-		(state != tunnelv1.ConnectorPeerLegBindingActive && state != tunnelv1.ConnectorPeerLegBindingPrepared && (state != "" || claim.DeliveryGeneration != 1)) ||
+		(state != tunnelv1.ConnectorPeerLegBindingActive && state != tunnelv1.ConnectorPeerLegBindingPrepared) ||
 		state == tunnelv1.ConnectorPeerLegBindingPrepared && duration > 10*time.Second ||
-		keyErr != nil || len(key) != 32 || idErr != nil || claim.ObservedAt.IsZero() || duration <= 0 || duration > 5*time.Minute || !until.After(time.Now()) || ctx.Err() != nil {
+		keyErr != nil || len(key) != 32 || idErr != nil || claim.ObservedAt.IsZero() || duration <= 0 || duration > 5*time.Minute || !until.After(time.Now()) {
 		return connectorClaim{}, denied
 	}
 	if _, current := a.currentLease(proof); !current {
@@ -156,37 +168,17 @@ func (a *ConnectorAcceptor) serve(ctx context.Context, outer muxsession.Session,
 	if claim.source == nil {
 		return &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 	}
-	binding := newConnectorBindingCarrier(nil, claim.source, claim.receipt.BindingState)
+	d := newConnectorDelivery(ctx, connection.packets.Done(), proof, claim)
+	defer d.close()
 	id, _ := tunnelv1.ParsePeerDeliveryIdentifier(claim.receipt.DeliveryID)
-	carrier, err := packets.Register(peerBinding(claim, id, 1, binding.admit), false)
+	carrier, err := packets.Register(peerBinding(claim, id, 1, d.admit), false)
 	if err != nil {
 		return err
 	}
 	defer carrier.Close()
-	binding.Carrier = &connectorSourceCarrier{Carrier: carrier, source: claim.source}
-	life, cancel := context.WithCancel(ctx)
-	defer cancel()
-	d := &connectorDelivery{ctx: life, cancel: cancel, claim: claim, proof: proof, connection: connection, carrier: binding, binding: binding, until: claim.receipt.ExpiresAt, changed: make(chan struct{})}
-	watchDone := make(chan struct{})
-	go func() { defer close(watchDone); d.watch(a) }()
-	defer func() {
-		cancel()
-		<-watchDone
-		if d.bridge != nil {
-			d.bridge.detach(d)
-		}
-	}()
-	return session.HandleConnectorLegControl(life, func(ctx context.Context, selection tunnelv1.ConnectorLegBinding) error {
-		d.mu.Lock()
-		defer d.mu.Unlock()
-		if d.ctx.Err() != nil || !d.until.After(time.Now()) || d.bridge != nil {
-			return &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
-		}
-		if err := d.claim.source.check(); err != nil {
-			return err
-		}
-		var err error
-		d.bridge, err = connection.packets.selectBridge(ctx, a, d, id, selection)
+	d.carrier = newConnectorBindingCarrier(carrier, claim.source, d.admit, d.cancel)
+	return session.HandleConnectorLegControl(d.ctx, func(ctx context.Context, selection tunnelv1.ConnectorLegBinding) error {
+		_, err := connection.packets.selectBridge(ctx, a, d, id, selection)
 		return err
 	}, func(ctx context.Context, proof tunnelv1.ConnectorPairLegProof) (tunnelv1.ConnectorPairLegAccepted, error) {
 		return d.renew(ctx, a, outer, proof)

@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"reflect"
 	"regexp"
@@ -55,14 +56,27 @@ func TestShardsCoverEveryTestOnceAndRemainStable(t *testing.T) {
 }
 
 func TestShardDiscoveryAndExecutionPreserveFlagsAndExclusions(t *testing.T) {
+	prepared, err := prepareTests(t.Context(), ".", []string{"go", "test", "-race", "-v", "./testdata/shards", "-run", "^Test", "-skip=^TestIgnored$", "-count=1", "-args", "-tnl-probe=kept"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := prepared.close(); err != nil {
+			t.Error(err)
+		}
+	})
+	// neither listing nor execution can call go after preparation.
+	t.Setenv("PATH", t.TempDir())
 	seen := make(map[string]int)
 	for _, shard := range []string{"1/2", "2/2"} {
-		command := []string{"go", "test", "-v", "./testdata/shards", "-run", "^Test", "-skip=^TestIgnored$", "-count=1", "-args", "-tnl-probe=kept"}
-		selected, err := shardGoTestCommand(t.Context(), ".", command, shard)
-		if err != nil {
+		selected := *prepared
+		selected.arguments = slices.Clone(prepared.arguments)
+		if err := selected.selectShard(t.Context(), shard); err != nil {
 			t.Fatal(err)
 		}
-		output, err := exec.CommandContext(t.Context(), selected[0], selected[1:]...).CombinedOutput()
+		child := exec.CommandContext(t.Context(), selected.binaries[0].path, selected.arguments...)
+		child.Dir = selected.binaries[0].directory
+		output, err := child.CombinedOutput()
 		if err != nil {
 			t.Fatalf("run shard %s: %v\n%s", shard, err, output)
 		}
@@ -71,6 +85,12 @@ func TestShardDiscoveryAndExecutionPreserveFlagsAndExclusions(t *testing.T) {
 				seen[name]++
 			}
 		}
+	}
+	if err := prepared.close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(prepared.directory); !os.IsNotExist(err) {
+		t.Fatalf("prepared artifacts remain: %v", err)
 	}
 	for _, name := range []string{"TestAlpha", "TestAlphabet", "TestBeta", "TestGamma"} {
 		if seen[name] != 1 {
@@ -96,7 +116,11 @@ func TestShardRejectsMissingTestsAndInvalidSelection(t *testing.T) {
 		{"go", "test", ".", "-run"},
 		{"other", "test", ".", "-run=Test"},
 	} {
-		if _, err := shardGoTestCommand(t.Context(), ".", command, "1/4"); err == nil {
+		plan, err := parseTestCommand(command)
+		if err == nil {
+			err = (&preparedTests{plan: plan}).selectShard(t.Context(), "1/4")
+		}
+		if err == nil {
 			t.Fatalf("accepted unsupported shard command %v", command)
 		}
 	}
@@ -113,6 +137,15 @@ func TestShardRejectsMissingTestsAndInvalidSelection(t *testing.T) {
 }
 
 func TestSingleShardAccountsForSelectionWithoutRewritingSubtests(t *testing.T) {
+	prepared, err := prepareTests(t.Context(), ".", []string{"go", "test", "./testdata/shards"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := prepared.close(); err != nil {
+			t.Error(err)
+		}
+	})
 	for _, shard := range []string{"", "1/1"} {
 		for _, command := range [][]string{
 			{"go", "test", "./testdata/shards", "-run=^TestAlpha$/child", "-args", "-tnl-probe=kept"},
@@ -120,13 +153,22 @@ func TestSingleShardAccountsForSelectionWithoutRewritingSubtests(t *testing.T) {
 			{"go", "test", "./testdata/shards", "-run=^Test[[:alpha:]/]+$/child", "-args", "-tnl-probe=kept"},
 			{"go", "test", "./testdata/shards", "-args", "-tnl-probe=kept"},
 		} {
-			selected, err := shardGoTestCommand(t.Context(), ".", command, shard)
-			if err != nil || !reflect.DeepEqual(selected, command) {
-				t.Fatalf("single shard %q changed selection %v: %v, %v", shard, command, selected, err)
+			plan, err := parseTestCommand(command)
+			if err != nil {
+				t.Fatal(err)
+			}
+			selected := &preparedTests{plan: plan, binaries: prepared.binaries, arguments: slices.Clone(plan.arguments)}
+			err = selected.selectShard(t.Context(), shard)
+			if err != nil || !reflect.DeepEqual(selected.arguments, plan.arguments) {
+				t.Fatalf("single shard %q changed selection %v: %v, %v", shard, command, selected.arguments, err)
 			}
 		}
 		command := []string{"go", "test", "./testdata/shards", "-run=^TestMissing$", "-args", "-tnl-probe=kept"}
-		if _, err := shardGoTestCommand(t.Context(), ".", command, shard); err == nil {
+		plan, err := parseTestCommand(command)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := (&preparedTests{plan: plan, binaries: prepared.binaries, arguments: plan.arguments}).selectShard(t.Context(), shard); err == nil {
 			t.Fatalf("single shard %q accepted an empty selector", shard)
 		}
 	}
@@ -137,7 +179,16 @@ func TestSingleShardAccountsForSelectionWithoutRewritingSubtests(t *testing.T) {
 
 func TestShardDiscoveryPreservesGoTestDiagnostics(t *testing.T) {
 	command := []string{"go", "test", "./testdata/shards", "-run=^TestAlpha$", "-args", "-tnl-unregistered-tier=integration"}
-	_, err := shardGoTestCommand(t.Context(), ".", command, "")
+	prepared, err := prepareTests(t.Context(), ".", command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := prepared.close(); err != nil {
+			t.Error(err)
+		}
+	})
+	err = prepared.selectShard(t.Context(), "")
 	var exitError *exec.ExitError
 	if !errors.As(err, &exitError) {
 		t.Fatalf("discovery failure lost its process exit: %v", err)

@@ -29,10 +29,16 @@ func TestPreparedConnectorCloseJoinsRenewalDecision(t *testing.T) {
 		joined  bool
 	}{
 		{name: "owned stop"},
+		{name: "joined owned stop", joined: true},
 		{name: "denial", failure: denied},
 		{name: "denial joined with stop", failure: denied, joined: true},
+		{name: "stale decision joined with denial", failure: errors.Join(tunnel.ErrConnectorPermissionStale, denied)},
+		{name: "stale decision joined with denial and stop", failure: errors.Join(tunnel.ErrConnectorPermissionStale, denied), joined: true},
+		{name: "stale decision joined with independent cancellation", failure: errors.Join(tunnel.ErrConnectorPermissionStale, context.Canceled)},
 		{name: "independent cancellation", failure: context.Canceled},
+		{name: "cancellation joined with stop", failure: context.Canceled, joined: true},
 		{name: "deadline", failure: context.DeadlineExceeded},
+		{name: "deadline joined with stop", failure: context.DeadlineExceeded, joined: true},
 		{name: "another stream stopped", failure: &preparedPermissionStop{owner: &PreparedConnector{}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -47,11 +53,11 @@ func TestPreparedConnectorCloseJoinsRenewalDecision(t *testing.T) {
 				<-ctx.Done()
 				close(stopped)
 				<-release
-				if test.failure == nil {
-					return context.Cause(ctx)
-				}
 				if test.joined {
 					return errors.Join(context.Cause(ctx), test.failure)
+				}
+				if test.failure == nil {
+					return context.Cause(ctx)
 				}
 				return test.failure
 			})

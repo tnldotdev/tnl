@@ -111,7 +111,7 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			target := startPrivateEchoTarget(t)
+			target := startPrivateEchoTarget(t, f.owner)
 			quic, tcp := f.connectors()
 			pubCtx, stopPub := context.WithCancel(t.Context())
 			ready, pubDone := make(chan struct{}), make(chan error, 1)

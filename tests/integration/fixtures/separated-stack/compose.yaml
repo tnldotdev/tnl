@@ -124,7 +124,6 @@ services:
       retries: 10
 
   postgres-target:
-    profiles: [postgres-load]
     image: docker.io/library/postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
     cpus: "${APP_CPUS:-1}"
     mem_limit: "${APP_MEMORY:-512m}"
@@ -161,6 +160,11 @@ services:
       - -tnl-test-tier=runtime-load
       - -tnl-test-postgres-url=postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
       - -tnl-separated-component=setup
+      - -tnl-runtime-load-workload=${RUNTIME_WORKLOAD:-public-url}
+      - -tnl-runtime-load-public-urls=${PUBLIC_URLS:-4}
+      - -tnl-runtime-load-ha-topology=${HA_TOPOLOGY:-1}
+      - -tnl-runtime-load-scenario=${SCENARIO:-relay-restart}
+      - -tnl-runtime-load-network-path=${NETWORK_PATH:-forwarding}
 
   control-a:
     <<: *runtime
@@ -181,7 +185,6 @@ services:
 
   control-b:
     <<: *runtime
-    profiles: [ha]
     cpus: "${CONTROL_CPUS:-1}"
     mem_limit: "${CONTROL_MEMORY:-2g}"
     memswap_limit: "${CONTROL_MEMORY:-2g}"
@@ -212,7 +215,6 @@ services:
 
   ingress-b:
     <<: *runtime
-    profiles: [ha]
     cap_add: [NET_ADMIN]
     cpus: "${INGRESS_CPUS:-1}"
     mem_limit: "${INGRESS_MEMORY:-2g}"
@@ -252,7 +254,6 @@ services:
 
   relay-a-2:
     <<: *runtime
-    profiles: [replicated-relays]
     cap_add: [NET_ADMIN]
     cpus: "${RELAY_A_CPUS:-1}"
     mem_limit: "${RELAY_A_MEMORY:-2g}"
@@ -266,7 +267,6 @@ services:
 
   relay-b-2:
     <<: *runtime
-    profiles: [replicated-relays]
     cap_add: [NET_ADMIN]
     cpus: "${RELAY_B_CPUS:-1}"
     mem_limit: "${RELAY_B_MEMORY:-2g}"

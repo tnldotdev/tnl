@@ -3,8 +3,11 @@ package tunnel
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -273,5 +276,141 @@ func TestSingleUseSlotsWaitForReplacementAndResetFallbackPreference(t *testing.T
 		}
 	case <-ctx.Done():
 		t.Fatal("replacement did not connect")
+	}
+}
+
+type cleanupFailureSlot struct {
+	*drainingSlot
+	err     error
+	closing chan struct{}
+	finish  chan struct{}
+	closes  atomic.Int32
+}
+
+func (s *cleanupFailureSlot) Serve(ctx context.Context) error {
+	select {
+	case err := <-s.result:
+		return err
+	case <-ctx.Done():
+		// keep this worker on a durable channel while AfterFunc owns Close.
+		// synctest does not consider contention on sync.Once durably blocked.
+		<-s.finish
+		return context.Cause(ctx)
+	}
+}
+
+func (s *cleanupFailureSlot) Close() error {
+	s.closes.Add(1)
+	_ = s.drainingSlot.Close()
+	close(s.closing)
+	<-s.finish
+	return s.err
+}
+
+func TestSlotsRetainCleanupAcrossStopReplacementRotationAndLateConnect(t *testing.T) {
+	for _, boundary := range []string{"stop", "replacement", "rotation", "late connect"} {
+		t.Run(boundary, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				cleanupErr := errors.New("retired session cleanup failed")
+				old := &cleanupFailureSlot{drainingSlot: newDrainingSlot(), err: errors.Join(context.Canceled, cleanupErr), closing: make(chan struct{}), finish: make(chan struct{})}
+				replacement := newDrainingSlot()
+				entered, release := make(chan struct{}), make(chan struct{})
+				var calls atomic.Int32
+				paths, err := NewSlots(ctx, SlotsConfig{Connect: func(ctx context.Context, _ uint8, _ bool) (SlotSession, error) {
+					if calls.Add(1) == 1 {
+						close(entered)
+						if boundary == "late connect" {
+							<-ctx.Done()
+							<-release
+						}
+						return old, nil
+					}
+					return replacement, nil
+				}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := paths.Set(0, "initial"); err != nil {
+					t.Fatal(err)
+				}
+				synctest.Wait()
+				<-entered
+				switch boundary {
+				case "stop":
+					cancel() // force the context.AfterFunc closing path.
+				case "replacement", "late connect":
+					if err := paths.Set(0, "replacement"); err != nil {
+						t.Fatal(err)
+					}
+					close(release)
+				case "rotation":
+					old.result <- ErrRotateSession
+					synctest.Wait()
+					close(old.release)
+				}
+				synctest.Wait()
+				select {
+				case <-old.closing:
+				default:
+					t.Error("proof did not reach the retired session's physical Close")
+				}
+				done := make(chan error, 1)
+				go func() { done <- paths.Close() }()
+				synctest.Wait()
+				select {
+				case err := <-done:
+					t.Error("slots returned before joining physical session cleanup", err)
+					done <- err
+				default:
+				}
+				close(old.finish)
+				err = <-done
+				if !errors.Is(err, context.Canceled) || !errors.Is(err, cleanupErr) || old.closes.Load() != 1 {
+					t.Fatal("slots lost the retired cleanup failure or closed twice", err, old.closes.Load())
+				}
+				if again := paths.Close(); again != err || old.closes.Load() != 1 {
+					t.Fatal("slots did not return their cached cleanup failure", again)
+				}
+			})
+		})
+	}
+}
+
+func TestSlotsRetainOnlyClassifiedConnectCleanupAfterCancellation(t *testing.T) {
+	for _, cleanupFailed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cleanup=%t", cleanupFailed), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				cause, cleanupErr, dialErr := errors.New("owner canceled"), errors.New("failed dial cleanup failed"), errors.New("recoverable network failure")
+				ctx, cancel := context.WithCancelCause(t.Context())
+				entered := make(chan struct{})
+				paths, err := NewSlots(ctx, SlotsConfig{Connect: func(ctx context.Context, _ uint8, _ bool) (SlotSession, error) {
+					close(entered)
+					<-ctx.Done()
+					err := errors.Join(ctx.Err(), context.Cause(ctx), dialErr)
+					if cleanupFailed {
+						err = errors.Join(err, &SessionCleanupError{Err: cleanupErr})
+					}
+					return nil, err
+				}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := paths.Set(0, "initial"); err != nil {
+					t.Fatal(err)
+				}
+				<-entered
+				cancel(cause)
+				err = paths.Close()
+				if cleanupFailed {
+					if !errors.Is(err, cleanupErr) || !errors.Is(err, cause) || !errors.Is(err, context.Canceled) || !errors.Is(err, dialErr) {
+						t.Fatal("classified failed-dial cleanup lost independent causes under cancellation", err)
+					}
+				} else if err != nil {
+					t.Fatal("recoverable network failure became a permanent shutdown failure", err)
+				}
+			})
+		})
 	}
 }

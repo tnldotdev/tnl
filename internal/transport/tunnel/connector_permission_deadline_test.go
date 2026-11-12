@@ -32,6 +32,36 @@ type permissionDeadlineSession struct {
 	stream *permissionDeadlineStream
 }
 
+type permissionRejectedDeadline struct {
+	muxsession.Stream
+	err error
+}
+
+func (s *permissionRejectedDeadline) SetWriteDeadline(until time.Time) error {
+	if s.err != nil {
+		return s.err
+	}
+	return s.Stream.SetWriteDeadline(until)
+}
+
+func TestConnectorPermissionDeadlineFailureFencesQueuedSibling(t *testing.T) {
+	client, server := newMemoryPair(t)
+	writer, _ := permissionControlPair(t, client, server)
+	failure := errors.New("cannot set shared stream deadline")
+	stream := &permissionRejectedDeadline{Stream: writer.stream, err: failure}
+	var gate ConnectorPermissionGate
+	writeGate := make(chan struct{}, 1)
+	wrote := false
+	write := func(io.Writer) error { wrote = true; return nil }
+	if shared, err := gate.write(tunnelContext(t), stream, writeGate, write); !shared || !errors.Is(err, failure) {
+		t.Fatal("shared stream setup failure became a visitor-local failure", err)
+	}
+	stream.err = nil
+	if shared, err := gate.write(tunnelContext(t), stream, writeGate, write); !shared || !errors.Is(err, failure) || wrote {
+		t.Fatal("a sibling entered framing after the shared stream failed", err)
+	}
+}
+
 func (s *permissionDeadlineSession) OpenStream(ctx context.Context) (muxsession.Stream, error) {
 	stream, err := s.Session.OpenStream(ctx)
 	if err != nil {

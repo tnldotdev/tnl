@@ -33,29 +33,30 @@ type standalonePublishFixture struct {
 func newStandalonePublishFixture(t *testing.T, hostnameLabel string, beforeStart ...func(daemonconfig.Config)) *standalonePublishFixture {
 	t.Helper()
 	databaseURL, inspect := standaloneTestDatabase(t)
-	publicListener := serviceRuntimeListener(t)
-	relayUDP := integrationPacketListener(t)
+	owner := newRuntimeTopology(t)
+	publicListener := serviceRuntimeListener(t, owner)
+	relayUDP := integrationPacketListener(t, owner)
 	publicAddress, relayUDPAddress := publicListener.Addr().String(), relayUDP.LocalAddr().String()
-	dns := newPrivateFixtureDNS(t)
-	pebble := startIntegrationPebble(t, integrationPort(t, publicAddress), dns.address)
-	cfg, listeners := standalonePublishConfig(t, databaseURL, publicListener, relayUDP, pebble.directoryURL)
+	dns := newPrivateFixtureDNS(t, owner)
+	pebble := startIntegrationPebble(t, integrationPort(t, publicAddress), dns.address, owner)
+	cfg, listeners := standalonePublishConfig(t, databaseURL, publicListener, relayUDP, pebble.directoryURL, owner)
 	ca := newIntegrationTestCA(t)
-	controlCertificate := ca.issueServer(t, cfg.ServerHostname())
+	controlCertificate := ca.issueServer(t, cfg.ServerHostname(), owner)
 	// publication fixtures exercise public URL issuance. relay DNS-01 polling
 	// belongs to the dedicated automatic relay certificate suite.
-	relayCertificate := ca.issueServer(t, cfg.StandaloneRelayHostname())
+	relayCertificate := ca.issueServer(t, cfg.StandaloneRelayHostname(), owner)
 	cfg.RelayTLSCertificateFile, cfg.RelayTLSPrivateKeyFile = relayCertificate.certificateFile, relayCertificate.privateKeyFile
 	relayTLS := &tls.Config{RootCAs: ca.roots, MinVersion: tls.VersionTLS13}
 	controlTLS, err := staticServerTLS(controlCertificate.certificateFile, controlCertificate.privateKeyFile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	publicControl := unusedTCPAddress(t)
+	controlProxy := serviceRuntimeListener(t, owner)
+	publicControl := controlProxy.Addr().String()
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	owner := newRuntimeTopology(t)
-	startIntegrationControlProxy(t, owner, publicControl, cfg.ControlListen, controlTLS)
+	serveIntegrationControlProxy(t, owner, controlProxy, cfg.ControlListen, controlTLS)
 	for _, check := range beforeStart {
 		check(cfg)
 	}
@@ -77,20 +78,20 @@ func newStandalonePublishFixture(t *testing.T, hostnameLabel string, beforeStart
 		visitor: newIntegrationVisitor(t, pebble.roots, publicAddress, owner)}
 }
 
-func standalonePublishConfig(t *testing.T, databaseURL string, publicListener net.Listener, relayUDP net.PacketConn, directoryURL string) (daemonconfig.Config, runtimeListeners) {
+func standalonePublishConfig(t *testing.T, databaseURL string, publicListener net.Listener, relayUDP net.PacketConn, directoryURL string, owner *runtimeTopology) (daemonconfig.Config, runtimeListeners) {
 	t.Helper()
 	const serverDomain = "integration.test"
 	// standalone uses one public listener and creates its internal listeners on
 	// :0 itself. these required but unused split-role addresses need no probes.
-	servicePorts, serviceListeners := reserveIntegrationServicePorts(t)
+	serviceListeners := newServicePortListeners(t, owner)
 	listeners := runtimeListeners{
-		control: serviceRuntimeListener(t), metrics: serviceRuntimeListener(t),
+		control: serviceRuntimeListener(t, owner), metrics: serviceRuntimeListener(t, owner),
 		relayUDP: relayUDP,
 		ingress:  combineIngressListeners(append([]net.Listener{publicListener}, serviceListeners...)),
 	}
-	t.Cleanup(func() { _ = listeners.ingress.Close() })
+	owner.cleanupResource(t, func() { _ = listeners.ingress.Close() })
 	return daemonconfig.Config{
-		ServicePortRanges: servicePorts,
+		ServicePortRanges: serviceListeners.inventory(),
 		Role:              daemonconfig.RoleStandalone, DatabaseURL: databaseURL, MetricsListen: listeners.metrics.Addr().String(),
 		ControlListen: listeners.control.Addr().String(), PrivateControlListen: "127.0.0.1:1", IngressListen: publicListener.Addr().String(),
 		ControlTrustedProxies: []string{"127.0.0.1/32"}, ControlClientIPHeader: "X-Forwarded-For",

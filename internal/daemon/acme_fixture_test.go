@@ -36,10 +36,10 @@ func newIntegrationTestCA(t *testing.T) *testCertificateAuthority {
 	return newTestCertificateAuthority(t)
 }
 
-func (c *testCertificateAuthority) issueServer(t *testing.T, hostname string) integrationCertificate {
+func (c *testCertificateAuthority) issueServer(t *testing.T, hostname string, owner *runtimeTopology) integrationCertificate {
 	t.Helper()
 	material := c.issue(t, hostname)
-	directory := t.TempDir()
+	directory := owner.tempDir(t)
 	certificate := integrationCertificate{filepath.Join(directory, "certificate.pem"), filepath.Join(directory, "private-key.pem")}
 	if err := errors.Join(
 		os.WriteFile(certificate.certificateFile, material.certificatePEM, 0o600),
@@ -59,7 +59,7 @@ type integrationPebble struct {
 	logPath      string
 }
 
-func startIntegrationPebble(t *testing.T, validationPort int, dnsAddress string) integrationPebble {
+func startIntegrationPebble(t *testing.T, validationPort int, dnsAddress string, topology *runtimeTopology) integrationPebble {
 	t.Helper()
 	pebblePath, err := exec.LookPath("pebble")
 	if err != nil {
@@ -67,7 +67,7 @@ func startIntegrationPebble(t *testing.T, validationPort int, dnsAddress string)
 	}
 	apiAddress, managementAddress := unusedTCPAddress(t), unusedTCPAddress(t)
 	apiCA := newIntegrationTestCA(t)
-	apiCertificate := apiCA.issueServer(t, "localhost")
+	apiCertificate := apiCA.issueServer(t, "localhost", topology)
 	configuration := map[string]any{"pebble": map[string]any{
 		"listenAddress": apiAddress, "managementListenAddress": managementAddress,
 		"certificate": apiCertificate.certificateFile, "privateKey": apiCertificate.privateKeyFile,
@@ -83,16 +83,16 @@ func startIntegrationPebble(t *testing.T, validationPort int, dnsAddress string)
 	if err != nil {
 		t.Fatal(err)
 	}
-	configurationFile := filepath.Join(t.TempDir(), "pebble.json")
+	configurationFile := filepath.Join(topology.tempDir(t), "pebble.json")
 	if err := os.WriteFile(configurationFile, encoded, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	logPath := filepath.Join(t.TempDir(), "pebble.log")
+	logPath := filepath.Join(topology.tempDir(t), "pebble.log")
 	logFile, err := os.Create(logPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = logFile.Close() })
+	topology.cleanupResource(t, func() { _ = logFile.Close() })
 	command := exec.Command(pebblePath, "-config", configurationFile, "-strict=false", "-dnsserver", dnsAddress)
 	command.Env = append(os.Environ(), "PEBBLE_AUTHZREUSE=0", "PEBBLE_VA_ALWAYS_VALID=0", "PEBBLE_VA_NOSLEEP=1", "PEBBLE_WFE_NONCEREJECT=0")
 	command.Stdout, command.Stderr = logFile, logFile
@@ -100,7 +100,7 @@ func startIntegrationPebble(t *testing.T, validationPort int, dnsAddress string)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
+	topology.cleanupResource(t, func() {
 		if err := owner.shutdown(5*time.Second, 5*time.Second); err != nil {
 			t.Errorf("Pebble shutdown: %v", err)
 		}
@@ -117,7 +117,7 @@ func startIntegrationPebble(t *testing.T, validationPort int, dnsAddress string)
 	rootURL := "https://localhost:" + managementPort + "/roots/0"
 	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: apiCA.roots, MinVersion: tls.VersionTLS12}}
 	httpClient := &http.Client{Transport: transport, Timeout: time.Second}
-	t.Cleanup(transport.CloseIdleConnections)
+	topology.cleanupResource(t, transport.CloseIdleConnections)
 	var roots *x509.CertPool
 	var rootPEM []byte
 	waitForIntegrationCondition(t, 10*time.Second, func(ctx context.Context) (bool, error) {
@@ -165,13 +165,13 @@ func integrationPebbleRoots(ctx context.Context, client *http.Client, directoryU
 	return roots, rootPEM, true
 }
 
-func startOwnedDNSServer(t *testing.T, server *dns.Server) {
+func startOwnedDNSServer(t *testing.T, server *dns.Server, owner *runtimeTopology) {
 	t.Helper()
 	started := make(chan struct{})
 	server.NotifyStartedFunc = func() { close(started) }
 	done := make(chan struct{})
 	var serveErr error
-	t.Cleanup(func() {
+	owner.cleanupResource(t, func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		select {
@@ -199,7 +199,7 @@ func startOwnedDNSServer(t *testing.T, server *dns.Server) {
 	}
 }
 
-func standaloneTestACMEServer(t *testing.T) *httptest.Server {
+func standaloneTestACMEServer(t *testing.T, owner *runtimeTopology) *httptest.Server {
 	t.Helper()
 	var server *httptest.Server
 	server = httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -222,6 +222,6 @@ func standaloneTestACMEServer(t *testing.T) *httptest.Server {
 			http.NotFound(response, request)
 		}
 	}))
-	cleanupIntegrationHTTPServer(t, server, nil)
+	cleanupIntegrationHTTPServer(t, server, owner)
 	return server
 }

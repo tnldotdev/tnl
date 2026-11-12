@@ -58,21 +58,22 @@ func newSplitPublishFixture(t *testing.T, hostnameLabel string) *splitPublishFix
 func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, options splitPublishOptions, configureACME ...func(*http.Client)) *splitPublishFixture {
 	t.Helper()
 	databaseURL, inspect := standaloneTestDatabase(t)
+	owner := newRuntimeTopology(t)
 	const serverDomain = "split.integration.test"
 	controlHostname := "control." + serverDomain
 	certificateAuthority := newIntegrationTestCA(t)
-	controlCertificate := certificateAuthority.issueServer(t, controlHostname)
+	controlCertificate := certificateAuthority.issueServer(t, controlHostname, owner)
 	var relayACertificate, relayBCertificate integrationCertificate
 	if options.dns == nil {
-		relayACertificate = certificateAuthority.issueServer(t, "relay-a."+serverDomain)
-		relayBCertificate = certificateAuthority.issueServer(t, "relay-b."+serverDomain)
+		relayACertificate = certificateAuthority.issueServer(t, "relay-a."+serverDomain, owner)
+		relayBCertificate = certificateAuthority.issueServer(t, "relay-b."+serverDomain, owner)
 	}
-	controlProxyListener, privateControlListener, ingressListener := serviceRuntimeListener(t), serviceRuntimeListener(t), serviceRuntimeListener(t)
+	controlProxyListener, privateControlListener, ingressListener := serviceRuntimeListener(t, owner), serviceRuntimeListener(t, owner), serviceRuntimeListener(t, owner)
 	controlAddress, privateControlAddress, ingressAddress := controlProxyListener.Addr().String(), privateControlListener.Addr().String(), ingressListener.Addr().String()
 	publicIngressAddress := ingressAddress
 	publicIngressListener := ingressListener
 	if options.proxyIngress {
-		ingressListener = serviceRuntimeListener(t)
+		ingressListener = serviceRuntimeListener(t, owner)
 		ingressAddress = ingressListener.Addr().String()
 	}
 	var dnsAddress string
@@ -80,18 +81,18 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 	if options.dns != nil {
 		dnsAddress = options.dns.address
 	} else {
-		localDNS = newPrivateFixtureDNS(t)
+		localDNS = newPrivateFixtureDNS(t, owner)
 		dnsAddress = localDNS.address
 	}
-	pebble := startIntegrationPebble(t, integrationPort(t, publicIngressAddress), dnsAddress)
+	pebble := startIntegrationPebble(t, integrationPort(t, publicIngressAddress), dnsAddress, owner)
 	for _, configure := range configureACME {
 		configure(pebble.httpClient)
 	}
-	serviceHTTP := splitTestServiceHTTPClient(t, certificateAuthority.roots, privateControlAddress)
+	serviceHTTP := splitTestServiceHTTPClient(t, certificateAuthority.roots, privateControlAddress, owner)
 	controlConfig := splitPublishConfig(t, daemonconfig.RoleControl)
-	controlSockets := runtimeListeners{control: serviceRuntimeListener(t), privateControl: privateControlListener, metrics: serviceRuntimeListener(t)}
-	var serviceListeners []net.Listener
-	controlConfig.ServicePortRanges, serviceListeners = reserveIntegrationServicePorts(t)
+	controlSockets := runtimeListeners{control: serviceRuntimeListener(t, owner), privateControl: privateControlListener, metrics: serviceRuntimeListener(t, owner)}
+	serviceListeners := newServicePortListeners(t, owner)
+	controlConfig.ServicePortRanges = serviceListeners.inventory()
 	controlConfig.DatabaseURL = databaseURL
 	controlConfig.ControlListen = controlSockets.control.Addr().String()
 	controlConfig.MetricsListen = controlSockets.metrics.Addr().String()
@@ -126,15 +127,15 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 		t.Fatal(err)
 	}
 	ingressConfig := splitPublishConfig(t, daemonconfig.RoleIngress)
-	ingressSockets := runtimeListeners{ingress: ingressListener, metrics: serviceRuntimeListener(t)}
+	ingressSockets := runtimeListeners{ingress: ingressListener, metrics: serviceRuntimeListener(t, owner)}
 	ingressConfig.MetricsListen = ingressSockets.metrics.Addr().String()
 	ingressConfig.ServicePortRanges = controlConfig.ServicePortRanges
 	ingressConfig.ControlHostname = controlHostname
 	ingressConfig.ClusterSecret = testClusterSecret
 	ingressConfig.IngressID = "ingress-split"
 	ingressConfig.IngressListen = ingressAddress
-	relayAConfig, relayASockets := splitPublishRelayConfig(t, controlHostname, serverDomain, "relay-a", "relay-a-1", relayACertificate)
-	relayBConfig, relayBSockets := splitPublishRelayConfig(t, controlHostname, serverDomain, "relay-b", "relay-b-1", relayBCertificate)
+	relayAConfig, relayASockets := splitPublishRelayConfig(t, controlHostname, serverDomain, "relay-a", "relay-a-1", relayACertificate, owner)
+	relayBConfig, relayBSockets := splitPublishRelayConfig(t, controlHostname, serverDomain, "relay-b", "relay-b-1", relayBCertificate, owner)
 	if options.dns != nil {
 		relayAConfig.ControlRetryInterval = 100 * time.Millisecond
 		relayBConfig.ControlRetryInterval = 100 * time.Millisecond
@@ -149,10 +150,9 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 	}
 	if !ingressConfig.RequireProxyHeader {
 		ingressSockets.ingress = combineIngressListeners(append([]net.Listener{ingressListener}, serviceListeners...))
-		t.Cleanup(func() { _ = ingressSockets.ingress.Close() })
+		owner.cleanupResource(t, func() { _ = ingressSockets.ingress.Close() })
 	}
 	// dependencies outlive every incarnation of control, ingress, and relay.
-	owner := newRuntimeTopology(t)
 	controlTLS, err := staticServerTLS(controlCertificate.certificateFile, controlCertificate.privateKeyFile)
 	if err != nil {
 		t.Fatal(err)
@@ -210,11 +210,36 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 // through the separate private ingress listener.
 func startSplitIngressProxy(t *testing.T, owner *runtimeTopology, listener net.Listener, backend string) {
 	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
 	var active sync.WaitGroup
+	var mu sync.Mutex
+	connections := make(map[net.Conn]struct{})
+	retain := func(connection net.Conn) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		if ctx.Err() != nil {
+			_ = connection.Close()
+			return false
+		}
+		connections[connection] = struct{}{}
+		return true
+	}
+	release := func(connection net.Conn) {
+		_ = connection.Close()
+		mu.Lock()
+		delete(connections, connection)
+		mu.Unlock()
+	}
 	acceptDone := make(chan struct{})
 	owner.cleanupResource(t, func() {
+		cancel()
 		_ = listener.Close()
 		<-acceptDone
+		mu.Lock()
+		for connection := range connections {
+			_ = connection.Close()
+		}
+		mu.Unlock()
 		active.Wait()
 	})
 	go func() {
@@ -224,17 +249,23 @@ func startSplitIngressProxy(t *testing.T, owner *runtimeTopology, listener net.L
 			if err != nil {
 				return
 			}
+			if !retain(visitor) {
+				return
+			}
 			active.Add(1)
 			go func() {
 				defer active.Done()
-				defer visitor.Close()
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				upstream, err := (&net.Dialer{}).DialContext(ctx, "tcp", backend)
-				cancel()
+				defer release(visitor)
+				dialCtx, cancelDial := context.WithTimeout(ctx, 5*time.Second)
+				upstream, err := (&net.Dialer{}).DialContext(dialCtx, "tcp", backend)
+				cancelDial()
 				if err != nil {
 					return
 				}
-				defer upstream.Close()
+				if !retain(upstream) {
+					return
+				}
+				defer release(upstream)
 				source := visitor.RemoteAddr().(*net.TCPAddr).AddrPort()
 				meta, err := proxyproto.Encode(proxyproto.Header{Source: netip.AddrPortFrom(source.Addr().Unmap(), source.Port()), Destination: netip.MustParseAddrPort("127.0.0.1:443")})
 				if err != nil {
@@ -264,7 +295,6 @@ func startSplitIngressProxy(t *testing.T, owner *runtimeTopology, listener net.L
 func splitPublishConfig(t *testing.T, role daemonconfig.Role) daemonconfig.Config {
 	t.Helper()
 	cfg := splitTestConfig(role, "")
-	cfg.MetricsListen = unusedTCPAddress(t)
 	cfg.IngressLeaseDuration = 5 * time.Second
 	cfg.RelayLeaseDuration = 5 * time.Second
 	cfg.LeaseRenewalInterval = 500 * time.Millisecond
@@ -272,7 +302,7 @@ func splitPublishConfig(t *testing.T, role daemonconfig.Role) daemonconfig.Confi
 	return cfg
 }
 
-func splitPublishRelayConfig(t *testing.T, controlHostname, serverDomain, relayServiceID, relayID string, certificate integrationCertificate) (daemonconfig.Config, runtimeListeners) {
+func splitPublishRelayConfig(t *testing.T, controlHostname, serverDomain, relayServiceID, relayID string, certificate integrationCertificate, owner *runtimeTopology) (daemonconfig.Config, runtimeListeners) {
 	t.Helper()
 	cfg := splitPublishConfig(t, daemonconfig.RoleRelay)
 	cfg.ControlHostname = controlHostname
@@ -282,7 +312,7 @@ func splitPublishRelayConfig(t *testing.T, controlHostname, serverDomain, relayS
 	cfg.RelayAddress = relayServiceID + "." + serverDomain + ":443"
 	cfg.RelayTLSCertificateFile = certificate.certificateFile
 	cfg.RelayTLSPrivateKeyFile = certificate.privateKeyFile
-	listeners := runtimeListeners{metrics: serviceRuntimeListener(t), relayTCP: serviceRuntimeListener(t), relayInternal: serviceRuntimeListener(t), relayUDP: integrationPacketListener(t)}
+	listeners := runtimeListeners{metrics: serviceRuntimeListener(t, owner), relayTCP: serviceRuntimeListener(t, owner), relayInternal: serviceRuntimeListener(t, owner), relayUDP: integrationPacketListener(t, owner)}
 	cfg.MetricsListen = listeners.metrics.Addr().String()
 	cfg.RelayTCPListen = listeners.relayTCP.Addr().String()
 	cfg.RelayUDPListen = listeners.relayUDP.LocalAddr().String()

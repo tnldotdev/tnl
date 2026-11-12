@@ -30,12 +30,14 @@ type connectorObservedSession struct {
 }
 
 type connectorBindingFixture struct {
-	acceptor   *ConnectorAcceptor
-	publisher  *connectorPacketSession
-	connection *serviceConnection
-	proof      tunnelv1.ConnectorPairLegProof
-	id         [16]byte
-	nonce      uint64
+	acceptor           *ConnectorAcceptor
+	publisher          *connectorPacketSession
+	publisherTransport *forwardingTestSession
+	connection         *serviceConnection
+	proof              tunnelv1.ConnectorPairLegProof
+	id                 [16]byte
+	nonce              uint64
+	duration           time.Duration
 }
 
 func newConnectorBindingFixture(t *testing.T) *connectorBindingFixture {
@@ -54,7 +56,7 @@ func newConnectorBindingFixture(t *testing.T) *connectorBindingFixture {
 	connection := &serviceConnection{ref: ref, lease: lease, paths: newStreamLifetime(nil), packets: packets}
 	registry := NewServiceRegistry()
 	registry.connections[ref.PublisherConnectionID] = connection
-	f := &connectorBindingFixture{acceptor: &ConnectorAcceptor{CurrentLease: func() relayv1.RelayLease { return lease }, SigningKey: key, Publishers: registry}, publisher: packets, connection: connection, proof: proof, id: [16]byte{1}}
+	f := &connectorBindingFixture{acceptor: &ConnectorAcceptor{CurrentLease: func() relayv1.RelayLease { return lease }, SigningKey: key, Publishers: registry}, publisher: packets, publisherTransport: outer, connection: connection, proof: proof, id: [16]byte{1}}
 	f.acceptor.Claim = connectorClaimFunc(func(_ context.Context, _ relayv1.RelayLease, source netip.Addr, proof tunnelv1.ConnectorPairLegProof, signature []byte) (relayv1.ConnectorPeerPairLegClaim, error) {
 		message, err := proof.RelayClaimMessage(source)
 		if err != nil || !ed25519.Verify(key.Public().(ed25519.PublicKey), message, signature) {
@@ -63,6 +65,9 @@ func newConnectorBindingFixture(t *testing.T) *connectorBindingFixture {
 		state, duration := relayv1.ConnectorPeerLegBindingActive, time.Minute
 		if proof.DeliveryGeneration > 1 {
 			state, duration = relayv1.ConnectorPeerLegBindingPrepared, 10*time.Second
+		}
+		if f.duration != 0 {
+			duration = f.duration
 		}
 		now := time.Now()
 		return relayv1.ConnectorPeerPairLegClaim{PairId: proof.PairID, DeliveryId: base64.RawURLEncoding.EncodeToString(f.id[:]), DeliveryGeneration: proof.DeliveryGeneration, BindingState: state, ConnectionSlot: proof.ConnectionSlot, SourceIp: source.String(), Key: base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{byte(proof.DeliveryGeneration)}, 32)), ObservedAt: now, ExpiresAt: now.Add(duration)}, nil
@@ -86,11 +91,10 @@ func (f *connectorBindingFixture) candidate(t *testing.T, generation int64, ip s
 	if err != nil {
 		t.Fatal(err)
 	}
-	life, cancel := context.WithCancel(t.Context())
+	d := newConnectorDelivery(t.Context(), f.publisher.Done(), proof, claim)
 	raw := newReconnectCarrier()
-	binding := newConnectorBindingCarrier(raw, claim.source, claim.receipt.BindingState)
-	d := &connectorDelivery{ctx: life, cancel: cancel, claim: claim, proof: proof, connection: f.connection, carrier: binding, binding: binding, until: claim.receipt.ExpiresAt, changed: make(chan struct{})}
-	t.Cleanup(func() { cancel(); _ = raw.Close() })
+	d.carrier = newConnectorBindingCarrier(raw, claim.source, d.admit, d.cancel)
+	t.Cleanup(func() { d.close(); _ = raw.Close() })
 	return d, outer
 }
 
@@ -107,11 +111,18 @@ func (f *connectorBindingFixture) activate(t *testing.T, d *connectorDelivery, o
 			t.Fatal(err)
 		}
 	}
-	b, err := f.publisher.selectBridge(t.Context(), f.acceptor, d, f.id, activation.Binding())
-	if err == nil {
-		d.bridge = b
-	}
-	return b, err
+	return f.publisher.selectBridge(t.Context(), f.acceptor, d, f.id, activation.Binding())
+}
+
+// isolate renewal/retirement ordering from the bridge's forwarding workers.
+func isolatedConnectorBridge(t *testing.T, d *connectorDelivery, ctx context.Context) *connectorBridge {
+	t.Helper()
+	slot := peer.NewCarrierSlot()
+	t.Cleanup(func() { _ = slot.Close() })
+	b := &connectorBridge{ctx: ctx, active: d, connector: slot, until: d.claim.receipt.ExpiresAt, state: d.claim.receipt.BindingState}
+	d.stopPreparation()
+	d.bridge.Store(b)
+	return b
 }
 
 func TestConnectorBindingReplacesGenerationAfterJoiningOldBridge(t *testing.T) {
@@ -131,7 +142,7 @@ func TestConnectorBindingReplacesGenerationAfterJoiningOldBridge(t *testing.T) {
 	default:
 		t.Fatal("successor installed before old registration joined")
 	}
-	if old == next || old.publisher == next.publisher || old.claim.key == next.claim.key || first.ctx.Err() == nil || next.handoff.operation.Revision() != 0 || second.binding.active.Load() {
+	if old == next || old.publisher == next.publisher || old.claim.key == next.claim.key || first.ctx.Err() == nil || next.handoff.operation.Revision() != 0 || second.admit(tunnelv1.PeerPacket{Kind: tunnelv1.PeerData}) {
 		t.Fatal("new generation inherited a carrier, key, active flag, or handoff history")
 	}
 	f.publisher.removeBridge(f.id, old)
@@ -162,7 +173,7 @@ func TestConnectorBindingInitialOperationSurvivesLostActivationReply(t *testing.
 	b.detach(first)
 	fresh, _ := f.candidate(t, 2, "192.0.2.2:12345")
 	retried, err := f.activate(t, fresh, initial)
-	if err != nil || retried != b || b.publisher != publisher || b.until != until || fresh.until != until || b.handoff.operation.Revision() != 0 || b.handoff.selected != initial {
+	if err != nil || retried != b || b.publisher != publisher || b.until != until || fresh.bridge.Load() != b || b.handoff.operation.Revision() != 0 || b.handoff.selected != initial {
 		t.Fatal("lost initial reply changed binding, authority or operation", err)
 	}
 	advanced, _ := f.candidate(t, 2, "192.0.2.2:12345")
@@ -183,7 +194,7 @@ func TestConnectorBindingInitialOperationSurvivesLostActivationReply(t *testing.
 func TestConnectorBindingMigrationRetiresPacketsButReportsStaleOnControlRenewal(t *testing.T) {
 	f := newConnectorBindingFixture(t)
 	d, outer := f.candidate(t, 1, "192.0.2.1:12345")
-	ready := d.readyCarrier()
+	ready := d.carrier
 	outer.move("192.0.2.2:12345")
 	if err := ready.Send(t.Context(), nil); !errors.Is(err, errConnectorSocketSourceChanged) {
 		t.Fatal("migration was not checked before the ready gate", err)
@@ -207,9 +218,9 @@ var _ peer.Carrier = (*connectorBindingCarrier)(nil)
 
 func TestConnectorBindingPreparedRenewalCannotExtendUntilExplicitlyActive(t *testing.T) {
 	f := newConnectorBindingFixture(t)
+	f.duration = 5 * time.Second
 	d, outer := f.candidate(t, 2, "192.0.2.2:12345")
-	d.until = time.Now().Add(5 * time.Second)
-	bound := d.until
+	bound := d.claim.receipt.ExpiresAt
 	initial := tunnelv1.ConnectorHandoffID{9}
 	b, err := f.activate(t, d, initial)
 	if err != nil {
@@ -219,7 +230,7 @@ func TestConnectorBindingPreparedRenewalCannotExtendUntilExplicitlyActive(t *tes
 	proof.Nonce = bytes.Repeat([]byte{8}, 32)
 	proof.RequestedAt = proof.RequestedAt.Add(time.Microsecond)
 	receipt, err := d.renew(t.Context(), f.acceptor, outer, proof)
-	if err != nil || d.until != bound || b.until != bound || receipt.ExpiresAt != bound || d.binding.active.Load() {
+	if err != nil || b.until != bound || receipt.ExpiresAt != bound || d.admit(tunnelv1.PeerPacket{Kind: tunnelv1.PeerData}) {
 		t.Fatal("pending repeat extended authority or admitted application data", err)
 	}
 	prior := f.acceptor.Claim
@@ -230,12 +241,12 @@ func TestConnectorBindingPreparedRenewalCannotExtendUntilExplicitlyActive(t *tes
 		return claim, err
 	})
 	receipt, err = d.renew(t.Context(), f.acceptor, outer, proof)
-	if err != nil || !d.until.After(bound) || b.until != d.until || receipt.BindingState != tunnelv1.ConnectorPeerLegBindingActive || !d.binding.active.Load() {
+	if err != nil || !b.until.After(bound) || receipt.ExpiresAt != b.until || receipt.BindingState != tunnelv1.ConnectorPeerLegBindingActive || !d.admit(tunnelv1.PeerPacket{Kind: tunnelv1.PeerData}) {
 		t.Fatal("checked activation did not promote the exact existing carrier", err)
 	}
-	activeUntil := d.until
+	activeUntil := b.until
 	f.acceptor.Claim = prior
-	if _, err := d.renew(t.Context(), f.acceptor, outer, proof); err == nil || !d.binding.active.Load() || d.until != activeUntil || b.until != activeUntil {
+	if _, err := d.renew(t.Context(), f.acceptor, outer, proof); err == nil || !d.admit(tunnelv1.PeerPacket{Kind: tunnelv1.PeerData}) || b.until != activeUntil {
 		t.Fatal("old prepared claim restored an earlier state or deadline", err)
 	}
 }
@@ -245,7 +256,11 @@ func TestConnectorBindingActiveConfirmationRequiresExactClaimAndLiveness(t *test
 		t.Run(boundary, func(t *testing.T) {
 			f := newConnectorBindingFixture(t)
 			d, outer := f.candidate(t, 2, "192.0.2.2:12345")
-			until := d.until
+			b, err := f.activate(t, d, tunnelv1.ConnectorHandoffID{9})
+			if err != nil {
+				t.Fatal(err)
+			}
+			until := b.until
 			prior := f.acceptor.Claim
 			f.acceptor.Claim = connectorClaimFunc(func(ctx context.Context, lease relayv1.RelayLease, source netip.Addr, proof tunnelv1.ConnectorPairLegProof, signature []byte) (relayv1.ConnectorPeerPairLegClaim, error) {
 				claim, err := prior.ClaimConnectorPeerPairLegFromAcceptedSocket(ctx, lease, source, proof, signature)
@@ -271,7 +286,7 @@ func TestConnectorBindingActiveConfirmationRequiresExactClaimAndLiveness(t *test
 				}
 				return claim, err
 			})
-			if _, err := d.renew(t.Context(), f.acceptor, outer, d.proof); err == nil || d.binding.active.Load() || d.until != until {
+			if _, err := d.renew(t.Context(), f.acceptor, outer, d.proof); err == nil || d.admit(tunnelv1.PeerPacket{Kind: tunnelv1.PeerData}) || b.until != until {
 				t.Fatal("invalid confirmation enabled data or changed authority", err)
 			}
 		})
@@ -291,7 +306,9 @@ func TestConnectorBindingPublisherAdmissionFollowsCurrentCandidate(t *testing.T)
 	if b.admit(data) || !b.admit(probe) {
 		t.Fatal("prepared publisher registration admitted data or blocked probes")
 	}
-	first.binding.active.Store(true)
+	b.mu.Lock()
+	b.state = tunnelv1.ConnectorPeerLegBindingActive
+	b.mu.Unlock()
 	if !b.admit(data) {
 		t.Fatal("active publisher registration remained fenced")
 	}
@@ -307,7 +324,9 @@ func TestConnectorBindingPublisherAdmissionFollowsCurrentCandidate(t *testing.T)
 	if b.admit(data) || !b.admit(probe) {
 		t.Fatal("replacement inherited its predecessor's active admission")
 	}
-	second.binding.active.Store(true)
+	b.mu.Lock()
+	b.state = tunnelv1.ConnectorPeerLegBindingActive
+	b.mu.Unlock()
 	if !b.admit(data) {
 		t.Fatal("replacement activation did not update the retained registration")
 	}

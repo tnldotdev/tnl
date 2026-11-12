@@ -34,12 +34,15 @@ func Serve(ctx context.Context, client net.Conn, target *url.URL, connect func(c
 	if client == nil || target == nil || target.Host == "" || connect == nil || target.Scheme != "http" && target.Scheme != "https" {
 		return ErrClosed
 	}
-	callbackDone := make(chan struct{})
-	stop := context.AfterFunc(ctx, func() { defer close(callbackDone); _ = client.Close() })
+	var workers sync.WaitGroup
+	workers.Add(1)
+	stop := context.AfterFunc(ctx, func() { defer workers.Done(); _ = client.Close() })
 	defer func() {
-		if !stop() {
-			<-callbackDone
+		if stop() {
+			workers.Done()
 		}
+		// listener and upstream cleanup must unblock the connection before joining.
+		workers.Wait()
 	}()
 	var mu sync.Mutex
 	dialed := false
@@ -104,7 +107,29 @@ func Serve(ctx context.Context, client net.Conn, target *url.URL, connect func(c
 		handler = wrap(handler)
 	}
 	handler = Requests(observability.PublisherHTTP(handler), RequestBodyTimeout)
-	server := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 32 << 10,
+	// net/http forgets hijacked connections before their handlers return. both
+	// this flag and the handler's defer run on the single connection's worker.
+	hijacked := false
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if hijacked {
+				workers.Done()
+			}
+		}()
+		handler.ServeHTTP(w, r)
+	}), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 32 << 10,
+		ConnState: func(_ net.Conn, state http.ConnState) {
+			switch state {
+			case http.StateNew:
+				// StateNew runs before Serve starts the connection worker, so no
+				// worker can be added after Serve returns and the join begins.
+				workers.Add(1)
+			case http.StateHijacked:
+				hijacked = true
+			case http.StateClosed:
+				workers.Done()
+			}
+		},
 		BaseContext: func(net.Listener) context.Context { return ctx }, ErrorLog: log.New(io.Discard, "", 0)}
 	defer server.Close()
 	err := server.Serve(listener)

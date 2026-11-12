@@ -180,7 +180,7 @@ func TestIntegrationConnectorCarrierSwitchRetainsApplicationAndTarget(t *testing
 				t.Run(fmt.Sprintf("standalone=%t/tcp=%t/lost-reply=%d", standalone, tcp, lostReply), func(t *testing.T) {
 					f := newServiceRuntimeFixture(t, standalone, nil)
 					f.publisherTCPOnly = tcp
-					target := startPrivateEchoTarget(t)
+					target := startPrivateEchoTarget(t, f.owner)
 					key, _ := opaqueid.New(opaqueid.IdempotencyPrefix)
 					service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "native", key, controlv1.ServiceMetadata{Protocol: controlv1.Tcp})
 					if err != nil {
@@ -324,7 +324,7 @@ func TestRevokedConnectorOwnerStopClassification(t *testing.T) {
 
 func startRuntimeConnector(t *testing.T, f *privateSeparatedFixture, service controlv1.Service, config connectorstream.Config, expectedStop ...func(error) bool) (net.Listener, func()) {
 	t.Helper()
-	listener := serviceRuntimeListener(t)
+	listener := serviceRuntimeListener(t, f.owner)
 	ctx, cancel := context.WithCancel(t.Context())
 	ready, done := make(chan struct{}), make(chan error, 1)
 	config.ServiceID, config.Protocol, config.TrustRevision, config.Endpoint = service.Id, string(service.Protocol), service.TrustRevision, service.Endpoint

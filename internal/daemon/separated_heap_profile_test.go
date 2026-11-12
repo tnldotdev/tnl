@@ -17,12 +17,12 @@ import (
 // separate diagnostic trial rather than mixing them into capacity points.
 func captureSeparatedHeapProfiles(t *testing.T, database *sql.DB, before separatedSnapshot) {
 	t.Helper()
-	components := append([]string{"ingress-a", "relay-a"}, separatedPublisherComponents()...)
-	components = append(components, separatedAppComponents()...)
+	components := append([]string{"ingress-a", "relay-a"}, separatedNames("publishers")...)
+	components = append(components, separatedNames("apps")...)
 	components = append(components, "visitor-1")
 	for _, component := range components {
 		address := component + ":9091"
-		if slices.Contains(separatedAppComponents(), component) {
+		if slices.Contains(separatedNames("apps"), component) {
 			address = separatedAppPublisher(component) + ":9092"
 		}
 		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)

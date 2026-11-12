@@ -5,35 +5,107 @@ inputs:
     description: Space-separated tool names from mise.toml
     default: go task
   go-cache:
-    description: Go build variant to restore, or empty to disable
+    description: Go build variant to restore and prefetch modules, or empty to disable
     default: ""
-  go-cache-save:
-    description: Refresh this Go cache on successful main pushes
-    default: "false"
   pnpm:
     description: Install frozen workspace dependencies
     default: "false"
-  pnpm-cache-save:
-    description: Save the frozen pnpm store on main pushes
+  save-cache:
+    description: Save selected dependency and build caches on trusted main pushes
     default: "false"
 runs:
   using: composite
   steps:
     - name: Install tools from mise.toml
       uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+      env:
+        MISE_HTTP_RETRIES: "5"
       with:
         install_args: ${{ inputs.tools }}
         cache_save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
-    - name: Restore Go caches
+    - name: Locate Go caches
       if: inputs.go-cache != ''
-      uses: ./.github/actions/cache-go # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
-      with:
-        cache-scope: ${{ inputs.go-cache }}
-        cache-save: ${{ inputs.go-cache-save }}
+      id: go
+      shell: bash
+      env:
+        DEPENDENCIES: ${{ hashFiles('go.mod', 'go.sum', 'tools/testharness/go.mod', 'tools/testharness/go.sum') }}
+        CACHE_SCOPE: ${{ inputs.go-cache }}
+      run: |
+        echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+        echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+        prefix="go-build-$RUNNER_OS-$RUNNER_ARCH-$ImageOS-$(go env GOVERSION)-$CACHE_SCOPE"
+        echo "module-key=go-modules-$RUNNER_OS-$RUNNER_ARCH-$DEPENDENCIES" >> "$GITHUB_OUTPUT"
+        echo "module-prefix=go-modules-$RUNNER_OS-$RUNNER_ARCH-" >> "$GITHUB_OUTPUT"
+        echo "build-key=$prefix-$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+        echo "build-prefix=$prefix-" >> "$GITHUB_OUTPUT"
 
-    - name: Install workspace dependencies
-      if: inputs.pnpm == 'true'
-      uses: ./.github/actions/install-pnpm # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
+    - name: Restore Go modules
+      if: inputs.go-cache != ''
+      id: modules
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        cache-save: ${{ inputs.pnpm-cache-save }}
+        path: ${{ steps.go.outputs.modules }}
+        key: ${{ steps.go.outputs.module-key }}
+        restore-keys: ${{ steps.go.outputs.module-prefix }}
+
+    - name: Download and verify Go modules
+      if: inputs.go-cache != ''
+      uses: ./.github/actions/download-go # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
+
+    # verified modules are safe to retain even if a later test fails.
+    - name: Save verified Go modules on main
+      if: inputs.go-cache != '' && inputs.save-cache == 'true' && steps.modules.outputs.cache-hit != 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # zizmor: ignore[cache-poisoning] v6.1.0; verified dependencies on trusted main pushes only
+      with:
+        path: ${{ steps.go.outputs.modules }}
+        key: ${{ steps.go.outputs.module-key }}
+
+    - name: Restore Go build cache
+      if: inputs.go-cache != '' && (inputs.save-cache != 'true' || github.event_name != 'push' || github.ref != 'refs/heads/main')
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.go.outputs.build }}
+        key: ${{ steps.go.outputs.build-key }}
+        restore-keys: ${{ steps.go.outputs.build-prefix }}
+
+    # only designated writers refresh build caches; all other jobs restore them.
+    - name: Refresh Go build cache on main
+      if: inputs.go-cache != '' && inputs.save-cache == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # zizmor: ignore[cache-poisoning] v6.1.0; successful trusted main pushes only
+      with:
+        path: ${{ steps.go.outputs.build }}
+        key: ${{ steps.go.outputs.build-key }}
+        restore-keys: ${{ steps.go.outputs.build-prefix }}
+
+    - name: Locate pnpm store
+      if: inputs.pnpm == 'true'
+      id: pnpm
+      shell: bash
+      run: |
+        echo "path=$(pnpm store path)" >> "$GITHUB_OUTPUT"
+        echo "node=$(node --version)" >> "$GITHUB_OUTPUT"
+
+    - name: Restore pnpm store
+      if: inputs.pnpm == 'true'
+      id: pnpm-cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.pnpm.outputs.path }}
+        key: pnpm-v2-${{ runner.os }}-${{ runner.arch }}-node-${{ steps.pnpm.outputs.node }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+    - name: Install frozen workspace dependencies
+      if: inputs.pnpm == 'true'
+      shell: bash
+      env:
+        PNPM_CONFIG_GLOBAL_SHIMS: '{"node":false}'
+      run: |
+        printf '%s\n' 'PNPM_CONFIG_GLOBAL_SHIMS={"node":false}' >> "$GITHUB_ENV"
+        pnpm install --frozen-lockfile --no-runtime
+
+    - name: Save pnpm store on main
+      if: inputs.save-cache == 'true' && inputs.pnpm == 'true' && steps.pnpm-cache.outputs.cache-hit != 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # zizmor: ignore[cache-poisoning] v6.1.0; frozen dependencies on trusted main pushes only
+      with:
+        path: ${{ steps.pnpm.outputs.path }}
+        key: pnpm-v2-${{ runner.os }}-${{ runner.arch }}-node-${{ steps.pnpm.outputs.node }}-${{ hashFiles('pnpm-lock.yaml') }}

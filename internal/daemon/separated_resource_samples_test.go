@@ -128,17 +128,12 @@ func sampleSeparatedResources(t *testing.T, phase string) func() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 		client := &http.Client{Timeout: 2 * time.Second}
-		components := append([]string{"control-a", "ingress-a", "relay-a", "relay-b"}, separatedPublisherComponents()...)
-		components = append(components, separatedAppComponents()...)
-		components = append(components, "visitor-1", "visitor-2", "visitor-3", "visitor-4")
-		if *runtimeLoadHATopology {
-			components = append(components, "control-b", "ingress-b")
-		}
+		components := separatedNames("components")
 		for {
 			sample := separatedResourceSample{At: time.Now(), Components: make(map[string]separatedSampledResource, len(components))}
 			for _, component := range components {
 				address := component + ":9091"
-				if slices.Contains(separatedAppComponents(), component) {
+				if slices.Contains(separatedNames("apps"), component) {
 					address = separatedAppPublisher(component) + ":9092"
 				}
 				response, err := integrationGET(ctx, client, "http://"+address+"/resources")
