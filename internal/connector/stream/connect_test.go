@@ -14,13 +14,13 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/testutil/transporttest"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/peer"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
@@ -35,6 +35,7 @@ type connectorFixture struct {
 	run                   Run
 	endpoints             [2]muxsession.Endpoint
 	localAddress          string
+	localListener         *net.TCPListener
 	target                string
 	expires               time.Time
 	certificate           tls.Certificate
@@ -145,29 +146,23 @@ func newConfiguredConnectorFixture(t *testing.T, transport, target string, confi
 	for slot := range uint8(2) {
 		var listener net.Listener
 		var udp *muxsession.QUICListener
-		// tcp and udp allocate ports independently; keep both listeners on success.
-		for range 32 {
-			listener, err = net.Listen("tcp", "127.0.0.1:0")
+		if transport == "quic" {
+			var packet net.PacketConn
+			listener, packet, err = transporttest.ListenTCPUDP()
 			if err != nil {
 				t.Fatal(err)
 			}
-			if transport != "quic" {
-				break
-			}
-			udp, err = muxsession.ListenQUIC(listener.Addr().String(), serverTLS, muxsession.QUICConfig{Config: fixtureDatagramConfig()})
+			t.Cleanup(func() { _ = listener.Close(); _ = packet.Close() })
+			udp, err = muxsession.ListenQUICPacket(packet, serverTLS, muxsession.QUICConfig{Config: fixtureDatagramConfig()})
+		} else {
+			listener, err = net.Listen("tcp", "127.0.0.1:0")
 			if err == nil {
-				break
-			}
-			_ = listener.Close()
-			listener = nil
-			if !errors.Is(err, syscall.EADDRINUSE) {
-				t.Fatal(err)
+				t.Cleanup(func() { _ = listener.Close() })
 			}
 		}
-		if listener == nil {
-			t.Fatalf("reserve connector tcp and quic listeners: %v", err)
+		if err != nil {
+			t.Fatal(err)
 		}
-		t.Cleanup(func() { _ = listener.Close() })
 		f.endpoints[slot] = muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "db.example"}
 		listeners[slot], datagrams[slot] = listener, udp
 		if udp != nil {
@@ -253,6 +248,7 @@ func newConfiguredConnectorFixture(t *testing.T, transport, target string, confi
 		t.Fatal("two native relay carriers did not become ready")
 	}
 	f.localAddress = listener.Addr().String()
+	f.localListener = listener.(*net.TCPListener)
 	f.startupOpened = f.opened.Load()
 	return f
 }
@@ -848,6 +844,7 @@ func TestConnectorRejectsStaleApprovedRevisionBeforeOpeningStream(t *testing.T) 
 				t.Fatal("fresh approved runner did not become ready")
 			}
 			f.localAddress = listener.Addr().String()
+			f.localListener = listener.(*net.TCPListener)
 			conn := f.local(t)
 			_, _ = conn.Write([]byte("fresh"))
 			got := make([]byte, 5)

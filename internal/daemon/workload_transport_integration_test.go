@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bufio"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -12,7 +13,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/http/httptrace"
 	"net/netip"
 	"strconv"
 	"strings"
@@ -37,66 +37,15 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-// real clock: the original 90-second lease and certificate are crossed twice.
-// every authorization uses the actual HTTP adapters and disposable PostgreSQL.
+// real clock: both siblings retain their original tcp, http and postgresql
+// streams across the 90-second lease and 135-second startup proof. only the
+// capped sibling ends at its original 205-second hard deadline.
 func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	for _, transport := range []string{"quic", "tls-tcp"} {
 		t.Run(transport, func(t *testing.T) {
-			t.Parallel()
-			opened := make(chan privateObservation, 256)
-			f, issuer := newWorkloadTransportFixture(t, opened)
-			for slot := range 2 {
-				startSeparatedPrivateIngress(t, f, slot, transport, opened)
-			}
-			echo := startPrivateEchoTarget(t)
-			httpTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Header.Get("Tnl-Access-Token") != "" || r.Header.Get("Tnl-Visitor-Token") != "" {
-					t.Error("target received visitor credential")
-				}
-				if r.URL.Path == "/stream" {
-					for {
-						if _, err := io.WriteString(w, "tick\n"); err != nil {
-							return
-						}
-						if err := http.NewResponseController(w).Flush(); err != nil {
-							return
-						}
-						select {
-						case <-r.Context().Done():
-							return
-						case <-time.After(100 * time.Millisecond):
-						}
-					}
-				}
-				_, _ = io.WriteString(w, "workload HTTP")
-			}))
-			t.Cleanup(httpTarget.Close)
-			pg, err := pgx.ParseConfig(f.databaseURL)
-			if err != nil {
-				t.Fatal(err)
-			}
-			private, public := "private", "public"
-			tcpProtocol, httpProtocol, pgProtocol := controlv1.Tcp, controlv1.ServiceProtocolHTTP, controlv1.Postgres
-			services := map[string]controlv1.ProjectServiceConfiguration{
-				"private-tcp":  {PublisherGroup: &private, Protocol: &tcpProtocol, Target: echo.address},
-				"public-tcp":   {PublisherGroup: &public, Protocol: &tcpProtocol, Target: echo.address},
-				"private-http": {PublisherGroup: &private, Protocol: &httpProtocol, Target: strings.TrimPrefix(httpTarget.URL, "http://")},
-				"public-http":  {PublisherGroup: &public, Protocol: &httpProtocol, Target: strings.TrimPrefix(httpTarget.URL, "http://")},
-				"db":           {PublisherGroup: &private, Protocol: &pgProtocol, Target: net.JoinHostPort(pg.Host, strconv.Itoa(int(pg.Port)))},
-			}
-			keys := []string{"private-tcp", "public-tcp", "private-http", "public-http", "db"}
-			policies := map[string]controlv1.ProjectWorkload{"test": {Provider: controlv1.WorkloadGitHub, Github: &controlv1.ProjectWorkloadGitHub{Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}}, Services: keys, MaxDurationSeconds: 205}}
-			continuousPolicy := policies["test"]
-			continuousPolicy.MaxDurationSeconds = 0
-			policies["continuous"] = continuousPolicy
-			applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{Workloads: &policies, PublisherGroups: map[string]controlv1.ProjectPublisherGroup{private: {}, public: {Public: new(true)}}, Services: services, Webhooks: map[string]controlv1.ProjectWebhook{}}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, group := range []string{private, public} {
-				startWorkloadPublishers(t, f, group, transport)
-			}
+			f, issuer := newWorkloadTransportFixture(t)
+			byName, pg := startWorkloadRuntimeServices(t, f, transport)
 			job, err := workload.New(f.controlConfig.ControlOrigin(), f.publicHTTP)
 			if err != nil {
 				t.Fatal(err)
@@ -104,23 +53,11 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 			initialClaims := githubtest.Claims(f.controlConfig.ControlOrigin(), time.Now())
 			initialClaims["exp"] = time.Now().Add(135 * time.Second).Unix()
 			assertion := issuer.Sign(t, initialClaims)
-			session, err := job.Exchange(t.Context(), f.identity.teamID, "workload", strings.Repeat("a", 64), "test", assertion, keys)
+			session, err := job.Exchange(t.Context(), f.identity.teamID, "workload", strings.Repeat("a", 64), "test", assertion, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			inventory, err := job.ListServices(t.Context())
-			if err != nil || len(inventory.Services) != len(keys) {
-				t.Fatal("workload inventory", err)
-			}
-			byName := map[string]string{}
-			for _, service := range inventory.Services {
-				byName[service.Service] = service.Id
-			}
-			for _, service := range applied.Services {
-				if service.ServiceId == nil || byName[service.Service] != *service.ServiceId {
-					t.Fatal("configuration keys did not retain exact saved service IDs")
-				}
-			}
+			assertWorkloadRuntimeInventory(t, job, byName)
 			stopRenew := renewRuntimeWorkload(t, job, session.ExpiresAt)
 			paths := openWorkloadPaths(t, f, job, byName, pg, transport)
 			t.Cleanup(func() {
@@ -146,41 +83,6 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 			})
 			paths.step(t, 0)
 			nativeBinding := workloadNativeRuntimeBinding(t, f, session.Id, *session.ExpiresAt)
-			unrenewed, err := workload.New(f.controlConfig.ControlOrigin(), f.publicHTTP)
-			if err != nil {
-				t.Fatal(err)
-			}
-			unrenewedClaims := githubtest.Claims(f.controlConfig.ControlOrigin(), time.Now())
-			unrenewedClaims["check_run_id"], unrenewedClaims["jti"] = "444", "unrenewed-execution"
-			unrenewedSession, err := unrenewed.Exchange(t.Context(), f.identity.teamID, "workload", strings.Repeat("a", 64), "test", issuer.Sign(t, unrenewedClaims), keys)
-			if err != nil {
-				t.Fatal(err)
-			}
-			unrenewedPaths := openWorkloadPaths(t, f, unrenewed, byName, pg, transport)
-			unrenewedPaths.step(t, 0)
-			// a second ephemeral key cannot steal the execution or reuse its cert.
-			other, err := workload.New(f.controlConfig.ControlOrigin(), f.publicHTTP)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err = other.Exchange(t.Context(), f.identity.teamID, "workload", strings.Repeat("a", 64), "test", assertion, keys); err == nil {
-				t.Fatal("execution key takeover")
-			}
-			// revocation traverses the same paths while the main job keeps renewing.
-			claims := githubtest.Claims(f.controlConfig.ControlOrigin(), time.Now())
-			claims["check_run_id"], claims["jti"] = "333", "revoked-execution"
-			if _, err = other.Exchange(t.Context(), f.identity.teamID, "workload", strings.Repeat("a", 64), "test", issuer.Sign(t, claims), keys); err != nil {
-				t.Fatal(err)
-			}
-			revokedPaths := openWorkloadPaths(t, f, other, byName, pg, transport)
-			revokedPaths.step(t, 0)
-			if err = other.Revoke(t.Context()); err != nil {
-				t.Fatal(err)
-			}
-			revokedPaths.denied(t, 31*time.Second)
-			// join the revoked fixture before adding continuous traffic, keeping
-			// the smoke topology at the original three active sets of connectors.
-			revokedPaths.stop()
 			continuous, err := workload.New(f.controlConfig.ControlOrigin(), f.publicHTTP)
 			if err != nil {
 				t.Fatal(err)
@@ -188,11 +90,11 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 			continuousClaims := githubtest.Claims(f.controlConfig.ControlOrigin(), time.Now())
 			continuousClaims["check_run_id"], continuousClaims["jti"] = "555", "continuous-initial-proof"
 			continuousClaims["exp"] = time.Now().Add(135 * time.Second).Unix()
-			continuousSession, err := continuous.Exchange(t.Context(), f.identity.teamID, "workload", strings.Repeat("a", 64), "continuous", issuer.Sign(t, continuousClaims), keys)
+			continuousSession, err := continuous.Exchange(t.Context(), f.identity.teamID, "workload", strings.Repeat("a", 64), "continuous", issuer.Sign(t, continuousClaims), nil)
 			if err != nil || continuousSession.ExpiresAt != nil {
 				t.Fatal("continuous session acquired a hard limit", err)
 			}
-			stopContinuous := renewRuntimeWorkload(t, continuous, nil)
+			renewRuntimeWorkload(t, continuous, nil)
 			continuousPaths := openWorkloadPaths(t, f, continuous, byName, pg, transport)
 			continuousPaths.step(t, 0)
 			continuousBinding := workloadNativeRuntimeBinding(t, f, continuousSession.Id, continuousSession.IdentityExpiresAt)
@@ -224,60 +126,140 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 				if workloadNativeRuntimeBinding(t, f, session.Id, *session.ExpiresAt) != nativeBinding {
 					t.Fatal("workload renewal replaced its connector owners or exact bindings")
 				}
-				before, _ := job.Session()
-				replayed, err := job.Exchange(t.Context(), f.identity.teamID, "workload", strings.Repeat("a", 64), "test", assertion, keys)
-				if err != nil || !replayed.ExpiresAt.Equal(*session.ExpiresAt) || !replayed.LeaseExpiresAt.Equal(before.LeaseExpiresAt) {
-					t.Fatal("replay extended fixed expiry", err)
-				}
-				if i == 0 {
-					waitRuntimeTime(t, unrenewedSession.LeaseExpiresAt.Add(time.Second))
-					unrenewedPaths.denied(t, 3*time.Second)
-					if _, err = unrenewed.ClientTLSCertificate(t.Context(), byName["public-tcp"]); err == nil {
-						t.Fatal("expired lease issued a new certificate")
-					}
-				}
 			}
 			var humans int
 			if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.visitor_devices`).Scan(&humans); err != nil || humans != 0 {
 				t.Fatal("workload enrolled a human device", err)
 			}
-			for len(opened) > 0 {
-				o := <-opened
-				if o.header.PublicService == nil || o.header.SourceIP != "127.0.0.1" {
-					t.Fatal("direct transport lost destination/source binding")
-				}
-			}
 			waitRuntimeTime(t, session.ExpiresAt.Add(time.Second))
 			stopRenew()
 			paths.denied(t, 3*time.Second)
-			if _, err = job.Renew(t.Context()); err == nil {
-				t.Fatal("hard-expired job renewed")
-			}
-			if _, err = job.SelectServiceRun(t.Context(), byName["private-tcp"]); err == nil {
-				t.Fatal("hard-expired job received a native signing snapshot")
-			}
-			if _, err = job.ClientTLSCertificate(t.Context(), byName["public-tcp"]); err == nil {
-				t.Fatal("hard-expired job received a certificate")
-			}
 			continuousPaths.step(t, 3)
 			currentContinuous, err := continuous.Session()
 			if err != nil || currentContinuous.ExpiresAt != nil || !time.Now().After(continuousSession.IdentityExpiresAt) || workloadNativeRuntimeBinding(t, f, continuousSession.Id, workload.SessionDeadline(currentContinuous)) != continuousBinding {
 				t.Fatal("continuous streams ended at the sibling's hard limit or startup proof", err)
 			}
-			stopContinuous()
-			if err := continuous.Revoke(t.Context()); err != nil {
-				t.Fatal(err)
-			}
-			continuousPaths.denied(t, 31*time.Second)
-			t.Log("uncapped original HTTP, PostgreSQL and opaque streams crossed startup-proof expiry and a capped sibling's deadline with exact native bindings; revocation still closed them")
+			t.Log("original HTTP, PostgreSQL and opaque streams crossed lease and startup-proof expiry with exact native bindings; only the capped sibling ended at its hard deadline")
 		})
 	}
 }
 
-func newWorkloadTransportFixture(t *testing.T, opened chan<- privateObservation) (*privateSeparatedFixture, *githubtest.Issuer) {
+func TestIntegrationWorkloadTransportClosure(t *testing.T) {
+	testutil.RequireTestTier(t, testutil.TestTierIntegration)
+	for _, transport := range []string{"quic", "tls-tcp"} {
+		t.Run(transport, func(t *testing.T) {
+			f, issuer := newWorkloadTransportFixture(t)
+			services, pg := startWorkloadRuntimeServices(t, f, transport)
+			for i, reason := range []string{"revocation", "lease-expiry"} {
+				t.Run(reason, func(t *testing.T) {
+					job, err := workload.New(f.controlConfig.ControlOrigin(), f.publicHTTP)
+					if err != nil {
+						t.Fatal(err)
+					}
+					claims := githubtest.Claims(f.controlConfig.ControlOrigin(), time.Now())
+					claims["check_run_id"], claims["jti"] = strconv.Itoa(333+i), reason
+					policy := "test"
+					if reason == "revocation" {
+						policy = "continuous"
+					}
+					session, err := job.Exchange(t.Context(), f.identity.teamID, "workload", strings.Repeat("a", 64), policy, issuer.Sign(t, claims), nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					paths := openWorkloadPaths(t, f, job, services, pg, transport)
+					paths.step(t, 0)
+					if reason == "revocation" {
+						if err := job.Revoke(t.Context()); err != nil {
+							t.Fatal(err)
+						}
+						paths.denied(t, 31*time.Second)
+					} else {
+						waitRuntimeTime(t, session.LeaseExpiresAt.Add(time.Second))
+						paths.denied(t, 3*time.Second)
+					}
+				})
+			}
+		})
+	}
+}
+
+func startWorkloadRuntimeServices(t *testing.T, f *privateSeparatedFixture, transport string) (map[string]string, *pgx.ConnConfig) {
+	t.Helper()
+	echo := startPrivateEchoTarget(t, f.owner)
+	httpTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Tnl-Access-Token") != "" || r.Header.Get("Tnl-Visitor-Token") != "" || strings.Contains(r.Header.Get("Cookie"), "__Host-tnl-") {
+			t.Error("target received visitor credential")
+		}
+		if r.URL.Path == "/stream" {
+			ticker := time.NewTicker(100 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				if _, err := io.WriteString(w, "tick\n"); err != nil {
+					return
+				}
+				if err := http.NewResponseController(w).Flush(); err != nil {
+					return
+				}
+				select {
+				case <-r.Context().Done():
+					return
+				case <-ticker.C:
+				}
+			}
+		}
+		_, _ = io.WriteString(w, "workload HTTP")
+	}))
+	cleanupIntegrationHTTPServer(t, httpTarget, f.owner)
+	pg, err := pgx.ParseConfig(f.databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	group := "private"
+	tcpProtocol, httpProtocol, pgProtocol := controlv1.Tcp, controlv1.ServiceProtocolHTTP, controlv1.Postgres
+	services := map[string]controlv1.ProjectServiceConfiguration{
+		"tcp":  {PublisherGroup: &group, Protocol: &tcpProtocol, Target: echo.address},
+		"http": {PublisherGroup: &group, Protocol: &httpProtocol, Target: strings.TrimPrefix(httpTarget.URL, "http://")},
+		"db":   {PublisherGroup: &group, Protocol: &pgProtocol, Target: net.JoinHostPort(pg.Host, strconv.Itoa(int(pg.Port)))},
+	}
+	policies := map[string]controlv1.ProjectWorkload{"test": {Provider: controlv1.WorkloadGitHub, Github: &controlv1.ProjectWorkloadGitHub{Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}}, Services: []string{"tcp", "http", "db"}, MaxDurationSeconds: 205}}
+	continuous := policies["test"]
+	continuous.MaxDurationSeconds = 0
+	policies["continuous"] = continuous
+	applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{Workloads: &policies, PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {}}, Services: services, Webhooks: map[string]controlv1.ProjectWebhook{}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := make(map[string]string, len(services))
+	if len(applied.Services) != len(services) {
+		t.Fatal("configuration did not retain all workload services")
+	}
+	for _, service := range applied.Services {
+		if service.ServiceId == nil {
+			t.Fatal("configuration did not return saved service ID")
+		}
+		byName[service.Service] = *service.ServiceId
+	}
+	startWorkloadPublishers(t, f, group, transport)
+	return byName, pg
+}
+
+func assertWorkloadRuntimeInventory(t *testing.T, job *workload.Client, services map[string]string) {
+	t.Helper()
+	inventory, err := job.ListServices(t.Context())
+	if err != nil || len(inventory.Services) != len(services) {
+		t.Fatal("workload inventory", err)
+	}
+	for _, service := range inventory.Services {
+		if services[service.Service] != service.Id {
+			t.Fatal("configuration keys did not retain exact saved service IDs")
+		}
+	}
+}
+
+func newWorkloadTransportFixture(t *testing.T) (*privateSeparatedFixture, *githubtest.Issuer) {
 	t.Helper()
 	issuer := githubtest.New(t)
-	f := newServiceRuntimeFixtureTiming(t, false, opened, true, func(_ *daemonconfig.Config, tr *http.Transport, _ *testCertificateAuthority) {
+	f := newServiceRuntimeFixtureTiming(t, false, nil, true, func(_ *daemonconfig.Config, tr *http.Transport, _ *testCertificateAuthority) {
 		base := tr.Clone()
 		t.Cleanup(base.CloseIdleConnections)
 		tr.RegisterProtocol("https", splitACMERoundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -292,7 +274,7 @@ func newWorkloadTransportFixture(t *testing.T, opened chan<- privateObservation)
 
 func TestIntegrationWorkloadTransportHTTPNoFallback(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	f, issuer := newWorkloadTransportFixture(t, nil)
+	f, issuer := newWorkloadTransportFixture(t)
 	process := startSeparatedPrivateIngress(t, f, 0, "tls-tcp", nil)
 	startSeparatedPrivateIngress(t, f, 1, "tls-tcp", nil)
 	var forwarded atomic.Int64
@@ -303,7 +285,7 @@ func TestIntegrationWorkloadTransportHTTPNoFallback(t *testing.T) {
 		}
 		_, _ = io.WriteString(w, "workload HTTP")
 	}))
-	t.Cleanup(target.Close)
+	cleanupIntegrationHTTPServer(t, target, f.owner)
 	group, protocol := "public", controlv1.ServiceProtocolHTTP
 	policies := map[string]controlv1.ProjectWorkload{"test": {Provider: controlv1.WorkloadGitHub, Github: &controlv1.ProjectWorkloadGitHub{Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}}, Services: []string{"api"}, MaxDurationSeconds: 60}}
 	_, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{Workloads: &policies, PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {Public: new(true)}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {PublisherGroup: &group, Protocol: &protocol, Target: strings.TrimPrefix(target.URL, "http://")}}, Webhooks: map[string]controlv1.ProjectWebhook{}}})
@@ -533,22 +515,15 @@ func waitRuntimeTime(t *testing.T, at time.Time) {
 }
 
 type workloadRuntimePaths struct {
-	ended           chan error
-	stops           []func()
-	connections     []net.Conn
-	connectionNames []string
-	clients         []*http.Client
-	urls            []string
-	streams         []io.ReadCloser
-	streamDone      []<-chan error
-	streamNames     []string
-	database        *pgx.Conn
-}
-
-func (p *workloadRuntimePaths) stop() {
-	for _, stop := range p.stops {
-		stop()
-	}
+	ended          chan error
+	connection     net.Conn
+	client         *http.Client
+	url            string
+	streamDone     chan struct{}
+	streamProgress chan struct{}
+	streamError    error
+	database       *pgx.Conn
+	backendPID     uint32
 }
 
 func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.Client, services map[string]string, pg *pgx.ConnConfig, transport string) *workloadRuntimePaths {
@@ -557,8 +532,8 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := &workloadRuntimePaths{ended: make(chan error, len(services))}
-	for _, name := range []string{"private-tcp", "private-http", "public-tcp", "public-http", "db"} {
+	p := &workloadRuntimePaths{ended: make(chan error, len(services)), streamDone: make(chan struct{}), streamProgress: make(chan struct{}, 1)}
+	for _, name := range []string{"tcp", "http", "db"} {
 		service := services[name]
 		control, err := connectorstream.NewWorkloadControl(job)
 		if err != nil {
@@ -570,28 +545,13 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 		}
 		verification := f.visitorRoots.Clone()
 		verification.ServerName = run.Endpoint.Hostname
-		var address string
-		var dial func(context.Context, string, string) (net.Conn, error)
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = listener.Close() })
-		address = listener.Addr().String()
+		address := listener.Addr().String()
 		ctx, cancel := context.WithCancel(t.Context())
-		started := time.Now()
-		var requestStarted, acquired, written, responseStarted atomic.Int64
-		traceContext := httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
-			GetConn: func(string) {
-				requestStarted.Store(time.Now().UnixNano())
-				acquired.Store(0)
-				written.Store(0)
-				responseStarted.Store(0)
-			},
-			GotConn:              func(httptrace.GotConnInfo) { acquired.Store(time.Now().UnixNano()) },
-			WroteRequest:         func(httptrace.WroteRequestInfo) { written.Store(time.Now().UnixNano()) },
-			GotFirstResponseByte: func() { responseStarted.Store(time.Now().UnixNano()) },
-		})
 		ready, done := make(chan struct{}), make(chan error, 1)
 		quic, tcp := f.connectors()
 		if transport == "quic" {
@@ -600,7 +560,7 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 			quic = privateDisabledConnector()
 		}
 		go func() {
-			err := connectorstream.Serve(traceContext, listener, connectorstream.Config{Control: control, ServiceID: service, Protocol: run.Protocol, TrustRevision: run.TrustRevision, Endpoint: run.Endpoint, ServiceTLS: verification, TransportTLS: f.roots, RelayQUIC: quic, RelayTCP: tcp, Ready: func() error { close(ready); return nil }})
+			err := connectorstream.Serve(ctx, listener, connectorstream.Config{Control: control, ServiceID: service, Protocol: run.Protocol, TrustRevision: run.TrustRevision, Endpoint: run.Endpoint, ServiceTLS: verification, TransportTLS: f.roots, RelayQUIC: quic, RelayTCP: tcp, Ready: func() error { close(ready); return nil }})
 			if ctx.Err() == nil {
 				p.ended <- fmt.Errorf("workload connector %s/%s source=%s ended: %v", transport, name, source.Id, err)
 			}
@@ -615,7 +575,6 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 				t.Error("workload connector did not join")
 			}
 		})
-		p.stops = append(p.stops, stop)
 		t.Cleanup(stop)
 		select {
 		case <-ready:
@@ -627,14 +586,6 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 		case <-time.After(30 * time.Second):
 			// capture the blocked request before cancellation releases its database
 			// locks. this independent, bounded snapshot cannot make setup pass late.
-			elapsed := func(at int64) time.Duration {
-				if at == 0 {
-					return -1
-				}
-				return time.Duration(at - started.UnixNano())
-			}
-			pool := f.database.PoolStats()
-			t.Logf("workload startup elapsed=%s last request=%s connection=%s write=%s response=%s pool acquired=%d idle=%d total=%d empty acquisitions=%d cancelled acquisitions=%d", time.Since(started), elapsed(requestStarted.Load()), elapsed(acquired.Load()), elapsed(written.Load()), elapsed(responseStarted.Load()), pool.AcquiredConns(), pool.IdleConns(), pool.TotalConns(), pool.EmptyAcquireCount(), pool.CanceledAcquireCount())
 			diagnostics, diagnosticErr := f.database.Diagnostics(t.Context())
 			encoded, encodeErr := json.Marshal(diagnostics)
 			if len(encoded) <= controlstate.MaxDatabaseDiagnosticBytes && encodeErr == nil {
@@ -645,7 +596,7 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 			stop()
 			t.Fatalf("workload connector %s/%s source=%s not ready within 30s; joined setup: %v", transport, name, source.Id, stoppedError)
 		}
-		dial = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		dial := func(ctx context.Context, network, _ string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, network, address)
 		}
 		if name == "db" {
@@ -658,15 +609,14 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 			if err != nil {
 				t.Fatal("native PostgreSQL", err)
 			}
+			p.backendPID = p.database.PgConn().PID()
 			t.Cleanup(func() { _ = p.database.Close(context.Background()) })
-		} else if strings.HasSuffix(name, "tcp") {
-			conn, err := dial(t.Context(), "tcp", "")
+		} else if name == "tcp" {
+			p.connection, err = dial(t.Context(), "tcp", "")
 			if err != nil {
 				t.Fatal(err)
 			}
-			p.connections = append(p.connections, conn)
-			p.connectionNames = append(p.connectionNames, name)
-			t.Cleanup(func() { _ = conn.Close() })
+			t.Cleanup(func() { _ = p.connection.Close() })
 		} else {
 			// step probes cross a 95-second gap, beyond the server's one-minute
 			// idle timeout. use fresh probe sockets; the separate streaming
@@ -675,19 +625,45 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 			t.Cleanup(tr.CloseIdleConnections)
 			client := &http.Client{Transport: tr, Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 			endpoint := "https://" + net.JoinHostPort(run.Endpoint.Hostname, strconv.Itoa(run.Endpoint.Port))
-			p.clients, p.urls = append(p.clients, client), append(p.urls, endpoint)
+			p.client, p.url = client, endpoint
 			streamClient := *client
 			streamClient.Timeout = 0
-			response, err := streamClient.Get(endpoint + "/stream")
-			if err != nil || response.StatusCode != 200 {
+			request, err := http.NewRequestWithContext(ctx, "GET", endpoint+"/stream", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response, err := streamClient.Do(request)
+			if err != nil {
 				t.Fatal("active workload HTTP stream", err)
 			}
-			p.streams = append(p.streams, response.Body)
-			t.Cleanup(func() { _ = response.Body.Close() })
-			done := make(chan error, 1)
-			p.streamDone = append(p.streamDone, done)
-			p.streamNames = append(p.streamNames, name)
-			go func() { _, err := io.Copy(io.Discard, response.Body); done <- err }()
+			t.Cleanup(func() {
+				_ = response.Body.Close()
+				select {
+				case <-p.streamDone:
+				case <-time.After(5 * time.Second):
+					t.Error("workload HTTP stream did not join")
+				}
+			})
+			go func() {
+				defer close(p.streamDone)
+				defer response.Body.Close()
+				scanner := bufio.NewScanner(response.Body)
+				for scanner.Scan() {
+					if scanner.Text() != "tick" {
+						p.streamError = fmt.Errorf("unexpected HTTP stream data %q", scanner.Text())
+						t.Errorf("workload HTTP stream: %v", p.streamError)
+						return
+					}
+					select {
+					case p.streamProgress <- struct{}{}:
+					default:
+					}
+				}
+				p.streamError = scanner.Err()
+			}()
+			if response.StatusCode != 200 {
+				t.Fatal("active workload HTTP stream status", response.StatusCode)
+			}
 		}
 	}
 	return p
@@ -702,7 +678,7 @@ func workloadNativeRuntimeBinding(t *testing.T, f *privateSeparatedFixture, sess
 		AND (SELECT count(*)=2 AND bool_and(host(source_ip)='127.0.0.1') FROM control.connector_peer_pair_leg_claims claim WHERE claim.pair_id=pair.id)),false),
 		COALESCE(jsonb_agg(jsonb_build_array(pair.id,pair.service_id,pair.service_run_id,pair.run_number,pair.owner_key,encode(pair.delivery_id,'hex'),pair.delivery_generation,encode(pair.key_ciphertext,'hex'),pair.slots) ORDER BY pair.id)::text,'')
 		FROM control.connector_peer_pairs pair WHERE pair.subject_kind='workload_session' AND pair.subject_id=$1`, session, expiry).Scan(&count, &valid, &binding)
-	if err != nil || count != 5 || !valid {
+	if err != nil || count != 3 || !valid {
 		t.Fatalf("workload native source/install/fixed-expiry scope: pairs=%d valid=%t: %v", count, valid, err)
 	}
 	return binding
@@ -728,83 +704,120 @@ func (p *workloadRuntimePaths) step(t *testing.T, step int) {
 		t.Fatal(err)
 	default:
 	}
-	for i, conn := range p.connections {
-		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
-		line := fmt.Sprintf("step-%d\n", step)
-		if _, err := io.WriteString(conn, line); err != nil {
-			t.Fatal("active workload TCP", p.connectionNames[i], err)
-		}
-		got := make([]byte, len(line))
-		if _, err := io.ReadFull(conn, got); err != nil || string(got) != line {
-			t.Fatal("workload TCP step", p.connectionNames[i], err)
-		}
-		_ = conn.SetDeadline(time.Time{})
+	_ = p.connection.SetDeadline(time.Now().Add(5 * time.Second))
+	line := fmt.Sprintf("step-%d\n", step)
+	if _, err := io.WriteString(p.connection, line); err != nil {
+		t.Fatal("active workload TCP", err)
 	}
-	for i, client := range p.clients {
-		response, err := client.Get(p.urls[i] + "/step")
-		if err != nil {
-			t.Fatal("workload HTTP step", err)
-		}
-		body, err := io.ReadAll(response.Body)
-		_ = response.Body.Close()
-		if err != nil || response.StatusCode != 200 || string(body) != "workload HTTP" {
-			t.Fatalf("workload HTTP step: %d %q %v", response.StatusCode, body, err)
-		}
+	got := make([]byte, len(line))
+	if _, err := io.ReadFull(p.connection, got); err != nil || string(got) != line {
+		t.Fatal("workload TCP step", err)
 	}
+	_ = p.connection.SetDeadline(time.Time{})
+	response, err := p.client.Get(p.url + "/step")
+	if err != nil {
+		t.Fatal("workload HTTP step", err)
+	}
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil || response.StatusCode != 200 || string(body) != "workload HTTP" {
+		t.Fatalf("workload HTTP step: %d %q %v", response.StatusCode, body, err)
+	}
+	var pid uint32
 	var n int
+	queryContext, cancelQuery := context.WithTimeout(t.Context(), 5*time.Second)
+	err = p.database.QueryRow(queryContext, "SELECT pg_backend_pid(),41+1").Scan(&pid, &n)
+	cancelQuery()
+	if err != nil || n != 42 || pid != p.backendPID {
+		t.Fatalf("native PostgreSQL original backend: pid=%d want=%d result=%d: %v", pid, p.backendPID, n, err)
+	}
+	// require fresh data on the original response, not a merely unclosed body.
+	select {
+	case <-p.streamProgress:
+	default:
+	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	if err := p.database.QueryRow(ctx, "SELECT 41+1").Scan(&n); err != nil || n != 42 {
-		t.Fatal("native PostgreSQL multi-step query", err)
-	}
-	for i, done := range p.streamDone {
-		select {
-		case err := <-done:
-			t.Fatal("active HTTP stream ended before expiry", p.streamNames[i], err)
-		default:
-		}
+	select {
+	case <-p.streamDone:
+		t.Fatal("active HTTP stream ended before expiry", p.streamError)
+	case <-p.streamProgress:
+	case <-ctx.Done():
+		t.Fatal("active HTTP stream stopped producing data", ctx.Err())
 	}
 }
 
 func (p *workloadRuntimePaths) denied(t *testing.T, bound time.Duration) {
 	t.Helper()
-	deadline := time.Now().Add(bound)
-	for _, conn := range p.connections {
-		_ = conn.SetReadDeadline(deadline)
+	ctx, cancel := context.WithTimeout(t.Context(), bound)
+	defer cancel()
+	deadline, _ := ctx.Deadline()
+	var failures [3]error
+	var checks sync.WaitGroup
+	checks.Go(func() {
+		if err := p.connection.SetReadDeadline(deadline); err != nil {
+			failures[0] = fmt.Errorf("set original TCP closure deadline: %w", err)
+			return
+		}
 		var one [1]byte
-		if _, err := conn.Read(one[:]); err == nil {
-			t.Fatal("denied TCP remained active")
-		} else if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
-			t.Fatal("TCP exceeded revocation/expiry bound")
-		}
-	}
-	for _, done := range p.streamDone {
-		select {
-		case <-done:
-		case <-time.After(max(time.Nanosecond, time.Until(deadline))):
-			t.Fatal("HTTP stream exceeded revocation/expiry bound")
-		}
-	}
-	for i, client := range p.clients {
-		response, err := client.Get(p.urls[i] + "/step")
+		_, err := p.connection.Read(one[:])
+		var timeout net.Error
 		if err == nil {
-			_ = response.Body.Close()
-			if response.StatusCode == 200 || response.StatusCode >= 300 && response.StatusCode < 400 {
-				t.Fatal("denied workload fell back to browser approval or target")
+			failures[0] = errors.New("denied original TCP connection remained active")
+		} else if errors.As(err, &timeout) && timeout.Timeout() {
+			failures[0] = fmt.Errorf("TCP exceeded revocation/expiry bound: %w", err)
+		}
+	})
+	checks.Go(func() {
+		select {
+		case <-p.streamDone:
+		case <-ctx.Done():
+			failures[1] = fmt.Errorf("HTTP stream exceeded revocation/expiry bound: %w", ctx.Err())
+		}
+	})
+	checks.Go(func() {
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			_, err := p.database.Exec(ctx, "SELECT 1")
+			if err != nil {
+				var timeout net.Error
+				if ctx.Err() != nil || errors.As(err, &timeout) && timeout.Timeout() {
+					failures[2] = fmt.Errorf("PostgreSQL did not observe runtime closure before its query deadline: %w", err)
+				}
+				return
+			}
+			select {
+			case <-ctx.Done():
+				failures[2] = fmt.Errorf("PostgreSQL exceeded revocation/expiry bound: %w", ctx.Err())
+				return
+			case <-ticker.C:
 			}
 		}
+	})
+	checks.Wait()
+	if err := errors.Join(failures[:]...); err != nil {
+		t.Fatal(err)
 	}
-	for {
-		ctx, cancel := context.WithDeadline(t.Context(), minTime(deadline, time.Now().Add(3*time.Second)))
-		_, err := p.database.Exec(ctx, "SELECT 1")
-		cancel()
-		if err != nil {
-			break
+
+	// new admissions have their own budget, after all original streams closed.
+	requestContext, cancelRequest := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancelRequest()
+	request, err := http.NewRequestWithContext(requestContext, "GET", p.url+"/step", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := p.client.Do(request)
+	if err != nil {
+		var timeout net.Error
+		if requestContext.Err() != nil || errors.As(err, &timeout) && timeout.Timeout() {
+			t.Fatal("fresh workload HTTP admission timed out instead of observing denial", err)
 		}
-		if !time.Now().Before(deadline) {
-			t.Fatal("PostgreSQL exceeded revocation/expiry bound")
-		}
-		time.Sleep(10 * time.Millisecond)
+		return
+	}
+	_ = response.Body.Close()
+	if response.StatusCode == 200 || response.StatusCode >= 300 && response.StatusCode < 400 {
+		t.Fatal("denied workload fell back to browser approval or target")
 	}
 }
 

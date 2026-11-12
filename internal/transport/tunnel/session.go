@@ -26,6 +26,15 @@ func (e *ProtocolError) Error() string { return "tunnel: " + string(e.Code) }
 // TunnelCode exposes the owned wire classification without parsing Error text.
 func (e *ProtocolError) TunnelCode() tunnelv1.ErrorCode { return e.Code }
 
+// SessionCleanupError identifies a failed owned cleanup, not a recoverable
+// connection attempt. it carries failure facts only, never a resource owner.
+type SessionCleanupError struct{ Err error }
+
+func (e *SessionCleanupError) Error() string {
+	return "tunnel: session cleanup failed: " + e.Err.Error()
+}
+func (e *SessionCleanupError) Unwrap() error { return e.Err }
+
 // StreamHeaderError belongs to one rejected stream, not its authenticated
 // publisher connection. the acceptor may keep serving other streams.
 type StreamHeaderError struct {
@@ -73,12 +82,9 @@ func (s *Session) BorrowServicePublisherTransport() (muxsession.Session, error) 
 }
 
 // Dial performs the client side of the shared tunnelv1 handshake.
-func Dial(ctx context.Context, transport muxsession.Session, hello tunnelv1.Message) (result *Session, err error) {
-	if hello.Role == tunnelv1.Connector {
-		return nil, errors.New("tunnel: connector requires an expected delivery ID")
-	}
-	result, _, err = dial(ctx, transport, hello, "", false)
-	return result, err
+func Dial(ctx context.Context, transport muxsession.Session, hello tunnelv1.Message) (*Session, error) {
+	result := dial(ctx, transport, hello, "", false)
+	return result.session, errors.Join(result.err, result.cleanupErr)
 }
 
 // DialConnector requires the delivery ID from the prepared pair, independently
@@ -87,67 +93,82 @@ func DialConnector(ctx context.Context, transport muxsession.Session, hello tunn
 	if hello.Role != tunnelv1.Connector || hello.ConnectorPairLegProof == nil {
 		return nil, tunnelv1.ConnectorPairLegAccepted{}, errors.New("tunnel: connector hello is required")
 	}
-	return dial(ctx, transport, hello, expectedDeliveryID, true)
+	result := dial(ctx, transport, hello, expectedDeliveryID, true)
+	return result.session, result.receipt, errors.Join(result.err, result.cleanupErr)
 }
 
-func dial(ctx context.Context, transport muxsession.Session, hello tunnelv1.Message, expectedDeliveryID string, native bool) (result *Session, receipt tunnelv1.ConnectorPairLegAccepted, err error) {
+// dial owns the failed handshake's transport cleanup. keep its error separate
+// so a transport race can recover from a rejection but never lose failed Close.
+type dialResult struct {
+	session    *Session
+	receipt    tunnelv1.ConnectorPairLegAccepted
+	err        error
+	cleanupErr error
+}
+
+func dial(ctx context.Context, transport muxsession.Session, hello tunnelv1.Message, expectedDeliveryID string, native bool) (result dialResult) {
 	if transport == nil {
-		return nil, receipt, errors.New("tunnel: transport session is required")
-	}
-	if hello.Type != tunnelv1.Hello {
-		return nil, receipt, errors.New("tunnel: hello message is required")
+		return dialResult{err: errors.New("tunnel: transport session is required")}
 	}
 	defer func() {
-		if err != nil {
-			err = errors.Join(controlContextError(ctx, err), transport.Close())
+		if result.err != nil {
+			result.err = controlContextError(ctx, result.err)
+			result.cleanupErr = transport.Close()
 		}
 	}()
+	if !native && hello.Role == tunnelv1.Connector {
+		return dialResult{err: errors.New("tunnel: connector requires an expected delivery ID")}
+	}
+	if hello.Type != tunnelv1.Hello {
+		return dialResult{err: errors.New("tunnel: hello message is required")}
+	}
 	if native {
 		if _, err := tunnelv1.ParsePeerDeliveryIdentifier(expectedDeliveryID); err != nil || hello.ConnectorPairLegProof.Validate() != nil {
-			return nil, receipt, errors.New("tunnel: valid connector leg and expected delivery ID are required")
+			return dialResult{err: errors.New("tunnel: valid connector leg and expected delivery ID are required")}
 		}
 	}
 	started := time.Now()
 	control, err := transport.OpenStream(ctx)
 	if err != nil {
-		return nil, receipt, fmt.Errorf("tunnel: open control stream: %w", err)
+		return dialResult{err: fmt.Errorf("tunnel: open control stream: %w", err)}
 	}
 	finish, err := setupDeadline(ctx, control)
 	if err != nil {
-		return nil, receipt, err
+		return dialResult{err: err}
 	}
 	defer func() {
-		err = errors.Join(err, finish(err == nil))
-		if err != nil {
-			result = nil
-			receipt = tunnelv1.ConnectorPairLegAccepted{}
+		result.err = errors.Join(result.err, finish(result.err == nil))
+		if result.err != nil {
+			result.session = nil
+			result.receipt = tunnelv1.ConnectorPairLegAccepted{}
 		}
 	}()
 	if err := tunnelv1.WriteControl(control, hello); err != nil {
-		return nil, receipt, fmt.Errorf("tunnel: write hello: %w", err)
+		return dialResult{err: fmt.Errorf("tunnel: write hello: %w", err)}
 	}
 	response, err := tunnelv1.ReadControl(control)
 	if err != nil {
-		return nil, receipt, fmt.Errorf("tunnel: read hello response: %w", err)
+		return dialResult{err: fmt.Errorf("tunnel: read hello response: %w", err)}
 	}
 	if response.Type == tunnelv1.Error {
 		if native {
 			_ = control.CloseWrite()
 		}
-		return nil, receipt, &ProtocolError{Code: response.Code}
+		return dialResult{err: &ProtocolError{Code: response.Code}}
 	}
 	if response.Type != tunnelv1.HelloAccepted {
-		return nil, receipt, errors.New("tunnel: unexpected hello response")
+		return dialResult{err: errors.New("tunnel: unexpected hello response")}
 	}
+	var receipt tunnelv1.ConnectorPairLegAccepted
 	if native {
 		if response.ConnectorPairLegAccepted == nil || response.ConnectorPairLegAccepted.Match(*hello.ConnectorPairLegProof, expectedDeliveryID, started, time.Now()) != nil {
-			return nil, receipt, errors.New("tunnel: connector hello receipt does not match prepared pair")
+			return dialResult{err: errors.New("tunnel: connector hello receipt does not match prepared pair")}
 		}
 		receipt = *response.ConnectorPairLegAccepted
 	} else if response.ConnectorPairLegAccepted != nil {
-		return nil, receipt, errors.New("tunnel: unexpected connector hello receipt")
+		return dialResult{err: errors.New("tunnel: unexpected connector hello receipt")}
 	}
-	return authenticatedSession(transport, control, hello), receipt, nil
+	return dialResult{session: authenticatedSession(transport, control, hello), receipt: receipt}
 }
 
 // Accept performs the server side of the shared tunnelv1 handshake.

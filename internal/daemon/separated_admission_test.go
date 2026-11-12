@@ -5,6 +5,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -91,7 +92,7 @@ func recordSeparatedAdmission(t *testing.T, components map[string]any) {
 func verifySeparatedAdmission(t *testing.T) {
 	t.Helper()
 	components := make(map[string]any)
-	for shard, component := range separatedPublisherComponents() {
+	for shard, component := range separatedNames("publishers") {
 		var concurrency int
 		separatedWait(t, separatedPublisherShardKey(shard, "concurrency"), 15*time.Second, &concurrency)
 		if concurrency != runtimeLoadAdmission.PublisherConcurrency {
@@ -99,11 +100,11 @@ func verifySeparatedAdmission(t *testing.T) {
 		}
 		components[component] = map[string]int{"concurrency": concurrency}
 	}
-	for _, component := range append(separatedIngresses(), "relay-a", "relay-b") {
+	for _, component := range slices.Concat(separatedNames("ingresses"), separatedPlan(t)["relays"]) {
 		var applied separatedAdmissionLimits
 		separatedWait(t, component+".admission-limits", 15*time.Second, &applied)
 		var matches bool
-		if component == "ingress-a" || component == "ingress-b" {
+		if slices.Contains(separatedNames("ingresses"), component) {
 			components[component] = applied.ingress()
 			matches = (runtimeLoadAdmission.ClientHelloConnectionLimit == -1 || applied.ClientHelloConnectionLimit == runtimeLoadAdmission.ClientHelloConnectionLimit) &&
 				(runtimeLoadAdmission.VisitorConnectionLimit == -1 || applied.VisitorConnectionLimit == runtimeLoadAdmission.VisitorConnectionLimit) &&

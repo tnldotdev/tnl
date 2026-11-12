@@ -46,12 +46,11 @@ func TestIntegrationPublicRunCapacity(t *testing.T) {
 					quic, tcp = f.connectors()
 					config = f.identity.publisherConfig("", quic, tcp)
 					second := f.ingressConfig
-					listeners := runtimeListeners{ingress: serviceRuntimeListener(t), metrics: serviceRuntimeListener(t)}
+					listeners := runtimeListeners{ingress: serviceRuntimeListener(t, owner), metrics: serviceRuntimeListener(t, owner)}
 					second.IngressID = "capacity-second-ingress"
 					second.IngressListen, second.MetricsListen = listeners.ingress.Addr().String(), listeners.metrics.Addr().String()
 					process := startIntegrationProcessWithOptions(t, second, integrationProcessOptions{serviceHTTPClient: f.serviceHTTP,
 						relayClientTLS: f.roots, owner: owner, listeners: listeners})
-					t.Cleanup(func() { stopIntegrationProcess(t, process) })
 					waitForProcessReady(t, process)
 					visitors = []*integrationVisitor{f.visitor, newIntegrationVisitor(t, f.pebble.roots, second.IngressListen, owner)}
 					ready = func(t *testing.T, handle *integrationPublisher) publisher.Event {

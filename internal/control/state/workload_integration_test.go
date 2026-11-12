@@ -107,6 +107,12 @@ func TestIntegrationWorkloadHandleCapacityAndExpiredCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := applied.Services[0].ServiceID
+	nativeService := ""
+	for _, candidate := range applied.Services {
+		if candidate.Service == "db" {
+			nativeService = candidate.ServiceID
+		}
+	}
 	renewed, err := d.RenewWorkloadSession(ctx, first.ID, first.Credential, signWorkloadRenewal(first, firstKey), now.Add(31*time.Second))
 	if err != nil {
 		t.Fatal(err)
@@ -117,6 +123,16 @@ func TestIntegrationWorkloadHandleCapacityAndExpiredCleanup(t *testing.T) {
 	expired := renewed.LeaseExpiresAt.Add(time.Second)
 	if _, err := d.CheckWorkloadService(ctx, first.Credential, service, expired); !errors.Is(err, ErrWorkloadDenied) {
 		t.Fatal("service permission revived expired lease", err)
+	}
+	if _, err := d.SelectWorkloadServiceRun(ctx, first.Credential, nativeService, expired); !errors.Is(err, ErrWorkloadDenied) {
+		t.Fatal("expired lease received a native signing snapshot", err)
+	}
+	expiredCSR, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, firstKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.IssueWorkloadServiceClientCertificate(ctx, first.Credential, nativeService, expiredCSR, expired); !errors.Is(err, ErrWorkloadDenied) {
+		t.Fatal("expired lease issued a new certificate", err)
 	}
 	secondRequest, key := workloadExchange(t, r, expired)
 	secondRequest.Execution.GitHub.CheckRunID, secondRequest.Execution.GitHub.JTI = "333", "second"
@@ -151,12 +167,6 @@ func TestIntegrationWorkloadHandleCapacityAndExpiredCleanup(t *testing.T) {
 	}
 	// native certificates retain the fixed workload window; HTTP permissions
 	// have their own short-lived certificate and local policy lease coverage.
-	nativeService := ""
-	for _, candidate := range applied.Services {
-		if candidate.Service == "db" {
-			nativeService = candidate.ServiceID
-		}
-	}
 	certificate, err := d.IssueWorkloadServiceClientCertificate(ctx, maximum.Credential, nativeService, csr, expired)
 	if err != nil {
 		t.Fatal(err)
@@ -260,8 +270,8 @@ func TestIntegrationWorkloadReplayNarrowingAndFixedWindow(t *testing.T) {
 	if err != nil || len(services) != 1 {
 		t.Fatal("re-added service expanded issued session", services, err)
 	}
-	if _, err = d.ExchangeWorkload(ctx, exchange, now.Add(time.Minute)); err != nil {
-		t.Fatal("same JWT/key could not resume after policy addition", err)
+	if replayed, err := d.ExchangeWorkload(ctx, exchange, now.Add(time.Minute)); err != nil || replayed.ID != original.ID || !replayed.ExpiresAt.Equal(*original.ExpiresAt) || !replayed.LeaseExpiresAt.Equal(renewed.LeaseExpiresAt) {
+		t.Fatal("same JWT/key replay changed the session or extended its fixed expiry/lease", err)
 	}
 	for at := now.Add(90 * time.Second); at.Before(*original.ExpiresAt); at = at.Add(30 * time.Second) {
 		if !renewed.IdentityExpiresAt.After(at.Add(WorkloadLease)) {
@@ -329,6 +339,9 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	session, err := d.ExchangeWorkload(ctx, exchange, now)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, err := d.SelectWorkloadServiceRun(ctx, session.Credential, service.ID, now); err != nil {
+		t.Fatal("live workload could not select native signing snapshot", err)
 	}
 	port := 0
 	for _, s := range applied.Services {
@@ -426,6 +439,12 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	}
 	if _, err = d.AuthorizeServiceClientCertificate(ctx, service.ID, run.RunID, run.Token, direct, run.RunNumber, source, block.Bytes, *session.ExpiresAt); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("public stream outlived job", err)
+	}
+	if _, err := d.SelectWorkloadServiceRun(ctx, session.Credential, service.ID, *session.ExpiresAt); !errors.Is(err, ErrWorkloadDenied) {
+		t.Fatal("hard-expired workload received a native signing snapshot", err)
+	}
+	if _, err := d.IssueWorkloadServiceClientCertificate(ctx, session.Credential, service.ID, csr, *session.ExpiresAt); !errors.Is(err, ErrWorkloadDenied) {
+		t.Fatal("hard-expired workload issued a new certificate", err)
 	}
 	// policy removal denies still-live admissions before their earlier deadline.
 	r.ExpectedRevision = applied.Revision

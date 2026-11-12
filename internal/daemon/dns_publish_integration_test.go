@@ -33,7 +33,7 @@ func TestDNSIntegrationSplitAutomaticRelayCertificates(t *testing.T) {
 		return
 	}
 	const serverDomain = "split.integration.test"
-	dnsFixture := newIntegrationRoute53(t, "server", serverDomain)
+	dnsFixture := newIntegrationRoute53(t, "server", serverDomain, newRuntimeTopology(t))
 	fixture := newSplitPublishFixtureWithOptions(t, "automatic", splitPublishOptions{dns: dnsFixture})
 	namespace, found := strings.CutPrefix(fixture.identity.hostname, "automatic.")
 	if !found {

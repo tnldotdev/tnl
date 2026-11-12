@@ -23,7 +23,7 @@ import (
 // deadline cannot transfer its authorization to, or close, the new subject.
 func TestIntegrationWorkloadHTTPReplacementKeepsSubjectsSeparate(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	f, issuer := newWorkloadTransportFixture(t, nil)
+	f, issuer := newWorkloadTransportFixture(t)
 	process := startSeparatedPrivateIngress(t, f, 0, "tls-tcp", nil)
 	startSeparatedPrivateIngress(t, f, 1, "tls-tcp", nil)
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

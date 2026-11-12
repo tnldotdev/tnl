@@ -110,10 +110,16 @@ func (w *ConnectorPermissionWriter) receive() {
 	}
 }
 
-func (w *ConnectorPermissionWriter) Renew(ctx context.Context, update tunnelv1.ConnectorPermissionUpdate) error {
+func (w *ConnectorPermissionWriter) Renew(ctx context.Context, update tunnelv1.ConnectorPermissionUpdate) (result error) {
+	// cancellation signals share a first cause; the result must also retain an
+	// independent owner failure that arrives after this visitor has stopped.
+	defer func() { result = errors.Join(result, context.Cause(w.ctx)) }()
+	if cause := context.Cause(ctx); cause != nil {
+		return cause
+	}
 	until, ok := ctx.Deadline()
-	if !ok || !until.After(time.Now()) || ctx.Err() != nil {
-		return errors.Join(context.DeadlineExceeded, context.Cause(ctx))
+	if !ok || !until.After(time.Now()) {
+		return context.DeadlineExceeded
 	}
 	w.mu.Lock()
 	if w.closed || w.ctx.Err() != nil || len(w.pending) >= MaxConnectorApplicationStreams || w.next == math.MaxUint64 {
@@ -143,16 +149,16 @@ func (w *ConnectorPermissionWriter) Renew(ctx context.Context, update tunnelv1.C
 			<-stopped
 		}
 	}()
-	started, err := w.suspension.write(call, w.stream, w.gate, func(w io.Writer) error {
+	sharedFailure, err := w.suspension.write(call, w.stream, w.gate, func(w io.Writer) error {
 		return tunnelv1.WriteConnectorPermissionUpdate(w, update)
 	})
-	if err != nil {
-		if started || !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			w.cancel(err)
-		}
-		return err
+	if err == nil {
+		sharedFailure, err = w.suspension.acknowledged(call, pending.result)
 	}
-	return w.suspension.acknowledged(call, pending.result)
+	if sharedFailure {
+		w.cancel(err)
+	}
+	return err
 }
 
 func minTime(a, b time.Time) time.Time {

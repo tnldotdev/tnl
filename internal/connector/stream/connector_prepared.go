@@ -281,14 +281,14 @@ func (p *PreparedConnector) renewPermissions(ctx context.Context, updates <-chan
 		p.mu.Lock()
 		until := p.permissionUntil
 		p.mu.Unlock()
-		wait, stopWait := context.WithCancel(ctx)
+		wait := ctx
+		stopWait := func() {}
 		if !until.IsZero() {
-			stopWait()
 			wait, stopWait = context.WithDeadline(ctx, until)
 		}
 		select {
 		case <-wait.Done():
-			if cause := context.Cause(wait); cause != p.permissionStop {
+			if cause := context.Cause(wait); !failure.Only(cause, p.permissionStop) {
 				p.mu.Lock()
 				p.permissionErr = cause
 				p.mu.Unlock()
@@ -307,12 +307,12 @@ func (p *PreparedConnector) renewPermissions(ctx context.Context, updates <-chan
 			call, cancel := context.WithDeadline(ctx, bound)
 			err := p.renewPermission(call, func() error { return renewal.writer.Renew(call, renewal.update) }, renewal.until)
 			cancel()
-			if errors.Is(err, tunnel.ErrConnectorPermissionStale) {
+			if failure.Only(err, tunnel.ErrConnectorPermissionStale) {
 				continue // keep the write fence until a fresh binding proof is ACKed.
 			}
 			if err != nil {
 				p.mu.Lock()
-				if err != p.permissionStop || context.Cause(ctx) != p.permissionStop {
+				if context.Cause(ctx) != p.permissionStop || !failure.Only(err, p.permissionStop) {
 					p.permissionErr = err
 				}
 				p.mu.Unlock()
@@ -370,7 +370,7 @@ func (p *PreparedConnector) renewPermission(ctx context.Context, renew func() er
 			p.permissionUntil = nextUntil
 		}
 	}
-	stale := errors.Is(err, tunnel.ErrConnectorPermissionStale)
+	stale := failure.Only(err, tunnel.ErrConnectorPermissionStale)
 	if p.closedLocked() {
 		// finish already released this waiter's channel.
 		p.permission = permissionUsable{}

@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/netip"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -22,8 +21,6 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	tclog "github.com/testcontainers/testcontainers-go/log"
 	"github.com/testcontainers/testcontainers-go/modules/compose"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 const (
@@ -34,7 +31,7 @@ const (
 
 type harnessArguments struct {
 	TestShard string   `name:"tnl-test-shard" help:"Run one stable test-name shard, numbered 1/N through N/N."`
-	Service   string   `arg:"" enum:"postgres,mysql,postgres-tls,mysql-tls,redis,dns,runtime,publisher-install" help:"Disposable service for the test command."`
+	Service   string   `arg:"" enum:"postgres,mysql,postgres-tls,mysql-tls,redis,connections,dns,runtime,publisher-install" help:"Disposable service or connections suite for the test command."`
 	Command   []string `arg:"" optional:"" passthrough:"" sep:"none" help:"Test command and arguments after --."`
 }
 
@@ -52,7 +49,7 @@ func parseHarnessArguments(arguments []string) (harnessArguments, error) {
 			return parsed, errors.New("dns, runtime, and publisher-install do not take a test command or shard")
 		}
 	} else if len(parsed.Command) < 2 || parsed.Command[0] != "--" {
-		return parsed, errors.New("usage: testharness postgres|postgres-tls|mysql|mysql-tls|redis -- go test [arguments...], or testharness dns|runtime")
+		return parsed, errors.New("usage: testharness postgres|postgres-tls|mysql|mysql-tls|redis|connections -- go test [arguments...], or testharness dns|runtime|publisher-install")
 	} else {
 		// kong's passthrough includes the separator; only the child command
 		// and its arguments belong in the process we launch.
@@ -92,64 +89,7 @@ func run() error {
 	if arguments.Service == "publisher-install" {
 		return runPublisherInstall(ctx, root)
 	}
-	command, err := shardGoTestCommand(ctx, root, arguments.Command, arguments.TestShard)
-	if err != nil {
-		return err
-	}
-	switch arguments.Service {
-	case "postgres-tls", "mysql", "mysql-tls":
-		fixture, err := startDatabaseTLS(ctx, arguments.Service)
-		if err != nil {
-			return err
-		}
-		defer fixture.Close()
-		command = append(command, fixture.Flags...)
-	case "postgres":
-		if err := prepareFixtureImage(ctx, postgresImage); err != nil {
-			return err
-		}
-		container, err := postgres.Run(ctx, postgresImage, postgres.BasicWaitStrategies(), loopbackPort("5432"))
-		if err != nil {
-			return fmt.Errorf("start disposable PostgreSQL: %w", err)
-		}
-		defer terminate(container)
-		address, err := container.ConnectionString(ctx, "sslmode=disable")
-		if err != nil {
-			return fmt.Errorf("read disposable PostgreSQL address: %w", err)
-		}
-		command = append(command, "-tnl-test-postgres-url="+address)
-	case "redis":
-		if err := prepareFixtureImage(ctx, redisImage); err != nil {
-			return err
-		}
-		container, err := testcontainers.Run(ctx, redisImage,
-			testcontainers.WithExposedPorts("6379/tcp"), loopbackPort("6379"),
-			testcontainers.WithCmd("redis-server", "--requirepass", "testpass"),
-			testcontainers.WithWaitStrategy(wait.ForListeningPort("6379/tcp")),
-		)
-		if err != nil {
-			return fmt.Errorf("start disposable Redis: %w", err)
-		}
-		defer terminate(container)
-		host, err := container.Host(ctx)
-		if err != nil {
-			return fmt.Errorf("read disposable Redis host: %w", err)
-		}
-		port, err := container.MappedPort(ctx, "6379/tcp")
-		if err != nil {
-			return fmt.Errorf("read disposable Redis port: %w", err)
-		}
-		command = append(command, "-tnl-test-redis-address="+net.JoinHostPort(host, port.Port()))
-	default:
-		return errors.New("test service must be postgres, mysql, or redis")
-	}
-	child := exec.CommandContext(ctx, command[0], command[1:]...)
-	child.Dir = root
-	child.Stdin, child.Stdout, child.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if err := child.Run(); err != nil {
-		return fmt.Errorf("test command: %w", err)
-	}
-	return nil
+	return runTestCommand(ctx, root, arguments)
 }
 
 func runDNS(ctx context.Context, root string) error {
@@ -244,10 +184,11 @@ func reservedLoopbackPort(port string) testcontainers.CustomizeRequestOption {
 	}
 }
 
-func terminate(container testcontainers.Container) {
+func terminate(container testcontainers.Container) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if err := container.Terminate(ctx); err != nil {
-		fmt.Fprintln(os.Stderr, "remove disposable test container:", err)
+		return fmt.Errorf("remove disposable test container: %w", err)
 	}
+	return nil
 }

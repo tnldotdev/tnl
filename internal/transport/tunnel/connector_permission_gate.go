@@ -112,7 +112,7 @@ func (g *ConnectorPermissionGate) Resume() error {
 	return g.err
 }
 
-func (g *ConnectorPermissionGate) wait(ctx context.Context) error {
+func (g *ConnectorPermissionGate) wait(ctx context.Context) (sharedFailure bool, err error) {
 	for {
 		g.mu.Lock()
 		if g.changed == nil {
@@ -121,16 +121,16 @@ func (g *ConnectorPermissionGate) wait(ctx context.Context) error {
 		err, until, changed := g.errorLocked(time.Now()), g.until, g.changed
 		g.mu.Unlock()
 		if err != nil {
-			return err
+			return true, err
 		}
 		if until.IsZero() {
-			return context.Cause(ctx)
+			return false, context.Cause(ctx)
 		}
 		timer := time.NewTimer(time.Until(until))
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return context.Cause(ctx)
+			return false, context.Cause(ctx)
 		case <-changed:
 			timer.Stop()
 		case <-timer.C:
@@ -138,9 +138,13 @@ func (g *ConnectorPermissionGate) wait(ctx context.Context) error {
 	}
 }
 
-func (g *ConnectorPermissionGate) write(ctx context.Context, stream muxsession.Stream, gate chan struct{}, write func(io.Writer) error) (started bool, result error) {
-	if err := g.wait(ctx); err != nil {
-		return false, err
+// the request owns queueing and its ACK wait. once a frame starts, only the
+// shared owner can interrupt it; its write deadline still bounds completion.
+// ending one visitor must not reset framing shared by its siblings.
+// callers own and join the stream's permanent cancellation/reset callback.
+func (g *ConnectorPermissionGate) write(ctx context.Context, stream muxsession.Stream, gate chan struct{}, write func(io.Writer) error) (sharedFailure bool, result error) {
+	if shared, err := g.wait(ctx); err != nil {
+		return shared, err
 	}
 	select {
 	case gate <- struct{}{}:
@@ -149,8 +153,8 @@ func (g *ConnectorPermissionGate) write(ctx context.Context, stream muxsession.S
 	}
 	defer func() { <-gate }()
 	for {
-		if err := g.wait(ctx); err != nil {
-			return false, err
+		if shared, err := g.wait(ctx); err != nil {
+			return shared, err
 		}
 		g.mu.Lock()
 		if !g.until.IsZero() {
@@ -159,9 +163,13 @@ func (g *ConnectorPermissionGate) write(ctx context.Context, stream muxsession.S
 		}
 		until, ok := ctx.Deadline()
 		now := time.Now()
-		if !ok || !until.After(now) || ctx.Err() != nil {
+		if cause := context.Cause(ctx); cause != nil {
 			g.mu.Unlock()
-			return false, errors.Join(context.DeadlineExceeded, context.Cause(ctx))
+			return false, cause
+		}
+		if !ok || !until.After(now) {
+			g.mu.Unlock()
+			return false, context.DeadlineExceeded
 		}
 		g.writing = &connectorPermissionWrite{stream: stream, authority: until, started: now, paused: g.pausedLocked(now)}
 		result = stream.SetWriteDeadline(g.writeDeadlineLocked(now))
@@ -171,28 +179,29 @@ func (g *ConnectorPermissionGate) write(ctx context.Context, stream muxsession.S
 	defer func() {
 		g.mu.Lock()
 		g.writing = nil
+		// latch shared failure before releasing the write gate. a sibling must
+		// not start another frame while the caller retires the control owner.
+		if result != nil {
+			g.err = errors.Join(g.err, result)
+			g.notifyLocked()
+		}
+		result = g.errorLocked(time.Now())
+		sharedFailure = result != nil
 		g.mu.Unlock()
 	}()
 	if result != nil {
-		return false, result
+		return true, result
 	}
-	joined := make(chan struct{})
-	stop := context.AfterFunc(ctx, func() { defer close(joined); _ = stream.Reset(0) })
-	defer func() {
-		if !stop() {
-			<-joined
-		}
-		result = errors.Join(result, context.Cause(ctx))
-	}()
 	result = write(stream)
 	if result != nil {
 		// never retry a frame after an IO error, including partial writes.
 		_ = stream.Reset(0)
+		result = errors.Join(result, context.Cause(ctx))
 	}
-	return true, result
+	return result != nil, result
 }
 
-func (g *ConnectorPermissionGate) acknowledged(ctx context.Context, result <-chan error) error {
+func (g *ConnectorPermissionGate) acknowledged(ctx context.Context, result <-chan error) (sharedFailure bool, err error) {
 	started := time.Now()
 	g.mu.Lock()
 	paused := g.pausedLocked(started)
@@ -212,26 +221,26 @@ func (g *ConnectorPermissionGate) acknowledged(ctx context.Context, result <-cha
 		}
 		g.mu.Unlock()
 		if err != nil {
-			return err
+			return true, err
 		}
 		if !suspended && accepted {
-			return context.Cause(ctx)
+			return false, context.Cause(ctx)
 		}
 		if budgetExpired || !until.After(now) {
-			return context.DeadlineExceeded
+			return false, context.DeadlineExceeded
 		}
 		timer := time.NewTimer(time.Until(until))
 		select {
 		case decision := <-result:
 			timer.Stop()
 			if decision != nil {
-				return decision
+				return false, decision
 			}
 			accepted = true
 			result = nil
 		case <-ctx.Done():
 			timer.Stop()
-			return context.Cause(ctx)
+			return false, context.Cause(ctx)
 		case <-changed:
 			timer.Stop()
 		case <-timer.C:

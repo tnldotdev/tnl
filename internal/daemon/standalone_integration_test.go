@@ -18,18 +18,22 @@ import (
 
 func TestIntegrationStandaloneLifecycle(t *testing.T) {
 	databaseURL, inspect := standaloneTestDatabase(t)
-	acmeServer := standaloneTestACMEServer(t)
+	owner := newRuntimeTopology(t)
+	acmeServer := standaloneTestACMEServer(t, owner)
 	certificateAuthority := newIntegrationTestCA(t)
-	controlCertificate := certificateAuthority.issueServer(t, "control.tnl.test")
-	relayCertificate := certificateAuthority.issueServer(t, "relay.tnl.test")
-	publicAddress := unusedTCPAddress(t)
-	publicControlAddress := unusedTCPAddress(t)
-	metricsAddress := unusedTCPAddress(t)
-	relayUDP := integrationPacketListener(t)
+	controlCertificate := certificateAuthority.issueServer(t, "control.tnl.test", owner)
+	relayCertificate := certificateAuthority.issueServer(t, "relay.tnl.test", owner)
+	publicListener, controlProxy := serviceRuntimeListener(t, owner), serviceRuntimeListener(t, owner)
+	controlListener, metrics := serviceRuntimeListener(t, owner), serviceRuntimeListener(t, owner)
+	publicAddress, publicControlAddress, metricsAddress := publicListener.Addr().String(), controlProxy.Addr().String(), metrics.Addr().String()
+	relayUDP := integrationPacketListener(t, owner)
+	serviceListeners := newServicePortListeners(t, owner)
+	ingressListener := combineIngressListeners(append([]net.Listener{publicListener}, serviceListeners...))
+	owner.cleanupResource(t, func() { _ = ingressListener.Close() })
 	cfg := daemonconfig.Config{
-		ServicePortRanges: integrationServicePorts(t),
+		ServicePortRanges: serviceListeners.inventory(),
 		Role:              daemonconfig.RoleStandalone, DatabaseURL: databaseURL, MetricsListen: metricsAddress,
-		ControlListen: unusedTCPAddress(t), PrivateControlListen: "127.0.0.1:1", IngressListen: publicAddress,
+		ControlListen: controlListener.Addr().String(), PrivateControlListen: "127.0.0.1:1", IngressListen: publicAddress,
 		ControlTrustedProxies: []string{"127.0.0.1/32"}, ControlClientIPHeader: "X-Forwarded-For",
 		RelayTCPListen: "127.0.0.1:1", RelayUDPListen: relayUDP.LocalAddr().String(), InternalRelayListen: "127.0.0.1:1",
 		ServerDomain: "tnl.test", ManagedDomain: "tunnels.test",
@@ -54,13 +58,13 @@ func TestIntegrationStandaloneLifecycle(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	serviceClient := splitTestServiceHTTPClient(t, certificateAuthority.roots, cfg.PrivateControlListen)
+	serviceClient := splitTestServiceHTTPClient(t, certificateAuthority.roots, cfg.PrivateControlListen, owner)
 	controlTLS, err := staticServerTLS(controlCertificate.certificateFile, controlCertificate.privateKeyFile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	startIntegrationControlProxy(t, nil, publicControlAddress, cfg.ControlListen, controlTLS)
-	process := startIntegrationProcessWithOptions(t, cfg, integrationProcessOptions{acmeHTTPClient: acmeServer.Client(), serviceHTTPClient: serviceClient, listeners: runtimeListeners{relayUDP: relayUDP}})
+	serveIntegrationControlProxy(t, owner, controlProxy, cfg.ControlListen, controlTLS)
+	process := startIntegrationProcessWithOptions(t, cfg, integrationProcessOptions{owner: owner, acmeHTTPClient: acmeServer.Client(), serviceHTTPClient: serviceClient, listeners: runtimeListeners{control: controlListener, metrics: metrics, ingress: ingressListener, relayUDP: relayUDP}})
 	waitForProcessReady(t, process)
 	metricsResponse, err := http.Get("http://" + metricsAddress + "/metrics")
 	if err != nil {
@@ -134,17 +138,20 @@ func TestIntegrationStandaloneLifecycle(t *testing.T) {
 
 func TestIntegrationSplitLifecycle(t *testing.T) {
 	databaseURL, inspect := standaloneTestDatabase(t)
+	owner := newRuntimeTopology(t)
 	const serverDomain = "127.0.0.1.nip.io"
 	controlHostname := "control." + serverDomain
 	certificateAuthority := newIntegrationTestCA(t)
-	controlCertificate := certificateAuthority.issueServer(t, controlHostname)
-	relayACertificate := certificateAuthority.issueServer(t, "relay-a."+serverDomain)
-	relayBCertificate := certificateAuthority.issueServer(t, "relay-b."+serverDomain)
-	acmeServer := standaloneTestACMEServer(t)
-	controlAddress := unusedTCPAddress(t)
-	privateControlAddress := unusedTCPAddress(t)
-	serviceClient := splitTestServiceHTTPClient(t, certificateAuthority.roots, privateControlAddress)
-	controlConfig := splitTestConfig(daemonconfig.RoleControl, unusedTCPAddress(t))
+	controlCertificate := certificateAuthority.issueServer(t, controlHostname, owner)
+	relayACertificate := certificateAuthority.issueServer(t, "relay-a."+serverDomain, owner)
+	relayBCertificate := certificateAuthority.issueServer(t, "relay-b."+serverDomain, owner)
+	acmeServer := standaloneTestACMEServer(t, owner)
+	controlSockets := runtimeListeners{control: serviceRuntimeListener(t, owner), privateControl: serviceRuntimeListener(t, owner), metrics: serviceRuntimeListener(t, owner)}
+	controlAddress, privateControlAddress := controlSockets.control.Addr().String(), controlSockets.privateControl.Addr().String()
+	serviceClient := splitTestServiceHTTPClient(t, certificateAuthority.roots, privateControlAddress, owner)
+	controlConfig := splitTestConfig(daemonconfig.RoleControl, controlSockets.metrics.Addr().String())
+	serviceListeners := newServicePortListeners(t, owner)
+	controlConfig.ServicePortRanges = serviceListeners.inventory()
 	controlConfig.DatabaseURL = databaseURL
 	controlConfig.ControlListen = controlAddress
 	controlConfig.PrivateControlListen = privateControlAddress
@@ -164,30 +171,34 @@ func TestIntegrationSplitLifecycle(t *testing.T) {
 	if err := controlConfig.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	control := startIntegrationProcess(t, controlConfig, acmeServer.Client(), serviceClient)
+	control := startIntegrationProcessWithOptions(t, controlConfig, integrationProcessOptions{owner: owner, acmeHTTPClient: acmeServer.Client(), serviceHTTPClient: serviceClient, listeners: controlSockets})
 	waitForProcessReady(t, control)
 
-	ingressConfig := splitTestConfig(daemonconfig.RoleIngress, unusedTCPAddress(t))
+	ingressSockets := runtimeListeners{ingress: serviceRuntimeListener(t, owner), metrics: serviceRuntimeListener(t, owner)}
+	ingressConfig := splitTestConfig(daemonconfig.RoleIngress, ingressSockets.metrics.Addr().String())
+	ingressConfig.ServicePortRanges = controlConfig.ServicePortRanges
 	ingressConfig.ControlHostname = controlHostname
 	ingressConfig.ClusterSecret = testClusterSecret
 	ingressConfig.IngressID = "ingress-split"
-	ingressConfig.IngressListen = unusedTCPAddress(t)
+	ingressConfig.IngressListen = ingressSockets.ingress.Addr().String()
+	ingressSockets.ingress = combineIngressListeners(append([]net.Listener{ingressSockets.ingress}, serviceListeners...))
+	owner.cleanupResource(t, func() { _ = ingressSockets.ingress.Close() })
 	relayAConfig, relayAListeners := splitTestRelayConfig(
 		t, controlHostname, "relay-a", "relay-a-1",
-		relayACertificate.certificateFile, relayACertificate.privateKeyFile,
+		relayACertificate.certificateFile, relayACertificate.privateKeyFile, owner,
 	)
 	relayBConfig, relayBListeners := splitTestRelayConfig(
 		t, controlHostname, "relay-b", "relay-b-1",
-		relayBCertificate.certificateFile, relayBCertificate.privateKeyFile,
+		relayBCertificate.certificateFile, relayBCertificate.privateKeyFile, owner,
 	)
 	for _, cfg := range []daemonconfig.Config{ingressConfig, relayAConfig, relayBConfig} {
 		if err := cfg.Validate(); err != nil {
 			t.Fatal(err)
 		}
 	}
-	ingressProcess := startIntegrationProcess(t, ingressConfig, acmeServer.Client(), serviceClient)
-	relayAProcess := startIntegrationProcessWithOptions(t, relayAConfig, integrationProcessOptions{acmeHTTPClient: acmeServer.Client(), serviceHTTPClient: serviceClient, listeners: relayAListeners})
-	relayBProcess := startIntegrationProcessWithOptions(t, relayBConfig, integrationProcessOptions{acmeHTTPClient: acmeServer.Client(), serviceHTTPClient: serviceClient, listeners: relayBListeners})
+	ingressProcess := startIntegrationProcessWithOptions(t, ingressConfig, integrationProcessOptions{owner: owner, acmeHTTPClient: acmeServer.Client(), serviceHTTPClient: serviceClient, listeners: ingressSockets})
+	relayAProcess := startIntegrationProcessWithOptions(t, relayAConfig, integrationProcessOptions{owner: owner, acmeHTTPClient: acmeServer.Client(), serviceHTTPClient: serviceClient, listeners: relayAListeners})
+	relayBProcess := startIntegrationProcessWithOptions(t, relayBConfig, integrationProcessOptions{owner: owner, acmeHTTPClient: acmeServer.Client(), serviceHTTPClient: serviceClient, listeners: relayBListeners})
 	for _, process := range []*integrationProcess{ingressProcess, relayAProcess, relayBProcess} {
 		waitForProcessReady(t, process)
 	}
@@ -207,9 +218,9 @@ func TestIntegrationSplitLifecycle(t *testing.T) {
 	waitUntilIntegrationTime(t, relayAExpiresAt.Add(100*time.Millisecond))
 	relayAReplacementConfig, replacementListeners := splitTestRelayConfig(
 		t, controlHostname, "relay-a", "relay-a-1",
-		relayACertificate.certificateFile, relayACertificate.privateKeyFile,
+		relayACertificate.certificateFile, relayACertificate.privateKeyFile, owner,
 	)
-	relayAReplacement := startIntegrationProcessWithOptions(t, relayAReplacementConfig, integrationProcessOptions{acmeHTTPClient: acmeServer.Client(), serviceHTTPClient: serviceClient, listeners: replacementListeners})
+	relayAReplacement := startIntegrationProcessWithOptions(t, relayAReplacementConfig, integrationProcessOptions{owner: owner, acmeHTTPClient: acmeServer.Client(), serviceHTTPClient: serviceClient, listeners: replacementListeners})
 	waitForProcessReady(t, relayAReplacement)
 	var replacementRunID string
 	var replacementRevision int64

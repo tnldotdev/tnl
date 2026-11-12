@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -46,32 +47,55 @@ func connectorClaimError(err error) error {
 			}
 		}
 	}
-	var visit func(error)
-	visit = func(cause error) {
+	var visit func(error, bool)
+	visit = func(cause error, explained bool) {
+		if cause == nil {
+			return
+		}
 		switch classified := cause.(type) {
 		case *tunnel.ProtocolError:
+			explained = true
 			protocol(classified.Code)
 		case *ControlProblemError:
+			explained = true
 			var code relayv1.ProblemCode
 			if classified.Problem != nil {
 				code = classified.Problem.Code
 			}
 			problem(classified.Status, code)
 		case *serviceapi.ProblemError:
+			explained = true
 			problem(classified.Status, relayv1.ProblemCode(classified.Code))
 		case *temporaryControlError:
+			explained = true
 			retryable = true
+		case *connectorSocketSourceChange:
+			explained = true
+		}
+		if cause == context.Canceled || cause == context.DeadlineExceeded {
+			explained, retryable = true, true
 		}
 		switch wrapped := cause.(type) {
 		case interface{ Unwrap() []error }:
-			for _, child := range wrapped.Unwrap() {
-				visit(child)
+			if children := wrapped.Unwrap(); len(children) > 0 {
+				for _, child := range children {
+					visit(child, explained)
+				}
+				return
 			}
 		case interface{ Unwrap() error }:
-			visit(wrapped.Unwrap())
+			if child := wrapped.Unwrap(); child != nil {
+				visit(child, explained)
+				return
+			}
+		}
+		// an authored wrapper can explain its provider cause, but a separate
+		// unclassified operation failure must not become cancellation-only.
+		if !explained {
+			denied = true
 		}
 	}
-	visit(err)
+	visit(err, false)
 	code := tunnelv1.Unauthenticated
 	if !denied {
 		switch {

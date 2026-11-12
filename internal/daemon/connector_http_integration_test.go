@@ -3,6 +3,7 @@ package daemon
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -39,7 +41,7 @@ func startPrivateHTTPPublisher(t *testing.T, f *privateSeparatedFixture, service
 	if f.publisherTCPOnly {
 		quic = privateDisabledConnector()
 	}
-	ctx, cancel := context.WithCancel(t.Context())
+	ctx, cancel := context.WithCancel(context.Background())
 	ready, done := make(chan struct{}), make(chan error, 1)
 	heartbeat := 100 * time.Millisecond
 	if f.defaultTiming {
@@ -66,17 +68,15 @@ func startPrivateHTTPPublisher(t *testing.T, f *privateSeparatedFixture, service
 				return claimed, err
 			}})
 	}()
-	t.Cleanup(func() {
-		cancel()
+	join := sync.OnceValue(func() error {
 		select {
 		case err := <-done:
-			if err != nil {
-				t.Errorf("private HTTP publisher shutdown: %v", err)
-			}
+			return err
 		case <-time.After(12 * time.Second):
-			t.Error("private HTTP publisher did not join")
+			return errors.New("private HTTP publisher did not join")
 		}
 	})
+	f.owner.publishers = append(f.owner.publishers, runtimeProcess{name: "private HTTP publisher", cancel: cancel, wait: join})
 	select {
 	case <-ready:
 	case err := <-done:

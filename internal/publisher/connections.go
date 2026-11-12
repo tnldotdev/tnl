@@ -247,8 +247,11 @@ func (m *publisherConnectionManager) connect(
 	}
 	m.mu.Unlock()
 	if !current {
-		_ = session.Close()
-		return nil, tunnel.ErrAwaitAssignment
+		var cleanup error
+		if err := session.Close(); err != nil {
+			cleanup = &tunnel.SessionCleanupError{Err: err}
+		}
+		return nil, errors.Join(tunnel.ErrAwaitAssignment, cleanup)
 	}
 	return &publicPublisherSlot{ctx: ctx, session: session, transport: transport, ref: ref, route: m.route}, nil
 }

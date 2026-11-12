@@ -26,7 +26,7 @@ func TestIntegrationRelayQUICProfiles(t *testing.T) {
 					func(cfg *daemonconfig.Config, _ *http.Transport, _ *testCertificateAuthority) {
 						cfg.RelayQUICProfile = profile
 					})
-				target := startPrivateEchoTarget(t)
+				target := startPrivateEchoTarget(t, f.owner)
 				key, err := opaqueid.New(opaqueid.IdempotencyPrefix)
 				if err != nil {
 					t.Fatal(err)
