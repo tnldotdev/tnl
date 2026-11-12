@@ -1,6 +1,9 @@
 package main
 
 import (
+	"errors"
+
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 )
@@ -11,8 +14,14 @@ type presentedFailure struct {
 	action  string
 }
 
-// presentFailure chooses authored output without reading the internal cause.
+// presentFailure uses authored messages and explicitly approved fields.
 func presentFailure(err error) presentedFailure {
+	var problem *clientcontrol.ProblemError
+	if errors.As(err, &problem) {
+		if id, ok := problem.CredentialDeliveryResourceID(); ok {
+			return presentedFailure{reason: failure.ServerConflict, message: "credential delivery unavailable", action: "revoke " + id + ", then create with a new key"}
+		}
+	}
 	if code, ok := diagnostic.CodeOf(err); ok {
 		return presentedFailure{reason: failure.Reason(code), message: diagnostic.Summary(code)}
 	}

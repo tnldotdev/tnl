@@ -56,7 +56,8 @@ func TestIntegrationGuestTrialCredentialAndOneCurrentPublicURL(t *testing.T) {
 	if err != nil || share.Scope != "guest" || share.Label != "trial" || share.PreviewID != "" || len(share.PublicURLIDs) != 1 || share.PublicURLIDs[0] != first.ID || !share.ExpiresAt.Equal(stored.ExpiresAt) {
 		t.Fatalf("guest share = %+v, %v", share, err)
 	}
-	if _, err := database.CreateGuestShare(t.Context(), guest.ID, first.ID, "first-share", "trial", sha256.Sum256([]byte("other-secret")), stored.ExpiresAt, now); !errors.Is(err, ErrShareIdempotency) {
+	var delivery *CredentialDeliveryUnavailable
+	if _, err := database.CreateGuestShare(t.Context(), guest.ID, first.ID, "first-share", "trial", sha256.Sum256([]byte("other-secret")), stored.ExpiresAt, now); !errors.As(err, &delivery) || delivery.ResourceID != share.ID {
 		t.Fatalf("reused guest share key with different secret: %v", err)
 	}
 	short, err := database.CreateGuestShare(t.Context(), guest.ID, first.ID, "short-share", "", sha256.Sum256([]byte("short-lived")), now.Add(time.Hour), now)

@@ -2,16 +2,14 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"time"
 
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	"github.com/tnldotdev/tnl/internal/failure"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -60,21 +58,19 @@ func createShareInvitation(ctx context.Context, s *clientteam.Session, f shareIn
 	if err != nil {
 		return err
 	}
-	var secret [32]byte
-	if _, err = rand.Read(secret[:]); err != nil {
-		return err
-	}
-	digest := sha256.Sum256(secret[:])
 	key, err := randomIdempotencyKey()
 	if err != nil {
 		return err
 	}
-	invite, err := s.Authenticated().Control.CreateVisitorInvitation(ctx, item.Id, key, controlv1.CreateVisitorInvitationRequest{Email: f.Email, TokenDigest: hex.EncodeToString(digest[:]), ExpiresAt: time.Now().Add(duration)})
+	invite, err := s.Authenticated().Control.CreateVisitorInvitation(ctx, item.Id, key, controlv1.CreateVisitorInvitationRequest{Email: f.Email, ExpiresAt: time.Now().Add(duration)})
 	if err != nil {
 		return err
 	}
+	if invite.Credential == "" || invite.Invitation.PublicUrlId != item.Id {
+		return failure.Wrap("create visitor invitation", failure.ServerResponseInvalid, errors.New("server returned an incomplete invitation or another public URL"))
+	}
 	// one-time credentials are raw stdout values, never framed or logged.
-	_, err = io.WriteString(o, invite.Id+"."+base64.RawURLEncoding.EncodeToString(secret[:])+"\n")
+	_, err = io.WriteString(o, invite.Credential+"\n")
 	return err
 }
 func runShareInviteAccept(ctx context.Context, f shareInviteAcceptCommand, o, d io.Writer) error {

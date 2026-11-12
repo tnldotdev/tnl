@@ -417,7 +417,7 @@ func runFeedbackMutation(ctx context.Context, flags feedbackMutationCommand, pro
 		return err
 	}
 	defer session.Close()
-	body := controlv1.AppendFeedbackEventRequest{Type: controlv1.FeedbackEventType(kind)}
+	body := controlv1.AppendFeedbackEventRequest{Type: controlv1.FeedbackEventInputType(kind)}
 	if message != "" {
 		body.Text = &message
 	}

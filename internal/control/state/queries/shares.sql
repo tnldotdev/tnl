@@ -51,6 +51,9 @@ RETURNING public_url_id;
 -- name: GetShare :one
 SELECT * FROM control.shares WHERE id = $1;
 
+-- name: FindShareRequest :one
+SELECT * FROM control.shares WHERE created_by_identity_id = $1 AND idempotency_key = $2;
+
 -- name: ListSharePublicURLs :many
 SELECT public_url_id FROM control.share_public_urls
 WHERE share_id = $1 ORDER BY public_url_id;

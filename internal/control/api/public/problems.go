@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/tnldotdev/tnl/internal/control/api/serviceaccess"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	failureproblem "github.com/tnldotdev/tnl/internal/failure/problem"
@@ -18,6 +19,9 @@ func writeControlStateProblem(ctx context.Context, response http.ResponseWriter,
 	// the peer has already ended this request. match the private API boundary:
 	// do not turn its interrupted database work into a server failure response.
 	if ctx.Err() != nil {
+		return
+	}
+	if serviceaccess.WriteCredentialDeliveryProblem(response, err) {
 		return
 	}
 	switch {

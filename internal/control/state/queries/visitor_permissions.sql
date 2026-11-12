@@ -48,6 +48,9 @@ ON CONFLICT (created_by_identity_id, idempotency_key) DO UPDATE SET idempotency_
 -- name: GetVisitorInvitation :one
 SELECT * FROM control.visitor_invitations WHERE id = $1;
 
+-- name: FindVisitorInvitationRequest :one
+SELECT * FROM control.visitor_invitations WHERE created_by_identity_id = $1 AND idempotency_key = $2;
+
 -- name: LockVisitorInvitation :one
 SELECT * FROM control.visitor_invitations WHERE id = $1 FOR UPDATE;
 

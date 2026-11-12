@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -61,6 +60,7 @@ type CreateShareRequest struct {
 	ExpiresAt         time.Time
 	PolicyRevision    uint64
 	PublicURLs        []AuthorizedSharePublicURL
+	EntryPublicURLID  string
 }
 
 func (d *Database) CreateShare(ctx context.Context, request CreateShareRequest, now time.Time) (result Share, retErr error) {
@@ -69,7 +69,7 @@ func (d *Database) CreateShare(ctx context.Context, request CreateShareRequest, 
 	if request.PreviewID != "" && !opaqueid.Valid(request.PreviewID, opaqueid.PreviewPrefix) || request.TeamID == "" || request.ActingIdentityID == "" ||
 		len(request.Label) > 128 ||
 		request.IdempotencyKey == "" || len(request.IdempotencyKey) > 128 || request.PolicyRevision == 0 ||
-		!request.ExpiresAt.After(now) || request.ExpiresAt.After(now.Add(maximumShareLifetime)) ||
+		request.ExpiresAt.IsZero() ||
 		len(request.PublicURLs) < 1 || len(request.PublicURLs) > 32 || request.PreviewID == "" && len(request.PublicURLs) != 1 {
 		return Share{}, ErrShareInvalid
 	}
@@ -85,14 +85,17 @@ func (d *Database) CreateShare(ctx context.Context, request CreateShareRequest, 
 		}
 		ids[index] = route.PublicURLID
 	}
+	if request.EntryPublicURLID != "" && !slices.Contains(ids, request.EntryPublicURLID) {
+		return Share{}, ErrShareInvalid
+	}
 	digestInput, err := json.Marshal(struct {
 		PreviewID    string   `json:"preview_id"`
 		TeamID       string   `json:"team_id"`
 		Label        string   `json:"label"`
 		PublicURLIDs []string `json:"public_url_ids"`
-		Fingerprint  string   `json:"secret_fingerprint"`
+		EntryURLID   string   `json:"entry_public_url_id"`
 		ExpiresAt    string   `json:"expires_at"`
-	}{request.PreviewID, request.TeamID, request.Label, ids, hex.EncodeToString(request.SecretFingerprint[:]), request.ExpiresAt.UTC().Format(time.RFC3339Nano)})
+	}{request.PreviewID, request.TeamID, request.Label, ids, request.EntryPublicURLID, request.ExpiresAt.UTC().Format(time.RFC3339Nano)})
 	if err != nil {
 		return Share{}, fmt.Errorf("controlstate: encode share request: %w", err)
 	}
@@ -168,8 +171,23 @@ func (d *Database) CreateShare(ctx context.Context, request CreateShareRequest, 
 			route.PublicURLScope == string(PublicURLScopeShared) && membership.Role != "admin" && membership.Role != "owner" {
 			return Share{}, ErrPreviewAccess
 		}
+	}
+	existing, err := queries.FindShareRequest(ctx, controlstatedb.FindShareRequestParams{CreatedByIdentityID: request.ActingIdentityID, IdempotencyKey: request.IdempotencyKey})
+	if err == nil {
+		if subtle.ConstantTimeCompare(existing.RequestDigest, digest[:]) != 1 {
+			return Share{}, ErrShareIdempotency
+		}
+		return Share{}, &CredentialDeliveryUnavailable{ResourceID: existing.ID}
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return Share{}, err
+	}
+	if !request.ExpiresAt.After(now) || request.ExpiresAt.After(now.Add(maximumShareLifetime)) {
+		return Share{}, ErrShareInvalid
+	}
+	for _, route := range urls {
 		count, err := queries.CountActiveSharesForPublicURL(ctx, controlstatedb.CountActiveSharesForPublicURLParams{
-			PublicURLID: route.ID, Now: timestamptz(now),
+			PublicURLID: route.PublicURLID, Now: timestamptz(now),
 		})
 		if err != nil {
 			return Share{}, fmt.Errorf("controlstate: count active shares: %w", err)
@@ -195,8 +213,11 @@ func (d *Database) CreateShare(ctx context.Context, request CreateShareRequest, 
 	if err != nil {
 		return Share{}, fmt.Errorf("controlstate: create share: save share: %w", err)
 	}
-	if stored.PreviewID.String != request.PreviewID || stored.Scope != scope || stored.RevokedAt.Valid || subtle.ConstantTimeCompare(stored.RequestDigest, digest[:]) != 1 {
+	if stored.PreviewID.String != request.PreviewID || stored.Scope != scope || subtle.ConstantTimeCompare(stored.RequestDigest, digest[:]) != 1 {
 		return Share{}, ErrShareIdempotency
+	}
+	if stored.ID != id {
+		return Share{}, &CredentialDeliveryUnavailable{ResourceID: stored.ID}
 	}
 	for _, publicURLID := range ids {
 		if _, err := queries.AddSharePublicURL(ctx, controlstatedb.AddSharePublicURLParams{
@@ -222,13 +243,13 @@ func (d *Database) CreateGuestShare(ctx context.Context, guestID, publicURLID, k
 	now = now.UTC().Truncate(time.Microsecond)
 	expiresAt = expiresAt.UTC().Truncate(time.Microsecond)
 	if guestID == "" || !opaqueid.Valid(publicURLID, opaqueid.PublicURLPrefix) || key == "" || len(key) > 128 || len(label) > 128 ||
-		!expiresAt.After(now) || expiresAt.After(now.Add(maximumShareLifetime)) {
+		expiresAt.IsZero() {
 		return Share{}, ErrShareInvalid
 	}
 	if err := d.requireOpen(); err != nil {
 		return Share{}, err
 	}
-	digest := sha256.Sum256([]byte(guestID + ":" + publicURLID + ":" + hex.EncodeToString(fingerprint[:]) + ":" + expiresAt.Format(time.RFC3339Nano) + ":" + label))
+	digest := sha256.Sum256([]byte(guestID + ":" + publicURLID + ":" + expiresAt.Format(time.RFC3339Nano) + ":" + label))
 	id, err := opaqueid.New(opaqueid.SharePrefix)
 	if err != nil {
 		return Share{}, err
@@ -245,6 +266,27 @@ func (d *Database) CreateGuestShare(ctx context.Context, guestID, publicURLID, k
 	}
 	if err != nil {
 		return Share{}, fmt.Errorf("controlstate: create guest share: lock public URL: %w", err)
+	}
+	// a retry must still belong to the live trial and its captured public URL.
+	var live bool
+	if err = tx.QueryRow(ctx, `SELECT control.guest_share_live($1,$2) AND EXISTS (SELECT 1 FROM control.guest_public_urls WHERE guest_id=$1 AND public_url_id=$3)`, guestID, now, publicURLID).Scan(&live); err != nil {
+		return Share{}, err
+	}
+	if !live {
+		return Share{}, ErrShareStale
+	}
+	existing, err := q.FindShareRequest(ctx, controlstatedb.FindShareRequestParams{CreatedByIdentityID: guestID, IdempotencyKey: key})
+	if err == nil {
+		if subtle.ConstantTimeCompare(existing.RequestDigest, digest[:]) != 1 {
+			return Share{}, ErrShareIdempotency
+		}
+		return Share{}, &CredentialDeliveryUnavailable{ResourceID: existing.ID}
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return Share{}, err
+	}
+	if !expiresAt.After(now) || expiresAt.After(now.Add(maximumShareLifetime)) {
+		return Share{}, ErrShareInvalid
 	}
 	count, err := q.CountActiveSharesForPublicURL(ctx, controlstatedb.CountActiveSharesForPublicURLParams{PublicURLID: publicURLID, Now: timestamptz(now)})
 	if err != nil {
@@ -263,8 +305,11 @@ func (d *Database) CreateGuestShare(ctx context.Context, guestID, publicURLID, k
 	if err != nil {
 		return Share{}, fmt.Errorf("controlstate: create guest share: save share: %w", err)
 	}
-	if stored.GuestID.String != guestID || stored.Scope != "guest" || stored.RevokedAt.Valid || subtle.ConstantTimeCompare(stored.RequestDigest, digest[:]) != 1 {
+	if stored.GuestID.String != guestID || stored.Scope != "guest" || subtle.ConstantTimeCompare(stored.RequestDigest, digest[:]) != 1 {
 		return Share{}, ErrShareIdempotency
+	}
+	if stored.ID != id {
+		return Share{}, &CredentialDeliveryUnavailable{ResourceID: stored.ID}
 	}
 	if _, err = q.AddGuestSharePublicURL(ctx, controlstatedb.AddGuestSharePublicURLParams{ShareID: stored.ID, PublicURLID: publicURLID}); errors.Is(err, pgx.ErrNoRows) {
 		return Share{}, ErrShareStale

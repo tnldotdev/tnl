@@ -223,7 +223,7 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	if requests.Load() != baseline {
 		t.Fatal("anonymous request reached target")
 	}
-	token, err := f.identity.routes.CreateServiceHTTPGrant(t.Context(), service.Id, controlv1.CreateVisitorCredentialRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service.Id}, Kind: "token", ExpiresAt: time.Now().Add(time.Hour)})
+	token, err := f.identity.routes.CreateServiceHTTPGrant(t.Context(), service.Id, controlv1.CreateVisitorCredentialRequest{Kind: "token", ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +247,7 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	}
 	awaitServiceHTTPStatus(t, client, base, "Tnl-Visitor-Token", token.Permission.VisitorToken, 403)
 	closeResponse(request(client, "/", "Tnl-Visitor-Token", token.Permission.VisitorToken, 403))
-	share, err := f.identity.routes.CreateServiceHTTPGrant(t.Context(), service.Id, controlv1.CreateVisitorCredentialRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service.Id}, Kind: "share", ExpiresAt: time.Now().Add(time.Hour)})
+	share, err := f.identity.routes.CreateServiceHTTPGrant(t.Context(), service.Id, controlv1.CreateVisitorCredentialRequest{Kind: "share", ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil || share.ShareUrl == nil || !strings.HasPrefix(*share.ShareUrl, base+"/") {
 		t.Fatal("share lost allocated port", err)
 	}
@@ -416,7 +416,7 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	transition, err := f.identity.routes.CreateServiceHTTPGrant(t.Context(), service.Id, controlv1.CreateVisitorCredentialRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service.Id}, Kind: "token", ExpiresAt: time.Now().Add(time.Hour)})
+	transition, err := f.identity.routes.CreateServiceHTTPGrant(t.Context(), service.Id, controlv1.CreateVisitorCredentialRequest{Kind: "token", ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}

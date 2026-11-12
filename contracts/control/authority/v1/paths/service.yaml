@@ -112,7 +112,7 @@ paths:
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
     post:
       operationId: inviteWebsiteServiceVisitor
-      description: Keep the same key and exact request when retrying with a fresh signed assertion. Current manager and company source checks run again. An exact retry returns HTTP 200 with the original ID and current state but no secret. If delivery was lost, explicitly revoke that ID and create with a new key and deadline. A changed service, email or deadline with the same actor/key returns conflict. No secret is retained for recovery.
+      description: Keep the same key and exact request when retrying with a fresh signed assertion. Current manager and company source checks run again. An exact retry returns HTTP 409 credential_delivery_unavailable with details.resource_id. If delivery was lost, explicitly revoke that ID and create with a new key and deadline. A changed service, email or deadline with the same actor/key returns conflict. No secret is retained for recovery.
       security: [{ webServiceAuth: [] }]
       parameters: [{ $ref: "../openapi.yaml#/components/parameters/IdempotencyKey" }]
       requestBody:
@@ -124,18 +124,19 @@ paths:
                 $ref: "../../../public/v1/openapi.yaml#/components/schemas/CreateServiceInvitationRequest",
               }
       responses:
-        "200":
-          description: Existing invitation without its secret; explicitly revoke and reissue if delivery was lost
+        "409":
+          description: Credential delivery unavailable or changed input
           content:
-            application/json:
-              schema:
-                { $ref: "../../../public/v1/openapi.yaml#/components/schemas/ServiceInvitation" }
+            application/problem+json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/Problem" }
         "201":
           description: Exact service invitation; secret returned only at creation
           content:
             application/json:
               schema:
-                { $ref: "../../../public/v1/openapi.yaml#/components/schemas/ServiceInvitation" }
+                {
+                  $ref: "../../../public/v1/openapi.yaml#/components/schemas/ServiceInvitationCreation",
+                }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/service/services/{service_id}/invitations/{invitation_id}:
     parameters:

@@ -190,7 +190,7 @@ func TestGuestVisitorLinkStaysOutOfFrames(t *testing.T) {
 		t.Fatal(err)
 	}
 	output.setGuestDemo()
-	output.setGuestShare("shr_trial.visitor-secret")
+	output.setGuestShare("https://demo.guest.example/__tnl/share/shr_trial.visitor-secret")
 	if err := output.starting("tun_0123456789abcdefghijkl", "http://127.0.0.1:3000"); err != nil {
 		t.Fatal(err)
 	}

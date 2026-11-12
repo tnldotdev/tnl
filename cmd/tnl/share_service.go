@@ -264,31 +264,21 @@ func createServiceShareInvitation(ctx context.Context, control *clientcontrol.Cl
 			return err
 		}
 	}
-	invite, err := control.InviteServiceVisitor(ctx, service, key, controlv1.CreateServiceInvitationRequest{Email: openapi_types.Email(f.Email), ExpiresAt: at})
+	creation, err := control.InviteServiceVisitor(ctx, service, key, controlv1.CreateServiceInvitationRequest{Email: openapi_types.Email(f.Email), ExpiresAt: at})
 	if err != nil {
 		return err
 	}
-	if invite.ServiceId != service || !opaqueid.Valid(invite.Id, opaqueid.ServiceInvitationPrefix) || !strings.EqualFold(string(invite.Email), strings.TrimSpace(f.Email)) || !invite.ExpiresAt.Equal(at) || invite.Secret != nil && (!privateInvitationSecret(*invite.Secret, invite.Id) || invite.AcceptedAt != nil || invite.RevokedAt != nil) {
+	invite := creation.Invitation
+	if invite.ServiceId != service || !opaqueid.Valid(invite.Id, opaqueid.ServiceInvitationPrefix) || !strings.EqualFold(string(invite.Email), strings.TrimSpace(f.Email)) || !invite.ExpiresAt.Equal(at) || !privateInvitationSecret(creation.Credential, invite.Id) || invite.AcceptedAt != nil || invite.RevokedAt != nil {
 		return serviceShareResponse()
 	}
 	if f.Output == statusOutputJSON {
-		return failure.Wrap("write service invitation", failure.OutputUnavailable, json.NewEncoder(o).Encode(invite))
+		return failure.Wrap("write service invitation", failure.OutputUnavailable, json.NewEncoder(o).Encode(struct {
+			controlv1.ServiceInvitation
+			Secret string `json:"secret"`
+		}{invite, creation.Credential}))
 	}
-	if invite.Secret == nil {
-		state := serviceShareState(&invite.ExpiresAt, invite.RevokedAt, time.Now())
-		if state == "active" {
-			state = "pending"
-			if invite.AcceptedAt != nil {
-				state = "accepted"
-			}
-		}
-		return writeHumanFrame(o, "tnl share service invite create", "secret unavailable", "revoke this invitation, then create with a new key", clioutput.Fields(
-			clioutput.Field{Label: "service ID", Value: service},
-			clioutput.Field{Label: "invitation ID", Value: invite.Id},
-			clioutput.Field{Label: "state", Value: state},
-		), clioutput.Section("revoke", clioutput.Text("tnl share service revoke "+service+" "+invite.Id)))
-	}
-	_, err = fmt.Fprintln(o, *invite.Secret)
+	_, err = fmt.Fprintln(o, creation.Credential)
 	return failure.Wrap("write service invitation secret", failure.OutputUnavailable, err)
 }
 
@@ -352,7 +342,7 @@ func listServiceShares(ctx context.Context, control *clientcontrol.Client, servi
 		}
 	}
 	for _, invite := range invitations {
-		if invite.ServiceId != service || !opaqueid.Valid(invite.Id, opaqueid.ServiceInvitationPrefix) || invite.Secret != nil {
+		if invite.ServiceId != service || !opaqueid.Valid(invite.Id, opaqueid.ServiceInvitationPrefix) {
 			return serviceShareResponse()
 		}
 	}
@@ -504,7 +494,7 @@ func createServiceShareHTTP(ctx context.Context, control *clientcontrol.Client, 
 	if service.Protocol != controlv1.ServiceProtocolHTTP || service.Endpoint == nil || !service.Endpoint.Public {
 		return serviceShareInput("HTTP links and tokens require a publicly reachable service HTTP service; use an identity invitation for connector access")
 	}
-	grant, err := control.CreateServiceHTTPGrant(ctx, service.Id, controlv1.CreateVisitorCredentialRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service.Id}, Kind: kind, ExpiresAt: at})
+	grant, err := control.CreateServiceHTTPGrant(ctx, service.Id, controlv1.CreateVisitorCredentialRequest{Kind: kind, ExpiresAt: at})
 	if err != nil {
 		return err
 	}

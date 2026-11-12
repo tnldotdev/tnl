@@ -29,6 +29,9 @@ type serviceAccessStore interface {
 }
 
 func serviceAccessError(ctx context.Context, w http.ResponseWriter, operation string, err error) {
+	if serviceaccess.WriteCredentialDeliveryProblem(w, err) {
+		return
+	}
 	switch {
 	case errors.Is(err, controlstate.ErrServiceManagerRequired):
 		writeProblem(w, 403, authorityv1.ManagerRequired, "current service manager permission is required")
@@ -154,6 +157,7 @@ func (h *handler) ListWebsiteServiceInvitations(w http.ResponseWriter, r *http.R
 }
 
 func (h *handler) InviteWebsiteServiceVisitor(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID, p authorityv1.InviteWebsiteServiceVisitorParams) {
+	w.Header().Set("Cache-Control", "no-store")
 	var body controlv1.CreateServiceInvitationRequest
 	s, actor, ok := h.serviceHuman(w, r, &body)
 	if !ok {
@@ -164,11 +168,7 @@ func (h *handler) InviteWebsiteServiceVisitor(w http.ResponseWriter, r *http.Req
 		serviceAccessError(r.Context(), w, "invite website service visitor", err)
 		return
 	}
-	status := http.StatusCreated
-	if row.Secret == "" {
-		status = http.StatusOK
-	}
-	writeJSON(w, status, serviceaccess.Invitation(row))
+	writeJSON(w, http.StatusCreated, controlv1.ServiceInvitationCreation{Invitation: serviceaccess.Invitation(row), Credential: row.Secret})
 }
 
 func (h *handler) PreviewWebsiteServiceInvitation(w http.ResponseWriter, r *http.Request, _ authorityv1.PreviewWebsiteServiceInvitationParams) {

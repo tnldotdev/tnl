@@ -48,7 +48,7 @@ schemas:
   CreateShareRequest:
     type: object
     additionalProperties: false
-    required: [public_url_ids, expires_at, secret_fingerprint]
+    required: [public_url_ids, entry_public_url_id, expires_at]
     properties:
       public_url_ids:
         type: array
@@ -60,12 +60,25 @@ schemas:
       expires_at:
         type: string
         format: date-time
-      secret_fingerprint:
-        type: string
-        pattern: "^[0-9a-f]{64}$"
+      entry_public_url_id:
+        $ref: "../openapi.yaml#/components/schemas/PublicURLID"
       label:
         type: string
         maxLength: 128
+  ShareCreation:
+    type: object
+    additionalProperties: false
+    description: One-time delivery. Save the complete link or token_source before discarding this response. Control retains only a digest; an exact retry returns credential_delivery_unavailable with details.resource_id after current authorization. Revoke that ID and create with a new key if delivery was lost. Expiry and captured public URLs never change on retry.
+    required: [share, link, token_source]
+    properties:
+      share:
+        $ref: "../openapi.yaml#/components/schemas/Share"
+      link:
+        type: string
+        format: uri
+        pattern: "^https://"
+      token_source:
+        $ref: "../openapi.yaml#/components/schemas/VisitorTokenShareSource"
   Share:
     type: object
     additionalProperties: false

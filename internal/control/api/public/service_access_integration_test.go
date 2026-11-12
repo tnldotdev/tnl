@@ -86,28 +86,33 @@ func TestIntegrationServiceAccessClient(t *testing.T) {
 		_, err := owner.InviteServiceVisitor(ctx, a.Id, "invalid-deadline", invalid)
 		denied(err)
 	}
-	invite, err := owner.InviteServiceVisitor(ctx, a.Id, "one-invitation", body)
-	if err != nil || invite.Secret == nil || invite.ServiceId != a.Id || !invite.ExpiresAt.Equal(deadline) {
+	creation, err := owner.InviteServiceVisitor(ctx, a.Id, "one-invitation", body)
+	invite, secret := creation.Invitation, creation.Credential
+	if err != nil || secret == "" || invite.ServiceId != a.Id || !invite.ExpiresAt.Equal(deadline) {
 		t.Fatalf("create exact invitation: %+v %v", invite, err)
 	}
-	if retry, err := owner.InviteServiceVisitor(ctx, a.Id, "one-invitation", body); err != nil || retry.Id != invite.Id || retry.Secret != nil {
-		t.Fatal("invitation creation retry lost its ID or reissued a secret", err)
+	assertRetry := func() {
+		t.Helper()
+		_, err := owner.InviteServiceVisitor(ctx, a.Id, "one-invitation", body)
+		var problem *clientcontrol.ProblemError
+		if !errors.As(err, &problem) || problem.Problem.Code != controlv1.CredentialDeliveryUnavailable || problem.Problem.Details == nil || (*problem.Problem.Details)["resource_id"] != invite.Id {
+			t.Fatal("retry did not identify the original resource without a credential", err)
+		}
 	}
+	assertRetry()
 	for _, client := range []*clientcontrol.Client{wrongEmail, unverified} {
-		_, err := client.AcceptServiceInvitation(ctx, *invite.Secret)
+		_, err := client.AcceptServiceInvitation(ctx, secret)
 		denied(err)
 	}
-	grant, err := visitor.AcceptServiceInvitation(ctx, *invite.Secret)
+	grant, err := visitor.AcceptServiceInvitation(ctx, secret)
 	if err != nil || grant.ServiceId != a.Id || grant.Kind != "identity" || grant.IdentityId == nil || *grant.IdentityId != visitorID || grant.InvitationId == nil || *grant.InvitationId != invite.Id || grant.ExpiresAt == nil || !grant.ExpiresAt.Equal(deadline) {
 		t.Fatalf("accepted exact invitation grant: %+v %v", grant, err)
 	}
-	_, err = visitor.AcceptServiceInvitation(ctx, *invite.Secret)
+	_, err = visitor.AcceptServiceInvitation(ctx, secret)
 	denied(err)
-	if retry, err := owner.InviteServiceVisitor(ctx, a.Id, "one-invitation", body); err != nil || retry.Id != invite.Id || retry.Secret != nil || retry.AcceptedAt == nil {
-		t.Fatal("accepted retry lost its current state or reissued a secret", err)
-	}
+	assertRetry()
 	invitations, err := owner.ListServiceInvitations(ctx, a.Id)
-	if err != nil || len(invitations) != 1 || invitations[0].Secret != nil || invitations[0].AcceptedAt == nil {
+	if err != nil || len(invitations) != 1 || invitations[0].AcceptedAt == nil {
 		t.Fatalf("listed accepted invitation: %+v %v", invitations, err)
 	}
 	grants, err := owner.ListServiceGrants(ctx, a.Id)
@@ -148,9 +153,7 @@ func TestIntegrationServiceAccessClient(t *testing.T) {
 	if err := owner.RevokeServiceInvitation(ctx, a.Id, invite.Id); err != nil {
 		t.Fatal(err)
 	}
-	if retry, err := owner.InviteServiceVisitor(ctx, a.Id, "one-invitation", body); err != nil || retry.Id != invite.Id || retry.Secret != nil || retry.RevokedAt == nil {
-		t.Fatal("retry revived a revoked invitation", err)
-	}
+	assertRetry()
 	invitations, err = owner.ListServiceInvitations(ctx, a.Id)
 	if err != nil || len(invitations) != 1 || invitations[0].RevokedAt == nil {
 		t.Fatalf("invitation revocation was not visible to the manager: %+v %v", invitations, err)
@@ -168,11 +171,11 @@ func TestIntegrationServiceAccessClient(t *testing.T) {
 	if err != nil || len(available) != 0 {
 		t.Fatalf("revoked invitation retained visitor access: %+v %v", available, err)
 	}
-	invite, err = owner.InviteServiceVisitor(ctx, a.Id, "grant-revocation", body)
-	if err != nil || invite.Secret == nil {
+	creation, err = owner.InviteServiceVisitor(ctx, a.Id, "grant-revocation", body)
+	if err != nil || creation.Credential == "" {
 		t.Fatal("second invitation", err)
 	}
-	grant, err = visitor.AcceptServiceInvitation(ctx, *invite.Secret)
+	grant, err = visitor.AcceptServiceInvitation(ctx, creation.Credential)
 	if err != nil {
 		t.Fatal(err)
 	}

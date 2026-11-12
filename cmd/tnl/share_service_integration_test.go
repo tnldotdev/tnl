@@ -81,11 +81,11 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 			if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/invitations") && loseInvitationResponse.CompareAndSwap(true, false) {
 				recorded := httptest.NewRecorder()
 				control.ServeHTTP(recorded, r)
-				var invitation controlv1.ServiceInvitation
-				if recorded.Code != http.StatusCreated || json.Unmarshal(recorded.Body.Bytes(), &invitation) != nil || invitation.Secret == nil {
+				var invitation controlv1.ServiceInvitationCreation
+				if recorded.Code != http.StatusCreated || json.Unmarshal(recorded.Body.Bytes(), &invitation) != nil || invitation.Credential == "" {
 					t.Error("lost-response fixture did not commit an invitation")
 				}
-				lostInvitationID.Store(invitation.Id)
+				lostInvitationID.Store(invitation.Invitation.Id)
 				conn, _, err := w.(http.Hijacker).Hijack()
 				if err != nil {
 					t.Error(err)
@@ -203,8 +203,11 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 				if err != nil {
 					t.Fatalf("manager without a visit grant could not invite using %s: %v", selector, err)
 				}
-				var invite controlv1.ServiceInvitation
-				if err := json.Unmarshal(data, &invite); err != nil || invite.ServiceId != item.id || !invite.ExpiresAt.Equal(deadline) || invite.Secret == nil {
+				var invite struct {
+					controlv1.ServiceInvitation
+					Secret string `json:"secret"`
+				}
+				if err := json.Unmarshal(data, &invite); err != nil || invite.ServiceId != item.id || !invite.ExpiresAt.Equal(deadline) || invite.Secret == "" {
 					t.Fatalf("invitation lost its exact resource or lifetime: %+v %v", invite, err)
 				}
 				if _, err := call(admin.AccessToken.String(), "list", selector); err != nil {
@@ -261,37 +264,33 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 		deadline := time.Now().Add(time.Hour).UTC().Truncate(time.Microsecond)
 		args := []string{"create", remote.Id, "--email=owner@example.test", "--expires-at=" + deadline.Format(time.RFC3339Nano), "--idempotency-key=cli-lost-response"}
 		loseInvitationResponse.Store(true)
-		data, firstErr := call(admin.AccessToken.String(), "invite", args...)
-		// net/http may itself retry an idempotent POST on a reused connection.
-		if firstErr == nil {
-			var recovered controlv1.ServiceInvitation
-			if err := json.Unmarshal(data, &recovered); err != nil || recovered.Secret != nil {
-				t.Fatal("automatic retry returned a new secret", err)
-			}
+		if _, firstErr := call(admin.AccessToken.String(), "invite", args...); firstErr == nil {
+			t.Fatal("lost response unexpectedly succeeded")
 		}
-		data, err := call(admin.AccessToken.String(), "invite", args...)
-		if err != nil {
-			t.Fatal("lost committed invitation did not recover", err)
-		}
-		var recovered controlv1.ServiceInvitation
-		if err := json.Unmarshal(data, &recovered); err != nil || recovered.Id != lostInvitationID.Load() || recovered.Secret != nil || recovered.ServiceId != remote.Id || !recovered.ExpiresAt.Equal(deadline) {
+		_, err := call(admin.AccessToken.String(), "invite", args...)
+		var problem *clientcontrol.ProblemError
+		if !errors.As(err, &problem) || problem.Problem.Code != controlv1.CredentialDeliveryUnavailable || problem.Problem.Details == nil || (*problem.Problem.Details)["resource_id"] != lostInvitationID.Load() {
 			t.Fatal("retry lost the original exact-service ID", err)
 		}
+		recoveredID := lostInvitationID.Load().(string)
 		changed := append([]string(nil), args...)
 		changed[2] = "--email=other@example.test"
 		if _, err := call(admin.AccessToken.String(), "invite", changed...); !errors.Is(err, clientcontrol.ErrStatusConflict) {
 			t.Fatal("changed retry did not conflict", err)
 		}
-		if _, err := call(admin.AccessToken.String(), "revoke", remote.Id, recovered.Id); err != nil {
+		if _, err := call(admin.AccessToken.String(), "revoke", remote.Id, recoveredID); err != nil {
 			t.Fatal(err)
 		}
 		args[len(args)-1] = "--idempotency-key=cli-reissued"
-		data, err = call(admin.AccessToken.String(), "invite", args...)
+		data, err := call(admin.AccessToken.String(), "invite", args...)
 		if err != nil {
 			t.Fatal(err)
 		}
-		var reissued controlv1.ServiceInvitation
-		if err := json.Unmarshal(data, &reissued); err != nil || reissued.Secret == nil || reissued.Id == recovered.Id {
+		var reissued struct {
+			controlv1.ServiceInvitation
+			Secret string `json:"secret"`
+		}
+		if err := json.Unmarshal(data, &reissued); err != nil || reissued.Secret == "" || reissued.Id == recoveredID {
 			t.Fatal("explicit reissue did not create a deliverable invitation", err)
 		}
 		assertNoVisit()

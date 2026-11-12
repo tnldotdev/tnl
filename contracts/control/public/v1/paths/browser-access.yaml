@@ -276,7 +276,12 @@ paths:
           description: One-use verified-email invitation without team membership
           content:
             application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/VisitorInvitation" }
+              schema: { $ref: "../openapi.yaml#/components/schemas/VisitorInvitationCreation" }
+        "409":
+          description: Exact retry cannot redeliver the credential, or changed input conflicts
+          content:
+            application/problem+json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/Problem" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/public-urls/{public_url_id}/visitor-invitations/{invitation_id}:
     delete:

@@ -137,11 +137,17 @@ paths:
               $ref: "../openapi.yaml#/components/schemas/CreateShareRequest"
       responses:
         "201":
-          description: Stored share without its secret
+          description: Complete one-time share credential; Cache-Control is no-store
           content:
             application/json:
               schema:
-                $ref: "../openapi.yaml#/components/schemas/Share"
+                $ref: "../openapi.yaml#/components/schemas/ShareCreation"
+        "409":
+          description: Exact retry cannot redeliver the credential, or changed input conflicts
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/Problem"
         default:
           $ref: "../openapi.yaml#/components/responses/Problem"
     get:
@@ -182,17 +188,23 @@ paths:
               $ref: "../openapi.yaml#/components/schemas/CreateShareRequest"
       responses:
         "201":
-          description: Stored share without its secret
+          description: Complete one-time share credential; Cache-Control is no-store
           content:
             application/json:
               schema:
-                $ref: "../openapi.yaml#/components/schemas/Share"
+                $ref: "../openapi.yaml#/components/schemas/ShareCreation"
+        "409":
+          description: Exact retry cannot redeliver the credential, or changed input conflicts
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/Problem"
         default:
           $ref: "../openapi.yaml#/components/responses/Problem"
     get:
       operationId: listTeamShares
       tags: [shares]
-      description: Read a cursor-paginated share inventory under current team management authorization. Responses omit share secrets; use the original secret to construct a share link.
+      description: Read a cursor-paginated share inventory under current team management authorization. Responses omit share secrets; retain the original creation link or token_source for visitor access.
       summary: List manageable shares for one team
       security:
         - bearerAuth: []

@@ -3,8 +3,6 @@ package invocation
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -230,25 +228,20 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 	defer func() { result = errors.Join(result, cleanup()) }()
 	publisherConfig.Observe = func(event publisher.Event) error {
 		if guest != nil && event.Type == publisher.EventPublicURLAssigned {
-			secret := make([]byte, 32)
-			if _, err := rand.Read(secret); err != nil {
-				return err
-			}
-			fingerprint := sha256.Sum256(secret)
 			key, err := opaqueid.New(opaqueid.IdempotencyPrefix)
 			if err != nil {
 				return err
 			}
 			share, err := authenticated.Control.CreateURLShare(ctx, key, controlv1.CreateShareRequest{
-				PublicUrlIds: []string{event.PublicURLID}, SecretFingerprint: hex.EncodeToString(fingerprint[:]), ExpiresAt: guest.ExpiresAt,
+				PublicUrlIds: []string{event.PublicURLID}, EntryPublicUrlId: event.PublicURLID, ExpiresAt: guest.ExpiresAt,
 			})
 			if err != nil {
 				return fmt.Errorf("create guest share: %w", err)
 			}
-			if share.Scope != controlv1.ShareScopeGuest || len(share.PublicUrlIds) != 1 || share.PublicUrlIds[0] != event.PublicURLID {
+			if share.Share.Scope != controlv1.ShareScopeGuest || len(share.Share.PublicUrlIds) != 1 || share.Share.PublicUrlIds[0] != event.PublicURLID {
 				return failure.Wrap("create guest share", failure.ServerResponseInvalid, errors.New("server returned a share for another public URL"))
 			}
-			output.setGuestShare(share.Id + "." + base64.RawURLEncoding.EncodeToString(secret))
+			output.setGuestShare(share.Link)
 		}
 		if localDemo != nil && event.Type == publisher.EventReady {
 			localDemo.SetPublicURL(event.PublicURL)

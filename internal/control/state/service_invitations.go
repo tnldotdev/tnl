@@ -50,9 +50,11 @@ func (d *Database) InviteServiceVisitor(ctx context.Context, serviceID, actorID,
 		if existing.ServiceID != serviceID || !bytes.Equal(existing.RequestDigest, requestDigest[:]) {
 			return result, ErrServiceConflict
 		}
-		// only the digest is stored. an exact retry recovers the owned ID and
-		// current state so the manager can explicitly revoke and reissue.
-		return privateInvitationRecord(existing), tx.Commit(ctx)
+		// signed management checks consume the current one-use actor proof.
+		if err = tx.Commit(ctx); err != nil {
+			return result, err
+		}
+		return result, &CredentialDeliveryUnavailable{ResourceID: existing.ID}
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return result, err

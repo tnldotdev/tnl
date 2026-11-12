@@ -153,7 +153,7 @@ func TestIntegrationServiceActorRequestBindingAndCurrentManager(t *testing.T) {
 		raw            []byte
 	}{
 		{"POST", base + "/invitations", body},
-		{"POST", base + "/http-grants", f.encode(controlv1.CreateVisitorCredentialRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service.ID}, Kind: "token", ExpiresAt: f.now.Add(time.Hour)})},
+		{"POST", base + "/http-grants", f.encode(controlv1.CreateVisitorCredentialRequest{Kind: "token", ExpiresAt: f.now.Add(time.Hour)})},
 		{"POST", "/v1/service/service-invitations/preview", f.encode(authorityv1.ServiceInvitationCredential{Secret: strings.Repeat("A", 64)})},
 		{"POST", "/v1/service/service-invitations/accept", f.encode(authorityv1.ServiceInvitationCredential{Secret: strings.Repeat("A", 64)})},
 		{"DELETE", base + "/grants/psg_0123456789ABCDEFGHIJKL", nil},
@@ -205,12 +205,13 @@ func TestIntegrationServiceActorInvitationAndServiceHTTPLifecycle(t *testing.T) 
 	base := "/v1/service/services/" + service.ID
 	deadline := f.now.Add(time.Hour).Truncate(time.Microsecond)
 	create := controlv1.CreateServiceInvitationRequest{Email: "recipient@example.test", ExpiresAt: deadline}
-	var invitation controlv1.ServiceInvitation
-	serviceResult(t, f.serviceCall("POST", base+"/invitations", serviceOwnerSub, create, nil), 201, &invitation)
-	if invitation.Secret == nil {
+	var creation controlv1.ServiceInvitationCreation
+	serviceResult(t, f.serviceCall("POST", base+"/invitations", serviceOwnerSub, create, nil), 201, &creation)
+	invitation := creation.Invitation
+	if creation.Credential == "" {
 		t.Fatal("creation omitted invitation secret")
 	}
-	credential := authorityv1.ServiceInvitationCredential{Secret: *invitation.Secret}
+	credential := authorityv1.ServiceInvitationCredential{Secret: creation.Credential}
 	preview, accept := "/v1/service/service-invitations/preview", "/v1/service/service-invitations/accept"
 	// acceptance derives current email from the issuer, not this stored snapshot.
 	if _, err := f.sql.Exec(t.Context(), `UPDATE control.identities SET normalized_email='stale@example.test',email_verified=false WHERE id=$1`, recipient.Identity.Identity.Id); err != nil {
@@ -246,7 +247,7 @@ func TestIntegrationServiceActorInvitationAndServiceHTTPLifecycle(t *testing.T) 
 	}
 	listed := f.serviceCall("GET", base+"/invitations", serviceOwnerSub, nil, nil)
 	serviceResult(t, listed, 200, nil)
-	if strings.Contains(listed.Body.String(), *invitation.Secret) || strings.Contains(listed.Body.String(), `"secret"`) {
+	if strings.Contains(listed.Body.String(), creation.Credential) || strings.Contains(listed.Body.String(), `"credential"`) {
 		t.Fatal("list exposed invitation secret")
 	}
 	serviceProblem(t, f.serviceCall("POST", accept, serviceRecipientSub, credential, nil), 403, authorityv1.Forbidden)
@@ -265,13 +266,11 @@ func TestIntegrationServiceActorInvitationAndServiceHTTPLifecycle(t *testing.T) 
 		t.Fatal("invitation revoke did not revoke the existing accepted grant")
 	}
 	var httpGrant controlv1.VisitorCredential
-	serviceResult(t, f.serviceCall("POST", base+"/http-grants", serviceOwnerSub, controlv1.CreateVisitorCredentialRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service.ID}, Kind: "token", ExpiresAt: deadline}, nil), 201, &httpGrant)
+	serviceResult(t, f.serviceCall("POST", base+"/http-grants", serviceOwnerSub, controlv1.CreateVisitorCredentialRequest{Kind: "token", ExpiresAt: deadline}, nil), 201, &httpGrant)
 	if httpGrant.Permission.Resource.Kind != "service" || httpGrant.Permission.Resource.Id != service.ID || httpGrant.Permission.VisitorToken == "" || httpGrant.Permission.ExpiresAt.After(deadline) {
 		t.Fatal("website credential lost its exact service permission")
 	}
-	for _, resource := range []controlv1.VisitorResourceScope{{Kind: "public_url", Id: service.ID}, {Kind: "service", Id: "svc_" + strings.Repeat("A", 22)}, {}} {
-		serviceProblem(t, f.serviceCall("POST", base+"/http-grants", serviceOwnerSub, controlv1.CreateVisitorCredentialRequest{Resource: resource, Kind: "token", ExpiresAt: deadline}, nil), 403, authorityv1.Forbidden)
-	}
+	serviceProblem(t, f.serviceCall("POST", base+"/http-grants", serviceOwnerSub, map[string]any{"resource": controlv1.VisitorResourceScope{Kind: "service", Id: service.ID}, "kind": "token", "expires_at": deadline}, nil), 400, authorityv1.InvalidRequest)
 	var summaries []controlv1.ServiceHTTPGrantSummary
 	listed = f.serviceCall("GET", base+"/http-grants", serviceOwnerSub, nil, nil)
 	serviceResult(t, listed, 200, &summaries)
@@ -310,7 +309,7 @@ func TestIntegrationServiceActorInvitationAndServiceHTTPLifecycle(t *testing.T) 
 	if _, err = f.sql.Exec(t.Context(), `UPDATE control.visitor_grants SET revoked_at=$2 WHERE service_id=$1`, service.ID, f.now); err != nil {
 		t.Fatal(err)
 	}
-	if w := f.serviceCall("POST", base+"/http-grants", serviceOwnerSub, controlv1.CreateVisitorCredentialRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service.ID}, Kind: "share", ExpiresAt: deadline}, nil); w.Code < 400 {
+	if w := f.serviceCall("POST", base+"/http-grants", serviceOwnerSub, controlv1.CreateVisitorCredentialRequest{Kind: "share", ExpiresAt: deadline}, nil); w.Code < 400 {
 		t.Fatal("manager without current visit access issued HTTP credential")
 	}
 	// direct grant revocation uses the same stored grant and exact service ID.
@@ -321,12 +320,13 @@ func TestIntegrationServiceActorInvitationAndServiceHTTPLifecycle(t *testing.T) 
 	serviceProblem(t, f.serviceCall("DELETE", base+"/grants/"+direct.ID, serviceOwnerSub, nil, nil), 403, authorityv1.Forbidden)
 	serviceResult(t, f.serviceCall("DELETE", "/v1/service/services/"+other.ID+"/grants/"+direct.ID, serviceOwnerSub, nil, nil), 204, nil)
 	// expired invitation metadata is indistinguishable from an invalid secret.
-	serviceResult(t, f.serviceCall("POST", base+"/invitations", serviceOwnerSub, create, nil), 201, &invitation)
+	serviceResult(t, f.serviceCall("POST", base+"/invitations", serviceOwnerSub, create, nil), 201, &creation)
+	invitation = creation.Invitation
 	if _, err = f.sql.Exec(t.Context(), `UPDATE control.service_invitations SET created_at=$2::timestamptz-interval '2 hours',expires_at=$2::timestamptz-interval '1 hour' WHERE id=$1`, invitation.Id, f.now); err != nil {
 		t.Fatal(err)
 	}
 	for _, op := range []string{preview, accept} {
-		serviceProblem(t, f.serviceCall("POST", op, serviceRecipientSub, authorityv1.ServiceInvitationCredential{Secret: *invitation.Secret}, nil), 403, authorityv1.Forbidden)
+		serviceProblem(t, f.serviceCall("POST", op, serviceRecipientSub, authorityv1.ServiceInvitationCredential{Secret: creation.Credential}, nil), 403, authorityv1.Forbidden)
 	}
 }
 
@@ -362,7 +362,7 @@ func TestIntegrationServiceActorCurrentCompanySource(t *testing.T) {
 		})
 	}
 	// signed service management does not mint a session to back HTTP credentials.
-	serviceProblem(t, f.serviceCall("POST", base+"/http-grants", serviceOwnerSub, controlv1.CreateVisitorCredentialRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service.ID}, Kind: "token", ExpiresAt: f.now.Add(time.Hour)}, valid), 403, authorityv1.SourceSignInRequired)
+	serviceProblem(t, f.serviceCall("POST", base+"/http-grants", serviceOwnerSub, controlv1.CreateVisitorCredentialRequest{Kind: "token", ExpiresAt: f.now.Add(time.Hour)}, valid), 403, authorityv1.SourceSignInRequired)
 	invitationBody := f.encode(controlv1.CreateServiceInvitationRequest{Email: "recipient@example.test", ExpiresAt: f.now.Add(time.Hour)})
 	retryInvitation := func() *httptest.ResponseRecorder {
 		token := f.serviceToken(serviceOwnerSub, "POST", base+"/invitations", invitationBody, valid)
@@ -510,14 +510,14 @@ func TestIntegrationServiceActorInvitationLostResponse(t *testing.T) {
 	if err := f.sql.QueryRow(ctx, `SELECT id FROM control.service_invitations WHERE created_by_identity_id=$1 AND idempotency_key='lost-response'`, owner.Identity.Identity.Id).Scan(&originalID); err != nil {
 		t.Fatal(err)
 	}
-	var retry controlv1.ServiceInvitation
-	serviceResult(t, call(path, serviceOwnerSub, "lost-response", body, nil), 200, &retry)
-	if retry.Id != originalID || retry.Secret != nil || retry.ServiceId != service.ID || !retry.ExpiresAt.Equal(body.ExpiresAt) {
-		t.Fatal("retry did not recover exact secretless metadata")
+	retry := call(path, serviceOwnerSub, "lost-response", body, nil)
+	serviceProblem(t, retry, 409, authorityv1.CredentialDeliveryUnavailable)
+	if !strings.Contains(retry.Body.String(), originalID) || retry.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("retry did not identify the exact resource")
 	}
 	raw := f.encode(body)
 	assertion := f.serviceToken(serviceOwnerSub, "POST", path, raw, nil)
-	serviceResult(t, f.serviceRawKey("POST", path, companyWebsiteSecret, assertion, raw, "lost-response"), 200, nil)
+	serviceProblem(t, f.serviceRawKey("POST", path, companyWebsiteSecret, assertion, raw, "lost-response"), 409, authorityv1.CredentialDeliveryUnavailable)
 	serviceProblem(t, f.serviceRawKey("POST", path, companyWebsiteSecret, assertion, raw, "lost-response"), 401, authorityv1.Unauthenticated)
 	for _, changed := range []controlv1.CreateServiceInvitationRequest{
 		{Email: "other@example.test", ExpiresAt: body.ExpiresAt},
@@ -539,13 +539,10 @@ func TestIntegrationServiceActorInvitationLostResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 	serviceResult(t, f.serviceCall("DELETE", path+"/"+originalID, serviceOwnerSub, nil, nil), 204, nil)
-	serviceResult(t, call(path, serviceOwnerSub, "lost-response", body, nil), 200, &retry)
-	if retry.RevokedAt == nil || retry.Secret != nil {
-		t.Fatal("retry revived revoked invitation")
-	}
-	var reissued controlv1.ServiceInvitation
+	serviceProblem(t, call(path, serviceOwnerSub, "lost-response", body, nil), 409, authorityv1.CredentialDeliveryUnavailable)
+	var reissued controlv1.ServiceInvitationCreation
 	serviceResult(t, call(path, serviceOwnerSub, "replacement", body, nil), 201, &reissued)
-	if reissued.Id == originalID || reissued.Secret == nil {
+	if reissued.Invitation.Id == originalID || reissued.Credential == "" {
 		t.Fatal("explicit reissue did not create a new secret")
 	}
 	var creations int

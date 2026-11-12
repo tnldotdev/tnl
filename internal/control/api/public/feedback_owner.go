@@ -128,7 +128,7 @@ func (h *handler) ListFeedbackThreads(response http.ResponseWriter, request *htt
 
 func (h *handler) AppendFeedbackEvent(response http.ResponseWriter, request *http.Request, feedbackID controlv1.FeedbackID, _ controlv1.AppendFeedbackEventParams) {
 	var body controlv1.AppendFeedbackEventRequest
-	if err := decodeJSONLimited(response, request, &body, 64<<10); err != nil {
+	if err := decodeJSONLimited(response, request, &body, 64<<10); err != nil || !body.Type.Valid() {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid feedback event")
 		return
 	}
@@ -136,7 +136,7 @@ func (h *handler) AppendFeedbackEvent(response http.ResponseWriter, request *htt
 	if !ok {
 		return
 	}
-	write, err := feedbackEventWrite(body.Type, body.Text, body.Evidence, body.SourceState)
+	write, err := feedbackEventWrite(controlv1.FeedbackEventType(body.Type), body.Text, body.Evidence, body.SourceState)
 	if err != nil {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid feedback event")
 		return

@@ -267,6 +267,36 @@ func (q *Queries) ExpiringVisitorIPURLs(ctx context.Context, expiresAt pgtype.Ti
 	return items, nil
 }
 
+const findVisitorInvitationRequest = `-- name: FindVisitorInvitationRequest :one
+SELECT id, public_url_id, team_id, normalized_email, token_digest, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, accepted_at, accepted_identity_id, revoked_at FROM control.visitor_invitations WHERE created_by_identity_id = $1 AND idempotency_key = $2
+`
+
+type FindVisitorInvitationRequestParams struct {
+	CreatedByIdentityID string
+	IdempotencyKey      string
+}
+
+func (q *Queries) FindVisitorInvitationRequest(ctx context.Context, arg FindVisitorInvitationRequestParams) (ControlVisitorInvitation, error) {
+	row := q.db.QueryRow(ctx, findVisitorInvitationRequest, arg.CreatedByIdentityID, arg.IdempotencyKey)
+	var i ControlVisitorInvitation
+	err := row.Scan(
+		&i.ID,
+		&i.PublicURLID,
+		&i.TeamID,
+		&i.NormalizedEmail,
+		&i.TokenDigest,
+		&i.CreatedByIdentityID,
+		&i.IdempotencyKey,
+		&i.RequestDigest,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.AcceptedAt,
+		&i.AcceptedIdentityID,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
 const getVisitorGrant = `-- name: GetVisitorGrant :one
 SELECT id, public_url_id, service_id, resource_kind, resource_id, team_id, kind, identity_id, auto_owner, invitation_id, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at FROM control.visitor_grants WHERE id = $1
 `

@@ -1,7 +1,9 @@
 package public
 
 import (
-	"encoding/hex"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"net/netip"
@@ -23,16 +25,16 @@ func (h *handler) CreateURLShare(response http.ResponseWriter, request *http.Req
 }
 
 func (h *handler) createShare(response http.ResponseWriter, request *http.Request, previewID string) {
+	response.Header().Set("Cache-Control", "no-store")
 	var body controlv1.CreateShareRequest
 	if err := decodeJSONLimited(response, request, &body, 1<<20); err != nil || body.ExpiresAt.IsZero() ||
 		len(body.PublicUrlIds) == 0 || len(body.PublicUrlIds) > 32 || previewID == "" && len(body.PublicUrlIds) != 1 ||
-		body.Label != nil && len(*body.Label) > 128 {
+		!slices.Contains(body.PublicUrlIds, body.EntryPublicUrlId) || body.Label != nil && len(*body.Label) > 128 {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid share request")
 		return
 	}
 	key := request.Header.Get("Idempotency-Key")
-	fingerprint, err := hex.DecodeString(body.SecretFingerprint)
-	if key == "" || len(key) > 128 || strings.TrimSpace(key) != key || err != nil || len(fingerprint) != 32 || hex.EncodeToString(fingerprint) != body.SecretFingerprint {
+	if key == "" || len(key) > 128 || strings.TrimSpace(key) != key {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid share request")
 		return
 	}
@@ -44,8 +46,13 @@ func (h *handler) createShare(response http.ResponseWriter, request *http.Reques
 	if !ok {
 		return
 	}
-	var secretFingerprint [32]byte
-	copy(secretFingerprint[:], fingerprint)
+	var secret [32]byte
+	if _, err := rand.Read(secret[:]); err != nil {
+		writeControlStateProblem(request.Context(), response, "generate share credential", err)
+		return
+	}
+	secretFingerprint := sha256.Sum256(secret[:])
+	encodedSecret := base64.RawURLEncoding.EncodeToString(secret[:])
 	label := ""
 	if body.Label != nil {
 		label = *body.Label
@@ -55,7 +62,7 @@ func (h *handler) createShare(response http.ResponseWriter, request *http.Reques
 			writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "guest demos are unavailable")
 			return
 		}
-		h.createGuestShare(response, request, *principal.guest, body.PublicUrlIds[0], key, label, secretFingerprint, body.ExpiresAt)
+		h.createGuestShare(response, request, *principal.guest, body.PublicUrlIds[0], key, label, secretFingerprint, encodedSecret, body.ExpiresAt)
 		return
 	}
 	var preview controlstate.Preview
@@ -75,6 +82,7 @@ func (h *handler) createShare(response http.ResponseWriter, request *http.Reques
 	}
 	authorized := make([]controlstate.AuthorizedSharePublicURL, 0, len(ids))
 	var revision uint64
+	entryHostname := ""
 	for _, id := range ids {
 		publicURL, err := h.store.GetPublicURLForAuthorization(request.Context(), id)
 		if errors.Is(err, controlstate.ErrPublicURLNotFound) {
@@ -117,21 +125,25 @@ func (h *handler) createShare(response http.ResponseWriter, request *http.Reques
 		authorized = append(authorized, controlstate.AuthorizedSharePublicURL{
 			PublicURLID: id, ExpectedMutationRevision: publicURL.MutationRevision,
 		})
+		if id == body.EntryPublicUrlId {
+			entryHostname = publicURL.CanonicalHostname
+		}
 	}
 	share, err := h.shares.CreateShare(request.Context(), controlstate.CreateShareRequest{
 		PreviewID: previewID, TeamID: preview.TeamID, Label: label,
 		ActingIdentityID: principal.identityID, IdempotencyKey: key,
 		SecretFingerprint: secretFingerprint, ExpiresAt: body.ExpiresAt,
 		PolicyRevision: revision, PublicURLs: authorized,
+		EntryPublicURLID: body.EntryPublicUrlId,
 	}, time.Now())
 	if err != nil {
 		writeControlStateProblem(request.Context(), response, "create share", err)
 		return
 	}
-	writeJSON(response, http.StatusCreated, shareResponse(share))
+	writeJSON(response, http.StatusCreated, shareCreationResponse(share, entryHostname, encodedSecret))
 }
 
-func (h *handler) createGuestShare(response http.ResponseWriter, request *http.Request, guest controlstate.GuestTrial, publicURLID, key, label string, fingerprint [32]byte, expiresAt time.Time) {
+func (h *handler) createGuestShare(response http.ResponseWriter, request *http.Request, guest controlstate.GuestTrial, publicURLID, key, label string, fingerprint [32]byte, secret string, expiresAt time.Time) {
 	address, err := guestRequestAddress(request)
 	if err != nil {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid client address")
@@ -151,8 +163,19 @@ func (h *handler) createGuestShare(response http.ResponseWriter, request *http.R
 		writeControlStateProblem(request.Context(), response, "create guest share", err)
 		return
 	}
+	publicURL, err := h.store.GetPublicURLForAuthorization(request.Context(), publicURLID)
+	if err != nil {
+		writeControlStateProblem(request.Context(), response, "read guest share public URL", err)
+		return
+	}
 	response.Header().Set("Cache-Control", "no-store")
-	writeJSON(response, http.StatusCreated, shareResponse(share))
+	writeJSON(response, http.StatusCreated, shareCreationResponse(share, publicURL.CanonicalHostname, secret))
+}
+
+func shareCreationResponse(share controlstate.Share, hostname, secret string) controlv1.ShareCreation {
+	return controlv1.ShareCreation{Share: shareResponse(share),
+		Link:        "https://" + hostname + "/__tnl/share/" + share.ID + "." + secret,
+		TokenSource: controlv1.VisitorTokenShareSource{Kind: controlv1.VisitorTokenShare, ShareId: share.ID, Secret: secret}}
 }
 
 func (h *handler) ListShares(response http.ResponseWriter, request *http.Request, previewID controlv1.PreviewID, _ controlv1.ListSharesParams) {

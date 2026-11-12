@@ -184,6 +184,38 @@ func (q *Queries) CreateShare(ctx context.Context, arg CreateShareParams) (Contr
 	return i, err
 }
 
+const findShareRequest = `-- name: FindShareRequest :one
+SELECT id, schema_version, preview_id, team_id, guest_id, scope, label, created_by_identity_id, idempotency_key, request_digest, secret_digest, created_at, expires_at, revoked_at, revoked_by_identity_id FROM control.shares WHERE created_by_identity_id = $1 AND idempotency_key = $2
+`
+
+type FindShareRequestParams struct {
+	CreatedByIdentityID string
+	IdempotencyKey      string
+}
+
+func (q *Queries) FindShareRequest(ctx context.Context, arg FindShareRequestParams) (ControlShare, error) {
+	row := q.db.QueryRow(ctx, findShareRequest, arg.CreatedByIdentityID, arg.IdempotencyKey)
+	var i ControlShare
+	err := row.Scan(
+		&i.ID,
+		&i.SchemaVersion,
+		&i.PreviewID,
+		&i.TeamID,
+		&i.GuestID,
+		&i.Scope,
+		&i.Label,
+		&i.CreatedByIdentityID,
+		&i.IdempotencyKey,
+		&i.RequestDigest,
+		&i.SecretDigest,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.RevokedAt,
+		&i.RevokedByIdentityID,
+	)
+	return i, err
+}
+
 const getShare = `-- name: GetShare :one
 SELECT id, schema_version, preview_id, team_id, guest_id, scope, label, created_by_identity_id, idempotency_key, request_digest, secret_digest, created_at, expires_at, revoked_at, revoked_by_identity_id FROM control.shares WHERE id = $1
 `

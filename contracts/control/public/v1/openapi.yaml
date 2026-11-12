@@ -642,6 +642,12 @@ components:
       $ref: "./schemas/browser-access.yaml#/schemas/CreateVisitorInvitationRequest"
     VisitorInvitation:
       $ref: "./schemas/browser-access.yaml#/schemas/VisitorInvitation"
+    VisitorInvitationCreation:
+      $ref: "./schemas/browser-access.yaml#/schemas/VisitorInvitationCreation"
+    ServiceInvitationCreation:
+      $ref: "./schemas/services.yaml#/schemas/ServiceInvitationCreation"
+    ShareCreation:
+      $ref: "./schemas/previews-and-shares.yaml#/schemas/ShareCreation"
     AvailablePublicURLPage:
       $ref: "./schemas/browser-access.yaml#/schemas/AvailablePublicURLPage"
     AvailablePublicURL:
@@ -762,6 +768,10 @@ components:
       $ref: "./schemas/feedback.yaml#/schemas/FeedbackThreadState"
     FeedbackEventType:
       $ref: "./schemas/feedback.yaml#/schemas/FeedbackEventType"
+    FeedbackEventInputType:
+      $ref: "./schemas/feedback.yaml#/schemas/FeedbackEventInputType"
+    ReviewerFeedbackEventInputType:
+      $ref: "./schemas/feedback.yaml#/schemas/ReviewerFeedbackEventInputType"
     FeedbackScope:
       $ref: "./schemas/feedback.yaml#/schemas/FeedbackScope"
     FeedbackAuthor:

@@ -225,7 +225,7 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 			}
 			if o.guestDemo && o.guestShare != "" {
 				// a guest link is a one-time credential, not a diagram field or log.
-				if _, err := io.WriteString(o.stdout, url+"/__tnl/share/"+o.guestShare+"\n"); err != nil {
+				if _, err := io.WriteString(o.stdout, o.guestShare+"\n"); err != nil {
 					return err
 				}
 			}
@@ -269,7 +269,7 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 // openPublicURL releases the output lock while DNS and the browser opener run.
 func (o *publishOutput) openPublicURL(url string) error {
 	if o.guestDemo && o.guestShare != "" {
-		url += "/__tnl/share/" + o.guestShare
+		url = o.guestShare
 	}
 	o.mu.Unlock()
 	err := o.openURL(url)
