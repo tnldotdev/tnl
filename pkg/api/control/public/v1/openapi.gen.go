@@ -1748,22 +1748,25 @@ type AdminDrainRelayRequest struct {
 
 // AdminRelayLease defines model for AdminRelayLease.
 type AdminRelayLease struct {
-	ConnectionCapacity   int64             `json:"connection_capacity"`
-	DrainDeadline        *time.Time        `json:"drain_deadline,omitempty"`
-	Draining             bool              `json:"draining"`
-	InternalRelayAddress string            `json:"internal_relay_address"`
-	LeaseExpiresAt       time.Time         `json:"lease_expires_at"`
-	ProtocolVersion      int64             `json:"protocol_version"`
-	RelayAddress         string            `json:"relay_address"`
-	RelayId              RelayID           `json:"relay_id"`
-	RelayLeaseRevision   int64             `json:"relay_lease_revision"`
-	RelayRunId           ResourceID        `json:"relay_run_id"`
-	RelayServiceId       RelayServiceID    `json:"relay_service_id"`
-	RenewedAt            time.Time         `json:"renewed_at"`
-	ReportedConnections  int64             `json:"reported_connections"`
-	ReportedStreams      int64             `json:"reported_streams"`
-	StreamCapacity       int64             `json:"stream_capacity"`
-	TlsServerName        CanonicalHostname `json:"tls_server_name"`
+	ConnectionCapacity   int64      `json:"connection_capacity"`
+	DrainDeadline        *time.Time `json:"drain_deadline,omitempty"`
+	Draining             bool       `json:"draining"`
+	InternalRelayAddress string     `json:"internal_relay_address"`
+	LeaseExpiresAt       time.Time  `json:"lease_expires_at"`
+	ProtocolVersion      int64      `json:"protocol_version"`
+
+	// Region Exact catalog provider:region identity, such as aws:us-west-2 or fly:sjc. local makes no geographic claim.
+	Region              string            `json:"region"`
+	RelayAddress        string            `json:"relay_address"`
+	RelayId             RelayID           `json:"relay_id"`
+	RelayLeaseRevision  int64             `json:"relay_lease_revision"`
+	RelayRunId          ResourceID        `json:"relay_run_id"`
+	RelayServiceId      RelayServiceID    `json:"relay_service_id"`
+	RenewedAt           time.Time         `json:"renewed_at"`
+	ReportedConnections int64             `json:"reported_connections"`
+	ReportedStreams     int64             `json:"reported_streams"`
+	StreamCapacity      int64             `json:"stream_capacity"`
+	TlsServerName       CanonicalHostname `json:"tls_server_name"`
 }
 
 // AdminRelayPage defines model for AdminRelayPage.
@@ -2338,6 +2341,9 @@ type CreatePublicURLRequest struct {
 
 // CreatePublishRunRequest defines model for CreatePublishRunRequest.
 type CreatePublishRunRequest struct {
+	// PreferredRegions Ordered provider-qualified preferences, not hard placement constraints. Control uses nearby eligible capacity when preferred regions are unavailable. Omission preserves load-based placement.
+	PreferredRegions *[]string `json:"preferred_regions,omitempty"`
+
 	// Traffic Explicit encrypted visitor traffic limits, resolved once against operator defaults and ceilings when the publish run is created. Omitted values use operator defaults. Zero totals mean unlimited.
 	Traffic *TrafficSelection `json:"traffic,omitempty"`
 }
@@ -3770,7 +3776,9 @@ type ServiceProtocol string
 
 // ServiceRunDeclaration defines model for ServiceRunDeclaration.
 type ServiceRunDeclaration struct {
-	Protocol ServiceProtocol `json:"protocol"`
+	// PreferredRegions Ordered provider-qualified preferences, not hard placement constraints. Control uses nearby eligible capacity when preferred regions are unavailable. Omission preserves load-based placement.
+	PreferredRegions *[]string       `json:"preferred_regions,omitempty"`
+	Protocol         ServiceProtocol `json:"protocol"`
 
 	// TargetTls Approved publisher-to-target trust. This never selects or disables visitor TLS.
 	TargetTls     *ServiceTargetTLS `json:"target_tls,omitempty"`

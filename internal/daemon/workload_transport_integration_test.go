@@ -543,6 +543,7 @@ type workloadRuntimePaths struct {
 	streamDone      []<-chan error
 	streamNames     []string
 	database        *pgx.Conn
+	postgresFailure *workloadPostgresDiagnosticSource
 }
 
 func (p *workloadRuntimePaths) stop() {
@@ -567,6 +568,12 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 		run, err := control.ResolveService(t.Context(), service)
 		if err != nil {
 			t.Fatal(err)
+		}
+		if name == "db" {
+			p.postgresFailure = &workloadPostgresDiagnosticSource{inspect: f.inspect, scope: workloadPostgresDiagnosticScope{
+				WorkloadSessionID: source.Id, Service: name, ServiceID: service,
+			}}
+			control = workloadPostgresDiagnosticControl{Control: control, source: p.postgresFailure}
 		}
 		verification := f.visitorRoots.Clone()
 		verification.ServerName = run.Endpoint.Hostname
@@ -658,6 +665,7 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 			if err != nil {
 				t.Fatal("native PostgreSQL", err)
 			}
+			p.postgresFailure.scope.BackendPID = p.database.PgConn().PID()
 			t.Cleanup(func() { _ = p.database.Close(context.Background()) })
 		} else if strings.HasSuffix(name, "tcp") {
 			conn, err := dial(t.Context(), "tcp", "")
@@ -755,6 +763,7 @@ func (p *workloadRuntimePaths) step(t *testing.T, step int) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	if err := p.database.QueryRow(ctx, "SELECT 41+1").Scan(&n); err != nil || n != 42 {
+		p.postgresFailure.log(t)
 		t.Fatal("native PostgreSQL multi-step query", err)
 	}
 	for i, done := range p.streamDone {

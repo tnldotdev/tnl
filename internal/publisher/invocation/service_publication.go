@@ -325,6 +325,7 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 		ServiceID: *identity.ServiceId, PublisherIdentityID: identity.ClientId, GrantID: identity.GrantId, Target: target, Protocol: config.ProtocolName(protocol), Trust: trust, ServerCAPEM: serverCAPEM,
 		TrustRevision: approved.TrustRevision, PublisherPool: approved.PublisherPool}
 	job.Limits = flags.Limits
+	job.PreferredRegions = flags.PreferredRegions
 	if flags.Service != "" {
 		job.Project, job.ProjectService = &project.Project, flags.Service
 	}
@@ -358,6 +359,7 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 		defer func() { result = errors.Join(result, stopRuntime()) }()
 	}
 	err = targetplan.PublishPrivate(ctx, job.TargetPlan(), publisherservice.RunConfig{Control: native, State: profile, Access: native.Access, Identity: identity, ServiceID: job.ServiceID, Target: target, Metadata: publisheridentity.ServiceMetadata(approved), StreamCapacity: int32(job.Limits.Concurrency),
+		PreferredRegions: job.PreferredRegions,
 		Ready: func() error {
 			if output.Ready != nil {
 				output.Ready()

@@ -37,7 +37,7 @@ func TestNativeTrafficClonePreservesOptionalValues(t *testing.T) {
 	}
 }
 
-func (s *trafficControlStub) CreatePublisherRun(_ context.Context, id, retry, token, proof string, selection *trafficlimits.Selection) (controlv1.PublishRunSetup, error) {
+func (s *trafficControlStub) CreatePublisherRun(_ context.Context, id, retry, token, proof string, selection *trafficlimits.Selection, _ ...string) (controlv1.PublishRunSetup, error) {
 	s.url, s.retry, s.token, s.proof, s.selection = id, retry, token, proof, selection
 	return controlv1.PublishRunSetup{}, nil
 }

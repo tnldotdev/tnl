@@ -118,6 +118,28 @@ func TestInstalledJobKindProtocolMatrix(t *testing.T) {
 	}
 }
 
+func TestInstalledPublisherProviderRegions(t *testing.T) {
+	for _, kind := range []Kind{KindPublicURL, KindService} {
+		registry := userRegistry(t)
+		job, identity, key := kindFixture(t, kind)
+		job.PreferredRegions = []string{"AWS:US-WEST-1", "fly:sjc"}
+		if err := installKind(t, registry, kind, job, identity, key); err != nil {
+			t.Fatal(err)
+		}
+		jobs, err := registry.List(t.Context())
+		if err != nil || len(jobs) != 1 || len(jobs[0].PreferredRegions) != 2 || jobs[0].PreferredRegions[0] != "aws:us-west-1" || jobs[0].PreferredRegions[1] != "fly:sjc" {
+			t.Fatal("installed job lost provider preference order", err)
+		}
+		job.PreferredRegions = []string{"sjc"}
+		requireScopeFailure(t, validateJob(&job))
+	}
+	for _, kind := range []Kind{KindConnector, KindGroup} {
+		job, _, _ := kindFixture(t, kind)
+		job.PreferredRegions = []string{"fly:sjc"}
+		requireScopeFailure(t, validateJob(&job))
+	}
+}
+
 func TestInstallationRejectsCrossKindMetadata(t *testing.T) {
 	for _, kind := range []Kind{KindPublicURL, KindService, KindConnector, KindGroup} {
 		name := string(kind)
