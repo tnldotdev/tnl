@@ -83,7 +83,7 @@ func New(control Control, server, id, key, scope string, private ed25519.Private
 
 func (o *Owner) call(ctx context.Context, action controlv1.PublisherRuntimeRequestAction) (controlv1.PublisherRuntimeResponse, error) {
 	epoch := o.expectedEpochLocked()
-	proof, err := publisherproof.Sign(o.id, o.key, publisherproof.RuntimeScope(o.scope, string(action), o.run, epoch, publisherprovenance.Digest(o.deployment)), o.server+"/v1/publisher-runtime", o.private, time.Now())
+	proof, err := publisherproof.Sign(o.id, o.key, publisherproof.RuntimeScope(o.scope, string(action), o.run, epoch, publisherprovenance.Digest(o.deployment)), o.server+"/v1/publisher/runtimes/"+o.id+"/"+string(action), o.private, time.Now())
 	if err != nil {
 		return controlv1.PublisherRuntimeResponse{}, err
 	}

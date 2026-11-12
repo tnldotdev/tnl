@@ -1,19 +1,15 @@
 paths:
-  /v1/publisher-runtime:
+  /v1/publisher/runtimes/{publisher_identity_id}/inspect:
     post:
-      operationId: observePublisherRuntime
+      operationId: inspectPublisherRuntime
       tags: [publisher-runtime]
-      summary: Inspect or update a signed publisher process lifetime
+      summary: Inspect a publisher runtime
       security: []
       description: >-
-        Explicit remote runtime lifecycle, independent of enrollment, verification,
-        and identity kind. A one-use Ed25519 assertion binds scope_id, action,
-        process_run_id and expected_epoch through the runtime proof scope, with
-        this path as its audience. Inspect reads the current epoch without recording
-        an address. Start compares that epoch and installs a new process run;
-        retries retain that run and epoch. Renew and stop require the current run
-        and epoch. Control records only the validated request source, never a body
-        address. Group start/renew also issue the existing group lease atomically.
+        Read the runtime epoch without recording an address. A one-use Ed25519
+        assertion binds this endpoint, publisher identity, inspect action, scope,
+        process run, expected epoch, and deployment report. The body's identity
+        and action must match the route.
         Authentication is the signed assertion in the JSON body, not a bearer
         token; the empty security array does not mean anonymous access.
       requestBody:
@@ -24,6 +20,71 @@ paths:
       responses:
         "200":
           description: Current runtime epoch and optional group lease
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/PublisherRuntimeResponse" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+    parameters:
+      - { $ref: "../openapi.yaml#/components/parameters/PublisherIdentityID" }
+  /v1/publisher/runtimes/{publisher_identity_id}/start:
+    parameters:
+      - { $ref: "../openapi.yaml#/components/parameters/PublisherIdentityID" }
+    post:
+      operationId: startPublisherRuntime
+      tags: [publisher-runtime]
+      summary: Start a publisher runtime
+      security: []
+      description: Compare the inspected epoch and start one process run. The one-use assertion binds this endpoint, publisher identity, start action, scope, process run, epoch, and deployment report. A retry retains the same process run and expected epoch. Control records only the validated request source, never a body address. Group start also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/PublisherRuntimeRequest" }
+      responses:
+        "200":
+          description: Started runtime epoch and optional group lease
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/PublisherRuntimeResponse" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/publisher/runtimes/{publisher_identity_id}/renew:
+    parameters:
+      - { $ref: "../openapi.yaml#/components/parameters/PublisherIdentityID" }
+    post:
+      operationId: renewPublisherRuntime
+      tags: [publisher-runtime]
+      summary: Renew a publisher runtime
+      security: []
+      description: Renew only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, renew action, scope, process run, epoch, and deployment report. Control records only the validated request source, never a body address. Group renew also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/PublisherRuntimeRequest" }
+      responses:
+        "200":
+          description: Current runtime epoch and optional group lease
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/PublisherRuntimeResponse" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/publisher/runtimes/{publisher_identity_id}/stop:
+    parameters:
+      - { $ref: "../openapi.yaml#/components/parameters/PublisherIdentityID" }
+    post:
+      operationId: stopPublisherRuntime
+      tags: [publisher-runtime]
+      summary: Stop a publisher runtime
+      security: []
+      description: Stop only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, stop action, scope, process run, epoch, and deployment report. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/PublisherRuntimeRequest" }
+      responses:
+        "200":
+          description: Stopped runtime epoch
           content:
             application/json:
               schema: { $ref: "../openapi.yaml#/components/schemas/PublisherRuntimeResponse" }

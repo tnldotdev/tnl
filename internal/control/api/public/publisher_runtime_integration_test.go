@@ -240,7 +240,7 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 		t.Fatal("runtime leaked into project metadata")
 	}
 	// a publication proof cannot start or replace a runtime, even for this identity.
-	proof, _ := publisherproof.Sign(member.PublisherIdentityId, member.KeyId, member.GroupId, server+"/v1/publisher-groups/verify", key, time.Now())
+	proof, _ := publisherproof.Sign(member.PublisherIdentityId, member.KeyId, member.GroupId, server+"/v1/publisher/groups/verify", key, time.Now())
 	if _, err = client.PublisherRuntime(ctx, controlv1.PublisherRuntimeRequest{PublisherIdentityId: member.PublisherIdentityId, ScopeId: member.GroupId, ProcessRunId: strings.Repeat("e", 32), ExpectedEpoch: 1, Action: controlv1.RuntimeStart, Assertion: proof}); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("verification proof started runtime", err)
 	}

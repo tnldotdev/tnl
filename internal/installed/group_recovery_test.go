@@ -23,9 +23,9 @@ func TestInstalledGroupRecoveryChecksControlPlansAgainstEntireOlderSnapshot(t *t
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/v1/publisher-groups/lease":
+		case "/v1/publisher/groups/lease":
 			_ = json.NewEncoder(w).Encode(controlv1.PublisherGroupLease{AccessToken: "fixture", ExpiresAt: time.Now().Add(time.Minute)})
-		case "/v1/publisher-groups/assignments":
+		case "/v1/publisher/groups/assignments":
 			_ = json.NewEncoder(w).Encode(assignments)
 		default:
 			t.Error("unexpected recovery request", r.URL.Path)

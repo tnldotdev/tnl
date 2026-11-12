@@ -129,7 +129,7 @@ func (h *handler) StartServiceRun(w http.ResponseWriter, r *http.Request, servic
 	writeJSON(w, http.StatusOK, controlv1.ServiceRunSetup{ServiceId: state.ServiceID, ServiceRunId: state.RunID, RunNumber: state.RunNumber, RunToken: state.Token, PublisherConnections: serviceRunConnections(state.Connections)})
 }
 
-func (h *handler) HeartbeatServiceRun(w http.ResponseWriter, r *http.Request, serviceID controlv1.ServiceID, runID controlv1.ServiceRunID) {
+func (h *handler) RenewServiceRun(w http.ResponseWriter, r *http.Request, serviceID controlv1.ServiceID, runID controlv1.ServiceRunID) {
 	var body controlv1.ServiceRunHeartbeat
 	if decodeJSON(w, r, &body) != nil {
 		writeProblem(w, 400, controlv1.InvalidRequest, "report the private publisher health and stream capacity")

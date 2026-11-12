@@ -175,7 +175,7 @@ func (f *Fixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 	}
 	m := f.assignment.Member
 	switch r.URL.Path {
-	case "/v1/publisher-runtime":
+	case "/v1/publisher/runtimes/" + m.PublisherIdentityId + "/inspect", "/v1/publisher/runtimes/" + m.PublisherIdentityId + "/start", "/v1/publisher/runtimes/" + m.PublisherIdentityId + "/renew", "/v1/publisher/runtimes/" + m.PublisherIdentityId + "/stop":
 		var request controlv1.PublisherRuntimeRequest
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
@@ -196,26 +196,26 @@ func (f *Fixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 		}
 		until := time.Now().Add(time.Minute)
 		write(w, controlv1.PublisherRuntimeResponse{Epoch: 1, LeaseExpiresAt: &until, GroupLease: &controlv1.PublisherGroupLease{AccessToken: "fixture-group", ExpiresAt: until}})
-	case "/v1/publisher-groups/lease", "/v1/publisher-groups/verify":
+	case "/v1/publisher/groups/lease", "/v1/publisher/groups/verify":
 		var request controlv1.PublisherGroupLeaseRequest
 		_ = json.NewDecoder(r.Body).Decode(&request)
 		if !f.verify(t, request.Assertion, m.GroupId, f.Server.URL+r.URL.Path) {
 			w.WriteHeader(401)
 			return
 		}
-		if r.URL.Path == "/v1/publisher-groups/verify" {
+		if r.URL.Path == "/v1/publisher/groups/verify" {
 			write(w, controlv1.PublisherGroupVerification{Member: m, GroupNames: []string{m.GroupName}})
 		} else {
 			write(w, controlv1.PublisherGroupLease{AccessToken: "fixture-group", ExpiresAt: time.Now().Add(time.Minute)})
 		}
-	case "/v1/publisher-groups/assignments":
+	case "/v1/publisher/groups/assignments":
 		if r.Header.Get("Authorization") != "Bearer fixture-group" {
 			t.Error("assignment lacked group lease")
 			w.WriteHeader(401)
 			return
 		}
 		write(w, f.assignment)
-	case "/v1/publisher-groups/ack":
+	case "/v1/publisher/groups/configuration-acknowledgements":
 		if r.Header.Get("Authorization") != "Bearer fixture-group" {
 			t.Error("ack lacked group lease")
 		}
@@ -247,11 +247,9 @@ func (f *Fixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 	case "/v1/services/" + f.service.Id + "/runs/" + f.setup.ServiceRunId + "/start":
 		write(w, f.setup)
 	case "/v1/services/" + f.service.Id + "/runs/" + f.setup.ServiceRunId:
-		if r.Method == "DELETE" {
-			f.Closes.Add(1)
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
+		f.Closes.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	case "/v1/services/" + f.service.Id + "/runs/" + f.setup.ServiceRunId + "/renew":
 		var health controlv1.ServiceRunHeartbeat
 		_ = json.NewDecoder(r.Body).Decode(&health)
 		select {

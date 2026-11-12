@@ -57,7 +57,7 @@ func TestServiceRunUsesSeparatePersonPublisherAndRunCredentials(t *testing.T) {
 				t.Error("prepared managed run changed")
 			}
 			_ = json.NewEncoder(w).Encode(controlv1.ServiceRunSetup{ServiceId: "svc_service", ServiceRunId: "srun_one", RunNumber: 1, RunToken: "run-token"})
-		case "POST /v1/services/svc_service/runs/srun_one":
+		case "POST /v1/services/svc_service/runs/srun_one/renew":
 			if r.Header.Get("Authorization") != "Bearer run-token" {
 				t.Error("heartbeat used a person or publisher credential")
 			}

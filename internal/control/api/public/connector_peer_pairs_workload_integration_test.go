@@ -42,11 +42,11 @@ func exerciseWorkloadConnectorPeerPair(t *testing.T, d *controlstate.Database, j
 	if err != nil {
 		t.Fatal("redeem group", err)
 	}
-	leaseProof, err := publisherproof.Sign(member.PublisherIdentityID, member.KeyID, member.GroupID, server.URL+"/v1/publisher-groups/lease", key, now)
+	leaseProof, err := publisherproof.Sign(member.PublisherIdentityID, member.KeyID, member.GroupID, server.URL+"/v1/publisher/groups/lease", key, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, err := d.AcquirePublisherGroupLease(ctx, member.PublisherIdentityID, member.GroupID, leaseProof, server.URL+"/v1/publisher-groups/lease", now)
+	lease, err := d.AcquirePublisherGroupLease(ctx, member.PublisherIdentityID, member.GroupID, leaseProof, server.URL+"/v1/publisher/groups/lease", now)
 	if err != nil {
 		t.Fatal("group lease", err)
 	}

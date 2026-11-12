@@ -29,7 +29,7 @@ func TestClientMapsProblemsAndRejectsTrailingJSON(t *testing.T) {
 		switch request.URL.Path {
 		case "/v1/discovery":
 			_, _ = response.Write([]byte(`{} {}`))
-		case "/v1/publish-runs/session/heartbeat":
+		case "/v1/publish-runs/session/renew":
 			if request.Header.Get("Authorization") != "Bearer "+session.String() {
 				t.Errorf("Authorization = %q", request.Header.Get("Authorization"))
 			}

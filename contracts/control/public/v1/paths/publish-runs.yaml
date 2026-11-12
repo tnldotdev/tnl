@@ -29,9 +29,9 @@ paths:
                 $ref: "../openapi.yaml#/components/schemas/PublishRunSetup"
         default:
           $ref: "../openapi.yaml#/components/responses/Problem"
-  /v1/publish-runs/{publish_run_id}/heartbeat:
+  /v1/publish-runs/{publish_run_id}/renew:
     post:
-      operationId: heartbeatPublishRun
+      operationId: renewPublishRun
       tags: [publish-runs]
       description: Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
       summary: Renew a publish run and replace missing publisher connections

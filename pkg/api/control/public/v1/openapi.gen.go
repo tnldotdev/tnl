@@ -3244,7 +3244,7 @@ type PublisherIdentityPage struct {
 	NextCursor *ResourceID         `json:"next_cursor,omitempty"`
 }
 
-// PublisherRuntimeRequest defines model for PublisherRuntimeRequest.
+// PublisherRuntimeRequest Signed runtime command. The publisher identity and action must match the endpoint; the one-use proof binds both, the remaining fields, and the full endpoint audience.
 type PublisherRuntimeRequest struct {
 	Action    PublisherRuntimeRequestAction `json:"action"`
 	Assertion string                        `json:"assertion"`
@@ -4551,14 +4551,14 @@ type ListReviewerFeedbackEventsJSONRequestBody = ReviewerFeedbackReadRequest
 // GetReviewerFeedbackThreadJSONRequestBody defines body for GetReviewerFeedbackThread for application/json ContentType.
 type GetReviewerFeedbackThreadJSONRequestBody = ReviewerFeedbackReadRequest
 
-// HeartbeatPublishRunJSONRequestBody defines body for HeartbeatPublishRun for application/json ContentType.
-type HeartbeatPublishRunJSONRequestBody = PublishRunVersionRequest
-
 // CreatePublishRunPreviewJSONRequestBody defines body for CreatePublishRunPreview for application/json ContentType.
 type CreatePublishRunPreviewJSONRequestBody = PublishRunVersionRequest
 
 // MarkPublishRunReadyJSONRequestBody defines body for MarkPublishRunReady for application/json ContentType.
 type MarkPublishRunReadyJSONRequestBody = PublishRunVersionRequest
+
+// RenewPublishRunJSONRequestBody defines body for RenewPublishRun for application/json ContentType.
+type RenewPublishRunJSONRequestBody = PublishRunVersionRequest
 
 // EnableShareAccessJSONRequestBody defines body for EnableShareAccess for application/json ContentType.
 type EnableShareAccessJSONRequestBody = EnableShareAccessRequest
@@ -4572,6 +4572,9 @@ type ReportPublishRunServiceObservationsJSONRequestBody = PublishRunServiceObser
 // CreatePublisherEnrollmentJSONRequestBody defines body for CreatePublisherEnrollment for application/json ContentType.
 type CreatePublisherEnrollmentJSONRequestBody = CreatePublisherEnrollmentRequest
 
+// CreatePublisherGrantJSONRequestBody defines body for CreatePublisherGrant for application/json ContentType.
+type CreatePublisherGrantJSONRequestBody = CreatePublisherGrantRequest
+
 // AcknowledgePublisherGroupConfigurationJSONRequestBody defines body for AcknowledgePublisherGroupConfiguration for application/json ContentType.
 type AcknowledgePublisherGroupConfigurationJSONRequestBody = PublisherGroupAcknowledgement
 
@@ -4584,14 +4587,20 @@ type AcquirePublisherGroupLeaseJSONRequestBody = PublisherGroupLeaseRequest
 // VerifyPublisherGroupIdentityJSONRequestBody defines body for VerifyPublisherGroupIdentity for application/json ContentType.
 type VerifyPublisherGroupIdentityJSONRequestBody = PublisherGroupLeaseRequest
 
-// CreatePublisherGrantJSONRequestBody defines body for CreatePublisherGrant for application/json ContentType.
-type CreatePublisherGrantJSONRequestBody = CreatePublisherGrantRequest
-
-// ObservePublisherRuntimeJSONRequestBody defines body for ObservePublisherRuntime for application/json ContentType.
-type ObservePublisherRuntimeJSONRequestBody = PublisherRuntimeRequest
-
 // AllocatePublisherPublicURLJSONRequestBody defines body for AllocatePublisherPublicURL for application/json ContentType.
 type AllocatePublisherPublicURLJSONRequestBody = AllocateEphemeralPublicURLRequest
+
+// InspectPublisherRuntimeJSONRequestBody defines body for InspectPublisherRuntime for application/json ContentType.
+type InspectPublisherRuntimeJSONRequestBody = PublisherRuntimeRequest
+
+// RenewPublisherRuntimeJSONRequestBody defines body for RenewPublisherRuntime for application/json ContentType.
+type RenewPublisherRuntimeJSONRequestBody = PublisherRuntimeRequest
+
+// StartPublisherRuntimeJSONRequestBody defines body for StartPublisherRuntime for application/json ContentType.
+type StartPublisherRuntimeJSONRequestBody = PublisherRuntimeRequest
+
+// StopPublisherRuntimeJSONRequestBody defines body for StopPublisherRuntime for application/json ContentType.
+type StopPublisherRuntimeJSONRequestBody = PublisherRuntimeRequest
 
 // AcceptServiceInvitationJSONRequestBody defines body for AcceptServiceInvitation for application/json ContentType.
 type AcceptServiceInvitationJSONRequestBody = ServiceInvitationCredential
@@ -4626,9 +4635,6 @@ type InviteServiceVisitorJSONRequestBody = CreateServiceInvitationRequest
 // PrepareServiceRunJSONRequestBody defines body for PrepareServiceRun for application/json ContentType.
 type PrepareServiceRunJSONRequestBody = ServiceRunDeclaration
 
-// HeartbeatServiceRunJSONRequestBody defines body for HeartbeatServiceRun for application/json ContentType.
-type HeartbeatServiceRunJSONRequestBody = ServiceRunHeartbeat
-
 // AuthorizeServiceClientCertificateJSONRequestBody defines body for AuthorizeServiceClientCertificate for application/json ContentType.
 type AuthorizeServiceClientCertificateJSONRequestBody = AuthorizeServiceClientCertificateRequest
 
@@ -4652,6 +4658,9 @@ type DeliverConnectorPeerPairJSONRequestBody DeliverConnectorPeerPairJSONBody
 
 // ConfirmConnectorPeerPairPreparedJSONRequestBody defines body for ConfirmConnectorPeerPairPrepared for application/json ContentType.
 type ConfirmConnectorPeerPairPreparedJSONRequestBody = ConnectorPeerPairPrepared
+
+// RenewServiceRunJSONRequestBody defines body for RenewServiceRun for application/json ContentType.
+type RenewServiceRunJSONRequestBody = ServiceRunHeartbeat
 
 // ReportServiceRunObservationsJSONRequestBody defines body for ReportServiceRunObservations for application/json ContentType.
 type ReportServiceRunObservationsJSONRequestBody = ServiceRunObservations
@@ -5573,24 +5582,6 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
 	GetReviewerFeedbackThread(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, body GetReviewerFeedbackThreadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// HeartbeatPublishRunWithBody Renew a publish run and replace missing publisher connections
-	//
-	// Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
-	HeartbeatPublishRunWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// HeartbeatPublishRun Renew a publish run and replace missing publisher connections
-	//
-	// Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
-	HeartbeatPublishRun(ctx context.Context, publishRunId PublishRunID, body HeartbeatPublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// CreatePublishRunPreviewWithBody Create feedback context for one ephemeral demo publish run
 	//
 	// Create or reuse the run-scoped preview used for an ephemeral demo's feedback. Authenticate with that exact publish run token and number; this is not ordinary project preview management.
@@ -5626,6 +5617,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
 	MarkPublishRunReady(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RenewPublishRunWithBody Renew a publish run and replace missing publisher connections
+	//
+	// Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/renew (the `RenewPublishRun` operationId).
+	RenewPublishRunWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RenewPublishRun Renew a publish run and replace missing publisher connections
+	//
+	// Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/renew (the `RenewPublishRun` operationId).
+	RenewPublishRun(ctx context.Context, publishRunId PublishRunID, body RenewPublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// EnableShareAccessWithBody Enable share-aware HTTP handling for this preview publish run
 	//
@@ -5699,85 +5708,6 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/publisher-enrollments (the `CreatePublisherEnrollment` operationId).
 	CreatePublisherEnrollment(ctx context.Context, body CreatePublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AcknowledgePublisherGroupConfigurationWithBody Acknowledge the exact configuration installed by a group replica
-	//
-	// Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/publisher-groups/ack (the `AcknowledgePublisherGroupConfiguration` operationId).
-	AcknowledgePublisherGroupConfigurationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AcknowledgePublisherGroupConfiguration Acknowledge the exact configuration installed by a group replica
-	//
-	// Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/publisher-groups/ack (the `AcknowledgePublisherGroupConfiguration` operationId).
-	AcknowledgePublisherGroupConfiguration(ctx context.Context, body AcknowledgePublisherGroupConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetPublisherGroupAssignments Read services and grants assigned to one leased group replica
-	//
-	// Authenticate with the current pgl_ group lease and read the replica's exact service assignments and publisher grant IDs. These assignments may contain targets; a pta_ publisher access token cannot read them.
-	//
-	// Corresponds with GET /v1/publisher-groups/assignments (the `GetPublisherGroupAssignments` operationId).
-	GetPublisherGroupAssignments(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RedeemPublisherGroupEnrollmentWithBody Enroll a replica's signing key with a group enrollment secret
-	//
-	// Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/publisher-groups/enroll (the `RedeemPublisherGroupEnrollment` operationId).
-	RedeemPublisherGroupEnrollmentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RedeemPublisherGroupEnrollment Enroll a replica's signing key with a group enrollment secret
-	//
-	// Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/publisher-groups/enroll (the `RedeemPublisherGroupEnrollment` operationId).
-	RedeemPublisherGroupEnrollment(ctx context.Context, body RedeemPublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AcquirePublisherGroupLeaseWithBody Exchange a signed replica assertion for a group lease
-	//
-	// Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/publisher-groups/lease (the `AcquirePublisherGroupLease` operationId).
-	AcquirePublisherGroupLeaseWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AcquirePublisherGroupLease Exchange a signed replica assertion for a group lease
-	//
-	// Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/publisher-groups/lease (the `AcquirePublisherGroupLease` operationId).
-	AcquirePublisherGroupLease(ctx context.Context, body AcquirePublisherGroupLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// VerifyPublisherGroupIdentityWithBody Verify a replica's group membership without acquiring a lease
-	//
-	// Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/publisher-groups/verify (the `VerifyPublisherGroupIdentity` operationId).
-	VerifyPublisherGroupIdentityWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// VerifyPublisherGroupIdentity Verify a replica's group membership without acquiring a lease
-	//
-	// Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/publisher-groups/verify (the `VerifyPublisherGroupIdentity` operationId).
-	VerifyPublisherGroupIdentity(ctx context.Context, body VerifyPublisherGroupIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// ListPublisherIdentities List publisher identities and grants without secrets
 	//
 	// Read a cursor-paginated inventory of publisher identities and their grants for a manageable team. Responses omit enrollment secrets and private signing keys; an inventory entry is not a publisher credential.
@@ -5817,23 +5747,84 @@ type ClientInterface interface {
 	// Corresponds with DELETE /v1/publisher-identities/{publisher_identity_id}/grants/{grant_id} (the `RevokePublisherGrant` operationId).
 	RevokePublisherGrant(ctx context.Context, publisherIdentityId PublisherIdentityID, grantId ResourceID, params *RevokePublisherGrantParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ObservePublisherRuntimeWithBody Inspect or update a signed publisher process lifetime
+	// GetPublisherGroupAssignments Read services and grants assigned to one leased group replica
 	//
-	// Explicit remote runtime lifecycle, independent of enrollment, verification, and identity kind. A one-use Ed25519 assertion binds scope_id, action, process_run_id and expected_epoch through the runtime proof scope, with this path as its audience. Inspect reads the current epoch without recording an address. Start compares that epoch and installs a new process run; retries retain that run and epoch. Renew and stop require the current run and epoch. Control records only the validated request source, never a body address. Group start/renew also issue the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	// Authenticate with the current pgl_ group lease and read the replica's exact service assignments and publisher grant IDs. These assignments may contain targets; a pta_ publisher access token cannot read them.
+	//
+	// Corresponds with GET /v1/publisher/groups/assignments (the `GetPublisherGroupAssignments` operationId).
+	GetPublisherGroupAssignments(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AcknowledgePublisherGroupConfigurationWithBody Acknowledge the exact configuration installed by a group replica
+	//
+	// Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
 	//
 	// Takes any type of body and a specified content type.
 	//
-	// Corresponds with POST /v1/publisher-runtime (the `ObservePublisherRuntime` operationId).
-	ObservePublisherRuntimeWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /v1/publisher/groups/configuration-acknowledgements (the `AcknowledgePublisherGroupConfiguration` operationId).
+	AcknowledgePublisherGroupConfigurationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ObservePublisherRuntime Inspect or update a signed publisher process lifetime
+	// AcknowledgePublisherGroupConfiguration Acknowledge the exact configuration installed by a group replica
 	//
-	// Explicit remote runtime lifecycle, independent of enrollment, verification, and identity kind. A one-use Ed25519 assertion binds scope_id, action, process_run_id and expected_epoch through the runtime proof scope, with this path as its audience. Inspect reads the current epoch without recording an address. Start compares that epoch and installs a new process run; retries retain that run and epoch. Renew and stop require the current run and epoch. Control records only the validated request source, never a body address. Group start/renew also issue the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	// Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
 	//
 	// Takes a body of the `application/json` content type.
 	//
-	// Corresponds with POST /v1/publisher-runtime (the `ObservePublisherRuntime` operationId).
-	ObservePublisherRuntime(ctx context.Context, body ObservePublisherRuntimeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /v1/publisher/groups/configuration-acknowledgements (the `AcknowledgePublisherGroupConfiguration` operationId).
+	AcknowledgePublisherGroupConfiguration(ctx context.Context, body AcknowledgePublisherGroupConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RedeemPublisherGroupEnrollmentWithBody Enroll a replica's signing key with a group enrollment secret
+	//
+	// Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publisher/groups/enroll (the `RedeemPublisherGroupEnrollment` operationId).
+	RedeemPublisherGroupEnrollmentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RedeemPublisherGroupEnrollment Enroll a replica's signing key with a group enrollment secret
+	//
+	// Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publisher/groups/enroll (the `RedeemPublisherGroupEnrollment` operationId).
+	RedeemPublisherGroupEnrollment(ctx context.Context, body RedeemPublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AcquirePublisherGroupLeaseWithBody Exchange a signed replica assertion for a group lease
+	//
+	// Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publisher/groups/lease (the `AcquirePublisherGroupLease` operationId).
+	AcquirePublisherGroupLeaseWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AcquirePublisherGroupLease Exchange a signed replica assertion for a group lease
+	//
+	// Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publisher/groups/lease (the `AcquirePublisherGroupLease` operationId).
+	AcquirePublisherGroupLease(ctx context.Context, body AcquirePublisherGroupLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// VerifyPublisherGroupIdentityWithBody Verify a replica's group membership without acquiring a lease
+	//
+	// Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publisher/groups/verify (the `VerifyPublisherGroupIdentity` operationId).
+	VerifyPublisherGroupIdentityWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// VerifyPublisherGroupIdentity Verify a replica's group membership without acquiring a lease
+	//
+	// Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publisher/groups/verify (the `VerifyPublisherGroupIdentity` operationId).
+	VerifyPublisherGroupIdentity(ctx context.Context, body VerifyPublisherGroupIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetPublisherPublicURL Read the saved URL selected by the current grant
 	//
@@ -5866,6 +5857,78 @@ type ClientInterface interface {
 	//
 	// Corresponds with DELETE /v1/publisher/public-urls/{public_url_id} (the `DeletePublisherPublicURL` operationId).
 	DeletePublisherPublicURL(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// InspectPublisherRuntimeWithBody Inspect a publisher runtime
+	//
+	// Read the runtime epoch without recording an address. A one-use Ed25519 assertion binds this endpoint, publisher identity, inspect action, scope, process run, expected epoch, and deployment report. The body's identity and action must match the route. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publisher/runtimes/{publisher_identity_id}/inspect (the `InspectPublisherRuntime` operationId).
+	InspectPublisherRuntimeWithBody(ctx context.Context, publisherIdentityId PublisherIdentityID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// InspectPublisherRuntime Inspect a publisher runtime
+	//
+	// Read the runtime epoch without recording an address. A one-use Ed25519 assertion binds this endpoint, publisher identity, inspect action, scope, process run, expected epoch, and deployment report. The body's identity and action must match the route. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publisher/runtimes/{publisher_identity_id}/inspect (the `InspectPublisherRuntime` operationId).
+	InspectPublisherRuntime(ctx context.Context, publisherIdentityId PublisherIdentityID, body InspectPublisherRuntimeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RenewPublisherRuntimeWithBody Renew a publisher runtime
+	//
+	// Renew only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, renew action, scope, process run, epoch, and deployment report. Control records only the validated request source, never a body address. Group renew also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publisher/runtimes/{publisher_identity_id}/renew (the `RenewPublisherRuntime` operationId).
+	RenewPublisherRuntimeWithBody(ctx context.Context, publisherIdentityId PublisherIdentityID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RenewPublisherRuntime Renew a publisher runtime
+	//
+	// Renew only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, renew action, scope, process run, epoch, and deployment report. Control records only the validated request source, never a body address. Group renew also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publisher/runtimes/{publisher_identity_id}/renew (the `RenewPublisherRuntime` operationId).
+	RenewPublisherRuntime(ctx context.Context, publisherIdentityId PublisherIdentityID, body RenewPublisherRuntimeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StartPublisherRuntimeWithBody Start a publisher runtime
+	//
+	// Compare the inspected epoch and start one process run. The one-use assertion binds this endpoint, publisher identity, start action, scope, process run, epoch, and deployment report. A retry retains the same process run and expected epoch. Control records only the validated request source, never a body address. Group start also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publisher/runtimes/{publisher_identity_id}/start (the `StartPublisherRuntime` operationId).
+	StartPublisherRuntimeWithBody(ctx context.Context, publisherIdentityId PublisherIdentityID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StartPublisherRuntime Start a publisher runtime
+	//
+	// Compare the inspected epoch and start one process run. The one-use assertion binds this endpoint, publisher identity, start action, scope, process run, epoch, and deployment report. A retry retains the same process run and expected epoch. Control records only the validated request source, never a body address. Group start also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publisher/runtimes/{publisher_identity_id}/start (the `StartPublisherRuntime` operationId).
+	StartPublisherRuntime(ctx context.Context, publisherIdentityId PublisherIdentityID, body StartPublisherRuntimeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StopPublisherRuntimeWithBody Stop a publisher runtime
+	//
+	// Stop only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, stop action, scope, process run, epoch, and deployment report. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publisher/runtimes/{publisher_identity_id}/stop (the `StopPublisherRuntime` operationId).
+	StopPublisherRuntimeWithBody(ctx context.Context, publisherIdentityId PublisherIdentityID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StopPublisherRuntime Stop a publisher runtime
+	//
+	// Stop only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, stop action, scope, process run, epoch, and deployment report. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publisher/runtimes/{publisher_identity_id}/stop (the `StopPublisherRuntime` operationId).
+	StopPublisherRuntime(ctx context.Context, publisherIdentityId PublisherIdentityID, body StopPublisherRuntimeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetPublisherService Read the saved service selected by the current publisher grant
 	//
@@ -6149,24 +6212,6 @@ type ClientInterface interface {
 	// Corresponds with DELETE /v1/services/{service_id}/runs/{service_run_id} (the `CloseServiceRun` operationId).
 	CloseServiceRun(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// HeartbeatServiceRunWithBody Renew a service run and report publisher health and capacity
-	//
-	// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id} (the `HeartbeatServiceRun` operationId).
-	HeartbeatServiceRunWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// HeartbeatServiceRun Renew a service run and report publisher health and capacity
-	//
-	// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id} (the `HeartbeatServiceRun` operationId).
-	HeartbeatServiceRun(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body HeartbeatServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// AuthorizeServiceClientCertificateWithBody Check a public endpoint visitor's client certificate and admission
 	//
 	// Authenticate a public endpoint visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
@@ -6324,6 +6369,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId).
 	ConfirmConnectorPeerPairPrepared(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body ConfirmConnectorPeerPairPreparedJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RenewServiceRunWithBody Renew a service run and report publisher health and capacity
+	//
+	// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/renew (the `RenewServiceRun` operationId).
+	RenewServiceRunWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RenewServiceRun Renew a service run and report publisher health and capacity
+	//
+	// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/renew (the `RenewServiceRun` operationId).
+	RenewServiceRun(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body RenewServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ReportServiceRunObservationsWithBody Report connector connection observations for a service run
 	//
@@ -8232,44 +8295,6 @@ func (c *Client) GetReviewerFeedbackThread(ctx context.Context, publishRunId Pub
 	return c.Client.Do(req)
 }
 
-// HeartbeatPublishRunWithBody Renew a publish run and replace missing publisher connections
-//
-// Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
-func (c *Client) HeartbeatPublishRunWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewHeartbeatPublishRunRequestWithBody(c.Server, publishRunId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// HeartbeatPublishRun Renew a publish run and replace missing publisher connections
-//
-// Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
-func (c *Client) HeartbeatPublishRun(ctx context.Context, publishRunId PublishRunID, body HeartbeatPublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewHeartbeatPublishRunRequest(c.Server, publishRunId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // CreatePublishRunPreviewWithBody Create feedback context for one ephemeral demo publish run
 //
 // Create or reuse the run-scoped preview used for an ephemeral demo's feedback. Authenticate with that exact publish run token and number; this is not ordinary project preview management.
@@ -8336,6 +8361,44 @@ func (c *Client) MarkPublishRunReadyWithBody(ctx context.Context, publishRunId P
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
 func (c *Client) MarkPublishRunReady(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewMarkPublishRunReadyRequest(c.Server, publishRunId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RenewPublishRunWithBody Renew a publish run and replace missing publisher connections
+//
+// Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/renew (the `RenewPublishRun` operationId).
+func (c *Client) RenewPublishRunWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenewPublishRunRequestWithBody(c.Server, publishRunId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RenewPublishRun Renew a publish run and replace missing publisher connections
+//
+// Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/renew (the `RenewPublishRun` operationId).
+func (c *Client) RenewPublishRun(ctx context.Context, publishRunId PublishRunID, body RenewPublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenewPublishRunRequest(c.Server, publishRunId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8498,175 +8561,6 @@ func (c *Client) CreatePublisherEnrollment(ctx context.Context, body CreatePubli
 	return c.Client.Do(req)
 }
 
-// AcknowledgePublisherGroupConfigurationWithBody Acknowledge the exact configuration installed by a group replica
-//
-// Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/publisher-groups/ack (the `AcknowledgePublisherGroupConfiguration` operationId).
-func (c *Client) AcknowledgePublisherGroupConfigurationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAcknowledgePublisherGroupConfigurationRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AcknowledgePublisherGroupConfiguration Acknowledge the exact configuration installed by a group replica
-//
-// Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/publisher-groups/ack (the `AcknowledgePublisherGroupConfiguration` operationId).
-func (c *Client) AcknowledgePublisherGroupConfiguration(ctx context.Context, body AcknowledgePublisherGroupConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAcknowledgePublisherGroupConfigurationRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// GetPublisherGroupAssignments Read services and grants assigned to one leased group replica
-//
-// Authenticate with the current pgl_ group lease and read the replica's exact service assignments and publisher grant IDs. These assignments may contain targets; a pta_ publisher access token cannot read them.
-//
-// Corresponds with GET /v1/publisher-groups/assignments (the `GetPublisherGroupAssignments` operationId).
-func (c *Client) GetPublisherGroupAssignments(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetPublisherGroupAssignmentsRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RedeemPublisherGroupEnrollmentWithBody Enroll a replica's signing key with a group enrollment secret
-//
-// Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/publisher-groups/enroll (the `RedeemPublisherGroupEnrollment` operationId).
-func (c *Client) RedeemPublisherGroupEnrollmentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRedeemPublisherGroupEnrollmentRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RedeemPublisherGroupEnrollment Enroll a replica's signing key with a group enrollment secret
-//
-// Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/publisher-groups/enroll (the `RedeemPublisherGroupEnrollment` operationId).
-func (c *Client) RedeemPublisherGroupEnrollment(ctx context.Context, body RedeemPublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRedeemPublisherGroupEnrollmentRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AcquirePublisherGroupLeaseWithBody Exchange a signed replica assertion for a group lease
-//
-// Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/publisher-groups/lease (the `AcquirePublisherGroupLease` operationId).
-func (c *Client) AcquirePublisherGroupLeaseWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAcquirePublisherGroupLeaseRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AcquirePublisherGroupLease Exchange a signed replica assertion for a group lease
-//
-// Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/publisher-groups/lease (the `AcquirePublisherGroupLease` operationId).
-func (c *Client) AcquirePublisherGroupLease(ctx context.Context, body AcquirePublisherGroupLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAcquirePublisherGroupLeaseRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// VerifyPublisherGroupIdentityWithBody Verify a replica's group membership without acquiring a lease
-//
-// Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/publisher-groups/verify (the `VerifyPublisherGroupIdentity` operationId).
-func (c *Client) VerifyPublisherGroupIdentityWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewVerifyPublisherGroupIdentityRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// VerifyPublisherGroupIdentity Verify a replica's group membership without acquiring a lease
-//
-// Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/publisher-groups/verify (the `VerifyPublisherGroupIdentity` operationId).
-func (c *Client) VerifyPublisherGroupIdentity(ctx context.Context, body VerifyPublisherGroupIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewVerifyPublisherGroupIdentityRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // ListPublisherIdentities List publisher identities and grants without secrets
 //
 // Read a cursor-paginated inventory of publisher identities and their grants for a manageable team. Responses omit enrollment secrets and private signing keys; an inventory entry is not a publisher credential.
@@ -8756,15 +8650,13 @@ func (c *Client) RevokePublisherGrant(ctx context.Context, publisherIdentityId P
 	return c.Client.Do(req)
 }
 
-// ObservePublisherRuntimeWithBody Inspect or update a signed publisher process lifetime
+// GetPublisherGroupAssignments Read services and grants assigned to one leased group replica
 //
-// Explicit remote runtime lifecycle, independent of enrollment, verification, and identity kind. A one-use Ed25519 assertion binds scope_id, action, process_run_id and expected_epoch through the runtime proof scope, with this path as its audience. Inspect reads the current epoch without recording an address. Start compares that epoch and installs a new process run; retries retain that run and epoch. Renew and stop require the current run and epoch. Control records only the validated request source, never a body address. Group start/renew also issue the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+// Authenticate with the current pgl_ group lease and read the replica's exact service assignments and publisher grant IDs. These assignments may contain targets; a pta_ publisher access token cannot read them.
 //
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/publisher-runtime (the `ObservePublisherRuntime` operationId).
-func (c *Client) ObservePublisherRuntimeWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewObservePublisherRuntimeRequestWithBody(c.Server, contentType, body)
+// Corresponds with GET /v1/publisher/groups/assignments (the `GetPublisherGroupAssignments` operationId).
+func (c *Client) GetPublisherGroupAssignments(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetPublisherGroupAssignmentsRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -8775,15 +8667,148 @@ func (c *Client) ObservePublisherRuntimeWithBody(ctx context.Context, contentTyp
 	return c.Client.Do(req)
 }
 
-// ObservePublisherRuntime Inspect or update a signed publisher process lifetime
+// AcknowledgePublisherGroupConfigurationWithBody Acknowledge the exact configuration installed by a group replica
 //
-// Explicit remote runtime lifecycle, independent of enrollment, verification, and identity kind. A one-use Ed25519 assertion binds scope_id, action, process_run_id and expected_epoch through the runtime proof scope, with this path as its audience. Inspect reads the current epoch without recording an address. Start compares that epoch and installs a new process run; retries retain that run and epoch. Renew and stop require the current run and epoch. Control records only the validated request source, never a body address. Group start/renew also issue the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+// Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publisher/groups/configuration-acknowledgements (the `AcknowledgePublisherGroupConfiguration` operationId).
+func (c *Client) AcknowledgePublisherGroupConfigurationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAcknowledgePublisherGroupConfigurationRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AcknowledgePublisherGroupConfiguration Acknowledge the exact configuration installed by a group replica
+//
+// Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
 //
 // Takes a body of the `application/json` content type.
 //
-// Corresponds with POST /v1/publisher-runtime (the `ObservePublisherRuntime` operationId).
-func (c *Client) ObservePublisherRuntime(ctx context.Context, body ObservePublisherRuntimeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewObservePublisherRuntimeRequest(c.Server, body)
+// Corresponds with POST /v1/publisher/groups/configuration-acknowledgements (the `AcknowledgePublisherGroupConfiguration` operationId).
+func (c *Client) AcknowledgePublisherGroupConfiguration(ctx context.Context, body AcknowledgePublisherGroupConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAcknowledgePublisherGroupConfigurationRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RedeemPublisherGroupEnrollmentWithBody Enroll a replica's signing key with a group enrollment secret
+//
+// Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publisher/groups/enroll (the `RedeemPublisherGroupEnrollment` operationId).
+func (c *Client) RedeemPublisherGroupEnrollmentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRedeemPublisherGroupEnrollmentRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RedeemPublisherGroupEnrollment Enroll a replica's signing key with a group enrollment secret
+//
+// Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publisher/groups/enroll (the `RedeemPublisherGroupEnrollment` operationId).
+func (c *Client) RedeemPublisherGroupEnrollment(ctx context.Context, body RedeemPublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRedeemPublisherGroupEnrollmentRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AcquirePublisherGroupLeaseWithBody Exchange a signed replica assertion for a group lease
+//
+// Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publisher/groups/lease (the `AcquirePublisherGroupLease` operationId).
+func (c *Client) AcquirePublisherGroupLeaseWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAcquirePublisherGroupLeaseRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AcquirePublisherGroupLease Exchange a signed replica assertion for a group lease
+//
+// Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publisher/groups/lease (the `AcquirePublisherGroupLease` operationId).
+func (c *Client) AcquirePublisherGroupLease(ctx context.Context, body AcquirePublisherGroupLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAcquirePublisherGroupLeaseRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// VerifyPublisherGroupIdentityWithBody Verify a replica's group membership without acquiring a lease
+//
+// Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publisher/groups/verify (the `VerifyPublisherGroupIdentity` operationId).
+func (c *Client) VerifyPublisherGroupIdentityWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewVerifyPublisherGroupIdentityRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// VerifyPublisherGroupIdentity Verify a replica's group membership without acquiring a lease
+//
+// Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publisher/groups/verify (the `VerifyPublisherGroupIdentity` operationId).
+func (c *Client) VerifyPublisherGroupIdentity(ctx context.Context, body VerifyPublisherGroupIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewVerifyPublisherGroupIdentityRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8856,6 +8881,158 @@ func (c *Client) AllocatePublisherPublicURL(ctx context.Context, body AllocatePu
 // Corresponds with DELETE /v1/publisher/public-urls/{public_url_id} (the `DeletePublisherPublicURL` operationId).
 func (c *Client) DeletePublisherPublicURL(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeletePublisherPublicURLRequest(c.Server, publicUrlId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// InspectPublisherRuntimeWithBody Inspect a publisher runtime
+//
+// Read the runtime epoch without recording an address. A one-use Ed25519 assertion binds this endpoint, publisher identity, inspect action, scope, process run, expected epoch, and deployment report. The body's identity and action must match the route. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publisher/runtimes/{publisher_identity_id}/inspect (the `InspectPublisherRuntime` operationId).
+func (c *Client) InspectPublisherRuntimeWithBody(ctx context.Context, publisherIdentityId PublisherIdentityID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewInspectPublisherRuntimeRequestWithBody(c.Server, publisherIdentityId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// InspectPublisherRuntime Inspect a publisher runtime
+//
+// Read the runtime epoch without recording an address. A one-use Ed25519 assertion binds this endpoint, publisher identity, inspect action, scope, process run, expected epoch, and deployment report. The body's identity and action must match the route. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publisher/runtimes/{publisher_identity_id}/inspect (the `InspectPublisherRuntime` operationId).
+func (c *Client) InspectPublisherRuntime(ctx context.Context, publisherIdentityId PublisherIdentityID, body InspectPublisherRuntimeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewInspectPublisherRuntimeRequest(c.Server, publisherIdentityId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RenewPublisherRuntimeWithBody Renew a publisher runtime
+//
+// Renew only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, renew action, scope, process run, epoch, and deployment report. Control records only the validated request source, never a body address. Group renew also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publisher/runtimes/{publisher_identity_id}/renew (the `RenewPublisherRuntime` operationId).
+func (c *Client) RenewPublisherRuntimeWithBody(ctx context.Context, publisherIdentityId PublisherIdentityID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenewPublisherRuntimeRequestWithBody(c.Server, publisherIdentityId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RenewPublisherRuntime Renew a publisher runtime
+//
+// Renew only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, renew action, scope, process run, epoch, and deployment report. Control records only the validated request source, never a body address. Group renew also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publisher/runtimes/{publisher_identity_id}/renew (the `RenewPublisherRuntime` operationId).
+func (c *Client) RenewPublisherRuntime(ctx context.Context, publisherIdentityId PublisherIdentityID, body RenewPublisherRuntimeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenewPublisherRuntimeRequest(c.Server, publisherIdentityId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StartPublisherRuntimeWithBody Start a publisher runtime
+//
+// Compare the inspected epoch and start one process run. The one-use assertion binds this endpoint, publisher identity, start action, scope, process run, epoch, and deployment report. A retry retains the same process run and expected epoch. Control records only the validated request source, never a body address. Group start also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publisher/runtimes/{publisher_identity_id}/start (the `StartPublisherRuntime` operationId).
+func (c *Client) StartPublisherRuntimeWithBody(ctx context.Context, publisherIdentityId PublisherIdentityID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStartPublisherRuntimeRequestWithBody(c.Server, publisherIdentityId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StartPublisherRuntime Start a publisher runtime
+//
+// Compare the inspected epoch and start one process run. The one-use assertion binds this endpoint, publisher identity, start action, scope, process run, epoch, and deployment report. A retry retains the same process run and expected epoch. Control records only the validated request source, never a body address. Group start also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publisher/runtimes/{publisher_identity_id}/start (the `StartPublisherRuntime` operationId).
+func (c *Client) StartPublisherRuntime(ctx context.Context, publisherIdentityId PublisherIdentityID, body StartPublisherRuntimeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStartPublisherRuntimeRequest(c.Server, publisherIdentityId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StopPublisherRuntimeWithBody Stop a publisher runtime
+//
+// Stop only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, stop action, scope, process run, epoch, and deployment report. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publisher/runtimes/{publisher_identity_id}/stop (the `StopPublisherRuntime` operationId).
+func (c *Client) StopPublisherRuntimeWithBody(ctx context.Context, publisherIdentityId PublisherIdentityID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStopPublisherRuntimeRequestWithBody(c.Server, publisherIdentityId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StopPublisherRuntime Stop a publisher runtime
+//
+// Stop only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, stop action, scope, process run, epoch, and deployment report. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publisher/runtimes/{publisher_identity_id}/stop (the `StopPublisherRuntime` operationId).
+func (c *Client) StopPublisherRuntime(ctx context.Context, publisherIdentityId PublisherIdentityID, body StopPublisherRuntimeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStopPublisherRuntimeRequest(c.Server, publisherIdentityId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -9488,44 +9665,6 @@ func (c *Client) CloseServiceRun(ctx context.Context, serviceId ServiceID, servi
 	return c.Client.Do(req)
 }
 
-// HeartbeatServiceRunWithBody Renew a service run and report publisher health and capacity
-//
-// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id} (the `HeartbeatServiceRun` operationId).
-func (c *Client) HeartbeatServiceRunWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewHeartbeatServiceRunRequestWithBody(c.Server, serviceId, serviceRunId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// HeartbeatServiceRun Renew a service run and report publisher health and capacity
-//
-// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id} (the `HeartbeatServiceRun` operationId).
-func (c *Client) HeartbeatServiceRun(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body HeartbeatServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewHeartbeatServiceRunRequest(c.Server, serviceId, serviceRunId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // AuthorizeServiceClientCertificateWithBody Check a public endpoint visitor's client certificate and admission
 //
 // Authenticate a public endpoint visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
@@ -9854,6 +9993,44 @@ func (c *Client) ConfirmConnectorPeerPairPreparedWithBody(ctx context.Context, s
 // Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId).
 func (c *Client) ConfirmConnectorPeerPairPrepared(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body ConfirmConnectorPeerPairPreparedJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewConfirmConnectorPeerPairPreparedRequest(c.Server, serviceId, serviceRunId, pairId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RenewServiceRunWithBody Renew a service run and report publisher health and capacity
+//
+// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/renew (the `RenewServiceRun` operationId).
+func (c *Client) RenewServiceRunWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenewServiceRunRequestWithBody(c.Server, serviceId, serviceRunId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RenewServiceRun Renew a service run and report publisher health and capacity
+//
+// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/renew (the `RenewServiceRun` operationId).
+func (c *Client) RenewServiceRun(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body RenewServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenewServiceRunRequest(c.Server, serviceId, serviceRunId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -13447,53 +13624,6 @@ func NewGetReviewerFeedbackThreadRequestWithBody(server string, publishRunId Pub
 	return req, nil
 }
 
-// NewHeartbeatPublishRunRequest calls the generic HeartbeatPublishRun builder with application/json body
-func NewHeartbeatPublishRunRequest(server string, publishRunId PublishRunID, body HeartbeatPublishRunJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewHeartbeatPublishRunRequestWithBody(server, publishRunId, "application/json", bodyReader)
-}
-
-// NewHeartbeatPublishRunRequestWithBody constructs an http.Request for the HeartbeatPublishRun method, with any body, and a specified content type
-func NewHeartbeatPublishRunRequestWithBody(server string, publishRunId PublishRunID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/publish-runs/%s/heartbeat", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewCreatePublishRunPreviewRequest calls the generic CreatePublishRunPreview builder with application/json body
 func NewCreatePublishRunPreviewRequest(server string, publishRunId PublishRunID, body CreatePublishRunPreviewJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -13569,6 +13699,53 @@ func NewMarkPublishRunReadyRequestWithBody(server string, publishRunId PublishRu
 	}
 
 	operationPath := fmt.Sprintf("/v1/publish-runs/%s/ready", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRenewPublishRunRequest calls the generic RenewPublishRun builder with application/json body
+func NewRenewPublishRunRequest(server string, publishRunId PublishRunID, body RenewPublishRunJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRenewPublishRunRequestWithBody(server, publishRunId, "application/json", bodyReader)
+}
+
+// NewRenewPublishRunRequestWithBody constructs an http.Request for the RenewPublishRun method, with any body, and a specified content type
+func NewRenewPublishRunRequestWithBody(server string, publishRunId PublishRunID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publish-runs/%s/renew", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -13750,193 +13927,6 @@ func NewCreatePublisherEnrollmentRequestWithBody(server string, contentType stri
 	}
 
 	operationPath := fmt.Sprintf("/v1/publisher-enrollments")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewAcknowledgePublisherGroupConfigurationRequest calls the generic AcknowledgePublisherGroupConfiguration builder with application/json body
-func NewAcknowledgePublisherGroupConfigurationRequest(server string, body AcknowledgePublisherGroupConfigurationJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewAcknowledgePublisherGroupConfigurationRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewAcknowledgePublisherGroupConfigurationRequestWithBody constructs an http.Request for the AcknowledgePublisherGroupConfiguration method, with any body, and a specified content type
-func NewAcknowledgePublisherGroupConfigurationRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/publisher-groups/ack")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewGetPublisherGroupAssignmentsRequest constructs an http.Request for the GetPublisherGroupAssignments method
-func NewGetPublisherGroupAssignmentsRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/publisher-groups/assignments")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewRedeemPublisherGroupEnrollmentRequest calls the generic RedeemPublisherGroupEnrollment builder with application/json body
-func NewRedeemPublisherGroupEnrollmentRequest(server string, body RedeemPublisherGroupEnrollmentJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewRedeemPublisherGroupEnrollmentRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewRedeemPublisherGroupEnrollmentRequestWithBody constructs an http.Request for the RedeemPublisherGroupEnrollment method, with any body, and a specified content type
-func NewRedeemPublisherGroupEnrollmentRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/publisher-groups/enroll")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewAcquirePublisherGroupLeaseRequest calls the generic AcquirePublisherGroupLease builder with application/json body
-func NewAcquirePublisherGroupLeaseRequest(server string, body AcquirePublisherGroupLeaseJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewAcquirePublisherGroupLeaseRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewAcquirePublisherGroupLeaseRequestWithBody constructs an http.Request for the AcquirePublisherGroupLease method, with any body, and a specified content type
-func NewAcquirePublisherGroupLeaseRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/publisher-groups/lease")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewVerifyPublisherGroupIdentityRequest calls the generic VerifyPublisherGroupIdentity builder with application/json body
-func NewVerifyPublisherGroupIdentityRequest(server string, body VerifyPublisherGroupIdentityJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewVerifyPublisherGroupIdentityRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewVerifyPublisherGroupIdentityRequestWithBody constructs an http.Request for the VerifyPublisherGroupIdentity method, with any body, and a specified content type
-func NewVerifyPublisherGroupIdentityRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/publisher-groups/verify")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -14186,19 +14176,8 @@ func NewRevokePublisherGrantRequest(server string, publisherIdentityId Publisher
 	return req, nil
 }
 
-// NewObservePublisherRuntimeRequest calls the generic ObservePublisherRuntime builder with application/json body
-func NewObservePublisherRuntimeRequest(server string, body ObservePublisherRuntimeJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewObservePublisherRuntimeRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewObservePublisherRuntimeRequestWithBody constructs an http.Request for the ObservePublisherRuntime method, with any body, and a specified content type
-func NewObservePublisherRuntimeRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+// NewGetPublisherGroupAssignmentsRequest constructs an http.Request for the GetPublisherGroupAssignments method
+func NewGetPublisherGroupAssignmentsRequest(server string) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -14206,7 +14185,165 @@ func NewObservePublisherRuntimeRequestWithBody(server string, contentType string
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/publisher-runtime")
+	operationPath := fmt.Sprintf("/v1/publisher/groups/assignments")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewAcknowledgePublisherGroupConfigurationRequest calls the generic AcknowledgePublisherGroupConfiguration builder with application/json body
+func NewAcknowledgePublisherGroupConfigurationRequest(server string, body AcknowledgePublisherGroupConfigurationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAcknowledgePublisherGroupConfigurationRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewAcknowledgePublisherGroupConfigurationRequestWithBody constructs an http.Request for the AcknowledgePublisherGroupConfiguration method, with any body, and a specified content type
+func NewAcknowledgePublisherGroupConfigurationRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publisher/groups/configuration-acknowledgements")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRedeemPublisherGroupEnrollmentRequest calls the generic RedeemPublisherGroupEnrollment builder with application/json body
+func NewRedeemPublisherGroupEnrollmentRequest(server string, body RedeemPublisherGroupEnrollmentJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRedeemPublisherGroupEnrollmentRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewRedeemPublisherGroupEnrollmentRequestWithBody constructs an http.Request for the RedeemPublisherGroupEnrollment method, with any body, and a specified content type
+func NewRedeemPublisherGroupEnrollmentRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publisher/groups/enroll")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewAcquirePublisherGroupLeaseRequest calls the generic AcquirePublisherGroupLease builder with application/json body
+func NewAcquirePublisherGroupLeaseRequest(server string, body AcquirePublisherGroupLeaseJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAcquirePublisherGroupLeaseRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewAcquirePublisherGroupLeaseRequestWithBody constructs an http.Request for the AcquirePublisherGroupLease method, with any body, and a specified content type
+func NewAcquirePublisherGroupLeaseRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publisher/groups/lease")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewVerifyPublisherGroupIdentityRequest calls the generic VerifyPublisherGroupIdentity builder with application/json body
+func NewVerifyPublisherGroupIdentityRequest(server string, body VerifyPublisherGroupIdentityJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewVerifyPublisherGroupIdentityRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewVerifyPublisherGroupIdentityRequestWithBody constructs an http.Request for the VerifyPublisherGroupIdentity method, with any body, and a specified content type
+func NewVerifyPublisherGroupIdentityRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publisher/groups/verify")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -14323,6 +14460,194 @@ func NewDeletePublisherPublicURLRequest(server string, publicUrlId PublicURLID) 
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewInspectPublisherRuntimeRequest calls the generic InspectPublisherRuntime builder with application/json body
+func NewInspectPublisherRuntimeRequest(server string, publisherIdentityId PublisherIdentityID, body InspectPublisherRuntimeJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewInspectPublisherRuntimeRequestWithBody(server, publisherIdentityId, "application/json", bodyReader)
+}
+
+// NewInspectPublisherRuntimeRequestWithBody constructs an http.Request for the InspectPublisherRuntime method, with any body, and a specified content type
+func NewInspectPublisherRuntimeRequestWithBody(server string, publisherIdentityId PublisherIdentityID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publisher_identity_id", publisherIdentityId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publisher/runtimes/%s/inspect", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRenewPublisherRuntimeRequest calls the generic RenewPublisherRuntime builder with application/json body
+func NewRenewPublisherRuntimeRequest(server string, publisherIdentityId PublisherIdentityID, body RenewPublisherRuntimeJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRenewPublisherRuntimeRequestWithBody(server, publisherIdentityId, "application/json", bodyReader)
+}
+
+// NewRenewPublisherRuntimeRequestWithBody constructs an http.Request for the RenewPublisherRuntime method, with any body, and a specified content type
+func NewRenewPublisherRuntimeRequestWithBody(server string, publisherIdentityId PublisherIdentityID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publisher_identity_id", publisherIdentityId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publisher/runtimes/%s/renew", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewStartPublisherRuntimeRequest calls the generic StartPublisherRuntime builder with application/json body
+func NewStartPublisherRuntimeRequest(server string, publisherIdentityId PublisherIdentityID, body StartPublisherRuntimeJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewStartPublisherRuntimeRequestWithBody(server, publisherIdentityId, "application/json", bodyReader)
+}
+
+// NewStartPublisherRuntimeRequestWithBody constructs an http.Request for the StartPublisherRuntime method, with any body, and a specified content type
+func NewStartPublisherRuntimeRequestWithBody(server string, publisherIdentityId PublisherIdentityID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publisher_identity_id", publisherIdentityId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publisher/runtimes/%s/start", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewStopPublisherRuntimeRequest calls the generic StopPublisherRuntime builder with application/json body
+func NewStopPublisherRuntimeRequest(server string, publisherIdentityId PublisherIdentityID, body StopPublisherRuntimeJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewStopPublisherRuntimeRequestWithBody(server, publisherIdentityId, "application/json", bodyReader)
+}
+
+// NewStopPublisherRuntimeRequestWithBody constructs an http.Request for the StopPublisherRuntime method, with any body, and a specified content type
+func NewStopPublisherRuntimeRequestWithBody(server string, publisherIdentityId PublisherIdentityID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publisher_identity_id", publisherIdentityId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publisher/runtimes/%s/stop", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -15400,60 +15725,6 @@ func NewCloseServiceRunRequest(server string, serviceId ServiceID, serviceRunId 
 	return req, nil
 }
 
-// NewHeartbeatServiceRunRequest calls the generic HeartbeatServiceRun builder with application/json body
-func NewHeartbeatServiceRunRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, body HeartbeatServiceRunJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewHeartbeatServiceRunRequestWithBody(server, serviceId, serviceRunId, "application/json", bodyReader)
-}
-
-// NewHeartbeatServiceRunRequestWithBody constructs an http.Request for the HeartbeatServiceRun method, with any body, and a specified content type
-func NewHeartbeatServiceRunRequestWithBody(server string, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "service_run_id", serviceRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewAuthorizeServiceClientCertificateRequest calls the generic AuthorizeServiceClientCertificate builder with application/json body
 func NewAuthorizeServiceClientCertificateRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceClientCertificateJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -16010,6 +16281,60 @@ func NewConfirmConnectorPeerPairPreparedRequestWithBody(server string, serviceId
 	}
 
 	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s/connector-peer-pairs/%s/prepared", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRenewServiceRunRequest calls the generic RenewServiceRun builder with application/json body
+func NewRenewServiceRunRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, body RenewServiceRunJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRenewServiceRunRequestWithBody(server, serviceId, serviceRunId, "application/json", bodyReader)
+}
+
+// NewRenewServiceRunRequestWithBody constructs an http.Request for the RenewServiceRun method, with any body, and a specified content type
+func NewRenewServiceRunRequestWithBody(server string, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "service_run_id", serviceRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s/renew", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -17829,24 +18154,6 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
 	GetReviewerFeedbackThreadWithResponse(ctx context.Context, publishRunId PublishRunID, feedbackId FeedbackID, body GetReviewerFeedbackThreadJSONRequestBody, reqEditors ...RequestEditorFn) (*GetReviewerFeedbackThreadResponse, error)
 
-	// HeartbeatPublishRunWithBodyWithResponse Renew a publish run and replace missing publisher connections
-	//
-	// Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
-	HeartbeatPublishRunWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*HeartbeatPublishRunResponse, error)
-
-	// HeartbeatPublishRunWithResponse Renew a publish run and replace missing publisher connections
-	//
-	// Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
-	HeartbeatPublishRunWithResponse(ctx context.Context, publishRunId PublishRunID, body HeartbeatPublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*HeartbeatPublishRunResponse, error)
-
 	// CreatePublishRunPreviewWithBodyWithResponse Create feedback context for one ephemeral demo publish run
 	//
 	// Create or reuse the run-scoped preview used for an ephemeral demo's feedback. Authenticate with that exact publish run token and number; this is not ordinary project preview management.
@@ -17882,6 +18189,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/ready (the `MarkPublishRunReady` operationId).
 	MarkPublishRunReadyWithResponse(ctx context.Context, publishRunId PublishRunID, body MarkPublishRunReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkPublishRunReadyResponse, error)
+
+	// RenewPublishRunWithBodyWithResponse Renew a publish run and replace missing publisher connections
+	//
+	// Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/renew (the `RenewPublishRun` operationId).
+	RenewPublishRunWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewPublishRunResponse, error)
+
+	// RenewPublishRunWithResponse Renew a publish run and replace missing publisher connections
+	//
+	// Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/renew (the `RenewPublishRun` operationId).
+	RenewPublishRunWithResponse(ctx context.Context, publishRunId PublishRunID, body RenewPublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewPublishRunResponse, error)
 
 	// EnableShareAccessWithBodyWithResponse Enable share-aware HTTP handling for this preview publish run
 	//
@@ -17955,87 +18280,6 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/publisher-enrollments (the `CreatePublisherEnrollment` operationId).
 	CreatePublisherEnrollmentWithResponse(ctx context.Context, body CreatePublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublisherEnrollmentResponse, error)
 
-	// AcknowledgePublisherGroupConfigurationWithBodyWithResponse Acknowledge the exact configuration installed by a group replica
-	//
-	// Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publisher-groups/ack (the `AcknowledgePublisherGroupConfiguration` operationId).
-	AcknowledgePublisherGroupConfigurationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcknowledgePublisherGroupConfigurationResponse, error)
-
-	// AcknowledgePublisherGroupConfigurationWithResponse Acknowledge the exact configuration installed by a group replica
-	//
-	// Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publisher-groups/ack (the `AcknowledgePublisherGroupConfiguration` operationId).
-	AcknowledgePublisherGroupConfigurationWithResponse(ctx context.Context, body AcknowledgePublisherGroupConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcknowledgePublisherGroupConfigurationResponse, error)
-
-	// GetPublisherGroupAssignmentsWithResponse Read services and grants assigned to one leased group replica
-	//
-	// Authenticate with the current pgl_ group lease and read the replica's exact service assignments and publisher grant IDs. These assignments may contain targets; a pta_ publisher access token cannot read them.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /v1/publisher-groups/assignments (the `GetPublisherGroupAssignments` operationId).
-	GetPublisherGroupAssignmentsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetPublisherGroupAssignmentsResponse, error)
-
-	// RedeemPublisherGroupEnrollmentWithBodyWithResponse Enroll a replica's signing key with a group enrollment secret
-	//
-	// Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publisher-groups/enroll (the `RedeemPublisherGroupEnrollment` operationId).
-	RedeemPublisherGroupEnrollmentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemPublisherGroupEnrollmentResponse, error)
-
-	// RedeemPublisherGroupEnrollmentWithResponse Enroll a replica's signing key with a group enrollment secret
-	//
-	// Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publisher-groups/enroll (the `RedeemPublisherGroupEnrollment` operationId).
-	RedeemPublisherGroupEnrollmentWithResponse(ctx context.Context, body RedeemPublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemPublisherGroupEnrollmentResponse, error)
-
-	// AcquirePublisherGroupLeaseWithBodyWithResponse Exchange a signed replica assertion for a group lease
-	//
-	// Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publisher-groups/lease (the `AcquirePublisherGroupLease` operationId).
-	AcquirePublisherGroupLeaseWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcquirePublisherGroupLeaseResponse, error)
-
-	// AcquirePublisherGroupLeaseWithResponse Exchange a signed replica assertion for a group lease
-	//
-	// Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publisher-groups/lease (the `AcquirePublisherGroupLease` operationId).
-	AcquirePublisherGroupLeaseWithResponse(ctx context.Context, body AcquirePublisherGroupLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*AcquirePublisherGroupLeaseResponse, error)
-
-	// VerifyPublisherGroupIdentityWithBodyWithResponse Verify a replica's group membership without acquiring a lease
-	//
-	// Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publisher-groups/verify (the `VerifyPublisherGroupIdentity` operationId).
-	VerifyPublisherGroupIdentityWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*VerifyPublisherGroupIdentityResponse, error)
-
-	// VerifyPublisherGroupIdentityWithResponse Verify a replica's group membership without acquiring a lease
-	//
-	// Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publisher-groups/verify (the `VerifyPublisherGroupIdentity` operationId).
-	VerifyPublisherGroupIdentityWithResponse(ctx context.Context, body VerifyPublisherGroupIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*VerifyPublisherGroupIdentityResponse, error)
-
 	// ListPublisherIdentitiesWithResponse List publisher identities and grants without secrets
 	//
 	// Read a cursor-paginated inventory of publisher identities and their grants for a manageable team. Responses omit enrollment secrets and private signing keys; an inventory entry is not a publisher credential.
@@ -18081,23 +18325,86 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with DELETE /v1/publisher-identities/{publisher_identity_id}/grants/{grant_id} (the `RevokePublisherGrant` operationId).
 	RevokePublisherGrantWithResponse(ctx context.Context, publisherIdentityId PublisherIdentityID, grantId ResourceID, params *RevokePublisherGrantParams, reqEditors ...RequestEditorFn) (*RevokePublisherGrantResponse, error)
 
-	// ObservePublisherRuntimeWithBodyWithResponse Inspect or update a signed publisher process lifetime
+	// GetPublisherGroupAssignmentsWithResponse Read services and grants assigned to one leased group replica
 	//
-	// Explicit remote runtime lifecycle, independent of enrollment, verification, and identity kind. A one-use Ed25519 assertion binds scope_id, action, process_run_id and expected_epoch through the runtime proof scope, with this path as its audience. Inspect reads the current epoch without recording an address. Start compares that epoch and installs a new process run; retries retain that run and epoch. Renew and stop require the current run and epoch. Control records only the validated request source, never a body address. Group start/renew also issue the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	// Authenticate with the current pgl_ group lease and read the replica's exact service assignments and publisher grant IDs. These assignments may contain targets; a pta_ publisher access token cannot read them.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/publisher/groups/assignments (the `GetPublisherGroupAssignments` operationId).
+	GetPublisherGroupAssignmentsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetPublisherGroupAssignmentsResponse, error)
+
+	// AcknowledgePublisherGroupConfigurationWithBodyWithResponse Acknowledge the exact configuration installed by a group replica
+	//
+	// Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/publisher-runtime (the `ObservePublisherRuntime` operationId).
-	ObservePublisherRuntimeWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ObservePublisherRuntimeResponse, error)
+	// Corresponds with POST /v1/publisher/groups/configuration-acknowledgements (the `AcknowledgePublisherGroupConfiguration` operationId).
+	AcknowledgePublisherGroupConfigurationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcknowledgePublisherGroupConfigurationResponse, error)
 
-	// ObservePublisherRuntimeWithResponse Inspect or update a signed publisher process lifetime
+	// AcknowledgePublisherGroupConfigurationWithResponse Acknowledge the exact configuration installed by a group replica
 	//
-	// Explicit remote runtime lifecycle, independent of enrollment, verification, and identity kind. A one-use Ed25519 assertion binds scope_id, action, process_run_id and expected_epoch through the runtime proof scope, with this path as its audience. Inspect reads the current epoch without recording an address. Start compares that epoch and installs a new process run; retries retain that run and epoch. Renew and stop require the current run and epoch. Control records only the validated request source, never a body address. Group start/renew also issue the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	// Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/publisher-runtime (the `ObservePublisherRuntime` operationId).
-	ObservePublisherRuntimeWithResponse(ctx context.Context, body ObservePublisherRuntimeJSONRequestBody, reqEditors ...RequestEditorFn) (*ObservePublisherRuntimeResponse, error)
+	// Corresponds with POST /v1/publisher/groups/configuration-acknowledgements (the `AcknowledgePublisherGroupConfiguration` operationId).
+	AcknowledgePublisherGroupConfigurationWithResponse(ctx context.Context, body AcknowledgePublisherGroupConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcknowledgePublisherGroupConfigurationResponse, error)
+
+	// RedeemPublisherGroupEnrollmentWithBodyWithResponse Enroll a replica's signing key with a group enrollment secret
+	//
+	// Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher/groups/enroll (the `RedeemPublisherGroupEnrollment` operationId).
+	RedeemPublisherGroupEnrollmentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemPublisherGroupEnrollmentResponse, error)
+
+	// RedeemPublisherGroupEnrollmentWithResponse Enroll a replica's signing key with a group enrollment secret
+	//
+	// Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher/groups/enroll (the `RedeemPublisherGroupEnrollment` operationId).
+	RedeemPublisherGroupEnrollmentWithResponse(ctx context.Context, body RedeemPublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemPublisherGroupEnrollmentResponse, error)
+
+	// AcquirePublisherGroupLeaseWithBodyWithResponse Exchange a signed replica assertion for a group lease
+	//
+	// Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher/groups/lease (the `AcquirePublisherGroupLease` operationId).
+	AcquirePublisherGroupLeaseWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcquirePublisherGroupLeaseResponse, error)
+
+	// AcquirePublisherGroupLeaseWithResponse Exchange a signed replica assertion for a group lease
+	//
+	// Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher/groups/lease (the `AcquirePublisherGroupLease` operationId).
+	AcquirePublisherGroupLeaseWithResponse(ctx context.Context, body AcquirePublisherGroupLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*AcquirePublisherGroupLeaseResponse, error)
+
+	// VerifyPublisherGroupIdentityWithBodyWithResponse Verify a replica's group membership without acquiring a lease
+	//
+	// Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher/groups/verify (the `VerifyPublisherGroupIdentity` operationId).
+	VerifyPublisherGroupIdentityWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*VerifyPublisherGroupIdentityResponse, error)
+
+	// VerifyPublisherGroupIdentityWithResponse Verify a replica's group membership without acquiring a lease
+	//
+	// Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher/groups/verify (the `VerifyPublisherGroupIdentity` operationId).
+	VerifyPublisherGroupIdentityWithResponse(ctx context.Context, body VerifyPublisherGroupIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*VerifyPublisherGroupIdentityResponse, error)
 
 	// GetPublisherPublicURLWithResponse Read the saved URL selected by the current grant
 	//
@@ -18134,6 +18441,78 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with DELETE /v1/publisher/public-urls/{public_url_id} (the `DeletePublisherPublicURL` operationId).
 	DeletePublisherPublicURLWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*DeletePublisherPublicURLResponse, error)
+
+	// InspectPublisherRuntimeWithBodyWithResponse Inspect a publisher runtime
+	//
+	// Read the runtime epoch without recording an address. A one-use Ed25519 assertion binds this endpoint, publisher identity, inspect action, scope, process run, expected epoch, and deployment report. The body's identity and action must match the route. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher/runtimes/{publisher_identity_id}/inspect (the `InspectPublisherRuntime` operationId).
+	InspectPublisherRuntimeWithBodyWithResponse(ctx context.Context, publisherIdentityId PublisherIdentityID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*InspectPublisherRuntimeResponse, error)
+
+	// InspectPublisherRuntimeWithResponse Inspect a publisher runtime
+	//
+	// Read the runtime epoch without recording an address. A one-use Ed25519 assertion binds this endpoint, publisher identity, inspect action, scope, process run, expected epoch, and deployment report. The body's identity and action must match the route. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher/runtimes/{publisher_identity_id}/inspect (the `InspectPublisherRuntime` operationId).
+	InspectPublisherRuntimeWithResponse(ctx context.Context, publisherIdentityId PublisherIdentityID, body InspectPublisherRuntimeJSONRequestBody, reqEditors ...RequestEditorFn) (*InspectPublisherRuntimeResponse, error)
+
+	// RenewPublisherRuntimeWithBodyWithResponse Renew a publisher runtime
+	//
+	// Renew only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, renew action, scope, process run, epoch, and deployment report. Control records only the validated request source, never a body address. Group renew also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher/runtimes/{publisher_identity_id}/renew (the `RenewPublisherRuntime` operationId).
+	RenewPublisherRuntimeWithBodyWithResponse(ctx context.Context, publisherIdentityId PublisherIdentityID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewPublisherRuntimeResponse, error)
+
+	// RenewPublisherRuntimeWithResponse Renew a publisher runtime
+	//
+	// Renew only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, renew action, scope, process run, epoch, and deployment report. Control records only the validated request source, never a body address. Group renew also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher/runtimes/{publisher_identity_id}/renew (the `RenewPublisherRuntime` operationId).
+	RenewPublisherRuntimeWithResponse(ctx context.Context, publisherIdentityId PublisherIdentityID, body RenewPublisherRuntimeJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewPublisherRuntimeResponse, error)
+
+	// StartPublisherRuntimeWithBodyWithResponse Start a publisher runtime
+	//
+	// Compare the inspected epoch and start one process run. The one-use assertion binds this endpoint, publisher identity, start action, scope, process run, epoch, and deployment report. A retry retains the same process run and expected epoch. Control records only the validated request source, never a body address. Group start also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher/runtimes/{publisher_identity_id}/start (the `StartPublisherRuntime` operationId).
+	StartPublisherRuntimeWithBodyWithResponse(ctx context.Context, publisherIdentityId PublisherIdentityID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartPublisherRuntimeResponse, error)
+
+	// StartPublisherRuntimeWithResponse Start a publisher runtime
+	//
+	// Compare the inspected epoch and start one process run. The one-use assertion binds this endpoint, publisher identity, start action, scope, process run, epoch, and deployment report. A retry retains the same process run and expected epoch. Control records only the validated request source, never a body address. Group start also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher/runtimes/{publisher_identity_id}/start (the `StartPublisherRuntime` operationId).
+	StartPublisherRuntimeWithResponse(ctx context.Context, publisherIdentityId PublisherIdentityID, body StartPublisherRuntimeJSONRequestBody, reqEditors ...RequestEditorFn) (*StartPublisherRuntimeResponse, error)
+
+	// StopPublisherRuntimeWithBodyWithResponse Stop a publisher runtime
+	//
+	// Stop only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, stop action, scope, process run, epoch, and deployment report. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher/runtimes/{publisher_identity_id}/stop (the `StopPublisherRuntime` operationId).
+	StopPublisherRuntimeWithBodyWithResponse(ctx context.Context, publisherIdentityId PublisherIdentityID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StopPublisherRuntimeResponse, error)
+
+	// StopPublisherRuntimeWithResponse Stop a publisher runtime
+	//
+	// Stop only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, stop action, scope, process run, epoch, and deployment report. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher/runtimes/{publisher_identity_id}/stop (the `StopPublisherRuntime` operationId).
+	StopPublisherRuntimeWithResponse(ctx context.Context, publisherIdentityId PublisherIdentityID, body StopPublisherRuntimeJSONRequestBody, reqEditors ...RequestEditorFn) (*StopPublisherRuntimeResponse, error)
 
 	// GetPublisherServiceWithResponse Read the saved service selected by the current publisher grant
 	//
@@ -18441,24 +18820,6 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with DELETE /v1/services/{service_id}/runs/{service_run_id} (the `CloseServiceRun` operationId).
 	CloseServiceRunWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, reqEditors ...RequestEditorFn) (*CloseServiceRunResponse, error)
 
-	// HeartbeatServiceRunWithBodyWithResponse Renew a service run and report publisher health and capacity
-	//
-	// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id} (the `HeartbeatServiceRun` operationId).
-	HeartbeatServiceRunWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*HeartbeatServiceRunResponse, error)
-
-	// HeartbeatServiceRunWithResponse Renew a service run and report publisher health and capacity
-	//
-	// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id} (the `HeartbeatServiceRun` operationId).
-	HeartbeatServiceRunWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body HeartbeatServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*HeartbeatServiceRunResponse, error)
-
 	// AuthorizeServiceClientCertificateWithBodyWithResponse Check a public endpoint visitor's client certificate and admission
 	//
 	// Authenticate a public endpoint visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
@@ -18620,6 +18981,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId).
 	ConfirmConnectorPeerPairPreparedWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body ConfirmConnectorPeerPairPreparedJSONRequestBody, reqEditors ...RequestEditorFn) (*ConfirmConnectorPeerPairPreparedResponse, error)
+
+	// RenewServiceRunWithBodyWithResponse Renew a service run and report publisher health and capacity
+	//
+	// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/renew (the `RenewServiceRun` operationId).
+	RenewServiceRunWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewServiceRunResponse, error)
+
+	// RenewServiceRunWithResponse Renew a service run and report publisher health and capacity
+	//
+	// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/renew (the `RenewServiceRun` operationId).
+	RenewServiceRunWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body RenewServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewServiceRunResponse, error)
 
 	// ReportServiceRunObservationsWithBodyWithResponse Report connector connection observations for a service run
 	//
@@ -21748,54 +22127,6 @@ func (r GetReviewerFeedbackThreadResponse) ContentType() string {
 	return ""
 }
 
-type HeartbeatPublishRunResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PublishRunHeartbeat
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r HeartbeatPublishRunResponse) GetJSON200() *PublishRunHeartbeat {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r HeartbeatPublishRunResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r HeartbeatPublishRunResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r HeartbeatPublishRunResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r HeartbeatPublishRunResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r HeartbeatPublishRunResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type CreatePublishRunPreviewResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -21886,6 +22217,54 @@ func (r MarkPublishRunReadyResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r MarkPublishRunReadyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RenewPublishRunResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublishRunHeartbeat
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RenewPublishRunResponse) GetJSON200() *PublishRunHeartbeat {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RenewPublishRunResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RenewPublishRunResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RenewPublishRunResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RenewPublishRunResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RenewPublishRunResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -22077,239 +22456,6 @@ func (r CreatePublisherEnrollmentResponse) ContentType() string {
 	return ""
 }
 
-type AcknowledgePublisherGroupConfigurationResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r AcknowledgePublisherGroupConfigurationResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r AcknowledgePublisherGroupConfigurationResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AcknowledgePublisherGroupConfigurationResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AcknowledgePublisherGroupConfigurationResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AcknowledgePublisherGroupConfigurationResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type GetPublisherGroupAssignmentsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PublisherGroupAssignments
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetPublisherGroupAssignmentsResponse) GetJSON200() *PublisherGroupAssignments {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r GetPublisherGroupAssignmentsResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r GetPublisherGroupAssignmentsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r GetPublisherGroupAssignmentsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetPublisherGroupAssignmentsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetPublisherGroupAssignmentsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type RedeemPublisherGroupEnrollmentResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PublisherGroupMember
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r RedeemPublisherGroupEnrollmentResponse) GetJSON200() *PublisherGroupMember {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r RedeemPublisherGroupEnrollmentResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r RedeemPublisherGroupEnrollmentResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r RedeemPublisherGroupEnrollmentResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RedeemPublisherGroupEnrollmentResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RedeemPublisherGroupEnrollmentResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type AcquirePublisherGroupLeaseResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PublisherGroupLease
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r AcquirePublisherGroupLeaseResponse) GetJSON200() *PublisherGroupLease {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r AcquirePublisherGroupLeaseResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r AcquirePublisherGroupLeaseResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AcquirePublisherGroupLeaseResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AcquirePublisherGroupLeaseResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AcquirePublisherGroupLeaseResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type VerifyPublisherGroupIdentityResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PublisherGroupVerification
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r VerifyPublisherGroupIdentityResponse) GetJSON200() *PublisherGroupVerification {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r VerifyPublisherGroupIdentityResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r VerifyPublisherGroupIdentityResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r VerifyPublisherGroupIdentityResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r VerifyPublisherGroupIdentityResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r VerifyPublisherGroupIdentityResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type ListPublisherIdentitiesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -22488,32 +22634,32 @@ func (r RevokePublisherGrantResponse) ContentType() string {
 	return ""
 }
 
-type ObservePublisherRuntimeResponse struct {
+type GetPublisherGroupAssignmentsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PublisherRuntimeResponse
+	JSON200 *PublisherGroupAssignments
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ObservePublisherRuntimeResponse) GetJSON200() *PublisherRuntimeResponse {
+func (r GetPublisherGroupAssignmentsResponse) GetJSON200() *PublisherGroupAssignments {
 	return r.JSON200
 }
 
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ObservePublisherRuntimeResponse) GetApplicationproblemJSONDefault() *Problem {
+func (r GetPublisherGroupAssignmentsResponse) GetApplicationproblemJSONDefault() *Problem {
 	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
-func (r ObservePublisherRuntimeResponse) GetBody() []byte {
+func (r GetPublisherGroupAssignmentsResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r ObservePublisherRuntimeResponse) Status() string {
+func (r GetPublisherGroupAssignmentsResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -22521,7 +22667,7 @@ func (r ObservePublisherRuntimeResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r ObservePublisherRuntimeResponse) StatusCode() int {
+func (r GetPublisherGroupAssignmentsResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -22529,7 +22675,192 @@ func (r ObservePublisherRuntimeResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ObservePublisherRuntimeResponse) ContentType() string {
+func (r GetPublisherGroupAssignmentsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AcknowledgePublisherGroupConfigurationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AcknowledgePublisherGroupConfigurationResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r AcknowledgePublisherGroupConfigurationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AcknowledgePublisherGroupConfigurationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AcknowledgePublisherGroupConfigurationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AcknowledgePublisherGroupConfigurationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RedeemPublisherGroupEnrollmentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublisherGroupMember
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RedeemPublisherGroupEnrollmentResponse) GetJSON200() *PublisherGroupMember {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RedeemPublisherGroupEnrollmentResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RedeemPublisherGroupEnrollmentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RedeemPublisherGroupEnrollmentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RedeemPublisherGroupEnrollmentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RedeemPublisherGroupEnrollmentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AcquirePublisherGroupLeaseResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublisherGroupLease
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AcquirePublisherGroupLeaseResponse) GetJSON200() *PublisherGroupLease {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AcquirePublisherGroupLeaseResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r AcquirePublisherGroupLeaseResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AcquirePublisherGroupLeaseResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AcquirePublisherGroupLeaseResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AcquirePublisherGroupLeaseResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type VerifyPublisherGroupIdentityResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublisherGroupVerification
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r VerifyPublisherGroupIdentityResponse) GetJSON200() *PublisherGroupVerification {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r VerifyPublisherGroupIdentityResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r VerifyPublisherGroupIdentityResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r VerifyPublisherGroupIdentityResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r VerifyPublisherGroupIdentityResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r VerifyPublisherGroupIdentityResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -22667,6 +22998,198 @@ func (r DeletePublisherPublicURLResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r DeletePublisherPublicURLResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type InspectPublisherRuntimeResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublisherRuntimeResponse
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r InspectPublisherRuntimeResponse) GetJSON200() *PublisherRuntimeResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r InspectPublisherRuntimeResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r InspectPublisherRuntimeResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r InspectPublisherRuntimeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r InspectPublisherRuntimeResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r InspectPublisherRuntimeResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RenewPublisherRuntimeResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublisherRuntimeResponse
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RenewPublisherRuntimeResponse) GetJSON200() *PublisherRuntimeResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RenewPublisherRuntimeResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RenewPublisherRuntimeResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RenewPublisherRuntimeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RenewPublisherRuntimeResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RenewPublisherRuntimeResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type StartPublisherRuntimeResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublisherRuntimeResponse
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r StartPublisherRuntimeResponse) GetJSON200() *PublisherRuntimeResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r StartPublisherRuntimeResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r StartPublisherRuntimeResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StartPublisherRuntimeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StartPublisherRuntimeResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StartPublisherRuntimeResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type StopPublisherRuntimeResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublisherRuntimeResponse
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r StopPublisherRuntimeResponse) GetJSON200() *PublisherRuntimeResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r StopPublisherRuntimeResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r StopPublisherRuntimeResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StopPublisherRuntimeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StopPublisherRuntimeResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StopPublisherRuntimeResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -23756,54 +24279,6 @@ func (r CloseServiceRunResponse) ContentType() string {
 	return ""
 }
 
-type HeartbeatServiceRunResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ServiceRunState
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r HeartbeatServiceRunResponse) GetJSON200() *ServiceRunState {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r HeartbeatServiceRunResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r HeartbeatServiceRunResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r HeartbeatServiceRunResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r HeartbeatServiceRunResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r HeartbeatServiceRunResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type AuthorizeServiceClientCertificateResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -24257,6 +24732,54 @@ func (r ConfirmConnectorPeerPairPreparedResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ConfirmConnectorPeerPairPreparedResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RenewServiceRunResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ServiceRunState
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RenewServiceRunResponse) GetJSON200() *ServiceRunState {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RenewServiceRunResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RenewServiceRunResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RenewServiceRunResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RenewServiceRunResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RenewServiceRunResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -26589,36 +27112,6 @@ func (c *ClientWithResponses) GetReviewerFeedbackThreadWithResponse(ctx context.
 	return ParseGetReviewerFeedbackThreadResponse(rsp)
 }
 
-// HeartbeatPublishRunWithBodyWithResponse Renew a publish run and replace missing publisher connections
-//
-// Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
-func (c *ClientWithResponses) HeartbeatPublishRunWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*HeartbeatPublishRunResponse, error) {
-	rsp, err := c.HeartbeatPublishRunWithBody(ctx, publishRunId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseHeartbeatPublishRunResponse(rsp)
-}
-
-// HeartbeatPublishRunWithResponse Renew a publish run and replace missing publisher connections
-//
-// Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publish-runs/{publish_run_id}/heartbeat (the `HeartbeatPublishRun` operationId).
-func (c *ClientWithResponses) HeartbeatPublishRunWithResponse(ctx context.Context, publishRunId PublishRunID, body HeartbeatPublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*HeartbeatPublishRunResponse, error) {
-	rsp, err := c.HeartbeatPublishRun(ctx, publishRunId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseHeartbeatPublishRunResponse(rsp)
-}
-
 // CreatePublishRunPreviewWithBodyWithResponse Create feedback context for one ephemeral demo publish run
 //
 // Create or reuse the run-scoped preview used for an ephemeral demo's feedback. Authenticate with that exact publish run token and number; this is not ordinary project preview management.
@@ -26677,6 +27170,36 @@ func (c *ClientWithResponses) MarkPublishRunReadyWithResponse(ctx context.Contex
 		return nil, err
 	}
 	return ParseMarkPublishRunReadyResponse(rsp)
+}
+
+// RenewPublishRunWithBodyWithResponse Renew a publish run and replace missing publisher connections
+//
+// Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/renew (the `RenewPublishRun` operationId).
+func (c *ClientWithResponses) RenewPublishRunWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewPublishRunResponse, error) {
+	rsp, err := c.RenewPublishRunWithBody(ctx, publishRunId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRenewPublishRunResponse(rsp)
+}
+
+// RenewPublishRunWithResponse Renew a publish run and replace missing publisher connections
+//
+// Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/renew (the `RenewPublishRun` operationId).
+func (c *ClientWithResponses) RenewPublishRunWithResponse(ctx context.Context, publishRunId PublishRunID, body RenewPublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewPublishRunResponse, error) {
+	rsp, err := c.RenewPublishRun(ctx, publishRunId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRenewPublishRunResponse(rsp)
 }
 
 // EnableShareAccessWithBodyWithResponse Enable share-aware HTTP handling for this preview publish run
@@ -26799,141 +27322,6 @@ func (c *ClientWithResponses) CreatePublisherEnrollmentWithResponse(ctx context.
 	return ParseCreatePublisherEnrollmentResponse(rsp)
 }
 
-// AcknowledgePublisherGroupConfigurationWithBodyWithResponse Acknowledge the exact configuration installed by a group replica
-//
-// Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publisher-groups/ack (the `AcknowledgePublisherGroupConfiguration` operationId).
-func (c *ClientWithResponses) AcknowledgePublisherGroupConfigurationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcknowledgePublisherGroupConfigurationResponse, error) {
-	rsp, err := c.AcknowledgePublisherGroupConfigurationWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAcknowledgePublisherGroupConfigurationResponse(rsp)
-}
-
-// AcknowledgePublisherGroupConfigurationWithResponse Acknowledge the exact configuration installed by a group replica
-//
-// Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publisher-groups/ack (the `AcknowledgePublisherGroupConfiguration` operationId).
-func (c *ClientWithResponses) AcknowledgePublisherGroupConfigurationWithResponse(ctx context.Context, body AcknowledgePublisherGroupConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcknowledgePublisherGroupConfigurationResponse, error) {
-	rsp, err := c.AcknowledgePublisherGroupConfiguration(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAcknowledgePublisherGroupConfigurationResponse(rsp)
-}
-
-// GetPublisherGroupAssignmentsWithResponse Read services and grants assigned to one leased group replica
-//
-// Authenticate with the current pgl_ group lease and read the replica's exact service assignments and publisher grant IDs. These assignments may contain targets; a pta_ publisher access token cannot read them.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /v1/publisher-groups/assignments (the `GetPublisherGroupAssignments` operationId).
-func (c *ClientWithResponses) GetPublisherGroupAssignmentsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetPublisherGroupAssignmentsResponse, error) {
-	rsp, err := c.GetPublisherGroupAssignments(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetPublisherGroupAssignmentsResponse(rsp)
-}
-
-// RedeemPublisherGroupEnrollmentWithBodyWithResponse Enroll a replica's signing key with a group enrollment secret
-//
-// Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publisher-groups/enroll (the `RedeemPublisherGroupEnrollment` operationId).
-func (c *ClientWithResponses) RedeemPublisherGroupEnrollmentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemPublisherGroupEnrollmentResponse, error) {
-	rsp, err := c.RedeemPublisherGroupEnrollmentWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRedeemPublisherGroupEnrollmentResponse(rsp)
-}
-
-// RedeemPublisherGroupEnrollmentWithResponse Enroll a replica's signing key with a group enrollment secret
-//
-// Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publisher-groups/enroll (the `RedeemPublisherGroupEnrollment` operationId).
-func (c *ClientWithResponses) RedeemPublisherGroupEnrollmentWithResponse(ctx context.Context, body RedeemPublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemPublisherGroupEnrollmentResponse, error) {
-	rsp, err := c.RedeemPublisherGroupEnrollment(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRedeemPublisherGroupEnrollmentResponse(rsp)
-}
-
-// AcquirePublisherGroupLeaseWithBodyWithResponse Exchange a signed replica assertion for a group lease
-//
-// Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publisher-groups/lease (the `AcquirePublisherGroupLease` operationId).
-func (c *ClientWithResponses) AcquirePublisherGroupLeaseWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcquirePublisherGroupLeaseResponse, error) {
-	rsp, err := c.AcquirePublisherGroupLeaseWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAcquirePublisherGroupLeaseResponse(rsp)
-}
-
-// AcquirePublisherGroupLeaseWithResponse Exchange a signed replica assertion for a group lease
-//
-// Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publisher-groups/lease (the `AcquirePublisherGroupLease` operationId).
-func (c *ClientWithResponses) AcquirePublisherGroupLeaseWithResponse(ctx context.Context, body AcquirePublisherGroupLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*AcquirePublisherGroupLeaseResponse, error) {
-	rsp, err := c.AcquirePublisherGroupLease(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAcquirePublisherGroupLeaseResponse(rsp)
-}
-
-// VerifyPublisherGroupIdentityWithBodyWithResponse Verify a replica's group membership without acquiring a lease
-//
-// Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publisher-groups/verify (the `VerifyPublisherGroupIdentity` operationId).
-func (c *ClientWithResponses) VerifyPublisherGroupIdentityWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*VerifyPublisherGroupIdentityResponse, error) {
-	rsp, err := c.VerifyPublisherGroupIdentityWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseVerifyPublisherGroupIdentityResponse(rsp)
-}
-
-// VerifyPublisherGroupIdentityWithResponse Verify a replica's group membership without acquiring a lease
-//
-// Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publisher-groups/verify (the `VerifyPublisherGroupIdentity` operationId).
-func (c *ClientWithResponses) VerifyPublisherGroupIdentityWithResponse(ctx context.Context, body VerifyPublisherGroupIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*VerifyPublisherGroupIdentityResponse, error) {
-	rsp, err := c.VerifyPublisherGroupIdentity(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseVerifyPublisherGroupIdentityResponse(rsp)
-}
-
 // ListPublisherIdentitiesWithResponse List publisher identities and grants without secrets
 //
 // Read a cursor-paginated inventory of publisher identities and their grants for a manageable team. Responses omit enrollment secrets and private signing keys; an inventory entry is not a publisher credential.
@@ -27009,34 +27397,139 @@ func (c *ClientWithResponses) RevokePublisherGrantWithResponse(ctx context.Conte
 	return ParseRevokePublisherGrantResponse(rsp)
 }
 
-// ObservePublisherRuntimeWithBodyWithResponse Inspect or update a signed publisher process lifetime
+// GetPublisherGroupAssignmentsWithResponse Read services and grants assigned to one leased group replica
 //
-// Explicit remote runtime lifecycle, independent of enrollment, verification, and identity kind. A one-use Ed25519 assertion binds scope_id, action, process_run_id and expected_epoch through the runtime proof scope, with this path as its audience. Inspect reads the current epoch without recording an address. Start compares that epoch and installs a new process run; retries retain that run and epoch. Renew and stop require the current run and epoch. Control records only the validated request source, never a body address. Group start/renew also issue the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+// Authenticate with the current pgl_ group lease and read the replica's exact service assignments and publisher grant IDs. These assignments may contain targets; a pta_ publisher access token cannot read them.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/publisher/groups/assignments (the `GetPublisherGroupAssignments` operationId).
+func (c *ClientWithResponses) GetPublisherGroupAssignmentsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetPublisherGroupAssignmentsResponse, error) {
+	rsp, err := c.GetPublisherGroupAssignments(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetPublisherGroupAssignmentsResponse(rsp)
+}
+
+// AcknowledgePublisherGroupConfigurationWithBodyWithResponse Acknowledge the exact configuration installed by a group replica
+//
+// Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/publisher-runtime (the `ObservePublisherRuntime` operationId).
-func (c *ClientWithResponses) ObservePublisherRuntimeWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ObservePublisherRuntimeResponse, error) {
-	rsp, err := c.ObservePublisherRuntimeWithBody(ctx, contentType, body, reqEditors...)
+// Corresponds with POST /v1/publisher/groups/configuration-acknowledgements (the `AcknowledgePublisherGroupConfiguration` operationId).
+func (c *ClientWithResponses) AcknowledgePublisherGroupConfigurationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcknowledgePublisherGroupConfigurationResponse, error) {
+	rsp, err := c.AcknowledgePublisherGroupConfigurationWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseObservePublisherRuntimeResponse(rsp)
+	return ParseAcknowledgePublisherGroupConfigurationResponse(rsp)
 }
 
-// ObservePublisherRuntimeWithResponse Inspect or update a signed publisher process lifetime
+// AcknowledgePublisherGroupConfigurationWithResponse Acknowledge the exact configuration installed by a group replica
 //
-// Explicit remote runtime lifecycle, independent of enrollment, verification, and identity kind. A one-use Ed25519 assertion binds scope_id, action, process_run_id and expected_epoch through the runtime proof scope, with this path as its audience. Inspect reads the current epoch without recording an address. Start compares that epoch and installs a new process run; retries retain that run and epoch. Renew and stop require the current run and epoch. Control records only the validated request source, never a body address. Group start/renew also issue the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+// Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/publisher-runtime (the `ObservePublisherRuntime` operationId).
-func (c *ClientWithResponses) ObservePublisherRuntimeWithResponse(ctx context.Context, body ObservePublisherRuntimeJSONRequestBody, reqEditors ...RequestEditorFn) (*ObservePublisherRuntimeResponse, error) {
-	rsp, err := c.ObservePublisherRuntime(ctx, body, reqEditors...)
+// Corresponds with POST /v1/publisher/groups/configuration-acknowledgements (the `AcknowledgePublisherGroupConfiguration` operationId).
+func (c *ClientWithResponses) AcknowledgePublisherGroupConfigurationWithResponse(ctx context.Context, body AcknowledgePublisherGroupConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcknowledgePublisherGroupConfigurationResponse, error) {
+	rsp, err := c.AcknowledgePublisherGroupConfiguration(ctx, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseObservePublisherRuntimeResponse(rsp)
+	return ParseAcknowledgePublisherGroupConfigurationResponse(rsp)
+}
+
+// RedeemPublisherGroupEnrollmentWithBodyWithResponse Enroll a replica's signing key with a group enrollment secret
+//
+// Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher/groups/enroll (the `RedeemPublisherGroupEnrollment` operationId).
+func (c *ClientWithResponses) RedeemPublisherGroupEnrollmentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemPublisherGroupEnrollmentResponse, error) {
+	rsp, err := c.RedeemPublisherGroupEnrollmentWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRedeemPublisherGroupEnrollmentResponse(rsp)
+}
+
+// RedeemPublisherGroupEnrollmentWithResponse Enroll a replica's signing key with a group enrollment secret
+//
+// Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher/groups/enroll (the `RedeemPublisherGroupEnrollment` operationId).
+func (c *ClientWithResponses) RedeemPublisherGroupEnrollmentWithResponse(ctx context.Context, body RedeemPublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemPublisherGroupEnrollmentResponse, error) {
+	rsp, err := c.RedeemPublisherGroupEnrollment(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRedeemPublisherGroupEnrollmentResponse(rsp)
+}
+
+// AcquirePublisherGroupLeaseWithBodyWithResponse Exchange a signed replica assertion for a group lease
+//
+// Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher/groups/lease (the `AcquirePublisherGroupLease` operationId).
+func (c *ClientWithResponses) AcquirePublisherGroupLeaseWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcquirePublisherGroupLeaseResponse, error) {
+	rsp, err := c.AcquirePublisherGroupLeaseWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAcquirePublisherGroupLeaseResponse(rsp)
+}
+
+// AcquirePublisherGroupLeaseWithResponse Exchange a signed replica assertion for a group lease
+//
+// Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher/groups/lease (the `AcquirePublisherGroupLease` operationId).
+func (c *ClientWithResponses) AcquirePublisherGroupLeaseWithResponse(ctx context.Context, body AcquirePublisherGroupLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*AcquirePublisherGroupLeaseResponse, error) {
+	rsp, err := c.AcquirePublisherGroupLease(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAcquirePublisherGroupLeaseResponse(rsp)
+}
+
+// VerifyPublisherGroupIdentityWithBodyWithResponse Verify a replica's group membership without acquiring a lease
+//
+// Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher/groups/verify (the `VerifyPublisherGroupIdentity` operationId).
+func (c *ClientWithResponses) VerifyPublisherGroupIdentityWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*VerifyPublisherGroupIdentityResponse, error) {
+	rsp, err := c.VerifyPublisherGroupIdentityWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseVerifyPublisherGroupIdentityResponse(rsp)
+}
+
+// VerifyPublisherGroupIdentityWithResponse Verify a replica's group membership without acquiring a lease
+//
+// Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher/groups/verify (the `VerifyPublisherGroupIdentity` operationId).
+func (c *ClientWithResponses) VerifyPublisherGroupIdentityWithResponse(ctx context.Context, body VerifyPublisherGroupIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*VerifyPublisherGroupIdentityResponse, error) {
+	rsp, err := c.VerifyPublisherGroupIdentity(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseVerifyPublisherGroupIdentityResponse(rsp)
 }
 
 // GetPublisherPublicURLWithResponse Read the saved URL selected by the current grant
@@ -27097,6 +27590,126 @@ func (c *ClientWithResponses) DeletePublisherPublicURLWithResponse(ctx context.C
 		return nil, err
 	}
 	return ParseDeletePublisherPublicURLResponse(rsp)
+}
+
+// InspectPublisherRuntimeWithBodyWithResponse Inspect a publisher runtime
+//
+// Read the runtime epoch without recording an address. A one-use Ed25519 assertion binds this endpoint, publisher identity, inspect action, scope, process run, expected epoch, and deployment report. The body's identity and action must match the route. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher/runtimes/{publisher_identity_id}/inspect (the `InspectPublisherRuntime` operationId).
+func (c *ClientWithResponses) InspectPublisherRuntimeWithBodyWithResponse(ctx context.Context, publisherIdentityId PublisherIdentityID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*InspectPublisherRuntimeResponse, error) {
+	rsp, err := c.InspectPublisherRuntimeWithBody(ctx, publisherIdentityId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseInspectPublisherRuntimeResponse(rsp)
+}
+
+// InspectPublisherRuntimeWithResponse Inspect a publisher runtime
+//
+// Read the runtime epoch without recording an address. A one-use Ed25519 assertion binds this endpoint, publisher identity, inspect action, scope, process run, expected epoch, and deployment report. The body's identity and action must match the route. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher/runtimes/{publisher_identity_id}/inspect (the `InspectPublisherRuntime` operationId).
+func (c *ClientWithResponses) InspectPublisherRuntimeWithResponse(ctx context.Context, publisherIdentityId PublisherIdentityID, body InspectPublisherRuntimeJSONRequestBody, reqEditors ...RequestEditorFn) (*InspectPublisherRuntimeResponse, error) {
+	rsp, err := c.InspectPublisherRuntime(ctx, publisherIdentityId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseInspectPublisherRuntimeResponse(rsp)
+}
+
+// RenewPublisherRuntimeWithBodyWithResponse Renew a publisher runtime
+//
+// Renew only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, renew action, scope, process run, epoch, and deployment report. Control records only the validated request source, never a body address. Group renew also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher/runtimes/{publisher_identity_id}/renew (the `RenewPublisherRuntime` operationId).
+func (c *ClientWithResponses) RenewPublisherRuntimeWithBodyWithResponse(ctx context.Context, publisherIdentityId PublisherIdentityID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewPublisherRuntimeResponse, error) {
+	rsp, err := c.RenewPublisherRuntimeWithBody(ctx, publisherIdentityId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRenewPublisherRuntimeResponse(rsp)
+}
+
+// RenewPublisherRuntimeWithResponse Renew a publisher runtime
+//
+// Renew only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, renew action, scope, process run, epoch, and deployment report. Control records only the validated request source, never a body address. Group renew also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher/runtimes/{publisher_identity_id}/renew (the `RenewPublisherRuntime` operationId).
+func (c *ClientWithResponses) RenewPublisherRuntimeWithResponse(ctx context.Context, publisherIdentityId PublisherIdentityID, body RenewPublisherRuntimeJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewPublisherRuntimeResponse, error) {
+	rsp, err := c.RenewPublisherRuntime(ctx, publisherIdentityId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRenewPublisherRuntimeResponse(rsp)
+}
+
+// StartPublisherRuntimeWithBodyWithResponse Start a publisher runtime
+//
+// Compare the inspected epoch and start one process run. The one-use assertion binds this endpoint, publisher identity, start action, scope, process run, epoch, and deployment report. A retry retains the same process run and expected epoch. Control records only the validated request source, never a body address. Group start also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher/runtimes/{publisher_identity_id}/start (the `StartPublisherRuntime` operationId).
+func (c *ClientWithResponses) StartPublisherRuntimeWithBodyWithResponse(ctx context.Context, publisherIdentityId PublisherIdentityID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartPublisherRuntimeResponse, error) {
+	rsp, err := c.StartPublisherRuntimeWithBody(ctx, publisherIdentityId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStartPublisherRuntimeResponse(rsp)
+}
+
+// StartPublisherRuntimeWithResponse Start a publisher runtime
+//
+// Compare the inspected epoch and start one process run. The one-use assertion binds this endpoint, publisher identity, start action, scope, process run, epoch, and deployment report. A retry retains the same process run and expected epoch. Control records only the validated request source, never a body address. Group start also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher/runtimes/{publisher_identity_id}/start (the `StartPublisherRuntime` operationId).
+func (c *ClientWithResponses) StartPublisherRuntimeWithResponse(ctx context.Context, publisherIdentityId PublisherIdentityID, body StartPublisherRuntimeJSONRequestBody, reqEditors ...RequestEditorFn) (*StartPublisherRuntimeResponse, error) {
+	rsp, err := c.StartPublisherRuntime(ctx, publisherIdentityId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStartPublisherRuntimeResponse(rsp)
+}
+
+// StopPublisherRuntimeWithBodyWithResponse Stop a publisher runtime
+//
+// Stop only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, stop action, scope, process run, epoch, and deployment report. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher/runtimes/{publisher_identity_id}/stop (the `StopPublisherRuntime` operationId).
+func (c *ClientWithResponses) StopPublisherRuntimeWithBodyWithResponse(ctx context.Context, publisherIdentityId PublisherIdentityID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StopPublisherRuntimeResponse, error) {
+	rsp, err := c.StopPublisherRuntimeWithBody(ctx, publisherIdentityId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStopPublisherRuntimeResponse(rsp)
+}
+
+// StopPublisherRuntimeWithResponse Stop a publisher runtime
+//
+// Stop only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, stop action, scope, process run, epoch, and deployment report. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher/runtimes/{publisher_identity_id}/stop (the `StopPublisherRuntime` operationId).
+func (c *ClientWithResponses) StopPublisherRuntimeWithResponse(ctx context.Context, publisherIdentityId PublisherIdentityID, body StopPublisherRuntimeJSONRequestBody, reqEditors ...RequestEditorFn) (*StopPublisherRuntimeResponse, error) {
+	rsp, err := c.StopPublisherRuntime(ctx, publisherIdentityId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStopPublisherRuntimeResponse(rsp)
 }
 
 // GetPublisherServiceWithResponse Read the saved service selected by the current publisher grant
@@ -27609,36 +28222,6 @@ func (c *ClientWithResponses) CloseServiceRunWithResponse(ctx context.Context, s
 	return ParseCloseServiceRunResponse(rsp)
 }
 
-// HeartbeatServiceRunWithBodyWithResponse Renew a service run and report publisher health and capacity
-//
-// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id} (the `HeartbeatServiceRun` operationId).
-func (c *ClientWithResponses) HeartbeatServiceRunWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*HeartbeatServiceRunResponse, error) {
-	rsp, err := c.HeartbeatServiceRunWithBody(ctx, serviceId, serviceRunId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseHeartbeatServiceRunResponse(rsp)
-}
-
-// HeartbeatServiceRunWithResponse Renew a service run and report publisher health and capacity
-//
-// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id} (the `HeartbeatServiceRun` operationId).
-func (c *ClientWithResponses) HeartbeatServiceRunWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body HeartbeatServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*HeartbeatServiceRunResponse, error) {
-	rsp, err := c.HeartbeatServiceRun(ctx, serviceId, serviceRunId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseHeartbeatServiceRunResponse(rsp)
-}
-
 // AuthorizeServiceClientCertificateWithBodyWithResponse Check a public endpoint visitor's client certificate and admission
 //
 // Authenticate a public endpoint visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
@@ -27907,6 +28490,36 @@ func (c *ClientWithResponses) ConfirmConnectorPeerPairPreparedWithResponse(ctx c
 		return nil, err
 	}
 	return ParseConfirmConnectorPeerPairPreparedResponse(rsp)
+}
+
+// RenewServiceRunWithBodyWithResponse Renew a service run and report publisher health and capacity
+//
+// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/renew (the `RenewServiceRun` operationId).
+func (c *ClientWithResponses) RenewServiceRunWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewServiceRunResponse, error) {
+	rsp, err := c.RenewServiceRunWithBody(ctx, serviceId, serviceRunId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRenewServiceRunResponse(rsp)
+}
+
+// RenewServiceRunWithResponse Renew a service run and report publisher health and capacity
+//
+// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/renew (the `RenewServiceRun` operationId).
+func (c *ClientWithResponses) RenewServiceRunWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body RenewServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewServiceRunResponse, error) {
+	rsp, err := c.RenewServiceRun(ctx, serviceId, serviceRunId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRenewServiceRunResponse(rsp)
 }
 
 // ReportServiceRunObservationsWithBodyWithResponse Report connector connection observations for a service run
@@ -30321,39 +30934,6 @@ func ParseGetReviewerFeedbackThreadResponse(rsp *http.Response) (*GetReviewerFee
 	return response, nil
 }
 
-// ParseHeartbeatPublishRunResponse parses an HTTP response from a HeartbeatPublishRunWithResponse call
-func ParseHeartbeatPublishRunResponse(rsp *http.Response) (*HeartbeatPublishRunResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &HeartbeatPublishRunResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PublishRunHeartbeat
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseCreatePublishRunPreviewResponse parses an HTTP response from a CreatePublishRunPreviewWithResponse call
 func ParseCreatePublishRunPreviewResponse(rsp *http.Response) (*CreatePublishRunPreviewResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -30403,6 +30983,39 @@ func ParseMarkPublishRunReadyResponse(rsp *http.Response) (*MarkPublishRunReadyR
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest PublishRun
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRenewPublishRunResponse parses an HTTP response from a RenewPublishRunWithResponse call
+func ParseRenewPublishRunResponse(rsp *http.Response) (*RenewPublishRunResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RenewPublishRunResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublishRunHeartbeat
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -30548,167 +31161,6 @@ func ParseCreatePublisherEnrollmentResponse(rsp *http.Response) (*CreatePublishe
 	return response, nil
 }
 
-// ParseAcknowledgePublisherGroupConfigurationResponse parses an HTTP response from a AcknowledgePublisherGroupConfigurationWithResponse call
-func ParseAcknowledgePublisherGroupConfigurationResponse(rsp *http.Response) (*AcknowledgePublisherGroupConfigurationResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AcknowledgePublisherGroupConfigurationResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetPublisherGroupAssignmentsResponse parses an HTTP response from a GetPublisherGroupAssignmentsWithResponse call
-func ParseGetPublisherGroupAssignmentsResponse(rsp *http.Response) (*GetPublisherGroupAssignmentsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetPublisherGroupAssignmentsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PublisherGroupAssignments
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseRedeemPublisherGroupEnrollmentResponse parses an HTTP response from a RedeemPublisherGroupEnrollmentWithResponse call
-func ParseRedeemPublisherGroupEnrollmentResponse(rsp *http.Response) (*RedeemPublisherGroupEnrollmentResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RedeemPublisherGroupEnrollmentResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PublisherGroupMember
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseAcquirePublisherGroupLeaseResponse parses an HTTP response from a AcquirePublisherGroupLeaseWithResponse call
-func ParseAcquirePublisherGroupLeaseResponse(rsp *http.Response) (*AcquirePublisherGroupLeaseResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AcquirePublisherGroupLeaseResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PublisherGroupLease
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseVerifyPublisherGroupIdentityResponse parses an HTTP response from a VerifyPublisherGroupIdentityWithResponse call
-func ParseVerifyPublisherGroupIdentityResponse(rsp *http.Response) (*VerifyPublisherGroupIdentityResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &VerifyPublisherGroupIdentityResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PublisherGroupVerification
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseListPublisherIdentitiesResponse parses an HTTP response from a ListPublisherIdentitiesWithResponse call
 func ParseListPublisherIdentitiesResponse(rsp *http.Response) (*ListPublisherIdentitiesResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -30833,22 +31285,150 @@ func ParseRevokePublisherGrantResponse(rsp *http.Response) (*RevokePublisherGran
 	return response, nil
 }
 
-// ParseObservePublisherRuntimeResponse parses an HTTP response from a ObservePublisherRuntimeWithResponse call
-func ParseObservePublisherRuntimeResponse(rsp *http.Response) (*ObservePublisherRuntimeResponse, error) {
+// ParseGetPublisherGroupAssignmentsResponse parses an HTTP response from a GetPublisherGroupAssignmentsWithResponse call
+func ParseGetPublisherGroupAssignmentsResponse(rsp *http.Response) (*GetPublisherGroupAssignmentsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &ObservePublisherRuntimeResponse{
+	response := &GetPublisherGroupAssignmentsResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PublisherRuntimeResponse
+		var dest PublisherGroupAssignments
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAcknowledgePublisherGroupConfigurationResponse parses an HTTP response from a AcknowledgePublisherGroupConfigurationWithResponse call
+func ParseAcknowledgePublisherGroupConfigurationResponse(rsp *http.Response) (*AcknowledgePublisherGroupConfigurationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AcknowledgePublisherGroupConfigurationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRedeemPublisherGroupEnrollmentResponse parses an HTTP response from a RedeemPublisherGroupEnrollmentWithResponse call
+func ParseRedeemPublisherGroupEnrollmentResponse(rsp *http.Response) (*RedeemPublisherGroupEnrollmentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RedeemPublisherGroupEnrollmentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublisherGroupMember
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAcquirePublisherGroupLeaseResponse parses an HTTP response from a AcquirePublisherGroupLeaseWithResponse call
+func ParseAcquirePublisherGroupLeaseResponse(rsp *http.Response) (*AcquirePublisherGroupLeaseResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AcquirePublisherGroupLeaseResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublisherGroupLease
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseVerifyPublisherGroupIdentityResponse parses an HTTP response from a VerifyPublisherGroupIdentityWithResponse call
+func ParseVerifyPublisherGroupIdentityResponse(rsp *http.Response) (*VerifyPublisherGroupIdentityResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &VerifyPublisherGroupIdentityResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublisherGroupVerification
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -30948,6 +31528,138 @@ func ParseDeletePublisherPublicURLResponse(rsp *http.Response) (*DeletePublisher
 	switch {
 	case rsp.StatusCode == 204:
 		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseInspectPublisherRuntimeResponse parses an HTTP response from a InspectPublisherRuntimeWithResponse call
+func ParseInspectPublisherRuntimeResponse(rsp *http.Response) (*InspectPublisherRuntimeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &InspectPublisherRuntimeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublisherRuntimeResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRenewPublisherRuntimeResponse parses an HTTP response from a RenewPublisherRuntimeWithResponse call
+func ParseRenewPublisherRuntimeResponse(rsp *http.Response) (*RenewPublisherRuntimeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RenewPublisherRuntimeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublisherRuntimeResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseStartPublisherRuntimeResponse parses an HTTP response from a StartPublisherRuntimeWithResponse call
+func ParseStartPublisherRuntimeResponse(rsp *http.Response) (*StartPublisherRuntimeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StartPublisherRuntimeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublisherRuntimeResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseStopPublisherRuntimeResponse parses an HTTP response from a StopPublisherRuntimeWithResponse call
+func ParseStopPublisherRuntimeResponse(rsp *http.Response) (*StopPublisherRuntimeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StopPublisherRuntimeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublisherRuntimeResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -31714,39 +32426,6 @@ func ParseCloseServiceRunResponse(rsp *http.Response) (*CloseServiceRunResponse,
 	return response, nil
 }
 
-// ParseHeartbeatServiceRunResponse parses an HTTP response from a HeartbeatServiceRunWithResponse call
-func ParseHeartbeatServiceRunResponse(rsp *http.Response) (*HeartbeatServiceRunResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &HeartbeatServiceRunResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ServiceRunState
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseAuthorizeServiceClientCertificateResponse parses an HTTP response from a AuthorizeServiceClientCertificateWithResponse call
 func ParseAuthorizeServiceClientCertificateResponse(rsp *http.Response) (*AuthorizeServiceClientCertificateResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -32052,6 +32731,39 @@ func ParseConfirmConnectorPeerPairPreparedResponse(rsp *http.Response) (*Confirm
 	switch {
 	case rsp.StatusCode == 204:
 		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRenewServiceRunResponse parses an HTTP response from a RenewServiceRunWithResponse call
+func ParseRenewServiceRunResponse(rsp *http.Response) (*RenewServiceRunResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RenewServiceRunResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ServiceRunState
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -32929,15 +33641,15 @@ type ServerInterface interface {
 	// GetReviewerFeedbackThread Read a feedback thread through a current publisher connection
 	// (POST /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/query)
 	GetReviewerFeedbackThread(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID, feedbackId FeedbackID)
-	// HeartbeatPublishRun Renew a publish run and replace missing publisher connections
-	// (POST /v1/publish-runs/{publish_run_id}/heartbeat)
-	HeartbeatPublishRun(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
 	// CreatePublishRunPreview Create feedback context for one ephemeral demo publish run
 	// (POST /v1/publish-runs/{publish_run_id}/preview)
 	CreatePublishRunPreview(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
 	// MarkPublishRunReady Mark a publish run ready after its certificate and two publisher connections are ready
 	// (POST /v1/publish-runs/{publish_run_id}/ready)
 	MarkPublishRunReady(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
+	// RenewPublishRun Renew a publish run and replace missing publisher connections
+	// (POST /v1/publish-runs/{publish_run_id}/renew)
+	RenewPublishRun(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
 	// EnableShareAccess Enable share-aware HTTP handling for this preview publish run
 	// (POST /v1/publish-runs/{publish_run_id}/share-access)
 	EnableShareAccess(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
@@ -32950,21 +33662,6 @@ type ServerInterface interface {
 	// CreatePublisherEnrollment Issue an expiring one-use publisher enrollment
 	// (POST /v1/publisher-enrollments)
 	CreatePublisherEnrollment(w http.ResponseWriter, r *http.Request)
-	// AcknowledgePublisherGroupConfiguration Acknowledge the exact configuration installed by a group replica
-	// (POST /v1/publisher-groups/ack)
-	AcknowledgePublisherGroupConfiguration(w http.ResponseWriter, r *http.Request)
-	// GetPublisherGroupAssignments Read services and grants assigned to one leased group replica
-	// (GET /v1/publisher-groups/assignments)
-	GetPublisherGroupAssignments(w http.ResponseWriter, r *http.Request)
-	// RedeemPublisherGroupEnrollment Enroll a replica's signing key with a group enrollment secret
-	// (POST /v1/publisher-groups/enroll)
-	RedeemPublisherGroupEnrollment(w http.ResponseWriter, r *http.Request)
-	// AcquirePublisherGroupLease Exchange a signed replica assertion for a group lease
-	// (POST /v1/publisher-groups/lease)
-	AcquirePublisherGroupLease(w http.ResponseWriter, r *http.Request)
-	// VerifyPublisherGroupIdentity Verify a replica's group membership without acquiring a lease
-	// (POST /v1/publisher-groups/verify)
-	VerifyPublisherGroupIdentity(w http.ResponseWriter, r *http.Request)
 	// ListPublisherIdentities List publisher identities and grants without secrets
 	// (GET /v1/publisher-identities)
 	ListPublisherIdentities(w http.ResponseWriter, r *http.Request, params ListPublisherIdentitiesParams)
@@ -32977,9 +33674,21 @@ type ServerInterface interface {
 	// RevokePublisherGrant Revoke one publisher grant without revoking the identity
 	// (DELETE /v1/publisher-identities/{publisher_identity_id}/grants/{grant_id})
 	RevokePublisherGrant(w http.ResponseWriter, r *http.Request, publisherIdentityId PublisherIdentityID, grantId ResourceID, params RevokePublisherGrantParams)
-	// ObservePublisherRuntime Inspect or update a signed publisher process lifetime
-	// (POST /v1/publisher-runtime)
-	ObservePublisherRuntime(w http.ResponseWriter, r *http.Request)
+	// GetPublisherGroupAssignments Read services and grants assigned to one leased group replica
+	// (GET /v1/publisher/groups/assignments)
+	GetPublisherGroupAssignments(w http.ResponseWriter, r *http.Request)
+	// AcknowledgePublisherGroupConfiguration Acknowledge the exact configuration installed by a group replica
+	// (POST /v1/publisher/groups/configuration-acknowledgements)
+	AcknowledgePublisherGroupConfiguration(w http.ResponseWriter, r *http.Request)
+	// RedeemPublisherGroupEnrollment Enroll a replica's signing key with a group enrollment secret
+	// (POST /v1/publisher/groups/enroll)
+	RedeemPublisherGroupEnrollment(w http.ResponseWriter, r *http.Request)
+	// AcquirePublisherGroupLease Exchange a signed replica assertion for a group lease
+	// (POST /v1/publisher/groups/lease)
+	AcquirePublisherGroupLease(w http.ResponseWriter, r *http.Request)
+	// VerifyPublisherGroupIdentity Verify a replica's group membership without acquiring a lease
+	// (POST /v1/publisher/groups/verify)
+	VerifyPublisherGroupIdentity(w http.ResponseWriter, r *http.Request)
 	// GetPublisherPublicURL Read the saved URL selected by the current grant
 	// (GET /v1/publisher/public-url)
 	GetPublisherPublicURL(w http.ResponseWriter, r *http.Request)
@@ -32989,6 +33698,18 @@ type ServerInterface interface {
 	// DeletePublisherPublicURL Remove the exact URL allocated by this identity and grant
 	// (DELETE /v1/publisher/public-urls/{public_url_id})
 	DeletePublisherPublicURL(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
+	// InspectPublisherRuntime Inspect a publisher runtime
+	// (POST /v1/publisher/runtimes/{publisher_identity_id}/inspect)
+	InspectPublisherRuntime(w http.ResponseWriter, r *http.Request, publisherIdentityId PublisherIdentityID)
+	// RenewPublisherRuntime Renew a publisher runtime
+	// (POST /v1/publisher/runtimes/{publisher_identity_id}/renew)
+	RenewPublisherRuntime(w http.ResponseWriter, r *http.Request, publisherIdentityId PublisherIdentityID)
+	// StartPublisherRuntime Start a publisher runtime
+	// (POST /v1/publisher/runtimes/{publisher_identity_id}/start)
+	StartPublisherRuntime(w http.ResponseWriter, r *http.Request, publisherIdentityId PublisherIdentityID)
+	// StopPublisherRuntime Stop a publisher runtime
+	// (POST /v1/publisher/runtimes/{publisher_identity_id}/stop)
+	StopPublisherRuntime(w http.ResponseWriter, r *http.Request, publisherIdentityId PublisherIdentityID)
 	// GetPublisherService Read the saved service selected by the current publisher grant
 	// (GET /v1/publisher/service)
 	GetPublisherService(w http.ResponseWriter, r *http.Request)
@@ -33058,9 +33779,6 @@ type ServerInterface interface {
 	// CloseServiceRun Close one exact service run using its run token
 	// (DELETE /v1/services/{service_id}/runs/{service_run_id})
 	CloseServiceRun(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
-	// HeartbeatServiceRun Renew a service run and report publisher health and capacity
-	// (POST /v1/services/{service_id}/runs/{service_run_id})
-	HeartbeatServiceRun(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
 	// AuthorizeServiceClientCertificate Check a public endpoint visitor's client certificate and admission
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate)
 	AuthorizeServiceClientCertificate(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
@@ -33091,6 +33809,9 @@ type ServerInterface interface {
 	// ConfirmConnectorPeerPairPrepared Confirm an exact connector binding installed by the publisher
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared)
 	ConfirmConnectorPeerPairPrepared(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID, pairId string)
+	// RenewServiceRun Renew a service run and report publisher health and capacity
+	// (POST /v1/services/{service_id}/runs/{service_run_id}/renew)
+	RenewServiceRun(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
 	// ReportServiceRunObservations Report connector connection observations for a service run
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/service-observations)
 	ReportServiceRunObservations(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
@@ -35412,32 +36133,6 @@ func (siw *ServerInterfaceWrapper) GetReviewerFeedbackThread(w http.ResponseWrit
 	handler.ServeHTTP(w, r)
 }
 
-// HeartbeatPublishRun operation middleware
-func (siw *ServerInterfaceWrapper) HeartbeatPublishRun(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "publish_run_id" -------------
-	var publishRunId PublishRunID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.HeartbeatPublishRun(w, r, publishRunId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // CreatePublishRunPreview operation middleware
 func (siw *ServerInterfaceWrapper) CreatePublishRunPreview(w http.ResponseWriter, r *http.Request) {
 
@@ -35481,6 +36176,32 @@ func (siw *ServerInterfaceWrapper) MarkPublishRunReady(w http.ResponseWriter, r 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.MarkPublishRunReady(w, r, publishRunId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RenewPublishRun operation middleware
+func (siw *ServerInterfaceWrapper) RenewPublishRun(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publish_run_id" -------------
+	var publishRunId PublishRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RenewPublishRun(w, r, publishRunId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -35573,76 +36294,6 @@ func (siw *ServerInterfaceWrapper) CreatePublisherEnrollment(w http.ResponseWrit
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CreatePublisherEnrollment(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// AcknowledgePublisherGroupConfiguration operation middleware
-func (siw *ServerInterfaceWrapper) AcknowledgePublisherGroupConfiguration(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.AcknowledgePublisherGroupConfiguration(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetPublisherGroupAssignments operation middleware
-func (siw *ServerInterfaceWrapper) GetPublisherGroupAssignments(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetPublisherGroupAssignments(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// RedeemPublisherGroupEnrollment operation middleware
-func (siw *ServerInterfaceWrapper) RedeemPublisherGroupEnrollment(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RedeemPublisherGroupEnrollment(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// AcquirePublisherGroupLease operation middleware
-func (siw *ServerInterfaceWrapper) AcquirePublisherGroupLease(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.AcquirePublisherGroupLease(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// VerifyPublisherGroupIdentity operation middleware
-func (siw *ServerInterfaceWrapper) VerifyPublisherGroupIdentity(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.VerifyPublisherGroupIdentity(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -35817,11 +36468,67 @@ func (siw *ServerInterfaceWrapper) RevokePublisherGrant(w http.ResponseWriter, r
 	handler.ServeHTTP(w, r)
 }
 
-// ObservePublisherRuntime operation middleware
-func (siw *ServerInterfaceWrapper) ObservePublisherRuntime(w http.ResponseWriter, r *http.Request) {
+// GetPublisherGroupAssignments operation middleware
+func (siw *ServerInterfaceWrapper) GetPublisherGroupAssignments(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ObservePublisherRuntime(w, r)
+		siw.Handler.GetPublisherGroupAssignments(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AcknowledgePublisherGroupConfiguration operation middleware
+func (siw *ServerInterfaceWrapper) AcknowledgePublisherGroupConfiguration(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AcknowledgePublisherGroupConfiguration(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RedeemPublisherGroupEnrollment operation middleware
+func (siw *ServerInterfaceWrapper) RedeemPublisherGroupEnrollment(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RedeemPublisherGroupEnrollment(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AcquirePublisherGroupLease operation middleware
+func (siw *ServerInterfaceWrapper) AcquirePublisherGroupLease(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AcquirePublisherGroupLease(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// VerifyPublisherGroupIdentity operation middleware
+func (siw *ServerInterfaceWrapper) VerifyPublisherGroupIdentity(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.VerifyPublisherGroupIdentity(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -35876,6 +36583,110 @@ func (siw *ServerInterfaceWrapper) DeletePublisherPublicURL(w http.ResponseWrite
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DeletePublisherPublicURL(w, r, publicUrlId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// InspectPublisherRuntime operation middleware
+func (siw *ServerInterfaceWrapper) InspectPublisherRuntime(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publisher_identity_id" -------------
+	var publisherIdentityId PublisherIdentityID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publisher_identity_id", r.PathValue("publisher_identity_id"), &publisherIdentityId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publisher_identity_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.InspectPublisherRuntime(w, r, publisherIdentityId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RenewPublisherRuntime operation middleware
+func (siw *ServerInterfaceWrapper) RenewPublisherRuntime(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publisher_identity_id" -------------
+	var publisherIdentityId PublisherIdentityID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publisher_identity_id", r.PathValue("publisher_identity_id"), &publisherIdentityId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publisher_identity_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RenewPublisherRuntime(w, r, publisherIdentityId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartPublisherRuntime operation middleware
+func (siw *ServerInterfaceWrapper) StartPublisherRuntime(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publisher_identity_id" -------------
+	var publisherIdentityId PublisherIdentityID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publisher_identity_id", r.PathValue("publisher_identity_id"), &publisherIdentityId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publisher_identity_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartPublisherRuntime(w, r, publisherIdentityId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StopPublisherRuntime operation middleware
+func (siw *ServerInterfaceWrapper) StopPublisherRuntime(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publisher_identity_id" -------------
+	var publisherIdentityId PublisherIdentityID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publisher_identity_id", r.PathValue("publisher_identity_id"), &publisherIdentityId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publisher_identity_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StopPublisherRuntime(w, r, publisherIdentityId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -36656,41 +37467,6 @@ func (siw *ServerInterfaceWrapper) CloseServiceRun(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
-// HeartbeatServiceRun operation middleware
-func (siw *ServerInterfaceWrapper) HeartbeatServiceRun(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "service_id" -------------
-	var serviceId ServiceID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "service_run_id" -------------
-	var serviceRunId ServiceRunID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "service_run_id", r.PathValue("service_run_id"), &serviceRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_run_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.HeartbeatServiceRun(w, r, serviceId, serviceRunId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // AuthorizeServiceClientCertificate operation middleware
 func (siw *ServerInterfaceWrapper) AuthorizeServiceClientCertificate(w http.ResponseWriter, r *http.Request) {
 
@@ -37103,6 +37879,41 @@ func (siw *ServerInterfaceWrapper) ConfirmConnectorPeerPairPrepared(w http.Respo
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ConfirmConnectorPeerPairPrepared(w, r, serviceId, serviceRunId, pairId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RenewServiceRun operation middleware
+func (siw *ServerInterfaceWrapper) RenewServiceRun(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "service_id" -------------
+	var serviceId ServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "service_run_id" -------------
+	var serviceRunId ServiceRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_run_id", r.PathValue("service_run_id"), &serviceRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_run_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RenewServiceRun(w, r, serviceId, serviceRunId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -37876,12 +38687,15 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/configuration", wrapper.GetProjectConfiguration)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/projects/{project_key}/configuration", wrapper.ApplyProjectConfiguration)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups/{group_name}/enrollments", wrapper.CreatePublisherGroupEnrollment)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher-groups/enroll", wrapper.RedeemPublisherGroupEnrollment)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher-groups/verify", wrapper.VerifyPublisherGroupIdentity)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher-runtime", wrapper.ObservePublisherRuntime)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher-groups/lease", wrapper.AcquirePublisherGroupLease)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/publisher-groups/assignments", wrapper.GetPublisherGroupAssignments)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher-groups/ack", wrapper.AcknowledgePublisherGroupConfiguration)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher/groups/enroll", wrapper.RedeemPublisherGroupEnrollment)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher/groups/verify", wrapper.VerifyPublisherGroupIdentity)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher/runtimes/{publisher_identity_id}/inspect", wrapper.InspectPublisherRuntime)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher/runtimes/{publisher_identity_id}/start", wrapper.StartPublisherRuntime)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher/runtimes/{publisher_identity_id}/renew", wrapper.RenewPublisherRuntime)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher/runtimes/{publisher_identity_id}/stop", wrapper.StopPublisherRuntime)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher/groups/lease", wrapper.AcquirePublisherGroupLease)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/publisher/groups/assignments", wrapper.GetPublisherGroupAssignments)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher/groups/configuration-acknowledgements", wrapper.AcknowledgePublisherGroupConfiguration)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/teams/{team_id}/service-audit", wrapper.ListServiceAudit)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{run_id}/service-observations", wrapper.ReportPublishRunServiceObservations)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/service-observations", wrapper.ReportServiceRunObservations)
@@ -37907,7 +38721,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind", wrapper.RebindConnectorPeerPair)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs", wrapper.PrepareServiceRun)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}", wrapper.CloseServiceRun)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}", wrapper.HeartbeatServiceRun)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/renew", wrapper.RenewServiceRun)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/visitor/public-urls", wrapper.ListAvailablePublicURLs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-grants", wrapper.ListVisitorGrants)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-grants", wrapper.CreateTeamVisitorGrant)
@@ -37961,7 +38775,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/publisher-identities/{publisher_identity_id}/grants/{grant_id}", wrapper.RevokePublisherGrant)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher/public-urls", wrapper.AllocatePublisherPublicURL)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/publisher/public-urls/{public_url_id}", wrapper.DeletePublisherPublicURL)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/heartbeat", wrapper.HeartbeatPublishRun)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/renew", wrapper.RenewPublishRun)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/share-access", wrapper.EnableShareAccess)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/share-redemptions", wrapper.RedeemPublishRunShare)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/feedback", wrapper.CreateFeedbackReport)

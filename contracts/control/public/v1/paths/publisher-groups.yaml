@@ -97,7 +97,7 @@ paths:
               },
           }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/publisher-groups/enroll:
+  /v1/publisher/groups/enroll:
     post:
       operationId: redeemPublisherGroupEnrollment
       tags: [publisher-groups]
@@ -129,7 +129,7 @@ paths:
               },
           }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/publisher-groups/verify:
+  /v1/publisher/groups/verify:
     post:
       operationId: verifyPublisherGroupIdentity
       tags: [publisher-groups]
@@ -148,7 +148,7 @@ paths:
             application/json:
               schema: { $ref: "../openapi.yaml#/components/schemas/PublisherGroupVerification" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/publisher-groups/lease:
+  /v1/publisher/groups/lease:
     post:
       operationId: acquirePublisherGroupLease
       tags: [publisher-groups]
@@ -178,7 +178,7 @@ paths:
               },
           }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/publisher-groups/assignments:
+  /v1/publisher/groups/assignments:
     get:
       operationId: getPublisherGroupAssignments
       tags: [publisher-groups]
@@ -199,7 +199,7 @@ paths:
               },
           }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/publisher-groups/ack:
+  /v1/publisher/groups/configuration-acknowledgements:
     post:
       operationId: acknowledgePublisherGroupConfiguration
       tags: [publisher-groups]

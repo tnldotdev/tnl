@@ -54,7 +54,7 @@ func TestInvalidRuntimeReplyCannotStartOrRenew(t *testing.T) {
 
 func (c *lostStartControl) PublisherRuntime(_ context.Context, r controlv1.PublisherRuntimeRequest) (controlv1.PublisherRuntimeResponse, error) {
 	c.requests = append(c.requests, r)
-	if _, err := publisherproof.Verify(r.Assertion, "publisher", "key", publisherproof.RuntimeScope("scope", string(r.Action), r.ProcessRunId, r.ExpectedEpoch, publisherprovenance.Digest(r.Deployment)), "https://control.example/v1/publisher-runtime", c.public, time.Now()); err != nil {
+	if _, err := publisherproof.Verify(r.Assertion, "publisher", "key", publisherproof.RuntimeScope("scope", string(r.Action), r.ProcessRunId, r.ExpectedEpoch, publisherprovenance.Digest(r.Deployment)), "https://control.example/v1/publisher/runtimes/publisher/"+string(r.Action), c.public, time.Now()); err != nil {
 		return controlv1.PublisherRuntimeResponse{}, err
 	}
 	if c.replaced {

@@ -11,7 +11,23 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func (h *handler) ObservePublisherRuntime(w http.ResponseWriter, r *http.Request) {
+func (h *handler) InspectPublisherRuntime(w http.ResponseWriter, r *http.Request, publisherID string) {
+	h.publisherRuntime(w, r, publisherID, "inspect")
+}
+
+func (h *handler) StartPublisherRuntime(w http.ResponseWriter, r *http.Request, publisherID string) {
+	h.publisherRuntime(w, r, publisherID, "start")
+}
+
+func (h *handler) RenewPublisherRuntime(w http.ResponseWriter, r *http.Request, publisherID string) {
+	h.publisherRuntime(w, r, publisherID, "renew")
+}
+
+func (h *handler) StopPublisherRuntime(w http.ResponseWriter, r *http.Request, publisherID string) {
+	h.publisherRuntime(w, r, publisherID, "stop")
+}
+
+func (h *handler) publisherRuntime(w http.ResponseWriter, r *http.Request, publisherID, action string) {
 	w.Header().Set("Cache-Control", "no-store")
 	store, ok := h.dependencies.PublisherRuntime, h.dependencies.PublisherRuntime != nil
 	if !ok || h.config.ControlURL == "" {
@@ -19,17 +35,17 @@ func (h *handler) ObservePublisherRuntime(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var b controlv1.PublisherRuntimeRequest
-	if decodeJSONLimited(w, r, &b, 8192) != nil || !b.Action.Valid() || publisherprovenance.Validate(b.Deployment) != nil {
+	if decodeJSONLimited(w, r, &b, 8192) != nil || b.PublisherIdentityId != publisherID || string(b.Action) != action || publisherprovenance.Validate(b.Deployment) != nil {
 		writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, "invalid publisher runtime request")
 		return
 	}
-	if b.Action == controlv1.RuntimeStart && !h.acceptingNewWork(r.Context(), w) {
+	if action == "start" && !h.acceptingNewWork(r.Context(), w) {
 		return
 	}
 	// controlproxy replaces RemoteAddr only after trusted-peer validation. raw
 	// forwarding headers are never source evidence at this handler boundary.
 	source, _, _ := net.SplitHostPort(r.RemoteAddr)
-	result, err := store.PublisherRuntime(r.Context(), controlstate.PublisherRuntimeRequest{PublisherIdentityID: b.PublisherIdentityId, ScopeID: b.ScopeId, ProcessRunID: b.ProcessRunId, Action: string(b.Action), Assertion: b.Assertion, ExpectedEpoch: b.ExpectedEpoch, Audience: h.config.ControlURL + "/v1/publisher-runtime", SourceIP: source, Now: time.Now(), Deployment: b.Deployment})
+	result, err := store.PublisherRuntime(r.Context(), controlstate.PublisherRuntimeRequest{PublisherIdentityID: publisherID, ScopeID: b.ScopeId, ProcessRunID: b.ProcessRunId, Action: action, Assertion: b.Assertion, ExpectedEpoch: b.ExpectedEpoch, Audience: h.config.ControlURL + "/v1/publisher/runtimes/" + publisherID + "/" + action, SourceIP: source, Now: time.Now(), Deployment: b.Deployment})
 	if errors.Is(err, controlstate.ErrPublisherDeploymentConflict) {
 		writeProblem(w, http.StatusConflict, controlv1.Conflict, "publisher deployment binding conflicts with the recorded replica")
 		return

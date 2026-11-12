@@ -22,7 +22,7 @@ type groupFixtureControl struct {
 }
 
 func (c *groupFixtureControl) AcquirePublisherGroupLease(_ context.Context, r controlv1.PublisherGroupLeaseRequest) (controlv1.PublisherGroupLease, error) {
-	if _, err := publisherproof.Verify(r.Assertion, c.member.PublisherIdentityId, c.member.KeyId, c.member.GroupId, "https://control.example/v1/publisher-groups/lease", c.public, time.Now()); err != nil {
+	if _, err := publisherproof.Verify(r.Assertion, c.member.PublisherIdentityId, c.member.KeyId, c.member.GroupId, "https://control.example/v1/publisher/groups/lease", c.public, time.Now()); err != nil {
 		return controlv1.PublisherGroupLease{}, err
 	}
 	c.leases++

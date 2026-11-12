@@ -136,7 +136,7 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	if member.GroupId != enrollment.GroupId || member.GroupName != group {
 		t.Fatal("enrollment changed group scope")
 	}
-	proof, err := publisherproof.Sign(member.PublisherIdentityId, member.KeyId, member.GroupId, server.URL+"/v1/publisher-groups/lease", private, now)
+	proof, err := publisherproof.Sign(member.PublisherIdentityId, member.KeyId, member.GroupId, server.URL+"/v1/publisher/groups/lease", private, now)
 	if err != nil {
 		t.Fatal(err)
 	}
