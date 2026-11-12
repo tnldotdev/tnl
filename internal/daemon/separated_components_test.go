@@ -226,23 +226,12 @@ type separatedPublishers struct {
 	ActivationDuration time.Duration
 }
 
-func separatedPublisherIndexes(count, shard int) []int {
-	shards := len(separatedPublisherComponents())
-	indexes := make([]int, 0, (count+shards-1)/shards)
-	for i := 2 * shard; i < count; i += 2 * shards {
-		indexes = append(indexes, i)
-		if i+1 < count {
-			indexes = append(indexes, i+1)
-		}
-	}
-	return indexes
-}
-
 func TestSeparatedPublisherIndexesCoverRoutesAndTransports(t *testing.T) {
 	for _, total := range []int{4, 8, 17, 3000} {
 		seen := make([]bool, total)
-		for shard := range separatedPublisherComponents() {
-			indexes := separatedPublisherIndexes(total, shard)
+		plan := planSeparatedPublisherActivation(total, len(separatedPublisherComponents()), *runtimeLoadStartParallel)
+		for shard, activation := range plan.Shards {
+			indexes := activation.Indexes
 			for _, index := range indexes {
 				if index < 0 || index >= total || seen[index] {
 					t.Fatalf("total=%d shard=%d duplicate/invalid index=%d", total, shard, index)
@@ -273,6 +262,8 @@ func TestSeparatedPublisherIndexesCoverRoutesAndTransports(t *testing.T) {
 }
 
 func runSeparatedPublishers(t *testing.T, ctx context.Context, count, rate, shard int) {
+	plan := planSeparatedPublisherActivation(count, len(separatedPublisherComponents()), *runtimeLoadStartParallel)
+	activation := plan.Shards[shard]
 	separatedWrite(t, separatedPublisherShardKey(shard, "concurrency"), runtimeLoadAdmission.PublisherConcurrency)
 	if !separatedRead(t, ctx, "publish.start", nil) {
 		return
@@ -318,7 +309,7 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count, rate, shar
 		Server: "https://control." + separatedDomain,
 		Domain: "routes." + separatedDomain, StateRoot: stateRoot, Target: "http://127.0.0.1:8080",
 		HTTPClient: client, RelayTLS: separatedRelayTLS(t), AllowedIPPrefixes: prefixes,
-		Transport: transport, Parallel: 4, StartParallel: max(1, *runtimeLoadStartParallel/len(separatedPublisherComponents())),
+		Transport: transport, Parallel: 4, StartParallel: activation.Parallel,
 		Concurrency: runtimeLoadAdmission.PublisherConcurrency, RateRequests: rateRequests,
 		ReadyTimeout: *runtimeLoadReadyTimeout, StopTimeout: 10 * time.Second, DrainTime: time.Second,
 		OnActivationFailure: func(index int) {
@@ -358,7 +349,7 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count, rate, shar
 	}()
 	result := separatedPublishers{URLs: make([]string, count), Ready: make([]publisher.Event, count)}
 	started := time.Now()
-	ready, err := group.Start(monitor, separatedPublisherIndexes(count, shard))
+	ready, err := group.Start(monitor, activation.Indexes)
 	result.ActivationDuration = time.Since(started)
 	if err != nil {
 		t.Fatal(err)
@@ -376,7 +367,7 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count, rate, shar
 			return
 		}
 		at := time.Now()
-		indexes := slices.DeleteFunc(separatedPublisherIndexes(count, shard), func(index int) bool {
+		indexes := slices.DeleteFunc(slices.Clone(activation.Indexes), func(index int) bool {
 			return (index < count/2) != (phase == "close-half")
 		})
 		if _, err := group.Stop(ctx, indexes); err != nil {

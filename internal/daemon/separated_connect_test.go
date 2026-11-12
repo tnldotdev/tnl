@@ -107,7 +107,8 @@ func runSeparatedConnectPublishers(t *testing.T, ctx context.Context, count, sha
 	publishCtx, stop := context.WithCancel(ctx)
 	var publishers sync.WaitGroup
 	defer func() { stop(); publishers.Wait() }()
-	for _, index := range separatedPublisherIndexes(count, shard) {
+	plan := planSeparatedPublisherActivation(count, len(separatedPublisherComponents()), *runtimeLoadStartParallel)
+	for _, index := range plan.Shards[shard].Indexes {
 		key, err := opaqueid.New(opaqueid.IdempotencyPrefix)
 		if err != nil {
 			t.Fatal(err)
