@@ -60,6 +60,7 @@ func (c *wiringControl) ReadIngressVisitorPolicy(_ context.Context, id string, b
 func (c *wiringControl) RegisterIngress(_ context.Context, r ingressv1.IngressRegistration) (ingressv1.IngressLease, error) {
 	now := time.Now()
 	l := ingressv1.IngressLease{IngressId: r.IngressId, IngressRunId: r.IngressRunId, IngressLeaseRevision: 1, ProtocolVersion: r.ProtocolVersion,
+		Region:             r.Region,
 		ConnectionCapacity: r.ConnectionCapacity, RegisteredAt: now, RenewedAt: now, LeaseExpiresAt: now.Add(time.Hour)}
 	c.mu.Lock()
 	c.lease = l

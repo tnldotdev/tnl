@@ -22,7 +22,7 @@ const defaultProvisioningStalledDelay = 2 * time.Minute
 type PublicURLControlClient interface {
 	GetPublicURLByHostname(context.Context, string, string) (controlv1.PublicURL, error)
 	DeletePublicURL(context.Context, string) error
-	CreatePublishRun(context.Context, string, string) (controlv1.PublishRunSetup, error)
+	CreatePublishRun(context.Context, string, string, ...string) (controlv1.PublishRunSetup, error)
 	ClosePublishRun(context.Context, string, credentials.PublishRunToken) error
 	MarkPublishRunReady(context.Context, string, uint64, credentials.PublishRunToken) error
 	HeartbeatPublishRun(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error)
@@ -58,6 +58,7 @@ type VisitorAccessManagementClient interface {
 }
 
 type Config struct {
+	PreferredRegions             []string
 	RequirePostQuantum           *bool
 	PublisherIdentityID          string
 	Control                      PublicURLControlClient
