@@ -34,7 +34,7 @@ type Settings = TnlConnectionRegistry[keyof TnlConnectionRegistry];
 type Prepared = ReturnType<typeof parsePrepared>;
 const maximumBytes = 128 * 1024;
 const { scopes, selectedScopes, fetches } = context;
-const command = ["--no-telemetry", "runtime", "connections"];
+const command = ["runtime", "connections"];
 
 function machineError(cause: unknown, operation?: string): TnlError {
   // native stderr and JSON parser errors can contain private input; retain only

@@ -26,21 +26,30 @@ func attachRuntimeIntegrations(ctx context.Context, state *clientstate.Database,
 	}
 	group := projectIntegrationScope(project, services.namespace)
 	output := &Presentation{}
+	telemetry := cfg.Telemetry.BeginScope("publisher")
+	transferred := false
+	defer func() {
+		if !transferred {
+			telemetry.Close()
+		}
+	}()
 	var stops []func()
 	if project.Config.OAuth {
 		origin, oauthServices, err := projectOAuthPublisher(ctx, state, project, server, valueOrEmpty(project.Config.Team), authenticated)
 		if err != nil {
 			return nil, err
 		}
-		stops = append(stops, startOAuthIntegrationURL(ctx, state, oauthServices, origin, tunnel, output, nil))
+		stops = append(stops, startOAuthIntegrationURL(ctx, state, oauthServices, origin, tunnel, output, telemetry))
 	}
 	if len(project.Config.Webhooks) != 0 {
-		stops = append(stops, startWebhookIntegrationURL(ctx, state, services, project, tunnel, service.Name, group, output, nil))
+		stops = append(stops, startWebhookIntegrationURL(ctx, state, services, project, tunnel, service.Name, group, output, telemetry))
 	}
 	if len(project.Config.Aliases) != 0 {
 		stops = append(stops, startProjectAliases(ctx, state, projectConfiguration{Project: project}, service.Name, valueOrEmpty(project.Config.Team), services, *cfg, group, tunnel, output))
 	}
+	transferred = true
 	return func() {
+		defer telemetry.Close()
 		for i := len(stops) - 1; i >= 0; i-- {
 			stops[i]()
 		}

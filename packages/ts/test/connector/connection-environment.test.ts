@@ -106,11 +106,11 @@ vi.mock("node:child_process", () => ({
             input: input === undefined ? undefined : (JSON.parse(input) as unknown),
           });
           queueMicrotask(() => {
-            if (args[3] === "sdk-workload") {
+            if (args[2] === "sdk-workload") {
               callback(null, JSON.stringify(workloadSelection()));
               return;
             }
-            if (args[3] === "sdk-stop") {
+            if (args[2] === "sdk-stop") {
               callback(null, JSON.stringify({ schema: 1, state: "stopped" }));
               return;
             }
@@ -276,7 +276,7 @@ test.each([
     gate.resolve();
 
     expect(await Promise.all([first, second])).toMatchObject([{ port: 20001 }, { port: 20002 }]);
-    const launches = fixture.launches.filter((launch) => launch.args[3] === "sdk-prepare");
+    const launches = fixture.launches.filter((launch) => launch.args[2] === "sdk-prepare");
     expect(launches.map((launch) => launch.environment[name])).toEqual([initial, changed]);
     expect(launches.map((launch) => launch.input)).toMatchObject([
       { assertion: "assertion-a", sdk_workload: { name: "job", callback: true } },
@@ -301,7 +301,7 @@ test("pending workload detection does not switch to an unconfigured context", as
   gate.resolve();
 
   await pending;
-  const launch = fixture.launches.find((launch) => launch.args[3] === "sdk-prepare");
+  const launch = fixture.launches.find((launch) => launch.args[2] === "sdk-prepare");
   expect(launch?.input).toMatchObject({ assertion: "assertion-a" });
   expect(callback).toHaveBeenCalledOnce();
 });
@@ -348,7 +348,7 @@ test.each([false, true])(
     expect(await second.connectionHandle("database", vi.fn())).toHaveProperty("port", 20001);
     expect(fixture.scopeStarted).toHaveBeenCalledOnce();
     expect(fixture.owners.size).toBe(1);
-    expect(fixture.launches.filter((launch) => launch.args[3] === "sdk-prepare")).toHaveLength(1);
+    expect(fixture.launches.filter((launch) => launch.args[2] === "sdk-prepare")).toHaveLength(1);
     expect(fixture.launches.every((launch) => launch.args.includes(process.cwd()))).toBe(true);
     expect(legacyContext.scopes.size).toBe(1);
     expect(legacyScope.select).not.toHaveBeenCalled();
@@ -370,7 +370,7 @@ test("workload recovery and cleanup keep scope selection but refresh launch inpu
   const active = vi.spyOn(context, "active").mockReturnValue(caller("1"));
   const { connectionHandle } = await import("../../src/internal/connector/connection.js");
   await connectionHandle("database", vi.fn());
-  expect(fixture.launches.map((launch) => launch.args[3])).toEqual(["sdk-workload", "sdk-prepare"]);
+  expect(fixture.launches.map((launch) => launch.args[2])).toEqual(["sdk-workload", "sdk-prepare"]);
   expect(fixture.launches[0]?.input).toEqual({
     schema: 1,
     sdk_workload: { name: "job", runtime: {} },
@@ -391,7 +391,7 @@ test("workload recovery and cleanup keep scope selection but refresh launch inpu
   vi.stubEnv("TNL_STATE_DIR", "/fixture/state-b");
   vi.stubEnv("VERCEL_OIDC_TOKEN", "current-assertion");
   await recovery;
-  expect(fixture.launches[2]?.args[3]).toBe("sdk-workload");
+  expect(fixture.launches[2]?.args[2]).toBe("sdk-workload");
   expect(fixture.launches[3]?.args).toContain("--recover-handle");
   expect(fixture.launches[3]?.input).toMatchObject({
     schema: 1,
@@ -410,7 +410,7 @@ test("workload recovery and cleanup keep scope selection but refresh launch inpu
   for (const listener of process.listeners("beforeExit"))
     if (!originalListeners.has(listener)) listener(0);
   await vi.waitFor(() => expect(fixture.launches).toHaveLength(5));
-  expect(fixture.launches[4]?.args[3]).toBe("sdk-stop");
+  expect(fixture.launches[4]?.args[2]).toBe("sdk-stop");
   expect(fixture.launches[4]?.environment).toMatchObject({
     TNL_SERVER: "https://a.example",
     TNL_STATE_DIR: "/fixture/state-a",

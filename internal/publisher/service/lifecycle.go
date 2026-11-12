@@ -10,6 +10,7 @@ import (
 
 	quic "github.com/quic-go/quic-go"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	serviceconfig "github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
@@ -44,6 +45,7 @@ type RunControl interface {
 type SlotSession = tunnel.SlotSession
 
 type RunConfig struct {
+	Telemetry         *clienttelemetry.Collector
 	PreferredRegions  []string
 	Control           RunControl
 	State             *clientstate.Store
@@ -87,6 +89,8 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	if result != nil {
 		return result
 	}
+	telemetry := config.Telemetry.BeginScope("publisher")
+	defer telemetry.Close()
 	if config.Control == nil || config.Access == nil || !config.Metadata.Protocol.Valid() || config.Identity.ServiceId == nil ||
 		config.Identity.Kind != authorityv1.Service || *config.Identity.ServiceId != config.ServiceID {
 		return ErrPrivateStream
@@ -252,7 +256,8 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	if err != nil {
 		return err
 	}
-	bound.connectivityOptions = config.Connectivity
+	bound.telemetry = telemetry
+	bound.connectivityOptions = telemetry.Connectivity(config.Connectivity)
 	if !config.Connectivity.DisableDirect {
 		bound.peerSocket = config.PeerSocket
 		if bound.peerSocket == nil {

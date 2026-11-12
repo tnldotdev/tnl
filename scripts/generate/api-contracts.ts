@@ -18,11 +18,6 @@ export const contracts = {
   relayv1: "contracts/control/private/relay/v1/openapi.yaml",
   publisherv1: "contracts/publisher/browser/v1/openapi.yaml",
   localpublisherv1: "contracts/publisher/local/v1/openapi.yaml",
-} as const;
-
-// the website serves this contract; bundle it without adding a native HTTP server.
-export const bundledContracts = {
-  ...contracts,
   telemetryv1: "contracts/integrations/telemetry/v1/openapi.yaml",
 } as const;
 
@@ -33,6 +28,7 @@ export const packagePaths: Record<keyof typeof contracts, string> = {
   relayv1: "control/private/relay/v1",
   publisherv1: "publisher/browser/v1",
   localpublisherv1: "publisher/local/v1",
+  telemetryv1: "integrations/telemetry/v1",
 };
 
 const objectSchema = z.record(z.string(), z.unknown());
@@ -298,9 +294,7 @@ export class ContractGraph {
 
 export async function repositoryGraph(): Promise<ContractGraph> {
   return new ContractGraph(
-    Object.fromEntries(
-      Object.entries(bundledContracts).map(([name, file]) => [name, join(root, file)]),
-    ),
+    Object.fromEntries(Object.entries(contracts).map(([name, file]) => [name, join(root, file)])),
   ).load();
 }
 
@@ -311,7 +305,7 @@ async function main(): Promise<void> {
     if (!directory || requested.length !== 2) throw new Error("expected --bundle-dir DIRECTORY");
     const graph = await repositoryGraph();
     await mkdir(directory, { recursive: true });
-    for (const name of Object.keys(bundledContracts)) {
+    for (const name of Object.keys(contracts)) {
       await writeFile(
         join(directory, `${name}.yaml`),
         `${JSON.stringify(graph.bundle(name), null, 2)}\n`,

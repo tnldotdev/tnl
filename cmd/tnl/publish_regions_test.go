@@ -31,7 +31,7 @@ func TestPublishProviderRegionFlags(t *testing.T) {
 		}
 	}
 	for _, value := range []string{"sjc", "aws:sjc", "gcp:us-west-1"} {
-		err := runPublish(t.Context(), publishCommand{PreferredRegions: []string{value}}, io.Discard, io.Discard, nil)
+		err := runPublish(t.Context(), publishCommand{PreferredRegions: []string{value}}, io.Discard, io.Discard)
 		typed, ok := failure.Of(err)
 		if !errors.Is(err, region.ErrPreference) || !ok || typed.Reason() != failure.InvalidTunnelFlags {
 			t.Fatal("invalid region opened publisher state or lost its diagnostic", value, err)

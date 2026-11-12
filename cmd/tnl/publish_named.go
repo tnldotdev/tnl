@@ -14,8 +14,9 @@ import (
 )
 
 type resolvedNamedInvocation struct {
-	project projectConfiguration
-	service string
+	telemetryDisabled bool
+	project           projectConfiguration
+	service           string
 }
 type resolvedPublicInvocation struct{ resolvedNamedInvocation }
 type resolvedPrivateInvocation struct {
@@ -46,7 +47,7 @@ func namedInvocation(flags publishCommand) (resolvedNamedInvocation, error) {
 		team := flags.selectedTeam
 		project.Config.Team = &team
 	}
-	return resolvedNamedInvocation{project: project, service: flags.Service}, nil
+	return resolvedNamedInvocation{project: project, service: flags.Service, telemetryDisabled: flags.TelemetryDisabled}, nil
 }
 
 func resolveNamedPublic(flags publishCommand) (resolvedPublicInvocation, error) {
@@ -67,5 +68,5 @@ func resolveNamedPrivate(flags publishCommand) (resolvedPrivateInvocation, error
 }
 
 func runNamedPublish(ctx context.Context, selected resolvedNamedInvocation, stateDir string, output *publishOutput) error {
-	return invocation.PublishNamed(ctx, selected.project.Project, selected.service, stateDir, local.EnsureOwner, &invocation.Presentation{Starting: output.starting, Provisioning: output.provisioning, Ready: output.ready, Stopped: output.stopped})
+	return invocation.PublishNamed(ctx, selected.project.Project, selected.service, stateDir, selected.telemetryDisabled, local.EnsureOwner, &invocation.Presentation{Starting: output.starting, Provisioning: output.provisioning, Ready: output.ready, Stopped: output.stopped})
 }

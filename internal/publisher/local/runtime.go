@@ -18,6 +18,7 @@ import (
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/client/project/meta"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -30,6 +31,7 @@ import (
 )
 
 type Options struct {
+	Telemetry         *clienttelemetry.Collector
 	Directory         string
 	StateDir          string
 	Snapshot          io.Reader
@@ -200,14 +202,16 @@ func Endpoint(ctx context.Context, options Options, service, invocationID string
 }
 
 type appPreparation struct {
-	configuration publisherapp.Configuration
-	project       clientproject.Project
-	framework     publisherprotocol.Framework
-	assignment    publisherprotocol.Assignment
-	invocation    *publisherprotocol.Invocation
+	telemetryDisabled bool
+	configuration     publisherapp.Configuration
+	project           clientproject.Project
+	framework         publisherprotocol.Framework
+	assignment        publisherprotocol.Assignment
+	invocation        *publisherprotocol.Invocation
 }
 
 type appRuntime struct {
+	Telemetry      *clienttelemetry.Collector
 	manager        *publisherapp.Manager
 	workers        *publisherapp.Workers
 	capabilities   *publisherprotocol.Capabilities
@@ -291,7 +295,7 @@ func Serve(ctx context.Context, options Options) (result error) {
 		return err
 	}
 	defer state.Close()
-	a := &appRuntime{project: project, state: state, capabilities: capabilities, prepared: map[string]appPreparation{}, TargetResolver: options.TargetResolver, AttachPublication: options.AttachPublication}
+	a := &appRuntime{Telemetry: options.Telemetry, project: project, state: state, capabilities: capabilities, prepared: map[string]appPreparation{}, TargetResolver: options.TargetResolver, AttachPublication: options.AttachPublication}
 	a.workers = &publisherapp.Workers{Database: state, Configure: a.workerConfiguration, AutomaticReadiness: true}
 	a.manager, err = publisherapp.New(observability.Independent(ctx), project.Root, state, publisherapp.ConfiguredServices(project), a.workers.Run)
 	if err != nil {
@@ -398,7 +402,11 @@ func (a *appRuntime) prepare(ctx context.Context, request publisherprotocol.Prep
 	}
 	assignment := publisherprotocol.Assignment{Version: 1, RegistrationID: id, Service: name, Hostname: selected.Hostname, PublicURL: selected.URL, Project: metadata.Public(true)}
 	a.mu.Lock()
-	a.prepared[id] = appPreparation{project: a.project, framework: request.Framework, assignment: assignment}
+	if previous, found := a.prepared[id]; found && previous.telemetryDisabled != request.TelemetryDisabled {
+		a.mu.Unlock()
+		return publisherprotocol.Assignment{}, publisherapp.ErrOwnerConflict
+	}
+	a.prepared[id] = appPreparation{project: a.project, framework: request.Framework, assignment: assignment, telemetryDisabled: request.TelemetryDisabled}
 	a.mu.Unlock()
 	return assignment, nil
 }
@@ -436,7 +444,11 @@ func (a *appRuntime) acquire(ctx context.Context, request publisherprotocol.Leas
 		return publisherprotocol.Registration{}, failure.Wrap("reserve named service", failure.ClientStateUnavailable, err)
 	}
 	a.mu.Lock()
-	a.prepared[id] = appPreparation{project: a.project}
+	if previous, found := a.prepared[id]; found && previous.telemetryDisabled != request.TelemetryDisabled {
+		a.mu.Unlock()
+		return publisherprotocol.Registration{}, publisherapp.ErrOwnerConflict
+	}
+	a.prepared[id] = appPreparation{project: a.project, telemetryDisabled: request.TelemetryDisabled}
 	a.mu.Unlock()
 	registration := publisherprotocol.Registration{Version: 1, RegistrationID: id, Owner: request.Owner, Target: string(*resolved.Target)}
 	if err := a.manager.RegisterContext(ctx, id, request.Owner, registration.Target, ""); err != nil {
@@ -446,20 +458,26 @@ func (a *appRuntime) acquire(ctx context.Context, request publisherprotocol.Leas
 	return registration, nil
 }
 
-func (a *appRuntime) workerConfiguration(ctx context.Context, service publisherapp.Service) (publisherapp.Configuration, error) {
+func (a *appRuntime) workerConfiguration(ctx context.Context, service publisherapp.Service) (configuration publisherapp.Configuration, result error) {
 	a.mu.Lock()
 	preparation, found := a.prepared[service.RegistrationID]
 	a.mu.Unlock()
 	if !found {
 		return publisherapp.Configuration{}, publisherapp.ErrRegistrationStale
 	}
+	operations := a.operations(preparation.project)
+	operations.Telemetry = a.Telemetry
+	if preparation.telemetryDisabled {
+		operations.Telemetry = nil
+	}
+	defer func() { configuration.Publisher.Telemetry = operations.Telemetry }()
 	if definition, configured := preparation.project.Config.Services[service.Name]; configured && !config.IsPublicService(definition) {
-		return a.operations(preparation.project).ServiceConfiguration(ctx, service)
+		return operations.ServiceConfiguration(ctx, service)
 	}
 	if preparation.configuration.Publisher.Control != nil {
 		return preparation.configuration, nil
 	}
-	return a.operations(preparation.project).PublicConfiguration(ctx, service)
+	return operations.PublicConfiguration(ctx, service)
 }
 
 func (a *appRuntime) operations(project clientproject.Project) *invocation.ProjectRuntime {

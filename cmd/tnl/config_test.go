@@ -77,13 +77,11 @@ export default {};`
 	t.Chdir(directory)
 
 	var stdout, stderr bytes.Buffer
-	var events []telemetryPayload
-	if err := run(t.Context(), []string{"check"}, &stdout, &stderr, func(string) telemetryReporter {
-		return telemetryReporterFunc(func(event telemetryPayload) { events = append(events, event) })
-	}); err != nil {
+	r := recordTelemetry(t)
+	if err := run(t.Context(), []string{"check"}, &stdout, &stderr, r.factory); err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 0 {
+	if events := r.events(); len(events) != 0 {
 		t.Fatalf("check opened telemetry = %+v", events)
 	}
 	want, err := clioutput.Render(clioutput.Frame{

@@ -1,9 +1,9 @@
 -- +goose Up
 CREATE TABLE baseline_identity (
     id INTEGER PRIMARY KEY CHECK (id = 1),
-    identity TEXT NOT NULL CHECK (identity = 'tnl-client-fresh-v1-integration-scope')
+    identity TEXT NOT NULL CHECK (identity = 'tnl-client-fresh-v1-telemetry')
 ) STRICT;
-INSERT INTO baseline_identity (id, identity) VALUES (1, 'tnl-client-fresh-v1-integration-scope');
+INSERT INTO baseline_identity (id, identity) VALUES (1, 'tnl-client-fresh-v1-telemetry');
 
 -- provisioning journals are append-only and protected by the client wrapping
 -- key. no expiration may discard a key after a remote enrollment committed.
@@ -84,7 +84,8 @@ CREATE TABLE installation_settings (
         installation_id IS NULL OR (length(installation_id) = 27 AND substr(installation_id, 1, 5) = 'inst_')
     ),
     worktree_hash_salt BLOB CHECK (worktree_hash_salt IS NULL OR length(worktree_hash_salt) = 32),
-    telemetry_enabled INTEGER NOT NULL DEFAULT 1 CHECK (telemetry_enabled IN (0, 1))
+    telemetry_enabled INTEGER NOT NULL DEFAULT 1 CHECK (telemetry_enabled IN (0, 1)),
+    telemetry_epoch INTEGER NOT NULL DEFAULT 0 CHECK (telemetry_epoch >= 0)
 ) STRICT;
 
 INSERT INTO installation_settings (id) VALUES (1);
@@ -200,7 +201,8 @@ CREATE TABLE project_previews (
 CREATE TABLE telemetry_outbox (
     event_id TEXT PRIMARY KEY CHECK (length(event_id) = 26 AND substr(event_id, 1, 4) = 'tev_'),
     created_at INTEGER NOT NULL,
-    event_json TEXT NOT NULL CHECK (json_valid(event_json))
+    event_json TEXT NOT NULL CHECK (json_valid(event_json)),
+    telemetry_epoch INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 CREATE INDEX telemetry_outbox_oldest_idx ON telemetry_outbox (created_at, event_id);
 

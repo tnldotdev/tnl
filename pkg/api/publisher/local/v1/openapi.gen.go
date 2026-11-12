@@ -314,6 +314,7 @@ type Invocation struct {
 	RequirePostQuantum      *bool                                    `json:"require_post_quantum,omitempty"`
 	ServerUrl               *string                                  `json:"server_url,omitempty"`
 	Target                  string                                   `json:"target"`
+	TelemetryDisabled       bool                                     `json:"telemetry_disabled,omitempty"`
 	Version                 InvocationVersion                        `json:"version"`
 }
 
@@ -330,6 +331,7 @@ type Lease struct {
 	Owner               string `json:"owner"`
 	Pid                 int    `json:"pid"`
 	Service             string `json:"service"`
+	TelemetryDisabled   bool   `json:"telemetry_disabled,omitempty"`
 }
 
 // Observation defines model for Observation.
@@ -345,12 +347,13 @@ type Observation struct {
 
 // Prepare defines model for Prepare.
 type Prepare struct {
-	Directory string           `json:"directory"`
-	Framework PrepareFramework `json:"framework"`
-	Owner     string           `json:"owner"`
-	PID       int              `json:"pid"`
-	Service   string           `json:"service,omitempty"`
-	Version   PrepareVersion   `json:"version"`
+	Directory         string           `json:"directory"`
+	Framework         PrepareFramework `json:"framework"`
+	Owner             string           `json:"owner"`
+	PID               int              `json:"pid"`
+	Service           string           `json:"service,omitempty"`
+	TelemetryDisabled bool             `json:"telemetry_disabled,omitempty"`
+	Version           PrepareVersion   `json:"version"`
 }
 
 // PrepareFramework defines model for Prepare.Framework.

@@ -11,7 +11,7 @@ import (
 
 type enrolledPublishSelection struct{ EnrollmentKey, PublisherIdentityID, PublisherCredentialFile string }
 
-func runEnrolledPublish(ctx context.Context, flags publishCommand, selection enrolledPublishSelection, output *publishOutput, telemetry telemetryReporter, input io.Reader) error {
+func runEnrolledPublish(ctx context.Context, flags publishCommand, selection enrolledPublishSelection, output *publishOutput, input io.Reader) error {
 	options := invocation.EnrolledOptions{PublicOptions: publicOptions(flags), Protocol: flags.Protocol, TargetTLS: flags.TargetTLS, Enrolled: flags.Enrolled, WorkLimits: flags.workLimits, ReadinessPath: flags.publicationReadinessPath(), ServicePresentation: privatePresentation(ctx, flags, output.stdout, output.stderr)}
 	options.Authenticate = publisherAuthentication(output.stderr)
 	options.SelectProtocol = func(protocol controlv1.PublicURLServiceProtocol) (publisher.ApplicationLimits, error) {
@@ -36,7 +36,7 @@ func runEnrolledPublish(ctx context.Context, flags publishCommand, selection enr
 		}
 		return flags.limits(), nil
 	}
-	presentation := publicationPresentation(ctx, flags, output, telemetry)
+	presentation := publicationPresentation(ctx, flags, output)
 	presentation.Delegated = func() { output.delegatedLifecycle = true }
 	return invocation.PublishEnrolled(ctx, options, invocation.EnrolledSelection{EnrollmentKey: selection.EnrollmentKey, PublisherIdentityID: selection.PublisherIdentityID, PublisherCredentialFile: selection.PublisherCredentialFile}, presentation, input)
 }

@@ -12,6 +12,7 @@ import (
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	"github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -21,6 +22,7 @@ import (
 // Operations composes connector operations with the client's sign-in UI.
 // the opener resolves a human client context; connector owns its lifetime.
 type Operations struct {
+	Telemetry   *clienttelemetry.Collector
 	OpenSession SessionOpener
 }
 

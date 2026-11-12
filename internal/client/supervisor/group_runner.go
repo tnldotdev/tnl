@@ -8,6 +8,7 @@ import (
 	"time"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/policy/publisherprovenance"
@@ -21,6 +22,7 @@ import (
 // jobs. dependencies are explicit; nil discovery providers are rejected
 // rather than selecting process credentials. providers must honor cancellation.
 type GroupRunner struct {
+	Telemetry  *clienttelemetry.Collector
 	scope      *groupRunnerScope
 	Discovery  publisherdiscovery.Provider
 	Deployment *controlv1.PublisherDeploymentReport
@@ -101,7 +103,7 @@ func (r GroupRunner) Serve(ctx context.Context, job Job, profile *clientstate.St
 	}
 	// Runtime.Serve joins assignments before shared discovery is canceled/joined.
 	defer resolver.Close()
-	publications := GroupPublisher{Member: member, Private: private, State: profile, Control: control.NativeControl, Authority: authority, Discovery: resolver}
+	publications := GroupPublisher{Telemetry: r.Telemetry, Member: member, Private: private, State: profile, Control: control.NativeControl, Authority: authority, Discovery: resolver}
 	return WithCertificateState(setupCtx, job, profile, private, client, func(_ context.Context) error {
 		finishStartup(nil)
 		ctx = observability.Independent(setup)

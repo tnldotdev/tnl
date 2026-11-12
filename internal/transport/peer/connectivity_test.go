@@ -51,6 +51,8 @@ type connectivityFixture struct {
 	owners      [2]*Connectivity
 	gates       [2]*connectivityGate
 	checks      [2]atomic.Int32
+	attempts    [2]chan ConnectivityAttempt
+	fallbacks   [2]chan struct{}
 	done        [2]chan error
 	binding     ConnectivityBinding
 }
@@ -135,11 +137,13 @@ func newConnectivityFixture(t *testing.T) *connectivityFixture {
 		t.Fatal(err)
 	}
 	for side := range 2 {
+		f.attempts[side] = make(chan ConnectivityAttempt, 32)
+		f.fallbacks[side] = make(chan struct{}, 32)
 		f.owners[side] = NewConnectivity(sockets[side], f.connections[side], f.endpoints[side], side == 0, ConnectivityOptions{IncludeLoopback: true, Observe: func(state ConnectivityState) {
 			if state == ConnectivityChecking {
 				f.checks[side].Add(1)
 			}
-		}}, nil)
+		}, ObserveAttempt: func(attempt ConnectivityAttempt) { f.attempts[side] <- attempt }, ObserveFallback: func() { f.fallbacks[side] <- struct{}{} }}, nil)
 	}
 	return f
 }
@@ -205,6 +209,16 @@ func TestConnectorConnectivityDirectFallbackAndRebindingRetainInnerStream(t *tes
 	exchange() // application bytes flow before either ICE agent exists.
 	f.start(t)
 	awaitPath(t, f.ctx, f.endpoints[0], f.endpoints[1], Direct)
+	for side := range 2 {
+		select {
+		case attempt := <-f.attempts[side]:
+			if attempt.Outcome != "succeeded" || attempt.Duration <= 0 {
+				t.Fatalf("direct attempt: %+v", attempt)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("direct attempt was not observed")
+		}
+	}
 	exchange()
 	if f.gates[0].directSent.Load() == 0 || f.gates[1].directSent.Load() == 0 {
 		t.Fatal("direct selection carried no UDP frames")
@@ -213,6 +227,13 @@ func TestConnectorConnectivityDirectFallbackAndRebindingRetainInnerStream(t *tes
 		gate.dropDirect.Store(true) // consent still passes; packet probes must fence it.
 	}
 	awaitPath(t, f.ctx, f.endpoints[0], f.endpoints[1], RelayA)
+	for side := range 2 {
+		select {
+		case <-f.fallbacks[side]:
+		case <-time.After(3 * time.Second):
+			t.Fatal("direct fallback was not observed")
+		}
+	}
 	exchange()
 	for _, gate := range f.gates {
 		gate.dropDirect.Store(false)

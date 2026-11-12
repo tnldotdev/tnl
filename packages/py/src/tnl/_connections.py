@@ -301,7 +301,7 @@ def _command(binary: Path, *arguments: str, input_value: object = None) -> objec
         if len(encoded) > _MAX_BYTES:
             raise _error("invalid")
         with subprocess.Popen(
-            [str(binary), "--no-telemetry", "runtime", "connections", *arguments],
+            [str(binary), "runtime", "connections", *arguments],
             stdin=subprocess.PIPE if input_value is not None else subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

@@ -20,6 +20,28 @@ import { withProcessEnvironment } from "../helpers/environment.js";
 
 afterEach(() => vi.useRealTimers());
 
+test("publication telemetry opt-out stays on its own preparation", async () => {
+  vi.stubEnv("TNL_NO_TELEMETRY", "0");
+  const requests: unknown[] = [];
+  const dependencies = {
+    start: async () => testEndpoint,
+    request: async (_endpoint: RuntimeEndpoint, operation: string, body?: unknown) => {
+      if (operation === "prepare") {
+        requests.push(body);
+        return assignment();
+      }
+      return undefined;
+    },
+  };
+  const disabled = await createPreparedService({ telemetry: false }, "node", dependencies);
+  const enabled = await createPreparedService({ telemetry: true }, "node", dependencies);
+  onTestFinished(() => disabled.close());
+  onTestFinished(() => enabled.close());
+  expect(requests).toHaveLength(2);
+  expect(requests[0]).toMatchObject({ telemetry_disabled: true });
+  expect(requests[1]).toMatchObject({ telemetry_disabled: false });
+});
+
 test("independent SDK copies share preparation and framework callbacks through close and reprepare", async () => {
   const first = await import("../../dist/internal/publisher/app.js");
   vi.resetModules();

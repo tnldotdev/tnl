@@ -8,6 +8,7 @@ import (
 	"time"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 )
 
 func TestStandaloneGroupsIsolateBlockedStoppedAndHealthyWorkers(t *testing.T) {
@@ -34,7 +35,7 @@ func TestStandaloneGroupsIsolateBlockedStoppedAndHealthyWorkers(t *testing.T) {
 		t.Fatal("same publisher accepted under another instance", err)
 	}
 	var healthyStarts, healthyJoins atomic.Int32
-	engine := Engine{Registry: r, PollInterval: time.Millisecond, RetryMin: time.Millisecond, RetryMax: 2 * time.Millisecond, Group: func(ctx context.Context, job Job, observe func(int64, bool) error) error {
+	engine := Engine{Registry: r, PollInterval: time.Millisecond, RetryMin: time.Millisecond, RetryMax: 2 * time.Millisecond, Group: func(ctx context.Context, job Job, _ *clienttelemetry.Collector, observe func(int64, bool) error) error {
 		if job.ID == a.ID {
 			return clientcontrol.ErrUnauthenticated
 		}

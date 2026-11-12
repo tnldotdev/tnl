@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   ContractGraph,
-  bundledContracts,
+  contracts,
   operationInventory,
   record,
   repositoryGraph,
@@ -222,25 +222,21 @@ describe("repository contracts", () => {
     const args = [join(root, "scripts/generate/api-contracts.ts"), "--bundle-dir", directory];
     execFileSync(process.execPath, args, { cwd: root, stdio: "pipe" });
     const first = await Promise.all(
-      Object.keys(bundledContracts).map((name) =>
-        readFile(join(directory, `${name}.yaml`), "utf8"),
-      ),
+      Object.keys(contracts).map((name) => readFile(join(directory, `${name}.yaml`), "utf8")),
     );
     execFileSync(process.execPath, args, { cwd: root, stdio: "pipe" });
     expect(
       await Promise.all(
-        Object.keys(bundledContracts).map((name) =>
-          readFile(join(directory, `${name}.yaml`), "utf8"),
-        ),
+        Object.keys(contracts).map((name) => readFile(join(directory, `${name}.yaml`), "utf8")),
       ),
     ).toEqual(first);
     const exported = await new ContractGraph(
       Object.fromEntries(
-        Object.keys(bundledContracts).map((name) => [name, join(directory, `${name}.yaml`)]),
+        Object.keys(contracts).map((name) => [name, join(directory, `${name}.yaml`)]),
       ),
     ).load();
     const source = await repositoryGraph();
-    for (const name of Object.keys(bundledContracts))
+    for (const name of Object.keys(contracts))
       expect(exported.bundle(name), name).toEqual(source.bundle(name));
   });
 });

@@ -88,12 +88,23 @@ type _RegistrationPhase = _Preparing | _Prepared | _Closed
 
 class PreparedService:
     def __init__(
-        self, directory: str, service: str | None, state_dir: str | None, native: NativeRuntime
+        self,
+        directory: str,
+        service: str | None,
+        state_dir: str | None,
+        native: NativeRuntime,
+        telemetry: bool = True,
     ) -> None:
         self._directory = directory
         self._service = service
         self._state_dir = state_dir
         self._native = native
+        if type(telemetry) is not bool:
+            raise TnlError("sdk.configuration_invalid", "telemetry must be a boolean")
+        self._telemetry_disabled = not telemetry or os.getenv("TNL_NO_TELEMETRY", "").lower() in {
+            "1",
+            "true",
+        }
         self._owner = secrets.token_hex(16)
         self._phase: _RegistrationPhase = _Preparing()
         self._target: str | None = None
@@ -113,6 +124,7 @@ class PreparedService:
             "framework": "python",
             "owner": self._owner,
             "pid": os.getpid(),
+            "telemetry_disabled": self._telemetry_disabled,
         }
         if self._service is not None:
             payload["service"] = self._service
@@ -265,12 +277,13 @@ async def prepare(
     directory: str | Path | None = None,
     service: str | None = None,
     state_dir: str | Path | None = None,
+    telemetry: bool = True,
 ) -> PreparedService:
     if service is not None:
         service_name(service)
     root = str(Path(directory or os.getcwd()).resolve())
     result = PreparedService(
-        root, service, None if state_dir is None else str(state_dir), NativeRuntime()
+        root, service, None if state_dir is None else str(state_dir), NativeRuntime(), telemetry
     )
     await result.start()
     return result
@@ -286,11 +299,13 @@ class Server(uvicorn.Server):
         directory: str | Path | None = None,
         service: str | None = None,
         state_dir: str | Path | None = None,
+        telemetry: bool = True,
     ) -> None:
         super().__init__(config)
         self._directory = directory
         self._service = service
         self._state_dir = state_dir
+        self._telemetry = telemetry
         self._publication: PreparedService | None = None
 
     async def startup(self, sockets: list[socket.socket] | None = None) -> None:
@@ -307,7 +322,10 @@ class Server(uvicorn.Server):
             authority = f"[{host}]" if ":" in host else host
             protocol = "https" if self.config.is_ssl else "http"
             self._publication = await prepare(
-                directory=self._directory, service=self._service, state_dir=self._state_dir
+                directory=self._directory,
+                service=self._service,
+                state_dir=self._state_dir,
+                telemetry=self._telemetry,
             )
             await self._publication.register(f"{protocol}://{authority}:{port}")
         except BaseException:
@@ -332,6 +350,7 @@ def run(
     directory: str | Path | None = None,
     service: str | None = None,
     state_dir: str | Path | None = None,
+    telemetry: bool = True,
     reload_dirs: list[str] | None = None,
 ) -> None:
     """run a configured service; reload uses a separate Uvicorn supervisor."""
@@ -346,7 +365,9 @@ def run(
         lifespan="on",
         ws="websockets-sansio",
     )
-    server = Server(config, directory=directory, service=service, state_dir=state_dir)
+    server = Server(
+        config, directory=directory, service=service, state_dir=state_dir, telemetry=telemetry
+    )
     if config.should_reload:
         listener = config.bind_socket()
         try:

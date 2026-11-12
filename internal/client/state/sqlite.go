@@ -14,7 +14,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const clientBaselineIdentity = "tnl-client-fresh-v1-integration-scope"
+const clientBaselineIdentity = "tnl-client-fresh-v1-telemetry"
 
 // openReadOnlySQLite reads existing client state without creating or migrating it.
 func openReadOnlySQLite(ctx context.Context, path string) (*sql.DB, error) {
@@ -39,7 +39,7 @@ func openReadOnlySQLite(ctx context.Context, path string) (*sql.DB, error) {
 
 // openClientSQLite configures every connection, including replacements after
 // cancellation. only a fresh database applies the single baseline.
-func openClientSQLite(ctx context.Context, path string, fresh bool) (_ *sql.DB, retErr error) {
+func openClientSQLite(ctx context.Context, path string, fresh, noWait bool) (_ *sql.DB, retErr error) {
 	// the caller has validated the owner-only root and its trusted ancestors.
 	// inspect metadata without opening these files: closing any extra descriptor
 	// for the database or -shm inode drops this process's posix locks, including
@@ -62,6 +62,9 @@ func openClientSQLite(ctx context.Context, path string, fresh bool) (_ *sql.DB, 
 	query.Set("mode", "rw")
 	query.Set("_txlock", "immediate")
 	query.Add("_pragma", "busy_timeout(5000)")
+	if noWait {
+		query.Set("_pragma", "busy_timeout(0)")
+	}
 	query.Add("_pragma", "foreign_keys(1)")
 	query.Add("_pragma", "journal_mode(WAL)")
 	u.RawQuery = query.Encode()
@@ -137,7 +140,7 @@ func validateClientBaseline(ctx context.Context, db *sql.DB) error {
 // baseline and wrapping-key check are durable. interruption leaves no partial
 // canonical database for a later process to mistake for initialized state.
 // the caller holds the initialization lock from key creation through this call.
-func initializeClientSQLite(ctx context.Context, path string, mode ProtectionMode, protector secretProtector) (*sql.DB, error) {
+func initializeClientSQLite(ctx context.Context, path string, mode ProtectionMode, protector secretProtector, noWait bool) (*sql.DB, error) {
 	file, err := os.CreateTemp(filepath.Dir(path), ".v1-initializing-*.db")
 	if err != nil {
 		return nil, err
@@ -149,7 +152,7 @@ func initializeClientSQLite(ctx context.Context, path string, mode ProtectionMod
 	if err := file.Close(); err != nil {
 		return nil, err
 	}
-	db, err := openClientSQLite(ctx, staging, true)
+	db, err := openClientSQLite(ctx, staging, true, noWait)
 	if err != nil {
 		return nil, err
 	}
@@ -184,5 +187,5 @@ func initializeClientSQLite(ctx context.Context, path string, mode ProtectionMod
 	if err != nil {
 		return nil, err
 	}
-	return openClientSQLite(ctx, path, false)
+	return openClientSQLite(ctx, path, false, noWait)
 }

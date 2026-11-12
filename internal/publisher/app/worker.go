@@ -13,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
+	telemetryv1 "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 )
 
 type Configuration struct {
@@ -66,6 +67,12 @@ func (w *Workers) Run(ctx context.Context, service Service, observe func(uint64,
 		return w.runPrivate(ctx, service, configuration, observe)
 	}
 	cfg := configuration.Publisher
+	if service.Framework != "" {
+		cfg.TelemetryFramework = telemetryv1.PublicationReadyFramework(service.Framework)
+		if !cfg.TelemetryFramework.Valid() {
+			cfg.TelemetryFramework = telemetryv1.PublicationReadyFrameworkOther
+		}
+	}
 	var captured target.TargetSnapshot
 	if configuration.TargetBinding != nil {
 		previous := configuration.TargetBinding.Changed

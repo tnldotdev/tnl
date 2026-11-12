@@ -12,6 +12,7 @@ import (
 
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/client/supervisor"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/config"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -20,6 +21,7 @@ import (
 )
 
 type StartOptions struct {
+	TelemetryDisabled bool
 	SessionOptions
 	Team                                                           string
 	Name, Listen, Protocol                                         string
@@ -143,7 +145,7 @@ func (o Operations) Start(ctx context.Context, flags StartOptions, input *os.Fil
 	}
 	if flags.Stdio {
 		finishStartup(nil)
-		return runConnectStdio(observability.Independent(ctx), session, service, input, output)
+		return runConnectStdio(observability.Independent(ctx), session, service, input, output, o.Telemetry)
 	}
 	flags.Protocol = string(service.Protocol)
 	if flags.Listen == "" && service.Endpoint != nil {
@@ -199,6 +201,7 @@ func (o Operations) Start(ctx context.Context, flags StartOptions, input *os.Fil
 		Server: session.authenticated.ServerEndpoint, ServiceID: service.Id, IdentityID: identity, StateDir: session.database.Root(),
 		Protocol: config.ProtocolName(flags.Protocol), Target: listenAddress, TrustRevision: service.TrustRevision}
 	job.Endpoint = service.Endpoint
+	job.TelemetryDisabled = flags.TelemetryDisabled
 	writeReady := func(job supervisor.Job, destination io.Writer) error {
 		profile, err := serviceConnectionProfile(controlv1.Service{Id: job.ServiceID, Protocol: controlv1.ServiceProtocol(job.Protocol), Enabled: true, Endpoint: job.Endpoint}, job.Target)
 		if err != nil {
@@ -231,7 +234,7 @@ func (o Operations) Start(ctx context.Context, flags StartOptions, input *os.Fil
 			return session.store.ListenServiceAt(ctx, job.IdentityID, job.ServiceID, job.Target)
 		},
 		serve: func(ctx context.Context, listener net.Listener, job supervisor.Job, ready func() error) error {
-			return serveConnector(ctx, session, listener, job, ready)
+			return serveConnector(ctx, session, listener, job, ready, o.Telemetry)
 		},
 		ready: func(job supervisor.Job) error {
 			finishStartup(nil)
@@ -316,12 +319,13 @@ func runConnectorLifecycle(ctx context.Context, listener net.Listener, job super
 	}
 }
 
-func serveConnector(ctx context.Context, session *Session, listener net.Listener, job supervisor.Job, ready func() error) error {
+func serveConnector(ctx context.Context, session *Session, listener net.Listener, job supervisor.Job, ready func() error, telemetry *clienttelemetry.Collector) error {
 	configuration, err := connectConfiguration(ctx, session, job)
 	if err != nil {
 		return err
 	}
 	configuration.Ready = ready
+	configuration.Telemetry = telemetry
 	return connectorstream.Serve(ctx, listener, configuration)
 }
 
@@ -390,5 +394,5 @@ func (o Operations) RunInstalled(ctx context.Context, job supervisor.Job, ready 
 		return err
 	}
 	defer listener.Close()
-	return serveConnector(ctx, session, listener, job, ready)
+	return serveConnector(ctx, session, listener, job, ready, o.Telemetry)
 }

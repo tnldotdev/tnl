@@ -107,6 +107,7 @@ func (a *ProjectRuntime) PublicConfiguration(ctx context.Context, service app.Se
 		return app.Configuration{}, err
 	}
 	cfg.Control, cfg.PublisherIdentityID = native, native.PublisherIdentityID()
+	cfg.Telemetry = a.Telemetry
 	configureNativePublication(&cfg, native, native)
 	if a.AttachPublication != nil {
 		if err := a.AttachPublication(ctx, service, &cfg); err != nil {

@@ -12,7 +12,7 @@ it("bundles the hosted telemetry receiver with its bounded, closed event schemas
   ]);
   const ajv = new Ajv2020({ strictTypes: false });
   // these are annotations, not validation rules. unknown validation keywords still fail.
-  for (const keyword of ["components", "discriminator", "x-enum-varnames", "x-tnl-upper-bounds-ms"])
+  for (const keyword of ["components", "discriminator", "x-go-type-skip-optional-pointer"])
     ajv.addKeyword(keyword);
   ajv.addFormat("int64", { type: "number", validate: Number.isSafeInteger });
   const validate = ajv.compile({
@@ -24,17 +24,31 @@ it("bundles the hosted telemetry receiver with its bounded, closed event schemas
   );
   expect(validate(batch), JSON.stringify(validate.errors)).toBe(true);
   const events = z.array(z.record(z.string(), z.unknown())).parse(batch.events);
-  expect(events).toHaveLength(3);
+  expect(events).toHaveLength(5);
+  const event = record(events[0]?.event);
   for (const change of [
     { raw_url: "https://private.invalid" },
     { schema_version: 2 },
     { installation_id: "not-an-installation-id" },
     { events: [] },
     { events: Array.from({ length: 26 }, () => events[0]) },
-    { events: [{ ...events[0], name: "unknown.event" }] },
+    { client: record(events[0]?.client) },
+    { events: [event] },
+    { events: [{ ...events[0], event: { ...event, name: "unknown.event" } }] },
+    { events: [{ ...events[0], event: { ...event, name: "publisher.report" } }] },
     { events: [{ ...events[0], raw_url: "https://private.invalid" }] },
     {
-      events: [{ ...events[0], payload: { ...record(events[0]?.payload), raw_command: "secret" } }],
+      events: [
+        {
+          ...events[0],
+          event: { ...event, payload: { ...record(event.payload), raw_command: "secret" } },
+        },
+      ],
+    },
+    {
+      events: [
+        { ...events[0], client: { ...record(events[0]?.client), hostname: "private.invalid" } },
+      ],
     },
   ])
     expect(validate({ ...batch, ...change }), JSON.stringify(change)).toBe(false);
