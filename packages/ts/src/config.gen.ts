@@ -35,993 +35,21 @@ export interface TnlConfig {
   oauth?: boolean;
   inspection?: Inspection;
   /**
-   * Named application services. A local public_url block enables a public URL; named-group reachability belongs to its publisher group.
+   * Common logical service names and protocols. Destinations, target trust, and workload permissions belong to environments.
    */
   services?: {
     [k: string]:
       | {
-          /**
-           * Saved name; defaults to the configuration key.
-           */
-          name?: string;
-          access?: {
-            team: true;
-          };
-          inspection?: Inspection1;
-          protocol?: "http";
-          target?:
-            | {
-                type: "app";
-                /**
-                 * Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS.
-                 */
-                tls?: {
-                  /**
-                   * Project-relative CA-only PEM file added to system roots; omit for system roots only.
-                   */
-                  caFile?: string;
-                  /**
-                   * Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known.
-                   */
-                  serverName?: string;
-                };
-                address?: never;
-                project?: never;
-                file?: never;
-                service?: never;
-                port?: never;
-                container?: never;
-                region?: never;
-                cluster?: never;
-                instance?: never;
-                endpoint?: never;
-              }
-            | {
-                type: "address";
-                address: string | number;
-                /**
-                 * Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS.
-                 */
-                tls?: {
-                  /**
-                   * Project-relative CA-only PEM file added to system roots; omit for system roots only.
-                   */
-                  caFile?: string;
-                  /**
-                   * Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known.
-                   */
-                  serverName?: string;
-                };
-                project?: never;
-                file?: never;
-                service?: never;
-                port?: never;
-                container?: never;
-                region?: never;
-                cluster?: never;
-                instance?: never;
-                endpoint?: never;
-              }
-            | {
-                type: "compose";
-                project?: string;
-                file?: string;
-                service: string;
-                port: number;
-                /**
-                 * Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS.
-                 */
-                tls?: {
-                  /**
-                   * Project-relative CA-only PEM file added to system roots; omit for system roots only.
-                   */
-                  caFile?: string;
-                  /**
-                   * Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known.
-                   */
-                  serverName?: string;
-                };
-                address?: never;
-                container?: never;
-                region?: never;
-                cluster?: never;
-                instance?: never;
-                endpoint?: never;
-              }
-            | {
-                type: "docker";
-                container: string;
-                port: number;
-                /**
-                 * Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS.
-                 */
-                tls?: {
-                  /**
-                   * Project-relative CA-only PEM file added to system roots; omit for system roots only.
-                   */
-                  caFile?: string;
-                  /**
-                   * Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known.
-                   */
-                  serverName?: string;
-                };
-                address?: never;
-                project?: never;
-                file?: never;
-                service?: never;
-                region?: never;
-                cluster?: never;
-                instance?: never;
-                endpoint?: never;
-              };
-          tls?: never;
-          http?: {
-            access?:
-              | "restricted"
-              | {
-                  mode?: "restricted";
-                  /**
-                   * @minItems 1
-                   * @maxItems 256
-                   */
-                  ip?: [string, ...string[]];
-                };
-            limits?: {
-              total?: number;
-              concurrency?: number;
-              rate?: {
-                count?: number;
-                per?: TnlRatePeriod;
-                burst?: number;
-              };
-            };
-            /**
-             * Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings.
-             */
-            readiness?: {
-              path: string;
-            };
-            open?: boolean;
-            /**
-             * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
-             */
-            paths?: {
-              [k: string]:
-                | string
-                | {
-                    service: string;
-                    stripPrefix?: boolean;
-                  }
-                | undefined;
-            };
-          };
-          /**
-           * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
-           */
-          publicURL: {
-            name?: never;
-            /**
-             * Ready team domain used for generated public URL hostnames.
-             */
-            domain?: string;
-            /**
-             * Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL.
-             */
-            hostname?: string;
-            access?:
-              | ("restricted" | "anonymous")
-              | {
-                  mode?: "restricted" | "anonymous";
-                  /**
-                   * @minItems 1
-                   * @maxItems 256
-                   */
-                  ip?: [string, ...string[]];
-                };
-            /**
-             * Remove the public URL when this tunnel stops.
-             */
-            ephemeral?: boolean;
-            limits?: {
-              http?: {
-                total?: number;
-                concurrency?: number;
-                rate?: {
-                  count?: number;
-                  per?: TnlRatePeriod;
-                  burst?: number;
-                };
-              };
-              tcp?: never;
-              traffic?: {
-                connections?: number;
-                rate?: number;
-                burst?: number;
-                downloadBytes?: number;
-                ratePer?: TnlRatePeriod;
-                totalConnections?: number;
-                totalDownloadBytes?: number;
-                totalUploadBytes?: number;
-                uploadBytes?: number;
-              };
-            };
-            publisherPool?: never;
-            /**
-             * Require hybrid post-quantum key agreement for public HTTPS visitors.
-             */
-            requirePostQuantum?: boolean;
-          };
-          /**
-           * Assigned publisher group; defaults to the built-in local publisher.
-           */
-          publisherGroup?: string;
-          publisherPool?: never;
-          /**
-           * Use the template's declared target. Concrete groups cannot override it.
-           */
-          targetBinding?: "fixed";
-        }
-      | {
-          /**
-           * Saved name; defaults to the configuration key.
-           */
-          name?: string;
-          access?: {
-            team: true;
-          };
-          inspection?: Inspection1;
-          protocol?: "http";
-          target?:
-            | {
-                type: "app";
-                /**
-                 * Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS.
-                 */
-                tls?: {
-                  /**
-                   * Project-relative CA-only PEM file added to system roots; omit for system roots only.
-                   */
-                  caFile?: string;
-                  /**
-                   * Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known.
-                   */
-                  serverName?: string;
-                };
-                address?: never;
-                project?: never;
-                file?: never;
-                service?: never;
-                port?: never;
-                container?: never;
-                region?: never;
-                cluster?: never;
-                instance?: never;
-                endpoint?: never;
-              }
-            | {
-                type: "address";
-                address: string | number;
-                /**
-                 * Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS.
-                 */
-                tls?: {
-                  /**
-                   * Project-relative CA-only PEM file added to system roots; omit for system roots only.
-                   */
-                  caFile?: string;
-                  /**
-                   * Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known.
-                   */
-                  serverName?: string;
-                };
-                project?: never;
-                file?: never;
-                service?: never;
-                port?: never;
-                container?: never;
-                region?: never;
-                cluster?: never;
-                instance?: never;
-                endpoint?: never;
-              }
-            | {
-                type: "compose";
-                project?: string;
-                file?: string;
-                service: string;
-                port: number;
-                /**
-                 * Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS.
-                 */
-                tls?: {
-                  /**
-                   * Project-relative CA-only PEM file added to system roots; omit for system roots only.
-                   */
-                  caFile?: string;
-                  /**
-                   * Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known.
-                   */
-                  serverName?: string;
-                };
-                address?: never;
-                container?: never;
-                region?: never;
-                cluster?: never;
-                instance?: never;
-                endpoint?: never;
-              }
-            | {
-                type: "docker";
-                container: string;
-                port: number;
-                /**
-                 * Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS.
-                 */
-                tls?: {
-                  /**
-                   * Project-relative CA-only PEM file added to system roots; omit for system roots only.
-                   */
-                  caFile?: string;
-                  /**
-                   * Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known.
-                   */
-                  serverName?: string;
-                };
-                address?: never;
-                project?: never;
-                file?: never;
-                service?: never;
-                region?: never;
-                cluster?: never;
-                instance?: never;
-                endpoint?: never;
-              };
-          tls?: never;
-          http?: {
-            access?:
-              | "restricted"
-              | {
-                  mode?: "restricted";
-                  /**
-                   * @minItems 1
-                   * @maxItems 256
-                   */
-                  ip?: [string, ...string[]];
-                };
-            limits?: {
-              total?: number;
-              concurrency?: number;
-              rate?: {
-                count?: number;
-                per?: TnlRatePeriod;
-                burst?: number;
-              };
-            };
-            /**
-             * Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings.
-             */
-            readiness?: {
-              path: string;
-            };
-            open?: boolean;
-            paths?: never;
-          };
-          publicURL?: never;
-          /**
-           * Assigned publisher group; defaults to the built-in local publisher.
-           */
-          publisherGroup?: string;
-          publisherPool?: never;
-          /**
-           * Use the template's declared target. Concrete groups cannot override it.
-           */
-          targetBinding?: "fixed";
-        }
-      | {
-          /**
-           * Saved name; defaults to the configuration key.
-           */
-          name?: string;
-          access?: {
-            team: true;
-          };
-          inspection?: Inspection1;
-          protocol: "tcp";
-          target:
-            | {
-                type: "address";
-                address: string | number;
-                /**
-                 * Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS.
-                 */
-                tls?: {
-                  /**
-                   * Project-relative CA-only PEM file added to system roots; omit for system roots only.
-                   */
-                  caFile?: string;
-                  /**
-                   * Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known.
-                   */
-                  serverName?: string;
-                };
-                project?: never;
-                file?: never;
-                service?: never;
-                port?: never;
-                container?: never;
-                region?: never;
-                cluster?: never;
-                instance?: never;
-                endpoint?: never;
-              }
-            | {
-                type: "compose";
-                project?: string;
-                file?: string;
-                service: string;
-                port: number;
-                /**
-                 * Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS.
-                 */
-                tls?: {
-                  /**
-                   * Project-relative CA-only PEM file added to system roots; omit for system roots only.
-                   */
-                  caFile?: string;
-                  /**
-                   * Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known.
-                   */
-                  serverName?: string;
-                };
-                address?: never;
-                container?: never;
-                region?: never;
-                cluster?: never;
-                instance?: never;
-                endpoint?: never;
-              }
-            | {
-                type: "docker";
-                container: string;
-                port: number;
-                /**
-                 * Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS.
-                 */
-                tls?: {
-                  /**
-                   * Project-relative CA-only PEM file added to system roots; omit for system roots only.
-                   */
-                  caFile?: string;
-                  /**
-                   * Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known.
-                   */
-                  serverName?: string;
-                };
-                address?: never;
-                project?: never;
-                file?: never;
-                service?: never;
-                region?: never;
-                cluster?: never;
-                instance?: never;
-                endpoint?: never;
-              };
-          tls?: never;
-          http?: never;
-          publicURL?: never;
-          /**
-           * Assigned publisher group; defaults to the built-in local publisher.
-           */
-          publisherGroup?: string;
-          publisherPool?: never;
-          /**
-           * Use the template's declared target. Concrete groups cannot override it.
-           */
-          targetBinding?: "fixed";
-        }
-      | {
-          /**
-           * Saved name; defaults to the configuration key.
-           */
-          name?: string;
-          access?: {
-            team: true;
-          };
-          inspection?: Inspection1;
-          protocol: "mysql";
-          target:
-            | {
-                type: "address";
-                address: string | number;
-                /**
-                 * Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS.
-                 */
-                tls?: {
-                  /**
-                   * Project-relative CA-only PEM file added to system roots; omit for system roots only.
-                   */
-                  caFile?: string;
-                  /**
-                   * Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known.
-                   */
-                  serverName?: string;
-                };
-                project?: never;
-                file?: never;
-                service?: never;
-                port?: never;
-                container?: never;
-                region?: never;
-                cluster?: never;
-                instance?: never;
-                endpoint?: never;
-              }
-            | {
-                type: "compose";
-                project?: string;
-                file?: string;
-                service: string;
-                port: number;
-                /**
-                 * Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS.
-                 */
-                tls?: {
-                  /**
-                   * Project-relative CA-only PEM file added to system roots; omit for system roots only.
-                   */
-                  caFile?: string;
-                  /**
-                   * Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known.
-                   */
-                  serverName?: string;
-                };
-                address?: never;
-                container?: never;
-                region?: never;
-                cluster?: never;
-                instance?: never;
-                endpoint?: never;
-              }
-            | {
-                type: "docker";
-                container: string;
-                port: number;
-                /**
-                 * Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS.
-                 */
-                tls?: {
-                  /**
-                   * Project-relative CA-only PEM file added to system roots; omit for system roots only.
-                   */
-                  caFile?: string;
-                  /**
-                   * Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known.
-                   */
-                  serverName?: string;
-                };
-                address?: never;
-                project?: never;
-                file?: never;
-                service?: never;
-                region?: never;
-                cluster?: never;
-                instance?: never;
-                endpoint?: never;
-              }
-            | {
-                type: "rds";
-                region: string;
-                cluster?: never;
-                instance: string;
-                endpoint?: "writer";
-                tls?: never;
-                address?: never;
-                project?: never;
-                file?: never;
-                service?: never;
-                port?: never;
-                container?: never;
-              }
-            | {
-                type: "rds";
-                region: string;
-                cluster: string;
-                instance?: never;
-                endpoint?: "writer" | "reader";
-                tls?: never;
-                address?: never;
-                project?: never;
-                file?: never;
-                service?: never;
-                port?: never;
-                container?: never;
-              };
-          tls?: never;
-          http?: never;
-          publicURL?: never;
-          /**
-           * Assigned publisher group; defaults to the built-in local publisher.
-           */
-          publisherGroup?: string;
-          publisherPool?: never;
-          /**
-           * Use the template's declared target. Concrete groups cannot override it.
-           */
-          targetBinding?: "fixed";
-        }
-      | {
-          /**
-           * Saved name; defaults to the configuration key.
-           */
-          name?: string;
-          access?: {
-            team: true;
-          };
-          inspection?: Inspection1;
-          protocol: "postgres";
-          target:
-            | {
-                type: "address";
-                address: string | number;
-                /**
-                 * Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS.
-                 */
-                tls?: {
-                  /**
-                   * Project-relative CA-only PEM file added to system roots; omit for system roots only.
-                   */
-                  caFile?: string;
-                  /**
-                   * Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known.
-                   */
-                  serverName?: string;
-                };
-                project?: never;
-                file?: never;
-                service?: never;
-                port?: never;
-                container?: never;
-                region?: never;
-                cluster?: never;
-                instance?: never;
-                endpoint?: never;
-              }
-            | {
-                type: "compose";
-                project?: string;
-                file?: string;
-                service: string;
-                port: number;
-                /**
-                 * Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS.
-                 */
-                tls?: {
-                  /**
-                   * Project-relative CA-only PEM file added to system roots; omit for system roots only.
-                   */
-                  caFile?: string;
-                  /**
-                   * Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known.
-                   */
-                  serverName?: string;
-                };
-                address?: never;
-                container?: never;
-                region?: never;
-                cluster?: never;
-                instance?: never;
-                endpoint?: never;
-              }
-            | {
-                type: "docker";
-                container: string;
-                port: number;
-                /**
-                 * Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS.
-                 */
-                tls?: {
-                  /**
-                   * Project-relative CA-only PEM file added to system roots; omit for system roots only.
-                   */
-                  caFile?: string;
-                  /**
-                   * Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known.
-                   */
-                  serverName?: string;
-                };
-                address?: never;
-                project?: never;
-                file?: never;
-                service?: never;
-                region?: never;
-                cluster?: never;
-                instance?: never;
-                endpoint?: never;
-              }
-            | {
-                type: "rds";
-                region: string;
-                cluster?: never;
-                instance: string;
-                endpoint?: "writer";
-                tls?: never;
-                address?: never;
-                project?: never;
-                file?: never;
-                service?: never;
-                port?: never;
-                container?: never;
-              }
-            | {
-                type: "rds";
-                region: string;
-                cluster: string;
-                instance?: never;
-                endpoint?: "writer" | "reader";
-                tls?: never;
-                address?: never;
-                project?: never;
-                file?: never;
-                service?: never;
-                port?: never;
-                container?: never;
-              };
-          tls?: never;
-          http?: never;
-          publicURL?: never;
-          /**
-           * Assigned publisher group; defaults to the built-in local publisher.
-           */
-          publisherGroup?: string;
-          publisherPool?: never;
-          /**
-           * Use the template's declared target. Concrete groups cannot override it.
-           */
-          targetBinding?: "fixed";
-        }
-      | {
-          /**
-           * Saved name; defaults to the configuration key.
-           */
-          name?: string;
-          access?: {
-            team: true;
-          };
-          inspection?: Inspection1;
-          protocol: "kubernetes";
-          target:
-            | {
-                type: "address";
-                address: string | number;
-                /**
-                 * Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS.
-                 */
-                tls?: {
-                  /**
-                   * Project-relative CA-only PEM file added to system roots; omit for system roots only.
-                   */
-                  caFile?: string;
-                  /**
-                   * Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known.
-                   */
-                  serverName?: string;
-                };
-                project?: never;
-                file?: never;
-                service?: never;
-                port?: never;
-                container?: never;
-                region?: never;
-                cluster?: never;
-                instance?: never;
-                endpoint?: never;
-              }
-            | {
-                type: "compose";
-                project?: string;
-                file?: string;
-                service: string;
-                port: number;
-                /**
-                 * Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS.
-                 */
-                tls?: {
-                  /**
-                   * Project-relative CA-only PEM file added to system roots; omit for system roots only.
-                   */
-                  caFile?: string;
-                  /**
-                   * Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known.
-                   */
-                  serverName?: string;
-                };
-                address?: never;
-                container?: never;
-                region?: never;
-                cluster?: never;
-                instance?: never;
-                endpoint?: never;
-              }
-            | {
-                type: "docker";
-                container: string;
-                port: number;
-                /**
-                 * Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS.
-                 */
-                tls?: {
-                  /**
-                   * Project-relative CA-only PEM file added to system roots; omit for system roots only.
-                   */
-                  caFile?: string;
-                  /**
-                   * Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known.
-                   */
-                  serverName?: string;
-                };
-                address?: never;
-                project?: never;
-                file?: never;
-                service?: never;
-                region?: never;
-                cluster?: never;
-                instance?: never;
-                endpoint?: never;
-              }
-            | {
-                type: "eks";
-                region: string;
-                cluster: string;
-                tls?: never;
-                address?: never;
-                project?: never;
-                file?: never;
-                service?: never;
-                port?: never;
-                container?: never;
-                instance?: never;
-                endpoint?: never;
-              };
-          tls?: never;
-          http?: never;
-          publicURL?: never;
-          /**
-           * Assigned publisher group; defaults to the built-in local publisher.
-           */
-          publisherGroup?: string;
-          publisherPool?: never;
-          /**
-           * Use the template's declared target. Concrete groups cannot override it.
-           */
-          targetBinding?: "fixed";
-        }
-      | {
-          /**
-           * Saved name; defaults to the configuration key.
-           */
-          name?: string;
-          access?: {
-            team: true;
-          };
-          inspection?: Inspection1;
-          protocol?: "http";
+          protocol?: "http" | "tcp" | "mysql" | "postgres" | "kubernetes";
           target?: never;
-          tls?: never;
-          http?: {
-            access?:
-              | "restricted"
-              | {
-                  mode?: "restricted";
-                  /**
-                   * @minItems 1
-                   * @maxItems 256
-                   */
-                  ip?: [string, ...string[]];
-                };
-            limits?: {
-              total?: number;
-              concurrency?: number;
-              rate?: {
-                count?: number;
-                per?: TnlRatePeriod;
-                burst?: number;
-              };
-            };
-            readiness?: never;
-            open?: never;
-            paths?: never;
-          };
-          publicURL?: never;
-          publisherGroup: string;
-          publisherPool?: never;
-          /**
-           * Use an exact saved target binding for each concrete group following this template. The publisher never accepts a connect-time target.
-           */
-          targetBinding: "group";
-        }
-      | {
-          /**
-           * Saved name; defaults to the configuration key.
-           */
-          name?: string;
-          access?: {
-            team: true;
-          };
-          inspection?: Inspection1;
-          protocol: "tcp";
-          target?: never;
-          tls?: never;
+          target_binding?: never;
+          publisher_group?: never;
+          name?: never;
+          access?: never;
+          inspection?: never;
           http?: never;
-          publicURL?: never;
-          publisherGroup: string;
-          publisherPool?: never;
-          /**
-           * Use an exact saved target binding for each concrete group following this template. The publisher never accepts a connect-time target.
-           */
-          targetBinding: "group";
-        }
-      | {
-          /**
-           * Saved name; defaults to the configuration key.
-           */
-          name?: string;
-          access?: {
-            team: true;
-          };
-          inspection?: Inspection1;
-          protocol: "mysql";
-          target?: never;
           tls?: never;
-          http?: never;
           publicURL?: never;
-          publisherGroup: string;
-          publisherPool?: never;
-          /**
-           * Use an exact saved target binding for each concrete group following this template. The publisher never accepts a connect-time target.
-           */
-          targetBinding: "group";
-        }
-      | {
-          /**
-           * Saved name; defaults to the configuration key.
-           */
-          name?: string;
-          access?: {
-            team: true;
-          };
-          inspection?: Inspection1;
-          protocol: "postgres";
-          target?: never;
-          tls?: never;
-          http?: never;
-          publicURL?: never;
-          publisherGroup: string;
-          publisherPool?: never;
-          /**
-           * Use an exact saved target binding for each concrete group following this template. The publisher never accepts a connect-time target.
-           */
-          targetBinding: "group";
-        }
-      | {
-          /**
-           * Saved name; defaults to the configuration key.
-           */
-          name?: string;
-          access?: {
-            team: true;
-          };
-          inspection?: Inspection1;
-          protocol: "kubernetes";
-          target?: never;
-          tls?: never;
-          http?: never;
-          publicURL?: never;
-          publisherGroup: string;
-          publisherPool?: never;
-          /**
-           * Use an exact saved target binding for each concrete group following this template. The publisher never accepts a connect-time target.
-           */
-          targetBinding: "group";
         }
       | undefined;
   };
@@ -1111,483 +139,1341 @@ export interface TnlConfig {
       | undefined;
   };
   /**
-   * Named provider identities granting access to exact configured services.
+   * Environment-specific destinations, target trust, and explicitly scoped workload access. local selects this worktree's app listeners and preview settings.
    */
-  workloads?: {
+  environments?: {
+    local?: {
+      server?: string;
+      targets?: {
+        [k: string]:
+          | {
+              address: string | number;
+              discovery?: never;
+              tls?: {
+                hostname?: string;
+                caFile?: string;
+                caPEM?: never;
+              };
+              /**
+               * Saved name; defaults to the configuration key.
+               */
+              name?: string;
+              access?: {
+                team: true;
+              };
+              inspection?: Inspection1;
+              http?: {
+                /**
+                 * Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings.
+                 */
+                readiness?: {
+                  path: string;
+                };
+                open?: boolean;
+                /**
+                 * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
+                 */
+                paths?: {
+                  [k: string]:
+                    | string
+                    | {
+                        service: string;
+                        stripPrefix?: boolean;
+                      }
+                    | undefined;
+                };
+              };
+              /**
+               * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
+               */
+              publicURL?: {
+                name?: never;
+                /**
+                 * Ready team domain used for generated public URL hostnames.
+                 */
+                domain?: string;
+                /**
+                 * Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL.
+                 */
+                hostname?: string;
+                access?:
+                  | ("restricted" | "anonymous")
+                  | {
+                      mode?: "restricted" | "anonymous";
+                      /**
+                       * @minItems 1
+                       * @maxItems 256
+                       */
+                      ip?: [string, ...string[]];
+                    };
+                /**
+                 * Remove the public URL when this tunnel stops.
+                 */
+                ephemeral?: boolean;
+                limits?: {
+                  http?: {
+                    total?: number;
+                    concurrency?: number;
+                    rate?: {
+                      count?: number;
+                      per?: TnlRatePeriod;
+                      burst?: number;
+                    };
+                  };
+                  tcp?: never;
+                  traffic?: {
+                    connections?: number;
+                    rate?: number;
+                    burst?: number;
+                    downloadBytes?: number;
+                    ratePer?: TnlRatePeriod;
+                    totalConnections?: number;
+                    totalDownloadBytes?: number;
+                    totalUploadBytes?: number;
+                    uploadBytes?: number;
+                  };
+                };
+                publisherPool?: never;
+                /**
+                 * Require hybrid post-quantum key agreement for public HTTPS visitors.
+                 */
+                requirePostQuantum?: boolean;
+              };
+            }
+          | {
+              address?: never;
+              discovery:
+                | {
+                    type: "compose";
+                    project?: string;
+                    file?: string;
+                    service: string;
+                    port: number;
+                    tls?: never;
+                    address?: never;
+                    container?: never;
+                    region?: never;
+                    cluster?: never;
+                    instance?: never;
+                    endpoint?: never;
+                  }
+                | {
+                    type: "docker";
+                    container: string;
+                    port: number;
+                    tls?: never;
+                    address?: never;
+                    project?: never;
+                    file?: never;
+                    service?: never;
+                    region?: never;
+                    cluster?: never;
+                    instance?: never;
+                    endpoint?: never;
+                  }
+                | {
+                    type: "rds";
+                    region: string;
+                    cluster?: never;
+                    instance: string;
+                    endpoint?: "writer";
+                    tls?: never;
+                    address?: never;
+                    project?: never;
+                    file?: never;
+                    service?: never;
+                    port?: never;
+                    container?: never;
+                  }
+                | {
+                    type: "rds";
+                    region: string;
+                    cluster: string;
+                    instance?: never;
+                    endpoint?: "writer" | "reader";
+                    tls?: never;
+                    address?: never;
+                    project?: never;
+                    file?: never;
+                    service?: never;
+                    port?: never;
+                    container?: never;
+                  }
+                | {
+                    type: "eks";
+                    region: string;
+                    cluster: string;
+                    tls?: never;
+                    address?: never;
+                    project?: never;
+                    file?: never;
+                    service?: never;
+                    port?: never;
+                    container?: never;
+                    instance?: never;
+                    endpoint?: never;
+                  };
+              tls?: {
+                hostname?: string;
+                caFile?: string;
+                caPEM?: never;
+              };
+              /**
+               * Saved name; defaults to the configuration key.
+               */
+              name?: string;
+              access?: {
+                team: true;
+              };
+              inspection?: Inspection1;
+              http?: {
+                /**
+                 * Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings.
+                 */
+                readiness?: {
+                  path: string;
+                };
+                open?: boolean;
+                /**
+                 * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
+                 */
+                paths?: {
+                  [k: string]:
+                    | string
+                    | {
+                        service: string;
+                        stripPrefix?: boolean;
+                      }
+                    | undefined;
+                };
+              };
+              /**
+               * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
+               */
+              publicURL?: {
+                name?: never;
+                /**
+                 * Ready team domain used for generated public URL hostnames.
+                 */
+                domain?: string;
+                /**
+                 * Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL.
+                 */
+                hostname?: string;
+                access?:
+                  | ("restricted" | "anonymous")
+                  | {
+                      mode?: "restricted" | "anonymous";
+                      /**
+                       * @minItems 1
+                       * @maxItems 256
+                       */
+                      ip?: [string, ...string[]];
+                    };
+                /**
+                 * Remove the public URL when this tunnel stops.
+                 */
+                ephemeral?: boolean;
+                limits?: {
+                  http?: {
+                    total?: number;
+                    concurrency?: number;
+                    rate?: {
+                      count?: number;
+                      per?: TnlRatePeriod;
+                      burst?: number;
+                    };
+                  };
+                  tcp?: never;
+                  traffic?: {
+                    connections?: number;
+                    rate?: number;
+                    burst?: number;
+                    downloadBytes?: number;
+                    ratePer?: TnlRatePeriod;
+                    totalConnections?: number;
+                    totalDownloadBytes?: number;
+                    totalUploadBytes?: number;
+                    uploadBytes?: number;
+                  };
+                };
+                publisherPool?: never;
+                /**
+                 * Require hybrid post-quantum key agreement for public HTTPS visitors.
+                 */
+                requirePostQuantum?: boolean;
+              };
+            }
+          | {
+              address?: never;
+              discovery?: never;
+              tls?: {
+                hostname?: string;
+                caFile?: string;
+                caPEM?: never;
+              };
+              /**
+               * Saved name; defaults to the configuration key.
+               */
+              name?: string;
+              access?: {
+                team: true;
+              };
+              inspection?: Inspection1;
+              http?: {
+                /**
+                 * Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings.
+                 */
+                readiness?: {
+                  path: string;
+                };
+                open?: boolean;
+                /**
+                 * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
+                 */
+                paths?: {
+                  [k: string]:
+                    | string
+                    | {
+                        service: string;
+                        stripPrefix?: boolean;
+                      }
+                    | undefined;
+                };
+              };
+              /**
+               * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
+               */
+              publicURL?: {
+                name?: never;
+                /**
+                 * Ready team domain used for generated public URL hostnames.
+                 */
+                domain?: string;
+                /**
+                 * Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL.
+                 */
+                hostname?: string;
+                access?:
+                  | ("restricted" | "anonymous")
+                  | {
+                      mode?: "restricted" | "anonymous";
+                      /**
+                       * @minItems 1
+                       * @maxItems 256
+                       */
+                      ip?: [string, ...string[]];
+                    };
+                /**
+                 * Remove the public URL when this tunnel stops.
+                 */
+                ephemeral?: boolean;
+                limits?: {
+                  http?: {
+                    total?: number;
+                    concurrency?: number;
+                    rate?: {
+                      count?: number;
+                      per?: TnlRatePeriod;
+                      burst?: number;
+                    };
+                  };
+                  tcp?: never;
+                  traffic?: {
+                    connections?: number;
+                    rate?: number;
+                    burst?: number;
+                    downloadBytes?: number;
+                    ratePer?: TnlRatePeriod;
+                    totalConnections?: number;
+                    totalDownloadBytes?: number;
+                    totalUploadBytes?: number;
+                    uploadBytes?: number;
+                  };
+                };
+                publisherPool?: never;
+                /**
+                 * Require hybrid post-quantum key agreement for public HTTPS visitors.
+                 */
+                requirePostQuantum?: boolean;
+              };
+            }
+          | undefined;
+      };
+      domain?: never;
+      public?: never;
+      collection?: never;
+      workloads?: never;
+    };
     [k: string]:
       | {
-          vercel?: never;
-          fly?: never;
-          oidc?: never;
-          google?: never;
-          kubernetes?: never;
-          gitlab?: never;
-          /**
-           * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
-           *
-           * @minItems 1
-           * @maxItems 32
-           */
-          services: [string, ...string[]];
-          token?:
-            | {
-                file: string;
-                env?: never;
-              }
-            | {
-                file?: never;
-                env: string;
-              };
-          github:
-            | {
-                repository?: string;
-                workflow: string;
-                environment?: string;
-                /**
-                 * @minItems 1
-                 */
-                events?: [
-                  (
-                    | "push"
-                    | "pull_request"
-                    | "pull_request_target"
-                    | "workflow_dispatch"
-                    | "workflow_call"
-                    | "schedule"
-                    | "release"
-                    | "merge_group"
-                    | "repository_dispatch"
-                    | "workflow_run"
-                  ),
-                  ...(
-                    | "push"
-                    | "pull_request"
-                    | "pull_request_target"
-                    | "workflow_dispatch"
-                    | "workflow_call"
-                    | "schedule"
-                    | "release"
-                    | "merge_group"
-                    | "repository_dispatch"
-                    | "workflow_run"
-                  )[],
-                ];
-                branch?: never;
-                tag?: never;
-                reusableWorkflow?: string;
-              }
-            | {
-                repository?: string;
-                workflow: string;
-                environment?: string;
-                /**
-                 * @minItems 1
-                 */
-                events?: [
-                  (
-                    | "push"
-                    | "pull_request"
-                    | "pull_request_target"
-                    | "workflow_dispatch"
-                    | "workflow_call"
-                    | "schedule"
-                    | "release"
-                    | "merge_group"
-                    | "repository_dispatch"
-                    | "workflow_run"
-                  ),
-                  ...(
-                    | "push"
-                    | "pull_request"
-                    | "pull_request_target"
-                    | "workflow_dispatch"
-                    | "workflow_call"
-                    | "schedule"
-                    | "release"
-                    | "merge_group"
-                    | "repository_dispatch"
-                    | "workflow_run"
-                  )[],
-                ];
-                branch: string;
-                tag?: never;
-                reusableWorkflow?: string;
-              }
-            | {
-                repository?: string;
-                workflow: string;
-                environment?: string;
-                /**
-                 * @minItems 1
-                 */
-                events?: [
-                  (
-                    | "push"
-                    | "pull_request"
-                    | "pull_request_target"
-                    | "workflow_dispatch"
-                    | "workflow_call"
-                    | "schedule"
-                    | "release"
-                    | "merge_group"
-                    | "repository_dispatch"
-                    | "workflow_run"
-                  ),
-                  ...(
-                    | "push"
-                    | "pull_request"
-                    | "pull_request_target"
-                    | "workflow_dispatch"
-                    | "workflow_call"
-                    | "schedule"
-                    | "release"
-                    | "merge_group"
-                    | "repository_dispatch"
-                    | "workflow_run"
-                  )[],
-                ];
-                branch?: never;
-                tag: string;
-                reusableWorkflow?: string;
-              };
-          /**
-           * Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof.
-           */
-          maxDuration?: TnlRatePeriod;
-        }
-      | {
-          github?: never;
-          fly?: never;
-          oidc?: never;
-          google?: never;
-          kubernetes?: never;
-          gitlab?: never;
-          /**
-           * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
-           *
-           * @minItems 1
-           * @maxItems 32
-           */
-          services: [string, ...string[]];
-          token?:
-            | {
-                file: string;
-                env?: never;
-              }
-            | {
-                file?: never;
-                env: string;
-              };
-          vercel: {
-            /**
-             * Project name; defaults to the linked Vercel project.
-             */
-            project?: string;
-            /**
-             * Team slug; defaults to the linked project's owner.
-             */
-            team?: string;
-            environment: "production" | "preview" | "development";
+          server?: string;
+          targets?: {
+            [k: string]:
+              | {
+                  address: string | number;
+                  discovery?: never;
+                  tls?: {
+                    hostname?: string;
+                    caFile?: string;
+                    caPEM?: string;
+                  };
+                  http?: {
+                    access?:
+                      | "restricted"
+                      | {
+                          mode?: "restricted";
+                          /**
+                           * @minItems 1
+                           * @maxItems 256
+                           */
+                          ip?: [string, ...string[]];
+                        };
+                    limits?: {
+                      total?: number;
+                      concurrency?: number;
+                      rate?: {
+                        count?: number;
+                        per?: TnlRatePeriod;
+                        burst?: number;
+                      };
+                    };
+                    readiness?: never;
+                    paths?: never;
+                    open?: never;
+                  };
+                  name?: never;
+                  access?: never;
+                  inspection?: never;
+                  publicURL?: never;
+                }
+              | {
+                  address?: never;
+                  discovery:
+                    | {
+                        type: "rds";
+                        region: string;
+                        cluster?: never;
+                        instance: string;
+                        endpoint?: "writer";
+                        tls?: never;
+                        address?: never;
+                        project?: never;
+                        file?: never;
+                        service?: never;
+                        port?: never;
+                        container?: never;
+                      }
+                    | {
+                        type: "rds";
+                        region: string;
+                        cluster: string;
+                        instance?: never;
+                        endpoint?: "writer" | "reader";
+                        tls?: never;
+                        address?: never;
+                        project?: never;
+                        file?: never;
+                        service?: never;
+                        port?: never;
+                        container?: never;
+                      }
+                    | {
+                        type: "eks";
+                        region: string;
+                        cluster: string;
+                        tls?: never;
+                        address?: never;
+                        project?: never;
+                        file?: never;
+                        service?: never;
+                        port?: never;
+                        container?: never;
+                        instance?: never;
+                        endpoint?: never;
+                      };
+                  tls?: never;
+                  http?: {
+                    access?:
+                      | "restricted"
+                      | {
+                          mode?: "restricted";
+                          /**
+                           * @minItems 1
+                           * @maxItems 256
+                           */
+                          ip?: [string, ...string[]];
+                        };
+                    limits?: {
+                      total?: number;
+                      concurrency?: number;
+                      rate?: {
+                        count?: number;
+                        per?: TnlRatePeriod;
+                        burst?: number;
+                      };
+                    };
+                    readiness?: never;
+                    paths?: never;
+                    open?: never;
+                  };
+                  name?: never;
+                  access?: never;
+                  inspection?: never;
+                  publicURL?: never;
+                }
+              | undefined;
           };
-          /**
-           * Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof.
-           */
-          maxDuration?: TnlRatePeriod;
-        }
-      | {
-          github?: never;
-          vercel?: never;
-          oidc?: never;
-          google?: never;
-          kubernetes?: never;
-          gitlab?: never;
-          /**
-           * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
-           *
-           * @minItems 1
-           * @maxItems 32
-           */
-          services: [string, ...string[]];
-          token?:
-            | {
-                file: string;
-                env?: never;
-              }
-            | {
-                file?: never;
-                env: string;
-              };
-          fly: {
-            /**
-             * Application name; defaults to fly.toml.
-             */
-            app?: string;
-            /**
-             * Organization slug; defaults to the application's owner.
-             */
-            org?: string;
-            machineId?: string;
+          domain?: string;
+          public?: boolean;
+          collection?: string;
+          workloads?: {
+            [k: string]:
+              | {
+                  vercel?: never;
+                  fly?: never;
+                  oidc?: never;
+                  google?: never;
+                  kubernetes?: never;
+                  gitlab?: never;
+                  /**
+                   * Explicit service allowlist within this environment. New service names never receive access automatically.
+                   *
+                   * @minItems 1
+                   * @maxItems 32
+                   */
+                  visit: [string, ...string[]];
+                  token?:
+                    | {
+                        file: string;
+                        env?: never;
+                      }
+                    | {
+                        file?: never;
+                        env: string;
+                      };
+                  github:
+                    | {
+                        repository?: string;
+                        workflow: string;
+                        environment?: string;
+                        /**
+                         * @minItems 1
+                         */
+                        events?: [
+                          (
+                            | "push"
+                            | "pull_request"
+                            | "pull_request_target"
+                            | "workflow_dispatch"
+                            | "workflow_call"
+                            | "schedule"
+                            | "release"
+                            | "merge_group"
+                            | "repository_dispatch"
+                            | "workflow_run"
+                          ),
+                          ...(
+                            | "push"
+                            | "pull_request"
+                            | "pull_request_target"
+                            | "workflow_dispatch"
+                            | "workflow_call"
+                            | "schedule"
+                            | "release"
+                            | "merge_group"
+                            | "repository_dispatch"
+                            | "workflow_run"
+                          )[],
+                        ];
+                        branch?: never;
+                        tag?: never;
+                        reusableWorkflow?: string;
+                      }
+                    | {
+                        repository?: string;
+                        workflow: string;
+                        environment?: string;
+                        /**
+                         * @minItems 1
+                         */
+                        events?: [
+                          (
+                            | "push"
+                            | "pull_request"
+                            | "pull_request_target"
+                            | "workflow_dispatch"
+                            | "workflow_call"
+                            | "schedule"
+                            | "release"
+                            | "merge_group"
+                            | "repository_dispatch"
+                            | "workflow_run"
+                          ),
+                          ...(
+                            | "push"
+                            | "pull_request"
+                            | "pull_request_target"
+                            | "workflow_dispatch"
+                            | "workflow_call"
+                            | "schedule"
+                            | "release"
+                            | "merge_group"
+                            | "repository_dispatch"
+                            | "workflow_run"
+                          )[],
+                        ];
+                        branch: string;
+                        tag?: never;
+                        reusableWorkflow?: string;
+                      }
+                    | {
+                        repository?: string;
+                        workflow: string;
+                        environment?: string;
+                        /**
+                         * @minItems 1
+                         */
+                        events?: [
+                          (
+                            | "push"
+                            | "pull_request"
+                            | "pull_request_target"
+                            | "workflow_dispatch"
+                            | "workflow_call"
+                            | "schedule"
+                            | "release"
+                            | "merge_group"
+                            | "repository_dispatch"
+                            | "workflow_run"
+                          ),
+                          ...(
+                            | "push"
+                            | "pull_request"
+                            | "pull_request_target"
+                            | "workflow_dispatch"
+                            | "workflow_call"
+                            | "schedule"
+                            | "release"
+                            | "merge_group"
+                            | "repository_dispatch"
+                            | "workflow_run"
+                          )[],
+                        ];
+                        branch?: never;
+                        tag: string;
+                        reusableWorkflow?: string;
+                      };
+                  /**
+                   * Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof.
+                   */
+                  maxDuration?: TnlRatePeriod;
+                }
+              | {
+                  github?: never;
+                  fly?: never;
+                  oidc?: never;
+                  google?: never;
+                  kubernetes?: never;
+                  gitlab?: never;
+                  /**
+                   * Explicit service allowlist within this environment. New service names never receive access automatically.
+                   *
+                   * @minItems 1
+                   * @maxItems 32
+                   */
+                  visit: [string, ...string[]];
+                  token?:
+                    | {
+                        file: string;
+                        env?: never;
+                      }
+                    | {
+                        file?: never;
+                        env: string;
+                      };
+                  vercel: {
+                    /**
+                     * Project name; defaults to the linked Vercel project.
+                     */
+                    project?: string;
+                    /**
+                     * Team slug; defaults to the linked project's owner.
+                     */
+                    team?: string;
+                    environment: "production" | "preview" | "development";
+                  };
+                  /**
+                   * Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof.
+                   */
+                  maxDuration?: TnlRatePeriod;
+                }
+              | {
+                  github?: never;
+                  vercel?: never;
+                  oidc?: never;
+                  google?: never;
+                  kubernetes?: never;
+                  gitlab?: never;
+                  /**
+                   * Explicit service allowlist within this environment. New service names never receive access automatically.
+                   *
+                   * @minItems 1
+                   * @maxItems 32
+                   */
+                  visit: [string, ...string[]];
+                  token?:
+                    | {
+                        file: string;
+                        env?: never;
+                      }
+                    | {
+                        file?: never;
+                        env: string;
+                      };
+                  fly: {
+                    /**
+                     * Application name; defaults to fly.toml.
+                     */
+                    app?: string;
+                    /**
+                     * Organization slug; defaults to the application's owner.
+                     */
+                    org?: string;
+                    machineId?: string;
+                  };
+                  /**
+                   * Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof.
+                   */
+                  maxDuration?: TnlRatePeriod;
+                }
+              | {
+                  github?: never;
+                  vercel?: never;
+                  fly?: never;
+                  google?: never;
+                  kubernetes?: never;
+                  gitlab?: never;
+                  /**
+                   * Explicit service allowlist within this environment. New service names never receive access automatically.
+                   *
+                   * @minItems 1
+                   * @maxItems 32
+                   */
+                  visit: [string, ...string[]];
+                  token?:
+                    | {
+                        file: string;
+                        env?: never;
+                      }
+                    | {
+                        file?: never;
+                        env: string;
+                      };
+                  oidc: {
+                    issuer: string;
+                    /**
+                     * Intended token recipient; defaults to the control URL.
+                     */
+                    audience?: string;
+                    claims: {
+                      [k: string]: string | undefined;
+                    };
+                    /**
+                     * Signing-key endpoint; defaults to issuer discovery during apply.
+                     */
+                    jwksUrl?: string;
+                  };
+                  /**
+                   * Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof.
+                   */
+                  maxDuration?: TnlRatePeriod;
+                }
+              | {
+                  github?: never;
+                  vercel?: never;
+                  fly?: never;
+                  oidc?: never;
+                  kubernetes?: never;
+                  gitlab?: never;
+                  /**
+                   * Explicit service allowlist within this environment. New service names never receive access automatically.
+                   *
+                   * @minItems 1
+                   * @maxItems 32
+                   */
+                  visit: [string, ...string[]];
+                  token?:
+                    | {
+                        file: string;
+                        env?: never;
+                      }
+                    | {
+                        file?: never;
+                        env: string;
+                      };
+                  google: {
+                    /**
+                     * Intended token recipient; defaults to the control URL.
+                     */
+                    audience?: string;
+                    /**
+                     * Google service account email or immutable numeric ID. Trusted apply resolves an email with gcloud and saves the numeric identity.
+                     */
+                    serviceAccount: string;
+                  };
+                  /**
+                   * Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof.
+                   */
+                  maxDuration?: TnlRatePeriod;
+                }
+              | {
+                  github?: never;
+                  vercel?: never;
+                  fly?: never;
+                  oidc?: never;
+                  google?: never;
+                  gitlab?: never;
+                  /**
+                   * Explicit service allowlist within this environment. New service names never receive access automatically.
+                   *
+                   * @minItems 1
+                   * @maxItems 32
+                   */
+                  visit: [string, ...string[]];
+                  token?:
+                    | {
+                        file: string;
+                        env?: never;
+                      }
+                    | {
+                        file?: never;
+                        env: string;
+                      };
+                  kubernetes: {
+                    /**
+                     * Trusted setup context; defaults to the current kubectl context. Runtime acquisition never reads kubeconfig.
+                     */
+                    context?: string;
+                    /**
+                     * Namespace; defaults to the selected context's namespace, then default.
+                     */
+                    namespace?: string;
+                    /**
+                     * Projected token audience; defaults to the control URL.
+                     */
+                    audience?: string;
+                    serviceAccount: string;
+                  };
+                  /**
+                   * Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof.
+                   */
+                  maxDuration?: TnlRatePeriod;
+                }
+              | {
+                  github?: never;
+                  vercel?: never;
+                  fly?: never;
+                  oidc?: never;
+                  google?: never;
+                  kubernetes?: never;
+                  /**
+                   * Explicit service allowlist within this environment. New service names never receive access automatically.
+                   *
+                   * @minItems 1
+                   * @maxItems 32
+                   */
+                  visit: [string, ...string[]];
+                  token?:
+                    | {
+                        file: string;
+                        env?: never;
+                      }
+                    | {
+                        file?: never;
+                        env: string;
+                      };
+                  gitlab:
+                    | {
+                        /**
+                         * GitLab project path; defaults to the Git origin on the selected server.
+                         */
+                        project?: string;
+                        /**
+                         * GitLab HTTPS origin; defaults to https://gitlab.com.
+                         */
+                        server?: string;
+                        environment?: string;
+                        /**
+                         * Intended token recipient; defaults to the control URL.
+                         */
+                        audience?: string;
+                        branch?: never;
+                        tag?: never;
+                        pipelineSource?:
+                          | "push"
+                          | "web"
+                          | "schedule"
+                          | "api"
+                          | "trigger"
+                          | "pipeline"
+                          | "parent_pipeline"
+                          | "merge_request_event"
+                          | "external"
+                          | "external_pull_request_event"
+                          | "chat"
+                          | "webide"
+                          | "ondemand_dast_scan"
+                          | "ondemand_dast_validation"
+                          | "security_orchestration_policy";
+                      }
+                    | {
+                        /**
+                         * GitLab project path; defaults to the Git origin on the selected server.
+                         */
+                        project?: string;
+                        /**
+                         * GitLab HTTPS origin; defaults to https://gitlab.com.
+                         */
+                        server?: string;
+                        environment?: string;
+                        /**
+                         * Intended token recipient; defaults to the control URL.
+                         */
+                        audience?: string;
+                        branch: string;
+                        tag?: never;
+                        pipelineSource?:
+                          | "push"
+                          | "web"
+                          | "schedule"
+                          | "api"
+                          | "trigger"
+                          | "pipeline"
+                          | "parent_pipeline"
+                          | "merge_request_event"
+                          | "external"
+                          | "external_pull_request_event"
+                          | "chat"
+                          | "webide"
+                          | "ondemand_dast_scan"
+                          | "ondemand_dast_validation"
+                          | "security_orchestration_policy";
+                      }
+                    | {
+                        /**
+                         * GitLab project path; defaults to the Git origin on the selected server.
+                         */
+                        project?: string;
+                        /**
+                         * GitLab HTTPS origin; defaults to https://gitlab.com.
+                         */
+                        server?: string;
+                        environment?: string;
+                        /**
+                         * Intended token recipient; defaults to the control URL.
+                         */
+                        audience?: string;
+                        branch?: never;
+                        tag: string;
+                        pipelineSource?:
+                          | "push"
+                          | "web"
+                          | "schedule"
+                          | "api"
+                          | "trigger"
+                          | "pipeline"
+                          | "parent_pipeline"
+                          | "merge_request_event"
+                          | "external"
+                          | "external_pull_request_event"
+                          | "chat"
+                          | "webide"
+                          | "ondemand_dast_scan"
+                          | "ondemand_dast_validation"
+                          | "security_orchestration_policy";
+                      };
+                  /**
+                   * Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof.
+                   */
+                  maxDuration?: TnlRatePeriod;
+                }
+              | undefined;
           };
-          /**
-           * Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof.
-           */
-          maxDuration?: TnlRatePeriod;
         }
       | {
-          github?: never;
-          vercel?: never;
-          fly?: never;
-          google?: never;
-          kubernetes?: never;
-          gitlab?: never;
-          /**
-           * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
-           *
-           * @minItems 1
-           * @maxItems 32
-           */
-          services: [string, ...string[]];
-          token?:
-            | {
-                file: string;
-                env?: never;
-              }
-            | {
-                file?: never;
-                env: string;
-              };
-          oidc: {
-            issuer: string;
-            /**
-             * Intended token recipient; defaults to the control URL.
-             */
-            audience?: string;
-            claims: {
-              [k: string]: string | undefined;
-            };
-            /**
-             * Signing-key endpoint; defaults to issuer discovery during apply.
-             */
-            jwksUrl?: string;
+          server?: string;
+          targets?: {
+            [k: string]:
+              | {
+                  address: string | number;
+                  discovery?: never;
+                  tls?: {
+                    hostname?: string;
+                    caFile?: string;
+                    caPEM?: never;
+                  };
+                  /**
+                   * Saved name; defaults to the configuration key.
+                   */
+                  name?: string;
+                  access?: {
+                    team: true;
+                  };
+                  inspection?: Inspection1;
+                  http?: {
+                    /**
+                     * Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings.
+                     */
+                    readiness?: {
+                      path: string;
+                    };
+                    open?: boolean;
+                    /**
+                     * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
+                     */
+                    paths?: {
+                      [k: string]:
+                        | string
+                        | {
+                            service: string;
+                            stripPrefix?: boolean;
+                          }
+                        | undefined;
+                    };
+                  };
+                  /**
+                   * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
+                   */
+                  publicURL?: {
+                    name?: never;
+                    /**
+                     * Ready team domain used for generated public URL hostnames.
+                     */
+                    domain?: string;
+                    /**
+                     * Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL.
+                     */
+                    hostname?: string;
+                    access?:
+                      | ("restricted" | "anonymous")
+                      | {
+                          mode?: "restricted" | "anonymous";
+                          /**
+                           * @minItems 1
+                           * @maxItems 256
+                           */
+                          ip?: [string, ...string[]];
+                        };
+                    /**
+                     * Remove the public URL when this tunnel stops.
+                     */
+                    ephemeral?: boolean;
+                    limits?: {
+                      http?: {
+                        total?: number;
+                        concurrency?: number;
+                        rate?: {
+                          count?: number;
+                          per?: TnlRatePeriod;
+                          burst?: number;
+                        };
+                      };
+                      tcp?: never;
+                      traffic?: {
+                        connections?: number;
+                        rate?: number;
+                        burst?: number;
+                        downloadBytes?: number;
+                        ratePer?: TnlRatePeriod;
+                        totalConnections?: number;
+                        totalDownloadBytes?: number;
+                        totalUploadBytes?: number;
+                        uploadBytes?: number;
+                      };
+                    };
+                    publisherPool?: never;
+                    /**
+                     * Require hybrid post-quantum key agreement for public HTTPS visitors.
+                     */
+                    requirePostQuantum?: boolean;
+                  };
+                }
+              | {
+                  address?: never;
+                  discovery:
+                    | {
+                        type: "compose";
+                        project?: string;
+                        file?: string;
+                        service: string;
+                        port: number;
+                        tls?: never;
+                        address?: never;
+                        container?: never;
+                        region?: never;
+                        cluster?: never;
+                        instance?: never;
+                        endpoint?: never;
+                      }
+                    | {
+                        type: "docker";
+                        container: string;
+                        port: number;
+                        tls?: never;
+                        address?: never;
+                        project?: never;
+                        file?: never;
+                        service?: never;
+                        region?: never;
+                        cluster?: never;
+                        instance?: never;
+                        endpoint?: never;
+                      }
+                    | {
+                        type: "rds";
+                        region: string;
+                        cluster?: never;
+                        instance: string;
+                        endpoint?: "writer";
+                        tls?: never;
+                        address?: never;
+                        project?: never;
+                        file?: never;
+                        service?: never;
+                        port?: never;
+                        container?: never;
+                      }
+                    | {
+                        type: "rds";
+                        region: string;
+                        cluster: string;
+                        instance?: never;
+                        endpoint?: "writer" | "reader";
+                        tls?: never;
+                        address?: never;
+                        project?: never;
+                        file?: never;
+                        service?: never;
+                        port?: never;
+                        container?: never;
+                      }
+                    | {
+                        type: "eks";
+                        region: string;
+                        cluster: string;
+                        tls?: never;
+                        address?: never;
+                        project?: never;
+                        file?: never;
+                        service?: never;
+                        port?: never;
+                        container?: never;
+                        instance?: never;
+                        endpoint?: never;
+                      };
+                  tls?: {
+                    hostname?: string;
+                    caFile?: string;
+                    caPEM?: never;
+                  };
+                  /**
+                   * Saved name; defaults to the configuration key.
+                   */
+                  name?: string;
+                  access?: {
+                    team: true;
+                  };
+                  inspection?: Inspection1;
+                  http?: {
+                    /**
+                     * Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings.
+                     */
+                    readiness?: {
+                      path: string;
+                    };
+                    open?: boolean;
+                    /**
+                     * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
+                     */
+                    paths?: {
+                      [k: string]:
+                        | string
+                        | {
+                            service: string;
+                            stripPrefix?: boolean;
+                          }
+                        | undefined;
+                    };
+                  };
+                  /**
+                   * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
+                   */
+                  publicURL?: {
+                    name?: never;
+                    /**
+                     * Ready team domain used for generated public URL hostnames.
+                     */
+                    domain?: string;
+                    /**
+                     * Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL.
+                     */
+                    hostname?: string;
+                    access?:
+                      | ("restricted" | "anonymous")
+                      | {
+                          mode?: "restricted" | "anonymous";
+                          /**
+                           * @minItems 1
+                           * @maxItems 256
+                           */
+                          ip?: [string, ...string[]];
+                        };
+                    /**
+                     * Remove the public URL when this tunnel stops.
+                     */
+                    ephemeral?: boolean;
+                    limits?: {
+                      http?: {
+                        total?: number;
+                        concurrency?: number;
+                        rate?: {
+                          count?: number;
+                          per?: TnlRatePeriod;
+                          burst?: number;
+                        };
+                      };
+                      tcp?: never;
+                      traffic?: {
+                        connections?: number;
+                        rate?: number;
+                        burst?: number;
+                        downloadBytes?: number;
+                        ratePer?: TnlRatePeriod;
+                        totalConnections?: number;
+                        totalDownloadBytes?: number;
+                        totalUploadBytes?: number;
+                        uploadBytes?: number;
+                      };
+                    };
+                    publisherPool?: never;
+                    /**
+                     * Require hybrid post-quantum key agreement for public HTTPS visitors.
+                     */
+                    requirePostQuantum?: boolean;
+                  };
+                }
+              | {
+                  address?: never;
+                  discovery?: never;
+                  tls?: {
+                    hostname?: string;
+                    caFile?: string;
+                    caPEM?: never;
+                  };
+                  /**
+                   * Saved name; defaults to the configuration key.
+                   */
+                  name?: string;
+                  access?: {
+                    team: true;
+                  };
+                  inspection?: Inspection1;
+                  http?: {
+                    /**
+                     * Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings.
+                     */
+                    readiness?: {
+                      path: string;
+                    };
+                    open?: boolean;
+                    /**
+                     * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
+                     */
+                    paths?: {
+                      [k: string]:
+                        | string
+                        | {
+                            service: string;
+                            stripPrefix?: boolean;
+                          }
+                        | undefined;
+                    };
+                  };
+                  /**
+                   * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
+                   */
+                  publicURL?: {
+                    name?: never;
+                    /**
+                     * Ready team domain used for generated public URL hostnames.
+                     */
+                    domain?: string;
+                    /**
+                     * Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL.
+                     */
+                    hostname?: string;
+                    access?:
+                      | ("restricted" | "anonymous")
+                      | {
+                          mode?: "restricted" | "anonymous";
+                          /**
+                           * @minItems 1
+                           * @maxItems 256
+                           */
+                          ip?: [string, ...string[]];
+                        };
+                    /**
+                     * Remove the public URL when this tunnel stops.
+                     */
+                    ephemeral?: boolean;
+                    limits?: {
+                      http?: {
+                        total?: number;
+                        concurrency?: number;
+                        rate?: {
+                          count?: number;
+                          per?: TnlRatePeriod;
+                          burst?: number;
+                        };
+                      };
+                      tcp?: never;
+                      traffic?: {
+                        connections?: number;
+                        rate?: number;
+                        burst?: number;
+                        downloadBytes?: number;
+                        ratePer?: TnlRatePeriod;
+                        totalConnections?: number;
+                        totalDownloadBytes?: number;
+                        totalUploadBytes?: number;
+                        uploadBytes?: number;
+                      };
+                    };
+                    publisherPool?: never;
+                    /**
+                     * Require hybrid post-quantum key agreement for public HTTPS visitors.
+                     */
+                    requirePostQuantum?: boolean;
+                  };
+                }
+              | undefined;
           };
-          /**
-           * Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof.
-           */
-          maxDuration?: TnlRatePeriod;
-        }
-      | {
-          github?: never;
-          vercel?: never;
-          fly?: never;
-          oidc?: never;
-          kubernetes?: never;
-          gitlab?: never;
-          /**
-           * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
-           *
-           * @minItems 1
-           * @maxItems 32
-           */
-          services: [string, ...string[]];
-          token?:
-            | {
-                file: string;
-                env?: never;
-              }
-            | {
-                file?: never;
-                env: string;
-              };
-          google: {
-            /**
-             * Intended token recipient; defaults to the control URL.
-             */
-            audience?: string;
-            /**
-             * Google service account email or immutable numeric ID. Trusted apply resolves an email with gcloud and saves the numeric identity.
-             */
-            serviceAccount: string;
-          };
-          /**
-           * Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof.
-           */
-          maxDuration?: TnlRatePeriod;
-        }
-      | {
-          github?: never;
-          vercel?: never;
-          fly?: never;
-          oidc?: never;
-          google?: never;
-          gitlab?: never;
-          /**
-           * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
-           *
-           * @minItems 1
-           * @maxItems 32
-           */
-          services: [string, ...string[]];
-          token?:
-            | {
-                file: string;
-                env?: never;
-              }
-            | {
-                file?: never;
-                env: string;
-              };
-          kubernetes: {
-            /**
-             * Trusted setup context; defaults to the current kubectl context. Runtime acquisition never reads kubeconfig.
-             */
-            context?: string;
-            /**
-             * Namespace; defaults to the selected context's namespace, then default.
-             */
-            namespace?: string;
-            /**
-             * Projected token audience; defaults to the control URL.
-             */
-            audience?: string;
-            serviceAccount: string;
-          };
-          /**
-           * Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof.
-           */
-          maxDuration?: TnlRatePeriod;
-        }
-      | {
-          github?: never;
-          vercel?: never;
-          fly?: never;
-          oidc?: never;
-          google?: never;
-          kubernetes?: never;
-          /**
-           * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
-           *
-           * @minItems 1
-           * @maxItems 32
-           */
-          services: [string, ...string[]];
-          token?:
-            | {
-                file: string;
-                env?: never;
-              }
-            | {
-                file?: never;
-                env: string;
-              };
-          gitlab:
-            | {
-                /**
-                 * GitLab project path; defaults to the Git origin on the selected server.
-                 */
-                project?: string;
-                /**
-                 * GitLab HTTPS origin; defaults to https://gitlab.com.
-                 */
-                server?: string;
-                environment?: string;
-                /**
-                 * Intended token recipient; defaults to the control URL.
-                 */
-                audience?: string;
-                branch?: never;
-                tag?: never;
-                pipelineSource?:
-                  | "push"
-                  | "web"
-                  | "schedule"
-                  | "api"
-                  | "trigger"
-                  | "pipeline"
-                  | "parent_pipeline"
-                  | "merge_request_event"
-                  | "external"
-                  | "external_pull_request_event"
-                  | "chat"
-                  | "webide"
-                  | "ondemand_dast_scan"
-                  | "ondemand_dast_validation"
-                  | "security_orchestration_policy";
-              }
-            | {
-                /**
-                 * GitLab project path; defaults to the Git origin on the selected server.
-                 */
-                project?: string;
-                /**
-                 * GitLab HTTPS origin; defaults to https://gitlab.com.
-                 */
-                server?: string;
-                environment?: string;
-                /**
-                 * Intended token recipient; defaults to the control URL.
-                 */
-                audience?: string;
-                branch: string;
-                tag?: never;
-                pipelineSource?:
-                  | "push"
-                  | "web"
-                  | "schedule"
-                  | "api"
-                  | "trigger"
-                  | "pipeline"
-                  | "parent_pipeline"
-                  | "merge_request_event"
-                  | "external"
-                  | "external_pull_request_event"
-                  | "chat"
-                  | "webide"
-                  | "ondemand_dast_scan"
-                  | "ondemand_dast_validation"
-                  | "security_orchestration_policy";
-              }
-            | {
-                /**
-                 * GitLab project path; defaults to the Git origin on the selected server.
-                 */
-                project?: string;
-                /**
-                 * GitLab HTTPS origin; defaults to https://gitlab.com.
-                 */
-                server?: string;
-                environment?: string;
-                /**
-                 * Intended token recipient; defaults to the control URL.
-                 */
-                audience?: string;
-                branch?: never;
-                tag: string;
-                pipelineSource?:
-                  | "push"
-                  | "web"
-                  | "schedule"
-                  | "api"
-                  | "trigger"
-                  | "pipeline"
-                  | "parent_pipeline"
-                  | "merge_request_event"
-                  | "external"
-                  | "external_pull_request_event"
-                  | "chat"
-                  | "webide"
-                  | "ondemand_dast_scan"
-                  | "ondemand_dast_validation"
-                  | "security_orchestration_policy";
-              };
-          /**
-           * Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof.
-           */
-          maxDuration?: TnlRatePeriod;
+          domain?: never;
+          public?: never;
+          collection?: never;
+          workloads?: never;
         }
       | undefined;
   };
   /**
-   * Defaults for explicit local public_url blocks. Applicable HTTP access and limits also apply to named-group http blocks; defaults never enable publication.
+   * Groups of dynamic environments. The current service definition becomes the default for new members only.
+   */
+  collections?: {
+    [k: string]: Collection | undefined;
+  };
+  /**
+   * Defaults for explicit local public_url blocks; defaults never enable publication.
    */
   publicURL?: {
     name?: never;
@@ -1650,23 +1536,6 @@ export interface TnlConfig {
      */
     requirePostQuantum?: boolean;
   };
-  /**
-   * Named publisher groups with a durable namespace beneath a ready team domain. local is reserved for the built-in local publisher.
-   */
-  publisherGroups?: {
-    [k: string]:
-      | {
-          /**
-           * Register a reusable definition without allocating a publisher group. Explicitly created groups follow this definition on every apply.
-           */
-          template?: boolean;
-          description?: string;
-          domain?: string;
-          public?: boolean;
-          aws?: never;
-        }
-      | undefined;
-  };
 }
 /**
  * Local inspection capture and retention for HTTP services.
@@ -1681,6 +1550,7 @@ export interface Inspection1 {
   retention?: TnlRatePeriod;
   maxBytes?: TnlByteSize;
 }
+export interface Collection {}
 
 /** The Git worktree or project directory that contains tnl.config.ts. */
 export interface TnlWorktree {

@@ -1,41 +1,32 @@
 package state
 
 import (
-	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"reflect"
 	"testing"
 	"time"
-
-	"github.com/tnldotdev/tnl/internal/security/workloadproof"
 )
 
 func TestIntegrationWorkloadOptionalHardDuration(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "workload_optional_duration")
 	ctx := t.Context()
-	r := appliedProjectRequest(t, d, now)
-	r.Configuration = workloadConfiguration()
-	policy := r.Configuration.Workloads["test"]
-	policy.MaxDurationSeconds = 0
-	r.Configuration.Workloads["test"] = policy
-	applied, err := d.ApplyProjectConfiguration(ctx, r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	exchange, key := workloadExchange(t, r, now)
-	session, err := d.ExchangeWorkload(ctx, exchange, now)
+	f := newRetainedVisitorFixture(t, d, now, retainedGitHubTrust(), 0, false)
+	r, applied := f.project, f.environment
+	exchange, key := retainedVisitorPreparation(t, f, now)
+	prepared, err := d.PrepareEnvironmentVisitor(ctx, exchange, now)
+	session := prepared.Session
 	if err != nil || session.ExpiresAt != nil || !session.LeaseExpiresAt.Equal(now.Add(WorkloadLease)) {
 		t.Fatal("omitted duration did not preserve independent proof and lease bounds", err)
 	}
 	current := session
-	freshAt := func(at time.Time) ExchangeWorkloadRequest {
+	freshAt := func(at time.Time) PrepareEnvironmentVisitorRequest {
 		fresh := exchange
-		fresh.Execution.GitHub = new(*exchange.Execution.GitHub)
-		fresh.Execution.IssuedAt, fresh.Execution.NotBefore, fresh.Execution.ExpiresAt = at.Unix(), at.Unix(), at.Add(5*time.Minute).Unix()
-		fresh.Execution.GitHub.IssuedAt, fresh.Execution.GitHub.NotBefore, fresh.Execution.GitHub.ExpiresAt = fresh.Execution.IssuedAt, fresh.Execution.NotBefore, fresh.Execution.ExpiresAt
-		fresh.Execution.GitHub.JTI = fmt.Sprintf("rotating-proof-%d", at.Unix())
-		signWorkloadRequest(&fresh, key)
+		fresh.Proof.Execution.GitHub = new(*exchange.Proof.Execution.GitHub)
+		fresh.Proof.Execution.IssuedAt, fresh.Proof.Execution.NotBefore, fresh.Proof.Execution.ExpiresAt = at.Unix(), at.Unix(), at.Add(5*time.Minute).Unix()
+		fresh.Proof.Execution.GitHub.IssuedAt, fresh.Proof.Execution.GitHub.NotBefore, fresh.Proof.Execution.GitHub.ExpiresAt = fresh.Proof.Execution.IssuedAt, fresh.Proof.Execution.NotBefore, fresh.Proof.Execution.ExpiresAt
+		fresh.Proof.Execution.GitHub.JTI = fmt.Sprintf("rotating-proof-%d", at.Unix())
+		signRetainedVisitorPreparation(&fresh, key)
 		return fresh
 	}
 	// cross both former limits without skipping a permission-lease fence.
@@ -43,20 +34,22 @@ func TestIntegrationWorkloadOptionalHardDuration(t *testing.T) {
 		at := now.Add(step)
 		if !current.IdentityExpiresAt.After(at.Add(WorkloadLease)) {
 			fresh := freshAt(at)
-			current, err = d.AttachWorkloadAssertion(ctx, session.ID, session.Credential, fresh.Execution, ed25519.Sign(key, workloadproof.Attach(session.ID, fresh.Execution.AssertionDigest)), at)
+			proof, signature, audience := retainedVisitorAssertion(t, d, session, key, fresh.Proof.Execution)
+			current, err = d.AttachEnvironmentVisitorAssertion(ctx, session.ID, session.Credential, proof, signature, audience, at)
 			if err != nil {
 				t.Fatal("continuous proof refresh failed", step, err)
 			}
 		}
-		current, err = d.RenewWorkloadSession(ctx, current.ID, current.Credential, signWorkloadRenewal(current, key), now.Add(step))
+		current, err = d.RenewEnvironmentVisitorSession(ctx, current.ID, current.Credential, signWorkloadRenewal(current, key), now.Add(step))
 		if err != nil || current.ExpiresAt != nil || current.ID != session.ID || current.Credential != session.Credential || !reflect.DeepEqual(current.ServiceIDs, session.ServiceIDs) {
 			t.Fatal("uncapped renewal acquired a default limit or changed authority", step, err)
 		}
 	}
 	at := now.Add(6*time.Hour + 70*time.Second)
 	fresh := freshAt(at)
+	proof, signature, audience := retainedVisitorAssertion(t, d, session, key, fresh.Proof.Execution)
 	attach := func(at time.Time) (WorkloadSession, error) {
-		return d.AttachWorkloadAssertion(ctx, session.ID, session.Credential, fresh.Execution, ed25519.Sign(key, workloadproof.Attach(session.ID, fresh.Execution.AssertionDigest)), at)
+		return d.AttachEnvironmentVisitorAssertion(ctx, session.ID, session.Credential, proof, signature, audience, at)
 	}
 	refreshed, err := attach(at)
 	if err != nil || refreshed.ExpiresAt != nil || !refreshed.IdentityExpiresAt.Equal(at.Add(5*time.Minute)) || refreshed.RenewalSequence != current.RenewalSequence {
@@ -68,23 +61,23 @@ func TestIntegrationWorkloadOptionalHardDuration(t *testing.T) {
 			t.Fatal("uncapped visitor authority escaped the accepted lease", err)
 		}
 	}
-	r.ExpectedRevision, r.Now = applied.Revision, at
-	policy.MaxDurationSeconds = int((6*time.Hour + 2*time.Minute) / time.Second)
-	policy.Services = []string{"api"}
-	r.Configuration.Workloads["test"] = policy
-	applied, err = d.ApplyProjectConfiguration(ctx, r)
+	definition := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"api": {Protocol: "http"}})
+	applied, err = d.ApplyEnvironment(ctx, ApplyEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, EnvironmentApplication: EnvironmentApplication{EnvironmentID: applied.ID, ExpectedRevision: applied.MutationRevision, DefinitionRevision: definition.Revision, Targets: EnvironmentTargets{"api": {Address: "api.internal:3000"}}}, Now: at})
 	if err != nil {
 		t.Fatal(err)
 	}
-	narrowed, err := attach(at.Add(time.Second))
 	want := now.Add(6*time.Hour + 2*time.Minute)
-	if err != nil || narrowed.ExpiresAt == nil || !narrowed.ExpiresAt.Equal(want) || narrowed.LeaseExpiresAt.After(want) || len(narrowed.ServiceIDs) != 1 {
-		t.Fatal("apply did not anchor a new hard limit to original session creation", err)
+	// seed the durable session owner's narrowed deadline, anchored to original
+	// creation. permissions are immutable; an environment cannot edit this fact.
+	if _, err := d.pool.Exec(ctx, `UPDATE control.workload_sessions SET expires_at=created_at+($2::bigint*interval '1 second'),lease_expires_at=LEAST(lease_expires_at,created_at+($2::bigint*interval '1 second')) WHERE id=$1`, session.ID, int64((6*time.Hour+2*time.Minute)/time.Second)); err != nil {
+		t.Fatal(err)
 	}
-	r.ExpectedRevision, r.Now = applied.Revision, at.Add(2*time.Second)
-	policy.MaxDurationSeconds, policy.Services = 0, []string{"api", "db"}
-	r.Configuration.Workloads["test"] = policy
-	if _, err := d.ApplyProjectConfiguration(ctx, r); err != nil {
+	narrowed, err := attach(at.Add(time.Second))
+	if err != nil || narrowed.ExpiresAt == nil || !narrowed.ExpiresAt.Equal(want) || narrowed.LeaseExpiresAt.After(want) || len(narrowed.ServiceIDs) != 1 {
+		t.Fatal("attachment changed the creation-anchored hard deadline", err)
+	}
+	definition = environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"api": {Protocol: "http"}, "db": {Protocol: "postgres"}})
+	if _, err := d.ApplyEnvironment(ctx, ApplyEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, EnvironmentApplication: EnvironmentApplication{EnvironmentID: applied.ID, ExpectedRevision: applied.MutationRevision, DefinitionRevision: definition.Revision, Targets: f.environment.Targets}, Now: at.Add(2 * time.Second)}); err != nil {
 		t.Fatal(err)
 	}
 	retained, err := attach(at.Add(3 * time.Second))
@@ -94,44 +87,35 @@ func TestIntegrationWorkloadOptionalHardDuration(t *testing.T) {
 	if _, err := attach(want); !errors.Is(err, ErrWorkloadExpired) {
 		t.Fatal("fresh proof revived the absolute hard deadline", err)
 	}
-	if _, err := d.RenewWorkloadSession(ctx, session.ID, session.Credential, signWorkloadRenewal(retained, key), want); !errors.Is(err, ErrWorkloadDenied) {
+	if _, err := d.RenewEnvironmentVisitorSession(ctx, session.ID, session.Credential, signWorkloadRenewal(retained, key), want); !errors.Is(err, ErrWorkloadDenied) {
 		t.Fatal("key renewal revived the absolute hard deadline", err)
 	}
 }
 
 func TestIntegrationWorkloadOptionalDurationMigration(t *testing.T) {
 	d, url, now := newControlStateIntegrationDatabaseWithURL(t, "workload_duration_migration")
-	r := appliedProjectRequest(t, d, now)
-	r.Configuration = workloadConfiguration()
-	if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
-		t.Fatal(err)
-	}
-	exchange, _ := workloadExchange(t, r, now)
-	session, err := d.ExchangeWorkload(t.Context(), exchange, now)
+	f := newRetainedVisitorFixture(t, d, now, retainedGitHubTrust(), 3600, false)
+	exchange, _ := retainedVisitorPreparation(t, f, now)
+	prepared, err := d.PrepareEnvironmentVisitor(t.Context(), exchange, now)
 	if err != nil {
 		t.Fatal(err)
 	}
+	session := prepared.Session
 	if err := Migrate(t.Context(), url); err != nil {
 		t.Fatal(err)
 	}
-	recovered, err := d.ExchangeWorkload(t.Context(), exchange, now)
-	if err != nil || !reflect.DeepEqual(recovered, session) {
+	recovered, err := d.PrepareEnvironmentVisitor(t.Context(), exchange, now)
+	if err != nil || !reflect.DeepEqual(recovered.Session, session) {
 		t.Fatal("migration removed or extended a retained session's hard cap", err)
 	}
 }
 
 func TestIntegrationWorkloadUncappedRetention(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "workload_uncapped_retention")
-	r := appliedProjectRequest(t, d, now)
-	r.Configuration = workloadConfiguration()
-	policy := r.Configuration.Workloads["test"]
-	policy.MaxDurationSeconds = 0
-	r.Configuration.Workloads["test"] = policy
-	if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
-		t.Fatal(err)
-	}
-	exchange, _ := workloadExchange(t, r, now)
-	session, err := d.ExchangeWorkload(t.Context(), exchange, now)
+	f := newRetainedVisitorFixture(t, d, now, retainedGitHubTrust(), 0, false)
+	exchange, _ := retainedVisitorPreparation(t, f, now)
+	prepared, err := d.PrepareEnvironmentVisitor(t.Context(), exchange, now)
+	session := prepared.Session
 	if err != nil || session.ExpiresAt != nil {
 		t.Fatal("fixture was not uncapped", err)
 	}

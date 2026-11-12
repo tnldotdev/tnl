@@ -57,56 +57,46 @@ func TestIntegrationPostQuantumPublicURLPersistsAcrossReadsAndRuns(t *testing.T)
 func TestIntegrationPostQuantumAppliedPublicURLPolicy(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "post_quantum_applied_url")
 	request := oidcRouteRequest(t, database, now)
+	request.RequirePostQuantum, request.AccessMode = true, VisitorAccessAnonymous
 	publicURL := createTestPublicURL(t, database, request, now)
-	service := ProjectServiceConfiguration{Target: "app", PublicURL: &ProjectServicePublicURL{}}
+	service := LocalServiceDeclaration{Target: "app", PublicURL: &ProjectServicePublicURL{}}
 	local := RealizeLocalProjectServiceRequest{TeamID: request.TeamID, ProjectKey: "post-quantum", SourceFingerprint: strings.Repeat("a", 64), Service: "web", WorktreeKey: "checkout", ActorID: request.ActingIdentityID, PublicURLID: publicURL.ID, Configuration: service, Now: now}
 	if _, err := database.RealizeLocalProjectService(t.Context(), local); err != nil {
 		t.Fatal(err)
 	}
-	apply := ApplyProjectConfigurationRequest{TeamID: request.TeamID, ProjectKey: local.ProjectKey, SourceFingerprint: local.SourceFingerprint, ActorID: request.ActingIdentityID,
-		Configuration: ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"web": service}}, Now: now}
-	applied, err := database.ApplyProjectConfiguration(t.Context(), apply)
-	if err != nil {
-		t.Fatal(err)
-	}
-	apply.ExpectedRevision = applied.Revision
 	service.PublicURL.RequirePostQuantum = new(true)
 	service.PublicURL.Access = &ProjectPublicAccess{Mode: string(VisitorAccessAnonymous)}
-	apply.Configuration.Services["web"] = service
-	applied, err = database.ApplyProjectConfiguration(t.Context(), apply)
-	if err != nil {
+	local.Configuration = service
+	if _, err := database.RealizeLocalProjectService(t.Context(), local); err != nil {
 		t.Fatal(err)
 	}
 	u, err := database.GetPublicURLForAuthorization(t.Context(), publicURL.ID)
 	if err != nil || !u.RequirePostQuantum || u.AccessMode != VisitorAccessAnonymous {
-		t.Fatalf("apply lost TLS or access policy: %+v, %v", u, err)
+		t.Fatalf("local realization lost TLS or access policy: %+v, %v", u, err)
 	}
-	apply.ExpectedRevision = applied.Revision
 	service.PublicURL.RequirePostQuantum = nil
-	applied, err = database.ApplyProjectConfiguration(t.Context(), apply)
-	if err != nil {
+	if _, err := database.RealizeLocalProjectService(t.Context(), local); err != nil {
 		t.Fatal(err)
 	}
 	u, err = database.GetPublicURLForAuthorization(t.Context(), publicURL.ID)
 	if err != nil || !u.RequirePostQuantum {
-		t.Fatalf("apply omission cleared saved policy: %+v, %v", u, err)
+		t.Fatalf("local omission cleared saved policy: %+v, %v", u, err)
 	}
 	insertTestPublishRun(t, database, testPublishRun{ID: "run_post_quantum_applied", PublicURLID: u.ID, TeamID: u.TeamID,
 		MembershipID: u.MembershipID, ActingIdentityID: request.ActingIdentityID, CertificateCacheKey: "post-quantum-applied", CertificateScope: "route",
 		CertificateIdentifiers: []string{u.CanonicalHostname}, ChallengeMethod: "dns-01", CreatedAt: now, ExpiresAt: now.Add(time.Minute)})
-	apply.ExpectedRevision = applied.Revision
 	service.PublicURL.RequirePostQuantum = new(false)
-	if _, err := database.ApplyProjectConfiguration(t.Context(), apply); !errors.Is(err, ErrPublishRunOpen) {
-		t.Fatalf("apply changed TLS policy during a run: %v", err)
+	if _, err := database.RealizeLocalProjectService(t.Context(), local); !errors.Is(err, ErrProjectConfigurationInvalid) {
+		t.Fatalf("local declaration overrode saved TLS policy during a run: %v", err)
 	}
 	if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_runs SET closed_at=$2,state='closed',close_reason='test' WHERE id=$1`, "run_post_quantum_applied", now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.ApplyProjectConfiguration(t.Context(), apply); err != nil {
-		t.Fatal(err)
+	if _, err := database.RealizeLocalProjectService(t.Context(), local); !errors.Is(err, ErrProjectConfigurationInvalid) {
+		t.Fatal("ending a run gave local declarations TLS policy authority", err)
 	}
 	u, err = database.GetPublicURLForAuthorization(t.Context(), publicURL.ID)
-	if err != nil || u.RequirePostQuantum {
-		t.Fatalf("apply did not clear explicit false: %+v, %v", u, err)
+	if err != nil || !u.RequirePostQuantum || u.AccessMode != VisitorAccessAnonymous {
+		t.Fatalf("mismatched local declaration changed saved URL policy: %+v, %v", u, err)
 	}
 }

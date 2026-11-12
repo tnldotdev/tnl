@@ -61,8 +61,8 @@ func NormalizeServiceDefinition(input ServiceDefinition) (ServiceDefinition, str
 	return result, hex.EncodeToString(hash[:]), nil
 }
 
-// the project row supplies immutable provenance and the existing resource FK
-// root. publishing a definition never changes its live configuration or revision.
+// the project row supplies immutable provenance and the resource FK root. it has
+// no project-wide desired configuration, mutation revision or encrypted targets.
 func (d *Database) ensureDefinitionProject(ctx context.Context, tx pgx.Tx, team, project, source, label, actor string, now time.Time) (controlstatedb.ControlAppliedProject, error) {
 	q := controlstatedb.New(tx)
 	if err := checkLocalProjectSource(ctx, tx, team, project, source); err != nil {
@@ -76,16 +76,7 @@ func (d *Database) ensureDefinitionProject(ctx context.Context, tx pgx.Tx, team,
 		if !validProjectDNSLabel(label) {
 			return row, ErrProjectConfigurationInvalid
 		}
-		c, hash, e := NormalizeProjectConfiguration(ProjectConfiguration{})
-		if e != nil {
-			return row, e
-		}
-		data, _ := json.Marshal(c)
-		sealed, e := d.storageKey.Seal(appliedProjectContext(team, project), data)
-		if e != nil {
-			return row, e
-		}
-		_, err = tx.Exec(ctx, `INSERT INTO control.applied_projects(team_id,project_key,source_fingerprint,project_label,configuration_hash,configuration_ciphertext,storage_key_id,created_by_identity_id,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, team, project, source, label, hash, sealed, d.storageKey.CurrentID(), actor, now)
+		_, err = tx.Exec(ctx, `INSERT INTO control.applied_projects(team_id,project_key,source_fingerprint,project_label,created_by_identity_id,updated_at) VALUES($1,$2,$3,$4,$5,$6)`, team, project, source, label, actor, now)
 		if err != nil {
 			return row, err
 		}

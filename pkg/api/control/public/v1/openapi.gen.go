@@ -39,27 +39,6 @@ func (e AdminServerStatusRole) Valid() bool {
 	}
 }
 
-// Defines values for AppliedProjectServiceServiceKind.
-const (
-	AppliedProjectServiceServiceKindLocal     AppliedProjectServiceServiceKind = "local"
-	AppliedProjectServiceServiceKindPublicUrl AppliedProjectServiceServiceKind = "public_url"
-	AppliedProjectServiceServiceKindService   AppliedProjectServiceServiceKind = "service"
-)
-
-// Valid indicates whether the value is a known member of the AppliedProjectServiceServiceKind enum.
-func (e AppliedProjectServiceServiceKind) Valid() bool {
-	switch e {
-	case AppliedProjectServiceServiceKindLocal:
-		return true
-	case AppliedProjectServiceServiceKindPublicUrl:
-		return true
-	case AppliedProjectServiceServiceKindService:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for AuthenticationFactsMethods.
 const (
 	Oidc AuthenticationFactsMethods = "oidc"
@@ -636,24 +615,6 @@ func (e ProjectServiceAccessTeam) Valid() bool {
 	}
 }
 
-// Defines values for ProjectServiceConfigurationTargetBinding.
-const (
-	Fixed ProjectServiceConfigurationTargetBinding = "fixed"
-	Group ProjectServiceConfigurationTargetBinding = "group"
-)
-
-// Valid indicates whether the value is a known member of the ProjectServiceConfigurationTargetBinding enum.
-func (e ProjectServiceConfigurationTargetBinding) Valid() bool {
-	switch e {
-	case Fixed:
-		return true
-	case Group:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for ProjectTargetDiscoveryEndpoint.
 const (
 	Reader ProjectTargetDiscoveryEndpoint = "reader"
@@ -888,39 +849,6 @@ func (e PublisherGrantKind) Valid() bool {
 	case PublisherGrantKindSavedPublicUrl:
 		return true
 	case PublisherGrantKindService:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for PublisherGroupConnectionSchema.
-const (
-	N1 PublisherGroupConnectionSchema = 1
-)
-
-// Valid indicates whether the value is a known member of the PublisherGroupConnectionSchema enum.
-func (e PublisherGroupConnectionSchema) Valid() bool {
-	switch e {
-	case N1:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for PublisherGroupServiceAssignmentServiceKind.
-const (
-	PublisherGroupServiceAssignmentServiceKindPublicUrl PublisherGroupServiceAssignmentServiceKind = "public_url"
-	PublisherGroupServiceAssignmentServiceKindService   PublisherGroupServiceAssignmentServiceKind = "service"
-)
-
-// Valid indicates whether the value is a known member of the PublisherGroupServiceAssignmentServiceKind enum.
-func (e PublisherGroupServiceAssignmentServiceKind) Valid() bool {
-	switch e {
-	case PublisherGroupServiceAssignmentServiceKindPublicUrl:
-		return true
-	case PublisherGroupServiceAssignmentServiceKindService:
 		return true
 	default:
 		return false
@@ -1843,60 +1771,13 @@ type AppendReviewerFeedbackEventRequest struct {
 	Type        FeedbackEventType `json:"type"`
 }
 
-// AppliedProjectConfiguration defines model for AppliedProjectConfiguration.
-type AppliedProjectConfiguration struct {
-	// Configuration Normalized declarative configuration, at most 512 KiB encoded. All local declarations defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its groups.
-	Configuration     ProjectConfiguration         `json:"configuration"`
-	ConfigurationHash string                       `json:"configuration_hash"`
-	Groups            *[]AppliedPublisherGroup     `json:"groups,omitempty"`
-	Members           []PublisherGroupMemberStatus `json:"members"`
-	ProjectKey        string                       `json:"project_key"`
-	Revision          int64                        `json:"revision"`
-	Services          []AppliedProjectService      `json:"services"`
-	SourceFingerprint string                       `json:"source_fingerprint"`
-	TeamId            string                       `json:"team_id"`
-}
-
-// AppliedProjectService defines model for AppliedProjectService.
-type AppliedProjectService struct {
-	DesiredRevision int64                            `json:"desired_revision"`
-	Hostname        *string                          `json:"hostname,omitempty"`
-	Port            *int                             `json:"port,omitempty"`
-	Public          *bool                            `json:"public,omitempty"`
-	PublisherGroup  string                           `json:"publisher_group"`
-	Service         string                           `json:"service"`
-	ServiceId       *string                          `json:"service_id,omitempty"`
-	ServiceKind     AppliedProjectServiceServiceKind `json:"service_kind"`
-	TrustRevision   int64                            `json:"trust_revision"`
-}
-
-// AppliedProjectServiceServiceKind defines model for AppliedProjectService.ServiceKind.
-type AppliedProjectServiceServiceKind string
-
-// AppliedPublisherGroup defines model for AppliedPublisherGroup.
-type AppliedPublisherGroup struct {
-	Bindings *PublisherGroupBindings `json:"bindings,omitempty"`
-	DomainId string                  `json:"domain_id"`
-
-	// GroupNames Authoritative current and historical selectors permanently bound to this group ID.
-	GroupNames []string `json:"group_names"`
-	Id         string   `json:"id"`
-
-	// IngressPoolId Ingress pool permanently assigned to this group.
-	IngressPoolId string `json:"ingress_pool_id"`
-	Name          string `json:"name"`
-	Namespace     string `json:"namespace"`
-	Public        bool   `json:"public"`
-	Retired       *bool  `json:"retired,omitempty"`
-
-	// Template Source template followed by this concrete group.
-	Template *string `json:"template,omitempty"`
-}
-
 // ApplyEnvironmentRequest Apply only the selected environment. Omitted targets retain saved approvals. A changed protocol or added service requires explicit complete replacement targets. This operation changes no visitor, workload, provisioning, or enrollment permission.
 type ApplyEnvironmentRequest struct {
 	DefinitionRevision int64 `json:"definition_revision"`
 	ExpectedRevision   int64 `json:"expected_revision"`
+
+	// Public Omit to retain reachability. Changing this setting does not create visitor grants.
+	Public *bool `json:"public,omitempty"`
 
 	// Targets Complete approved targets keyed by logical service name. Unknown services and missing assigned services are rejected. This has the same target shape for creation and replacement.
 	Targets *EnvironmentTargets `json:"targets,omitempty"`
@@ -1909,19 +1790,6 @@ type ApplyEnvironmentsRequest struct {
 	TeamId       string                   `json:"team_id"`
 }
 
-// ApplyProjectConfigurationRequest defines model for ApplyProjectConfigurationRequest.
-type ApplyProjectConfigurationRequest struct {
-	// Configuration Normalized declarative configuration, at most 512 KiB encoded. All local declarations defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its groups.
-	Configuration    ProjectConfiguration `json:"configuration"`
-	ExpectedRevision int64                `json:"expected_revision"`
-
-	// GroupBindings Complete replacement binding sets keyed by concrete group ID, saved atomically with this declaration. Omitted groups retain their saved target and approved protocol. Changing a bound service's protocol requires an explicit replacement set for every affected group in this same apply.
-	GroupBindings     *map[string]PublisherGroupBindings `json:"group_bindings,omitempty"`
-	ProjectLabel      *string                            `json:"project_label,omitempty"`
-	SourceFingerprint string                             `json:"source_fingerprint"`
-	TeamId            string                             `json:"team_id"`
-}
-
 // AuthenticationFacts defines model for AuthenticationFacts.
 type AuthenticationFacts struct {
 	Methods []AuthenticationFactsMethods `json:"methods"`
@@ -1930,6 +1798,17 @@ type AuthenticationFacts struct {
 
 // AuthenticationFactsMethods defines model for AuthenticationFacts.Methods.
 type AuthenticationFactsMethods string
+
+// AuthorizeEnvironmentPublisherServiceRequest Explicit current-manager intent for one already-installed environment publisher and one saved service. Requests are limited to 8 KiB. The previous-grant field is required; null means no mapped grant, while a grant ID must match the current active grant or revoked tombstone. Reauthorization after revocation requires the exact tombstone and a new idempotency key. Replaying revoked or replaced intent never creates authority. Environment apply and rollback do not issue these grants.
+type AuthorizeEnvironmentPublisherServiceRequest struct {
+	ExpectedConfigurationHash string  `json:"expected_configuration_hash"`
+	ExpectedPreviousGrantId   *string `json:"expected_previous_grant_id"`
+	ExpectedRevision          int64   `json:"expected_revision"`
+
+	// IdempotencyKey At most 128 UTF-8 bytes, with no control characters or leading/trailing whitespace.
+	IdempotencyKey IdempotencyKey `json:"idempotency_key"`
+	TeamId         string         `json:"team_id"`
+}
 
 // AuthorizeServiceClientCertificateRequest defines model for AuthorizeServiceClientCertificateRequest.
 type AuthorizeServiceClientCertificateRequest struct {
@@ -2354,15 +2233,33 @@ type CreateCollectionRequest struct {
 	TeamId                    TeamID `json:"team_id"`
 }
 
+// CreateEnvironmentPublisherEnrollmentRequest defines model for CreateEnvironmentPublisherEnrollmentRequest.
+type CreateEnvironmentPublisherEnrollmentRequest struct {
+	ConfigurationHash string `json:"configuration_hash"`
+	ExpectedRevision  int64  `json:"expected_revision"`
+	ExpiresIn         int    `json:"expires_in"`
+	MaxMembers        int    `json:"max_members"`
+
+	// Services Exact current logical services authorized for enrollment. Control captures their saved service IDs at issuance. Added services and later collection defaults are not included. This grants no visitor access and does not authorize another service on an already enrolled publisher.
+	Services []string `json:"services"`
+	TeamId   string   `json:"team_id"`
+}
+
 // CreateEnvironmentRequest Require a positive definition_revision unless a collection is selected. collection_id and expected_collection_revision must appear together. Omit definition_revision to select the collection default; an explicit positive revision overrides it. Literal zero and null are invalid. Exact retries keep the original collection revision as creation intent, even after its default changes; changing that precondition with a used key conflicts.
 type CreateEnvironmentRequest struct {
-	CollectionId               *CollectionID `json:"collection_id,omitempty"`
-	DefinitionRevision         *int64        `json:"definition_revision,omitempty"`
-	ExpectedCollectionRevision *int64        `json:"expected_collection_revision,omitempty"`
-	IdempotencyKey             string        `json:"idempotency_key"`
-	Name                       string        `json:"name"`
-	ProjectLabel               *string       `json:"project_label,omitempty"`
-	SourceFingerprint          string        `json:"source_fingerprint"`
+	CollectionId       *CollectionID `json:"collection_id,omitempty"`
+	DefinitionRevision *int64        `json:"definition_revision,omitempty"`
+
+	// DomainId Domain captured at creation. Omission captures the current team default; later default changes do not move endpoints.
+	DomainId                   *string `json:"domain_id,omitempty"`
+	ExpectedCollectionRevision *int64  `json:"expected_collection_revision,omitempty"`
+	IdempotencyKey             string  `json:"idempotency_key"`
+	Name                       string  `json:"name"`
+	ProjectLabel               *string `json:"project_label,omitempty"`
+
+	// Public Public endpoint reachability, independent of visitor authorization.
+	Public            *bool  `json:"public,omitempty"`
+	SourceFingerprint string `json:"source_fingerprint"`
 
 	// Targets Complete approved targets keyed by logical service name. Unknown services and missing assigned services are rejected. This has the same target shape for creation and replacement.
 	Targets EnvironmentTargets `json:"targets"`
@@ -2453,23 +2350,6 @@ type CreatePublisherGrantRequest struct {
 	PublicUrlId *PublicURLID `json:"public_url_id,omitempty"`
 	ServiceId   *ServiceID   `json:"service_id,omitempty"`
 	TeamId      TeamID       `json:"team_id"`
-}
-
-// CreatePublisherGroupEnrollmentRequest defines model for CreatePublisherGroupEnrollmentRequest.
-type CreatePublisherGroupEnrollmentRequest struct {
-	ExpiresIn  int    `json:"expires_in"`
-	MaxMembers int    `json:"max_members"`
-	TeamId     string `json:"team_id"`
-}
-
-// CreatePublisherGroupRequest defines model for CreatePublisherGroupRequest.
-type CreatePublisherGroupRequest struct {
-	Bindings         *PublisherGroupBindings `json:"bindings,omitempty"`
-	ExpectedRevision int64                   `json:"expected_revision"`
-	From             string                  `json:"from"`
-	IdempotencyKey   *string                 `json:"idempotency_key,omitempty"`
-	Name             *string                 `json:"name,omitempty"`
-	TeamId           string                  `json:"team_id"`
 }
 
 // CreateServiceCertificateIssuanceRequest defines model for CreateServiceCertificateIssuanceRequest.
@@ -2567,10 +2447,14 @@ type Environment struct {
 	AppliedDefinitionRevision int64         `json:"applied_definition_revision"`
 	CollectionId              *CollectionID `json:"collection_id,omitempty"`
 	ConfigurationHash         string        `json:"configuration_hash"`
+	DomainId                  string        `json:"domain_id"`
 	Id                        string        `json:"id"`
 	MutationRevision          int64         `json:"mutation_revision"`
 	Name                      string        `json:"name"`
 	ProjectKey                string        `json:"project_key"`
+
+	// Public Public endpoint reachability. Visitor access rules still apply.
+	Public bool `json:"public"`
 
 	// Ref Nonsecret selection of one immutable environment on one control server. Possession of this reference grants no access.
 	Ref      EnvironmentReference `json:"ref"`
@@ -2587,6 +2471,9 @@ type EnvironmentApplication struct {
 	EnvironmentId      string `json:"environment_id"`
 	ExpectedRevision   int64  `json:"expected_revision"`
 
+	// Public Omit to retain reachability.
+	Public *bool `json:"public,omitempty"`
+
 	// Targets Complete approved targets keyed by logical service name. Unknown services and missing assigned services are rejected. This has the same target shape for creation and replacement.
 	Targets *EnvironmentTargets `json:"targets,omitempty"`
 }
@@ -2596,6 +2483,108 @@ type EnvironmentPublication struct {
 	ConfigurationHash string `json:"configuration_hash"`
 	EnvironmentId     string `json:"environment_id"`
 	MutationRevision  int64  `json:"mutation_revision"`
+}
+
+// EnvironmentPublisher defines model for EnvironmentPublisher.
+type EnvironmentPublisher struct {
+	EnvironmentId       string `json:"environment_id"`
+	KeyId               string `json:"key_id"`
+	ProjectKey          string `json:"project_key"`
+	PublisherIdentityId string `json:"publisher_identity_id"`
+	TeamId              string `json:"team_id"`
+}
+
+// EnvironmentPublisherAcknowledgement defines model for EnvironmentPublisherAcknowledgement.
+type EnvironmentPublisherAcknowledgement struct {
+	// Environment The exact saved environment application assigned to this publisher worker. This is a publication freshness fence, not a visitor, provisioning, or publisher permission. Preparation must supply it unchanged; control never substitutes the latest application for an omitted or stale value.
+	Environment EnvironmentPublication `json:"environment"`
+	Healthy     bool                   `json:"healthy"`
+}
+
+// EnvironmentPublisherAssignment defines model for EnvironmentPublisherAssignment.
+type EnvironmentPublisherAssignment struct {
+	// Configuration Validated publication facts for one assigned environment service. The pinned definition supplies protocol. There are no project declarations, group selectors, visitor grants, or local listener settings in this payload.
+	Configuration EnvironmentServicePublication `json:"configuration"`
+	GrantId       string                        `json:"grant_id"`
+	Service       string                        `json:"service"`
+	ServiceId     ServiceID                     `json:"service_id"`
+	TrustRevision int64                         `json:"trust_revision"`
+}
+
+// EnvironmentPublisherAssignments defines model for EnvironmentPublisherAssignments.
+type EnvironmentPublisherAssignments struct {
+	CertificateStatePlans []CertificatePlan `json:"certificate_state_plans"`
+
+	// Environment The exact saved environment application assigned to this publisher worker. This is a publication freshness fence, not a visitor, provisioning, or publisher permission. Preparation must supply it unchanged; control never substitutes the latest application for an omitted or stale value.
+	Environment EnvironmentPublication           `json:"environment"`
+	Publisher   EnvironmentPublisher             `json:"publisher"`
+	Services    []EnvironmentPublisherAssignment `json:"services"`
+}
+
+// EnvironmentPublisherEnrollment defines model for EnvironmentPublisherEnrollment.
+type EnvironmentPublisherEnrollment struct {
+	EnrollmentKey string    `json:"enrollment_key"`
+	ExpiresAt     time.Time `json:"expires_at"`
+	MaxMembers    int       `json:"max_members"`
+
+	// Ref Nonsecret selection of one immutable environment on one control server. Possession of this reference grants no access.
+	Ref EnvironmentReference `json:"ref"`
+}
+
+// EnvironmentPublisherGrant The exact mapped publisher grant, including a revoked tombstone. Null means this tuple has no saved mapping. These are management facts, never a credential or an authorization decision. The issuer is provenance and does not control the installed publisher's lifetime.
+type EnvironmentPublisherGrant struct {
+	CreatedAt           time.Time   `json:"created_at"`
+	CreatedByIdentityId *IdentityID `json:"created_by_identity_id,omitempty"`
+	CreatedByMachineId  *string     `json:"created_by_machine_id,omitempty"`
+	ExpiresAt           *time.Time  `json:"expires_at,omitempty"`
+	Id                  string      `json:"id"`
+	ProvisioningGrantId *string     `json:"provisioning_grant_id,omitempty"`
+	RevokedAt           *time.Time  `json:"revoked_at,omitempty"`
+}
+
+// EnvironmentPublisherGrantState Current exact environment, installed publisher member and saved service selection. Inspection grants no access. A successful authorization returns its current non-null mapped grant; an inspect may return null or a revoked tombstone.
+type EnvironmentPublisherGrantState struct {
+	ConfigurationHash string `json:"configuration_hash"`
+	EnvironmentId     string `json:"environment_id"`
+
+	// Grant The exact mapped publisher grant, including a revoked tombstone. Null means this tuple has no saved mapping. These are management facts, never a credential or an authorization decision. The issuer is provenance and does not control the installed publisher's lifetime.
+	Grant               *EnvironmentPublisherGrant `json:"grant"`
+	MutationRevision    int64                      `json:"mutation_revision"`
+	ProjectKey          string                     `json:"project_key"`
+	PublisherIdentityId string                     `json:"publisher_identity_id"`
+	ServiceId           ServiceID                  `json:"service_id"`
+	TeamId              string                     `json:"team_id"`
+}
+
+// EnvironmentPublisherLease defines model for EnvironmentPublisherLease.
+type EnvironmentPublisherLease struct {
+	AccessToken string    `json:"access_token"`
+	ExpiresAt   time.Time `json:"expires_at"`
+}
+
+// EnvironmentPublisherProof defines model for EnvironmentPublisherProof.
+type EnvironmentPublisherProof struct {
+	Assertion           string `json:"assertion"`
+	EnvironmentId       string `json:"environment_id"`
+	PublisherIdentityId string `json:"publisher_identity_id"`
+}
+
+// EnvironmentPublisherStatus defines model for EnvironmentPublisherStatus.
+type EnvironmentPublisherStatus struct {
+	AcknowledgedAt      *time.Time `json:"acknowledged_at,omitempty"`
+	CurrentRevision     int64      `json:"current_revision"`
+	EnvironmentId       string     `json:"environment_id"`
+	Healthy             bool       `json:"healthy"`
+	KeyId               string     `json:"key_id"`
+	LeaseExpiresAt      *time.Time `json:"lease_expires_at,omitempty"`
+	ObservedRevision    int64      `json:"observed_revision"`
+	ProjectKey          string     `json:"project_key"`
+	PublisherIdentityId string     `json:"publisher_identity_id"`
+
+	// Runtime Latest explicitly started runtime for this immutable publisher identity. A single bounded record survives stop and lease expiry. Active describes the runtime lease, not target reachability or a permanent static IP. Control egress may differ from database-target routing, address family, or NAT. This evidence never grants access or configures an allowlist.
+	Runtime    *PublisherRuntimeStatus `json:"runtime,omitempty"`
+	SnapshotAt time.Time               `json:"snapshot_at"`
+	TeamId     string                  `json:"team_id"`
 }
 
 // EnvironmentReference Nonsecret selection of one immutable environment on one control server. Possession of this reference grants no access.
@@ -2616,12 +2605,32 @@ type EnvironmentService struct {
 	TrustRevision int64           `json:"trust_revision"`
 }
 
+// EnvironmentServiceHTTP defines model for EnvironmentServiceHTTP.
+type EnvironmentServiceHTTP struct {
+	Access *ProjectPublicAccess          `json:"access,omitempty"`
+	Limits *ProjectHTTPApplicationLimits `json:"limits,omitempty"`
+}
+
+// EnvironmentServicePublication Validated publication facts for one assigned environment service. The pinned definition supplies protocol. There are no project declarations, group selectors, visitor grants, or local listener settings in this payload.
+type EnvironmentServicePublication struct {
+	Http     *EnvironmentServiceHTTP `json:"http,omitempty"`
+	Protocol ServiceProtocol         `json:"protocol"`
+	Target   string                  `json:"target"`
+
+	// TargetDiscovery Exact provider selector resolved by the assigned publisher with its own AWS credentials. Control does not discover targets or credentials. EKS requires kubernetes; RDS requires postgres or mysql, verified against provider metadata.
+	TargetDiscovery *ProjectTargetDiscovery `json:"target_discovery,omitempty"`
+
+	// TargetTls Publisher-to-target TLS trust, independent of visitor TLS. The protocol selects native negotiation. ca_pem is a CA-only snapshot added to the publisher's system roots. digest is lowercase SHA-256 of "tnl-target-tls/v1", NUL, hostname, NUL, and ca_pem.
+	TargetTls *ProjectTargetTLS `json:"target_tls,omitempty"`
+}
+
 // EnvironmentTarget One environment's approved destination, with exactly one of address or discovery. The service definition supplies the protocol; a target cannot override it. Provider discovery supplies its own target trust and cannot be combined with tls. Discovery uses the assigned publisher's credentials, never control's credentials.
 type EnvironmentTarget struct {
 	Address *string `json:"address,omitempty"`
 
 	// Discovery Exact provider selector resolved by the assigned publisher with its own AWS credentials. Control does not discover targets or credentials. EKS requires kubernetes; RDS requires postgres or mysql, verified against provider metadata.
 	Discovery *ProjectTargetDiscovery `json:"discovery,omitempty"`
+	Http      *EnvironmentServiceHTTP `json:"http,omitempty"`
 
 	// Tls Explicit verified publisher-to-target TLS. An empty object uses the destination hostname and system roots. ca_pem adds a CA-only snapshot, never a server-side file path. Saved targets return the normalized hostname and approved digest. Protocol-specific negotiation has no plaintext or unverified fallback.
 	Tls *EnvironmentTargetTLS `json:"tls,omitempty"`
@@ -2890,6 +2899,28 @@ type LocalProjectService struct {
 // LocalProjectServiceServiceKind defines model for LocalProjectService.ServiceKind.
 type LocalProjectServiceServiceKind string
 
+// LocalServiceDeclaration defines model for LocalServiceDeclaration.
+type LocalServiceDeclaration struct {
+	Access *ProjectServiceAccess `json:"access,omitempty"`
+
+	// Http Local listener readiness, browser opening and path mounts. Remote environment HTTP policy has its own serving-owner contract.
+	Http     *ProjectServiceHTTP `json:"http,omitempty"`
+	Name     *string             `json:"name,omitempty"`
+	Protocol *ServiceProtocol    `json:"protocol,omitempty"`
+
+	// PublicUrl Enables a local service's public URL. Remote environment service endpoints are separate resources.
+	PublicUrl *ProjectServicePublicURL `json:"public_url,omitempty"`
+
+	// Target Public URL targets are HTTP/HTTPS origins with an explicit port and no trailing slash. Service targets normalize to host:port with separate target_tls trust. Only local declarations may use deferred app, compose:SERVICE:PORT, or docker:CONTAINER:PORT descriptors; control does not discover targets.
+	Target string `json:"target"`
+
+	// TargetDiscovery Exact provider selector resolved by the assigned publisher with its own AWS credentials. Control does not discover targets or credentials. EKS requires kubernetes; RDS requires postgres or mysql, verified against provider metadata.
+	TargetDiscovery *ProjectTargetDiscovery `json:"target_discovery,omitempty"`
+
+	// TargetTls Publisher-to-target TLS trust, independent of visitor TLS. The protocol selects native negotiation. ca_pem is a CA-only snapshot added to the publisher's system roots. digest is lowercase SHA-256 of "tnl-target-tls/v1", NUL, hostname, NUL, and ca_pem.
+	TargetTls *ProjectTargetTLS `json:"target_tls,omitempty"`
+}
+
 // LocalServiceSource defines model for LocalServiceSource.
 type LocalServiceSource struct {
 	ProjectKey        string `json:"project_key"`
@@ -2969,18 +3000,6 @@ type ProjectApplicationRate struct {
 	Per   string `json:"per"`
 }
 
-// ProjectConfiguration Normalized declarative configuration, at most 512 KiB encoded. All local declarations defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its groups.
-type ProjectConfiguration struct {
-	// Oauth Desired local app-led OAuth integration URL declaration. Applying it does not provision a handler on a named publisher group.
-	Oauth           bool                                   `json:"oauth"`
-	PublisherGroups map[string]ProjectPublisherGroup       `json:"publisher_groups"`
-	Services        map[string]ProjectServiceConfiguration `json:"services"`
-
-	// Webhooks Desired exact endpoints for the existing local webhook integration handler. Each endpoint names a declared local HTTP service with public_url enabled, including app, address, compose, and docker targets. Control does not fetch provider catalogs or provision remote webhook handlers during apply.
-	Webhooks  map[string]ProjectWebhook   `json:"webhooks"`
-	Workloads *map[string]ProjectWorkload `json:"workloads,omitempty"`
-}
-
 // ProjectHTTPApplicationLimits defines model for ProjectHTTPApplicationLimits.
 type ProjectHTTPApplicationLimits struct {
 	Concurrency *int                    `json:"concurrency,omitempty"`
@@ -3014,14 +3033,6 @@ type ProjectPublicMetadata struct {
 	SourceFingerprint string `json:"source_fingerprint"`
 }
 
-// ProjectPublisherGroup defines model for ProjectPublisherGroup.
-type ProjectPublisherGroup struct {
-	Description *string `json:"description,omitempty"`
-	DomainId    *string `json:"domain_id,omitempty"`
-	Public      *bool   `json:"public,omitempty"`
-	Template    *bool   `json:"template,omitempty"`
-}
-
 // ProjectServiceAccess defines model for ProjectServiceAccess.
 type ProjectServiceAccess struct {
 	Team ProjectServiceAccessTeam `json:"team"`
@@ -3030,41 +3041,10 @@ type ProjectServiceAccess struct {
 // ProjectServiceAccessTeam defines model for ProjectServiceAccess.Team.
 type ProjectServiceAccessTeam bool
 
-// ProjectServiceConfiguration defines model for ProjectServiceConfiguration.
-type ProjectServiceConfiguration struct {
-	Access *ProjectServiceAccess `json:"access,omitempty"`
-
-	// Http Local readiness and path mounts, or named-group restricted HTTP access and request limits. A group owns its endpoint and reachability.
-	Http     *ProjectServiceHTTP `json:"http,omitempty"`
-	Name     *string             `json:"name,omitempty"`
-	Protocol *ServiceProtocol    `json:"protocol,omitempty"`
-
-	// PublicUrl Enables a local service's public URL. Named publisher groups use http settings and reject this block.
-	PublicUrl      *ProjectServicePublicURL `json:"public_url,omitempty"`
-	PublisherGroup *string                  `json:"publisher_group,omitempty"`
-
-	// Target Public URL targets are HTTP/HTTPS origins with an explicit port and no trailing slash. Service targets normalize to host:port with separate target_tls trust. Only local declarations may use deferred app, compose:SERVICE:PORT, or docker:CONTAINER:PORT descriptors; control does not discover targets.
-	Target string `json:"target"`
-
-	// TargetBinding Only template services may use group. Each concrete group must supply an exact saved binding; target, target_tls and target_discovery must be omitted or empty in the declaration. Omitted or fixed uses the template target and forbids instance overrides.
-	TargetBinding *ProjectServiceConfigurationTargetBinding `json:"target_binding,omitempty"`
-
-	// TargetDiscovery Exact provider selector resolved by the assigned publisher with its own AWS credentials. Control does not discover targets or credentials. EKS requires kubernetes; RDS requires postgres or mysql, verified against provider metadata.
-	TargetDiscovery *ProjectTargetDiscovery `json:"target_discovery,omitempty"`
-
-	// TargetTls Publisher-to-target TLS trust, independent of visitor TLS. The protocol selects native negotiation. ca_pem is a CA-only snapshot added to the publisher's system roots. digest is lowercase SHA-256 of "tnl-target-tls/v1", NUL, hostname, NUL, and ca_pem.
-	TargetTls *ProjectTargetTLS `json:"target_tls,omitempty"`
-}
-
-// ProjectServiceConfigurationTargetBinding Only template services may use group. Each concrete group must supply an exact saved binding; target, target_tls and target_discovery must be omitted or empty in the declaration. Omitted or fixed uses the template target and forbids instance overrides.
-type ProjectServiceConfigurationTargetBinding string
-
-// ProjectServiceHTTP Local readiness and path mounts, or named-group restricted HTTP access and request limits. A group owns its endpoint and reachability.
+// ProjectServiceHTTP Local listener readiness, browser opening and path mounts. Remote environment HTTP policy has its own serving-owner contract.
 type ProjectServiceHTTP struct {
-	Access *ProjectPublicAccess          `json:"access,omitempty"`
-	Limits *ProjectHTTPApplicationLimits `json:"limits,omitempty"`
-	Open   *bool                         `json:"open,omitempty"`
-	Paths  *map[string]struct {
+	Open  *bool `json:"open,omitempty"`
+	Paths *map[string]struct {
 		Service     string `json:"service"`
 		StripPrefix *bool  `json:"strip_prefix,omitempty"`
 	} `json:"paths,omitempty"`
@@ -3073,7 +3053,7 @@ type ProjectServiceHTTP struct {
 	} `json:"readiness,omitempty"`
 }
 
-// ProjectServicePublicURL Enables a local service's public URL. Named publisher groups use http settings and reject this block.
+// ProjectServicePublicURL Enables a local service's public URL. Remote environment service endpoints are separate resources.
 type ProjectServicePublicURL struct {
 	Access   *ProjectPublicAccess `json:"access,omitempty"`
 	DomainId *string              `json:"domain_id,omitempty"`
@@ -3290,11 +3270,11 @@ type PublisherConnectionID = ResourceID
 // PublisherConnectionState defines model for PublisherConnectionState.
 type PublisherConnectionState string
 
-// PublisherDeploymentObservation A deployment report accepted through the signed runtime lifecycle. Publisher and team are the surrounding runtime's authenticated identity; group_id is derived by control from current publisher membership. Timestamps are control receipt times. This is evidence of a publisher report, not cloud deployment state, image attestation or target health. The group/deployment/replica tuple is reserved for this publisher identity.
+// PublisherDeploymentObservation A deployment report accepted through the signed runtime lifecycle. Publisher and team are the surrounding runtime's authenticated identity; environment_id is derived by control from current publisher membership. Timestamps are control receipt times. This is evidence of a publisher report, not cloud deployment state, image attestation or target health. The environment/deployment/replica tuple is reserved for this publisher identity.
 type PublisherDeploymentObservation struct {
+	EnvironmentId   string                                 `json:"environment_id"`
 	Evidence        PublisherDeploymentObservationEvidence `json:"evidence"`
 	FirstObservedAt time.Time                              `json:"first_observed_at"`
-	GroupId         string                                 `json:"group_id"`
 	ObservedAt      time.Time                              `json:"observed_at"`
 
 	// Report Optional, bounded metadata reported by a signed group publisher process. The runtime assertion binds every field. It supplies no tenant, group, or publisher authority and is not AWS attestation. Values stay fixed within a process run. Deployment, provider, replica and instance stay bound to the same publisher identity across replacement processes.
@@ -3354,151 +3334,6 @@ type PublisherGrant struct {
 // PublisherGrantKind defines model for PublisherGrant.Kind.
 type PublisherGrantKind string
 
-// PublisherGroupAcknowledgement defines model for PublisherGroupAcknowledgement.
-type PublisherGroupAcknowledgement struct {
-	ConfigurationHash string `json:"configuration_hash"`
-	Healthy           bool   `json:"healthy"`
-	Revision          int64  `json:"revision"`
-}
-
-// PublisherGroupAssignments defines model for PublisherGroupAssignments.
-type PublisherGroupAssignments struct {
-	// CertificateStatePlans Every certificate plan submitted by this publisher identity. Restore each plan's private material; unrelated or older plans cannot satisfy this list.
-	CertificateStatePlans []CertificatePlan                 `json:"certificate_state_plans"`
-	ConfigurationHash     string                            `json:"configuration_hash"`
-	Member                PublisherGroupMember              `json:"member"`
-	Revision              int64                             `json:"revision"`
-	Services              []PublisherGroupServiceAssignment `json:"services"`
-}
-
-// PublisherGroupBindings defines model for PublisherGroupBindings.
-type PublisherGroupBindings map[string]PublisherGroupTargetBinding
-
-// PublisherGroupConnection defines model for PublisherGroupConnection.
-type PublisherGroupConnection struct {
-	GroupId           string                                      `json:"group_id"`
-	GroupName         string                                      `json:"group_name"`
-	ProjectKey        string                                      `json:"project_key"`
-	ProjectLabel      string                                      `json:"project_label"`
-	Schema            PublisherGroupConnectionSchema              `json:"schema"`
-	Server            string                                      `json:"server"`
-	Services          map[string]ServiceProtocol                  `json:"services"`
-	SourceFingerprint string                                      `json:"source_fingerprint"`
-	TeamId            string                                      `json:"team_id"`
-	Workloads         map[string]PublisherGroupConnectionWorkload `json:"workloads"`
-}
-
-// PublisherGroupConnectionSchema defines model for PublisherGroupConnection.Schema.
-type PublisherGroupConnectionSchema int
-
-// PublisherGroupConnectionWorkload defines model for PublisherGroupConnectionWorkload.
-type PublisherGroupConnectionWorkload struct {
-	MaxDurationSeconds int              `json:"max_duration_seconds"`
-	Provider           WorkloadProvider `json:"provider"`
-	Services           []string         `json:"services"`
-}
-
-// PublisherGroupEnrollment defines model for PublisherGroupEnrollment.
-type PublisherGroupEnrollment struct {
-	EnrollmentKey string    `json:"enrollment_key"`
-	ExpiresAt     time.Time `json:"expires_at"`
-	GroupId       string    `json:"group_id"`
-	MaxMembers    int       `json:"max_members"`
-	Publisher     struct {
-		Group   string `json:"group"`
-		Project string `json:"project"`
-		Server  string `json:"server"`
-	} `json:"publisher"`
-}
-
-// PublisherGroupLease defines model for PublisherGroupLease.
-type PublisherGroupLease struct {
-	AccessToken string    `json:"access_token"`
-	ExpiresAt   time.Time `json:"expires_at"`
-}
-
-// PublisherGroupLeaseRequest defines model for PublisherGroupLeaseRequest.
-type PublisherGroupLeaseRequest struct {
-	Assertion           string `json:"assertion"`
-	GroupId             string `json:"group_id"`
-	PublisherIdentityId string `json:"publisher_identity_id"`
-}
-
-// PublisherGroupMember defines model for PublisherGroupMember.
-type PublisherGroupMember struct {
-	GroupId             string `json:"group_id"`
-	GroupName           string `json:"group_name"`
-	KeyId               string `json:"key_id"`
-	ProjectKey          string `json:"project_key"`
-	PublisherIdentityId string `json:"publisher_identity_id"`
-	TeamId              string `json:"team_id"`
-}
-
-// PublisherGroupMemberStatus defines model for PublisherGroupMemberStatus.
-type PublisherGroupMemberStatus struct {
-	AcknowledgedAt      *time.Time `json:"acknowledged_at,omitempty"`
-	CurrentRevision     int64      `json:"current_revision"`
-	GroupId             string     `json:"group_id"`
-	GroupName           string     `json:"group_name"`
-	Healthy             bool       `json:"healthy"`
-	KeyId               string     `json:"key_id"`
-	LeaseExpiresAt      *time.Time `json:"lease_expires_at,omitempty"`
-	ObservedRevision    int64      `json:"observed_revision"`
-	ProjectKey          string     `json:"project_key"`
-	PublisherIdentityId string     `json:"publisher_identity_id"`
-
-	// Runtime Latest explicitly started runtime for this immutable publisher identity. A single bounded record survives stop and lease expiry. Active describes the runtime lease, not target reachability or a permanent static IP. Control egress may differ from database-target routing, address family, or NAT. This evidence never grants access or configures an allowlist.
-	Runtime    *PublisherRuntimeStatus `json:"runtime,omitempty"`
-	SnapshotAt time.Time               `json:"snapshot_at"`
-	TeamId     string                  `json:"team_id"`
-}
-
-// PublisherGroupResource defines model for PublisherGroupResource.
-type PublisherGroupResource struct {
-	Bindings PublisherGroupBindings       `json:"bindings"`
-	From     string                       `json:"from"`
-	Id       string                       `json:"id"`
-	Members  []PublisherGroupMemberStatus `json:"members"`
-	Name     string                       `json:"name"`
-	Retired  bool                         `json:"retired"`
-	Revision int64                        `json:"revision"`
-	Services []AppliedProjectService      `json:"services"`
-}
-
-// PublisherGroupServiceAssignment defines model for PublisherGroupServiceAssignment.
-type PublisherGroupServiceAssignment struct {
-	Configuration ProjectServiceConfiguration `json:"configuration"`
-
-	// Environment The exact saved environment application assigned to this publisher worker. This is a publication freshness fence, not a visitor, provisioning, or publisher permission. Preparation must supply it unchanged; control never substitutes the latest application for an omitted or stale value.
-	Environment   *EnvironmentPublication                    `json:"environment,omitempty"`
-	GrantId       string                                     `json:"grant_id"`
-	Hostname      *string                                    `json:"hostname,omitempty"`
-	Service       string                                     `json:"service"`
-	ServiceId     string                                     `json:"service_id"`
-	ServiceKind   PublisherGroupServiceAssignmentServiceKind `json:"service_kind"`
-	TrustRevision int64                                      `json:"trust_revision"`
-}
-
-// PublisherGroupServiceAssignmentServiceKind defines model for PublisherGroupServiceAssignment.ServiceKind.
-type PublisherGroupServiceAssignmentServiceKind string
-
-// PublisherGroupTargetBinding Exact target settings for one group. Control privately pins the template service's protocol when this binding is explicitly saved; callers never select a separate protocol. A retained binding cannot be reinterpreted by a template protocol change.
-type PublisherGroupTargetBinding struct {
-	Target *string `json:"target,omitempty"`
-
-	// TargetDiscovery Exact provider selector resolved by the assigned publisher with its own AWS credentials. Control does not discover targets or credentials. EKS requires kubernetes; RDS requires postgres or mysql, verified against provider metadata.
-	TargetDiscovery *ProjectTargetDiscovery `json:"target_discovery,omitempty"`
-
-	// TargetTls Publisher-to-target TLS trust, independent of visitor TLS. The protocol selects native negotiation. ca_pem is a CA-only snapshot added to the publisher's system roots. digest is lowercase SHA-256 of "tnl-target-tls/v1", NUL, hostname, NUL, and ca_pem.
-	TargetTls *ProjectTargetTLS `json:"target_tls,omitempty"`
-}
-
-// PublisherGroupVerification defines model for PublisherGroupVerification.
-type PublisherGroupVerification struct {
-	GroupNames []string             `json:"group_names"`
-	Member     PublisherGroupMember `json:"member"`
-}
-
 // PublisherIdentity defines model for PublisherIdentity.
 type PublisherIdentity struct {
 	CreatedAt         time.Time                  `json:"created_at"`
@@ -3546,9 +3381,9 @@ type PublisherRuntimeRequestAction string
 
 // PublisherRuntimeResponse defines model for PublisherRuntimeResponse.
 type PublisherRuntimeResponse struct {
-	Epoch          int64                `json:"epoch"`
-	GroupLease     *PublisherGroupLease `json:"group_lease,omitempty"`
-	LeaseExpiresAt *time.Time           `json:"lease_expires_at,omitempty"`
+	EnvironmentLease *EnvironmentPublisherLease `json:"environment_lease,omitempty"`
+	Epoch            int64                      `json:"epoch"`
+	LeaseExpiresAt   *time.Time                 `json:"lease_expires_at,omitempty"`
 }
 
 // PublisherRuntimeStatus Latest explicitly started runtime for this immutable publisher identity. A single bounded record survives stop and lease expiry. Active describes the runtime lease, not target reachability or a permanent static IP. Control egress may differ from database-target routing, address family, or NAT. This evidence never grants access or configures an allowlist.
@@ -3559,7 +3394,7 @@ type PublisherRuntimeStatus struct {
 	Address       *string                             `json:"address,omitempty"`
 	AddressFamily PublisherRuntimeStatusAddressFamily `json:"address_family"`
 
-	// Deployment A deployment report accepted through the signed runtime lifecycle. Publisher and team are the surrounding runtime's authenticated identity; group_id is derived by control from current publisher membership. Timestamps are control receipt times. This is evidence of a publisher report, not cloud deployment state, image attestation or target health. The group/deployment/replica tuple is reserved for this publisher identity.
+	// Deployment A deployment report accepted through the signed runtime lifecycle. Publisher and team are the surrounding runtime's authenticated identity; environment_id is derived by control from current publisher membership. Timestamps are control receipt times. This is evidence of a publisher report, not cloud deployment state, image attestation or target health. The environment/deployment/replica tuple is reserved for this publisher identity.
 	Deployment          *PublisherDeploymentObservation `json:"deployment,omitempty"`
 	Epoch               int64                           `json:"epoch"`
 	Evidence            PublisherRuntimeStatusEvidence  `json:"evidence"`
@@ -3628,17 +3463,17 @@ type ReadinessResponseStatus string
 
 // RealizeLocalProjectServiceRequest defines model for RealizeLocalProjectServiceRequest.
 type RealizeLocalProjectServiceRequest struct {
-	Configuration     ProjectServiceConfiguration `json:"configuration"`
-	DomainId          *DomainID                   `json:"domain_id,omitempty"`
-	PublicUrlId       *PublicURLID                `json:"public_url_id,omitempty"`
-	SourceFingerprint string                      `json:"source_fingerprint"`
-	TeamId            string                      `json:"team_id"`
-	WorktreeKey       string                      `json:"worktree_key"`
-	WorktreeLabel     *string                     `json:"worktree_label,omitempty"`
+	Configuration     LocalServiceDeclaration `json:"configuration"`
+	DomainId          *DomainID               `json:"domain_id,omitempty"`
+	PublicUrlId       *PublicURLID            `json:"public_url_id,omitempty"`
+	SourceFingerprint string                  `json:"source_fingerprint"`
+	TeamId            string                  `json:"team_id"`
+	WorktreeKey       string                  `json:"worktree_key"`
+	WorktreeLabel     *string                 `json:"worktree_label,omitempty"`
 }
 
-// RedeemPublisherGroupEnrollmentRequest defines model for RedeemPublisherGroupEnrollmentRequest.
-type RedeemPublisherGroupEnrollmentRequest struct {
+// RedeemEnvironmentPublisherEnrollmentRequest defines model for RedeemEnvironmentPublisherEnrollmentRequest.
+type RedeemEnvironmentPublisherEnrollmentRequest struct {
 	EnrollmentKey string `json:"enrollment_key"`
 	PublicKey     string `json:"public_key"`
 }
@@ -3656,21 +3491,6 @@ type RelayID = ResourceID
 
 // RelayServiceID defines model for RelayServiceID.
 type RelayServiceID = ResourceID
-
-// RenamePublisherGroupRequest defines model for RenamePublisherGroupRequest.
-type RenamePublisherGroupRequest struct {
-	ExpectedRevision int64  `json:"expected_revision"`
-	Name             string `json:"name"`
-	TeamId           string `json:"team_id"`
-}
-
-// RenamePublisherNamespaceRequest defines model for RenamePublisherNamespaceRequest.
-type RenamePublisherNamespaceRequest struct {
-	ExpectedRevision int64  `json:"expected_revision"`
-	IdempotencyKey   string `json:"idempotency_key"`
-	NamespaceLabel   string `json:"namespace_label"`
-	TeamId           string `json:"team_id"`
-}
 
 // ReplaceVisitorAccessRequest defines model for ReplaceVisitorAccessRequest.
 type ReplaceVisitorAccessRequest struct {
@@ -4209,13 +4029,6 @@ type UpdatePublicURLRequest struct {
 	Target string `json:"target"`
 }
 
-// UpdatePublisherGroupBindingsRequest defines model for UpdatePublisherGroupBindingsRequest.
-type UpdatePublisherGroupBindingsRequest struct {
-	Bindings         PublisherGroupBindings `json:"bindings"`
-	ExpectedRevision int64                  `json:"expected_revision"`
-	TeamId           string                 `json:"team_id"`
-}
-
 // VisitorAccessMode defines model for VisitorAccessMode.
 type VisitorAccessMode string
 
@@ -4527,6 +4340,9 @@ type CanonicalHostnameQuery = CanonicalHostname
 // Cursor defines model for Cursor.
 type Cursor = ResourceID
 
+// DNSAuthorityReference defines model for DNSAuthorityReference.
+type DNSAuthorityReference = string
+
 // FeedbackAfterCursor defines model for FeedbackAfterCursor.
 type FeedbackAfterCursor = int64
 
@@ -4612,11 +4428,6 @@ type GetCollectionParams struct {
 	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
 }
 
-// GetProjectConfigurationParams defines parameters for GetProjectConfiguration.
-type GetProjectConfigurationParams struct {
-	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
-}
-
 // ListEnvironmentsParams defines parameters for ListEnvironments.
 type ListEnvironmentsParams struct {
 	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
@@ -4633,6 +4444,34 @@ type GetEnvironmentParams struct {
 	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
 }
 
+// CreateEnvironmentPublisherEnrollmentParams defines parameters for CreateEnvironmentPublisherEnrollment.
+type CreateEnvironmentPublisherEnrollmentParams struct {
+	// IdempotencyKey Required for machine provisioning sessions; human managers may omit it. Keep the same key for retries of one exact enrollment intent. Machine retries return the original still-current enrollment without spending its cumulative member budget again; changing intent with a used key conflicts.
+	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
+}
+
+// ListEnvironmentPublishersParams defines parameters for ListEnvironmentPublishers.
+type ListEnvironmentPublishersParams struct {
+	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
+}
+
+// RevokeEnvironmentPublisherParams defines parameters for RevokeEnvironmentPublisher.
+type RevokeEnvironmentPublisherParams struct {
+	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
+}
+
+// GetEnvironmentPublisherGrantParams defines parameters for GetEnvironmentPublisherGrant.
+type GetEnvironmentPublisherGrantParams struct {
+	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
+}
+
+// RevokeEnvironmentPublisherGrantParams defines parameters for RevokeEnvironmentPublisherGrant.
+type RevokeEnvironmentPublisherGrantParams struct {
+	TeamId                    TeamIDQuery `form:"team_id" json:"team_id"`
+	ExpectedRevision          int64       `form:"expected_revision" json:"expected_revision"`
+	ExpectedConfigurationHash string      `form:"expected_configuration_hash" json:"expected_configuration_hash"`
+}
+
 // GetLocalProjectServiceParams defines parameters for GetLocalProjectService.
 type GetLocalProjectServiceParams struct {
 	TeamId            TeamIDQuery `form:"team_id" json:"team_id"`
@@ -4643,45 +4482,6 @@ type GetLocalProjectServiceParams struct {
 // GetProjectPublicMetadataParams defines parameters for GetProjectPublicMetadata.
 type GetProjectPublicMetadataParams struct {
 	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
-}
-
-// ListPublisherGroupsParams defines parameters for ListPublisherGroups.
-type ListPublisherGroupsParams struct {
-	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
-}
-
-// RemovePublisherGroupParams defines parameters for RemovePublisherGroup.
-type RemovePublisherGroupParams struct {
-	TeamId           TeamIDQuery `form:"team_id" json:"team_id"`
-	ExpectedRevision int64       `form:"expected_revision" json:"expected_revision"`
-}
-
-// GetPublisherGroupParams defines parameters for GetPublisherGroup.
-type GetPublisherGroupParams struct {
-	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
-}
-
-// GetPublisherGroupConnectionParams defines parameters for GetPublisherGroupConnection.
-type GetPublisherGroupConnectionParams struct {
-	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
-}
-
-// ListPublisherGroupMembersParams defines parameters for ListPublisherGroupMembers.
-type ListPublisherGroupMembersParams struct {
-	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
-}
-
-// RevokePublisherGroupMemberParams defines parameters for RevokePublisherGroupMember.
-type RevokePublisherGroupMemberParams struct {
-	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
-}
-
-// GetProjectServiceParams defines parameters for GetProjectService.
-type GetProjectServiceParams struct {
-	// PublisherGroup Exact group ID or current/historical selector within this project; never a visitor grant.
-	PublisherGroup    *string `form:"publisher_group,omitempty" json:"publisher_group,omitempty"`
-	TeamId            TeamID  `form:"team_id" json:"team_id"`
-	SourceFingerprint string  `form:"source_fingerprint" json:"source_fingerprint"`
 }
 
 // ListPublicURLsParams defines parameters for ListPublicURLs.
@@ -4863,6 +4663,18 @@ type SetMaintenanceControlJSONRequestBody = SetMaintenanceControlRequest
 // DrainAdminRelayJSONRequestBody defines body for DrainAdminRelay for application/json ContentType.
 type DrainAdminRelayJSONRequestBody = AdminDrainRelayRequest
 
+// AcknowledgeEnvironmentPublisherJSONRequestBody defines body for AcknowledgeEnvironmentPublisher for application/json ContentType.
+type AcknowledgeEnvironmentPublisherJSONRequestBody = EnvironmentPublisherAcknowledgement
+
+// RedeemEnvironmentPublisherEnrollmentJSONRequestBody defines body for RedeemEnvironmentPublisherEnrollment for application/json ContentType.
+type RedeemEnvironmentPublisherEnrollmentJSONRequestBody = RedeemEnvironmentPublisherEnrollmentRequest
+
+// AcquireEnvironmentPublisherLeaseJSONRequestBody defines body for AcquireEnvironmentPublisherLease for application/json ContentType.
+type AcquireEnvironmentPublisherLeaseJSONRequestBody = EnvironmentPublisherProof
+
+// VerifyEnvironmentPublisherJSONRequestBody defines body for VerifyEnvironmentPublisher for application/json ContentType.
+type VerifyEnvironmentPublisherJSONRequestBody = EnvironmentPublisherProof
+
 // AppendFeedbackEventJSONRequestBody defines body for AppendFeedbackEvent for application/json ContentType.
 type AppendFeedbackEventJSONRequestBody = AppendFeedbackEventRequest
 
@@ -4887,9 +4699,6 @@ type CreateCollectionJSONRequestBody = CreateCollectionRequest
 // UpdateCollectionDefaultJSONRequestBody defines body for UpdateCollectionDefault for application/json ContentType.
 type UpdateCollectionDefaultJSONRequestBody = UpdateCollectionDefaultRequest
 
-// ApplyProjectConfigurationJSONRequestBody defines body for ApplyProjectConfiguration for application/json ContentType.
-type ApplyProjectConfigurationJSONRequestBody = ApplyProjectConfigurationRequest
-
 // CreateEnvironmentJSONRequestBody defines body for CreateEnvironment for application/json ContentType.
 type CreateEnvironmentJSONRequestBody = CreateEnvironmentRequest
 
@@ -4899,26 +4708,14 @@ type ApplyEnvironmentsJSONRequestBody = ApplyEnvironmentsRequest
 // ApplyEnvironmentJSONRequestBody defines body for ApplyEnvironment for application/json ContentType.
 type ApplyEnvironmentJSONRequestBody = ApplyEnvironmentRequest
 
+// CreateEnvironmentPublisherEnrollmentJSONRequestBody defines body for CreateEnvironmentPublisherEnrollment for application/json ContentType.
+type CreateEnvironmentPublisherEnrollmentJSONRequestBody = CreateEnvironmentPublisherEnrollmentRequest
+
+// AuthorizeEnvironmentPublisherServiceJSONRequestBody defines body for AuthorizeEnvironmentPublisherService for application/json ContentType.
+type AuthorizeEnvironmentPublisherServiceJSONRequestBody = AuthorizeEnvironmentPublisherServiceRequest
+
 // RealizeLocalProjectServiceJSONRequestBody defines body for RealizeLocalProjectService for application/json ContentType.
 type RealizeLocalProjectServiceJSONRequestBody = RealizeLocalProjectServiceRequest
-
-// CreateBoundPublisherGroupJSONRequestBody defines body for CreateBoundPublisherGroup for application/json ContentType.
-type CreateBoundPublisherGroupJSONRequestBody = CreatePublisherGroupRequest
-
-// CreatePublisherGroupJSONRequestBody defines body for CreatePublisherGroup for application/json ContentType.
-type CreatePublisherGroupJSONRequestBody = CreatePublisherGroupRequest
-
-// UpdatePublisherGroupBindingsJSONRequestBody defines body for UpdatePublisherGroupBindings for application/json ContentType.
-type UpdatePublisherGroupBindingsJSONRequestBody = UpdatePublisherGroupBindingsRequest
-
-// CreatePublisherGroupEnrollmentJSONRequestBody defines body for CreatePublisherGroupEnrollment for application/json ContentType.
-type CreatePublisherGroupEnrollmentJSONRequestBody = CreatePublisherGroupEnrollmentRequest
-
-// RenamePublisherNamespaceJSONRequestBody defines body for RenamePublisherNamespace for application/json ContentType.
-type RenamePublisherNamespaceJSONRequestBody = RenamePublisherNamespaceRequest
-
-// RenamePublisherGroupJSONRequestBody defines body for RenamePublisherGroup for application/json ContentType.
-type RenamePublisherGroupJSONRequestBody = RenamePublisherGroupRequest
 
 // CreateServiceDefinitionJSONRequestBody defines body for CreateServiceDefinition for application/json ContentType.
 type CreateServiceDefinitionJSONRequestBody = CreateServiceDefinitionRequest
@@ -4994,18 +4791,6 @@ type ReportPublishRunServiceObservationsJSONRequestBody = PublishRunServiceObser
 
 // CreatePublisherEnrollmentJSONRequestBody defines body for CreatePublisherEnrollment for application/json ContentType.
 type CreatePublisherEnrollmentJSONRequestBody = CreatePublisherEnrollmentRequest
-
-// AcknowledgePublisherGroupConfigurationJSONRequestBody defines body for AcknowledgePublisherGroupConfiguration for application/json ContentType.
-type AcknowledgePublisherGroupConfigurationJSONRequestBody = PublisherGroupAcknowledgement
-
-// RedeemPublisherGroupEnrollmentJSONRequestBody defines body for RedeemPublisherGroupEnrollment for application/json ContentType.
-type RedeemPublisherGroupEnrollmentJSONRequestBody = RedeemPublisherGroupEnrollmentRequest
-
-// AcquirePublisherGroupLeaseJSONRequestBody defines body for AcquirePublisherGroupLease for application/json ContentType.
-type AcquirePublisherGroupLeaseJSONRequestBody = PublisherGroupLeaseRequest
-
-// VerifyPublisherGroupIdentityJSONRequestBody defines body for VerifyPublisherGroupIdentity for application/json ContentType.
-type VerifyPublisherGroupIdentityJSONRequestBody = PublisherGroupLeaseRequest
 
 // CreatePublisherGrantJSONRequestBody defines body for CreatePublisherGrant for application/json ContentType.
 type CreatePublisherGrantJSONRequestBody = CreatePublisherGrantRequest
@@ -5312,6 +5097,53 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/discovery (the `GetControlDiscovery` operationId).
 	GetControlDiscovery(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// AcknowledgeEnvironmentPublisherWithBody performs a POST /v1/environment-publishers/ack (the `AcknowledgeEnvironmentPublisher` operationId) request,
+	// with any type of body and a specified content type.
+	AcknowledgeEnvironmentPublisherWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AcknowledgeEnvironmentPublisher performs a POST /v1/environment-publishers/ack (the `AcknowledgeEnvironmentPublisher` operationId) request.
+	// Takes a body of the `application/json` content type.
+	AcknowledgeEnvironmentPublisher(ctx context.Context, body AcknowledgeEnvironmentPublisherJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetEnvironmentPublisherAssignments performs a GET /v1/environment-publishers/assignments (the `GetEnvironmentPublisherAssignments` operationId) request.
+	GetEnvironmentPublisherAssignments(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RedeemEnvironmentPublisherEnrollmentWithBody performs a POST /v1/environment-publishers/enroll (the `RedeemEnvironmentPublisherEnrollment` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Install this replica's own Ed25519 public key. Exact-key replay is idempotent and does not consume another member. The enrolled identity is independent of its historical enrollment issuer.
+	RedeemEnvironmentPublisherEnrollmentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RedeemEnvironmentPublisherEnrollment performs a POST /v1/environment-publishers/enroll (the `RedeemEnvironmentPublisherEnrollment` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Install this replica's own Ed25519 public key. Exact-key replay is idempotent and does not consume another member. The enrolled identity is independent of its historical enrollment issuer.
+	RedeemEnvironmentPublisherEnrollment(ctx context.Context, body RedeemEnvironmentPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AcquireEnvironmentPublisherLeaseWithBody performs a POST /v1/environment-publishers/lease (the `AcquireEnvironmentPublisherLease` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Exchange a one-use exact-environment assertion for a fixed-expiry publisher lease. Current installed identity and service authority are checked independently of the historical enrollment issuer.
+	AcquireEnvironmentPublisherLeaseWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AcquireEnvironmentPublisherLease performs a POST /v1/environment-publishers/lease (the `AcquireEnvironmentPublisherLease` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Exchange a one-use exact-environment assertion for a fixed-expiry publisher lease. Current installed identity and service authority are checked independently of the historical enrollment issuer.
+	AcquireEnvironmentPublisherLease(ctx context.Context, body AcquireEnvironmentPublisherLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// VerifyEnvironmentPublisherWithBody performs a POST /v1/environment-publishers/verify (the `VerifyEnvironmentPublisher` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Verify current installed identity without replacing its running lease. Sign a one-use assertion for this exact endpoint with the environment ID as its scope.
+	VerifyEnvironmentPublisherWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// VerifyEnvironmentPublisher performs a POST /v1/environment-publishers/verify (the `VerifyEnvironmentPublisher` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Verify current installed identity without replacing its running lease. Sign a one-use assertion for this exact endpoint with the environment ID as its scope.
+	VerifyEnvironmentPublisher(ctx context.Context, body VerifyEnvironmentPublisherJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListFeedbackThreads List feedback threads manageable in one team
 	//
 	// Corresponds with GET /v1/feedback (the `ListFeedbackThreads` operationId).
@@ -5454,7 +5286,7 @@ type ClientInterface interface {
 
 	// GetCollection performs a GET /v1/projects/{project_key}/collections/{collection_id} (the `GetCollection` operationId) request.
 	//
-	// Read this exact collection in the authorized team and project as a current team manager. Neither its name nor its reference authorizes access; no other scope is searched.
+	// Read this exact collection using current team manager access or a machine read provisioning session scoped to that collection and every service in its current default definition. Neither its name nor its reference authorizes access; no other scope is searched.
 	GetCollection(ctx context.Context, projectKey string, collectionId CollectionID, params *GetCollectionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UpdateCollectionDefaultWithBody performs a PUT /v1/projects/{project_key}/collections/{collection_id}/default (the `UpdateCollectionDefault` operationId) request,
@@ -5469,71 +5301,96 @@ type ClientInterface interface {
 	// Replace the collection default as a current team manager, requiring its current mutation revision. The new default applies only to newly created environments. Existing members keep their applied definitions, mutation revisions, approved targets, service IDs, grants, and runs. Selecting an older default still advances the collection mutation revision.
 	UpdateCollectionDefault(ctx context.Context, projectKey string, collectionId CollectionID, body UpdateCollectionDefaultJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetProjectConfiguration performs a GET /v1/projects/{project_key}/configuration (the `GetProjectConfiguration` operationId) request.
-	GetProjectConfiguration(ctx context.Context, projectKey string, params *GetProjectConfigurationParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ApplyProjectConfigurationWithBody performs a PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
-	ApplyProjectConfigurationWithBody(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ApplyProjectConfiguration performs a PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId) request.
-	// Takes a body of the `application/json` content type.
-	//
-	// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
-	ApplyProjectConfiguration(ctx context.Context, projectKey string, body ApplyProjectConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// ListEnvironments performs a GET /v1/projects/{project_key}/environments (the `ListEnvironments` operationId) request.
 	//
-	// List active environments in this project as a current team manager. Contains sensitive target settings; never use as browser metadata.
+	// List active environments in this project using current team manager access or a machine read provisioning session. Machine results include only environments within its current saved scope whose complete applied definition fits its fixed service allowlist. Contains sensitive target settings; never use as browser metadata.
 	ListEnvironments(ctx context.Context, projectKey string, params *ListEnvironmentsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateEnvironmentWithBody performs a POST /v1/projects/{project_key}/environments (the `CreateEnvironment` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Materialize one environment from an immutable definition and complete approved targets as a current team manager. With a collection, require its expected mutation revision and save membership atomically; an explicit definition revision overrides its default. Creation grants no visitor or workload permission. Authorized identical retries return the saved environment without following a changed default; changing the original collection precondition or other creation intent with a used key conflicts, as do retired keys. Names and references select resources, not authorization scope.
+	// Materialize one environment from an immutable definition and complete approved targets using current team manager access or an exact machine create provisioning session. Machine creation requires its granted collection including future environments, and the complete selected definition must fit its fixed service allowlist. With a collection, require its expected mutation revision and save membership atomically; an explicit definition revision overrides its default. Creation grants no visitor or workload permission. Authorized identical retries return the saved environment without following a changed default; changing the original collection precondition or other creation intent with a used key conflicts, as do retired keys. Names and references select resources, not authorization scope.
 	CreateEnvironmentWithBody(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateEnvironment performs a POST /v1/projects/{project_key}/environments (the `CreateEnvironment` operationId) request.
 	// Takes a body of the `application/json` content type.
 	//
-	// Materialize one environment from an immutable definition and complete approved targets as a current team manager. With a collection, require its expected mutation revision and save membership atomically; an explicit definition revision overrides its default. Creation grants no visitor or workload permission. Authorized identical retries return the saved environment without following a changed default; changing the original collection precondition or other creation intent with a used key conflicts, as do retired keys. Names and references select resources, not authorization scope.
+	// Materialize one environment from an immutable definition and complete approved targets using current team manager access or an exact machine create provisioning session. Machine creation requires its granted collection including future environments, and the complete selected definition must fit its fixed service allowlist. With a collection, require its expected mutation revision and save membership atomically; an explicit definition revision overrides its default. Creation grants no visitor or workload permission. Authorized identical retries return the saved environment without following a changed default; changing the original collection precondition or other creation intent with a used key conflicts, as do retired keys. Names and references select resources, not authorization scope.
 	CreateEnvironment(ctx context.Context, projectKey string, body CreateEnvironmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ApplyEnvironmentsWithBody performs a POST /v1/projects/{project_key}/environments/apply (the `ApplyEnvironments` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Atomically apply the selected environments as a current team manager. Check every expected environment revision in one transaction; any validation, capacity, or revision failure saves nothing. Definition rollout does not reconcile current authorization.
+	// Atomically apply the selected environments using current team manager access or exact machine update authority for every environment and every old and selected service. Check every expected environment revision in one transaction; any authorization, validation, capacity, or revision failure saves nothing. Definition rollout does not reconcile current authorization.
 	ApplyEnvironmentsWithBody(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ApplyEnvironments performs a POST /v1/projects/{project_key}/environments/apply (the `ApplyEnvironments` operationId) request.
 	// Takes a body of the `application/json` content type.
 	//
-	// Atomically apply the selected environments as a current team manager. Check every expected environment revision in one transaction; any validation, capacity, or revision failure saves nothing. Definition rollout does not reconcile current authorization.
+	// Atomically apply the selected environments using current team manager access or exact machine update authority for every environment and every old and selected service. Check every expected environment revision in one transaction; any authorization, validation, capacity, or revision failure saves nothing. Definition rollout does not reconcile current authorization.
 	ApplyEnvironments(ctx context.Context, projectKey string, body ApplyEnvironmentsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RetireEnvironment performs a DELETE /v1/projects/{project_key}/environments/{environment_id} (the `RetireEnvironment` operationId) request.
 	//
-	// Retire only this environment and its publications as a current team manager. Its saved creation key cannot recreate it. Other environments, local worktrees, and their authorizations remain unchanged.
+	// Retire only this environment and its publications using current team manager access or exact machine retire authority for its complete applied service set. Its saved creation key cannot recreate it. Other environments, local worktrees, and their authorizations remain unchanged.
 	RetireEnvironment(ctx context.Context, projectKey string, environmentId string, params *RetireEnvironmentParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetEnvironment performs a GET /v1/projects/{project_key}/environments/{environment_id} (the `GetEnvironment` operationId) request.
 	//
-	// Read one exact immutable environment in this project as a current team manager. Does not search names, another project, or another team.
+	// Read one exact environment in this project using current team manager access or exact machine read authority for its complete applied service set. Does not search names, another project, or another team.
 	GetEnvironment(ctx context.Context, projectKey string, environmentId string, params *GetEnvironmentParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ApplyEnvironmentWithBody performs a POST /v1/projects/{project_key}/environments/{environment_id}/apply (the `ApplyEnvironment` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Apply one pinned definition and approved targets to this exact environment as a current team manager. A rollback still advances its mutation revision. No other environment is reconciled; no current permission is restored from definition history.
+	// Apply one pinned definition and approved targets to this exact environment using current team manager access or exact machine update authority. A machine must cover every old and selected service; it cannot remove an unauthorized service to gain control of the remainder. A rollback still advances its mutation revision. No other environment is reconciled; no current permission is restored from definition history.
 	ApplyEnvironmentWithBody(ctx context.Context, projectKey string, environmentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ApplyEnvironment performs a POST /v1/projects/{project_key}/environments/{environment_id}/apply (the `ApplyEnvironment` operationId) request.
 	// Takes a body of the `application/json` content type.
 	//
-	// Apply one pinned definition and approved targets to this exact environment as a current team manager. A rollback still advances its mutation revision. No other environment is reconciled; no current permission is restored from definition history.
+	// Apply one pinned definition and approved targets to this exact environment using current team manager access or exact machine update authority. A machine must cover every old and selected service; it cannot remove an unauthorized service to gain control of the remainder. A rollback still advances its mutation revision. No other environment is reconciled; no current permission is restored from definition history.
 	ApplyEnvironment(ctx context.Context, projectKey string, environmentId string, body ApplyEnvironmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateEnvironmentPublisherEnrollmentWithBody performs a POST /v1/projects/{project_key}/environments/{environment_id}/publisher-enrollments (the `CreateEnvironmentPublisherEnrollment` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Issue bounded enrollment for this exact environment under a current manager session or an exact machine provisioning session with the enroll operation. Machine issuance requires Idempotency-Key; retries return the original still-current enrollment without spending its cumulative member budget again. Enrollment is separate from visitor access and from authorizing new service grants on an already enrolled publisher.
+	CreateEnvironmentPublisherEnrollmentWithBody(ctx context.Context, projectKey string, environmentId string, params *CreateEnvironmentPublisherEnrollmentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateEnvironmentPublisherEnrollment performs a POST /v1/projects/{project_key}/environments/{environment_id}/publisher-enrollments (the `CreateEnvironmentPublisherEnrollment` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Issue bounded enrollment for this exact environment under a current manager session or an exact machine provisioning session with the enroll operation. Machine issuance requires Idempotency-Key; retries return the original still-current enrollment without spending its cumulative member budget again. Enrollment is separate from visitor access and from authorizing new service grants on an already enrolled publisher.
+	CreateEnvironmentPublisherEnrollment(ctx context.Context, projectKey string, environmentId string, params *CreateEnvironmentPublisherEnrollmentParams, body CreateEnvironmentPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListEnvironmentPublishers performs a GET /v1/projects/{project_key}/environments/{environment_id}/publishers (the `ListEnvironmentPublishers` operationId) request.
+	ListEnvironmentPublishers(ctx context.Context, projectKey string, environmentId string, params *ListEnvironmentPublishersParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeEnvironmentPublisher performs a DELETE /v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id} (the `RevokeEnvironmentPublisher` operationId) request.
+	RevokeEnvironmentPublisher(ctx context.Context, projectKey string, environmentId string, publisherIdentityId string, params *RevokeEnvironmentPublisherParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetEnvironmentPublisherGrant performs a GET /v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id}/services/{service_id}/grant (the `GetEnvironmentPublisherGrant` operationId) request.
+	//
+	// Inspect one exact environment/member/service mapping using a current manager control session or a machine provisioning session with read authority for this environment and logical service. Returns null when no mapping exists, or its exact active/revoked grant and current environment fence. Never searches another scope or treats these facts as credentials.
+	GetEnvironmentPublisherGrant(ctx context.Context, projectKey string, environmentId string, publisherIdentityId string, serviceId ServiceID, params *GetEnvironmentPublisherGrantParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AuthorizeEnvironmentPublisherServiceWithBody performs a POST /v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id}/services/{service_id}/grant (the `AuthorizeEnvironmentPublisherService` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Explicitly authorize only this already-enrolled environment member for this saved service using a current manager control session or exact machine enroll authority. A machine spends one member from its cumulative enrollment budget only when a fresh grant is created; retries and active no-ops spend nothing. Does not enroll a publisher, change its key, apply a definition or grant visitor access. Current authority and the original access deadline are checked after lock waits and on every replay/no-op.
+	AuthorizeEnvironmentPublisherServiceWithBody(ctx context.Context, projectKey string, environmentId string, publisherIdentityId string, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AuthorizeEnvironmentPublisherService performs a POST /v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id}/services/{service_id}/grant (the `AuthorizeEnvironmentPublisherService` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Explicitly authorize only this already-enrolled environment member for this saved service using a current manager control session or exact machine enroll authority. A machine spends one member from its cumulative enrollment budget only when a fresh grant is created; retries and active no-ops spend nothing. Does not enroll a publisher, change its key, apply a definition or grant visitor access. Current authority and the original access deadline are checked after lock waits and on every replay/no-op.
+	AuthorizeEnvironmentPublisherService(ctx context.Context, projectKey string, environmentId string, publisherIdentityId string, serviceId ServiceID, body AuthorizeEnvironmentPublisherServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeEnvironmentPublisherGrant performs a DELETE /v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id}/services/{service_id}/grant/{grant_id} (the `RevokeEnvironmentPublisherGrant` operationId) request.
+	//
+	// Revoke this exact mapped grant using a current manager control session or exact machine revoke_member authority, retain its tombstone and close only its exact publisher/service run. An already-revoked grant is a current-authority and precondition-checked no-op; deleting an old grant never revokes a replacement or another publisher's grant. Apply and rollback do not restore it.
+	RevokeEnvironmentPublisherGrant(ctx context.Context, projectKey string, environmentId string, publisherIdentityId string, serviceId ServiceID, grantId string, params *RevokeEnvironmentPublisherGrantParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetLocalProjectService performs a GET /v1/projects/{project_key}/local-services/{service} (the `GetLocalProjectService` operationId) request.
 	//
@@ -5557,98 +5414,6 @@ type ClientInterface interface {
 	// Browser-safe project source and public service IDs/hostnames, including exact local worktree realizations before or after first apply. Returns only public services the caller may visit, or all public services for a project manager. A service key may appear more than once for separate worktree URLs. Never returns configuration, targets, trust, grants, or publisher data.
 	GetProjectPublicMetadata(ctx context.Context, projectKey string, params *GetProjectPublicMetadataParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListPublisherGroups performs a GET /v1/projects/{project_key}/publisher-groups (the `ListPublisherGroups` operationId) request.
-	ListPublisherGroups(ctx context.Context, projectKey string, params *ListPublisherGroupsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateBoundPublisherGroupWithBody performs a POST /v1/projects/{project_key}/publisher-groups (the `CreateBoundPublisherGroup` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Create one concrete group with exact saved bindings. An omitted name generates a DNS-safe selector independent of customer IDs. An idempotency key is scoped to team/project and normalized name/template/bindings, not the revision precondition. Authorized retries return the same immutable active identity; changed requests and retired keys conflict. Retirement never recreates resources. New mutations use the project's expected revision and commit allocation, bindings and grants together.
-	CreateBoundPublisherGroupWithBody(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateBoundPublisherGroup performs a POST /v1/projects/{project_key}/publisher-groups (the `CreateBoundPublisherGroup` operationId) request.
-	// Takes a body of the `application/json` content type.
-	//
-	// Create one concrete group with exact saved bindings. An omitted name generates a DNS-safe selector independent of customer IDs. An idempotency key is scoped to team/project and normalized name/template/bindings, not the revision precondition. Authorized retries return the same immutable active identity; changed requests and retired keys conflict. Retirement never recreates resources. New mutations use the project's expected revision and commit allocation, bindings and grants together.
-	CreateBoundPublisherGroup(ctx context.Context, projectKey string, body CreateBoundPublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RemovePublisherGroup performs a DELETE /v1/projects/{project_key}/publisher-groups/{group_name} (the `RemovePublisherGroup` operationId) request.
-	//
-	// Retire a template-created group by immutable ID or selector, including services, publisher identities and enrollments. Directly declared groups remain owned by apply.
-	RemovePublisherGroup(ctx context.Context, projectKey string, groupName string, params *RemovePublisherGroupParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetPublisherGroup performs a GET /v1/projects/{project_key}/publisher-groups/{group_name} (the `GetPublisherGroup` operationId) request.
-	//
-	// Read a concrete group by immutable ID or its existing selector.
-	GetPublisherGroup(ctx context.Context, projectKey string, groupName string, params *GetPublisherGroupParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreatePublisherGroupWithBody performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name} (the `CreatePublisherGroup` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Create a concrete team-owned group following an applied template. Same name and template return the existing group; names cannot be adopted from another template or reused after retirement. Creation allocates distinct services but grants no new visitor authority to existing workload sessions.
-	CreatePublisherGroupWithBody(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreatePublisherGroup performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name} (the `CreatePublisherGroup` operationId) request.
-	// Takes a body of the `application/json` content type.
-	//
-	// Create a concrete team-owned group following an applied template. Same name and template return the existing group; names cannot be adopted from another template or reused after retirement. Creation allocates distinct services but grants no new visitor authority to existing workload sessions.
-	CreatePublisherGroup(ctx context.Context, projectKey string, groupName string, body CreatePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// UpdatePublisherGroupBindingsWithBody performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name}/bindings (the `UpdatePublisherGroupBindings` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Replace the exact saved bindings of a template-created group by ID or selector. Preserves group/service IDs and reserved endpoints; closes changed runs and replaces their grants and target trust through the existing apply lifecycle. The project revision fences binding and template changes together.
-	UpdatePublisherGroupBindingsWithBody(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// UpdatePublisherGroupBindings performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name}/bindings (the `UpdatePublisherGroupBindings` operationId) request.
-	// Takes a body of the `application/json` content type.
-	//
-	// Replace the exact saved bindings of a template-created group by ID or selector. Preserves group/service IDs and reserved endpoints; closes changed runs and replaces their grants and target trust through the existing apply lifecycle. The project revision fences binding and template changes together.
-	UpdatePublisherGroupBindings(ctx context.Context, projectKey string, groupName string, body UpdatePublisherGroupBindingsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetPublisherGroupConnection performs a GET /v1/projects/{project_key}/publisher-groups/{group_name}/connection (the `GetPublisherGroupConnection` operationId) request.
-	//
-	// Read nonsecret group connection context as a team manager. The descriptor is a selector, never an access credential.
-	GetPublisherGroupConnection(ctx context.Context, projectKey string, groupName string, params *GetPublisherGroupConnectionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreatePublisherGroupEnrollmentWithBody performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId) request,
-	// with any type of body and a specified content type.
-	CreatePublisherGroupEnrollmentWithBody(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreatePublisherGroupEnrollment performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId) request.
-	// Takes a body of the `application/json` content type.
-	CreatePublisherGroupEnrollment(ctx context.Context, projectKey string, groupName string, body CreatePublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListPublisherGroupMembers performs a GET /v1/projects/{project_key}/publisher-groups/{group_name}/members (the `ListPublisherGroupMembers` operationId) request.
-	ListPublisherGroupMembers(ctx context.Context, projectKey string, groupName string, params *ListPublisherGroupMembersParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RevokePublisherGroupMember performs a DELETE /v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id} (the `RevokePublisherGroupMember` operationId) request.
-	RevokePublisherGroupMember(ctx context.Context, projectKey string, groupName string, publisherIdentityId string, params *RevokePublisherGroupMemberParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RenamePublisherNamespaceWithBody performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
-	RenamePublisherNamespaceWithBody(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RenamePublisherNamespace performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId) request.
-	// Takes a body of the `application/json` content type.
-	//
-	// Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
-	RenamePublisherNamespace(ctx context.Context, projectKey string, groupName string, body RenamePublisherNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RenamePublisherGroupWithBody performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
-	RenamePublisherGroupWithBody(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RenamePublisherGroup performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId) request.
-	// Takes a body of the `application/json` content type.
-	//
-	// Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
-	RenamePublisherGroup(ctx context.Context, projectKey string, groupName string, body RenamePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// CreateServiceDefinitionWithBody performs a POST /v1/projects/{project_key}/service-definitions (the `CreateServiceDefinition` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -5660,11 +5425,6 @@ type ClientInterface interface {
 	//
 	// Save an immutable project service definition as a current team manager. Equal normalized definitions reuse their revision. Publishing a definition alone changes no environment, target, permission, or publisher assignment.
 	CreateServiceDefinition(ctx context.Context, projectKey string, body CreateServiceDefinitionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetProjectService performs a GET /v1/projects/{project_key}/services/{service} (the `GetProjectService` operationId) request.
-	//
-	// Resolve an applied service by its exact Git source and configuration key using current visitor access. Does not return targets or require project-manager permission.
-	GetProjectService(ctx context.Context, projectKey string, service ServiceName, params *GetProjectServiceParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListPublicURLs List public URLs for one team
 	//
@@ -6015,53 +5775,6 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/publisher-enrollments (the `CreatePublisherEnrollment` operationId).
 	CreatePublisherEnrollment(ctx context.Context, body CreatePublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AcknowledgePublisherGroupConfigurationWithBody performs a POST /v1/publisher-groups/ack (the `AcknowledgePublisherGroupConfiguration` operationId) request,
-	// with any type of body and a specified content type.
-	AcknowledgePublisherGroupConfigurationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AcknowledgePublisherGroupConfiguration performs a POST /v1/publisher-groups/ack (the `AcknowledgePublisherGroupConfiguration` operationId) request.
-	// Takes a body of the `application/json` content type.
-	AcknowledgePublisherGroupConfiguration(ctx context.Context, body AcknowledgePublisherGroupConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetPublisherGroupAssignments performs a GET /v1/publisher-groups/assignments (the `GetPublisherGroupAssignments` operationId) request.
-	GetPublisherGroupAssignments(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RedeemPublisherGroupEnrollmentWithBody performs a POST /v1/publisher-groups/enroll (the `RedeemPublisherGroupEnrollment` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Each replica submits its own Ed25519 public key. Retrying the same key is idempotent and consumes no additional enrollment capacity.
-	RedeemPublisherGroupEnrollmentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RedeemPublisherGroupEnrollment performs a POST /v1/publisher-groups/enroll (the `RedeemPublisherGroupEnrollment` operationId) request.
-	// Takes a body of the `application/json` content type.
-	//
-	// Each replica submits its own Ed25519 public key. Retrying the same key is idempotent and consumes no additional enrollment capacity.
-	RedeemPublisherGroupEnrollment(ctx context.Context, body RedeemPublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AcquirePublisherGroupLeaseWithBody performs a POST /v1/publisher-groups/lease (the `AcquirePublisherGroupLease` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Exchange a one-use signed assertion for a short-lived group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID.
-	AcquirePublisherGroupLeaseWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AcquirePublisherGroupLease performs a POST /v1/publisher-groups/lease (the `AcquirePublisherGroupLease` operationId) request.
-	// Takes a body of the `application/json` content type.
-	//
-	// Exchange a one-use signed assertion for a short-lived group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID.
-	AcquirePublisherGroupLease(ctx context.Context, body AcquirePublisherGroupLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// VerifyPublisherGroupIdentityWithBody performs a POST /v1/publisher-groups/verify (the `VerifyPublisherGroupIdentity` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The one-use assertion audience is the control URL followed by this path.
-	VerifyPublisherGroupIdentityWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// VerifyPublisherGroupIdentity performs a POST /v1/publisher-groups/verify (the `VerifyPublisherGroupIdentity` operationId) request.
-	// Takes a body of the `application/json` content type.
-	//
-	// Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The one-use assertion audience is the control URL followed by this path.
-	VerifyPublisherGroupIdentity(ctx context.Context, body VerifyPublisherGroupIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListPublisherIdentities List publisher identities and grants without secrets
 	//
@@ -6737,6 +6450,143 @@ func (c *Client) GetControlDiscovery(ctx context.Context, reqEditors ...RequestE
 	return c.Client.Do(req)
 }
 
+// AcknowledgeEnvironmentPublisherWithBody performs a POST /v1/environment-publishers/ack (the `AcknowledgeEnvironmentPublisher` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) AcknowledgeEnvironmentPublisherWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAcknowledgeEnvironmentPublisherRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AcknowledgeEnvironmentPublisher performs a POST /v1/environment-publishers/ack (the `AcknowledgeEnvironmentPublisher` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) AcknowledgeEnvironmentPublisher(ctx context.Context, body AcknowledgeEnvironmentPublisherJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAcknowledgeEnvironmentPublisherRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetEnvironmentPublisherAssignments performs a GET /v1/environment-publishers/assignments (the `GetEnvironmentPublisherAssignments` operationId) request.
+func (c *Client) GetEnvironmentPublisherAssignments(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetEnvironmentPublisherAssignmentsRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RedeemEnvironmentPublisherEnrollmentWithBody performs a POST /v1/environment-publishers/enroll (the `RedeemEnvironmentPublisherEnrollment` operationId) request,
+// with any type of body and a specified content type.
+//
+// Install this replica's own Ed25519 public key. Exact-key replay is idempotent and does not consume another member. The enrolled identity is independent of its historical enrollment issuer.
+func (c *Client) RedeemEnvironmentPublisherEnrollmentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRedeemEnvironmentPublisherEnrollmentRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RedeemEnvironmentPublisherEnrollment performs a POST /v1/environment-publishers/enroll (the `RedeemEnvironmentPublisherEnrollment` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Install this replica's own Ed25519 public key. Exact-key replay is idempotent and does not consume another member. The enrolled identity is independent of its historical enrollment issuer.
+func (c *Client) RedeemEnvironmentPublisherEnrollment(ctx context.Context, body RedeemEnvironmentPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRedeemEnvironmentPublisherEnrollmentRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AcquireEnvironmentPublisherLeaseWithBody performs a POST /v1/environment-publishers/lease (the `AcquireEnvironmentPublisherLease` operationId) request,
+// with any type of body and a specified content type.
+//
+// Exchange a one-use exact-environment assertion for a fixed-expiry publisher lease. Current installed identity and service authority are checked independently of the historical enrollment issuer.
+func (c *Client) AcquireEnvironmentPublisherLeaseWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAcquireEnvironmentPublisherLeaseRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AcquireEnvironmentPublisherLease performs a POST /v1/environment-publishers/lease (the `AcquireEnvironmentPublisherLease` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Exchange a one-use exact-environment assertion for a fixed-expiry publisher lease. Current installed identity and service authority are checked independently of the historical enrollment issuer.
+func (c *Client) AcquireEnvironmentPublisherLease(ctx context.Context, body AcquireEnvironmentPublisherLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAcquireEnvironmentPublisherLeaseRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// VerifyEnvironmentPublisherWithBody performs a POST /v1/environment-publishers/verify (the `VerifyEnvironmentPublisher` operationId) request,
+// with any type of body and a specified content type.
+//
+// Verify current installed identity without replacing its running lease. Sign a one-use assertion for this exact endpoint with the environment ID as its scope.
+func (c *Client) VerifyEnvironmentPublisherWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewVerifyEnvironmentPublisherRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// VerifyEnvironmentPublisher performs a POST /v1/environment-publishers/verify (the `VerifyEnvironmentPublisher` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Verify current installed identity without replacing its running lease. Sign a one-use assertion for this exact endpoint with the environment ID as its scope.
+func (c *Client) VerifyEnvironmentPublisher(ctx context.Context, body VerifyEnvironmentPublisherJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewVerifyEnvironmentPublisherRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListFeedbackThreads List feedback threads manageable in one team
 //
 // Corresponds with GET /v1/feedback (the `ListFeedbackThreads` operationId).
@@ -7119,7 +6969,7 @@ func (c *Client) CreateCollection(ctx context.Context, projectKey string, body C
 
 // GetCollection performs a GET /v1/projects/{project_key}/collections/{collection_id} (the `GetCollection` operationId) request.
 //
-// Read this exact collection in the authorized team and project as a current team manager. Neither its name nor its reference authorizes access; no other scope is searched.
+// Read this exact collection using current team manager access or a machine read provisioning session scoped to that collection and every service in its current default definition. Neither its name nor its reference authorizes access; no other scope is searched.
 func (c *Client) GetCollection(ctx context.Context, projectKey string, collectionId CollectionID, params *GetCollectionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetCollectionRequest(c.Server, projectKey, collectionId, params)
 	if err != nil {
@@ -7164,54 +7014,9 @@ func (c *Client) UpdateCollectionDefault(ctx context.Context, projectKey string,
 	return c.Client.Do(req)
 }
 
-// GetProjectConfiguration performs a GET /v1/projects/{project_key}/configuration (the `GetProjectConfiguration` operationId) request.
-func (c *Client) GetProjectConfiguration(ctx context.Context, projectKey string, params *GetProjectConfigurationParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetProjectConfigurationRequest(c.Server, projectKey, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ApplyProjectConfigurationWithBody performs a PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId) request,
-// with any type of body and a specified content type.
-//
-// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
-func (c *Client) ApplyProjectConfigurationWithBody(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewApplyProjectConfigurationRequestWithBody(c.Server, projectKey, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ApplyProjectConfiguration performs a PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId) request.
-// Takes a body of the `application/json` content type.
-//
-// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
-func (c *Client) ApplyProjectConfiguration(ctx context.Context, projectKey string, body ApplyProjectConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewApplyProjectConfigurationRequest(c.Server, projectKey, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // ListEnvironments performs a GET /v1/projects/{project_key}/environments (the `ListEnvironments` operationId) request.
 //
-// List active environments in this project as a current team manager. Contains sensitive target settings; never use as browser metadata.
+// List active environments in this project using current team manager access or a machine read provisioning session. Machine results include only environments within its current saved scope whose complete applied definition fits its fixed service allowlist. Contains sensitive target settings; never use as browser metadata.
 func (c *Client) ListEnvironments(ctx context.Context, projectKey string, params *ListEnvironmentsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListEnvironmentsRequest(c.Server, projectKey, params)
 	if err != nil {
@@ -7227,7 +7032,7 @@ func (c *Client) ListEnvironments(ctx context.Context, projectKey string, params
 // CreateEnvironmentWithBody performs a POST /v1/projects/{project_key}/environments (the `CreateEnvironment` operationId) request,
 // with any type of body and a specified content type.
 //
-// Materialize one environment from an immutable definition and complete approved targets as a current team manager. With a collection, require its expected mutation revision and save membership atomically; an explicit definition revision overrides its default. Creation grants no visitor or workload permission. Authorized identical retries return the saved environment without following a changed default; changing the original collection precondition or other creation intent with a used key conflicts, as do retired keys. Names and references select resources, not authorization scope.
+// Materialize one environment from an immutable definition and complete approved targets using current team manager access or an exact machine create provisioning session. Machine creation requires its granted collection including future environments, and the complete selected definition must fit its fixed service allowlist. With a collection, require its expected mutation revision and save membership atomically; an explicit definition revision overrides its default. Creation grants no visitor or workload permission. Authorized identical retries return the saved environment without following a changed default; changing the original collection precondition or other creation intent with a used key conflicts, as do retired keys. Names and references select resources, not authorization scope.
 func (c *Client) CreateEnvironmentWithBody(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateEnvironmentRequestWithBody(c.Server, projectKey, contentType, body)
 	if err != nil {
@@ -7243,7 +7048,7 @@ func (c *Client) CreateEnvironmentWithBody(ctx context.Context, projectKey strin
 // CreateEnvironment performs a POST /v1/projects/{project_key}/environments (the `CreateEnvironment` operationId) request.
 // Takes a body of the `application/json` content type.
 //
-// Materialize one environment from an immutable definition and complete approved targets as a current team manager. With a collection, require its expected mutation revision and save membership atomically; an explicit definition revision overrides its default. Creation grants no visitor or workload permission. Authorized identical retries return the saved environment without following a changed default; changing the original collection precondition or other creation intent with a used key conflicts, as do retired keys. Names and references select resources, not authorization scope.
+// Materialize one environment from an immutable definition and complete approved targets using current team manager access or an exact machine create provisioning session. Machine creation requires its granted collection including future environments, and the complete selected definition must fit its fixed service allowlist. With a collection, require its expected mutation revision and save membership atomically; an explicit definition revision overrides its default. Creation grants no visitor or workload permission. Authorized identical retries return the saved environment without following a changed default; changing the original collection precondition or other creation intent with a used key conflicts, as do retired keys. Names and references select resources, not authorization scope.
 func (c *Client) CreateEnvironment(ctx context.Context, projectKey string, body CreateEnvironmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateEnvironmentRequest(c.Server, projectKey, body)
 	if err != nil {
@@ -7259,7 +7064,7 @@ func (c *Client) CreateEnvironment(ctx context.Context, projectKey string, body 
 // ApplyEnvironmentsWithBody performs a POST /v1/projects/{project_key}/environments/apply (the `ApplyEnvironments` operationId) request,
 // with any type of body and a specified content type.
 //
-// Atomically apply the selected environments as a current team manager. Check every expected environment revision in one transaction; any validation, capacity, or revision failure saves nothing. Definition rollout does not reconcile current authorization.
+// Atomically apply the selected environments using current team manager access or exact machine update authority for every environment and every old and selected service. Check every expected environment revision in one transaction; any authorization, validation, capacity, or revision failure saves nothing. Definition rollout does not reconcile current authorization.
 func (c *Client) ApplyEnvironmentsWithBody(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewApplyEnvironmentsRequestWithBody(c.Server, projectKey, contentType, body)
 	if err != nil {
@@ -7275,7 +7080,7 @@ func (c *Client) ApplyEnvironmentsWithBody(ctx context.Context, projectKey strin
 // ApplyEnvironments performs a POST /v1/projects/{project_key}/environments/apply (the `ApplyEnvironments` operationId) request.
 // Takes a body of the `application/json` content type.
 //
-// Atomically apply the selected environments as a current team manager. Check every expected environment revision in one transaction; any validation, capacity, or revision failure saves nothing. Definition rollout does not reconcile current authorization.
+// Atomically apply the selected environments using current team manager access or exact machine update authority for every environment and every old and selected service. Check every expected environment revision in one transaction; any authorization, validation, capacity, or revision failure saves nothing. Definition rollout does not reconcile current authorization.
 func (c *Client) ApplyEnvironments(ctx context.Context, projectKey string, body ApplyEnvironmentsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewApplyEnvironmentsRequest(c.Server, projectKey, body)
 	if err != nil {
@@ -7290,7 +7095,7 @@ func (c *Client) ApplyEnvironments(ctx context.Context, projectKey string, body 
 
 // RetireEnvironment performs a DELETE /v1/projects/{project_key}/environments/{environment_id} (the `RetireEnvironment` operationId) request.
 //
-// Retire only this environment and its publications as a current team manager. Its saved creation key cannot recreate it. Other environments, local worktrees, and their authorizations remain unchanged.
+// Retire only this environment and its publications using current team manager access or exact machine retire authority for its complete applied service set. Its saved creation key cannot recreate it. Other environments, local worktrees, and their authorizations remain unchanged.
 func (c *Client) RetireEnvironment(ctx context.Context, projectKey string, environmentId string, params *RetireEnvironmentParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRetireEnvironmentRequest(c.Server, projectKey, environmentId, params)
 	if err != nil {
@@ -7305,7 +7110,7 @@ func (c *Client) RetireEnvironment(ctx context.Context, projectKey string, envir
 
 // GetEnvironment performs a GET /v1/projects/{project_key}/environments/{environment_id} (the `GetEnvironment` operationId) request.
 //
-// Read one exact immutable environment in this project as a current team manager. Does not search names, another project, or another team.
+// Read one exact environment in this project using current team manager access or exact machine read authority for its complete applied service set. Does not search names, another project, or another team.
 func (c *Client) GetEnvironment(ctx context.Context, projectKey string, environmentId string, params *GetEnvironmentParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetEnvironmentRequest(c.Server, projectKey, environmentId, params)
 	if err != nil {
@@ -7321,7 +7126,7 @@ func (c *Client) GetEnvironment(ctx context.Context, projectKey string, environm
 // ApplyEnvironmentWithBody performs a POST /v1/projects/{project_key}/environments/{environment_id}/apply (the `ApplyEnvironment` operationId) request,
 // with any type of body and a specified content type.
 //
-// Apply one pinned definition and approved targets to this exact environment as a current team manager. A rollback still advances its mutation revision. No other environment is reconciled; no current permission is restored from definition history.
+// Apply one pinned definition and approved targets to this exact environment using current team manager access or exact machine update authority. A machine must cover every old and selected service; it cannot remove an unauthorized service to gain control of the remainder. A rollback still advances its mutation revision. No other environment is reconciled; no current permission is restored from definition history.
 func (c *Client) ApplyEnvironmentWithBody(ctx context.Context, projectKey string, environmentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewApplyEnvironmentRequestWithBody(c.Server, projectKey, environmentId, contentType, body)
 	if err != nil {
@@ -7337,9 +7142,129 @@ func (c *Client) ApplyEnvironmentWithBody(ctx context.Context, projectKey string
 // ApplyEnvironment performs a POST /v1/projects/{project_key}/environments/{environment_id}/apply (the `ApplyEnvironment` operationId) request.
 // Takes a body of the `application/json` content type.
 //
-// Apply one pinned definition and approved targets to this exact environment as a current team manager. A rollback still advances its mutation revision. No other environment is reconciled; no current permission is restored from definition history.
+// Apply one pinned definition and approved targets to this exact environment using current team manager access or exact machine update authority. A machine must cover every old and selected service; it cannot remove an unauthorized service to gain control of the remainder. A rollback still advances its mutation revision. No other environment is reconciled; no current permission is restored from definition history.
 func (c *Client) ApplyEnvironment(ctx context.Context, projectKey string, environmentId string, body ApplyEnvironmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewApplyEnvironmentRequest(c.Server, projectKey, environmentId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateEnvironmentPublisherEnrollmentWithBody performs a POST /v1/projects/{project_key}/environments/{environment_id}/publisher-enrollments (the `CreateEnvironmentPublisherEnrollment` operationId) request,
+// with any type of body and a specified content type.
+//
+// Issue bounded enrollment for this exact environment under a current manager session or an exact machine provisioning session with the enroll operation. Machine issuance requires Idempotency-Key; retries return the original still-current enrollment without spending its cumulative member budget again. Enrollment is separate from visitor access and from authorizing new service grants on an already enrolled publisher.
+func (c *Client) CreateEnvironmentPublisherEnrollmentWithBody(ctx context.Context, projectKey string, environmentId string, params *CreateEnvironmentPublisherEnrollmentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateEnvironmentPublisherEnrollmentRequestWithBody(c.Server, projectKey, environmentId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateEnvironmentPublisherEnrollment performs a POST /v1/projects/{project_key}/environments/{environment_id}/publisher-enrollments (the `CreateEnvironmentPublisherEnrollment` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Issue bounded enrollment for this exact environment under a current manager session or an exact machine provisioning session with the enroll operation. Machine issuance requires Idempotency-Key; retries return the original still-current enrollment without spending its cumulative member budget again. Enrollment is separate from visitor access and from authorizing new service grants on an already enrolled publisher.
+func (c *Client) CreateEnvironmentPublisherEnrollment(ctx context.Context, projectKey string, environmentId string, params *CreateEnvironmentPublisherEnrollmentParams, body CreateEnvironmentPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateEnvironmentPublisherEnrollmentRequest(c.Server, projectKey, environmentId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListEnvironmentPublishers performs a GET /v1/projects/{project_key}/environments/{environment_id}/publishers (the `ListEnvironmentPublishers` operationId) request.
+func (c *Client) ListEnvironmentPublishers(ctx context.Context, projectKey string, environmentId string, params *ListEnvironmentPublishersParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListEnvironmentPublishersRequest(c.Server, projectKey, environmentId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeEnvironmentPublisher performs a DELETE /v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id} (the `RevokeEnvironmentPublisher` operationId) request.
+func (c *Client) RevokeEnvironmentPublisher(ctx context.Context, projectKey string, environmentId string, publisherIdentityId string, params *RevokeEnvironmentPublisherParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeEnvironmentPublisherRequest(c.Server, projectKey, environmentId, publisherIdentityId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetEnvironmentPublisherGrant performs a GET /v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id}/services/{service_id}/grant (the `GetEnvironmentPublisherGrant` operationId) request.
+//
+// Inspect one exact environment/member/service mapping using a current manager control session or a machine provisioning session with read authority for this environment and logical service. Returns null when no mapping exists, or its exact active/revoked grant and current environment fence. Never searches another scope or treats these facts as credentials.
+func (c *Client) GetEnvironmentPublisherGrant(ctx context.Context, projectKey string, environmentId string, publisherIdentityId string, serviceId ServiceID, params *GetEnvironmentPublisherGrantParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetEnvironmentPublisherGrantRequest(c.Server, projectKey, environmentId, publisherIdentityId, serviceId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AuthorizeEnvironmentPublisherServiceWithBody performs a POST /v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id}/services/{service_id}/grant (the `AuthorizeEnvironmentPublisherService` operationId) request,
+// with any type of body and a specified content type.
+//
+// Explicitly authorize only this already-enrolled environment member for this saved service using a current manager control session or exact machine enroll authority. A machine spends one member from its cumulative enrollment budget only when a fresh grant is created; retries and active no-ops spend nothing. Does not enroll a publisher, change its key, apply a definition or grant visitor access. Current authority and the original access deadline are checked after lock waits and on every replay/no-op.
+func (c *Client) AuthorizeEnvironmentPublisherServiceWithBody(ctx context.Context, projectKey string, environmentId string, publisherIdentityId string, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAuthorizeEnvironmentPublisherServiceRequestWithBody(c.Server, projectKey, environmentId, publisherIdentityId, serviceId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AuthorizeEnvironmentPublisherService performs a POST /v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id}/services/{service_id}/grant (the `AuthorizeEnvironmentPublisherService` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Explicitly authorize only this already-enrolled environment member for this saved service using a current manager control session or exact machine enroll authority. A machine spends one member from its cumulative enrollment budget only when a fresh grant is created; retries and active no-ops spend nothing. Does not enroll a publisher, change its key, apply a definition or grant visitor access. Current authority and the original access deadline are checked after lock waits and on every replay/no-op.
+func (c *Client) AuthorizeEnvironmentPublisherService(ctx context.Context, projectKey string, environmentId string, publisherIdentityId string, serviceId ServiceID, body AuthorizeEnvironmentPublisherServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAuthorizeEnvironmentPublisherServiceRequest(c.Server, projectKey, environmentId, publisherIdentityId, serviceId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeEnvironmentPublisherGrant performs a DELETE /v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id}/services/{service_id}/grant/{grant_id} (the `RevokeEnvironmentPublisherGrant` operationId) request.
+//
+// Revoke this exact mapped grant using a current manager control session or exact machine revoke_member authority, retain its tombstone and close only its exact publisher/service run. An already-revoked grant is a current-authority and precondition-checked no-op; deleting an old grant never revokes a replacement or another publisher's grant. Apply and rollback do not restore it.
+func (c *Client) RevokeEnvironmentPublisherGrant(ctx context.Context, projectKey string, environmentId string, publisherIdentityId string, serviceId ServiceID, grantId string, params *RevokeEnvironmentPublisherGrantParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeEnvironmentPublisherGrantRequest(c.Server, projectKey, environmentId, publisherIdentityId, serviceId, grantId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -7412,278 +7337,6 @@ func (c *Client) GetProjectPublicMetadata(ctx context.Context, projectKey string
 	return c.Client.Do(req)
 }
 
-// ListPublisherGroups performs a GET /v1/projects/{project_key}/publisher-groups (the `ListPublisherGroups` operationId) request.
-func (c *Client) ListPublisherGroups(ctx context.Context, projectKey string, params *ListPublisherGroupsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListPublisherGroupsRequest(c.Server, projectKey, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateBoundPublisherGroupWithBody performs a POST /v1/projects/{project_key}/publisher-groups (the `CreateBoundPublisherGroup` operationId) request,
-// with any type of body and a specified content type.
-//
-// Create one concrete group with exact saved bindings. An omitted name generates a DNS-safe selector independent of customer IDs. An idempotency key is scoped to team/project and normalized name/template/bindings, not the revision precondition. Authorized retries return the same immutable active identity; changed requests and retired keys conflict. Retirement never recreates resources. New mutations use the project's expected revision and commit allocation, bindings and grants together.
-func (c *Client) CreateBoundPublisherGroupWithBody(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateBoundPublisherGroupRequestWithBody(c.Server, projectKey, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateBoundPublisherGroup performs a POST /v1/projects/{project_key}/publisher-groups (the `CreateBoundPublisherGroup` operationId) request.
-// Takes a body of the `application/json` content type.
-//
-// Create one concrete group with exact saved bindings. An omitted name generates a DNS-safe selector independent of customer IDs. An idempotency key is scoped to team/project and normalized name/template/bindings, not the revision precondition. Authorized retries return the same immutable active identity; changed requests and retired keys conflict. Retirement never recreates resources. New mutations use the project's expected revision and commit allocation, bindings and grants together.
-func (c *Client) CreateBoundPublisherGroup(ctx context.Context, projectKey string, body CreateBoundPublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateBoundPublisherGroupRequest(c.Server, projectKey, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RemovePublisherGroup performs a DELETE /v1/projects/{project_key}/publisher-groups/{group_name} (the `RemovePublisherGroup` operationId) request.
-//
-// Retire a template-created group by immutable ID or selector, including services, publisher identities and enrollments. Directly declared groups remain owned by apply.
-func (c *Client) RemovePublisherGroup(ctx context.Context, projectKey string, groupName string, params *RemovePublisherGroupParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRemovePublisherGroupRequest(c.Server, projectKey, groupName, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// GetPublisherGroup performs a GET /v1/projects/{project_key}/publisher-groups/{group_name} (the `GetPublisherGroup` operationId) request.
-//
-// Read a concrete group by immutable ID or its existing selector.
-func (c *Client) GetPublisherGroup(ctx context.Context, projectKey string, groupName string, params *GetPublisherGroupParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetPublisherGroupRequest(c.Server, projectKey, groupName, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreatePublisherGroupWithBody performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name} (the `CreatePublisherGroup` operationId) request,
-// with any type of body and a specified content type.
-//
-// Create a concrete team-owned group following an applied template. Same name and template return the existing group; names cannot be adopted from another template or reused after retirement. Creation allocates distinct services but grants no new visitor authority to existing workload sessions.
-func (c *Client) CreatePublisherGroupWithBody(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreatePublisherGroupRequestWithBody(c.Server, projectKey, groupName, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreatePublisherGroup performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name} (the `CreatePublisherGroup` operationId) request.
-// Takes a body of the `application/json` content type.
-//
-// Create a concrete team-owned group following an applied template. Same name and template return the existing group; names cannot be adopted from another template or reused after retirement. Creation allocates distinct services but grants no new visitor authority to existing workload sessions.
-func (c *Client) CreatePublisherGroup(ctx context.Context, projectKey string, groupName string, body CreatePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreatePublisherGroupRequest(c.Server, projectKey, groupName, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// UpdatePublisherGroupBindingsWithBody performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name}/bindings (the `UpdatePublisherGroupBindings` operationId) request,
-// with any type of body and a specified content type.
-//
-// Replace the exact saved bindings of a template-created group by ID or selector. Preserves group/service IDs and reserved endpoints; closes changed runs and replaces their grants and target trust through the existing apply lifecycle. The project revision fences binding and template changes together.
-func (c *Client) UpdatePublisherGroupBindingsWithBody(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUpdatePublisherGroupBindingsRequestWithBody(c.Server, projectKey, groupName, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// UpdatePublisherGroupBindings performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name}/bindings (the `UpdatePublisherGroupBindings` operationId) request.
-// Takes a body of the `application/json` content type.
-//
-// Replace the exact saved bindings of a template-created group by ID or selector. Preserves group/service IDs and reserved endpoints; closes changed runs and replaces their grants and target trust through the existing apply lifecycle. The project revision fences binding and template changes together.
-func (c *Client) UpdatePublisherGroupBindings(ctx context.Context, projectKey string, groupName string, body UpdatePublisherGroupBindingsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUpdatePublisherGroupBindingsRequest(c.Server, projectKey, groupName, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// GetPublisherGroupConnection performs a GET /v1/projects/{project_key}/publisher-groups/{group_name}/connection (the `GetPublisherGroupConnection` operationId) request.
-//
-// Read nonsecret group connection context as a team manager. The descriptor is a selector, never an access credential.
-func (c *Client) GetPublisherGroupConnection(ctx context.Context, projectKey string, groupName string, params *GetPublisherGroupConnectionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetPublisherGroupConnectionRequest(c.Server, projectKey, groupName, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreatePublisherGroupEnrollmentWithBody performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId) request,
-// with any type of body and a specified content type.
-func (c *Client) CreatePublisherGroupEnrollmentWithBody(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreatePublisherGroupEnrollmentRequestWithBody(c.Server, projectKey, groupName, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreatePublisherGroupEnrollment performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId) request.
-// Takes a body of the `application/json` content type.
-func (c *Client) CreatePublisherGroupEnrollment(ctx context.Context, projectKey string, groupName string, body CreatePublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreatePublisherGroupEnrollmentRequest(c.Server, projectKey, groupName, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ListPublisherGroupMembers performs a GET /v1/projects/{project_key}/publisher-groups/{group_name}/members (the `ListPublisherGroupMembers` operationId) request.
-func (c *Client) ListPublisherGroupMembers(ctx context.Context, projectKey string, groupName string, params *ListPublisherGroupMembersParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListPublisherGroupMembersRequest(c.Server, projectKey, groupName, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RevokePublisherGroupMember performs a DELETE /v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id} (the `RevokePublisherGroupMember` operationId) request.
-func (c *Client) RevokePublisherGroupMember(ctx context.Context, projectKey string, groupName string, publisherIdentityId string, params *RevokePublisherGroupMemberParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRevokePublisherGroupMemberRequest(c.Server, projectKey, groupName, publisherIdentityId, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RenamePublisherNamespaceWithBody performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId) request,
-// with any type of body and a specified content type.
-//
-// Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
-func (c *Client) RenamePublisherNamespaceWithBody(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRenamePublisherNamespaceRequestWithBody(c.Server, projectKey, groupName, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RenamePublisherNamespace performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId) request.
-// Takes a body of the `application/json` content type.
-//
-// Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
-func (c *Client) RenamePublisherNamespace(ctx context.Context, projectKey string, groupName string, body RenamePublisherNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRenamePublisherNamespaceRequest(c.Server, projectKey, groupName, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RenamePublisherGroupWithBody performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId) request,
-// with any type of body and a specified content type.
-//
-// Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
-func (c *Client) RenamePublisherGroupWithBody(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRenamePublisherGroupRequestWithBody(c.Server, projectKey, groupName, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RenamePublisherGroup performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId) request.
-// Takes a body of the `application/json` content type.
-//
-// Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
-func (c *Client) RenamePublisherGroup(ctx context.Context, projectKey string, groupName string, body RenamePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRenamePublisherGroupRequest(c.Server, projectKey, groupName, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // CreateServiceDefinitionWithBody performs a POST /v1/projects/{project_key}/service-definitions (the `CreateServiceDefinition` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -7706,21 +7359,6 @@ func (c *Client) CreateServiceDefinitionWithBody(ctx context.Context, projectKey
 // Save an immutable project service definition as a current team manager. Equal normalized definitions reuse their revision. Publishing a definition alone changes no environment, target, permission, or publisher assignment.
 func (c *Client) CreateServiceDefinition(ctx context.Context, projectKey string, body CreateServiceDefinitionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateServiceDefinitionRequest(c.Server, projectKey, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// GetProjectService performs a GET /v1/projects/{project_key}/services/{service} (the `GetProjectService` operationId) request.
-//
-// Resolve an applied service by its exact Git source and configuration key using current visitor access. Does not return targets or require project-manager permission.
-func (c *Client) GetProjectService(ctx context.Context, projectKey string, service ServiceName, params *GetProjectServiceParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetProjectServiceRequest(c.Server, projectKey, service, params)
 	if err != nil {
 		return nil, err
 	}
@@ -8631,143 +8269,6 @@ func (c *Client) CreatePublisherEnrollmentWithBody(ctx context.Context, contentT
 // Corresponds with POST /v1/publisher-enrollments (the `CreatePublisherEnrollment` operationId).
 func (c *Client) CreatePublisherEnrollment(ctx context.Context, body CreatePublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreatePublisherEnrollmentRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AcknowledgePublisherGroupConfigurationWithBody performs a POST /v1/publisher-groups/ack (the `AcknowledgePublisherGroupConfiguration` operationId) request,
-// with any type of body and a specified content type.
-func (c *Client) AcknowledgePublisherGroupConfigurationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAcknowledgePublisherGroupConfigurationRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AcknowledgePublisherGroupConfiguration performs a POST /v1/publisher-groups/ack (the `AcknowledgePublisherGroupConfiguration` operationId) request.
-// Takes a body of the `application/json` content type.
-func (c *Client) AcknowledgePublisherGroupConfiguration(ctx context.Context, body AcknowledgePublisherGroupConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAcknowledgePublisherGroupConfigurationRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// GetPublisherGroupAssignments performs a GET /v1/publisher-groups/assignments (the `GetPublisherGroupAssignments` operationId) request.
-func (c *Client) GetPublisherGroupAssignments(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetPublisherGroupAssignmentsRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RedeemPublisherGroupEnrollmentWithBody performs a POST /v1/publisher-groups/enroll (the `RedeemPublisherGroupEnrollment` operationId) request,
-// with any type of body and a specified content type.
-//
-// Each replica submits its own Ed25519 public key. Retrying the same key is idempotent and consumes no additional enrollment capacity.
-func (c *Client) RedeemPublisherGroupEnrollmentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRedeemPublisherGroupEnrollmentRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RedeemPublisherGroupEnrollment performs a POST /v1/publisher-groups/enroll (the `RedeemPublisherGroupEnrollment` operationId) request.
-// Takes a body of the `application/json` content type.
-//
-// Each replica submits its own Ed25519 public key. Retrying the same key is idempotent and consumes no additional enrollment capacity.
-func (c *Client) RedeemPublisherGroupEnrollment(ctx context.Context, body RedeemPublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRedeemPublisherGroupEnrollmentRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AcquirePublisherGroupLeaseWithBody performs a POST /v1/publisher-groups/lease (the `AcquirePublisherGroupLease` operationId) request,
-// with any type of body and a specified content type.
-//
-// Exchange a one-use signed assertion for a short-lived group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID.
-func (c *Client) AcquirePublisherGroupLeaseWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAcquirePublisherGroupLeaseRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AcquirePublisherGroupLease performs a POST /v1/publisher-groups/lease (the `AcquirePublisherGroupLease` operationId) request.
-// Takes a body of the `application/json` content type.
-//
-// Exchange a one-use signed assertion for a short-lived group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID.
-func (c *Client) AcquirePublisherGroupLease(ctx context.Context, body AcquirePublisherGroupLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAcquirePublisherGroupLeaseRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// VerifyPublisherGroupIdentityWithBody performs a POST /v1/publisher-groups/verify (the `VerifyPublisherGroupIdentity` operationId) request,
-// with any type of body and a specified content type.
-//
-// Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The one-use assertion audience is the control URL followed by this path.
-func (c *Client) VerifyPublisherGroupIdentityWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewVerifyPublisherGroupIdentityRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// VerifyPublisherGroupIdentity performs a POST /v1/publisher-groups/verify (the `VerifyPublisherGroupIdentity` operationId) request.
-// Takes a body of the `application/json` content type.
-//
-// Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The one-use assertion audience is the control URL followed by this path.
-func (c *Client) VerifyPublisherGroupIdentity(ctx context.Context, body VerifyPublisherGroupIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewVerifyPublisherGroupIdentityRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -10688,6 +10189,193 @@ func NewGetControlDiscoveryRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewAcknowledgeEnvironmentPublisherRequest calls the generic AcknowledgeEnvironmentPublisher builder with application/json body
+func NewAcknowledgeEnvironmentPublisherRequest(server string, body AcknowledgeEnvironmentPublisherJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAcknowledgeEnvironmentPublisherRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewAcknowledgeEnvironmentPublisherRequestWithBody constructs an http.Request for the AcknowledgeEnvironmentPublisher method, with any body, and a specified content type
+func NewAcknowledgeEnvironmentPublisherRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/environment-publishers/ack")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetEnvironmentPublisherAssignmentsRequest constructs an http.Request for the GetEnvironmentPublisherAssignments method
+func NewGetEnvironmentPublisherAssignmentsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/environment-publishers/assignments")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRedeemEnvironmentPublisherEnrollmentRequest calls the generic RedeemEnvironmentPublisherEnrollment builder with application/json body
+func NewRedeemEnvironmentPublisherEnrollmentRequest(server string, body RedeemEnvironmentPublisherEnrollmentJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRedeemEnvironmentPublisherEnrollmentRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewRedeemEnvironmentPublisherEnrollmentRequestWithBody constructs an http.Request for the RedeemEnvironmentPublisherEnrollment method, with any body, and a specified content type
+func NewRedeemEnvironmentPublisherEnrollmentRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/environment-publishers/enroll")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewAcquireEnvironmentPublisherLeaseRequest calls the generic AcquireEnvironmentPublisherLease builder with application/json body
+func NewAcquireEnvironmentPublisherLeaseRequest(server string, body AcquireEnvironmentPublisherLeaseJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAcquireEnvironmentPublisherLeaseRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewAcquireEnvironmentPublisherLeaseRequestWithBody constructs an http.Request for the AcquireEnvironmentPublisherLease method, with any body, and a specified content type
+func NewAcquireEnvironmentPublisherLeaseRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/environment-publishers/lease")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewVerifyEnvironmentPublisherRequest calls the generic VerifyEnvironmentPublisher builder with application/json body
+func NewVerifyEnvironmentPublisherRequest(server string, body VerifyEnvironmentPublisherJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewVerifyEnvironmentPublisherRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewVerifyEnvironmentPublisherRequestWithBody constructs an http.Request for the VerifyEnvironmentPublisher method, with any body, and a specified content type
+func NewVerifyEnvironmentPublisherRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/environment-publishers/verify")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListFeedbackThreadsRequest constructs an http.Request for the ListFeedbackThreads method
 func NewListFeedbackThreadsRequest(server string, params *ListFeedbackThreadsParams) (*http.Request, error) {
 	var err error
@@ -11612,110 +11300,6 @@ func NewUpdateCollectionDefaultRequestWithBody(server string, projectKey string,
 	return req, nil
 }
 
-// NewGetProjectConfigurationRequest constructs an http.Request for the GetProjectConfiguration method
-func NewGetProjectConfigurationRequest(server string, projectKey string, params *GetProjectConfigurationParams) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/projects/%s/configuration", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewApplyProjectConfigurationRequest calls the generic ApplyProjectConfiguration builder with application/json body
-func NewApplyProjectConfigurationRequest(server string, projectKey string, body ApplyProjectConfigurationJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewApplyProjectConfigurationRequestWithBody(server, projectKey, "application/json", bodyReader)
-}
-
-// NewApplyProjectConfigurationRequestWithBody constructs an http.Request for the ApplyProjectConfiguration method, with any body, and a specified content type
-func NewApplyProjectConfigurationRequestWithBody(server string, projectKey string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/projects/%s/configuration", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewListEnvironmentsRequest constructs an http.Request for the ListEnvironments method
 func NewListEnvironmentsRequest(server string, projectKey string, params *ListEnvironmentsParams) (*http.Request, error) {
 	var err error
@@ -12057,6 +11641,457 @@ func NewApplyEnvironmentRequestWithBody(server string, projectKey string, enviro
 	return req, nil
 }
 
+// NewCreateEnvironmentPublisherEnrollmentRequest calls the generic CreateEnvironmentPublisherEnrollment builder with application/json body
+func NewCreateEnvironmentPublisherEnrollmentRequest(server string, projectKey string, environmentId string, params *CreateEnvironmentPublisherEnrollmentParams, body CreateEnvironmentPublisherEnrollmentJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateEnvironmentPublisherEnrollmentRequestWithBody(server, projectKey, environmentId, params, "application/json", bodyReader)
+}
+
+// NewCreateEnvironmentPublisherEnrollmentRequestWithBody constructs an http.Request for the CreateEnvironmentPublisherEnrollment method, with any body, and a specified content type
+func NewCreateEnvironmentPublisherEnrollmentRequestWithBody(server string, projectKey string, environmentId string, params *CreateEnvironmentPublisherEnrollmentParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "environment_id", environmentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/environments/%s/publisher-enrollments", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.IdempotencyKey != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", *params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Idempotency-Key", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewListEnvironmentPublishersRequest constructs an http.Request for the ListEnvironmentPublishers method
+func NewListEnvironmentPublishersRequest(server string, projectKey string, environmentId string, params *ListEnvironmentPublishersParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "environment_id", environmentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/environments/%s/publishers", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRevokeEnvironmentPublisherRequest constructs an http.Request for the RevokeEnvironmentPublisher method
+func NewRevokeEnvironmentPublisherRequest(server string, projectKey string, environmentId string, publisherIdentityId string, params *RevokeEnvironmentPublisherParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "environment_id", environmentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "publisher_identity_id", publisherIdentityId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/environments/%s/publishers/%s", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetEnvironmentPublisherGrantRequest constructs an http.Request for the GetEnvironmentPublisherGrant method
+func NewGetEnvironmentPublisherGrantRequest(server string, projectKey string, environmentId string, publisherIdentityId string, serviceId ServiceID, params *GetEnvironmentPublisherGrantParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "environment_id", environmentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "publisher_identity_id", publisherIdentityId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam3 string
+
+	pathParam3, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/environments/%s/publishers/%s/services/%s/grant", pathParam0, pathParam1, pathParam2, pathParam3)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewAuthorizeEnvironmentPublisherServiceRequest calls the generic AuthorizeEnvironmentPublisherService builder with application/json body
+func NewAuthorizeEnvironmentPublisherServiceRequest(server string, projectKey string, environmentId string, publisherIdentityId string, serviceId ServiceID, body AuthorizeEnvironmentPublisherServiceJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAuthorizeEnvironmentPublisherServiceRequestWithBody(server, projectKey, environmentId, publisherIdentityId, serviceId, "application/json", bodyReader)
+}
+
+// NewAuthorizeEnvironmentPublisherServiceRequestWithBody constructs an http.Request for the AuthorizeEnvironmentPublisherService method, with any body, and a specified content type
+func NewAuthorizeEnvironmentPublisherServiceRequestWithBody(server string, projectKey string, environmentId string, publisherIdentityId string, serviceId ServiceID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "environment_id", environmentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "publisher_identity_id", publisherIdentityId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam3 string
+
+	pathParam3, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/environments/%s/publishers/%s/services/%s/grant", pathParam0, pathParam1, pathParam2, pathParam3)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRevokeEnvironmentPublisherGrantRequest constructs an http.Request for the RevokeEnvironmentPublisherGrant method
+func NewRevokeEnvironmentPublisherGrantRequest(server string, projectKey string, environmentId string, publisherIdentityId string, serviceId ServiceID, grantId string, params *RevokeEnvironmentPublisherGrantParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "environment_id", environmentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "publisher_identity_id", publisherIdentityId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam3 string
+
+	pathParam3, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam4 string
+
+	pathParam4, err = runtime.StyleParamWithOptions("simple", false, "grant_id", grantId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/environments/%s/publishers/%s/services/%s/grant/%s", pathParam0, pathParam1, pathParam2, pathParam3, pathParam4)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "expected_revision", params.ExpectedRevision, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "expected_configuration_hash", params.ExpectedConfigurationHash, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetLocalProjectServiceRequest constructs an http.Request for the GetLocalProjectService method
 func NewGetLocalProjectServiceRequest(server string, projectKey string, service string, params *GetLocalProjectServiceParams) (*http.Request, error) {
 	var err error
@@ -12248,715 +12283,6 @@ func NewGetProjectPublicMetadataRequest(server string, projectKey string, params
 	return req, nil
 }
 
-// NewListPublisherGroupsRequest constructs an http.Request for the ListPublisherGroups method
-func NewListPublisherGroupsRequest(server string, projectKey string, params *ListPublisherGroupsParams) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/projects/%s/publisher-groups", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewCreateBoundPublisherGroupRequest calls the generic CreateBoundPublisherGroup builder with application/json body
-func NewCreateBoundPublisherGroupRequest(server string, projectKey string, body CreateBoundPublisherGroupJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreateBoundPublisherGroupRequestWithBody(server, projectKey, "application/json", bodyReader)
-}
-
-// NewCreateBoundPublisherGroupRequestWithBody constructs an http.Request for the CreateBoundPublisherGroup method, with any body, and a specified content type
-func NewCreateBoundPublisherGroupRequestWithBody(server string, projectKey string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/projects/%s/publisher-groups", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewRemovePublisherGroupRequest constructs an http.Request for the RemovePublisherGroup method
-func NewRemovePublisherGroupRequest(server string, projectKey string, groupName string, params *RemovePublisherGroupParams) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "group_name", groupName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/projects/%s/publisher-groups/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "expected_revision", params.ExpectedRevision, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewGetPublisherGroupRequest constructs an http.Request for the GetPublisherGroup method
-func NewGetPublisherGroupRequest(server string, projectKey string, groupName string, params *GetPublisherGroupParams) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "group_name", groupName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/projects/%s/publisher-groups/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewCreatePublisherGroupRequest calls the generic CreatePublisherGroup builder with application/json body
-func NewCreatePublisherGroupRequest(server string, projectKey string, groupName string, body CreatePublisherGroupJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreatePublisherGroupRequestWithBody(server, projectKey, groupName, "application/json", bodyReader)
-}
-
-// NewCreatePublisherGroupRequestWithBody constructs an http.Request for the CreatePublisherGroup method, with any body, and a specified content type
-func NewCreatePublisherGroupRequestWithBody(server string, projectKey string, groupName string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "group_name", groupName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/projects/%s/publisher-groups/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewUpdatePublisherGroupBindingsRequest calls the generic UpdatePublisherGroupBindings builder with application/json body
-func NewUpdatePublisherGroupBindingsRequest(server string, projectKey string, groupName string, body UpdatePublisherGroupBindingsJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewUpdatePublisherGroupBindingsRequestWithBody(server, projectKey, groupName, "application/json", bodyReader)
-}
-
-// NewUpdatePublisherGroupBindingsRequestWithBody constructs an http.Request for the UpdatePublisherGroupBindings method, with any body, and a specified content type
-func NewUpdatePublisherGroupBindingsRequestWithBody(server string, projectKey string, groupName string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "group_name", groupName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/projects/%s/publisher-groups/%s/bindings", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewGetPublisherGroupConnectionRequest constructs an http.Request for the GetPublisherGroupConnection method
-func NewGetPublisherGroupConnectionRequest(server string, projectKey string, groupName string, params *GetPublisherGroupConnectionParams) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "group_name", groupName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/projects/%s/publisher-groups/%s/connection", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewCreatePublisherGroupEnrollmentRequest calls the generic CreatePublisherGroupEnrollment builder with application/json body
-func NewCreatePublisherGroupEnrollmentRequest(server string, projectKey string, groupName string, body CreatePublisherGroupEnrollmentJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreatePublisherGroupEnrollmentRequestWithBody(server, projectKey, groupName, "application/json", bodyReader)
-}
-
-// NewCreatePublisherGroupEnrollmentRequestWithBody constructs an http.Request for the CreatePublisherGroupEnrollment method, with any body, and a specified content type
-func NewCreatePublisherGroupEnrollmentRequestWithBody(server string, projectKey string, groupName string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "group_name", groupName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/projects/%s/publisher-groups/%s/enrollments", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewListPublisherGroupMembersRequest constructs an http.Request for the ListPublisherGroupMembers method
-func NewListPublisherGroupMembersRequest(server string, projectKey string, groupName string, params *ListPublisherGroupMembersParams) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "group_name", groupName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/projects/%s/publisher-groups/%s/members", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewRevokePublisherGroupMemberRequest constructs an http.Request for the RevokePublisherGroupMember method
-func NewRevokePublisherGroupMemberRequest(server string, projectKey string, groupName string, publisherIdentityId string, params *RevokePublisherGroupMemberParams) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "group_name", groupName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam2 string
-
-	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "publisher_identity_id", publisherIdentityId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/projects/%s/publisher-groups/%s/members/%s", pathParam0, pathParam1, pathParam2)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewRenamePublisherNamespaceRequest calls the generic RenamePublisherNamespace builder with application/json body
-func NewRenamePublisherNamespaceRequest(server string, projectKey string, groupName string, body RenamePublisherNamespaceJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewRenamePublisherNamespaceRequestWithBody(server, projectKey, groupName, "application/json", bodyReader)
-}
-
-// NewRenamePublisherNamespaceRequestWithBody constructs an http.Request for the RenamePublisherNamespace method, with any body, and a specified content type
-func NewRenamePublisherNamespaceRequestWithBody(server string, projectKey string, groupName string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "group_name", groupName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/projects/%s/publisher-groups/%s/namespace/rename", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewRenamePublisherGroupRequest calls the generic RenamePublisherGroup builder with application/json body
-func NewRenamePublisherGroupRequest(server string, projectKey string, groupName string, body RenamePublisherGroupJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewRenamePublisherGroupRequestWithBody(server, projectKey, groupName, "application/json", bodyReader)
-}
-
-// NewRenamePublisherGroupRequestWithBody constructs an http.Request for the RenamePublisherGroup method, with any body, and a specified content type
-func NewRenamePublisherGroupRequestWithBody(server string, projectKey string, groupName string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "group_name", groupName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/projects/%s/publisher-groups/%s/rename", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewCreateServiceDefinitionRequest calls the generic CreateServiceDefinition builder with application/json body
 func NewCreateServiceDefinitionRequest(server string, projectKey string, body CreateServiceDefinitionJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -13000,90 +12326,6 @@ func NewCreateServiceDefinitionRequestWithBody(server string, projectKey string,
 	}
 
 	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewGetProjectServiceRequest constructs an http.Request for the GetProjectService method
-func NewGetProjectServiceRequest(server string, projectKey string, service ServiceName, params *GetProjectServiceParams) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "service", service, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/projects/%s/services/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if params.PublisherGroup != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "publisher_group", *params.PublisherGroup, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "source_fingerprint", params.SourceFingerprint, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
 
 	return req, nil
 }
@@ -14643,193 +13885,6 @@ func NewCreatePublisherEnrollmentRequestWithBody(server string, contentType stri
 	}
 
 	operationPath := fmt.Sprintf("/v1/publisher-enrollments")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewAcknowledgePublisherGroupConfigurationRequest calls the generic AcknowledgePublisherGroupConfiguration builder with application/json body
-func NewAcknowledgePublisherGroupConfigurationRequest(server string, body AcknowledgePublisherGroupConfigurationJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewAcknowledgePublisherGroupConfigurationRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewAcknowledgePublisherGroupConfigurationRequestWithBody constructs an http.Request for the AcknowledgePublisherGroupConfiguration method, with any body, and a specified content type
-func NewAcknowledgePublisherGroupConfigurationRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/publisher-groups/ack")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewGetPublisherGroupAssignmentsRequest constructs an http.Request for the GetPublisherGroupAssignments method
-func NewGetPublisherGroupAssignmentsRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/publisher-groups/assignments")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewRedeemPublisherGroupEnrollmentRequest calls the generic RedeemPublisherGroupEnrollment builder with application/json body
-func NewRedeemPublisherGroupEnrollmentRequest(server string, body RedeemPublisherGroupEnrollmentJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewRedeemPublisherGroupEnrollmentRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewRedeemPublisherGroupEnrollmentRequestWithBody constructs an http.Request for the RedeemPublisherGroupEnrollment method, with any body, and a specified content type
-func NewRedeemPublisherGroupEnrollmentRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/publisher-groups/enroll")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewAcquirePublisherGroupLeaseRequest calls the generic AcquirePublisherGroupLease builder with application/json body
-func NewAcquirePublisherGroupLeaseRequest(server string, body AcquirePublisherGroupLeaseJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewAcquirePublisherGroupLeaseRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewAcquirePublisherGroupLeaseRequestWithBody constructs an http.Request for the AcquirePublisherGroupLease method, with any body, and a specified content type
-func NewAcquirePublisherGroupLeaseRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/publisher-groups/lease")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewVerifyPublisherGroupIdentityRequest calls the generic VerifyPublisherGroupIdentity builder with application/json body
-func NewVerifyPublisherGroupIdentityRequest(server string, body VerifyPublisherGroupIdentityJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewVerifyPublisherGroupIdentityRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewVerifyPublisherGroupIdentityRequestWithBody constructs an http.Request for the VerifyPublisherGroupIdentity method, with any body, and a specified content type
-func NewVerifyPublisherGroupIdentityRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/publisher-groups/verify")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -17994,6 +17049,63 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/discovery (the `GetControlDiscovery` operationId).
 	GetControlDiscoveryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetControlDiscoveryResponse, error)
 
+	// AcknowledgeEnvironmentPublisherWithBodyWithResponse performs a POST /v1/environment-publishers/ack (the `AcknowledgeEnvironmentPublisher` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	AcknowledgeEnvironmentPublisherWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcknowledgeEnvironmentPublisherResponse, error)
+
+	// AcknowledgeEnvironmentPublisherWithResponse performs a POST /v1/environment-publishers/ack (the `AcknowledgeEnvironmentPublisher` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	AcknowledgeEnvironmentPublisherWithResponse(ctx context.Context, body AcknowledgeEnvironmentPublisherJSONRequestBody, reqEditors ...RequestEditorFn) (*AcknowledgeEnvironmentPublisherResponse, error)
+
+	// GetEnvironmentPublisherAssignmentsWithResponse performs a GET /v1/environment-publishers/assignments (the `GetEnvironmentPublisherAssignments` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	GetEnvironmentPublisherAssignmentsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetEnvironmentPublisherAssignmentsResponse, error)
+
+	// RedeemEnvironmentPublisherEnrollmentWithBodyWithResponse performs a POST /v1/environment-publishers/enroll (the `RedeemEnvironmentPublisherEnrollment` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Install this replica's own Ed25519 public key. Exact-key replay is idempotent and does not consume another member. The enrolled identity is independent of its historical enrollment issuer.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RedeemEnvironmentPublisherEnrollmentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemEnvironmentPublisherEnrollmentResponse, error)
+
+	// RedeemEnvironmentPublisherEnrollmentWithResponse performs a POST /v1/environment-publishers/enroll (the `RedeemEnvironmentPublisherEnrollment` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Install this replica's own Ed25519 public key. Exact-key replay is idempotent and does not consume another member. The enrolled identity is independent of its historical enrollment issuer.
+	RedeemEnvironmentPublisherEnrollmentWithResponse(ctx context.Context, body RedeemEnvironmentPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemEnvironmentPublisherEnrollmentResponse, error)
+
+	// AcquireEnvironmentPublisherLeaseWithBodyWithResponse performs a POST /v1/environment-publishers/lease (the `AcquireEnvironmentPublisherLease` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Exchange a one-use exact-environment assertion for a fixed-expiry publisher lease. Current installed identity and service authority are checked independently of the historical enrollment issuer.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	AcquireEnvironmentPublisherLeaseWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcquireEnvironmentPublisherLeaseResponse, error)
+
+	// AcquireEnvironmentPublisherLeaseWithResponse performs a POST /v1/environment-publishers/lease (the `AcquireEnvironmentPublisherLease` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Exchange a one-use exact-environment assertion for a fixed-expiry publisher lease. Current installed identity and service authority are checked independently of the historical enrollment issuer.
+	AcquireEnvironmentPublisherLeaseWithResponse(ctx context.Context, body AcquireEnvironmentPublisherLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*AcquireEnvironmentPublisherLeaseResponse, error)
+
+	// VerifyEnvironmentPublisherWithBodyWithResponse performs a POST /v1/environment-publishers/verify (the `VerifyEnvironmentPublisher` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Verify current installed identity without replacing its running lease. Sign a one-use assertion for this exact endpoint with the environment ID as its scope.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	VerifyEnvironmentPublisherWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*VerifyEnvironmentPublisherResponse, error)
+
+	// VerifyEnvironmentPublisherWithResponse performs a POST /v1/environment-publishers/verify (the `VerifyEnvironmentPublisher` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Verify current installed identity without replacing its running lease. Sign a one-use assertion for this exact endpoint with the environment ID as its scope.
+	VerifyEnvironmentPublisherWithResponse(ctx context.Context, body VerifyEnvironmentPublisherJSONRequestBody, reqEditors ...RequestEditorFn) (*VerifyEnvironmentPublisherResponse, error)
+
 	// ListFeedbackThreadsWithResponse List feedback threads manageable in one team
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -18160,7 +17272,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetCollectionWithResponse performs a GET /v1/projects/{project_key}/collections/{collection_id} (the `GetCollection` operationId) request.
 	//
-	// Read this exact collection in the authorized team and project as a current team manager. Neither its name nor its reference authorizes access; no other scope is searched.
+	// Read this exact collection using current team manager access or a machine read provisioning session scoped to that collection and every service in its current default definition. Neither its name nor its reference authorizes access; no other scope is searched.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	GetCollectionWithResponse(ctx context.Context, projectKey string, collectionId CollectionID, params *GetCollectionParams, reqEditors ...RequestEditorFn) (*GetCollectionResponse, error)
@@ -18179,28 +17291,9 @@ type ClientWithResponsesInterface interface {
 	// Replace the collection default as a current team manager, requiring its current mutation revision. The new default applies only to newly created environments. Existing members keep their applied definitions, mutation revisions, approved targets, service IDs, grants, and runs. Selecting an older default still advances the collection mutation revision.
 	UpdateCollectionDefaultWithResponse(ctx context.Context, projectKey string, collectionId CollectionID, body UpdateCollectionDefaultJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateCollectionDefaultResponse, error)
 
-	// GetProjectConfigurationWithResponse performs a GET /v1/projects/{project_key}/configuration (the `GetProjectConfiguration` operationId) request.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	GetProjectConfigurationWithResponse(ctx context.Context, projectKey string, params *GetProjectConfigurationParams, reqEditors ...RequestEditorFn) (*GetProjectConfigurationResponse, error)
-
-	// ApplyProjectConfigurationWithBodyWithResponse performs a PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	ApplyProjectConfigurationWithBodyWithResponse(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApplyProjectConfigurationResponse, error)
-
-	// ApplyProjectConfigurationWithResponse performs a PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
-	ApplyProjectConfigurationWithResponse(ctx context.Context, projectKey string, body ApplyProjectConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*ApplyProjectConfigurationResponse, error)
-
 	// ListEnvironmentsWithResponse performs a GET /v1/projects/{project_key}/environments (the `ListEnvironments` operationId) request.
 	//
-	// List active environments in this project as a current team manager. Contains sensitive target settings; never use as browser metadata.
+	// List active environments in this project using current team manager access or a machine read provisioning session. Machine results include only environments within its current saved scope whose complete applied definition fits its fixed service allowlist. Contains sensitive target settings; never use as browser metadata.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	ListEnvironmentsWithResponse(ctx context.Context, projectKey string, params *ListEnvironmentsParams, reqEditors ...RequestEditorFn) (*ListEnvironmentsResponse, error)
@@ -18208,7 +17301,7 @@ type ClientWithResponsesInterface interface {
 	// CreateEnvironmentWithBodyWithResponse performs a POST /v1/projects/{project_key}/environments (the `CreateEnvironment` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Materialize one environment from an immutable definition and complete approved targets as a current team manager. With a collection, require its expected mutation revision and save membership atomically; an explicit definition revision overrides its default. Creation grants no visitor or workload permission. Authorized identical retries return the saved environment without following a changed default; changing the original collection precondition or other creation intent with a used key conflicts, as do retired keys. Names and references select resources, not authorization scope.
+	// Materialize one environment from an immutable definition and complete approved targets using current team manager access or an exact machine create provisioning session. Machine creation requires its granted collection including future environments, and the complete selected definition must fit its fixed service allowlist. With a collection, require its expected mutation revision and save membership atomically; an explicit definition revision overrides its default. Creation grants no visitor or workload permission. Authorized identical retries return the saved environment without following a changed default; changing the original collection precondition or other creation intent with a used key conflicts, as do retired keys. Names and references select resources, not authorization scope.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	CreateEnvironmentWithBodyWithResponse(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateEnvironmentResponse, error)
@@ -18216,13 +17309,13 @@ type ClientWithResponsesInterface interface {
 	// CreateEnvironmentWithResponse performs a POST /v1/projects/{project_key}/environments (the `CreateEnvironment` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Materialize one environment from an immutable definition and complete approved targets as a current team manager. With a collection, require its expected mutation revision and save membership atomically; an explicit definition revision overrides its default. Creation grants no visitor or workload permission. Authorized identical retries return the saved environment without following a changed default; changing the original collection precondition or other creation intent with a used key conflicts, as do retired keys. Names and references select resources, not authorization scope.
+	// Materialize one environment from an immutable definition and complete approved targets using current team manager access or an exact machine create provisioning session. Machine creation requires its granted collection including future environments, and the complete selected definition must fit its fixed service allowlist. With a collection, require its expected mutation revision and save membership atomically; an explicit definition revision overrides its default. Creation grants no visitor or workload permission. Authorized identical retries return the saved environment without following a changed default; changing the original collection precondition or other creation intent with a used key conflicts, as do retired keys. Names and references select resources, not authorization scope.
 	CreateEnvironmentWithResponse(ctx context.Context, projectKey string, body CreateEnvironmentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateEnvironmentResponse, error)
 
 	// ApplyEnvironmentsWithBodyWithResponse performs a POST /v1/projects/{project_key}/environments/apply (the `ApplyEnvironments` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Atomically apply the selected environments as a current team manager. Check every expected environment revision in one transaction; any validation, capacity, or revision failure saves nothing. Definition rollout does not reconcile current authorization.
+	// Atomically apply the selected environments using current team manager access or exact machine update authority for every environment and every old and selected service. Check every expected environment revision in one transaction; any authorization, validation, capacity, or revision failure saves nothing. Definition rollout does not reconcile current authorization.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	ApplyEnvironmentsWithBodyWithResponse(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApplyEnvironmentsResponse, error)
@@ -18230,19 +17323,19 @@ type ClientWithResponsesInterface interface {
 	// ApplyEnvironmentsWithResponse performs a POST /v1/projects/{project_key}/environments/apply (the `ApplyEnvironments` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Atomically apply the selected environments as a current team manager. Check every expected environment revision in one transaction; any validation, capacity, or revision failure saves nothing. Definition rollout does not reconcile current authorization.
+	// Atomically apply the selected environments using current team manager access or exact machine update authority for every environment and every old and selected service. Check every expected environment revision in one transaction; any authorization, validation, capacity, or revision failure saves nothing. Definition rollout does not reconcile current authorization.
 	ApplyEnvironmentsWithResponse(ctx context.Context, projectKey string, body ApplyEnvironmentsJSONRequestBody, reqEditors ...RequestEditorFn) (*ApplyEnvironmentsResponse, error)
 
 	// RetireEnvironmentWithResponse performs a DELETE /v1/projects/{project_key}/environments/{environment_id} (the `RetireEnvironment` operationId) request.
 	//
-	// Retire only this environment and its publications as a current team manager. Its saved creation key cannot recreate it. Other environments, local worktrees, and their authorizations remain unchanged.
+	// Retire only this environment and its publications using current team manager access or exact machine retire authority for its complete applied service set. Its saved creation key cannot recreate it. Other environments, local worktrees, and their authorizations remain unchanged.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	RetireEnvironmentWithResponse(ctx context.Context, projectKey string, environmentId string, params *RetireEnvironmentParams, reqEditors ...RequestEditorFn) (*RetireEnvironmentResponse, error)
 
 	// GetEnvironmentWithResponse performs a GET /v1/projects/{project_key}/environments/{environment_id} (the `GetEnvironment` operationId) request.
 	//
-	// Read one exact immutable environment in this project as a current team manager. Does not search names, another project, or another team.
+	// Read one exact environment in this project using current team manager access or exact machine read authority for its complete applied service set. Does not search names, another project, or another team.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	GetEnvironmentWithResponse(ctx context.Context, projectKey string, environmentId string, params *GetEnvironmentParams, reqEditors ...RequestEditorFn) (*GetEnvironmentResponse, error)
@@ -18250,7 +17343,7 @@ type ClientWithResponsesInterface interface {
 	// ApplyEnvironmentWithBodyWithResponse performs a POST /v1/projects/{project_key}/environments/{environment_id}/apply (the `ApplyEnvironment` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Apply one pinned definition and approved targets to this exact environment as a current team manager. A rollback still advances its mutation revision. No other environment is reconciled; no current permission is restored from definition history.
+	// Apply one pinned definition and approved targets to this exact environment using current team manager access or exact machine update authority. A machine must cover every old and selected service; it cannot remove an unauthorized service to gain control of the remainder. A rollback still advances its mutation revision. No other environment is reconciled; no current permission is restored from definition history.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	ApplyEnvironmentWithBodyWithResponse(ctx context.Context, projectKey string, environmentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApplyEnvironmentResponse, error)
@@ -18258,8 +17351,60 @@ type ClientWithResponsesInterface interface {
 	// ApplyEnvironmentWithResponse performs a POST /v1/projects/{project_key}/environments/{environment_id}/apply (the `ApplyEnvironment` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Apply one pinned definition and approved targets to this exact environment as a current team manager. A rollback still advances its mutation revision. No other environment is reconciled; no current permission is restored from definition history.
+	// Apply one pinned definition and approved targets to this exact environment using current team manager access or exact machine update authority. A machine must cover every old and selected service; it cannot remove an unauthorized service to gain control of the remainder. A rollback still advances its mutation revision. No other environment is reconciled; no current permission is restored from definition history.
 	ApplyEnvironmentWithResponse(ctx context.Context, projectKey string, environmentId string, body ApplyEnvironmentJSONRequestBody, reqEditors ...RequestEditorFn) (*ApplyEnvironmentResponse, error)
+
+	// CreateEnvironmentPublisherEnrollmentWithBodyWithResponse performs a POST /v1/projects/{project_key}/environments/{environment_id}/publisher-enrollments (the `CreateEnvironmentPublisherEnrollment` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Issue bounded enrollment for this exact environment under a current manager session or an exact machine provisioning session with the enroll operation. Machine issuance requires Idempotency-Key; retries return the original still-current enrollment without spending its cumulative member budget again. Enrollment is separate from visitor access and from authorizing new service grants on an already enrolled publisher.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CreateEnvironmentPublisherEnrollmentWithBodyWithResponse(ctx context.Context, projectKey string, environmentId string, params *CreateEnvironmentPublisherEnrollmentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateEnvironmentPublisherEnrollmentResponse, error)
+
+	// CreateEnvironmentPublisherEnrollmentWithResponse performs a POST /v1/projects/{project_key}/environments/{environment_id}/publisher-enrollments (the `CreateEnvironmentPublisherEnrollment` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Issue bounded enrollment for this exact environment under a current manager session or an exact machine provisioning session with the enroll operation. Machine issuance requires Idempotency-Key; retries return the original still-current enrollment without spending its cumulative member budget again. Enrollment is separate from visitor access and from authorizing new service grants on an already enrolled publisher.
+	CreateEnvironmentPublisherEnrollmentWithResponse(ctx context.Context, projectKey string, environmentId string, params *CreateEnvironmentPublisherEnrollmentParams, body CreateEnvironmentPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateEnvironmentPublisherEnrollmentResponse, error)
+
+	// ListEnvironmentPublishersWithResponse performs a GET /v1/projects/{project_key}/environments/{environment_id}/publishers (the `ListEnvironmentPublishers` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ListEnvironmentPublishersWithResponse(ctx context.Context, projectKey string, environmentId string, params *ListEnvironmentPublishersParams, reqEditors ...RequestEditorFn) (*ListEnvironmentPublishersResponse, error)
+
+	// RevokeEnvironmentPublisherWithResponse performs a DELETE /v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id} (the `RevokeEnvironmentPublisher` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RevokeEnvironmentPublisherWithResponse(ctx context.Context, projectKey string, environmentId string, publisherIdentityId string, params *RevokeEnvironmentPublisherParams, reqEditors ...RequestEditorFn) (*RevokeEnvironmentPublisherResponse, error)
+
+	// GetEnvironmentPublisherGrantWithResponse performs a GET /v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id}/services/{service_id}/grant (the `GetEnvironmentPublisherGrant` operationId) request.
+	//
+	// Inspect one exact environment/member/service mapping using a current manager control session or a machine provisioning session with read authority for this environment and logical service. Returns null when no mapping exists, or its exact active/revoked grant and current environment fence. Never searches another scope or treats these facts as credentials.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	GetEnvironmentPublisherGrantWithResponse(ctx context.Context, projectKey string, environmentId string, publisherIdentityId string, serviceId ServiceID, params *GetEnvironmentPublisherGrantParams, reqEditors ...RequestEditorFn) (*GetEnvironmentPublisherGrantResponse, error)
+
+	// AuthorizeEnvironmentPublisherServiceWithBodyWithResponse performs a POST /v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id}/services/{service_id}/grant (the `AuthorizeEnvironmentPublisherService` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Explicitly authorize only this already-enrolled environment member for this saved service using a current manager control session or exact machine enroll authority. A machine spends one member from its cumulative enrollment budget only when a fresh grant is created; retries and active no-ops spend nothing. Does not enroll a publisher, change its key, apply a definition or grant visitor access. Current authority and the original access deadline are checked after lock waits and on every replay/no-op.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	AuthorizeEnvironmentPublisherServiceWithBodyWithResponse(ctx context.Context, projectKey string, environmentId string, publisherIdentityId string, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeEnvironmentPublisherServiceResponse, error)
+
+	// AuthorizeEnvironmentPublisherServiceWithResponse performs a POST /v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id}/services/{service_id}/grant (the `AuthorizeEnvironmentPublisherService` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Explicitly authorize only this already-enrolled environment member for this saved service using a current manager control session or exact machine enroll authority. A machine spends one member from its cumulative enrollment budget only when a fresh grant is created; retries and active no-ops spend nothing. Does not enroll a publisher, change its key, apply a definition or grant visitor access. Current authority and the original access deadline are checked after lock waits and on every replay/no-op.
+	AuthorizeEnvironmentPublisherServiceWithResponse(ctx context.Context, projectKey string, environmentId string, publisherIdentityId string, serviceId ServiceID, body AuthorizeEnvironmentPublisherServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeEnvironmentPublisherServiceResponse, error)
+
+	// RevokeEnvironmentPublisherGrantWithResponse performs a DELETE /v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id}/services/{service_id}/grant/{grant_id} (the `RevokeEnvironmentPublisherGrant` operationId) request.
+	//
+	// Revoke this exact mapped grant using a current manager control session or exact machine revoke_member authority, retain its tombstone and close only its exact publisher/service run. An already-revoked grant is a current-authority and precondition-checked no-op; deleting an old grant never revokes a replacement or another publisher's grant. Apply and rollback do not restore it.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RevokeEnvironmentPublisherGrantWithResponse(ctx context.Context, projectKey string, environmentId string, publisherIdentityId string, serviceId ServiceID, grantId string, params *RevokeEnvironmentPublisherGrantParams, reqEditors ...RequestEditorFn) (*RevokeEnvironmentPublisherGrantResponse, error)
 
 	// GetLocalProjectServiceWithResponse performs a GET /v1/projects/{project_key}/local-services/{service} (the `GetLocalProjectService` operationId) request.
 	//
@@ -18289,122 +17434,6 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	GetProjectPublicMetadataWithResponse(ctx context.Context, projectKey string, params *GetProjectPublicMetadataParams, reqEditors ...RequestEditorFn) (*GetProjectPublicMetadataResponse, error)
 
-	// ListPublisherGroupsWithResponse performs a GET /v1/projects/{project_key}/publisher-groups (the `ListPublisherGroups` operationId) request.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	ListPublisherGroupsWithResponse(ctx context.Context, projectKey string, params *ListPublisherGroupsParams, reqEditors ...RequestEditorFn) (*ListPublisherGroupsResponse, error)
-
-	// CreateBoundPublisherGroupWithBodyWithResponse performs a POST /v1/projects/{project_key}/publisher-groups (the `CreateBoundPublisherGroup` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Create one concrete group with exact saved bindings. An omitted name generates a DNS-safe selector independent of customer IDs. An idempotency key is scoped to team/project and normalized name/template/bindings, not the revision precondition. Authorized retries return the same immutable active identity; changed requests and retired keys conflict. Retirement never recreates resources. New mutations use the project's expected revision and commit allocation, bindings and grants together.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	CreateBoundPublisherGroupWithBodyWithResponse(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateBoundPublisherGroupResponse, error)
-
-	// CreateBoundPublisherGroupWithResponse performs a POST /v1/projects/{project_key}/publisher-groups (the `CreateBoundPublisherGroup` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Create one concrete group with exact saved bindings. An omitted name generates a DNS-safe selector independent of customer IDs. An idempotency key is scoped to team/project and normalized name/template/bindings, not the revision precondition. Authorized retries return the same immutable active identity; changed requests and retired keys conflict. Retirement never recreates resources. New mutations use the project's expected revision and commit allocation, bindings and grants together.
-	CreateBoundPublisherGroupWithResponse(ctx context.Context, projectKey string, body CreateBoundPublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateBoundPublisherGroupResponse, error)
-
-	// RemovePublisherGroupWithResponse performs a DELETE /v1/projects/{project_key}/publisher-groups/{group_name} (the `RemovePublisherGroup` operationId) request.
-	//
-	// Retire a template-created group by immutable ID or selector, including services, publisher identities and enrollments. Directly declared groups remain owned by apply.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	RemovePublisherGroupWithResponse(ctx context.Context, projectKey string, groupName string, params *RemovePublisherGroupParams, reqEditors ...RequestEditorFn) (*RemovePublisherGroupResponse, error)
-
-	// GetPublisherGroupWithResponse performs a GET /v1/projects/{project_key}/publisher-groups/{group_name} (the `GetPublisherGroup` operationId) request.
-	//
-	// Read a concrete group by immutable ID or its existing selector.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	GetPublisherGroupWithResponse(ctx context.Context, projectKey string, groupName string, params *GetPublisherGroupParams, reqEditors ...RequestEditorFn) (*GetPublisherGroupResponse, error)
-
-	// CreatePublisherGroupWithBodyWithResponse performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name} (the `CreatePublisherGroup` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Create a concrete team-owned group following an applied template. Same name and template return the existing group; names cannot be adopted from another template or reused after retirement. Creation allocates distinct services but grants no new visitor authority to existing workload sessions.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	CreatePublisherGroupWithBodyWithResponse(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublisherGroupResponse, error)
-
-	// CreatePublisherGroupWithResponse performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name} (the `CreatePublisherGroup` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Create a concrete team-owned group following an applied template. Same name and template return the existing group; names cannot be adopted from another template or reused after retirement. Creation allocates distinct services but grants no new visitor authority to existing workload sessions.
-	CreatePublisherGroupWithResponse(ctx context.Context, projectKey string, groupName string, body CreatePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublisherGroupResponse, error)
-
-	// UpdatePublisherGroupBindingsWithBodyWithResponse performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name}/bindings (the `UpdatePublisherGroupBindings` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Replace the exact saved bindings of a template-created group by ID or selector. Preserves group/service IDs and reserved endpoints; closes changed runs and replaces their grants and target trust through the existing apply lifecycle. The project revision fences binding and template changes together.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	UpdatePublisherGroupBindingsWithBodyWithResponse(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdatePublisherGroupBindingsResponse, error)
-
-	// UpdatePublisherGroupBindingsWithResponse performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name}/bindings (the `UpdatePublisherGroupBindings` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Replace the exact saved bindings of a template-created group by ID or selector. Preserves group/service IDs and reserved endpoints; closes changed runs and replaces their grants and target trust through the existing apply lifecycle. The project revision fences binding and template changes together.
-	UpdatePublisherGroupBindingsWithResponse(ctx context.Context, projectKey string, groupName string, body UpdatePublisherGroupBindingsJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdatePublisherGroupBindingsResponse, error)
-
-	// GetPublisherGroupConnectionWithResponse performs a GET /v1/projects/{project_key}/publisher-groups/{group_name}/connection (the `GetPublisherGroupConnection` operationId) request.
-	//
-	// Read nonsecret group connection context as a team manager. The descriptor is a selector, never an access credential.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	GetPublisherGroupConnectionWithResponse(ctx context.Context, projectKey string, groupName string, params *GetPublisherGroupConnectionParams, reqEditors ...RequestEditorFn) (*GetPublisherGroupConnectionResponse, error)
-
-	// CreatePublisherGroupEnrollmentWithBodyWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	CreatePublisherGroupEnrollmentWithBodyWithResponse(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublisherGroupEnrollmentResponse, error)
-
-	// CreatePublisherGroupEnrollmentWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	CreatePublisherGroupEnrollmentWithResponse(ctx context.Context, projectKey string, groupName string, body CreatePublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublisherGroupEnrollmentResponse, error)
-
-	// ListPublisherGroupMembersWithResponse performs a GET /v1/projects/{project_key}/publisher-groups/{group_name}/members (the `ListPublisherGroupMembers` operationId) request.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	ListPublisherGroupMembersWithResponse(ctx context.Context, projectKey string, groupName string, params *ListPublisherGroupMembersParams, reqEditors ...RequestEditorFn) (*ListPublisherGroupMembersResponse, error)
-
-	// RevokePublisherGroupMemberWithResponse performs a DELETE /v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id} (the `RevokePublisherGroupMember` operationId) request.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	RevokePublisherGroupMemberWithResponse(ctx context.Context, projectKey string, groupName string, publisherIdentityId string, params *RevokePublisherGroupMemberParams, reqEditors ...RequestEditorFn) (*RevokePublisherGroupMemberResponse, error)
-
-	// RenamePublisherNamespaceWithBodyWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	RenamePublisherNamespaceWithBodyWithResponse(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenamePublisherNamespaceResponse, error)
-
-	// RenamePublisherNamespaceWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
-	RenamePublisherNamespaceWithResponse(ctx context.Context, projectKey string, groupName string, body RenamePublisherNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*RenamePublisherNamespaceResponse, error)
-
-	// RenamePublisherGroupWithBodyWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	RenamePublisherGroupWithBodyWithResponse(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenamePublisherGroupResponse, error)
-
-	// RenamePublisherGroupWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
-	RenamePublisherGroupWithResponse(ctx context.Context, projectKey string, groupName string, body RenamePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*RenamePublisherGroupResponse, error)
-
 	// CreateServiceDefinitionWithBodyWithResponse performs a POST /v1/projects/{project_key}/service-definitions (the `CreateServiceDefinition` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -18418,13 +17447,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Save an immutable project service definition as a current team manager. Equal normalized definitions reuse their revision. Publishing a definition alone changes no environment, target, permission, or publisher assignment.
 	CreateServiceDefinitionWithResponse(ctx context.Context, projectKey string, body CreateServiceDefinitionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateServiceDefinitionResponse, error)
-
-	// GetProjectServiceWithResponse performs a GET /v1/projects/{project_key}/services/{service} (the `GetProjectService` operationId) request.
-	//
-	// Resolve an applied service by its exact Git source and configuration key using current visitor access. Does not return targets or require project-manager permission.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	GetProjectServiceWithResponse(ctx context.Context, projectKey string, service ServiceName, params *GetProjectServiceParams, reqEditors ...RequestEditorFn) (*GetProjectServiceResponse, error)
 
 	// ListPublicURLsWithResponse List public URLs for one team
 	//
@@ -18797,63 +17819,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/publisher-enrollments (the `CreatePublisherEnrollment` operationId).
 	CreatePublisherEnrollmentWithResponse(ctx context.Context, body CreatePublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublisherEnrollmentResponse, error)
-
-	// AcknowledgePublisherGroupConfigurationWithBodyWithResponse performs a POST /v1/publisher-groups/ack (the `AcknowledgePublisherGroupConfiguration` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	AcknowledgePublisherGroupConfigurationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcknowledgePublisherGroupConfigurationResponse, error)
-
-	// AcknowledgePublisherGroupConfigurationWithResponse performs a POST /v1/publisher-groups/ack (the `AcknowledgePublisherGroupConfiguration` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	AcknowledgePublisherGroupConfigurationWithResponse(ctx context.Context, body AcknowledgePublisherGroupConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcknowledgePublisherGroupConfigurationResponse, error)
-
-	// GetPublisherGroupAssignmentsWithResponse performs a GET /v1/publisher-groups/assignments (the `GetPublisherGroupAssignments` operationId) request.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	GetPublisherGroupAssignmentsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetPublisherGroupAssignmentsResponse, error)
-
-	// RedeemPublisherGroupEnrollmentWithBodyWithResponse performs a POST /v1/publisher-groups/enroll (the `RedeemPublisherGroupEnrollment` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Each replica submits its own Ed25519 public key. Retrying the same key is idempotent and consumes no additional enrollment capacity.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	RedeemPublisherGroupEnrollmentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemPublisherGroupEnrollmentResponse, error)
-
-	// RedeemPublisherGroupEnrollmentWithResponse performs a POST /v1/publisher-groups/enroll (the `RedeemPublisherGroupEnrollment` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Each replica submits its own Ed25519 public key. Retrying the same key is idempotent and consumes no additional enrollment capacity.
-	RedeemPublisherGroupEnrollmentWithResponse(ctx context.Context, body RedeemPublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemPublisherGroupEnrollmentResponse, error)
-
-	// AcquirePublisherGroupLeaseWithBodyWithResponse performs a POST /v1/publisher-groups/lease (the `AcquirePublisherGroupLease` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Exchange a one-use signed assertion for a short-lived group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	AcquirePublisherGroupLeaseWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcquirePublisherGroupLeaseResponse, error)
-
-	// AcquirePublisherGroupLeaseWithResponse performs a POST /v1/publisher-groups/lease (the `AcquirePublisherGroupLease` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Exchange a one-use signed assertion for a short-lived group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID.
-	AcquirePublisherGroupLeaseWithResponse(ctx context.Context, body AcquirePublisherGroupLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*AcquirePublisherGroupLeaseResponse, error)
-
-	// VerifyPublisherGroupIdentityWithBodyWithResponse performs a POST /v1/publisher-groups/verify (the `VerifyPublisherGroupIdentity` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The one-use assertion audience is the control URL followed by this path.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	VerifyPublisherGroupIdentityWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*VerifyPublisherGroupIdentityResponse, error)
-
-	// VerifyPublisherGroupIdentityWithResponse performs a POST /v1/publisher-groups/verify (the `VerifyPublisherGroupIdentity` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The one-use assertion audience is the control URL followed by this path.
-	VerifyPublisherGroupIdentityWithResponse(ctx context.Context, body VerifyPublisherGroupIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*VerifyPublisherGroupIdentityResponse, error)
 
 	// ListPublisherIdentitiesWithResponse List publisher identities and grants without secrets
 	//
@@ -19953,6 +18918,239 @@ func (r GetControlDiscoveryResponse) ContentType() string {
 	return ""
 }
 
+type AcknowledgeEnvironmentPublisherResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AcknowledgeEnvironmentPublisherResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r AcknowledgeEnvironmentPublisherResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AcknowledgeEnvironmentPublisherResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AcknowledgeEnvironmentPublisherResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AcknowledgeEnvironmentPublisherResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetEnvironmentPublisherAssignmentsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *EnvironmentPublisherAssignments
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetEnvironmentPublisherAssignmentsResponse) GetJSON200() *EnvironmentPublisherAssignments {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetEnvironmentPublisherAssignmentsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetEnvironmentPublisherAssignmentsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetEnvironmentPublisherAssignmentsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetEnvironmentPublisherAssignmentsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetEnvironmentPublisherAssignmentsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RedeemEnvironmentPublisherEnrollmentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *EnvironmentPublisher
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RedeemEnvironmentPublisherEnrollmentResponse) GetJSON200() *EnvironmentPublisher {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RedeemEnvironmentPublisherEnrollmentResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RedeemEnvironmentPublisherEnrollmentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RedeemEnvironmentPublisherEnrollmentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RedeemEnvironmentPublisherEnrollmentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RedeemEnvironmentPublisherEnrollmentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AcquireEnvironmentPublisherLeaseResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *EnvironmentPublisherLease
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AcquireEnvironmentPublisherLeaseResponse) GetJSON200() *EnvironmentPublisherLease {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AcquireEnvironmentPublisherLeaseResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r AcquireEnvironmentPublisherLeaseResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AcquireEnvironmentPublisherLeaseResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AcquireEnvironmentPublisherLeaseResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AcquireEnvironmentPublisherLeaseResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type VerifyEnvironmentPublisherResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *EnvironmentPublisher
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r VerifyEnvironmentPublisherResponse) GetJSON200() *EnvironmentPublisher {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r VerifyEnvironmentPublisherResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r VerifyEnvironmentPublisherResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r VerifyEnvironmentPublisherResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r VerifyEnvironmentPublisherResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r VerifyEnvironmentPublisherResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListFeedbackThreadsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -20865,102 +20063,6 @@ func (r UpdateCollectionDefaultResponse) ContentType() string {
 	return ""
 }
 
-type GetProjectConfigurationResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *AppliedProjectConfiguration
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetProjectConfigurationResponse) GetJSON200() *AppliedProjectConfiguration {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r GetProjectConfigurationResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r GetProjectConfigurationResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r GetProjectConfigurationResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetProjectConfigurationResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetProjectConfigurationResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ApplyProjectConfigurationResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *AppliedProjectConfiguration
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ApplyProjectConfigurationResponse) GetJSON200() *AppliedProjectConfiguration {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ApplyProjectConfigurationResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r ApplyProjectConfigurationResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ApplyProjectConfigurationResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ApplyProjectConfigurationResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ApplyProjectConfigurationResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type ListEnvironmentsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -21242,6 +20344,287 @@ func (r ApplyEnvironmentResponse) ContentType() string {
 	return ""
 }
 
+type CreateEnvironmentPublisherEnrollmentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *EnvironmentPublisherEnrollment
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateEnvironmentPublisherEnrollmentResponse) GetJSON201() *EnvironmentPublisherEnrollment {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateEnvironmentPublisherEnrollmentResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateEnvironmentPublisherEnrollmentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateEnvironmentPublisherEnrollmentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateEnvironmentPublisherEnrollmentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateEnvironmentPublisherEnrollmentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListEnvironmentPublishersResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]EnvironmentPublisherStatus
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListEnvironmentPublishersResponse) GetJSON200() *[]EnvironmentPublisherStatus {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListEnvironmentPublishersResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListEnvironmentPublishersResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListEnvironmentPublishersResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListEnvironmentPublishersResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListEnvironmentPublishersResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RevokeEnvironmentPublisherResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokeEnvironmentPublisherResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokeEnvironmentPublisherResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeEnvironmentPublisherResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeEnvironmentPublisherResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokeEnvironmentPublisherResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetEnvironmentPublisherGrantResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *EnvironmentPublisherGrantState
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetEnvironmentPublisherGrantResponse) GetJSON200() *EnvironmentPublisherGrantState {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetEnvironmentPublisherGrantResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetEnvironmentPublisherGrantResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetEnvironmentPublisherGrantResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetEnvironmentPublisherGrantResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetEnvironmentPublisherGrantResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AuthorizeEnvironmentPublisherServiceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *EnvironmentPublisherGrantState
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *EnvironmentPublisherGrantState
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AuthorizeEnvironmentPublisherServiceResponse) GetJSON200() *EnvironmentPublisherGrantState {
+	return r.JSON200
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r AuthorizeEnvironmentPublisherServiceResponse) GetJSON201() *EnvironmentPublisherGrantState {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AuthorizeEnvironmentPublisherServiceResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r AuthorizeEnvironmentPublisherServiceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AuthorizeEnvironmentPublisherServiceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AuthorizeEnvironmentPublisherServiceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AuthorizeEnvironmentPublisherServiceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RevokeEnvironmentPublisherGrantResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokeEnvironmentPublisherGrantResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokeEnvironmentPublisherGrantResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeEnvironmentPublisherGrantResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeEnvironmentPublisherGrantResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokeEnvironmentPublisherGrantResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetLocalProjectServiceResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -21386,568 +20769,6 @@ func (r GetProjectPublicMetadataResponse) ContentType() string {
 	return ""
 }
 
-type ListPublisherGroupsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *[]PublisherGroupResource
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListPublisherGroupsResponse) GetJSON200() *[]PublisherGroupResource {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ListPublisherGroupsResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r ListPublisherGroupsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ListPublisherGroupsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListPublisherGroupsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListPublisherGroupsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type CreateBoundPublisherGroupResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PublisherGroupResource
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r CreateBoundPublisherGroupResponse) GetJSON200() *PublisherGroupResource {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r CreateBoundPublisherGroupResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r CreateBoundPublisherGroupResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CreateBoundPublisherGroupResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreateBoundPublisherGroupResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CreateBoundPublisherGroupResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type RemovePublisherGroupResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r RemovePublisherGroupResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r RemovePublisherGroupResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r RemovePublisherGroupResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RemovePublisherGroupResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RemovePublisherGroupResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type GetPublisherGroupResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PublisherGroupResource
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetPublisherGroupResponse) GetJSON200() *PublisherGroupResource {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r GetPublisherGroupResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r GetPublisherGroupResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r GetPublisherGroupResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetPublisherGroupResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetPublisherGroupResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type CreatePublisherGroupResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PublisherGroupConnection
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r CreatePublisherGroupResponse) GetJSON200() *PublisherGroupConnection {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r CreatePublisherGroupResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r CreatePublisherGroupResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CreatePublisherGroupResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreatePublisherGroupResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CreatePublisherGroupResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type UpdatePublisherGroupBindingsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PublisherGroupResource
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r UpdatePublisherGroupBindingsResponse) GetJSON200() *PublisherGroupResource {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r UpdatePublisherGroupBindingsResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r UpdatePublisherGroupBindingsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r UpdatePublisherGroupBindingsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r UpdatePublisherGroupBindingsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r UpdatePublisherGroupBindingsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type GetPublisherGroupConnectionResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PublisherGroupConnection
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetPublisherGroupConnectionResponse) GetJSON200() *PublisherGroupConnection {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r GetPublisherGroupConnectionResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r GetPublisherGroupConnectionResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r GetPublisherGroupConnectionResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetPublisherGroupConnectionResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetPublisherGroupConnectionResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type CreatePublisherGroupEnrollmentResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *PublisherGroupEnrollment
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreatePublisherGroupEnrollmentResponse) GetJSON201() *PublisherGroupEnrollment {
-	return r.JSON201
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r CreatePublisherGroupEnrollmentResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r CreatePublisherGroupEnrollmentResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CreatePublisherGroupEnrollmentResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreatePublisherGroupEnrollmentResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CreatePublisherGroupEnrollmentResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ListPublisherGroupMembersResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *[]PublisherGroupMemberStatus
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListPublisherGroupMembersResponse) GetJSON200() *[]PublisherGroupMemberStatus {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ListPublisherGroupMembersResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r ListPublisherGroupMembersResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ListPublisherGroupMembersResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListPublisherGroupMembersResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListPublisherGroupMembersResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type RevokePublisherGroupMemberResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r RevokePublisherGroupMemberResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r RevokePublisherGroupMemberResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r RevokePublisherGroupMemberResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RevokePublisherGroupMemberResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RevokePublisherGroupMemberResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type RenamePublisherNamespaceResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *AppliedProjectConfiguration
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r RenamePublisherNamespaceResponse) GetJSON200() *AppliedProjectConfiguration {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r RenamePublisherNamespaceResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r RenamePublisherNamespaceResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r RenamePublisherNamespaceResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RenamePublisherNamespaceResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RenamePublisherNamespaceResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type RenamePublisherGroupResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *AppliedProjectConfiguration
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r RenamePublisherGroupResponse) GetJSON200() *AppliedProjectConfiguration {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r RenamePublisherGroupResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r RenamePublisherGroupResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r RenamePublisherGroupResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RenamePublisherGroupResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RenamePublisherGroupResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type CreateServiceDefinitionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -21990,54 +20811,6 @@ func (r CreateServiceDefinitionResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r CreateServiceDefinitionResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type GetProjectServiceResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *Service
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetProjectServiceResponse) GetJSON200() *Service {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r GetProjectServiceResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r GetProjectServiceResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r GetProjectServiceResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetProjectServiceResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetProjectServiceResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -23532,239 +22305,6 @@ func (r CreatePublisherEnrollmentResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r CreatePublisherEnrollmentResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type AcknowledgePublisherGroupConfigurationResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r AcknowledgePublisherGroupConfigurationResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r AcknowledgePublisherGroupConfigurationResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AcknowledgePublisherGroupConfigurationResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AcknowledgePublisherGroupConfigurationResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AcknowledgePublisherGroupConfigurationResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type GetPublisherGroupAssignmentsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PublisherGroupAssignments
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetPublisherGroupAssignmentsResponse) GetJSON200() *PublisherGroupAssignments {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r GetPublisherGroupAssignmentsResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r GetPublisherGroupAssignmentsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r GetPublisherGroupAssignmentsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetPublisherGroupAssignmentsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetPublisherGroupAssignmentsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type RedeemPublisherGroupEnrollmentResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PublisherGroupMember
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r RedeemPublisherGroupEnrollmentResponse) GetJSON200() *PublisherGroupMember {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r RedeemPublisherGroupEnrollmentResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r RedeemPublisherGroupEnrollmentResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r RedeemPublisherGroupEnrollmentResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RedeemPublisherGroupEnrollmentResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RedeemPublisherGroupEnrollmentResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type AcquirePublisherGroupLeaseResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PublisherGroupLease
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r AcquirePublisherGroupLeaseResponse) GetJSON200() *PublisherGroupLease {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r AcquirePublisherGroupLeaseResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r AcquirePublisherGroupLeaseResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AcquirePublisherGroupLeaseResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AcquirePublisherGroupLeaseResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AcquirePublisherGroupLeaseResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type VerifyPublisherGroupIdentityResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PublisherGroupVerification
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r VerifyPublisherGroupIdentityResponse) GetJSON200() *PublisherGroupVerification {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r VerifyPublisherGroupIdentityResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r VerifyPublisherGroupIdentityResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r VerifyPublisherGroupIdentityResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r VerifyPublisherGroupIdentityResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r VerifyPublisherGroupIdentityResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -26854,6 +25394,117 @@ func (c *ClientWithResponses) GetControlDiscoveryWithResponse(ctx context.Contex
 	return ParseGetControlDiscoveryResponse(rsp)
 }
 
+// AcknowledgeEnvironmentPublisherWithBodyWithResponse performs a POST /v1/environment-publishers/ack (the `AcknowledgeEnvironmentPublisher` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) AcknowledgeEnvironmentPublisherWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcknowledgeEnvironmentPublisherResponse, error) {
+	rsp, err := c.AcknowledgeEnvironmentPublisherWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAcknowledgeEnvironmentPublisherResponse(rsp)
+}
+
+// AcknowledgeEnvironmentPublisherWithResponse performs a POST /v1/environment-publishers/ack (the `AcknowledgeEnvironmentPublisher` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) AcknowledgeEnvironmentPublisherWithResponse(ctx context.Context, body AcknowledgeEnvironmentPublisherJSONRequestBody, reqEditors ...RequestEditorFn) (*AcknowledgeEnvironmentPublisherResponse, error) {
+	rsp, err := c.AcknowledgeEnvironmentPublisher(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAcknowledgeEnvironmentPublisherResponse(rsp)
+}
+
+// GetEnvironmentPublisherAssignmentsWithResponse performs a GET /v1/environment-publishers/assignments (the `GetEnvironmentPublisherAssignments` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) GetEnvironmentPublisherAssignmentsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetEnvironmentPublisherAssignmentsResponse, error) {
+	rsp, err := c.GetEnvironmentPublisherAssignments(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetEnvironmentPublisherAssignmentsResponse(rsp)
+}
+
+// RedeemEnvironmentPublisherEnrollmentWithBodyWithResponse performs a POST /v1/environment-publishers/enroll (the `RedeemEnvironmentPublisherEnrollment` operationId) request,
+// with any type of body and a specified content type.
+//
+// Install this replica's own Ed25519 public key. Exact-key replay is idempotent and does not consume another member. The enrolled identity is independent of its historical enrollment issuer.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RedeemEnvironmentPublisherEnrollmentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemEnvironmentPublisherEnrollmentResponse, error) {
+	rsp, err := c.RedeemEnvironmentPublisherEnrollmentWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRedeemEnvironmentPublisherEnrollmentResponse(rsp)
+}
+
+// RedeemEnvironmentPublisherEnrollmentWithResponse performs a POST /v1/environment-publishers/enroll (the `RedeemEnvironmentPublisherEnrollment` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Install this replica's own Ed25519 public key. Exact-key replay is idempotent and does not consume another member. The enrolled identity is independent of its historical enrollment issuer.
+func (c *ClientWithResponses) RedeemEnvironmentPublisherEnrollmentWithResponse(ctx context.Context, body RedeemEnvironmentPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemEnvironmentPublisherEnrollmentResponse, error) {
+	rsp, err := c.RedeemEnvironmentPublisherEnrollment(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRedeemEnvironmentPublisherEnrollmentResponse(rsp)
+}
+
+// AcquireEnvironmentPublisherLeaseWithBodyWithResponse performs a POST /v1/environment-publishers/lease (the `AcquireEnvironmentPublisherLease` operationId) request,
+// with any type of body and a specified content type.
+//
+// Exchange a one-use exact-environment assertion for a fixed-expiry publisher lease. Current installed identity and service authority are checked independently of the historical enrollment issuer.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) AcquireEnvironmentPublisherLeaseWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcquireEnvironmentPublisherLeaseResponse, error) {
+	rsp, err := c.AcquireEnvironmentPublisherLeaseWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAcquireEnvironmentPublisherLeaseResponse(rsp)
+}
+
+// AcquireEnvironmentPublisherLeaseWithResponse performs a POST /v1/environment-publishers/lease (the `AcquireEnvironmentPublisherLease` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Exchange a one-use exact-environment assertion for a fixed-expiry publisher lease. Current installed identity and service authority are checked independently of the historical enrollment issuer.
+func (c *ClientWithResponses) AcquireEnvironmentPublisherLeaseWithResponse(ctx context.Context, body AcquireEnvironmentPublisherLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*AcquireEnvironmentPublisherLeaseResponse, error) {
+	rsp, err := c.AcquireEnvironmentPublisherLease(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAcquireEnvironmentPublisherLeaseResponse(rsp)
+}
+
+// VerifyEnvironmentPublisherWithBodyWithResponse performs a POST /v1/environment-publishers/verify (the `VerifyEnvironmentPublisher` operationId) request,
+// with any type of body and a specified content type.
+//
+// Verify current installed identity without replacing its running lease. Sign a one-use assertion for this exact endpoint with the environment ID as its scope.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) VerifyEnvironmentPublisherWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*VerifyEnvironmentPublisherResponse, error) {
+	rsp, err := c.VerifyEnvironmentPublisherWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseVerifyEnvironmentPublisherResponse(rsp)
+}
+
+// VerifyEnvironmentPublisherWithResponse performs a POST /v1/environment-publishers/verify (the `VerifyEnvironmentPublisher` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Verify current installed identity without replacing its running lease. Sign a one-use assertion for this exact endpoint with the environment ID as its scope.
+func (c *ClientWithResponses) VerifyEnvironmentPublisherWithResponse(ctx context.Context, body VerifyEnvironmentPublisherJSONRequestBody, reqEditors ...RequestEditorFn) (*VerifyEnvironmentPublisherResponse, error) {
+	rsp, err := c.VerifyEnvironmentPublisher(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseVerifyEnvironmentPublisherResponse(rsp)
+}
+
 // ListFeedbackThreadsWithResponse List feedback threads manageable in one team
 //
 // Returns a wrapper object for the known response body format(s).
@@ -27164,7 +25815,7 @@ func (c *ClientWithResponses) CreateCollectionWithResponse(ctx context.Context, 
 
 // GetCollectionWithResponse performs a GET /v1/projects/{project_key}/collections/{collection_id} (the `GetCollection` operationId) request.
 //
-// Read this exact collection in the authorized team and project as a current team manager. Neither its name nor its reference authorizes access; no other scope is searched.
+// Read this exact collection using current team manager access or a machine read provisioning session scoped to that collection and every service in its current default definition. Neither its name nor its reference authorizes access; no other scope is searched.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) GetCollectionWithResponse(ctx context.Context, projectKey string, collectionId CollectionID, params *GetCollectionParams, reqEditors ...RequestEditorFn) (*GetCollectionResponse, error) {
@@ -27201,46 +25852,9 @@ func (c *ClientWithResponses) UpdateCollectionDefaultWithResponse(ctx context.Co
 	return ParseUpdateCollectionDefaultResponse(rsp)
 }
 
-// GetProjectConfigurationWithResponse performs a GET /v1/projects/{project_key}/configuration (the `GetProjectConfiguration` operationId) request.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) GetProjectConfigurationWithResponse(ctx context.Context, projectKey string, params *GetProjectConfigurationParams, reqEditors ...RequestEditorFn) (*GetProjectConfigurationResponse, error) {
-	rsp, err := c.GetProjectConfiguration(ctx, projectKey, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetProjectConfigurationResponse(rsp)
-}
-
-// ApplyProjectConfigurationWithBodyWithResponse performs a PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId) request,
-// with any type of body and a specified content type.
-//
-// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) ApplyProjectConfigurationWithBodyWithResponse(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApplyProjectConfigurationResponse, error) {
-	rsp, err := c.ApplyProjectConfigurationWithBody(ctx, projectKey, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseApplyProjectConfigurationResponse(rsp)
-}
-
-// ApplyProjectConfigurationWithResponse performs a PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
-func (c *ClientWithResponses) ApplyProjectConfigurationWithResponse(ctx context.Context, projectKey string, body ApplyProjectConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*ApplyProjectConfigurationResponse, error) {
-	rsp, err := c.ApplyProjectConfiguration(ctx, projectKey, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseApplyProjectConfigurationResponse(rsp)
-}
-
 // ListEnvironmentsWithResponse performs a GET /v1/projects/{project_key}/environments (the `ListEnvironments` operationId) request.
 //
-// List active environments in this project as a current team manager. Contains sensitive target settings; never use as browser metadata.
+// List active environments in this project using current team manager access or a machine read provisioning session. Machine results include only environments within its current saved scope whose complete applied definition fits its fixed service allowlist. Contains sensitive target settings; never use as browser metadata.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) ListEnvironmentsWithResponse(ctx context.Context, projectKey string, params *ListEnvironmentsParams, reqEditors ...RequestEditorFn) (*ListEnvironmentsResponse, error) {
@@ -27254,7 +25868,7 @@ func (c *ClientWithResponses) ListEnvironmentsWithResponse(ctx context.Context, 
 // CreateEnvironmentWithBodyWithResponse performs a POST /v1/projects/{project_key}/environments (the `CreateEnvironment` operationId) request,
 // with any type of body and a specified content type.
 //
-// Materialize one environment from an immutable definition and complete approved targets as a current team manager. With a collection, require its expected mutation revision and save membership atomically; an explicit definition revision overrides its default. Creation grants no visitor or workload permission. Authorized identical retries return the saved environment without following a changed default; changing the original collection precondition or other creation intent with a used key conflicts, as do retired keys. Names and references select resources, not authorization scope.
+// Materialize one environment from an immutable definition and complete approved targets using current team manager access or an exact machine create provisioning session. Machine creation requires its granted collection including future environments, and the complete selected definition must fit its fixed service allowlist. With a collection, require its expected mutation revision and save membership atomically; an explicit definition revision overrides its default. Creation grants no visitor or workload permission. Authorized identical retries return the saved environment without following a changed default; changing the original collection precondition or other creation intent with a used key conflicts, as do retired keys. Names and references select resources, not authorization scope.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) CreateEnvironmentWithBodyWithResponse(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateEnvironmentResponse, error) {
@@ -27268,7 +25882,7 @@ func (c *ClientWithResponses) CreateEnvironmentWithBodyWithResponse(ctx context.
 // CreateEnvironmentWithResponse performs a POST /v1/projects/{project_key}/environments (the `CreateEnvironment` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Materialize one environment from an immutable definition and complete approved targets as a current team manager. With a collection, require its expected mutation revision and save membership atomically; an explicit definition revision overrides its default. Creation grants no visitor or workload permission. Authorized identical retries return the saved environment without following a changed default; changing the original collection precondition or other creation intent with a used key conflicts, as do retired keys. Names and references select resources, not authorization scope.
+// Materialize one environment from an immutable definition and complete approved targets using current team manager access or an exact machine create provisioning session. Machine creation requires its granted collection including future environments, and the complete selected definition must fit its fixed service allowlist. With a collection, require its expected mutation revision and save membership atomically; an explicit definition revision overrides its default. Creation grants no visitor or workload permission. Authorized identical retries return the saved environment without following a changed default; changing the original collection precondition or other creation intent with a used key conflicts, as do retired keys. Names and references select resources, not authorization scope.
 func (c *ClientWithResponses) CreateEnvironmentWithResponse(ctx context.Context, projectKey string, body CreateEnvironmentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateEnvironmentResponse, error) {
 	rsp, err := c.CreateEnvironment(ctx, projectKey, body, reqEditors...)
 	if err != nil {
@@ -27280,7 +25894,7 @@ func (c *ClientWithResponses) CreateEnvironmentWithResponse(ctx context.Context,
 // ApplyEnvironmentsWithBodyWithResponse performs a POST /v1/projects/{project_key}/environments/apply (the `ApplyEnvironments` operationId) request,
 // with any type of body and a specified content type.
 //
-// Atomically apply the selected environments as a current team manager. Check every expected environment revision in one transaction; any validation, capacity, or revision failure saves nothing. Definition rollout does not reconcile current authorization.
+// Atomically apply the selected environments using current team manager access or exact machine update authority for every environment and every old and selected service. Check every expected environment revision in one transaction; any authorization, validation, capacity, or revision failure saves nothing. Definition rollout does not reconcile current authorization.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) ApplyEnvironmentsWithBodyWithResponse(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApplyEnvironmentsResponse, error) {
@@ -27294,7 +25908,7 @@ func (c *ClientWithResponses) ApplyEnvironmentsWithBodyWithResponse(ctx context.
 // ApplyEnvironmentsWithResponse performs a POST /v1/projects/{project_key}/environments/apply (the `ApplyEnvironments` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Atomically apply the selected environments as a current team manager. Check every expected environment revision in one transaction; any validation, capacity, or revision failure saves nothing. Definition rollout does not reconcile current authorization.
+// Atomically apply the selected environments using current team manager access or exact machine update authority for every environment and every old and selected service. Check every expected environment revision in one transaction; any authorization, validation, capacity, or revision failure saves nothing. Definition rollout does not reconcile current authorization.
 func (c *ClientWithResponses) ApplyEnvironmentsWithResponse(ctx context.Context, projectKey string, body ApplyEnvironmentsJSONRequestBody, reqEditors ...RequestEditorFn) (*ApplyEnvironmentsResponse, error) {
 	rsp, err := c.ApplyEnvironments(ctx, projectKey, body, reqEditors...)
 	if err != nil {
@@ -27305,7 +25919,7 @@ func (c *ClientWithResponses) ApplyEnvironmentsWithResponse(ctx context.Context,
 
 // RetireEnvironmentWithResponse performs a DELETE /v1/projects/{project_key}/environments/{environment_id} (the `RetireEnvironment` operationId) request.
 //
-// Retire only this environment and its publications as a current team manager. Its saved creation key cannot recreate it. Other environments, local worktrees, and their authorizations remain unchanged.
+// Retire only this environment and its publications using current team manager access or exact machine retire authority for its complete applied service set. Its saved creation key cannot recreate it. Other environments, local worktrees, and their authorizations remain unchanged.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) RetireEnvironmentWithResponse(ctx context.Context, projectKey string, environmentId string, params *RetireEnvironmentParams, reqEditors ...RequestEditorFn) (*RetireEnvironmentResponse, error) {
@@ -27318,7 +25932,7 @@ func (c *ClientWithResponses) RetireEnvironmentWithResponse(ctx context.Context,
 
 // GetEnvironmentWithResponse performs a GET /v1/projects/{project_key}/environments/{environment_id} (the `GetEnvironment` operationId) request.
 //
-// Read one exact immutable environment in this project as a current team manager. Does not search names, another project, or another team.
+// Read one exact environment in this project using current team manager access or exact machine read authority for its complete applied service set. Does not search names, another project, or another team.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) GetEnvironmentWithResponse(ctx context.Context, projectKey string, environmentId string, params *GetEnvironmentParams, reqEditors ...RequestEditorFn) (*GetEnvironmentResponse, error) {
@@ -27332,7 +25946,7 @@ func (c *ClientWithResponses) GetEnvironmentWithResponse(ctx context.Context, pr
 // ApplyEnvironmentWithBodyWithResponse performs a POST /v1/projects/{project_key}/environments/{environment_id}/apply (the `ApplyEnvironment` operationId) request,
 // with any type of body and a specified content type.
 //
-// Apply one pinned definition and approved targets to this exact environment as a current team manager. A rollback still advances its mutation revision. No other environment is reconciled; no current permission is restored from definition history.
+// Apply one pinned definition and approved targets to this exact environment using current team manager access or exact machine update authority. A machine must cover every old and selected service; it cannot remove an unauthorized service to gain control of the remainder. A rollback still advances its mutation revision. No other environment is reconciled; no current permission is restored from definition history.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) ApplyEnvironmentWithBodyWithResponse(ctx context.Context, projectKey string, environmentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApplyEnvironmentResponse, error) {
@@ -27346,13 +25960,113 @@ func (c *ClientWithResponses) ApplyEnvironmentWithBodyWithResponse(ctx context.C
 // ApplyEnvironmentWithResponse performs a POST /v1/projects/{project_key}/environments/{environment_id}/apply (the `ApplyEnvironment` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Apply one pinned definition and approved targets to this exact environment as a current team manager. A rollback still advances its mutation revision. No other environment is reconciled; no current permission is restored from definition history.
+// Apply one pinned definition and approved targets to this exact environment using current team manager access or exact machine update authority. A machine must cover every old and selected service; it cannot remove an unauthorized service to gain control of the remainder. A rollback still advances its mutation revision. No other environment is reconciled; no current permission is restored from definition history.
 func (c *ClientWithResponses) ApplyEnvironmentWithResponse(ctx context.Context, projectKey string, environmentId string, body ApplyEnvironmentJSONRequestBody, reqEditors ...RequestEditorFn) (*ApplyEnvironmentResponse, error) {
 	rsp, err := c.ApplyEnvironment(ctx, projectKey, environmentId, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseApplyEnvironmentResponse(rsp)
+}
+
+// CreateEnvironmentPublisherEnrollmentWithBodyWithResponse performs a POST /v1/projects/{project_key}/environments/{environment_id}/publisher-enrollments (the `CreateEnvironmentPublisherEnrollment` operationId) request,
+// with any type of body and a specified content type.
+//
+// Issue bounded enrollment for this exact environment under a current manager session or an exact machine provisioning session with the enroll operation. Machine issuance requires Idempotency-Key; retries return the original still-current enrollment without spending its cumulative member budget again. Enrollment is separate from visitor access and from authorizing new service grants on an already enrolled publisher.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreateEnvironmentPublisherEnrollmentWithBodyWithResponse(ctx context.Context, projectKey string, environmentId string, params *CreateEnvironmentPublisherEnrollmentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateEnvironmentPublisherEnrollmentResponse, error) {
+	rsp, err := c.CreateEnvironmentPublisherEnrollmentWithBody(ctx, projectKey, environmentId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateEnvironmentPublisherEnrollmentResponse(rsp)
+}
+
+// CreateEnvironmentPublisherEnrollmentWithResponse performs a POST /v1/projects/{project_key}/environments/{environment_id}/publisher-enrollments (the `CreateEnvironmentPublisherEnrollment` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Issue bounded enrollment for this exact environment under a current manager session or an exact machine provisioning session with the enroll operation. Machine issuance requires Idempotency-Key; retries return the original still-current enrollment without spending its cumulative member budget again. Enrollment is separate from visitor access and from authorizing new service grants on an already enrolled publisher.
+func (c *ClientWithResponses) CreateEnvironmentPublisherEnrollmentWithResponse(ctx context.Context, projectKey string, environmentId string, params *CreateEnvironmentPublisherEnrollmentParams, body CreateEnvironmentPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateEnvironmentPublisherEnrollmentResponse, error) {
+	rsp, err := c.CreateEnvironmentPublisherEnrollment(ctx, projectKey, environmentId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateEnvironmentPublisherEnrollmentResponse(rsp)
+}
+
+// ListEnvironmentPublishersWithResponse performs a GET /v1/projects/{project_key}/environments/{environment_id}/publishers (the `ListEnvironmentPublishers` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ListEnvironmentPublishersWithResponse(ctx context.Context, projectKey string, environmentId string, params *ListEnvironmentPublishersParams, reqEditors ...RequestEditorFn) (*ListEnvironmentPublishersResponse, error) {
+	rsp, err := c.ListEnvironmentPublishers(ctx, projectKey, environmentId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListEnvironmentPublishersResponse(rsp)
+}
+
+// RevokeEnvironmentPublisherWithResponse performs a DELETE /v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id} (the `RevokeEnvironmentPublisher` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RevokeEnvironmentPublisherWithResponse(ctx context.Context, projectKey string, environmentId string, publisherIdentityId string, params *RevokeEnvironmentPublisherParams, reqEditors ...RequestEditorFn) (*RevokeEnvironmentPublisherResponse, error) {
+	rsp, err := c.RevokeEnvironmentPublisher(ctx, projectKey, environmentId, publisherIdentityId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeEnvironmentPublisherResponse(rsp)
+}
+
+// GetEnvironmentPublisherGrantWithResponse performs a GET /v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id}/services/{service_id}/grant (the `GetEnvironmentPublisherGrant` operationId) request.
+//
+// Inspect one exact environment/member/service mapping using a current manager control session or a machine provisioning session with read authority for this environment and logical service. Returns null when no mapping exists, or its exact active/revoked grant and current environment fence. Never searches another scope or treats these facts as credentials.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) GetEnvironmentPublisherGrantWithResponse(ctx context.Context, projectKey string, environmentId string, publisherIdentityId string, serviceId ServiceID, params *GetEnvironmentPublisherGrantParams, reqEditors ...RequestEditorFn) (*GetEnvironmentPublisherGrantResponse, error) {
+	rsp, err := c.GetEnvironmentPublisherGrant(ctx, projectKey, environmentId, publisherIdentityId, serviceId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetEnvironmentPublisherGrantResponse(rsp)
+}
+
+// AuthorizeEnvironmentPublisherServiceWithBodyWithResponse performs a POST /v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id}/services/{service_id}/grant (the `AuthorizeEnvironmentPublisherService` operationId) request,
+// with any type of body and a specified content type.
+//
+// Explicitly authorize only this already-enrolled environment member for this saved service using a current manager control session or exact machine enroll authority. A machine spends one member from its cumulative enrollment budget only when a fresh grant is created; retries and active no-ops spend nothing. Does not enroll a publisher, change its key, apply a definition or grant visitor access. Current authority and the original access deadline are checked after lock waits and on every replay/no-op.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) AuthorizeEnvironmentPublisherServiceWithBodyWithResponse(ctx context.Context, projectKey string, environmentId string, publisherIdentityId string, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeEnvironmentPublisherServiceResponse, error) {
+	rsp, err := c.AuthorizeEnvironmentPublisherServiceWithBody(ctx, projectKey, environmentId, publisherIdentityId, serviceId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAuthorizeEnvironmentPublisherServiceResponse(rsp)
+}
+
+// AuthorizeEnvironmentPublisherServiceWithResponse performs a POST /v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id}/services/{service_id}/grant (the `AuthorizeEnvironmentPublisherService` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Explicitly authorize only this already-enrolled environment member for this saved service using a current manager control session or exact machine enroll authority. A machine spends one member from its cumulative enrollment budget only when a fresh grant is created; retries and active no-ops spend nothing. Does not enroll a publisher, change its key, apply a definition or grant visitor access. Current authority and the original access deadline are checked after lock waits and on every replay/no-op.
+func (c *ClientWithResponses) AuthorizeEnvironmentPublisherServiceWithResponse(ctx context.Context, projectKey string, environmentId string, publisherIdentityId string, serviceId ServiceID, body AuthorizeEnvironmentPublisherServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeEnvironmentPublisherServiceResponse, error) {
+	rsp, err := c.AuthorizeEnvironmentPublisherService(ctx, projectKey, environmentId, publisherIdentityId, serviceId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAuthorizeEnvironmentPublisherServiceResponse(rsp)
+}
+
+// RevokeEnvironmentPublisherGrantWithResponse performs a DELETE /v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id}/services/{service_id}/grant/{grant_id} (the `RevokeEnvironmentPublisherGrant` operationId) request.
+//
+// Revoke this exact mapped grant using a current manager control session or exact machine revoke_member authority, retain its tombstone and close only its exact publisher/service run. An already-revoked grant is a current-authority and precondition-checked no-op; deleting an old grant never revokes a replacement or another publisher's grant. Apply and rollback do not restore it.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RevokeEnvironmentPublisherGrantWithResponse(ctx context.Context, projectKey string, environmentId string, publisherIdentityId string, serviceId ServiceID, grantId string, params *RevokeEnvironmentPublisherGrantParams, reqEditors ...RequestEditorFn) (*RevokeEnvironmentPublisherGrantResponse, error) {
+	rsp, err := c.RevokeEnvironmentPublisherGrant(ctx, projectKey, environmentId, publisherIdentityId, serviceId, grantId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeEnvironmentPublisherGrantResponse(rsp)
 }
 
 // GetLocalProjectServiceWithResponse performs a GET /v1/projects/{project_key}/local-services/{service} (the `GetLocalProjectService` operationId) request.
@@ -27407,230 +26121,6 @@ func (c *ClientWithResponses) GetProjectPublicMetadataWithResponse(ctx context.C
 	return ParseGetProjectPublicMetadataResponse(rsp)
 }
 
-// ListPublisherGroupsWithResponse performs a GET /v1/projects/{project_key}/publisher-groups (the `ListPublisherGroups` operationId) request.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) ListPublisherGroupsWithResponse(ctx context.Context, projectKey string, params *ListPublisherGroupsParams, reqEditors ...RequestEditorFn) (*ListPublisherGroupsResponse, error) {
-	rsp, err := c.ListPublisherGroups(ctx, projectKey, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListPublisherGroupsResponse(rsp)
-}
-
-// CreateBoundPublisherGroupWithBodyWithResponse performs a POST /v1/projects/{project_key}/publisher-groups (the `CreateBoundPublisherGroup` operationId) request,
-// with any type of body and a specified content type.
-//
-// Create one concrete group with exact saved bindings. An omitted name generates a DNS-safe selector independent of customer IDs. An idempotency key is scoped to team/project and normalized name/template/bindings, not the revision precondition. Authorized retries return the same immutable active identity; changed requests and retired keys conflict. Retirement never recreates resources. New mutations use the project's expected revision and commit allocation, bindings and grants together.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) CreateBoundPublisherGroupWithBodyWithResponse(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateBoundPublisherGroupResponse, error) {
-	rsp, err := c.CreateBoundPublisherGroupWithBody(ctx, projectKey, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateBoundPublisherGroupResponse(rsp)
-}
-
-// CreateBoundPublisherGroupWithResponse performs a POST /v1/projects/{project_key}/publisher-groups (the `CreateBoundPublisherGroup` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Create one concrete group with exact saved bindings. An omitted name generates a DNS-safe selector independent of customer IDs. An idempotency key is scoped to team/project and normalized name/template/bindings, not the revision precondition. Authorized retries return the same immutable active identity; changed requests and retired keys conflict. Retirement never recreates resources. New mutations use the project's expected revision and commit allocation, bindings and grants together.
-func (c *ClientWithResponses) CreateBoundPublisherGroupWithResponse(ctx context.Context, projectKey string, body CreateBoundPublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateBoundPublisherGroupResponse, error) {
-	rsp, err := c.CreateBoundPublisherGroup(ctx, projectKey, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateBoundPublisherGroupResponse(rsp)
-}
-
-// RemovePublisherGroupWithResponse performs a DELETE /v1/projects/{project_key}/publisher-groups/{group_name} (the `RemovePublisherGroup` operationId) request.
-//
-// Retire a template-created group by immutable ID or selector, including services, publisher identities and enrollments. Directly declared groups remain owned by apply.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) RemovePublisherGroupWithResponse(ctx context.Context, projectKey string, groupName string, params *RemovePublisherGroupParams, reqEditors ...RequestEditorFn) (*RemovePublisherGroupResponse, error) {
-	rsp, err := c.RemovePublisherGroup(ctx, projectKey, groupName, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRemovePublisherGroupResponse(rsp)
-}
-
-// GetPublisherGroupWithResponse performs a GET /v1/projects/{project_key}/publisher-groups/{group_name} (the `GetPublisherGroup` operationId) request.
-//
-// Read a concrete group by immutable ID or its existing selector.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) GetPublisherGroupWithResponse(ctx context.Context, projectKey string, groupName string, params *GetPublisherGroupParams, reqEditors ...RequestEditorFn) (*GetPublisherGroupResponse, error) {
-	rsp, err := c.GetPublisherGroup(ctx, projectKey, groupName, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetPublisherGroupResponse(rsp)
-}
-
-// CreatePublisherGroupWithBodyWithResponse performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name} (the `CreatePublisherGroup` operationId) request,
-// with any type of body and a specified content type.
-//
-// Create a concrete team-owned group following an applied template. Same name and template return the existing group; names cannot be adopted from another template or reused after retirement. Creation allocates distinct services but grants no new visitor authority to existing workload sessions.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) CreatePublisherGroupWithBodyWithResponse(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublisherGroupResponse, error) {
-	rsp, err := c.CreatePublisherGroupWithBody(ctx, projectKey, groupName, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreatePublisherGroupResponse(rsp)
-}
-
-// CreatePublisherGroupWithResponse performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name} (the `CreatePublisherGroup` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Create a concrete team-owned group following an applied template. Same name and template return the existing group; names cannot be adopted from another template or reused after retirement. Creation allocates distinct services but grants no new visitor authority to existing workload sessions.
-func (c *ClientWithResponses) CreatePublisherGroupWithResponse(ctx context.Context, projectKey string, groupName string, body CreatePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublisherGroupResponse, error) {
-	rsp, err := c.CreatePublisherGroup(ctx, projectKey, groupName, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreatePublisherGroupResponse(rsp)
-}
-
-// UpdatePublisherGroupBindingsWithBodyWithResponse performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name}/bindings (the `UpdatePublisherGroupBindings` operationId) request,
-// with any type of body and a specified content type.
-//
-// Replace the exact saved bindings of a template-created group by ID or selector. Preserves group/service IDs and reserved endpoints; closes changed runs and replaces their grants and target trust through the existing apply lifecycle. The project revision fences binding and template changes together.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) UpdatePublisherGroupBindingsWithBodyWithResponse(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdatePublisherGroupBindingsResponse, error) {
-	rsp, err := c.UpdatePublisherGroupBindingsWithBody(ctx, projectKey, groupName, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseUpdatePublisherGroupBindingsResponse(rsp)
-}
-
-// UpdatePublisherGroupBindingsWithResponse performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name}/bindings (the `UpdatePublisherGroupBindings` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Replace the exact saved bindings of a template-created group by ID or selector. Preserves group/service IDs and reserved endpoints; closes changed runs and replaces their grants and target trust through the existing apply lifecycle. The project revision fences binding and template changes together.
-func (c *ClientWithResponses) UpdatePublisherGroupBindingsWithResponse(ctx context.Context, projectKey string, groupName string, body UpdatePublisherGroupBindingsJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdatePublisherGroupBindingsResponse, error) {
-	rsp, err := c.UpdatePublisherGroupBindings(ctx, projectKey, groupName, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseUpdatePublisherGroupBindingsResponse(rsp)
-}
-
-// GetPublisherGroupConnectionWithResponse performs a GET /v1/projects/{project_key}/publisher-groups/{group_name}/connection (the `GetPublisherGroupConnection` operationId) request.
-//
-// Read nonsecret group connection context as a team manager. The descriptor is a selector, never an access credential.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) GetPublisherGroupConnectionWithResponse(ctx context.Context, projectKey string, groupName string, params *GetPublisherGroupConnectionParams, reqEditors ...RequestEditorFn) (*GetPublisherGroupConnectionResponse, error) {
-	rsp, err := c.GetPublisherGroupConnection(ctx, projectKey, groupName, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetPublisherGroupConnectionResponse(rsp)
-}
-
-// CreatePublisherGroupEnrollmentWithBodyWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId) request,
-// with any type of body and a specified content type.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) CreatePublisherGroupEnrollmentWithBodyWithResponse(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublisherGroupEnrollmentResponse, error) {
-	rsp, err := c.CreatePublisherGroupEnrollmentWithBody(ctx, projectKey, groupName, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreatePublisherGroupEnrollmentResponse(rsp)
-}
-
-// CreatePublisherGroupEnrollmentWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) CreatePublisherGroupEnrollmentWithResponse(ctx context.Context, projectKey string, groupName string, body CreatePublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublisherGroupEnrollmentResponse, error) {
-	rsp, err := c.CreatePublisherGroupEnrollment(ctx, projectKey, groupName, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreatePublisherGroupEnrollmentResponse(rsp)
-}
-
-// ListPublisherGroupMembersWithResponse performs a GET /v1/projects/{project_key}/publisher-groups/{group_name}/members (the `ListPublisherGroupMembers` operationId) request.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) ListPublisherGroupMembersWithResponse(ctx context.Context, projectKey string, groupName string, params *ListPublisherGroupMembersParams, reqEditors ...RequestEditorFn) (*ListPublisherGroupMembersResponse, error) {
-	rsp, err := c.ListPublisherGroupMembers(ctx, projectKey, groupName, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListPublisherGroupMembersResponse(rsp)
-}
-
-// RevokePublisherGroupMemberWithResponse performs a DELETE /v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id} (the `RevokePublisherGroupMember` operationId) request.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) RevokePublisherGroupMemberWithResponse(ctx context.Context, projectKey string, groupName string, publisherIdentityId string, params *RevokePublisherGroupMemberParams, reqEditors ...RequestEditorFn) (*RevokePublisherGroupMemberResponse, error) {
-	rsp, err := c.RevokePublisherGroupMember(ctx, projectKey, groupName, publisherIdentityId, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRevokePublisherGroupMemberResponse(rsp)
-}
-
-// RenamePublisherNamespaceWithBodyWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId) request,
-// with any type of body and a specified content type.
-//
-// Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) RenamePublisherNamespaceWithBodyWithResponse(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenamePublisherNamespaceResponse, error) {
-	rsp, err := c.RenamePublisherNamespaceWithBody(ctx, projectKey, groupName, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRenamePublisherNamespaceResponse(rsp)
-}
-
-// RenamePublisherNamespaceWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
-func (c *ClientWithResponses) RenamePublisherNamespaceWithResponse(ctx context.Context, projectKey string, groupName string, body RenamePublisherNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*RenamePublisherNamespaceResponse, error) {
-	rsp, err := c.RenamePublisherNamespace(ctx, projectKey, groupName, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRenamePublisherNamespaceResponse(rsp)
-}
-
-// RenamePublisherGroupWithBodyWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId) request,
-// with any type of body and a specified content type.
-//
-// Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) RenamePublisherGroupWithBodyWithResponse(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenamePublisherGroupResponse, error) {
-	rsp, err := c.RenamePublisherGroupWithBody(ctx, projectKey, groupName, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRenamePublisherGroupResponse(rsp)
-}
-
-// RenamePublisherGroupWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
-func (c *ClientWithResponses) RenamePublisherGroupWithResponse(ctx context.Context, projectKey string, groupName string, body RenamePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*RenamePublisherGroupResponse, error) {
-	rsp, err := c.RenamePublisherGroup(ctx, projectKey, groupName, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRenamePublisherGroupResponse(rsp)
-}
-
 // CreateServiceDefinitionWithBodyWithResponse performs a POST /v1/projects/{project_key}/service-definitions (the `CreateServiceDefinition` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -27655,19 +26145,6 @@ func (c *ClientWithResponses) CreateServiceDefinitionWithResponse(ctx context.Co
 		return nil, err
 	}
 	return ParseCreateServiceDefinitionResponse(rsp)
-}
-
-// GetProjectServiceWithResponse performs a GET /v1/projects/{project_key}/services/{service} (the `GetProjectService` operationId) request.
-//
-// Resolve an applied service by its exact Git source and configuration key using current visitor access. Does not return targets or require project-manager permission.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) GetProjectServiceWithResponse(ctx context.Context, projectKey string, service ServiceName, params *GetProjectServiceParams, reqEditors ...RequestEditorFn) (*GetProjectServiceResponse, error) {
-	rsp, err := c.GetProjectService(ctx, projectKey, service, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetProjectServiceResponse(rsp)
 }
 
 // ListPublicURLsWithResponse List public URLs for one team
@@ -28376,117 +26853,6 @@ func (c *ClientWithResponses) CreatePublisherEnrollmentWithResponse(ctx context.
 		return nil, err
 	}
 	return ParseCreatePublisherEnrollmentResponse(rsp)
-}
-
-// AcknowledgePublisherGroupConfigurationWithBodyWithResponse performs a POST /v1/publisher-groups/ack (the `AcknowledgePublisherGroupConfiguration` operationId) request,
-// with any type of body and a specified content type.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) AcknowledgePublisherGroupConfigurationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcknowledgePublisherGroupConfigurationResponse, error) {
-	rsp, err := c.AcknowledgePublisherGroupConfigurationWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAcknowledgePublisherGroupConfigurationResponse(rsp)
-}
-
-// AcknowledgePublisherGroupConfigurationWithResponse performs a POST /v1/publisher-groups/ack (the `AcknowledgePublisherGroupConfiguration` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) AcknowledgePublisherGroupConfigurationWithResponse(ctx context.Context, body AcknowledgePublisherGroupConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcknowledgePublisherGroupConfigurationResponse, error) {
-	rsp, err := c.AcknowledgePublisherGroupConfiguration(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAcknowledgePublisherGroupConfigurationResponse(rsp)
-}
-
-// GetPublisherGroupAssignmentsWithResponse performs a GET /v1/publisher-groups/assignments (the `GetPublisherGroupAssignments` operationId) request.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) GetPublisherGroupAssignmentsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetPublisherGroupAssignmentsResponse, error) {
-	rsp, err := c.GetPublisherGroupAssignments(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetPublisherGroupAssignmentsResponse(rsp)
-}
-
-// RedeemPublisherGroupEnrollmentWithBodyWithResponse performs a POST /v1/publisher-groups/enroll (the `RedeemPublisherGroupEnrollment` operationId) request,
-// with any type of body and a specified content type.
-//
-// Each replica submits its own Ed25519 public key. Retrying the same key is idempotent and consumes no additional enrollment capacity.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) RedeemPublisherGroupEnrollmentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemPublisherGroupEnrollmentResponse, error) {
-	rsp, err := c.RedeemPublisherGroupEnrollmentWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRedeemPublisherGroupEnrollmentResponse(rsp)
-}
-
-// RedeemPublisherGroupEnrollmentWithResponse performs a POST /v1/publisher-groups/enroll (the `RedeemPublisherGroupEnrollment` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Each replica submits its own Ed25519 public key. Retrying the same key is idempotent and consumes no additional enrollment capacity.
-func (c *ClientWithResponses) RedeemPublisherGroupEnrollmentWithResponse(ctx context.Context, body RedeemPublisherGroupEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemPublisherGroupEnrollmentResponse, error) {
-	rsp, err := c.RedeemPublisherGroupEnrollment(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRedeemPublisherGroupEnrollmentResponse(rsp)
-}
-
-// AcquirePublisherGroupLeaseWithBodyWithResponse performs a POST /v1/publisher-groups/lease (the `AcquirePublisherGroupLease` operationId) request,
-// with any type of body and a specified content type.
-//
-// Exchange a one-use signed assertion for a short-lived group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) AcquirePublisherGroupLeaseWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcquirePublisherGroupLeaseResponse, error) {
-	rsp, err := c.AcquirePublisherGroupLeaseWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAcquirePublisherGroupLeaseResponse(rsp)
-}
-
-// AcquirePublisherGroupLeaseWithResponse performs a POST /v1/publisher-groups/lease (the `AcquirePublisherGroupLease` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Exchange a one-use signed assertion for a short-lived group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID.
-func (c *ClientWithResponses) AcquirePublisherGroupLeaseWithResponse(ctx context.Context, body AcquirePublisherGroupLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*AcquirePublisherGroupLeaseResponse, error) {
-	rsp, err := c.AcquirePublisherGroupLease(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAcquirePublisherGroupLeaseResponse(rsp)
-}
-
-// VerifyPublisherGroupIdentityWithBodyWithResponse performs a POST /v1/publisher-groups/verify (the `VerifyPublisherGroupIdentity` operationId) request,
-// with any type of body and a specified content type.
-//
-// Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The one-use assertion audience is the control URL followed by this path.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) VerifyPublisherGroupIdentityWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*VerifyPublisherGroupIdentityResponse, error) {
-	rsp, err := c.VerifyPublisherGroupIdentityWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseVerifyPublisherGroupIdentityResponse(rsp)
-}
-
-// VerifyPublisherGroupIdentityWithResponse performs a POST /v1/publisher-groups/verify (the `VerifyPublisherGroupIdentity` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The one-use assertion audience is the control URL followed by this path.
-func (c *ClientWithResponses) VerifyPublisherGroupIdentityWithResponse(ctx context.Context, body VerifyPublisherGroupIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*VerifyPublisherGroupIdentityResponse, error) {
-	rsp, err := c.VerifyPublisherGroupIdentity(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseVerifyPublisherGroupIdentityResponse(rsp)
 }
 
 // ListPublisherIdentitiesWithResponse List publisher identities and grants without secrets
@@ -29994,6 +28360,167 @@ func ParseGetControlDiscoveryResponse(rsp *http.Response) (*GetControlDiscoveryR
 	return response, nil
 }
 
+// ParseAcknowledgeEnvironmentPublisherResponse parses an HTTP response from a AcknowledgeEnvironmentPublisherWithResponse call
+func ParseAcknowledgeEnvironmentPublisherResponse(rsp *http.Response) (*AcknowledgeEnvironmentPublisherResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AcknowledgeEnvironmentPublisherResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetEnvironmentPublisherAssignmentsResponse parses an HTTP response from a GetEnvironmentPublisherAssignmentsWithResponse call
+func ParseGetEnvironmentPublisherAssignmentsResponse(rsp *http.Response) (*GetEnvironmentPublisherAssignmentsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetEnvironmentPublisherAssignmentsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest EnvironmentPublisherAssignments
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRedeemEnvironmentPublisherEnrollmentResponse parses an HTTP response from a RedeemEnvironmentPublisherEnrollmentWithResponse call
+func ParseRedeemEnvironmentPublisherEnrollmentResponse(rsp *http.Response) (*RedeemEnvironmentPublisherEnrollmentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RedeemEnvironmentPublisherEnrollmentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest EnvironmentPublisher
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAcquireEnvironmentPublisherLeaseResponse parses an HTTP response from a AcquireEnvironmentPublisherLeaseWithResponse call
+func ParseAcquireEnvironmentPublisherLeaseResponse(rsp *http.Response) (*AcquireEnvironmentPublisherLeaseResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AcquireEnvironmentPublisherLeaseResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest EnvironmentPublisherLease
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseVerifyEnvironmentPublisherResponse parses an HTTP response from a VerifyEnvironmentPublisherWithResponse call
+func ParseVerifyEnvironmentPublisherResponse(rsp *http.Response) (*VerifyEnvironmentPublisherResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &VerifyEnvironmentPublisherResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest EnvironmentPublisher
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListFeedbackThreadsResponse parses an HTTP response from a ListFeedbackThreadsWithResponse call
 func ParseListFeedbackThreadsResponse(rsp *http.Response) (*ListFeedbackThreadsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -30621,72 +29148,6 @@ func ParseUpdateCollectionDefaultResponse(rsp *http.Response) (*UpdateCollection
 	return response, nil
 }
 
-// ParseGetProjectConfigurationResponse parses an HTTP response from a GetProjectConfigurationWithResponse call
-func ParseGetProjectConfigurationResponse(rsp *http.Response) (*GetProjectConfigurationResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetProjectConfigurationResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest AppliedProjectConfiguration
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseApplyProjectConfigurationResponse parses an HTTP response from a ApplyProjectConfigurationWithResponse call
-func ParseApplyProjectConfigurationResponse(rsp *http.Response) (*ApplyProjectConfigurationResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ApplyProjectConfigurationResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest AppliedProjectConfiguration
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseListEnvironmentsResponse parses an HTTP response from a ListEnvironmentsWithResponse call
 func ParseListEnvironmentsResponse(rsp *http.Response) (*ListEnvironmentsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -30881,6 +29342,203 @@ func ParseApplyEnvironmentResponse(rsp *http.Response) (*ApplyEnvironmentRespons
 	return response, nil
 }
 
+// ParseCreateEnvironmentPublisherEnrollmentResponse parses an HTTP response from a CreateEnvironmentPublisherEnrollmentWithResponse call
+func ParseCreateEnvironmentPublisherEnrollmentResponse(rsp *http.Response) (*CreateEnvironmentPublisherEnrollmentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateEnvironmentPublisherEnrollmentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest EnvironmentPublisherEnrollment
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListEnvironmentPublishersResponse parses an HTTP response from a ListEnvironmentPublishersWithResponse call
+func ParseListEnvironmentPublishersResponse(rsp *http.Response) (*ListEnvironmentPublishersResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListEnvironmentPublishersResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []EnvironmentPublisherStatus
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeEnvironmentPublisherResponse parses an HTTP response from a RevokeEnvironmentPublisherWithResponse call
+func ParseRevokeEnvironmentPublisherResponse(rsp *http.Response) (*RevokeEnvironmentPublisherResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeEnvironmentPublisherResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetEnvironmentPublisherGrantResponse parses an HTTP response from a GetEnvironmentPublisherGrantWithResponse call
+func ParseGetEnvironmentPublisherGrantResponse(rsp *http.Response) (*GetEnvironmentPublisherGrantResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetEnvironmentPublisherGrantResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest EnvironmentPublisherGrantState
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAuthorizeEnvironmentPublisherServiceResponse parses an HTTP response from a AuthorizeEnvironmentPublisherServiceWithResponse call
+func ParseAuthorizeEnvironmentPublisherServiceResponse(rsp *http.Response) (*AuthorizeEnvironmentPublisherServiceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AuthorizeEnvironmentPublisherServiceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest EnvironmentPublisherGrantState
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest EnvironmentPublisherGrantState
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeEnvironmentPublisherGrantResponse parses an HTTP response from a RevokeEnvironmentPublisherGrantWithResponse call
+func ParseRevokeEnvironmentPublisherGrantResponse(rsp *http.Response) (*RevokeEnvironmentPublisherGrantResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeEnvironmentPublisherGrantResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetLocalProjectServiceResponse parses an HTTP response from a GetLocalProjectServiceWithResponse call
 func ParseGetLocalProjectServiceResponse(rsp *http.Response) (*GetLocalProjectServiceResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -30980,394 +29638,6 @@ func ParseGetProjectPublicMetadataResponse(rsp *http.Response) (*GetProjectPubli
 	return response, nil
 }
 
-// ParseListPublisherGroupsResponse parses an HTTP response from a ListPublisherGroupsWithResponse call
-func ParseListPublisherGroupsResponse(rsp *http.Response) (*ListPublisherGroupsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListPublisherGroupsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []PublisherGroupResource
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseCreateBoundPublisherGroupResponse parses an HTTP response from a CreateBoundPublisherGroupWithResponse call
-func ParseCreateBoundPublisherGroupResponse(rsp *http.Response) (*CreateBoundPublisherGroupResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreateBoundPublisherGroupResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PublisherGroupResource
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseRemovePublisherGroupResponse parses an HTTP response from a RemovePublisherGroupWithResponse call
-func ParseRemovePublisherGroupResponse(rsp *http.Response) (*RemovePublisherGroupResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RemovePublisherGroupResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetPublisherGroupResponse parses an HTTP response from a GetPublisherGroupWithResponse call
-func ParseGetPublisherGroupResponse(rsp *http.Response) (*GetPublisherGroupResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetPublisherGroupResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PublisherGroupResource
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseCreatePublisherGroupResponse parses an HTTP response from a CreatePublisherGroupWithResponse call
-func ParseCreatePublisherGroupResponse(rsp *http.Response) (*CreatePublisherGroupResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreatePublisherGroupResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PublisherGroupConnection
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseUpdatePublisherGroupBindingsResponse parses an HTTP response from a UpdatePublisherGroupBindingsWithResponse call
-func ParseUpdatePublisherGroupBindingsResponse(rsp *http.Response) (*UpdatePublisherGroupBindingsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &UpdatePublisherGroupBindingsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PublisherGroupResource
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetPublisherGroupConnectionResponse parses an HTTP response from a GetPublisherGroupConnectionWithResponse call
-func ParseGetPublisherGroupConnectionResponse(rsp *http.Response) (*GetPublisherGroupConnectionResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetPublisherGroupConnectionResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PublisherGroupConnection
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseCreatePublisherGroupEnrollmentResponse parses an HTTP response from a CreatePublisherGroupEnrollmentWithResponse call
-func ParseCreatePublisherGroupEnrollmentResponse(rsp *http.Response) (*CreatePublisherGroupEnrollmentResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreatePublisherGroupEnrollmentResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest PublisherGroupEnrollment
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseListPublisherGroupMembersResponse parses an HTTP response from a ListPublisherGroupMembersWithResponse call
-func ParseListPublisherGroupMembersResponse(rsp *http.Response) (*ListPublisherGroupMembersResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListPublisherGroupMembersResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []PublisherGroupMemberStatus
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseRevokePublisherGroupMemberResponse parses an HTTP response from a RevokePublisherGroupMemberWithResponse call
-func ParseRevokePublisherGroupMemberResponse(rsp *http.Response) (*RevokePublisherGroupMemberResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RevokePublisherGroupMemberResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseRenamePublisherNamespaceResponse parses an HTTP response from a RenamePublisherNamespaceWithResponse call
-func ParseRenamePublisherNamespaceResponse(rsp *http.Response) (*RenamePublisherNamespaceResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RenamePublisherNamespaceResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest AppliedProjectConfiguration
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseRenamePublisherGroupResponse parses an HTTP response from a RenamePublisherGroupWithResponse call
-func ParseRenamePublisherGroupResponse(rsp *http.Response) (*RenamePublisherGroupResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RenamePublisherGroupResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest AppliedProjectConfiguration
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseCreateServiceDefinitionResponse parses an HTTP response from a CreateServiceDefinitionWithResponse call
 func ParseCreateServiceDefinitionResponse(rsp *http.Response) (*CreateServiceDefinitionResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -31384,39 +29654,6 @@ func ParseCreateServiceDefinitionResponse(rsp *http.Response) (*CreateServiceDef
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest ServiceDefinitionRevision
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetProjectServiceResponse parses an HTTP response from a GetProjectServiceWithResponse call
-func ParseGetProjectServiceResponse(rsp *http.Response) (*GetProjectServiceResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetProjectServiceResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest Service
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -32453,167 +30690,6 @@ func ParseCreatePublisherEnrollmentResponse(rsp *http.Response) (*CreatePublishe
 			return nil, err
 		}
 		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseAcknowledgePublisherGroupConfigurationResponse parses an HTTP response from a AcknowledgePublisherGroupConfigurationWithResponse call
-func ParseAcknowledgePublisherGroupConfigurationResponse(rsp *http.Response) (*AcknowledgePublisherGroupConfigurationResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AcknowledgePublisherGroupConfigurationResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetPublisherGroupAssignmentsResponse parses an HTTP response from a GetPublisherGroupAssignmentsWithResponse call
-func ParseGetPublisherGroupAssignmentsResponse(rsp *http.Response) (*GetPublisherGroupAssignmentsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetPublisherGroupAssignmentsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PublisherGroupAssignments
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseRedeemPublisherGroupEnrollmentResponse parses an HTTP response from a RedeemPublisherGroupEnrollmentWithResponse call
-func ParseRedeemPublisherGroupEnrollmentResponse(rsp *http.Response) (*RedeemPublisherGroupEnrollmentResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RedeemPublisherGroupEnrollmentResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PublisherGroupMember
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseAcquirePublisherGroupLeaseResponse parses an HTTP response from a AcquirePublisherGroupLeaseWithResponse call
-func ParseAcquirePublisherGroupLeaseResponse(rsp *http.Response) (*AcquirePublisherGroupLeaseResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AcquirePublisherGroupLeaseResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PublisherGroupLease
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseVerifyPublisherGroupIdentityResponse parses an HTTP response from a VerifyPublisherGroupIdentityWithResponse call
-func ParseVerifyPublisherGroupIdentityResponse(rsp *http.Response) (*VerifyPublisherGroupIdentityResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &VerifyPublisherGroupIdentityResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PublisherGroupVerification
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -34697,6 +32773,21 @@ type ServerInterface interface {
 	// GetControlDiscovery Describe control and its authentication methods
 	// (GET /v1/discovery)
 	GetControlDiscovery(w http.ResponseWriter, r *http.Request)
+
+	// (POST /v1/environment-publishers/ack)
+	AcknowledgeEnvironmentPublisher(w http.ResponseWriter, r *http.Request)
+
+	// (GET /v1/environment-publishers/assignments)
+	GetEnvironmentPublisherAssignments(w http.ResponseWriter, r *http.Request)
+
+	// (POST /v1/environment-publishers/enroll)
+	RedeemEnvironmentPublisherEnrollment(w http.ResponseWriter, r *http.Request)
+
+	// (POST /v1/environment-publishers/lease)
+	AcquireEnvironmentPublisherLease(w http.ResponseWriter, r *http.Request)
+
+	// (POST /v1/environment-publishers/verify)
+	VerifyEnvironmentPublisher(w http.ResponseWriter, r *http.Request)
 	// ListFeedbackThreads List feedback threads manageable in one team
 	// (GET /v1/feedback)
 	ListFeedbackThreads(w http.ResponseWriter, r *http.Request, params ListFeedbackThreadsParams)
@@ -34755,12 +32846,6 @@ type ServerInterface interface {
 	// (PUT /v1/projects/{project_key}/collections/{collection_id}/default)
 	UpdateCollectionDefault(w http.ResponseWriter, r *http.Request, projectKey string, collectionId CollectionID)
 
-	// (GET /v1/projects/{project_key}/configuration)
-	GetProjectConfiguration(w http.ResponseWriter, r *http.Request, projectKey string, params GetProjectConfigurationParams)
-
-	// (PUT /v1/projects/{project_key}/configuration)
-	ApplyProjectConfiguration(w http.ResponseWriter, r *http.Request, projectKey string)
-
 	// (GET /v1/projects/{project_key}/environments)
 	ListEnvironments(w http.ResponseWriter, r *http.Request, projectKey string, params ListEnvironmentsParams)
 
@@ -34779,6 +32864,24 @@ type ServerInterface interface {
 	// (POST /v1/projects/{project_key}/environments/{environment_id}/apply)
 	ApplyEnvironment(w http.ResponseWriter, r *http.Request, projectKey string, environmentId string)
 
+	// (POST /v1/projects/{project_key}/environments/{environment_id}/publisher-enrollments)
+	CreateEnvironmentPublisherEnrollment(w http.ResponseWriter, r *http.Request, projectKey string, environmentId string, params CreateEnvironmentPublisherEnrollmentParams)
+
+	// (GET /v1/projects/{project_key}/environments/{environment_id}/publishers)
+	ListEnvironmentPublishers(w http.ResponseWriter, r *http.Request, projectKey string, environmentId string, params ListEnvironmentPublishersParams)
+
+	// (DELETE /v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id})
+	RevokeEnvironmentPublisher(w http.ResponseWriter, r *http.Request, projectKey string, environmentId string, publisherIdentityId string, params RevokeEnvironmentPublisherParams)
+
+	// (GET /v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id}/services/{service_id}/grant)
+	GetEnvironmentPublisherGrant(w http.ResponseWriter, r *http.Request, projectKey string, environmentId string, publisherIdentityId string, serviceId ServiceID, params GetEnvironmentPublisherGrantParams)
+
+	// (POST /v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id}/services/{service_id}/grant)
+	AuthorizeEnvironmentPublisherService(w http.ResponseWriter, r *http.Request, projectKey string, environmentId string, publisherIdentityId string, serviceId ServiceID)
+
+	// (DELETE /v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id}/services/{service_id}/grant/{grant_id})
+	RevokeEnvironmentPublisherGrant(w http.ResponseWriter, r *http.Request, projectKey string, environmentId string, publisherIdentityId string, serviceId ServiceID, grantId string, params RevokeEnvironmentPublisherGrantParams)
+
 	// (GET /v1/projects/{project_key}/local-services/{service})
 	GetLocalProjectService(w http.ResponseWriter, r *http.Request, projectKey string, service string, params GetLocalProjectServiceParams)
 
@@ -34788,47 +32891,8 @@ type ServerInterface interface {
 	// (GET /v1/projects/{project_key}/public-metadata)
 	GetProjectPublicMetadata(w http.ResponseWriter, r *http.Request, projectKey string, params GetProjectPublicMetadataParams)
 
-	// (GET /v1/projects/{project_key}/publisher-groups)
-	ListPublisherGroups(w http.ResponseWriter, r *http.Request, projectKey string, params ListPublisherGroupsParams)
-
-	// (POST /v1/projects/{project_key}/publisher-groups)
-	CreateBoundPublisherGroup(w http.ResponseWriter, r *http.Request, projectKey string)
-
-	// (DELETE /v1/projects/{project_key}/publisher-groups/{group_name})
-	RemovePublisherGroup(w http.ResponseWriter, r *http.Request, projectKey string, groupName string, params RemovePublisherGroupParams)
-
-	// (GET /v1/projects/{project_key}/publisher-groups/{group_name})
-	GetPublisherGroup(w http.ResponseWriter, r *http.Request, projectKey string, groupName string, params GetPublisherGroupParams)
-
-	// (PUT /v1/projects/{project_key}/publisher-groups/{group_name})
-	CreatePublisherGroup(w http.ResponseWriter, r *http.Request, projectKey string, groupName string)
-
-	// (PUT /v1/projects/{project_key}/publisher-groups/{group_name}/bindings)
-	UpdatePublisherGroupBindings(w http.ResponseWriter, r *http.Request, projectKey string, groupName string)
-
-	// (GET /v1/projects/{project_key}/publisher-groups/{group_name}/connection)
-	GetPublisherGroupConnection(w http.ResponseWriter, r *http.Request, projectKey string, groupName string, params GetPublisherGroupConnectionParams)
-
-	// (POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments)
-	CreatePublisherGroupEnrollment(w http.ResponseWriter, r *http.Request, projectKey string, groupName string)
-
-	// (GET /v1/projects/{project_key}/publisher-groups/{group_name}/members)
-	ListPublisherGroupMembers(w http.ResponseWriter, r *http.Request, projectKey string, groupName string, params ListPublisherGroupMembersParams)
-
-	// (DELETE /v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id})
-	RevokePublisherGroupMember(w http.ResponseWriter, r *http.Request, projectKey string, groupName string, publisherIdentityId string, params RevokePublisherGroupMemberParams)
-
-	// (POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename)
-	RenamePublisherNamespace(w http.ResponseWriter, r *http.Request, projectKey string, groupName string)
-
-	// (POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename)
-	RenamePublisherGroup(w http.ResponseWriter, r *http.Request, projectKey string, groupName string)
-
 	// (POST /v1/projects/{project_key}/service-definitions)
 	CreateServiceDefinition(w http.ResponseWriter, r *http.Request, projectKey string)
-
-	// (GET /v1/projects/{project_key}/services/{service})
-	GetProjectService(w http.ResponseWriter, r *http.Request, projectKey string, service ServiceName, params GetProjectServiceParams)
 	// ListPublicURLs List public URLs for one team
 	// (GET /v1/public-urls)
 	ListPublicURLs(w http.ResponseWriter, r *http.Request, params ListPublicURLsParams)
@@ -34925,21 +32989,6 @@ type ServerInterface interface {
 	// CreatePublisherEnrollment Issue an expiring one-use publisher enrollment
 	// (POST /v1/publisher-enrollments)
 	CreatePublisherEnrollment(w http.ResponseWriter, r *http.Request)
-
-	// (POST /v1/publisher-groups/ack)
-	AcknowledgePublisherGroupConfiguration(w http.ResponseWriter, r *http.Request)
-
-	// (GET /v1/publisher-groups/assignments)
-	GetPublisherGroupAssignments(w http.ResponseWriter, r *http.Request)
-
-	// (POST /v1/publisher-groups/enroll)
-	RedeemPublisherGroupEnrollment(w http.ResponseWriter, r *http.Request)
-
-	// (POST /v1/publisher-groups/lease)
-	AcquirePublisherGroupLease(w http.ResponseWriter, r *http.Request)
-
-	// (POST /v1/publisher-groups/verify)
-	VerifyPublisherGroupIdentity(w http.ResponseWriter, r *http.Request)
 	// ListPublisherIdentities List publisher identities and grants without secrets
 	// (GET /v1/publisher-identities)
 	ListPublisherIdentities(w http.ResponseWriter, r *http.Request, params ListPublisherIdentitiesParams)
@@ -35472,6 +33521,76 @@ func (siw *ServerInterfaceWrapper) GetControlDiscovery(w http.ResponseWriter, r 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetControlDiscovery(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AcknowledgeEnvironmentPublisher operation middleware
+func (siw *ServerInterfaceWrapper) AcknowledgeEnvironmentPublisher(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AcknowledgeEnvironmentPublisher(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetEnvironmentPublisherAssignments operation middleware
+func (siw *ServerInterfaceWrapper) GetEnvironmentPublisherAssignments(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetEnvironmentPublisherAssignments(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RedeemEnvironmentPublisherEnrollment operation middleware
+func (siw *ServerInterfaceWrapper) RedeemEnvironmentPublisherEnrollment(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RedeemEnvironmentPublisherEnrollment(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AcquireEnvironmentPublisherLease operation middleware
+func (siw *ServerInterfaceWrapper) AcquireEnvironmentPublisherLease(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AcquireEnvironmentPublisherLease(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// VerifyEnvironmentPublisher operation middleware
+func (siw *ServerInterfaceWrapper) VerifyEnvironmentPublisher(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.VerifyEnvironmentPublisher(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -36124,74 +34243,6 @@ func (siw *ServerInterfaceWrapper) UpdateCollectionDefault(w http.ResponseWriter
 	handler.ServeHTTP(w, r)
 }
 
-// GetProjectConfiguration operation middleware
-func (siw *ServerInterfaceWrapper) GetProjectConfiguration(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "project_key" -------------
-	var projectKey string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params GetProjectConfigurationParams
-
-	// ------------- Required query parameter "team_id" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
-		}
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetProjectConfiguration(w, r, projectKey, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// ApplyProjectConfiguration operation middleware
-func (siw *ServerInterfaceWrapper) ApplyProjectConfiguration(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "project_key" -------------
-	var projectKey string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ApplyProjectConfiguration(w, r, projectKey)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // ListEnvironments operation middleware
 func (siw *ServerInterfaceWrapper) ListEnvironments(w http.ResponseWriter, r *http.Request) {
 
@@ -36436,6 +34487,402 @@ func (siw *ServerInterfaceWrapper) ApplyEnvironment(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// CreateEnvironmentPublisherEnrollment operation middleware
+func (siw *ServerInterfaceWrapper) CreateEnvironmentPublisherEnrollment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment_id" -------------
+	var environmentId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment_id", r.PathValue("environment_id"), &environmentId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateEnvironmentPublisherEnrollmentParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = &IdempotencyKey
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateEnvironmentPublisherEnrollment(w, r, projectKey, environmentId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListEnvironmentPublishers operation middleware
+func (siw *ServerInterfaceWrapper) ListEnvironmentPublishers(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment_id" -------------
+	var environmentId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment_id", r.PathValue("environment_id"), &environmentId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListEnvironmentPublishersParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListEnvironmentPublishers(w, r, projectKey, environmentId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokeEnvironmentPublisher operation middleware
+func (siw *ServerInterfaceWrapper) RevokeEnvironmentPublisher(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment_id" -------------
+	var environmentId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment_id", r.PathValue("environment_id"), &environmentId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "publisher_identity_id" -------------
+	var publisherIdentityId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publisher_identity_id", r.PathValue("publisher_identity_id"), &publisherIdentityId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publisher_identity_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params RevokeEnvironmentPublisherParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokeEnvironmentPublisher(w, r, projectKey, environmentId, publisherIdentityId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetEnvironmentPublisherGrant operation middleware
+func (siw *ServerInterfaceWrapper) GetEnvironmentPublisherGrant(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment_id" -------------
+	var environmentId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment_id", r.PathValue("environment_id"), &environmentId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "publisher_identity_id" -------------
+	var publisherIdentityId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publisher_identity_id", r.PathValue("publisher_identity_id"), &publisherIdentityId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publisher_identity_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "service_id" -------------
+	var serviceId ServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetEnvironmentPublisherGrantParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetEnvironmentPublisherGrant(w, r, projectKey, environmentId, publisherIdentityId, serviceId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AuthorizeEnvironmentPublisherService operation middleware
+func (siw *ServerInterfaceWrapper) AuthorizeEnvironmentPublisherService(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment_id" -------------
+	var environmentId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment_id", r.PathValue("environment_id"), &environmentId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "publisher_identity_id" -------------
+	var publisherIdentityId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publisher_identity_id", r.PathValue("publisher_identity_id"), &publisherIdentityId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publisher_identity_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "service_id" -------------
+	var serviceId ServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AuthorizeEnvironmentPublisherService(w, r, projectKey, environmentId, publisherIdentityId, serviceId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokeEnvironmentPublisherGrant operation middleware
+func (siw *ServerInterfaceWrapper) RevokeEnvironmentPublisherGrant(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment_id" -------------
+	var environmentId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment_id", r.PathValue("environment_id"), &environmentId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "publisher_identity_id" -------------
+	var publisherIdentityId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publisher_identity_id", r.PathValue("publisher_identity_id"), &publisherIdentityId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publisher_identity_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "service_id" -------------
+	var serviceId ServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "grant_id" -------------
+	var grantId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "grant_id", r.PathValue("grant_id"), &grantId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "grant_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params RevokeEnvironmentPublisherGrantParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "expected_revision" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "expected_revision", r.URL.Query(), &params.ExpectedRevision, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "expected_revision"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "expected_revision", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "expected_configuration_hash" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "expected_configuration_hash", r.URL.Query(), &params.ExpectedConfigurationHash, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "expected_configuration_hash"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "expected_configuration_hash", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokeEnvironmentPublisherGrant(w, r, projectKey, environmentId, publisherIdentityId, serviceId, grantId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetLocalProjectService operation middleware
 func (siw *ServerInterfaceWrapper) GetLocalProjectService(w http.ResponseWriter, r *http.Request) {
 
@@ -36590,526 +35037,6 @@ func (siw *ServerInterfaceWrapper) GetProjectPublicMetadata(w http.ResponseWrite
 	handler.ServeHTTP(w, r)
 }
 
-// ListPublisherGroups operation middleware
-func (siw *ServerInterfaceWrapper) ListPublisherGroups(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "project_key" -------------
-	var projectKey string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params ListPublisherGroupsParams
-
-	// ------------- Required query parameter "team_id" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
-		}
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListPublisherGroups(w, r, projectKey, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// CreateBoundPublisherGroup operation middleware
-func (siw *ServerInterfaceWrapper) CreateBoundPublisherGroup(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "project_key" -------------
-	var projectKey string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateBoundPublisherGroup(w, r, projectKey)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// RemovePublisherGroup operation middleware
-func (siw *ServerInterfaceWrapper) RemovePublisherGroup(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "project_key" -------------
-	var projectKey string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "group_name" -------------
-	var groupName string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "group_name", r.PathValue("group_name"), &groupName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "group_name", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params RemovePublisherGroupParams
-
-	// ------------- Required query parameter "team_id" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
-		}
-		return
-	}
-
-	// ------------- Required query parameter "expected_revision" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "expected_revision", r.URL.Query(), &params.ExpectedRevision, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "expected_revision"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "expected_revision", Err: err})
-		}
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RemovePublisherGroup(w, r, projectKey, groupName, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetPublisherGroup operation middleware
-func (siw *ServerInterfaceWrapper) GetPublisherGroup(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "project_key" -------------
-	var projectKey string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "group_name" -------------
-	var groupName string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "group_name", r.PathValue("group_name"), &groupName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "group_name", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params GetPublisherGroupParams
-
-	// ------------- Required query parameter "team_id" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
-		}
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetPublisherGroup(w, r, projectKey, groupName, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// CreatePublisherGroup operation middleware
-func (siw *ServerInterfaceWrapper) CreatePublisherGroup(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "project_key" -------------
-	var projectKey string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "group_name" -------------
-	var groupName string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "group_name", r.PathValue("group_name"), &groupName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "group_name", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreatePublisherGroup(w, r, projectKey, groupName)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// UpdatePublisherGroupBindings operation middleware
-func (siw *ServerInterfaceWrapper) UpdatePublisherGroupBindings(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "project_key" -------------
-	var projectKey string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "group_name" -------------
-	var groupName string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "group_name", r.PathValue("group_name"), &groupName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "group_name", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.UpdatePublisherGroupBindings(w, r, projectKey, groupName)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetPublisherGroupConnection operation middleware
-func (siw *ServerInterfaceWrapper) GetPublisherGroupConnection(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "project_key" -------------
-	var projectKey string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "group_name" -------------
-	var groupName string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "group_name", r.PathValue("group_name"), &groupName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "group_name", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params GetPublisherGroupConnectionParams
-
-	// ------------- Required query parameter "team_id" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
-		}
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetPublisherGroupConnection(w, r, projectKey, groupName, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// CreatePublisherGroupEnrollment operation middleware
-func (siw *ServerInterfaceWrapper) CreatePublisherGroupEnrollment(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "project_key" -------------
-	var projectKey string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "group_name" -------------
-	var groupName string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "group_name", r.PathValue("group_name"), &groupName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "group_name", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreatePublisherGroupEnrollment(w, r, projectKey, groupName)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// ListPublisherGroupMembers operation middleware
-func (siw *ServerInterfaceWrapper) ListPublisherGroupMembers(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "project_key" -------------
-	var projectKey string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "group_name" -------------
-	var groupName string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "group_name", r.PathValue("group_name"), &groupName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "group_name", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params ListPublisherGroupMembersParams
-
-	// ------------- Required query parameter "team_id" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
-		}
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListPublisherGroupMembers(w, r, projectKey, groupName, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// RevokePublisherGroupMember operation middleware
-func (siw *ServerInterfaceWrapper) RevokePublisherGroupMember(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "project_key" -------------
-	var projectKey string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "group_name" -------------
-	var groupName string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "group_name", r.PathValue("group_name"), &groupName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "group_name", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "publisher_identity_id" -------------
-	var publisherIdentityId string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "publisher_identity_id", r.PathValue("publisher_identity_id"), &publisherIdentityId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publisher_identity_id", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params RevokePublisherGroupMemberParams
-
-	// ------------- Required query parameter "team_id" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
-		}
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RevokePublisherGroupMember(w, r, projectKey, groupName, publisherIdentityId, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// RenamePublisherNamespace operation middleware
-func (siw *ServerInterfaceWrapper) RenamePublisherNamespace(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "project_key" -------------
-	var projectKey string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "group_name" -------------
-	var groupName string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "group_name", r.PathValue("group_name"), &groupName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "group_name", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RenamePublisherNamespace(w, r, projectKey, groupName)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// RenamePublisherGroup operation middleware
-func (siw *ServerInterfaceWrapper) RenamePublisherGroup(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "project_key" -------------
-	var projectKey string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "group_name" -------------
-	var groupName string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "group_name", r.PathValue("group_name"), &groupName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "group_name", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RenamePublisherGroup(w, r, projectKey, groupName)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // CreateServiceDefinition operation middleware
 func (siw *ServerInterfaceWrapper) CreateServiceDefinition(w http.ResponseWriter, r *http.Request) {
 
@@ -37127,83 +35054,6 @@ func (siw *ServerInterfaceWrapper) CreateServiceDefinition(w http.ResponseWriter
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CreateServiceDefinition(w, r, projectKey)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetProjectService operation middleware
-func (siw *ServerInterfaceWrapper) GetProjectService(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "project_key" -------------
-	var projectKey string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "service" -------------
-	var service ServiceName
-
-	err = runtime.BindStyledParameterWithOptions("simple", "service", r.PathValue("service"), &service, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params GetProjectServiceParams
-
-	// ------------- Optional query parameter "publisher_group" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "publisher_group", r.URL.Query(), &params.PublisherGroup, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "publisher_group"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publisher_group", Err: err})
-		}
-		return
-	}
-
-	// ------------- Required query parameter "team_id" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
-		}
-		return
-	}
-
-	// ------------- Required query parameter "source_fingerprint" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "source_fingerprint", r.URL.Query(), &params.SourceFingerprint, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "source_fingerprint"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "source_fingerprint", Err: err})
-		}
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetProjectService(w, r, projectKey, service, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -38340,76 +36190,6 @@ func (siw *ServerInterfaceWrapper) CreatePublisherEnrollment(w http.ResponseWrit
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CreatePublisherEnrollment(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// AcknowledgePublisherGroupConfiguration operation middleware
-func (siw *ServerInterfaceWrapper) AcknowledgePublisherGroupConfiguration(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.AcknowledgePublisherGroupConfiguration(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetPublisherGroupAssignments operation middleware
-func (siw *ServerInterfaceWrapper) GetPublisherGroupAssignments(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetPublisherGroupAssignments(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// RedeemPublisherGroupEnrollment operation middleware
-func (siw *ServerInterfaceWrapper) RedeemPublisherGroupEnrollment(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RedeemPublisherGroupEnrollment(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// AcquirePublisherGroupLease operation middleware
-func (siw *ServerInterfaceWrapper) AcquirePublisherGroupLease(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.AcquirePublisherGroupLease(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// VerifyPublisherGroupIdentity operation middleware
-func (siw *ServerInterfaceWrapper) VerifyPublisherGroupIdentity(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.VerifyPublisherGroupIdentity(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -40611,6 +38391,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id}/services/{service_id}/grant", wrapper.GetEnvironmentPublisherGrant)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id}/services/{service_id}/grant", wrapper.AuthorizeEnvironmentPublisherService)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id}/services/{service_id}/grant/{grant_id}", wrapper.RevokeEnvironmentPublisherGrant)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/collections", wrapper.ListCollections)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/collections", wrapper.CreateCollection)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/collections/{collection_id}", wrapper.GetCollection)
@@ -40622,14 +38405,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/environments/{environment_id}", wrapper.GetEnvironment)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/environments/{environment_id}/apply", wrapper.ApplyEnvironment)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/environments/apply", wrapper.ApplyEnvironments)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups", wrapper.ListPublisherGroups)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups", wrapper.CreateBoundPublisherGroup)
-	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups/{group_name}/bindings", wrapper.UpdatePublisherGroupBindings)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups/{group_name}/members", wrapper.ListPublisherGroupMembers)
-	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups/{group_name}", wrapper.RemovePublisherGroup)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups/{group_name}", wrapper.GetPublisherGroup)
-	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups/{group_name}", wrapper.CreatePublisherGroup)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups/{group_name}/connection", wrapper.GetPublisherGroupConnection)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/environments/{environment_id}/publisher-enrollments", wrapper.CreateEnvironmentPublisherEnrollment)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/environments/{environment_id}/publishers", wrapper.ListEnvironmentPublishers)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id}", wrapper.RevokeEnvironmentPublisher)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs", wrapper.ListConnectorPeerPairs)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery", wrapper.DeliverConnectorPeerPair)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared", wrapper.ConfirmConnectorPeerPairPrepared)
@@ -40646,28 +38424,21 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/browser/handoff", wrapper.RedeemServiceBrowserHandoff)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/browser/session", wrapper.RevokeServiceBrowserSession)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/browser/session", wrapper.CheckServiceBrowserSession)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/services/{service}", wrapper.GetProjectService)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/start", wrapper.StartServiceRun)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/client-certificates", wrapper.IssueServiceClientCertificate)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate", wrapper.AuthorizeServiceClientCertificate)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/certificate-issuances", wrapper.CreateServiceCertificateIssuance)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id}", wrapper.GetServiceCertificateIssuance)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/certificate-installed", wrapper.MarkServiceCertificateInstalled)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename", wrapper.RenamePublisherNamespace)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups/{group_name}/rename", wrapper.RenamePublisherGroup)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/public-metadata", wrapper.GetProjectPublicMetadata)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/local-services/{service}", wrapper.GetLocalProjectService)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/projects/{project_key}/local-services/{service}", wrapper.RealizeLocalProjectService)
-	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id}", wrapper.RevokePublisherGroupMember)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/configuration", wrapper.GetProjectConfiguration)
-	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/projects/{project_key}/configuration", wrapper.ApplyProjectConfiguration)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups/{group_name}/enrollments", wrapper.CreatePublisherGroupEnrollment)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher-groups/enroll", wrapper.RedeemPublisherGroupEnrollment)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher-groups/verify", wrapper.VerifyPublisherGroupIdentity)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/environment-publishers/enroll", wrapper.RedeemEnvironmentPublisherEnrollment)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/environment-publishers/verify", wrapper.VerifyEnvironmentPublisher)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher-runtime", wrapper.ObservePublisherRuntime)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher-groups/lease", wrapper.AcquirePublisherGroupLease)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/publisher-groups/assignments", wrapper.GetPublisherGroupAssignments)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher-groups/ack", wrapper.AcknowledgePublisherGroupConfiguration)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/environment-publishers/lease", wrapper.AcquireEnvironmentPublisherLease)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/environment-publishers/assignments", wrapper.GetEnvironmentPublisherAssignments)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/environment-publishers/ack", wrapper.AcknowledgeEnvironmentPublisher)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/teams/{team_id}/service-audit", wrapper.ListServiceAudit)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{run_id}/service-observations", wrapper.ReportPublishRunServiceObservations)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/service-observations", wrapper.ReportServiceRunObservations)

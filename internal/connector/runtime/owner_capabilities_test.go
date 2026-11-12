@@ -9,12 +9,13 @@ import (
 	"net/http"
 	"testing"
 	"time"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 type sdkCapabilityBackend struct{ fixtureBackend }
 
-func (*sdkCapabilityBackend) SDKWorkload(context.Context, Request) (SDKWorkload, error) {
-	panic("unconfigured SDK workload selection must not be discovered")
+func (*sdkCapabilityBackend) IdentityChallenge() (authorityv1.IdentitySourceChallenge, error) {
+	panic("unconfigured identity source must not be discovered")
 }
 func (*sdkCapabilityBackend) SDKPrepare(context.Context, Request) (SDKPrepared, error) {
 	panic("unconfigured SDK owner selection must not be discovered")
@@ -94,9 +95,12 @@ func TestConnectionOwnerExposesOnlyConfiguredSDKOperations(t *testing.T) {
 					t.Fatal("SDK selection changed its exact owner or private snapshot", status, snapshotErr)
 				}
 			}
-			// selecting an owner does not also opt into provider selection.
-			if status := call("sdk-workload", new(SDKWorkload)); status != http.StatusServiceUnavailable {
-				t.Fatal("SDK workload selection was discovered instead of configured", status)
+			// selecting a local owner does not opt into identity-source authority.
+			if status := call("identity-challenge", new(authorityv1.IdentitySourceChallenge)); status != http.StatusServiceUnavailable {
+				t.Fatal("identity source was discovered instead of configured", status)
+			}
+			if status := call("sdk-workload", new(any)); status != http.StatusNotFound {
+				t.Fatal("retired workload selector remains exposed", status)
 			}
 		})
 	}

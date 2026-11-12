@@ -7,7 +7,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
@@ -97,23 +96,16 @@ func TestIntegrationPublisherRuntimeResourceAvailability(t *testing.T) {
 
 func TestIntegrationPublisherRuntimeGroupUsesEnrolledKey(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "runtime_group_key")
-	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"remote": {}}, Services: map[string]ProjectServiceConfiguration{"api": {PublisherGroup: "remote", Target: "api.internal:3000"}}}
-	if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
-		t.Fatal(err)
-	}
-	e, err := d.IssuePublisherGroupEnrollment(t.Context(), r.TeamID, r.ProjectKey, "remote", r.ActorID, 1, time.Hour, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	replica := enrollAppliedGroup(t, d, r, e, now)
+	r := retainedEnvironmentProject(t, d, now)
+	e, _ := retainedServiceEnvironment(t, d, r, "remote", map[string]EnvironmentServicePublication{"api": {Protocol: "http", Target: "api.internal:3000"}})
+	replica := enrollTestEnvironment(t, d, r, e)
 	m := replica.member
 	request := func(action, run, kid string, epoch int64, key ed25519.PrivateKey) PublisherRuntimeRequest {
-		proof, err := publisherproof.Sign(m.PublisherIdentityID, kid, publisherproof.RuntimeScope(m.GroupID, action, run, epoch, ""), "https://control.example/v1/publisher-runtime", key, now)
+		proof, err := publisherproof.Sign(m.PublisherIdentityID, kid, publisherproof.RuntimeScope(m.EnvironmentID, action, run, epoch, ""), "https://control.example/v1/publisher-runtime", key, now)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return PublisherRuntimeRequest{PublisherIdentityID: m.PublisherIdentityID, ScopeID: m.GroupID, ProcessRunID: run, Action: action, Assertion: proof, Audience: "https://control.example/v1/publisher-runtime", SourceIP: "8.8.8.8", ExpectedEpoch: epoch, Now: now}
+		return PublisherRuntimeRequest{PublisherIdentityID: m.PublisherIdentityID, ScopeID: m.EnvironmentID, ProcessRunID: run, Action: action, Assertion: proof, Audience: "https://control.example/v1/publisher-runtime", SourceIP: "8.8.8.8", ExpectedEpoch: epoch, Now: now}
 	}
 	run := strings.Repeat("b", 32)
 	if _, err := d.PublisherRuntime(t.Context(), request("start", run, m.KeyID, 0, replica.private)); err != nil {

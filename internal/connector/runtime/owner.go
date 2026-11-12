@@ -37,6 +37,7 @@ func Serve(ctx context.Context, scope Context, directory, executable string, con
 			defer done()
 			cleanup, finish := observability.ClientOperation(cleanup, "connector.connections.shutdown")
 			closeError = backend.Close(cleanup)
+			if config.Closed != nil { config.Closed(closeError) }
 			finish(closeError)
 			result = errors.Join(result, closeError)
 		})
@@ -81,9 +82,6 @@ func Serve(ctx context.Context, scope Context, directory, executable string, con
 	}
 	path := filepath.Join(directory, "handle.json")
 	handle := Handle{Schema: Schema, URL: "http://" + listener.Addr().String(), Key: key, Directory: scope.Directory, ConfigDigest: scope.ConfigDigest, ExpiresAt: expires, Executable: executable}
-	if scope.Workload != "" {
-		handle.Workload, handle.TeamID = scope.Workload, scope.TeamID
-	}
 	if err := WriteHandle(path, handle); err != nil {
 		return err
 	}
@@ -97,6 +95,9 @@ func Serve(ctx context.Context, scope Context, directory, executable string, con
 		_ = os.Remove(path)
 	}()
 	state := Status{Schema: Schema, State: "ready", PID: os.Getpid(), ExpiresAt: expires, ProjectRuntime: metadata, ConnectionHandle: path, Executable: executable}
+	if config.Environment != nil {
+		state.Environment = config.Environment()
+	}
 	if config.Kubernetes != nil {
 		state.Kubeconfig = config.Kubernetes.Kubeconfig()
 	}
@@ -132,22 +133,17 @@ func Serve(ctx context.Context, scope Context, directory, executable string, con
 			return
 		}
 		switch operation {
-		case "sdk-workload":
-			if config.SDKWorkload == nil {
+		case "identity-challenge":
+			if config.IdentityChallenge == nil {
 				writeConnectionFailure(w, ErrInvalid)
 				return
 			}
-			selected, err := config.SDKWorkload(r.Context(), request)
+			challenge, err := config.IdentityChallenge()
 			if err != nil {
-				reason, known := failure.ReasonOf(err)
-				if !known {
-					reason = failure.ConnectionUnavailable
-				}
-				w.WriteHeader(http.StatusServiceUnavailable)
-				_ = json.NewEncoder(w).Encode(map[string]any{"schema": 1, "reason": reason})
+				writeConnectionFailure(w, err)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(selected)
+			_ = json.NewEncoder(w).Encode(challenge)
 		case "sdk-prepare":
 			if config.SDKPrepare == nil {
 				writeConnectionFailure(w, ErrInvalid)
@@ -187,7 +183,11 @@ func Serve(ctx context.Context, scope Context, directory, executable string, con
 		case "attach":
 			bounded, done := context.WithTimeout(r.Context(), 10*time.Second)
 			defer done()
-			if err := backend.Attach(bounded, request.Assertion); err != nil {
+			var err error
+			if config.UseIdentityReply != nil {
+				if request.Assertion != "" || request.IdentityReply == nil { err = ErrInvalid } else { err = config.UseIdentityReply(bounded, request) }
+			} else if request.IdentityReply != nil { err = ErrInvalid } else { err = backend.Attach(bounded, request.Assertion) }
+			if err != nil {
 				w.WriteHeader(403)
 				_, _ = io.WriteString(w, `{"code":"connections.unauthorized"}`)
 				return
@@ -206,6 +206,19 @@ func Serve(ctx context.Context, scope Context, directory, executable string, con
 			defer stop()
 			var prepared Prepared
 			var err error
+			if operation != "prepared" && config.UseIdentityReply != nil {
+				if request.Assertion != "" || request.AcquireAssertion {
+					writeConnectionFailure(w, ErrInvalid)
+					return
+				}
+				if err := config.UseIdentityReply(bounded, request); err != nil {
+					writeConnectionFailure(w, err)
+					return
+				}
+			} else if request.IdentityReply != nil {
+				writeConnectionFailure(w, ErrInvalid)
+				return
+			}
 			if operation == "prepared" {
 				prepared, err = backend.SnapshotFor(request.Service, request.Assertion)
 			} else {
@@ -350,6 +363,11 @@ func renewedOwnerDeadline(now, deadline, previous, next time.Time, renewable boo
 }
 
 func writeConnectionFailure(w http.ResponseWriter, err error) {
+	if reason, known := failure.ReasonOf(err); known {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]any{"schema": Schema, "reason": reason})
+		return
+	}
 	switch {
 	case errors.Is(err, ErrUnprepared):
 		w.WriteHeader(425)

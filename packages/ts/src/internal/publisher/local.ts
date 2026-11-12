@@ -164,15 +164,16 @@ function runtimeRequestUntraced(
       : { invocationID: endpoint.invocation_id },
   );
   if (
-    !["health", "status", "prepare", "register", "renew", "unregister", "ad-hoc/register"].includes(
+    !["health", "status", "prepare", "register", "renew", "unregister", "publications", "identity-source-challenges", "capability"].includes(
       operation,
     )
   )
     throw new TnlError("sdk.configuration_invalid");
   const get = operation === "health" || operation === "status";
-  const payload = get ? undefined : JSON.stringify(body);
+  const empty = get || operation === "capability";
+  const payload = empty ? undefined : JSON.stringify(body);
   if (
-    (get && body !== undefined) ||
+    (empty && body !== undefined) ||
     (payload !== undefined && Buffer.byteLength(payload) > 64 * 1024)
   )
     throw new TnlError("sdk.configuration_invalid");
@@ -180,7 +181,7 @@ function runtimeRequestUntraced(
     const request = http.request(
       endpoint.url + `/v1/${operation}`,
       {
-        method: get ? "GET" : "POST",
+        method: get ? "GET" : operation === "capability" ? "DELETE" : "POST",
         agent: false,
         headers: {
           ...traceHeaders(),
@@ -210,7 +211,7 @@ function runtimeRequestUntraced(
             )
               throw new TnlError("sdk.registration_stale");
             if (response.statusCode === 204) {
-              if (length !== 0 || ["prepare", "status", "ad-hoc/register"].includes(operation))
+              if (length !== 0 || ["prepare", "status", "publications", "identity-source-challenges"].includes(operation))
                 throw new TnlError("sdk.response_invalid");
               resolve(undefined);
               return;
@@ -237,7 +238,7 @@ function runtimeRequestUntraced(
                             : "sdk.request_rejected",
               );
             }
-            if (!["prepare", "status", "ad-hoc/register"].includes(operation))
+            if (!["prepare", "status", "publications", "identity-source-challenges"].includes(operation))
               throw new TnlError("sdk.response_invalid");
             resolve(value);
           } catch (cause) {

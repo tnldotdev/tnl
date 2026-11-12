@@ -99,7 +99,7 @@ func TestIntegrationStateLockOrderServiceActor(t *testing.T) {
 	for _, operation := range []string{"list-grants", "create-grant", "create-service", "delete-service"} {
 		t.Run(operation, func(t *testing.T) {
 			d, now := newControlStateIntegrationDatabase(t, "service_actor_order")
-			r := appliedProjectRequest(t, d, now)
+			r := retainedEnvironmentProject(t, d, now)
 			s, err := d.CreateServiceAt(t.Context(), r.TeamID, r.ActorID, "database", "database", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
 			if err != nil {
 				t.Fatal(err)
@@ -145,7 +145,7 @@ func TestIntegrationStateLockOrderServiceActor(t *testing.T) {
 			// team's apply must finish even while this signed manager is blocked.
 			unrelated := r
 			unrelated.TeamID = other.ID
-			if _, err = d.ApplyProjectConfiguration(ctx, unrelated); err != nil {
+			if _, err = d.CreateServiceDefinition(ctx, CreateServiceDefinitionRequest{TeamID: unrelated.TeamID, ProjectKey: unrelated.ProjectKey, SourceFingerprint: unrelated.SourceFingerprint, ActorID: unrelated.ActorID, Definition: ServiceDefinition{Services: map[string]ServiceDefinitionService{"web": {Protocol: "http"}}}, Now: now}); err != nil {
 				t.Fatalf("unrelated control-session apply = %v", err)
 			}
 			if _, err = gate.Exec(ctx, `SELECT id FROM control.teams WHERE id=$1 FOR UPDATE NOWAIT`, r.TeamID); err != nil {
@@ -205,28 +205,16 @@ func TestIntegrationStateLockOrderCompanyDecision(t *testing.T) {
 
 func TestIntegrationStateLockOrderApplyExpiration(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "apply_expiration_order")
-	r := appliedProjectRequest(t, d, now)
-	r.Configuration.PublisherGroups = map[string]ProjectPublisherGroup{"production": {}}
-	r.Configuration.Services = map[string]ProjectServiceConfiguration{
-		"a": {PublisherGroup: "production", Protocol: "tcp", Target: "localhost:5001"},
-		"b": {PublisherGroup: "production", Protocol: "tcp", Target: "localhost:5002"},
-	}
-	applied, err := d.ApplyProjectConfiguration(t.Context(), r)
-	if err != nil {
-		t.Fatal(err)
-	}
+	r := retainedEnvironmentProject(t, d, now)
+	applied, _ := retainedServiceEnvironment(t, d, r, "production", map[string]EnvironmentServicePublication{"a": {Protocol: "tcp", Target: "localhost:5001"}, "b": {Protocol: "tcp", Target: "localhost:5002"}})
 	unrelated, err := d.CreateServiceAt(t.Context(), r.TeamID, r.ActorID, "unrelated", "unrelated", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	service := applied.Services[1].ServiceID
-	e, err := d.IssuePublisherGroupEnrollment(t.Context(), r.TeamID, r.ProjectKey, "production", r.ActorID, 1, time.Hour, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	replica := enrollAppliedGroup(t, d, r, e, now)
-	access := groupAssignmentAccess(t, d, replica, replica.assignments.Services[1], now)
-	prepared, err := d.PrepareServiceRun(t.Context(), service, access.PublisherIdentity, "prepared", now, ServiceMetadata{Protocol: "tcp", PublisherPool: true, TrustRevision: 1}, nil)
+	replica := enrollTestEnvironment(t, d, r, applied)
+	access := environmentAssignmentAccess(t, d, replica, replica.assignments.Services[1], now)
+	prepared, err := d.PrepareServiceRun(t.Context(), service, access.PublisherIdentity, "prepared", now, ServiceMetadata{Protocol: "tcp", PublisherPool: true, TrustRevision: 1}, &replica.assignments.Environment)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,10 +235,11 @@ func TestIntegrationStateLockOrderApplyExpiration(t *testing.T) {
 		expired <- err
 	})
 	pid := waitForPostgresBlock(t, ctx, d, int32(gate.Conn().PgConn().PID()), expired)
-	r.ExpectedRevision, r.Now = applied.Revision, prepared.ExpiresAt
-	r.Configuration.Services = map[string]ProjectServiceConfiguration{}
 	updated := make(chan error, 1)
-	workers.Go(func() { _, err := d.ApplyProjectConfiguration(ctx, r); updated <- err })
+	workers.Go(func() {
+		err := d.RetireEnvironment(ctx, RetireEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, EnvironmentID: applied.ID, ExpectedRevision: applied.MutationRevision, Now: prepared.ExpiresAt})
+		updated <- err
+	})
 	waitForPostgresBlock(t, ctx, d, pid, updated)
 	if _, err = gate.Exec(ctx, `SELECT id FROM control.services WHERE id=$1 FOR UPDATE NOWAIT`, unrelated.ID); err != nil {
 		t.Fatalf("apply locked a service outside its project: %v", err)

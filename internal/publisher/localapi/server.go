@@ -17,22 +17,27 @@ import (
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 type Server struct {
-	Capabilities        *publisherprotocol.Capabilities
-	Manager             *publisherapp.Manager
-	Database            *clientstate.Database
-	Project             string
-	Prepare             func(context.Context, publisherprotocol.Prepare) (publisherprotocol.Assignment, error)
-	Register            func(publisherprotocol.Registration) error
-	RegisterContext     func(context.Context, publisherprotocol.Registration) error
-	Acquire             func(context.Context, publisherprotocol.Lease) (publisherprotocol.Registration, error)
-	Invocation          func(context.Context, publisherprotocol.Invocation) (publisherprotocol.Registration, error)
-	PublishApplication  func(context.Context, publisherprotocol.ApplicationPublication) (publisherprotocol.AcceptedPublication, error)
-	Check               func(context.Context, []string) (publisherapp.Snapshot, error)
-	AppService          func(string) bool
-	ConfigurationDigest func() (string, error)
+	Capabilities          *publisherprotocol.Capabilities
+	Manager               *publisherapp.Manager
+	Database              *clientstate.Database
+	Project               string
+	Prepare               func(context.Context, publisherprotocol.Prepare) (publisherprotocol.Assignment, error)
+	Register              func(publisherprotocol.Registration) error
+	RegisterContext       func(context.Context, publisherprotocol.Registration) error
+	Acquire               func(context.Context, publisherprotocol.Lease) (publisherprotocol.Registration, error)
+	Invocation            func(context.Context, publisherprotocol.Invocation) (publisherprotocol.Registration, error)
+	PublishApplication    func(context.Context, publisherprotocol.ApplicationPublication) (publisherprotocol.AcceptedPublication, error)
+	ChallengeApplication  func(context.Context, publisherprotocol.ApplicationPublication) (authorityv1.IdentitySourceChallenge, error)
+	UnregisterApplication func(context.Context, string, publisherprotocol.Registration) error
+	RenewApplication      func(context.Context, string, publisherprotocol.Registration) error
+	ReleaseApplication    func(context.Context, string) error
+	Check                 func(context.Context, []string) (publisherapp.Snapshot, error)
+	AppService            func(string) bool
+	ConfigurationDigest   func() (string, error)
 }
 
 func (s *Server) Handler() http.Handler {
@@ -163,6 +168,14 @@ func (s *Server) Handler() http.Handler {
 			}
 			service, found := s.Manager.ServiceForRegistration(request.RegistrationID)
 			grant := publisherprotocol.Grant(r)
+			if operation == "unregister" && grant.Scope == "invocation" && grant.InvocationId != nil && s.UnregisterApplication != nil {
+				if err := s.UnregisterApplication(r.Context(), *grant.InvocationId, request); err != nil {
+					Problem(w, err)
+					return
+				}
+				w.WriteHeader(204)
+				return
+			}
 			if !found || grant.Scope == "app" && service.Name != *grant.Service || grant.Scope == "invocation" && service.Name != *grant.InvocationId {
 				Problem(w, publisherapp.ErrRegistrationStale)
 				return
@@ -182,7 +195,11 @@ func (s *Server) Handler() http.Handler {
 					err = s.Manager.RegisterContext(r.Context(), request.RegistrationID, request.Owner, request.Target, service.Framework)
 				}
 			case "renew":
-				err = s.Manager.RenewTarget(request.RegistrationID, request.Owner, request.Target)
+				if grant.Scope == "invocation" && s.RenewApplication != nil {
+					err = s.RenewApplication(r.Context(), service.Name, request)
+				} else {
+					err = s.Manager.RenewTarget(request.RegistrationID, request.Owner, request.Target)
+				}
 			case "unregister":
 				err = s.Manager.UnregisterTarget(request.RegistrationID, request.Owner, request.Target)
 			}
@@ -193,6 +210,29 @@ func (s *Server) Handler() http.Handler {
 			w.WriteHeader(204)
 		})
 	}
+	mux.HandleFunc("POST /v1/identity-source-challenges", func(w http.ResponseWriter, r *http.Request) {
+		grant := publisherprotocol.Grant(r)
+		if grant.Scope != "invocation" || grant.InvocationId == nil || s.ChallengeApplication == nil {
+			Problem(w, publisherprotocol.ErrForbidden)
+			return
+		}
+		var request publisherprotocol.ApplicationPublication
+		if err := publisherprotocol.Decode(w, r, &request); err != nil {
+			Problem(w, err)
+			return
+		}
+		defer clear(request.Auth)
+		if request.InvocationId != *grant.InvocationId {
+			Problem(w, publisherprotocol.ErrForbidden)
+			return
+		}
+		challenge, err := s.ChallengeApplication(r.Context(), request)
+		if err != nil {
+			Problem(w, err)
+			return
+		}
+		_ = publisherprotocol.Write(w, http.StatusOK, challenge)
+	})
 	mux.HandleFunc("POST /v1/publications", func(w http.ResponseWriter, r *http.Request) {
 		grant := publisherprotocol.Grant(r)
 		if grant.Scope != "invocation" || grant.InvocationId == nil || s.PublishApplication == nil {
@@ -214,9 +254,9 @@ func (s *Server) Handler() http.Handler {
 			Problem(w, err)
 			return
 		}
-		if err := publisherprotocol.Write(w, 200, accepted); (err != nil || r.Context().Err() != nil) && !accepted.Reused {
-			_ = s.Manager.UnregisterTarget(accepted.Registration.RegistrationID, accepted.Registration.Owner, accepted.Registration.Target)
-		}
+		// an uncertain acknowledgment is not an abort of accepted authority. the
+		// stable owner can recover the same URL; its lease bounds abandonment.
+		_ = publisherprotocol.Write(w, 200, accepted)
 	})
 	mux.HandleFunc("DELETE /v1/capability", func(w http.ResponseWriter, r *http.Request) {
 		grant := publisherprotocol.Grant(r)
@@ -227,6 +267,12 @@ func (s *Server) Handler() http.Handler {
 		for _, service := range s.Manager.Snapshot().Services {
 			if service.Name == *grant.InvocationId && service.RegistrationID != "" {
 				Problem(w, publisherapp.ErrOwnerConflict)
+				return
+			}
+		}
+		if s.ReleaseApplication != nil {
+			if err := s.ReleaseApplication(r.Context(), *grant.InvocationId); err != nil {
+				Problem(w, err)
 				return
 			}
 		}
@@ -297,6 +343,8 @@ func Problem(w http.ResponseWriter, err error) {
 		status, code, message = 503, "runtime.publication_failed", "publication stopped with a failure; read scoped status or events"
 	case errors.Is(err, publisherprotocol.ErrApplicationAuthInvalid):
 		status, code, message = 400, "runtime.credential_invalid", "check the application identity source"
+	case errors.Is(err, publisherprotocol.ErrApplicationChallengeStale):
+		status, code, message = 409, "runtime.identity_challenge_stale", "request a fresh challenge for the same original publication"
 	case errors.Is(err, publisherprotocol.ErrApplicationDenied):
 		status, code, message = 403, "runtime.credential_denied", "select a current grant for this exact resource or namespace"
 	case errors.Is(err, publisherprotocol.ErrApplicationUnavailable):

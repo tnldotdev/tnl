@@ -4,8 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"reflect"
 	"testing"
-	"time"
 
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
@@ -13,46 +13,34 @@ import (
 func TestIntegrationPublisherGroupBindingChangesInvalidateRuns(t *testing.T) {
 	d, now, _, leases := newPublishRunPrerequisites(t)
 	ctx := t.Context()
-	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"customer": {Template: true}}, Services: map[string]ProjectServiceConfiguration{"db": {PublisherGroup: "customer", Protocol: "postgres", TargetBinding: "group"}}}
-	current, err := d.ApplyProjectConfiguration(ctx, r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	groups := []PublisherGroupResource{}
-	members := []enrolledGroupReplica{}
+	r := retainedEnvironmentProject(t, d, now)
+	definition := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"db": {Protocol: "postgres"}})
+	groups := []Environment{}
+	members := []environmentPublisherReplica{}
 	for _, name := range []string{"customer-a", "customer-b"} {
-		group, err := d.CreateBoundPublisherGroup(ctx, CreateBoundPublisherGroupRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, ExpectedRevision: current.Revision, Now: now, Creation: PublisherGroupCreation{Name: name, Template: "customer", Bindings: PublisherGroupBindings{"db": {Target: name + ".internal:5432"}}}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		current.Revision = group.Revision
+		group, _ := createTestEnvironment(t, d, r, name, definition.Revision, EnvironmentTargets{"db": {Address: name + ".internal:5432"}})
 		groups = append(groups, group)
-		enrollment, err := d.IssuePublisherGroupEnrollment(ctx, r.TeamID, r.ProjectKey, group.ID, r.ActorID, 1, time.Hour, now)
-		if err != nil {
-			t.Fatal(err)
-		}
-		members = append(members, enrollAppliedGroup(t, d, r, enrollment, now))
+		members = append(members, enrollTestEnvironment(t, d, r, group))
 	}
 	type publication struct {
-		assignment PublisherGroupServiceAssignment
+		assignment EnvironmentPublisherAssignment
 		access     PublisherAccess
 		run        ServiceRunState
 	}
-	start := func(t *testing.T, member enrolledGroupReplica) publication {
+	start := func(t *testing.T, member environmentPublisherReplica) publication {
 		t.Helper()
-		assignments, err := d.GetPublisherGroupAssignments(ctx, member.lease.AccessToken, now)
+		assignments, err := d.GetEnvironmentPublisherAssignments(ctx, member.lease.AccessToken, now)
 		if err != nil || len(assignments.Services) != 1 {
 			t.Fatal("get assigned publication", assignments, err)
 		}
 		assignment := assignments.Services[0]
-		access := groupAssignmentAccess(t, d, member, assignment, now)
+		access := environmentAssignmentAccess(t, d, member, assignment, now)
 		trust, err := appliedServiceTargetTrust(assignment.Configuration.TargetTLS)
 		if err != nil {
 			t.Fatal(err)
 		}
 		metadata := ServiceMetadata{Protocol: assignment.Configuration.Protocol, TLS: trust, PublisherPool: true, TrustRevision: assignment.TrustRevision}
-		prepared, err := d.PrepareServiceRun(ctx, assignment.ServiceID, access.PublisherIdentity, "binding-regression/"+assignment.GrantID, now, metadata, nil)
+		prepared, err := d.PrepareServiceRun(ctx, assignment.ServiceID, access.PublisherIdentity, "binding-regression/"+assignment.GrantID, now, metadata, &assignments.Environment)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -78,26 +66,56 @@ func TestIntegrationPublisherGroupBindingChangesInvalidateRuns(t *testing.T) {
 	first, other := start(t, members[0]), start(t, members[1])
 	for _, change := range []string{"target", "target TLS"} {
 		t.Run(change, func(t *testing.T) {
-			bindings := PublisherGroupBindings{"db": {Target: "replacement.internal:5432"}}
+			previousMutation := retainedPublisherGrantMutation(t, d, r, groups[0], members[0].member.PublisherIdentityID, first.assignment.ServiceID)
+			previousGrant, err := d.GetEnvironmentPublisherGrant(ctx, previousMutation.InspectEnvironmentPublisherGrantRequest)
+			if err != nil || previousGrant.Grant == nil || previousGrant.Grant.ID != first.assignment.GrantID || previousGrant.Grant.RevokedAt != nil {
+				t.Fatal("missing current exact grant before apply", err)
+			}
+			bindings := EnvironmentTargets{"db": {Address: "replacement.internal:5432"}}
 			if change == "target TLS" {
 				digest := sha256.Sum256([]byte("tnl-target-tls/v1\x00replacement.internal\x00"))
 				binding := bindings["db"]
-				binding.TargetTLS = &ProjectTargetTLS{Hostname: "replacement.internal", Digest: hex.EncodeToString(digest[:])}
+				binding.TLS = &ProjectTargetTLS{Hostname: "replacement.internal", Digest: hex.EncodeToString(digest[:])}
 				bindings["db"] = binding
 			}
-			updated, err := d.UpdatePublisherGroupBindings(ctx, r.TeamID, r.ProjectKey, groups[0].ID, r.ActorID, current.Revision, bindings, false, now)
+			updated, err := d.ApplyEnvironment(ctx, ApplyEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, EnvironmentApplication: EnvironmentApplication{EnvironmentID: groups[0].ID, ExpectedRevision: groups[0].MutationRevision, DefinitionRevision: definition.Revision, Targets: bindings}, Now: now})
 			if err != nil {
 				t.Fatal(err)
 			}
-			current.Revision = updated.Revision
 			if updated.Services[0].ServiceID != groups[0].Services[0].ServiceID || updated.Services[0].Hostname != groups[0].Services[0].Hostname || updated.Services[0].Port != groups[0].Services[0].Port {
 				t.Fatal("mutation replaced reserved endpoint", updated)
 			}
+			groups[0] = updated
+			// apply must close the changed publication before any grant mutation
+			// can mask missing cleanup, while preserving its existing authority.
+			var closedByApply bool
+			if err := d.pool.QueryRow(ctx, `SELECT closed_at IS NOT NULL FROM control.service_runs WHERE id=$1`, first.run.RunID).Scan(&closedByApply); err != nil || !closedByApply {
+				t.Fatal("apply did not durably close the changed run", closedByApply, err)
+			}
 			if _, err := d.HeartbeatServiceRun(ctx, first.run.ServiceID, first.run.RunID, first.run.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64}); !errors.Is(err, ErrServiceAccess) {
-				t.Fatal("old run survived binding mutation", err)
+				t.Fatal("old run survived apply before grant revocation", err)
+			}
+			if state, err := d.HeartbeatServiceRun(ctx, other.run.ServiceID, other.run.RunID, other.run.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64}); err != nil || state.State != "ready" {
+				t.Fatal("apply disturbed the other customer before grant revocation", state, err)
+			}
+			preservedGrant, err := d.GetEnvironmentPublisherGrant(ctx, previousMutation.InspectEnvironmentPublisherGrantRequest)
+			if err != nil || !reflect.DeepEqual(preservedGrant.Grant, previousGrant.Grant) {
+				t.Fatal("apply changed the existing exact grant", err)
+			}
+			// publication changes do not rotate authority. revoke and replace the
+			// exact grant separately before asserting old token/proof retirement.
+			mutation := retainedPublisherGrantMutation(t, d, r, updated, members[0].member.PublisherIdentityID, first.assignment.ServiceID)
+			if err := d.RevokeEnvironmentPublisherGrant(ctx, RevokeEnvironmentPublisherGrantRequest{EnvironmentPublisherGrantMutation: mutation, GrantID: first.assignment.GrantID}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := d.AuthorizeEnvironmentPublisherService(ctx, AuthorizeEnvironmentPublisherServiceRequest{EnvironmentPublisherGrantMutation: mutation, ExpectedPreviousGrantID: environmentPublisherGrantExpected(t, first.assignment.GrantID), IdempotencyKey: "replacement/" + change}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := d.HeartbeatServiceRun(ctx, first.run.ServiceID, first.run.RunID, first.run.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64}); !errors.Is(err, ErrServiceAccess) {
+				t.Fatal("old run survived explicit grant revocation", err)
 			}
 			if _, err := d.AuthenticatePublisherAccess(ctx, first.access.Token, "", now); !errors.Is(err, ErrPublisherIdentity) {
-				t.Fatal("old access survived binding mutation", err)
+				t.Fatal("old access survived explicit grant revocation", err)
 			}
 			assertion, err := publisherproof.Sign(members[0].member.PublisherIdentityID, members[0].member.KeyID, first.assignment.GrantID, publisherTestAudience, members[0].private, now)
 			if err != nil {
@@ -123,7 +141,7 @@ func TestIntegrationPublisherGroupBindingChangesInvalidateRuns(t *testing.T) {
 			first = replacement
 		})
 	}
-	if _, err := d.RemovePublisherGroup(ctx, r.TeamID, r.ProjectKey, groups[0].ID, r.ActorID, current.Revision, false, now); err != nil {
+	if err := d.RetireEnvironment(ctx, RetireEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, EnvironmentID: groups[0].ID, ExpectedRevision: groups[0].MutationRevision, Now: now}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.HeartbeatServiceRun(ctx, first.run.ServiceID, first.run.RunID, first.run.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64}); !errors.Is(err, ErrServiceAccess) {

@@ -167,7 +167,7 @@ func TestIntegrationMachinePublicationAuthorityWithoutOIDCIdentitySelector(t *te
 			if kind == "oidc" {
 				// the exact same platform assertion can authenticate a separately
 				// approved provisioning purpose; neither API requires machine_id.
-				grant, e := f.client.CreateProvisioningGrantWithResponse(ctx, f.team, machine, authorityv1.ProvisioningGrantRequest{ProjectKey: "equipment", Templates: []string{"equipment"}, Operations: []authorityv1.ProvisioningOperation{authorityv1.ProvisioningRead}, ExpiresAt: f.now.Add(time.Hour)}, machineBearer(f.human))
+				grant, e := f.client.CreateProvisioningGrantWithResponse(ctx, f.team, machine, authorityv1.ProvisioningGrantRequest{ProjectKey: "equipment", Scope: machineEnvironmentScope(f.environment.ID), Services: []string{"api"}, Operations: []authorityv1.ProvisioningOperation{authorityv1.ProvisioningRead}, ExpiresAt: f.now.Add(time.Hour)}, machineBearer(f.human))
 				if e != nil || grant.JSON201 == nil {
 					t.Fatal(grant, e)
 				}

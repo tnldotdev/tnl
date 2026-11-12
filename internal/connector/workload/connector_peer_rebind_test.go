@@ -14,7 +14,7 @@ import (
 func TestConnectorPeerRebindRetainsWorkloadSubjectAndCurrentRights(t *testing.T) {
 	for _, boundary := range []string{"valid", "uncapped", "no session", "lease", "expiry", "identity expiry", "uncapped lease", "uncapped identity expiry", "service", "subject"} {
 		t.Run(boundary, func(t *testing.T) {
-			session := sessionFixture(controlv1.WorkloadOIDC)
+			session := sessionFixture()
 			calls := 0
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls++

@@ -50,7 +50,7 @@ func applicationRequest(t *testing.T, a *appRuntime) (publisherprotocol.Endpoint
 		t.Fatal(err)
 	}
 	resource, _ := opaqueid.New(opaqueid.PublicURLPrefix)
-	return endpoint, publisherprotocol.ApplicationPublication{Version: 1, InvocationId: id, Owner: "0123456789abcdef0123456789abcdef", Pid: os.Getpid(), Target: "http://127.0.0.1:3000", ServerUrl: "https://control.example", Auth: json.RawMessage(`{"source":"secret-source-only-on-ipc"}`), ResourceId: &resource}
+	return endpoint, publisherprotocol.ApplicationPublication{Version: 1, InvocationId: id, Owner: "0123456789abcdef0123456789abcdef", Pid: os.Getpid(), Target: "http://127.0.0.1:3000", ServerUrl: "https://control.example", Auth: json.RawMessage(`{"kind":"oidc","machine_id":"mci_0123456789ABCDEFGHIJKL","assertion":"secret-source-only-on-ipc"}`), ResourceId: &resource}
 }
 
 func applicationGrant(selection invocation.ApplicationSelection) invocation.ApplicationGrant {
@@ -79,7 +79,7 @@ func TestApplicationPublicationAcceptsBeforeTrafficReadyAndKeepsProbeSeparate(t 
 		grant := applicationGrant(selection)
 		grant.RefreshAuth = func(_ context.Context, proof json.RawMessage) error {
 			refreshes.Add(1)
-			if string(proof) != `{"source":"refreshed-proof"}` {
+			if string(proof) != `{"kind":"oidc","machine_id":"mci_0123456789ABCDEFGHIJKL","assertion":"refreshed-proof"}` {
 				t.Error("new proof did not reach the existing identity source")
 			}
 			return nil
@@ -118,7 +118,7 @@ func TestApplicationPublicationAcceptsBeforeTrafficReadyAndKeepsProbeSeparate(t 
 		t.Fatal("authentication reached the journal")
 	}
 	// refreshed proof bytes do not replace or allocate another publication.
-	request.Auth = json.RawMessage(`{"source":"refreshed-proof"}`)
+	request.Auth = json.RawMessage(`{"kind":"oidc","machine_id":"mci_0123456789ABCDEFGHIJKL","assertion":"refreshed-proof"}`)
 	var repeated publisherprotocol.AcceptedPublication
 	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/publications", request, &repeated); err != nil || repeated != accepted || resolves.Load() != 1 || refreshes.Load() != 1 {
 		t.Fatalf("recovery did not reuse accepted publication: %+v %v", repeated, err)
@@ -268,6 +268,7 @@ func TestApplicationPublicationRejectsGroupOwnedAndMismatchedResources(t *testin
 			t.Fatalf("out-of-bound resource accepted: %v", err)
 		}
 	}
+	_, request = applicationRequest(t, a)
 	request.ResourceId = nil
 	request.Allocate = &struct {
 		Namespace string `json:"namespace"`
@@ -303,7 +304,7 @@ func TestApplicationPublicationRejectsNoncanonicalAllocationLabels(t *testing.T)
 	}
 }
 
-func TestApplicationPublicationLostAckAndCanceledSetupCleanAllocation(t *testing.T) {
+func TestApplicationPublicationUncertainAckRecoversButCanceledSetupCleans(t *testing.T) {
 	for _, canceled := range []bool{false, true} {
 		t.Run(map[bool]string{true: "canceled", false: "lost-ack"}[canceled], func(t *testing.T) {
 			a, _ := testAppRuntimeWorkers(t, true)
@@ -327,6 +328,15 @@ func TestApplicationPublicationLostAckAndCanceledSetupCleanAllocation(t *testing
 			r := invocationRequest(t, ctx, endpoint, request)
 			r.URL.Path, r.RequestURI = "/v1/publications", "/v1/publications"
 			a.handler().ServeHTTP(&lostInvocationAck{header: http.Header{}}, r)
+			if !canceled {
+				var recovered publisherprotocol.AcceptedPublication
+				if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/publications", request, &recovered); err != nil || cleaned.Load() != 0 {
+					t.Fatal("uncertain accepted acknowledgment destroyed its publication", err)
+				}
+				if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/unregister", recovered.Registration, nil); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if cleaned.Load() != 1 {
 				t.Fatalf("allocation cleanup count=%d", cleaned.Load())
 			}
@@ -374,6 +384,64 @@ func TestApplicationPublicationLostRenewalReplyKeepsAcceptedResource(t *testing.
 	}
 }
 
+func TestApplicationPublicationSourceCannotChangeAfterUncertainExchangeOrAcceptance(t *testing.T) {
+	for _, uncertain := range []bool{false, true} {
+		t.Run(map[bool]string{false: "accepted", true: "uncertain-exchange"}[uncertain], func(t *testing.T) {
+			a, _ := testAppRuntimeWorkers(t, true)
+			endpoint, request := applicationRequest(t, a)
+			var resolves, refreshes atomic.Int32
+			a.ApplicationAuthority = applicationAuthority(func(_ context.Context, selection invocation.ApplicationSelection) (invocation.ApplicationGrant, error) {
+				resolves.Add(1)
+				if uncertain {
+					return invocation.ApplicationGrant{}, publisheridentity.ErrApplicationSessionUncertain
+				}
+				grant := applicationGrant(selection)
+				grant.RefreshAuth = func(context.Context, json.RawMessage) error { refreshes.Add(1); return nil }
+				return grant, nil
+			})
+			a.workers.RunPublisher = readyInvocation
+			var accepted publisherprotocol.AcceptedPublication
+			err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/publications", request, &accepted)
+			if uncertain == (err == nil) {
+				t.Fatal("fixture did not reach selected acceptance state", err)
+			}
+			request.Auth = bytes.ReplaceAll(request.Auth, []byte("mci_0123456789ABCDEFGHIJKL"), []byte("mci_1123456789ABCDEFGHIJKL"))
+			if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/publications", request, new(publisherprotocol.AcceptedPublication)); err == nil {
+				t.Fatal("recovery switched its original source identity")
+			}
+			if resolves.Load() != 1 || refreshes.Load() != 0 {
+				t.Fatal("changed source reached an exchange or refresh")
+			}
+		})
+	}
+}
+
+func TestApplicationPublicationUncertainAckCanCloseWithOriginalOwnerWithoutRegistrationID(t *testing.T) {
+	a, _ := testAppRuntimeWorkers(t, true)
+	endpoint, request := applicationRequest(t, a)
+	var cleaned atomic.Int32
+	a.ApplicationAuthority = applicationAuthority(func(_ context.Context, selection invocation.ApplicationSelection) (invocation.ApplicationGrant, error) {
+		grant := applicationGrant(selection)
+		grant.Release = func(context.Context) error { cleaned.Add(1); return nil }
+		return grant, nil
+	})
+	a.workers.RunPublisher = readyInvocation
+	r := invocationRequest(t, t.Context(), endpoint, request)
+	r.URL.Path, r.RequestURI = "/v1/publications", "/v1/publications"
+	a.handler().ServeHTTP(&lostInvocationAck{header: http.Header{}}, r)
+	registration := publisherprotocol.Registration{Version: 1, Owner: request.Owner, Target: request.Target}
+	for _, change := range []func(*publisherprotocol.Registration){func(r *publisherprotocol.Registration) { r.Owner = strings.Repeat("a", 32) }, func(r *publisherprotocol.Registration) { r.Target = "http://127.0.0.1:4000" }} {
+		wrong := registration
+		change(&wrong)
+		if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/unregister", wrong, nil); err == nil || cleaned.Load() != 0 {
+			t.Fatal("uncertain close accepted another owner or target", err)
+		}
+	}
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/unregister", registration, nil); err != nil || cleaned.Load() != 1 {
+		t.Fatal("original owner could not close its uncertain acknowledgment", err)
+	}
+}
+
 func TestApplicationPublicationRealNativeTrafficAndCleanup(t *testing.T) {
 	if !testutil.IsolatedPublishingTest(t) {
 		return
@@ -387,7 +455,7 @@ func TestApplicationPublicationRealNativeTrafficAndCleanup(t *testing.T) {
 	if err := json.Unmarshal(encoded, &request); err != nil {
 		t.Fatal(err)
 	}
-	request.Auth = json.RawMessage(`{"source":"fixture"}`)
+	request.Auth = json.RawMessage(`{"kind":"oidc","machine_id":"mci_0123456789ABCDEFGHIJKL","assertion":"fixture"}`)
 	request.Allocate = &struct {
 		Namespace string `json:"namespace"`
 	}{Namespace: fixture.Namespace}
@@ -467,6 +535,16 @@ func TestApplicationCleanupRetriesAndCachesOnlySuccess(t *testing.T) {
 	alreadyExpired := applicationCleanup(func(context.Context) error { return clientcontrol.ErrNotFound })
 	if err := alreadyExpired(); err != nil {
 		t.Fatal("server-expired temporary resource retained its cleanup obligation", err)
+	}
+	var joinedCalls int
+	joinedFailure := applicationCleanup(func(context.Context) error { joinedCalls++; return errors.Join(clientcontrol.ErrNotFound, failure) })
+	for range 2 {
+		if err := joinedFailure(); !errors.Is(err, failure) {
+			t.Fatal("not-found hid an independent cleanup failure", err)
+		}
+	}
+	if joinedCalls != 2 {
+		t.Fatal("failed joined cleanup was cached as success")
 	}
 }
 

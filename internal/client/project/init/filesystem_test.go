@@ -97,7 +97,7 @@ func TestProjectTypeIncludesUseReferencedProjectDirectories(t *testing.T) {
 	if after, err := os.ReadFile(filepath.Join(root, "tsconfig.json")); err != nil || !bytes.Equal(rootSource, after) {
 		t.Fatal("solution references changed", err)
 	}
-	if after, err := os.ReadFile(filepath.Join(nested, "tsconfig.json")); err != nil || !bytes.Contains(after, []byte("../../.tnl/generated/project.d.ts")) || !bytes.Contains(after, []byte(`"src"`)) {
+	if after, err := os.ReadFile(filepath.Join(nested, "tsconfig.json")); err != nil || !bytes.Contains(after, []byte("../../.tnl/generated/project.ts")) || !bytes.Contains(after, []byte(`"src"`)) {
 		t.Fatalf("referenced include = %s %v", after, err)
 	}
 }
@@ -120,9 +120,9 @@ func TestProjectTypeIncludesPreserveConfiguration(t *testing.T) {
 		wantUpdate   bool
 	}{
 		{"missing_include", "{\n  \"include\": [\"src/**/*.ts\"]\n}\n", false, true},
-		{"included", "{\n  \"include\": [\"src/**/*.ts\", \".tnl/generated/project.d.ts\"]\n}\n", false, false},
+		{"included", "{\n  \"include\": [\"src/**/*.ts\", \".tnl/generated/project.ts\"]\n}\n", false, false},
 		{"jsonc", "{\n  // preserve this JSONC file\n  \"include\": [\"src\"]\n}\n", false, true},
-		{"jsonc_included", "{\n  // preserve comments and trailing commas\n  \"include\": [\"src\", \".tnl/generated/project.d.ts\",],\n}\n", false, false},
+		{"jsonc_included", "{\n  // preserve comments and trailing commas\n  \"include\": [\"src\", \".tnl/generated/project.ts\",],\n}\n", false, false},
 		{"duplicate_keys", "{\n  \"include\": [\"src\"],\n  \"include\": [\"generated\"]\n}\n", true, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -133,11 +133,11 @@ func TestProjectTypeIncludesPreserveConfiguration(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if test.wantAction && (len(result.actions) != 1 || !strings.Contains(result.actions[0], `".tnl/generated/project.d.ts"`) || !strings.Contains(result.actions[0], path)) || !test.wantAction && len(result.actions) != 0 || (len(result.updated) != 0) != test.wantUpdate {
+			if test.wantAction && (len(result.actions) != 1 || !strings.Contains(result.actions[0], `".tnl/generated/project.ts"`) || !strings.Contains(result.actions[0], path)) || !test.wantAction && len(result.actions) != 0 || (len(result.updated) != 0) != test.wantUpdate {
 				t.Fatalf("include result = %v", result)
 			}
 			after, err := os.ReadFile(path)
-			if err != nil || !test.wantUpdate && string(after) != test.source || test.wantUpdate && !bytes.Contains(after, []byte(".tnl/generated/project.d.ts")) {
+			if err != nil || !test.wantUpdate && string(after) != test.source || test.wantUpdate && !bytes.Contains(after, []byte(".tnl/generated/project.ts")) {
 				t.Fatalf("tsconfig changed: %s, %v", after, err)
 			}
 			if got, err := os.ReadFile(nestedPath); err != nil || !bytes.Equal(got, nestedSource) {
@@ -162,7 +162,7 @@ func TestProjectTypeIncludeWiresRootWithoutNamedServices(t *testing.T) {
 		t.Fatalf("include result = %v", result)
 	}
 	data, err := os.ReadFile(path)
-	if err != nil || !bytes.Contains(data, []byte(".tnl/generated/project.d.ts")) || !bytes.Contains(data, []byte("src/**/*.ts")) {
+	if err != nil || !bytes.Contains(data, []byte(".tnl/generated/project.ts")) || !bytes.Contains(data, []byte("src/**/*.ts")) {
 		t.Fatalf("tsconfig changed: %s, %v", data, err)
 	}
 }
@@ -182,7 +182,7 @@ func TestProjectTypeIncludeActionDoesNotInferNestedServiceDirectory(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.actions) != 1 || !strings.Contains(result.actions[0], filepath.Join(root, "tsconfig.json")) || !strings.Contains(result.actions[0], `".tnl/generated/project.d.ts"`) || strings.Contains(result.actions[0], nestedPath) {
+	if len(result.actions) != 1 || !strings.Contains(result.actions[0], filepath.Join(root, "tsconfig.json")) || !strings.Contains(result.actions[0], `".tnl/generated/project.ts"`) || strings.Contains(result.actions[0], nestedPath) {
 		t.Fatalf("actions = %v", result.actions)
 	}
 	if got, err := os.ReadFile(nestedPath); err != nil || !bytes.Equal(got, source) {

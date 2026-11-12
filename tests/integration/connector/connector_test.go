@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -32,12 +33,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	"github.com/tnldotdev/tnl/internal/config"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	connectorworkload "github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/security/machineproof"
 	"github.com/tnldotdev/tnl/internal/security/workloadproof"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/connectorfixture"
@@ -90,12 +91,9 @@ func TestIntegrationConnectionConnectorOwnerSDKNativeWorkloadAcquisition(t *test
 	for _, language := range []string{"javascript-provider", "python-provider"} {
 		t.Run(language, func(t *testing.T) {
 			actual := runConnectionNativeOwnerStartup(t, "http", true, language)
-			total := 0
-			for _, count := range actual {
-				total += count
-			}
-			if total != 12 || baseline != nil && !maps.Equal(baseline, actual) {
-				t.Fatalf("native provider changed the cold control budget: got %v, want twelve calls matching both SDKs", actual)
+			assertFixtureColdBudget(t, actual)
+			if baseline != nil && !maps.Equal(baseline, actual) {
+				t.Fatalf("native provider changed the exact cold control budget between SDKs: got %v, want %v", actual, baseline)
 			}
 			baseline = actual
 		})
@@ -149,42 +147,52 @@ type connectorConnectionFixture struct {
 	Stop     func()
 }
 
-func readSDKSelection(t *testing.T, directory, service string) (connectorruntime.SDKOwner, connectorruntime.Connection) {
-	t.Helper()
-	files, err := filepath.Glob(filepath.Join(directory, "tnl-sdk-*", "registry.json"))
-	if err != nil || len(files) != 1 {
-		t.Fatal("SDK did not create exactly one registry", files, err)
-	}
-	return readSDKRegistry(t, files[0], service)
+// saved authority evidence is private to this fixture. only the canonical
+// session is encoded on the wire; source execution and native intent are not.
+type fixtureVisitorSession struct {
+	authorityv1.EnvironmentVisitorSession
+	public        ed25519.PublicKey
+	execution     oidc.WorkloadExecution
+	project       string
+	environment   string
+	permission    string
+	machine       string
+	nonce         string
+	services      map[string]string
+	renewedAt     time.Time
+	permissionEnd time.Time
+	revoked       bool
 }
 
-func readSDKRegistry(t *testing.T, file, service string) (connectorruntime.SDKOwner, connectorruntime.Connection) {
+func (s *fixtureVisitorSession) current(now time.Time) bool {
+	return s != nil && s.Id != "" && !s.revoked && s.permissionEnd.After(now) && s.LeaseExpiresAt.After(now) && connectorworkload.SessionDeadline(s.EnvironmentVisitorSession).After(now)
+}
+
+func readSDKSelection(t *testing.T, directory, service string) (connectorruntime.SDKOwner, connectorruntime.Connection) {
 	t.Helper()
-	data, err := os.ReadFile(file)
+	files, err := filepath.Glob(filepath.Join(directory, "tnl-connections-*", "handle.json"))
+	if err != nil || len(files) != 1 {
+		t.Fatal("SDK did not create exactly one native owner handle", err)
+	}
+	return readSDKOwner(t, files[0], service)
+}
+
+func readSDKOwner(t *testing.T, file, service string) (connectorruntime.SDKOwner, connectorruntime.Connection) {
+	t.Helper()
+	handle, err := connectorruntime.ReadHandle(file)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var registry struct {
-		Owners map[string]struct {
-			Owner connectorruntime.SDKOwner `json:"owner"`
-		} `json:"owners"`
+	request := connectorruntime.Request{Schema: 1, Directory: handle.Directory, ConfigDigest: handle.ConfigDigest, Service: service}
+	var state connectorruntime.Status
+	if err := connectorruntime.Call(t.Context(), file, "status", request, &state); err != nil || state.ConnectionHandle != file {
+		t.Fatal("SDK native owner status did not match its capability", err)
 	}
-	if err := json.Unmarshal(data, &registry); err != nil || len(registry.Owners) != 1 {
-		t.Fatal("SDK did not select exactly one owner", err)
+	var prepared connectorruntime.Prepared
+	if err := connectorruntime.Call(t.Context(), file, "prepared", request, &prepared); err != nil {
+		t.Fatal(err)
 	}
-	for _, record := range registry.Owners {
-		handle, err := connectorruntime.ReadHandle(record.Owner.ConnectionHandle)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var prepared connectorruntime.Prepared
-		if err := connectorruntime.Call(t.Context(), record.Owner.ConnectionHandle, "prepared", connectorruntime.Request{Schema: 1, Directory: handle.Directory, ConfigDigest: handle.ConfigDigest, Service: service}, &prepared); err != nil {
-			t.Fatal(err)
-		}
-		return record.Owner, prepared.Connection
-	}
-	t.Fatal("missing native SDK owner")
-	return connectorruntime.SDKOwner{}, connectorruntime.Connection{}
+	return state.SDKOwner(), prepared.Connection
 }
 
 func runConnectionNativeOwner(t *testing.T, protocol string, public bool, qualify ...func(connectorConnectionFixture)) {
@@ -296,6 +304,11 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 	port, _ := strconv.Atoi(portString)
 	providerAddress := application.Listener.Addr().String()
 	team, _ := opaqueid.New(opaqueid.TeamPrefix)
+	environmentID, _ := opaqueid.New(opaqueid.EnvironmentPrefix)
+	permissionID, _ := opaqueid.New("mwp_")
+	machineID, _ := opaqueid.New("mci_")
+	const projectKey = "connector-fixture"
+	preparePath := "/v1/projects/" + projectKey + "/environments/" + environmentID + "/visitors/prepare"
 	service, _ := opaqueid.New(opaqueid.ServicePrefix)
 	trustRevision := int64(1)
 	sessionID, _ := opaqueid.New("wls_")
@@ -311,24 +324,19 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 	renewed := make(chan struct{})
 	var renewedOnce sync.Once
 	var certificateRequests atomic.Int64
-	type workloadSession struct {
-		authorityv1.WorkloadSession
-		public  ed25519.PublicKey
-		revoked bool
-	}
-	sessions := map[string]*workloadSession{}
+	sessions := map[string]*fixtureVisitorSession{}
+	nonces := map[string]*fixtureVisitorSession{}
 	var exchangeAttempts atomic.Int32
-	var isolatedSDKContexts atomic.Bool
 	var denySDKExchange, blockSDKExchange atomic.Bool
 	var blockSDKPrepare atomic.Bool
-	isolatedSDKContexts.Store(startup == "python-timeout" || startup == "python-startup-timeout")
 	blockSDKPrepare.Store(startup == "python-timeout")
 	blockSDKExchange.Store(startup == "python-startup-timeout")
 	var deniedSDKExchanges atomic.Int32
 	startupEntered, startupRelease := make(chan struct{}, 1), make(chan struct{})
-	ownerKeys := map[string]*workloadSession{}
+	ownerKeys := map[string]*fixtureVisitorSession{}
 	var authorityMu sync.Mutex
 	controlCalls := map[string]int{}
+	var actionProviderDenials []actionProviderDenial
 	googleConfig := strings.HasPrefix(startup, "config-google-")
 	var issuer *githubtest.Issuer
 	if googleConfig {
@@ -339,17 +347,12 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 	var verifyAssertion func(context.Context, string) (oidc.WorkloadExecution, error)
 	var providerAssertion, providerAudience string
 	var peerAssertion string
-	bindingFor := func(assertion string) string {
-		if peerAssertion != "" && assertion == peerAssertion {
-			return strings.Repeat("c", 64)
-		}
-		return strings.Repeat("b", 64)
-	}
 	var providerCalls atomic.Int32
 	var redirectedProviderCalls atomic.Int32
 	providerCanceled := make(chan struct{}, 1)
 	var proofMu sync.Mutex
 	var actionProofs []string
+	var initialActionAssertion string
 	privateActionProofs := func() []string {
 		proofMu.Lock()
 		defer proofMu.Unlock()
@@ -380,6 +383,16 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 			if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer action-private-runtime-bearer" || r.URL.Query().Get("audience") != providerAudience || r.URL.Query().Get("keep") != "yes" {
 				t.Error("Action refresh used the wrong runtime source or selected audience")
 				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			// native startup acquires the finite original proof from the same job
+			// source. failure modes apply only to its later background refresh.
+			if sequence == 1 {
+				proofMu.Lock()
+				proof := initialActionAssertion
+				proofMu.Unlock()
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]string{"value": proof})
 				return
 			}
 			switch startup {
@@ -428,7 +441,7 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
-		blockedExchange := r.URL.Path == "/v1/workload-sessions/exchange" && blockSDKExchange.Load()
+		blockedExchange := r.URL.Path == preparePath && blockSDKExchange.Load()
 		blockedPrepare := strings.HasSuffix(r.URL.Path, "/authorization") && blockSDKPrepare.Load()
 		if blockedExchange || blockedPrepare {
 			select {
@@ -457,90 +470,102 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 			_ = json.NewEncoder(w).Encode(map[string]string{"value": providerAssertion})
 			return
 		}
-		path := strings.ReplaceAll(strings.ReplaceAll(r.URL.Path, sessionID, "{session}"), service, "{service}")
+		path := strings.NewReplacer(sessionID, "{session}", service, "{service}", environmentID, "{environment}").Replace(r.URL.Path)
 		controlCalls[r.Method+" "+path]++
 		current := sessions[strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")]
 		if current == nil {
-			current = &workloadSession{}
+			current = &fixtureVisitorSession{}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case r.URL.Path == "/v1/workload-sessions/identity":
-			var input authorityv1.WorkloadIdentityRequest
-			if json.NewDecoder(r.Body).Decode(&input) != nil {
-				w.WriteHeader(400)
-				return
-			}
-			claims, err := verifyAssertion(r.Context(), input.Assertion)
-			if err != nil {
-				w.WriteHeader(403)
-				return
-			}
-			_ = json.NewEncoder(w).Encode(authorityv1.WorkloadIdentity{Binding: bindingFor(input.Assertion), Services: []string{serviceName}, AssertionExpiresAt: time.Unix(claims.ExpiresAt, 0)})
-		case r.URL.Path == "/v1/workload-sessions/"+current.Id+"/assertions":
-			var input authorityv1.WorkloadAssertion
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/environment-visitor-sessions/"+current.Id+"/assertions":
+			var input authorityv1.EnvironmentVisitorAssertion
 			if json.NewDecoder(r.Body).Decode(&input) != nil {
 				w.WriteHeader(400)
 				return
 			}
 			claims, err := verifyAssertion(r.Context(), input.Assertion)
 			signature, decodeErr := base64.RawURLEncoding.DecodeString(input.Signature)
-			if err != nil || decodeErr != nil || current.revoked || !ed25519.Verify(current.public, workloadproof.Attach(current.Id, claims.AssertionDigest), signature) {
+			if err != nil || decodeErr != nil || current.Id == "" || current.revoked || !connectorworkload.SessionDeadline(current.EnvironmentVisitorSession).After(time.Now()) || !current.LeaseExpiresAt.After(time.Now()) || !ed25519.Verify(current.public, machineproof.EnvironmentVisitorPossession(current.project, current.permission, current.environment, "attach", base64.RawURLEncoding.EncodeToString(current.public), current.Id, current.services, claims.AssertionDigest), signature) {
 				w.WriteHeader(403)
 				return
 			}
 			// attachment may extend proof time, never replace the original job.
-			g := claims.GitHub
-			if current.Provider == controlv1.WorkloadGitHub && (current.Github == nil || g == nil || g.RepositoryID != current.Github.RepositoryId || g.RepositoryOwnerID != current.Github.RepositoryOwnerId || g.RunID != current.Github.RunId || g.RunAttempt != current.Github.RunAttempt || g.CheckRunID != current.Github.CheckRunId) {
+			if current.execution.IdentityDigest() != claims.IdentityDigest() {
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}
-			current.AssertionExpiresAt = new(time.Unix(claims.ExpiresAt, 0))
-			if current.AssertionExpiresAt.After(current.IdentityExpiresAt) {
-				current.IdentityExpiresAt = *current.AssertionExpiresAt
-				current.LeaseExpiresAt = minTimeForFixture(current.RenewAfter.Add(time.Minute), connectorworkload.SessionDeadline(current.WorkloadSession))
+			accepted := minTimeForFixture(time.Unix(claims.ExpiresAt, 0), current.permissionEnd)
+			if accepted.After(current.IdentityExpiresAt) {
+				current.IdentityExpiresAt = accepted
+				lease := minTimeForFixture(current.renewedAt.Add(90*time.Second), connectorworkload.SessionDeadline(current.EnvironmentVisitorSession))
+				if lease.After(current.LeaseExpiresAt) {
+					current.LeaseExpiresAt = lease
+				}
 				select {
 				case refreshedProof <- struct{}{}:
 				default:
 				}
 			}
-			_ = json.NewEncoder(w).Encode(current)
-		case strings.HasSuffix(r.URL.Path, "/authorization"):
-			if current.Id == "" || current.revoked {
+			_ = json.NewEncoder(w).Encode(current.EnvironmentVisitorSession)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/workload/services/"+service+"/authorization":
+			if current.Id == "" || current.revoked || !current.LeaseExpiresAt.After(time.Now()) || !connectorworkload.SessionDeadline(current.EnvironmentVisitorSession).After(time.Now()) {
 				w.WriteHeader(403)
 				return
 			}
 			_ = json.NewEncoder(w).Encode(controlv1.WorkloadServiceAuthorization{Subject: current.Subject, ServiceId: service, ValidUntil: current.LeaseExpiresAt, PolicyRevision: 1})
-		case r.URL.Path == "/v1/workload-sessions/exchange":
+		case r.Method == http.MethodPost && r.URL.Path == preparePath:
 			if denySDKExchange.Load() {
 				deniedSDKExchanges.Add(1)
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}
-			var exchange authorityv1.WorkloadExchange
+			var exchange authorityv1.EnvironmentVisitorPrepareRequest
 			if json.NewDecoder(r.Body).Decode(&exchange) != nil {
 				w.WriteHeader(400)
 				return
 			}
 			claims, err := verifyAssertion(r.Context(), exchange.Assertion)
 			if err != nil {
-				w.WriteHeader(http.StatusUnauthorized)
+				status, code := http.StatusForbidden, authorityv1.Forbidden
+				providerMismatch := errors.Is(err, oidc.ErrUnauthenticated)
+				if !providerMismatch {
+					status, code = http.StatusServiceUnavailable, authorityv1.Unavailable
+				}
+				if startup == "action-wrong-provider" {
+					actionProviderDenials = append(actionProviderDenials, actionProviderDenial{status: status, request: exchange, providerMismatch: providerMismatch})
+				}
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(status)
+				_ = json.NewEncoder(w).Encode(authorityv1.Problem{Code: code, Status: status, Type: "about:blank", Title: "saved provider policy denied this proof", Detail: "saved provider policy denied this proof", RequestId: "fixture-policy-denial"})
 				return
 			}
-			public, err := base64.RawURLEncoding.DecodeString(exchange.PublicKey)
-			if err != nil {
+			publicKey, err := base64.RawURLEncoding.Strict().DecodeString(exchange.PublicKey)
+			signature, signatureErr := base64.RawURLEncoding.Strict().DecodeString(exchange.Signature)
+			services := map[string]string{}
+			for name, protocol := range exchange.Services {
+				services[name] = string(protocol)
+			}
+			if err != nil || signatureErr != nil || len(publicKey) != ed25519.PublicKeySize || !workloadproof.ValidNonce(exchange.Nonce) {
 				w.WriteHeader(400)
 				return
 			}
-			current = ownerKeys[exchange.PublicKey]
+			if exchange.PermissionId != permissionID || !maps.Equal(services, map[string]string{serviceName: protocol}) || !ed25519.Verify(publicKey, machineproof.EnvironmentVisitorPossession(projectKey, permissionID, environmentID, "prepare", exchange.PublicKey, exchange.Nonce, services, sha256.Sum256([]byte(exchange.Assertion))), signature) {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			current = nonces[exchange.Nonce]
+			if current != nil && (!bytes.Equal(current.public, publicKey) || current.permission != exchange.PermissionId || current.environment != environmentID || !maps.Equal(current.services, services) || current.execution.IdentityDigest() != claims.IdentityDigest()) {
+				w.WriteHeader(http.StatusConflict)
+				return
+			}
+			if current != nil && (current.revoked || !current.LeaseExpiresAt.After(time.Now()) || !connectorworkload.SessionDeadline(current.EnvironmentVisitorSession).After(time.Now())) {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
 			if current == nil {
-				if len(ownerKeys) > 0 && !isolatedSDKContexts.Load() {
-					t.Error("exchange retried with another owner key")
-					w.WriteHeader(403)
-					return
-				}
-				// isolation begins only after the original lost-reply retry and
-				// warm budget checks. each new context must supply a fresh key.
+				// each independent nonce receives its own session. original-nonce
+				// replay above still requires the exact native key and intent.
 				id := sessionID
 				if len(ownerKeys) > 0 {
 					id, err = opaqueid.New("wls_")
@@ -557,19 +582,14 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 					w.WriteHeader(500)
 					return
 				}
-				var github *authorityv1.WorkloadGitHubExecution
-				if g := claims.GitHub; g != nil {
-					github = &authorityv1.WorkloadGitHubExecution{RepositoryId: g.RepositoryID, RepositoryOwnerId: g.RepositoryOwnerID, RunId: g.RunID, RunAttempt: g.RunAttempt, CheckRunId: g.CheckRunID}
-				}
-				current = &workloadSession{public: ed25519.PublicKey(public), WorkloadSession: authorityv1.WorkloadSession{Id: id, TeamId: team, ProjectKey: exchange.ProjectKey, Workload: exchange.Workload, Provider: controlv1.WorkloadGitHub, Github: github, Credential: "wlc_" + base64.RawURLEncoding.EncodeToString(credential), ExpiresAt: new(time.Now().Add(time.Hour)), IdentityExpiresAt: time.Unix(claims.ExpiresAt, 0), LeaseExpiresAt: time.Now().Add(90 * time.Second), RenewAfter: time.Now().Add(30 * time.Second), ServiceIds: []string{service}, Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, Binding: bindingFor(exchange.Assertion)}}
-				if googleConfig {
-					current.Provider, current.Github = controlv1.WorkloadGoogle, nil
-				}
+				now := time.Now()
+				current = &fixtureVisitorSession{public: ed25519.PublicKey(publicKey), execution: claims, project: projectKey, environment: environmentID, permission: permissionID, machine: machineID, nonce: exchange.Nonce, services: maps.Clone(services), renewedAt: now, permissionEnd: now.Add(time.Hour), EnvironmentVisitorSession: authorityv1.EnvironmentVisitorSession{Id: id, Credential: "wlc_" + base64.RawURLEncoding.EncodeToString(credential), ExpiresAt: new(now.Add(time.Hour)), IdentityExpiresAt: time.Unix(claims.ExpiresAt, 0), LeaseExpiresAt: now.Add(90 * time.Second), RenewAfter: now.Add(30 * time.Second), ServiceIds: []string{service}, Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}}}
 				ownerKeys[exchange.PublicKey] = current
+				nonces[exchange.Nonce] = current
 				if strings.HasSuffix(startup, "-refresh") {
 					current.ExpiresAt = nil
 				}
-				current.LeaseExpiresAt = minTimeForFixture(current.LeaseExpiresAt, connectorworkload.SessionDeadline(current.WorkloadSession))
+				current.LeaseExpiresAt = minTimeForFixture(current.LeaseExpiresAt, connectorworkload.SessionDeadline(current.EnvironmentVisitorSession))
 				sessions[current.Credential] = current
 			}
 			if exchangeAttempts.Add(1) == 1 {
@@ -581,13 +601,13 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 				_ = connection.Close()
 				return
 			}
-			_ = json.NewEncoder(w).Encode(current)
-		case r.URL.Path == "/v1/workload-sessions/"+current.Id+"/renew":
-			if current.revoked {
+			_ = json.NewEncoder(w).Encode(authorityv1.EnvironmentVisitorPreparation{Environment: controlv1.EnvironmentReference{Server: providerAudience, ProjectKey: projectKey, EnvironmentId: environmentID}, AppliedDefinitionRevision: 1, MutationRevision: 1, Session: current.EnvironmentVisitorSession, Services: map[string]authorityv1.EnvironmentVisitorService{serviceName: {ServiceId: service, Protocol: controlv1.ServiceProtocol(protocol), Endpoint: controlv1.ServiceEndpoint{Hostname: managedHostname, Port: port, Public: public}}}})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/environment-visitor-sessions/"+current.Id+"/renew":
+			if current.Id == "" || current.revoked || !current.LeaseExpiresAt.After(time.Now()) || !connectorworkload.SessionDeadline(current.EnvironmentVisitorSession).After(time.Now()) {
 				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}
-			var renewal authorityv1.WorkloadRenewal
+			var renewal authorityv1.EnvironmentVisitorRenewal
 			if json.NewDecoder(r.Body).Decode(&renewal) != nil {
 				w.WriteHeader(http.StatusBadRequest)
 				return
@@ -599,23 +619,32 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 			}
 			if renewal.Sequence != current.RenewalSequence {
 				current.RenewalSequence = renewal.Sequence
-				current.LeaseExpiresAt = minTimeForFixture(time.Now().Add(90*time.Second), connectorworkload.SessionDeadline(current.WorkloadSession))
+				current.renewedAt = time.Now()
+				current.LeaseExpiresAt = minTimeForFixture(current.renewedAt.Add(90*time.Second), connectorworkload.SessionDeadline(current.EnvironmentVisitorSession))
 				current.RenewAfter = time.Now().Add(30 * time.Second)
 			}
-			_ = json.NewEncoder(w).Encode(current)
+			_ = json.NewEncoder(w).Encode(current.EnvironmentVisitorSession)
 		case r.URL.Path == "/v1/workload/services":
+			if current.Id == "" || current.revoked || !current.LeaseExpiresAt.After(time.Now()) || !connectorworkload.SessionDeadline(current.EnvironmentVisitorSession).After(time.Now()) {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"services": []any{map[string]any{"id": service, "service": serviceName, "protocol": protocol, "endpoint": map[string]any{"hostname": managedHostname, "port": port, "public": public}}}})
-		case strings.HasSuffix(r.URL.Path, "/run"):
-			_ = json.NewEncoder(w).Encode(map[string]any{"service_id": service, "service_run_id": serviceRun, "run_number": 1, "protocol": protocol, "trust_revision": trustRevision, "expires_at": time.Now().Add(time.Minute), "subject": current.Subject, "endpoint": map[string]any{"hostname": managedHostname, "port": port, "public": public}, "pair_ready": native.Ready})
+		case r.URL.Path == "/v1/workload/services/"+service+"/run":
+			if current.Id == "" || current.revoked || !current.LeaseExpiresAt.After(time.Now()) || !connectorworkload.SessionDeadline(current.EnvironmentVisitorSession).After(time.Now()) {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"service_id": service, "service_run_id": serviceRun, "run_number": 1, "protocol": protocol, "trust_revision": trustRevision, "expires_at": minTimeForFixture(time.Now().Add(time.Minute), current.LeaseExpiresAt, connectorworkload.SessionDeadline(current.EnvironmentVisitorSession)), "subject": current.Subject, "endpoint": map[string]any{"hostname": managedHostname, "port": port, "public": public}, "pair_ready": native.Ready})
 		case strings.Contains(r.URL.Path, "/connector-peer-pairs"):
 			var requested controlv1.ConnectorPeerPairRequest
 			var source controlv1.VisitorTokenWorkloadSource
-			if json.NewDecoder(r.Body).Decode(&requested) != nil || json.Unmarshal(requested.Source, &source) != nil {
+			if json.NewDecoder(r.Body).Decode(&requested) != nil || json.Unmarshal(requested.Source, &source) != nil || source.Kind != controlv1.VisitorTokenWorkload {
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}
 			current = sessions[source.Credential]
-			if current == nil || current.revoked || requested.Subject.WorkloadSessionId == nil || *requested.Subject.WorkloadSessionId != current.Id {
+			if !current.current(time.Now()) || requested.Subject.WorkloadSessionId == nil || *requested.Subject.WorkloadSessionId != current.Id || requested.ServiceRunId != serviceRun || requested.RunNumber != 1 {
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}
@@ -641,12 +670,12 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 		case r.URL.Path == "/v1/visitor-tokens":
 			var requested controlv1.VisitorTokenRequest
 			var source controlv1.VisitorTokenWorkloadSource
-			if json.NewDecoder(r.Body).Decode(&requested) != nil || json.Unmarshal(requested.Source, &source) != nil || requested.Resource.Kind != "service" || requested.Resource.Id != service {
+			if json.NewDecoder(r.Body).Decode(&requested) != nil || json.Unmarshal(requested.Source, &source) != nil || source.Kind != controlv1.VisitorTokenWorkload || requested.Resource.Kind != "service" || requested.Resource.Id != service {
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}
 			current = sessions[source.Credential]
-			if current == nil || current.revoked {
+			if !current.current(time.Now()) {
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}
@@ -654,11 +683,9 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 		case strings.HasSuffix(r.URL.Path, "/client-certificate"):
 			certificateRequests.Add(1)
 			w.WriteHeader(403)
-		case r.Method == "DELETE":
-			if strings.HasPrefix(r.URL.Path, "/v1/workload-sessions/") {
-				current.revoked = true
-				revoked.Store(true)
-			}
+		case r.Method == http.MethodDelete && current.Id != "" && r.URL.Path == "/v1/environment-visitor-sessions/"+current.Id:
+			current.revoked = true
+			revoked.Store(true)
 			w.WriteHeader(204)
 		default:
 			t.Error("unexpected connector owner fixture request", r.URL.Path)
@@ -677,30 +704,49 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 		authority.Close()
 	}()
 	server := strings.Replace(authority.URL, "127.0.0.1", "localhost", 1)
-	verifier, err := oidc.NewGitHubWorkloadVerifier(server, issuer.Client)
+	providerAudience = server
+	verifier, err := oidc.NewWorkloadVerifier(server, issuer.Client)
 	if err != nil {
 		t.Fatal(err)
 	}
-	verifyAssertion = func(ctx context.Context, raw string) (oidc.WorkloadExecution, error) {
-		claims, err := verifier.Verify(ctx, raw)
-		return oidc.WorkloadExecution{GitHub: &claims, ExpiresAt: claims.ExpiresAt, AssertionDigest: claims.AssertionDigest}, err
-	}
+	trust := oidc.WorkloadTrust{Provider: "github", Issuer: oidc.GitHubIssuer, JWKSURL: oidc.GitHubIssuer + "/.well-known/jwks", Audience: server, Events: []string{"push"}, Claims: map[string]string{"repository": "example/repository", "repository_id": "12345", "repository_owner_id": "6789", "workflow_ref": "example/repository/.github/workflows/test.yml@refs/heads/main", "ref": "refs/heads/main"}}
 	if googleConfig {
-		verifier, err := oidc.NewWorkloadVerifier(server, issuer.Client)
-		if err != nil {
-			t.Fatal(err)
+		trust = oidc.WorkloadTrust{Provider: "google", Issuer: config.GoogleWorkloadIssuer, JWKSURL: config.GoogleWorkloadJWKS, Audience: server, Claims: map[string]string{"sub": "112010400000000710080"}}
+	} else if startup == "action-wrong-provider" {
+		trust = oidc.WorkloadTrust{Provider: "fly", Issuer: "https://oidc.fly.io/example", JWKSURL: "https://oidc.fly.io/example/.well-known/jwks", Audience: server, Claims: map[string]string{"org_name": "example", "org_id": "123", "app_name": "fixture", "app_id": "456"}}
+	}
+	verifyAssertion = func(ctx context.Context, raw string) (oidc.WorkloadExecution, error) {
+		return verifier.Verify(ctx, trust, raw)
+	}
+	assertOriginalPreparation := func() {
+		t.Helper()
+		authorityMu.Lock()
+		defer authorityMu.Unlock()
+		if exchangeAttempts.Load() != 2 || len(sessions) != 1 || len(nonces) != 1 || len(ownerKeys) != 1 {
+			t.Fatal("lost first preparation was not recovered with the original session, native key and nonce")
 		}
-		trust := oidc.WorkloadTrust{Provider: "google", Issuer: config.GoogleWorkloadIssuer, JWKSURL: config.GoogleWorkloadJWKS, Audience: server, Claims: map[string]string{"sub": "112010400000000710080"}}
-		verifyAssertion = func(ctx context.Context, raw string) (oidc.WorkloadExecution, error) {
-			return verifier.Verify(ctx, trust, raw)
+		for _, session := range sessions {
+			if session.Id != sessionID || nonces[session.nonce] != session || ownerKeys[base64.RawURLEncoding.EncodeToString(session.public)] != session || session.machine != machineID || session.permission != permissionID || session.environment != environmentID {
+				t.Fatal("lost first preparation recovery changed its exact saved authority")
+			}
 		}
+	}
+	selection := connectorruntime.EnvironmentSelection{Environment: controlv1.EnvironmentReference{Server: server, ProjectKey: projectKey, EnvironmentId: environmentID}, PermissionID: permissionID, Services: map[string]string{serviceName: protocol}}
+	identitySource := authorityv1.IdentitySourceSelection{Kind: "oidc", MachineId: machineID}
+	fixtureStart := connectorruntime.EnvironmentStart{Schema: 1, Selection: selection, Source: identitySource}
+	fixtureInput, err := json.Marshal(fixtureStart)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "environment.json"), fixtureInput, 0o600); err != nil {
+		t.Fatal(err)
 	}
 	target := "http://unused.invalid:3000"
-	targetDefinition := map[string]any{"type": "address", "address": target}
+	targetDefinition := map[string]any{"address": target}
 	if protocol == "kubernetes" {
-		targetDefinition = map[string]any{"type": "eks", "cluster": "fixture", "region": "us-east-1"}
+		targetDefinition = map[string]any{"discovery": map[string]any{"type": "eks", "cluster": "fixture", "region": "us-east-1"}}
 	}
-	workloadPolicy := map[string]any{"github": map[string]any{"workflow": ".github/workflows/test.yml", "branch": "main", "events": []string{"push"}}, "services": []string{serviceName}}
+	workloadPolicy := map[string]any{"github": map[string]any{"workflow": ".github/workflows/test.yml", "branch": "main", "events": []string{"push"}}, "visit": []string{serviceName}}
 	if startup == "borrowed-refresh" {
 		workloadPolicy["token"] = map[string]any{"file": "assertion"}
 	}
@@ -713,9 +759,10 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 			workloadPolicy["token"] = map[string]any{"env": "FIXTURE_GOOGLE_ASSERTION"}
 		}
 	}
-	configuration := map[string]any{"version": 1, "tnl": map[string]any{"server": server, "team": team, "publisher_groups": map[string]any{"remote": map[string]any{"public": public}}, "services": map[string]any{serviceName: map[string]any{"publisher_group": "remote", "protocol": protocol, "target": targetDefinition}}, "workloads": map[string]any{"test": workloadPolicy}}}
+	environment := map[string]any{"public": public, "targets": map[string]any{serviceName: targetDefinition}, "workloads": map[string]any{"test": workloadPolicy}}
+	configuration := map[string]any{"version": 1, "tnl": map[string]any{"server": server, "team": team, "services": map[string]any{serviceName: map[string]any{"protocol": protocol}}, "environments": map[string]any{"remote": environment}}}
 	if startup == "action-wrong-provider" {
-		configuration["tnl"].(map[string]any)["workloads"] = map[string]any{"test": map[string]any{"fly": map[string]any{"app": "fixture", "org": "example"}, "services": []string{serviceName}}}
+		environment["workloads"] = map[string]any{"test": map[string]any{"fly": map[string]any{"app": "fixture", "org": "example"}, "visit": []string{serviceName}}}
 	}
 	data, _ := json.Marshal(configuration)
 	if err := os.WriteFile(filepath.Join(root, "tnl.json"), data, 0o600); err != nil {
@@ -823,9 +870,6 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 		return output.Bytes()
 	}
 	var scope connectorruntime.Context
-	if err := json.Unmarshal(call(nil, "context", "--directory", root, "--workload", "test"), &scope); err != nil {
-		t.Fatal(err)
-	}
 	initialClaims := githubtest.Claims(server, time.Now())
 	if googleConfig {
 		initialClaims = map[string]any{"iss": config.GoogleWorkloadIssuer, "aud": server, "sub": "112010400000000710080", "iat": time.Now().Unix(), "exp": time.Now().Add(time.Hour).Unix()}
@@ -838,7 +882,7 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 	if strings.HasPrefix(startup, "action-") {
 		initialProofExpiry = time.Now().Add(15 * time.Second).Truncate(time.Second)
 		initialClaims["exp"] = initialProofExpiry.Unix()
-		providerAudience = scope.Audience
+		providerAudience = server
 	}
 	assertion := issuer.Sign(t, initialClaims)
 	if startup == "python-timeout" || startup == "python-startup-timeout" {
@@ -854,6 +898,7 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 	if strings.HasPrefix(startup, "action-") {
 		proofMu.Lock()
 		actionProofs = append(actionProofs, assertion)
+		initialActionAssertion = assertion
 		proofMu.Unlock()
 	}
 	if googleConfig {
@@ -866,24 +911,6 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 		}
 	}
 	if strings.HasPrefix(startup, "javascript") || strings.HasPrefix(startup, "python") {
-		manifest := workloadmanifest.Manifest{Schema: 1, Server: scope.Server, Team: scope.TeamID, ProjectKey: scope.ProjectKey, SourceFingerprint: scope.SourceID, ProjectLabel: scope.ProjectLabel,
-			Workloads: map[string]workloadmanifest.Workload{"test": {Provider: "github", Services: []string{serviceName}, MaxDurationSeconds: 3600, Acquisition: workloadmanifest.Acquisition{Method: "github-actions", Audience: scope.Server}}}, Services: map[string]string{serviceName: protocol}}
-		if strings.HasSuffix(startup, "-refresh") {
-			policy := manifest.Workloads["test"]
-			policy.MaxDurationSeconds = 0
-			manifest.Workloads["test"] = policy
-		}
-		if err := manifest.Validate(); err != nil {
-			t.Fatal(err)
-		}
-		generated := filepath.Join(root, ".tnl", "generated")
-		if err := os.MkdirAll(generated, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		data, _ := json.Marshal(manifest)
-		if err := os.WriteFile(filepath.Join(generated, "workloads.json"), data, 0o600); err != nil {
-			t.Fatal(err)
-		}
 		if err := os.WriteFile(filepath.Join(root, "assertion"), []byte(assertion), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -930,7 +957,7 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 		}
 		if strings.HasSuffix(startup, "-provider") {
 			authorityMu.Lock()
-			providerAssertion, providerAudience = assertion, scope.Server
+			providerAssertion, providerAudience = assertion, server
 			authorityMu.Unlock()
 			child.Env = append(child.Env, "GITHUB_ACTIONS=true", "ACTIONS_ID_TOKEN_REQUEST_URL="+server+"/sdk-provider-token?audience=wrong", "ACTIONS_ID_TOKEN_REQUEST_TOKEN=provider-cold")
 		}
@@ -979,6 +1006,7 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 		if !lines.Scan() || lines.Text() != "cold" {
 			t.Fatal("SDK did not complete cold selection")
 		}
+		assertOriginalPreparation()
 		owner, first := readSDKSelection(t, root, serviceName)
 		initialHandle, err := connectorruntime.ReadHandle(owner.ConnectionHandle)
 		if err != nil {
@@ -1047,19 +1075,18 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 			t.Log("quiet native owner reread a rotating file; original SDK stream crossed proof expiry without a request callback, owner replacement or replay")
 		}
 		if startup == "javascript-copies" {
-			isolatedSDKContexts.Store(true)
 			_, _ = io.WriteString(input, "isolate\n")
 			if !lines.Scan() || lines.Text() != "isolated" {
 				t.Fatal("SDK did not preserve project, state, and server isolation")
 			}
-			registries, err := filepath.Glob(filepath.Join(root, "tnl-sdk-*", "registry.json"))
-			if err != nil || len(registries) != 4 {
-				t.Fatal("expected four isolated native registries", registries, err)
+			handles, err := filepath.Glob(filepath.Join(root, "tnl-connections-*", "handle.json"))
+			if err != nil || len(handles) != 4 {
+				t.Fatal("expected four isolated native owners", err)
 			}
 			transports := map[string]bool{}
 			ports := map[int]bool{}
-			for _, registry := range registries {
-				isolatedOwner, snapshot := readSDKRegistry(t, registry, serviceName)
+			for _, handle := range handles {
+				isolatedOwner, snapshot := readSDKOwner(t, handle, serviceName)
 				if transports[snapshot.TransportID] || ports[snapshot.Port] {
 					t.Fatal("isolated contexts shared a transport or listener")
 				}
@@ -1076,7 +1103,6 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 			}
 		}
 		if startup == "python-lifecycle" {
-			isolatedSDKContexts.Store(true)
 			phase := func(send, want string) {
 				t.Helper()
 				_, _ = io.WriteString(input, send+"\n")
@@ -1112,41 +1138,112 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 		t.Logf("%s SDK decoded cold and ten warm native responses with stable transport and expiry; cold=%v warm=0", startup, cold)
 		return cold
 	}
-	startRequest := connectorruntime.StartRequest{Schema: 1, Context: scope, Assertion: assertion}
+	startRequest := fixtureStart
+	startRequest.Acquisition = &connectorworkload.Acquisition{Method: "token-env", TokenEnv: "FIXTURE_INITIAL_ASSERTION"}
+	startRequest.Environment = &connectorruntime.SDKEnvironment{TokenEnv: "FIXTURE_INITIAL_ASSERTION", TokenValue: assertion}
 	if startup == "borrowed-refresh" {
 		file := filepath.Join(root, "assertion")
 		if err := os.WriteFile(file, []byte(assertion), 0600); err != nil {
 			t.Fatal(err)
 		}
 		// exercise normal CLI acquisition and native refresh-source selection.
-		startRequest.Assertion = ""
+		startRequest.Acquisition = &connectorworkload.Acquisition{Method: "token-file", TokenFile: file}
+		startRequest.Environment = nil
 	}
 	if googleConfig && startup != "config-google-caller-assertion" {
 		// leave the assertion empty to exercise config acquisition, not the SDK
 		// manifest path or the caller-supplied assertion fast path.
-		startRequest.Assertion = ""
+		if startup == "config-google-token-file" {
+			startRequest.Acquisition = &connectorworkload.Acquisition{Method: "token-file", TokenFile: filepath.Join(root, "assertion")}
+			startRequest.Environment = nil
+		} else {
+			startRequest.Acquisition = &connectorworkload.Acquisition{Method: "token-env", TokenEnv: "FIXTURE_GOOGLE_ASSERTION"}
+			startRequest.Environment = &connectorruntime.SDKEnvironment{TokenEnv: "FIXTURE_GOOGLE_ASSERTION", TokenValue: assertion}
+		}
 	}
 	request, _ := json.Marshal(startRequest)
 	if strings.HasPrefix(startup, "action-") && startup != "action-static" {
-		// proposed action-only private stdin contract. keep runtime credentials
-		// out of workload manifests, ordinary SDK inputs and the owner's env.
-		audience := scope.Audience
+		// this is the defining private job-owned startup source, not a manifest
+		// or later SDK request environment.
+		audience := server
 		if startup == "action-wrong-audience" {
 			audience = "https://wrong.example.test"
 		}
-		request, _ = json.Marshal(map[string]any{"schema": 1, "context": scope, "assertion": assertion, "github_actions_refresh": map[string]string{
-			"audience": audience, "request_url": server + "/action-provider-token?keep=yes&audience=wrong", "request_token": "action-private-runtime-bearer",
-		}})
+		startRequest.Acquisition = &connectorworkload.Acquisition{Method: "github-actions", Audience: server}
+		startRequest.Environment = nil
+		startRequest.GitHubActionsRefresh = &connectorruntime.GitHubActionsRefresh{Audience: audience, RequestURL: server + "/action-provider-token?keep=yes&audience=wrong", RequestToken: "action-private-runtime-bearer"}
+		request, _ = json.Marshal(startRequest)
 	}
 	var state connectorruntime.Status
-	startArgs := []string{"start", "--directory", root, "--workload", "test", "--runner-temp", root}
+	startArgs := []string{"environment-start", "--runner-temp", root}
 	if startup == "action-wrong-audience" || startup == "action-wrong-provider" {
-		rejectMismatchedActionRefresh(t, binary, slices.Clone(env), startArgs, request)
-		authorityMu.Lock()
-		defer authorityMu.Unlock()
-		if len(controlCalls) != 0 || providerCalls.Load() != 0 {
-			t.Fatal("mismatched Action refresh performed acquisition or control work")
+		assertNoAuthority := func(t *testing.T) {
+			t.Helper()
+			authorityMu.Lock()
+			defer authorityMu.Unlock()
+			if len(controlCalls) != 0 || providerCalls.Load() != 0 || len(actionProviderDenials) != 0 || len(sessions) != 0 || len(nonces) != 0 || len(ownerKeys) != 0 || exchangeAttempts.Load() != 0 || visits.Load() != 0 || refreshStreams.Load() != 0 || certificateRequests.Load() != 0 {
+				t.Fatal("private Action source rejection performed acquisition, authority writes or visitor traffic")
+			}
 		}
+		if startup == "action-wrong-audience" {
+			rejectMismatchedActionRefresh(t, binary, slices.Clone(env), startArgs, request, root, privateActionProofs)
+			assertNoAuthority(t)
+			assertRejectedActionHasNoOwner(t, root, port)
+			return nil
+		}
+		if trust.Provider != "fly" || trust.Validate() != nil || startRequest.Source.Kind != "oidc" {
+			t.Fatal("Action provider boundary fixture did not select the genuine saved Fly identity")
+		}
+		githubVerifier, err := oidc.NewGitHubWorkloadVerifier(server, issuer.Client)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if github, err := githubVerifier.Verify(t.Context(), assertion); err != nil || github.RepositoryID != "12345" || github.CheckRunID != "222" {
+			t.Fatal("Action provider-policy fixture did not acquire a valid signed GitHub execution proof", err)
+		}
+		t.Run("native-source-method", func(t *testing.T) {
+			// an explicit native acquisition method is a preflight input, not a
+			// claim about the opaque machine's authority-owned provider policy.
+			mismatch := startRequest
+			mismatch.Acquisition = &connectorworkload.Acquisition{Method: "fly-machine-api", Audience: server}
+			if connectorworkload.ValidateAcquisition(*mismatch.Acquisition) != nil || mismatch.GitHubActionsRefresh == nil {
+				t.Fatal("Action preflight fixture did not combine a valid Fly acquisition method with the explicit GitHub job source")
+			}
+			input, err := json.Marshal(mismatch)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rejectMismatchedActionRefresh(t, binary, slices.Clone(env), startArgs, input, root, privateActionProofs)
+			assertNoAuthority(t)
+			assertRejectedActionHasNoOwner(t, root, port)
+		})
+		if t.Failed() {
+			return nil
+		}
+		t.Run("authority-provider-policy", func(t *testing.T) {
+			// only the explicit method changes. the exact saved Fly machine,
+			// environment and permission remain the same as the preflight case.
+			rejectActionStartup(t, binary, slices.Clone(env), startArgs, request, root, privateActionProofs, "")
+			authorityMu.Lock()
+			calls := maps.Clone(controlCalls)
+			denials := slices.Clone(actionProviderDenials)
+			writes := len(sessions) + len(nonces) + len(ownerKeys)
+			authorityMu.Unlock()
+			if !maps.Equal(calls, map[string]int{"POST /v1/projects/connector-fixture/environments/{environment}/visitors/prepare": 1}) || len(denials) != 1 || providerCalls.Load() != 1 || redirectedProviderCalls.Load() != 0 {
+				t.Fatal("saved Fly policy was not checked by exactly one acquired proof and canonical Prepare")
+			}
+			assertActionProviderDenial(t, denials[0], startRequest, assertion)
+			if writes != 0 || exchangeAttempts.Load() != 0 || revoked.Load() || certificateRequests.Load() != 0 || visits.Load() != 0 || refreshStreams.Load() != 0 {
+				t.Fatal("provider-policy denial created visitor authority, grants or traffic")
+			}
+			select {
+			case <-refreshedProof:
+				t.Fatal("provider-policy denial started background proof refresh")
+			default:
+			}
+			assertRejectedActionHasNoOwner(t, root, port)
+			assertActionSourcePrivate(t, root, privateActionProofs())
+		})
 		return nil
 	}
 	if protocol == "kubernetes" {
@@ -1157,113 +1254,62 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 		startArgs = append(startArgs, "--kube-token-file", path, "--namespace", "runtime-test")
 	}
 	if startup != "caller-prepared" && startup != "borrowed-refresh" && !strings.HasPrefix(startup, "action-") && !googleConfig {
-		// reproduce d0825a78's SDK sequence against the same real native owner,
-		// authority, signed assertion, relay carriers, and TLS preflight. this is
-		// a baseline operation sequence, not a separately built historical SDK.
-		privateRequest := connectorruntime.Request{Schema: 1, Directory: scope.Directory, ConfigDigest: scope.ConfigDigest, Service: serviceName, Assertion: assertion}
-		operation := "prepare"
-		registry := ""
-		defer func() {
-			if registry != "" {
-				call(nil, "sdk-stop", "--registry", registry, "--parent-pid", strconv.Itoa(os.Getpid()))
-			} else if state.ConnectionHandle != "" {
-				call(nil, "stop", "--handle", state.ConnectionHandle)
-			}
-		}()
-		if startup == "baseline-sdk" {
-			call(request, "identity", "--directory", root, "--workload", "test")
-			startArgs = append(startArgs, "--parent-pid", strconv.Itoa(os.Getpid()))
-			if err := json.Unmarshal(call(request, startArgs...), &state); err != nil {
-				t.Fatal(err)
-			}
-			var prepared connectorruntime.Prepared
-			if err := connectorruntime.Call(t.Context(), state.ConnectionHandle, operation, privateRequest, &prepared); err != nil {
-				t.Fatal(err)
-			}
-			if err := connectorruntime.ValidatePrepared(prepared, serviceName); err != nil {
-				t.Fatal(err)
-			}
-		} else {
-			var err error
-			registry, err = connectorruntime.NewDirectory(root)
-			if err != nil {
-				t.Fatal(err)
-			}
-			input, _ := json.Marshal(map[string]any{"schema": 1, "assertion": assertion})
-			var prepared connectorruntime.SDKPrepared
-			if err := json.Unmarshal(call(input, "sdk-prepare", "--directory", root, "--workload", "test", "--registry", registry, "--parent-pid", strconv.Itoa(os.Getpid()), "--selected-service", serviceName), &prepared); err != nil {
-				t.Fatal(err)
-			}
-			state = connectorruntime.Status{ConnectionHandle: prepared.Owner.ConnectionHandle}
-			if err := connectorruntime.ValidatePrepared(prepared.Prepared, serviceName); err != nil {
-				t.Fatal(err)
-			}
-			operation, privateRequest.Workload = "sdk-prepare", "test"
+		// both adapters use the canonical native startup/challenge and the same
+		// private preparation operation as the SDK, never a registry selector.
+		var nativePublic string
+		var stopOwner func()
+		state, nativePublic, stopOwner = startFixtureEnvironment(t, binary, env, fixtureStart, assertion)
+		defer stopOwner()
+		assertOriginalPreparation()
+		first := prepareFixtureEnvironment(t, state, serviceName, nil, startup == "baseline-sdk")
+		if err := connectorruntime.ValidatePrepared(first, serviceName); err != nil {
+			t.Fatal(err)
 		}
 		authorityMu.Lock()
 		cold := maps.Clone(controlCalls)
 		authorityMu.Unlock()
-		client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 25 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-		defer client.CloseIdleConnections()
 		for range 10 {
-			var prepared connectorruntime.Prepared
-			if operation == "sdk-prepare" {
-				// use the same authenticated private HTTP operation as the SDK;
-				// the caller-prepared Go Call adapter intentionally has no SDK verb.
-				handle, err := connectorruntime.ReadHandle(state.ConnectionHandle)
-				if err != nil {
-					t.Fatal(err)
-				}
-				data, _ := json.Marshal(privateRequest)
-				request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, handle.URL+"/v1/connections/sdk-prepare", bytes.NewReader(data))
-				if err != nil {
-					t.Fatal(err)
-				}
-				request.Header.Set("Authorization", "Bearer "+handle.Key)
-				request.Header.Set("Content-Type", "application/json")
-				response, err := client.Do(request)
-				if err != nil {
-					t.Fatal("warm SDK IPC", err)
-				}
-				var selected connectorruntime.SDKPrepared
-				err = connectorruntime.ReadJSON(response.Body, &selected)
-				response.Body.Close()
-				if response.StatusCode != http.StatusOK || err != nil {
-					t.Fatal("warm SDK IPC returned an invalid snapshot", response.StatusCode, err)
-				}
-				if selected.Owner.ConnectionHandle != state.ConnectionHandle {
-					t.Fatal("warm SDK selection replaced its owner")
-				}
-				prepared = selected.Prepared
-			} else if err := connectorruntime.Call(t.Context(), state.ConnectionHandle, operation, privateRequest, &prepared); err != nil {
-				t.Fatal(err)
+			var challenge authorityv1.IdentitySourceChallenge
+			fixtureEnvironmentIPC(t, state.ConnectionHandle, "identity-challenge", "", nil, &challenge)
+			validateFixtureChallenge(t, challenge, fixtureStart, "visitor_attach")
+			if challenge.NativePublicKey != nativePublic || challenge.SessionId != sessionID {
+				t.Fatal("warm source challenge replaced the original native key or session")
 			}
+			prepared := prepareFixtureEnvironment(t, state, serviceName, &authorityv1.IdentitySourceReply{Schema: 1, ChallengeId: challenge.Id, Assertion: assertion}, startup == "baseline-sdk")
 			if err := connectorruntime.ValidatePrepared(prepared, serviceName); err != nil {
 				t.Fatal(err)
+			}
+			if prepared.Connection.TransportID != first.Connection.TransportID || prepared.Connection.Host != first.Connection.Host || prepared.Connection.Port != first.Connection.Port || !prepared.Connection.ExpiresAt.Equal(first.Connection.ExpiresAt) {
+				t.Fatal("warm preparation replaced the transport, listener or expiry")
 			}
 		}
 		authorityMu.Lock()
 		warm := maps.Clone(controlCalls)
+		nonceCount, keyCount := len(nonces), len(ownerKeys)
 		authorityMu.Unlock()
 		if !maps.Equal(cold, warm) {
 			t.Fatalf("warm SDK preparation made control RPCs: cold=%v after=%v", cold, warm)
 		}
-		if cold["POST /v1/workload-sessions/identity"] != 2 || cold["POST /v1/workload-sessions/exchange"] != 2 {
-			t.Fatal("SDK budget omitted selector identification or lost-exchange retry", cold)
+		if cold["POST /v1/projects/connector-fixture/environments/{environment}/visitors/prepare"] != 2 || nonceCount != 1 || keyCount != 1 {
+			t.Fatal("SDK budget omitted original-key and original-nonce lost-first-prepare recovery", cold)
 		}
 		total := 0
 		for _, n := range cold {
 			total += n
 		}
-		if total != 12 {
-			t.Fatalf("SDK cold RPC budget=%d, want 12 including one lost-exchange retry: %v", total, cold)
-		}
-		t.Logf("%s control RPCs: cold=%d warm(10 requests)=0; includes two identity calls and one injected lost-exchange retry; by endpoint=%v", startup, total, cold)
+		assertFixtureColdBudget(t, cold)
+		t.Logf("%s control RPCs: cold=%d warm(10 requests)=0; includes one injected lost-first-prepare retry; by endpoint=%v", startup, total, cold)
 		return cold
 	}
 	if err := json.Unmarshal(call(request, startArgs...), &state); err != nil {
 		t.Fatal(err)
 	}
+	assertOriginalPreparation()
+	ownerHandle, err := connectorruntime.ReadHandle(state.ConnectionHandle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope.Directory, scope.ConfigDigest = ownerHandle.Directory, ownerHandle.ConfigDigest
 	defer func() {
 		if state.ConnectionHandle != "" {
 			call(nil, "stop", "--handle", state.ConnectionHandle)
@@ -1420,12 +1466,15 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 			providerCalls: &providerCalls, redirectedCalls: &redirectedProviderCalls, streams: &refreshStreams,
 			refreshed: refreshedProof, release: refreshAfter, providerCanceled: providerCanceled,
 			call: call, privateProofs: privateActionProofs,
-			inspect: func() (map[string]int, authorityv1.WorkloadSession, int) {
+			inspect: func() (map[string]int, fixtureVisitorSession, int) {
 				authorityMu.Lock()
 				defer authorityMu.Unlock()
-				var current authorityv1.WorkloadSession
+				var current fixtureVisitorSession
 				for _, session := range sessions {
-					current = session.WorkloadSession
+					current = *session
+					current.public = slices.Clone(session.public)
+					current.services = maps.Clone(session.services)
+					current.ServiceIds = slices.Clone(session.ServiceIds)
 				}
 				return maps.Clone(controlCalls), current, len(ownerKeys)
 			},

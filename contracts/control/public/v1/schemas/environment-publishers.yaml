@@ -1,0 +1,121 @@
+schemas:
+  EnvironmentServicePublication:
+    type: object
+    additionalProperties: false
+    description: Validated publication facts for one assigned environment service. The pinned definition supplies protocol. There are no project declarations, group selectors, visitor grants, or local listener settings in this payload.
+    required: [protocol, target]
+    properties:
+      protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
+      target: { type: string, maxLength: 8192 }
+      target_tls: { $ref: "../openapi.yaml#/components/schemas/ProjectTargetTLS" }
+      target_discovery: { $ref: "../openapi.yaml#/components/schemas/ProjectTargetDiscovery" }
+      http: { $ref: "../openapi.yaml#/components/schemas/EnvironmentServiceHTTP" }
+  EnvironmentServiceHTTP:
+    type: object
+    additionalProperties: false
+    properties:
+      access: { $ref: "../openapi.yaml#/components/schemas/ProjectPublicAccess" }
+      limits: { $ref: "../openapi.yaml#/components/schemas/ProjectHTTPApplicationLimits" }
+  EnvironmentPublisher:
+    type: object
+    additionalProperties: false
+    required: [team_id, project_key, environment_id, publisher_identity_id, key_id]
+    properties:
+      team_id: { type: string }
+      project_key: { type: string }
+      environment_id: { type: string }
+      publisher_identity_id: { type: string }
+      key_id: { type: string }
+  EnvironmentPublisherStatus:
+    allOf:
+      - { $ref: "../openapi.yaml#/components/schemas/EnvironmentPublisher" }
+      - type: object
+        required: [observed_revision, current_revision, snapshot_at, healthy]
+        properties:
+          observed_revision: { type: integer, format: int64 }
+          current_revision: { type: integer, format: int64 }
+          snapshot_at: { type: string, format: date-time }
+          acknowledged_at: { type: string, format: date-time }
+          healthy: { type: boolean }
+          lease_expires_at: { type: string, format: date-time }
+          runtime: { $ref: "../openapi.yaml#/components/schemas/PublisherRuntimeStatus" }
+  CreateEnvironmentPublisherEnrollmentRequest:
+    type: object
+    additionalProperties: false
+    required: [team_id, expected_revision, configuration_hash, services, max_members, expires_in]
+    properties:
+      team_id: { type: string }
+      expected_revision: { type: integer, format: int64, minimum: 1 }
+      configuration_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+      services:
+        type: array
+        minItems: 1
+        maxItems: 128
+        uniqueItems: true
+        description: Exact current logical services authorized for enrollment. Control captures their saved service IDs at issuance. Added services and later collection defaults are not included. This grants no visitor access and does not authorize another service on an already enrolled publisher.
+        items: { type: string }
+      max_members: { type: integer, minimum: 1, maximum: 256 }
+      expires_in: { type: integer, minimum: 60, maximum: 86400 }
+  EnvironmentPublisherEnrollment:
+    type: object
+    additionalProperties: false
+    required: [ref, enrollment_key, expires_at, max_members]
+    properties:
+      ref: { $ref: "../openapi.yaml#/components/schemas/EnvironmentReference" }
+      enrollment_key: { type: string }
+      expires_at: { type: string, format: date-time }
+      max_members: { type: integer, minimum: 1, maximum: 256 }
+  RedeemEnvironmentPublisherEnrollmentRequest:
+    type: object
+    additionalProperties: false
+    required: [enrollment_key, public_key]
+    properties:
+      enrollment_key: { type: string, maxLength: 256 }
+      public_key: { type: string, pattern: "^[A-Za-z0-9_-]{43}$" }
+  EnvironmentPublisherProof:
+    type: object
+    additionalProperties: false
+    required: [publisher_identity_id, environment_id, assertion]
+    properties:
+      publisher_identity_id: { type: string }
+      environment_id: { type: string }
+      assertion: { type: string, maxLength: 4096 }
+  EnvironmentPublisherLease:
+    type: object
+    additionalProperties: false
+    required: [access_token, expires_at]
+    properties:
+      access_token: { type: string }
+      expires_at: { type: string, format: date-time }
+  EnvironmentPublisherAssignment:
+    type: object
+    additionalProperties: false
+    required: [service, service_id, grant_id, configuration, trust_revision]
+    properties:
+      service: { type: string }
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      grant_id: { type: string }
+      trust_revision: { type: integer, format: int64, minimum: 1 }
+      configuration: { $ref: "../openapi.yaml#/components/schemas/EnvironmentServicePublication" }
+  EnvironmentPublisherAssignments:
+    type: object
+    additionalProperties: false
+    required: [publisher, environment, services, certificate_state_plans]
+    properties:
+      publisher: { $ref: "../openapi.yaml#/components/schemas/EnvironmentPublisher" }
+      environment: { $ref: "../openapi.yaml#/components/schemas/EnvironmentPublication" }
+      services:
+        type: array
+        maxItems: 128
+        items: { $ref: "../openapi.yaml#/components/schemas/EnvironmentPublisherAssignment" }
+      certificate_state_plans:
+        type: array
+        maxItems: 1024
+        items: { $ref: "../openapi.yaml#/components/schemas/CertificatePlan" }
+  EnvironmentPublisherAcknowledgement:
+    type: object
+    additionalProperties: false
+    required: [environment, healthy]
+    properties:
+      environment: { $ref: "../openapi.yaml#/components/schemas/EnvironmentPublication" }
+      healthy: { type: boolean }

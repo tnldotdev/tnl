@@ -5,3 +5,7 @@ generate:
   client: true
   models: true
   std-http-server: true
+output-options:
+  # authority and publisher contracts reference serving-owner components that
+  # need not also appear in this contract's own operations.
+  skip-prune: true

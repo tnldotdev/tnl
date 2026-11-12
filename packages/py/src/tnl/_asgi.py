@@ -10,6 +10,7 @@ import socket
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
@@ -18,6 +19,7 @@ import uvicorn
 from starlette.types import ASGIApp
 
 from ._native import NativeRuntime
+from ._identity import IdentitySource, OIDCAssertion
 from ._protocol import (
     Endpoint,
     InvalidResponse,
@@ -27,6 +29,8 @@ from ._protocol import (
     TnlError,
     parse_registration,
     parse_status,
+    object_value,
+    hostname,
 )
 
 _native = NativeRuntime()
@@ -150,9 +154,10 @@ class Tunnel:
         serve_task: asyncio.Task[None],
         listener: socket.socket,
         directory: str,
-        publisher_credential_file: str | None,
-        publisher_identity_id: str | None,
-        server_url: str | None,
+        identity: IdentitySource,
+        server_url: str,
+        resource_id: str | None,
+        namespace: str | None,
         state_dir: str | None,
         access_mode: str | None,
         ip: list[str] | None,
@@ -176,12 +181,14 @@ class Tunnel:
             "pid": os.getpid(),
             "target": self._target,
         }
-        if publisher_credential_file is not None:
-            self._payload["publisher_credential_file"] = publisher_credential_file
-        if publisher_identity_id is not None:
-            self._payload["publisher_identity_id"] = publisher_identity_id
-        if server_url is not None:
-            self._payload["server_url"] = server_url
+        self._payload["server_url"] = server_url
+        self._identity = identity
+        self._proof_expiry: datetime | None = None
+        self._accepted: dict[str, object] | None = None
+        if resource_id is not None:
+            self._payload["resource_id"] = resource_id
+        else:
+            self._payload["allocate"] = {"namespace": namespace}
         self._registration: dict[str, object] | None = None
         self._registration_uncertain = False
         self._initial_registration: asyncio.Task[None] | None = None
@@ -228,15 +235,38 @@ class Tunnel:
 
     async def _acknowledge_registration(self) -> None:
         assert self._endpoint is not None
-        # native may commit before the reply is lost. keep the exact invocation,
-        # owner, PID, target, and policy until its idempotent reply is reconciled.
+        # native may commit before delivery is lost. every retry retains the
+        # original invocation and public selection and reacquires fresh proof.
+        if self._identity.assertion is None:
+            raise TnlError("sdk.configuration_invalid", "publication requires an explicit source callback")
+        budget = 30.0 if self._proof_expiry is None else min(30.0, (self._proof_expiry - datetime.now(UTC)).total_seconds())
+        if budget <= 0:
+            raise TnlError("sdk.publication_failed", "identity proof expired before refresh")
+        async with asyncio.timeout(budget):
+            proof = await self._identity.assertion()
+        if not isinstance(proof, OIDCAssertion) or proof.expires_at <= datetime.now(UTC):
+            raise TnlError("sdk.configuration_invalid", "identity source returned invalid proof")
         self._registration_uncertain = True
         try:
-            self._registration = parse_registration(
-                await self._native.request(self._endpoint, "ad-hoc/register", self._payload),
+            response = object_value(await self._native.request(self._endpoint, "publications", {**self._payload, "auth": {**self._identity._selector(), "assertion": proof.token}}), {"registration", "public_url_id", "hostname", "public_url"})
+            accepted_host = hostname(response.get("hostname"))
+            selected_id = response.get("public_url_id")
+            allocate = self._payload.get("allocate")
+            if not isinstance(selected_id, str) or re.fullmatch(r"url_[A-Za-z0-9]{22}", selected_id) is None or response.get("public_url") != "https://" + accepted_host or self._payload.get("resource_id", selected_id) != selected_id:
+                raise InvalidResponse()
+            if isinstance(allocate, dict) and not accepted_host.endswith("." + str(allocate["namespace"])):
+                raise InvalidResponse()
+            registration = parse_registration(
+                response.get("registration"),
                 self._owner,
                 self._target,
             )
+            if self._accepted is not None and response != self._accepted:
+                raise InvalidResponse()
+            self._registration = registration
+            self._accepted = response
+            self._url = "https://" + accepted_host
+            self._proof_expiry = proof.expires_at
         except (NativeUnavailable, InvalidResponse, asyncio.CancelledError):
             raise
         except TnlError:
@@ -245,7 +275,15 @@ class Tunnel:
         self._registration_uncertain = False
 
     async def start(self) -> None:
-        self._initial_registration = asyncio.create_task(self._register())
+        async def register() -> None:
+            for attempt in range(2):
+                try:
+                    await self._register()
+                    return
+                except (NativeUnavailable, RegistrationLost):
+                    if attempt == 1:
+                        raise
+        self._initial_registration = asyncio.create_task(register())
         await asyncio.shield(self._initial_registration)
         self._monitor = asyncio.create_task(self._follow())
         await self._ready
@@ -262,19 +300,11 @@ class Tunnel:
             except TnlError:
                 pass
         async with self._registration_lock:
-            for attempt in range(3):
-                try:
-                    if self._registration_uncertain:
-                        await self._acknowledge_registration()
-                    break
-                except NativeUnavailable:
-                    if attempt == 2:
-                        raise
-                    await asyncio.sleep(0.1)
-            if self._registration is not None and self._endpoint is not None:
+            if self._endpoint is not None and (self._registration is not None or self._registration_uncertain):
+                registration = self._registration or {"version": 1, "registration_id": "", "owner": self._owner, "target": self._target}
                 for attempt in range(3):
                     try:
-                        await self._native.request(self._endpoint, "unregister", self._registration)
+                        await self._native.request(self._endpoint, "unregister", registration)
                         break
                     except RegistrationLost:
                         break
@@ -283,6 +313,9 @@ class Tunnel:
                             raise
                         await asyncio.sleep(0.1)
                 self._registration = None
+                self._registration_uncertain = False
+            if self._endpoint is not None:
+                await self._native.request(self._endpoint, "capability")
 
     def _observe(self, status: Status) -> None:
         if status.public_url is not None:
@@ -319,6 +352,9 @@ class Tunnel:
                 await self._pause(0.25)
                 if self._closed or self._finished.done():
                     return
+                if self._proof_expiry is not None and (self._proof_expiry - datetime.now(UTC)).total_seconds() <= 5:
+                    async with self._registration_lock:
+                        await self._acknowledge_registration()
                 if asyncio.get_running_loop().time() - last_renew >= 5:
                     await self._native.request(self._endpoint, "renew", self._registration)
                     last_renew = asyncio.get_running_loop().time()
@@ -435,9 +471,10 @@ async def _start_asgi(app: ASGIApp) -> tuple[_OwnedServer, asyncio.Task[None], s
 async def open(
     app: ASGIApp,
     *,
-    publisher_credential_file: str | Path | None = None,
-    publisher_identity_id: str | None = None,
-    server: str | None = None,
+    identity: IdentitySource,
+    server: str,
+    resource_id: str | None = None,
+    namespace: str | None = None,
     directory: str | Path | None = None,
     state_dir: str | Path | None = None,
     access: Literal["restricted", "anonymous"] | AccessPolicy | None = None,
@@ -449,26 +486,14 @@ async def open(
         raise TnlError("sdk.configuration_invalid", "pass an ASGI app")
     if not isinstance(require_post_quantum, bool):
         raise TnlError("sdk.configuration_invalid", "require_post_quantum must be a boolean")
-    if publisher_credential_file is not None and publisher_identity_id is not None:
-        raise TnlError("sdk.configuration_invalid", "select a publisher file or publisher ID")
-    # a running connector owner does not inherit later changes to the app's env.
-    # send the path, never the credential contents, with this invocation.
-    if publisher_credential_file is None and publisher_identity_id is None:
-        publisher_credential_file = os.getenv("TNL_PUBLISHER_CREDENTIAL_FILE")
-    if publisher_credential_file is not None and (
-        not isinstance(publisher_credential_file, str | Path)
-        or not Path(publisher_credential_file).is_absolute()
-        or not 0 < len(str(publisher_credential_file)) <= 4096
-        or "\0" in str(publisher_credential_file)
-    ):
-        raise TnlError(
-            "sdk.configuration_invalid", "publisher_credential_file must be an absolute path"
-        )
-    if publisher_identity_id is not None and (
-        not isinstance(publisher_identity_id, str)
-        or re.fullmatch(r"pub_[A-Za-z0-9]{22}", publisher_identity_id) is None
-    ):
-        raise TnlError("sdk.configuration_invalid", "pass a stored publisher ID")
+    if not isinstance(identity, IdentitySource) or identity.assertion is None:
+        raise TnlError("sdk.configuration_invalid", "pass an explicit identity source")
+    if (resource_id is None) == (namespace is None):
+        raise TnlError("sdk.configuration_invalid", "select one saved public URL or namespace")
+    if resource_id is not None and (not re.fullmatch(r"url_[A-Za-z0-9]{22}", resource_id) or access is not None or limits is not None):
+        raise TnlError("sdk.configuration_invalid", "saved public URLs retain their access and limits")
+    if namespace is not None and hostname(namespace) != namespace:
+        raise TnlError("sdk.configuration_invalid", "select an exact namespace")
     if server is not None:
         origin = urlsplit(server)
         if (
@@ -492,9 +517,10 @@ async def open(
         task,
         listener,
         root,
-        None if publisher_credential_file is None else str(publisher_credential_file),
-        publisher_identity_id,
+        identity,
         server,
+        resource_id,
+        namespace,
         None if state_dir is None else str(state_dir),
         access_mode,
         ip,

@@ -60,46 +60,17 @@ func (d *Database) visitorKubernetesAuth(ctx context.Context, q *controlstatedb.
 	if err != nil {
 		return nil, err
 	}
-	if row.EnvironmentID != "" {
-		s, err := d.environmentServiceConfiguration(ctx, q, row.EnvironmentID, row.GroupID.String, appliedServiceName(row.Service))
-		if err != nil {
-			return nil, err
-		}
-		return visitorKubernetesAuthForConfiguration(s)
-	}
-	c, err := d.openAppliedProject(controlstatedb.ControlAppliedProject{TeamID: row.TeamID, ProjectKey: row.ProjectKey, ConfigurationCiphertext: row.ConfigurationCiphertext, StorageKeyID: row.StorageKeyID})
-	if err != nil {
-		return nil, err
-	}
-	s, ok := c.Services[appliedServiceName(row.Service)]
-	if !ok {
+	if row.EnvironmentID == "" || !row.GroupID.Valid {
 		return nil, ErrServiceAccess
 	}
-	if s.TargetBinding == "group" {
-		if !row.GroupID.Valid {
-			return nil, ErrServiceAccess
-		}
-		settings, err := q.GetPublisherGroupBindings(ctx, row.GroupID.String)
-		if err != nil {
-			return nil, err
-		}
-		bindings, err := d.openPublisherGroupBindings(settings)
-		if err != nil {
-			return nil, err
-		}
-		binding, ok := bindings[appliedServiceName(row.Service)]
-		if !ok {
-			return nil, ErrServiceAccess
-		}
-		s, err = bindPublisherGroupService(s, binding)
-		if err != nil {
-			return nil, err
-		}
+	s, err := d.environmentServiceConfiguration(ctx, q, row.EnvironmentID, row.GroupID.String, appliedServiceName(row.Service))
+	if err != nil {
+		return nil, err
 	}
 	return visitorKubernetesAuthForConfiguration(s)
 }
 
-func visitorKubernetesAuthForConfiguration(s ProjectServiceConfiguration) (*controlv1.KubernetesAuth, error) {
+func visitorKubernetesAuthForConfiguration(s EnvironmentServicePublication) (*controlv1.KubernetesAuth, error) {
 	target := s.TargetDiscovery
 	if s.Protocol != "kubernetes" || target == nil || target.Type != "eks" {
 		return nil, nil

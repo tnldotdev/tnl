@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"reflect"
 	"strings"
 	"time"
 
@@ -19,7 +18,7 @@ type RealizeLocalProjectServiceRequest struct {
 	PublicURLID                                                          string
 	DomainID, WorktreeLabel                                              string
 	DNSAutomation                                                        bool
-	Configuration                                                        ProjectServiceConfiguration
+	Configuration                                                        LocalServiceDeclaration
 	Now                                                                  time.Time
 }
 
@@ -87,7 +86,7 @@ func localProjectPrivateName(r RealizeLocalProjectServiceRequest, name string) s
 	return fmt.Sprintf("%.20s-%x", name, digest[:5])
 }
 
-func (d *Database) updateLocalService(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, row controlstatedb.ControlService, s ProjectServiceConfiguration, now time.Time) error {
+func (d *Database) updateLocalService(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, row controlstatedb.ControlService, s LocalServiceDeclaration, now time.Time) error {
 	trust, err := appliedServiceTargetTrust(s.TargetTLS)
 	if err != nil {
 		return err
@@ -101,7 +100,7 @@ func (d *Database) updateLocalService(ctx context.Context, tx pgx.Tx, q *control
 			return err
 		}
 	}
-	return d.updateAppliedService(ctx, tx, q, row.ID, row.NameScope, s, now)
+	return d.updateLocalServiceResource(ctx, tx, q, row.ID, row.NameScope, s, now)
 }
 
 func checkLocalProjectSource(ctx context.Context, tx pgx.Tx, team, project, source string) error {
@@ -122,25 +121,14 @@ func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLoca
 	if !validLocalProjectServiceScope(r.ProjectKey, r.SourceFingerprint, r.Service, r.WorktreeKey) {
 		return result, ErrProjectConfigurationInvalid
 	}
-	services := map[string]ProjectServiceConfiguration{r.Service: r.Configuration}
 	if err := (ServicePlacement{WorktreeKey: r.WorktreeKey, WorktreeLabel: r.WorktreeLabel, DomainID: r.DomainID}).Validate(); err != nil {
 		return result, err
 	}
-	// this endpoint realizes one resource, not the path destinations. include
-	// inert declarations only so shared path-reference validation remains exact.
-	if r.Configuration.HTTP != nil {
-		for _, mount := range r.Configuration.HTTP.Paths {
-			if mount.Service != r.Service {
-				services[mount.Service] = ProjectServiceConfiguration{Protocol: "http", Target: "app"}
-			}
-		}
-	}
-	c, _, err := NormalizeProjectConfiguration(ProjectConfiguration{Services: services})
+	s, err := normalizeLocalService(r.Service, r.Configuration)
 	if err != nil {
 		return result, err
 	}
-	s := c.Services[r.Service]
-	if s.PublisherGroup != "local" || (s.PublicURL != nil) != (r.PublicURLID != "") {
+	if (s.PublicURL != nil) != (r.PublicURLID != "") {
 		return result, ErrProjectConfigurationInvalid
 	}
 	tx, err := d.pool.Begin(ctx)
@@ -162,17 +150,6 @@ func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLoca
 	if err == nil {
 		if project.SourceFingerprint != r.SourceFingerprint {
 			return result, ErrProjectSourceConflict
-		}
-		// definition-only provenance does not declare local listeners. those
-		// registrations stay partial and app-owned, as before the first apply.
-		if project.Revision > 0 {
-			applied, e := d.openAppliedProject(project)
-			if e != nil {
-				return result, e
-			}
-			if !reflect.DeepEqual(applied.Services[r.Service], s) {
-				return result, ErrProjectConfigurationStale
-			}
 		}
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return result, err
@@ -215,7 +192,7 @@ func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLoca
 			// scope saved names too, so two worktrees cannot share a private run.
 			local := s
 			local.Name = localProjectPrivateName(r, s.Name)
-			id, e := d.createAppliedService(ctx, tx, q, ApplyProjectConfigurationRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, Now: r.Now}, r.Service, "local/"+r.ProjectKey+"/"+r.WorktreeKey, local)
+			id, e := d.createLocalService(ctx, tx, q, serviceResourceMutation{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, Now: r.Now}, r.Service, "local/"+r.ProjectKey+"/"+r.WorktreeKey, local)
 			if e != nil {
 				return result, e
 			}
@@ -322,101 +299,6 @@ func reconcileLocalVisitorGrant(ctx context.Context, tx pgx.Tx, entry controlsta
 	return err
 }
 
-// apply reconciles only already-proven local IDs. deferred listeners are never
-// allocated here, and removing access revokes only the configuration-owned grant.
-func (d *Database) reconcileProjectLocalRealizations(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, r ApplyProjectConfigurationRequest, old, current ProjectConfiguration) error {
-	rows, err := tx.Query(ctx, `SELECT DISTINCT service FROM control.local_project_services WHERE team_id=$1 AND project_key=$2 ORDER BY service`, r.TeamID, r.ProjectKey)
-	if err != nil {
-		return err
-	}
-	var keys []string
-	for rows.Next() {
-		var key string
-		if err = rows.Scan(&key); err != nil {
-			rows.Close()
-			return err
-		}
-		keys = append(keys, key)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return err
-	}
-	for _, key := range keys {
-		var declared *ProjectServiceConfiguration
-		if s, found := current.Services[key]; found && s.PublisherGroup == "local" {
-			declared = &s
-		}
-		previous, hadPrevious := old.Services[key]
-		reset := hadPrevious && declared != nil && previous.PublicURL != nil && declared.PublicURL != nil && (!sameAppliedResource(previous, *declared) || previous.Name != declared.Name || previous.PublicURL.Ephemeral != declared.PublicURL.Ephemeral)
-		if err = d.reconcileLocalProjectServices(ctx, tx, q, r, key, declared, !reflect.DeepEqual(previous.PublicURL, current.Services[key].PublicURL), reset); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (d *Database) reconcileLocalProjectServices(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, r ApplyProjectConfigurationRequest, key string, s *ProjectServiceConfiguration, publicChanged, reset bool) error {
-	rows, err := tx.Query(ctx, `SELECT worktree_key,service_id,public_url_id,COALESCE(visitor_grant_id,'') FROM control.local_project_services WHERE team_id=$1 AND project_key=$2 AND service=$3 ORDER BY worktree_key`, r.TeamID, r.ProjectKey, key)
-	if err != nil {
-		return err
-	}
-	type local struct {
-		worktree, grant string
-		entry           controlstatedb.ControlAppliedProjectService
-	}
-	var locals []local
-	for rows.Next() {
-		v := local{entry: controlstatedb.ControlAppliedProjectService{TeamID: r.TeamID, ProjectKey: r.ProjectKey, Service: key}}
-		if err = rows.Scan(&v.worktree, &v.entry.ServiceID, &v.entry.PublicURLID, &v.grant); err != nil {
-			rows.Close()
-			return err
-		}
-		locals = append(locals, v)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return err
-	}
-	for _, v := range locals {
-		compatible := !reset && s != nil && (s.PublicURL == nil) == v.entry.ServiceID.Valid
-		if err = reconcileLocalVisitorGrant(ctx, tx, v.entry, v.worktree, r.ActorID, v.grant, compatible && s.Access != nil && s.Access.Team, r.Now); err != nil {
-			return err
-		}
-		if !compatible {
-			if err = d.revokeProjectResourcePublishers(ctx, tx, q, v.entry, r.Now); err != nil {
-				return err
-			}
-			if err = d.retireProjectResource(ctx, tx, q, v.entry, r.Now); err != nil {
-				return err
-			}
-			if _, err = tx.Exec(ctx, `DELETE FROM control.local_project_services WHERE team_id=$1 AND project_key=$2 AND service=$3 AND worktree_key=$4`, r.TeamID, r.ProjectKey, key, v.worktree); err != nil {
-				return err
-			}
-			continue
-		}
-		if v.entry.PublicURLID.Valid && publicChanged {
-			if err = d.reconcileAppliedPublicSettings(ctx, tx, q, v.entry.PublicURLID.String, s.PublicURL, r.Now); err != nil {
-				return err
-			}
-		}
-		if v.entry.ServiceID.Valid {
-			row, e := q.LockService(ctx, v.entry.ServiceID.String)
-			if e != nil {
-				return e
-			}
-			local := *s
-			local.Name = localProjectPrivateName(RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Service: key, WorktreeKey: v.worktree}, s.Name)
-			if err = d.updateLocalService(ctx, tx, q, row, local, r.Now); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
 type ProjectPublicService struct {
 	Service     string `json:"service"`
 	PublicURLID string `json:"public_url_id,omitempty"`
@@ -465,6 +347,7 @@ func (d *Database) GetProjectPublicMetadata(ctx context.Context, team, project, 
 			rows.Close()
 			return result, err
 		}
+		s.Service = appliedServiceName(s.Service)
 		result.Services = append(result.Services, s)
 	}
 	err = rows.Err()

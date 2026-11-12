@@ -11,7 +11,7 @@ import (
 func ConfiguredServices(project clientproject.Project) []Service {
 	services := make([]Service, 0, len(project.Config.Services))
 	for name, definition := range project.Config.Services {
-		if config.PublisherGroupName(definition) != "local" {
+		if !project.HasLocalService(name) {
 			continue
 		}
 		readiness := Readiness{Path: "/"}

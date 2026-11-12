@@ -287,7 +287,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		bound.Invalidate()
 		flush, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
-		_ = audit.Close(flush)
+		result = errors.Join(result, audit.Close(flush))
 	}()
 	bound.streamCapacity = int(config.StreamCapacity)
 	var certificateDone <-chan error
@@ -302,7 +302,9 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		defer func() {
 			cancel()
 			if certificateDone != nil {
-				<-certificateDone
+				if err := <-certificateDone; !failure.Only(err, context.Canceled) {
+					result = errors.Join(result, err)
+				}
 			}
 		}()
 	}
@@ -342,6 +344,9 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	}
 	state, err := heartbeat(ctx)
 	if err != nil {
+		if ctx.Err() != nil && failure.Only(err, ctx.Err()) {
+			return nil
+		}
 		return errors.Join(ErrPrivateStream, err)
 	}
 	if err := bound.PrepareConnectorPolicy(ctx, config.Control, runToken); err != nil {
@@ -412,14 +417,14 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		case err := <-peersDone:
 			expires.Stop()
 			peersDone = nil
-			if ctx.Err() != nil {
+			if ctx.Err() != nil && (err == nil || failure.Only(err, ctx.Err())) {
 				return nil
 			}
 			return errors.Join(ErrPrivateStream, err)
 		case err := <-certificateDone:
 			expires.Stop()
 			certificateDone = nil
-			if ctx.Err() != nil {
+			if ctx.Err() != nil && (err == nil || failure.Only(err, ctx.Err())) {
 				return nil
 			}
 			return err
@@ -444,7 +449,10 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 				status.LastCheck = time.Now()
 				report()
 				if ctx.Err() != nil {
-					return nil
+					if failure.Only(err, ctx.Err()) {
+						return nil
+					}
+					return err
 				}
 				reason, _ := failure.ReasonOf(err)
 				if reason != failure.ServerUnavailable && reason != failure.ServerRateLimited {

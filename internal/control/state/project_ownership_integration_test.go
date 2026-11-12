@@ -23,12 +23,12 @@ func TestIntegrationAppliedProjectLocalRealizationOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	configuration := ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{
+	declarations := map[string]LocalServiceDeclaration{
 		"db":  {Protocol: "postgres", Target: "localhost:5432", Access: &ProjectServiceAccess{Team: true}},
 		"web": {Target: "app", PublicURL: &ProjectServicePublicURL{}, Access: &ProjectServiceAccess{Team: true}},
-	}}
-	r := ApplyProjectConfigurationRequest{TeamID: base.TeamID, ProjectKey: "local-project", SourceFingerprint: strings.Repeat("a", 64), ActorID: base.ActingIdentityID, Configuration: configuration, Now: now}
-	local := RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Service: "db", WorktreeKey: "checkout-a", ActorID: r.ActorID, Configuration: configuration.Services["db"], Now: now}
+	}
+	r := environmentPublisherTestProject{TeamID: base.TeamID, ProjectKey: "local-project", SourceFingerprint: strings.Repeat("a", 64), ActorID: base.ActingIdentityID, Now: now}
+	local := RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Service: "db", WorktreeKey: "checkout-a", ActorID: r.ActorID, Configuration: declarations["db"], Now: now}
 	first, err := d.RealizeLocalProjectService(ctx, local)
 	if err != nil {
 		t.Fatal(err)
@@ -46,28 +46,23 @@ func TestIntegrationAppliedProjectLocalRealizationOwnership(t *testing.T) {
 		t.Fatal("worktrees share a service", err)
 	}
 	public := createTestPublicURL(t, d, base, now)
-	local.Service, local.WorktreeKey, local.PublicURLID, local.Configuration = "web", "checkout-a", public.ID, configuration.Services["web"]
+	local.Service, local.WorktreeKey, local.PublicURLID, local.Configuration = "web", "checkout-a", public.ID, declarations["web"]
 	if _, err = d.RealizeLocalProjectService(ctx, local); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = d.RealizeLocalProjectService(ctx, RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: "another-project", SourceFingerprint: r.SourceFingerprint, Service: "web", WorktreeKey: "checkout-a", ActorID: r.ActorID, Configuration: local.Configuration, PublicURLID: public.ID, Now: now}); !errors.Is(err, ErrProjectManaged) {
 		t.Fatal("public resource adopted by unrelated project", err)
 	}
-	status, err := d.ApplyProjectConfiguration(ctx, r)
-	if err != nil {
-		t.Fatal("first apply collided with legitimate startup", err)
-	}
-	for _, s := range status.Services {
-		if s.Kind != "local" || s.ServiceID != "" {
-			t.Fatal("apply allocated a shared local resource")
-		}
+	definition := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"db": {Protocol: "postgres"}, "web": {Protocol: "http"}})
+	if len(definition.Definition.Services) != 2 {
+		t.Fatal("first definition publication collided with legitimate startup")
 	}
 	var count int
 	if err = d.pool.QueryRow(ctx, `SELECT count(*) FROM control.services WHERE team_id=$1 AND deleted_at IS NULL`, r.TeamID).Scan(&count); err != nil || count != 3 {
-		t.Fatal("apply duplicated local service", count, err)
+		t.Fatal("definition publication duplicated local service", count, err)
 	}
-	if _, err = d.GetProjectConfiguration(ctx, r.TeamID, r.ProjectKey, member.IdentityID); !errors.Is(err, ErrServiceAccess) {
-		t.Fatal("member read manager configuration", err)
+	if _, _, err = d.ListServices(ctx, r.TeamID, member.IdentityID, ""); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("member read service management inventory", err)
 	}
 	if _, err = d.ConfigureService(ctx, first.ServiceID, r.ActorID, *first.Metadata, now); !errors.Is(err, ErrProjectManaged) {
 		t.Fatal("direct managed definition changed", err)
@@ -96,26 +91,24 @@ func TestIntegrationAppliedProjectLocalRealizationOwnership(t *testing.T) {
 	if err = d.RevokeVisitorGrant(ctx, public.ID, r.ActorID, publicGrant, now); !errors.Is(err, ErrProjectManaged) {
 		t.Fatal("configured local public team grant revoked directly", err)
 	}
-	r.ExpectedRevision = status.Revision
-	r.Configuration = status.Configuration
-	for key, s := range r.Configuration.Services {
-		s.Access = nil
-		r.Configuration.Services[key] = s
-	}
-	if _, err = d.ApplyProjectConfiguration(ctx, r); err != nil {
-		t.Fatal(err)
+	for _, binding := range []struct{ service, worktree, public string }{{"db", "checkout-a", ""}, {"db", "checkout-b", ""}, {"web", "checkout-a", public.ID}} {
+		declaration := declarations[binding.service]
+		declaration.Access = nil
+		if _, err = d.RealizeLocalProjectService(ctx, RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Service: binding.service, WorktreeKey: binding.worktree, ActorID: r.ActorID, PublicURLID: binding.public, Configuration: declaration, Now: now}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	for _, grant := range []string{configuredGrant, extra.ID} {
 		var revoked bool
 		if err = d.pool.QueryRow(ctx, `SELECT revoked_at IS NOT NULL FROM control.visitor_grants WHERE id=$1`, grant).Scan(&revoked); err != nil || !revoked {
-			t.Fatal("apply restored revoked or removed access", err)
+			t.Fatal("local declaration restored revoked or removed access", err)
 		}
 	}
 	var revoked bool
 	if err = d.pool.QueryRow(ctx, `SELECT revoked_at IS NOT NULL FROM control.visitor_grants WHERE id=$1`, publicGrant).Scan(&revoked); err != nil || !revoked {
-		t.Fatal("apply did not remove local public team access", err)
+		t.Fatal("local declaration did not remove local public team access", err)
 	}
-	local.Configuration = r.Configuration.Services["web"]
+	local.Configuration.Access = nil
 	if _, err = d.RealizeLocalProjectService(ctx, local); err != nil {
 		t.Fatal("restart after access removal", err)
 	}
@@ -136,7 +129,7 @@ func TestIntegrationAppliedProjectLocalEphemeralRealizationAfterExpiry(t *testin
 	r := oidcRouteRequest(t, d, now)
 	r.Ephemeral = true
 	first := createTestPublicURL(t, d, r, now)
-	local := RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: "ephemeral", SourceFingerprint: strings.Repeat("a", 64), Service: "web", WorktreeKey: "checkout", ActorID: r.ActingIdentityID, PublicURLID: first.ID, Configuration: ProjectServiceConfiguration{Target: "app", PublicURL: &ProjectServicePublicURL{Ephemeral: true}, Access: &ProjectServiceAccess{Team: true}}, Now: now}
+	local := RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: "ephemeral", SourceFingerprint: strings.Repeat("a", 64), Service: "web", WorktreeKey: "checkout", ActorID: r.ActingIdentityID, PublicURLID: first.ID, Configuration: LocalServiceDeclaration{Target: "app", PublicURL: &ProjectServicePublicURL{Ephemeral: true}, Access: &ProjectServiceAccess{Team: true}}, Now: now}
 	if _, err := d.RealizeLocalProjectService(t.Context(), local); err != nil {
 		t.Fatal(err)
 	}
@@ -168,25 +161,19 @@ func TestIntegrationAppliedProjectLocalEphemeralRealizationAfterExpiry(t *testin
 func TestIntegrationAppliedProjectManagedGroupGrantsAndSafeMetadata(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "managed_projection")
 	d.managedURLMode = naming.ManagedURLModeSimple
-	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{
-		"public": {PublisherGroup: "production", Target: "http://secret.internal:3000", Access: &ProjectServiceAccess{Team: true}},
-		"db":     {PublisherGroup: "production", Protocol: "postgres", Target: "db.internal:5432"},
-	}}
-	status, err := d.ApplyProjectConfiguration(t.Context(), r)
-	if err != nil {
-		t.Fatal(err)
-	}
+	r := retainedEnvironmentProject(t, d, now)
+	definition := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"public": {Protocol: "http"}, "db": {Protocol: "postgres"}})
+	status, _ := createTestEnvironment(t, d, r, "production", definition.Revision, EnvironmentTargets{"public": {Address: "secret.internal:3000"}, "db": {Address: "db.internal:5432"}})
 	var publicID string
 	for _, s := range status.Services {
 		if s.Service == "public" {
 			publicID = s.ServiceID
 		}
 	}
-	if err = d.DeleteService(t.Context(), publicID, r.ActorID, now); !errors.Is(err, ErrProjectManaged) {
+	if err := d.DeleteService(t.Context(), publicID, r.ActorID, now); !errors.Is(err, ErrProjectManaged) {
 		t.Fatal("public service deletion succeeded", err)
 	}
-	if _, err = d.GetPublicURL(t.Context(), r.ActorID, publicID); err == nil {
+	if _, err := d.GetPublicURL(t.Context(), r.ActorID, publicID); err == nil {
 		t.Fatal("service became a public URL")
 	}
 	if _, err := d.pool.Exec(t.Context(), `UPDATE control.teams SET kind='organization' WHERE id=$1`, r.TeamID); err != nil {
@@ -203,48 +190,41 @@ func TestIntegrationAppliedProjectManagedGroupGrantsAndSafeMetadata(t *testing.T
 			t.Fatal("projection leaked manager data", value)
 		}
 	}
-	if _, err = d.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, member.IdentityID); !errors.Is(err, ErrServiceAccess) {
+	if _, err = d.GetEnvironment(t.Context(), r.TeamID, r.ProjectKey, status.ID, member.IdentityID); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("visitor read full configuration", err)
 	}
 	outsider := finalVisitorIdentity(t, d, now, "projection-outsider@example.test")
 	if _, err = d.GetProjectPublicMetadata(t.Context(), r.TeamID, r.ProjectKey, outsider, now); !errors.Is(err, ErrPublicURLAccess) {
 		t.Fatal("ungranted visitor read project source", err)
 	}
-	e, err := d.IssuePublisherGroupEnrollment(t.Context(), r.TeamID, r.ProjectKey, "production", r.ActorID, 1, time.Hour, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	replica := enrollAppliedGroup(t, d, r, e, now)
+	replica := enrollTestEnvironment(t, d, r, status)
 	a := replica.assignments.Services[0]
 	if err = d.RevokePublisherGrant(t.Context(), r.TeamID, replica.member.PublisherIdentityID, a.GrantID, r.ActorID, now); !errors.Is(err, ErrProjectManaged) {
 		t.Fatal("managed group grant revoked directly", err)
 	}
-	if current, e := d.GetPublisherGroupAssignments(t.Context(), replica.lease.AccessToken, now); e != nil || len(current.Services) != 2 {
+	if current, e := d.GetEnvironmentPublisherAssignments(t.Context(), replica.lease.AccessToken, now); e != nil || len(current.Services) != 2 {
 		t.Fatal("guard disturbed group poll", e)
 	}
-	// legacy or exceptional revoked state must not be silently recreated by an
+	// independently revoked state must not be silently recreated by an
 	// unrelated apply, and must not turn healthy sibling assignments into 401.
 	if _, err = d.pool.Exec(t.Context(), `UPDATE control.publisher_grants SET revoked_at=$2 WHERE id=$1`, a.GrantID, now); err != nil {
 		t.Fatal(err)
 	}
-	r.ExpectedRevision = status.Revision
-	r.Configuration = status.Configuration
-	r.Configuration.PublisherGroups["production"] = ProjectPublisherGroup{Description: "updated description"}
-	if _, err = d.ApplyProjectConfiguration(t.Context(), r); err != nil {
+	if _, err = d.ApplyEnvironment(t.Context(), ApplyEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, EnvironmentApplication: EnvironmentApplication{EnvironmentID: status.ID, ExpectedRevision: status.MutationRevision, DefinitionRevision: definition.Revision}, Now: now}); err != nil {
 		t.Fatal(err)
 	}
-	current, err := d.GetPublisherGroupAssignments(t.Context(), replica.lease.AccessToken, now)
+	current, err := d.GetEnvironmentPublisherAssignments(t.Context(), replica.lease.AccessToken, now)
 	if err != nil || len(current.Services) != 1 {
 		t.Fatal("one revoked grant broke sibling poll", current, err)
 	}
 	var grant string
-	if err = d.pool.QueryRow(t.Context(), `SELECT grant_id FROM control.publisher_group_service_grants WHERE publisher_identity_id=$1 AND service=$2`, replica.member.PublisherIdentityID, a.Service).Scan(&grant); err != nil || grant != a.GrantID {
+	if err = d.pool.QueryRow(t.Context(), `SELECT grant_id FROM control.publisher_group_service_grants WHERE publisher_identity_id=$1 AND grant_id=$2`, replica.member.PublisherIdentityID, a.GrantID).Scan(&grant); err != nil || grant != a.GrantID {
 		t.Fatal("unrelated apply recreated revoked grant", err)
 	}
-	if err = d.RevokePublisherGroupMember(t.Context(), r.TeamID, r.ProjectKey, "production", replica.member.PublisherIdentityID, r.ActorID, now); err != nil {
+	if err = d.RevokeEnvironmentPublisher(t.Context(), environmentPublisherSelection(t, d, r, status), replica.member.PublisherIdentityID, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.GetPublisherGroupAssignments(t.Context(), replica.lease.AccessToken, now); !errors.Is(err, ErrPublisherGroup) {
+	if _, err = d.GetEnvironmentPublisherAssignments(t.Context(), replica.lease.AccessToken, now); !errors.Is(err, ErrEnvironmentPublisher) {
 		t.Fatal("operational revoke was not immediate", err)
 	}
 }

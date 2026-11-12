@@ -18,8 +18,24 @@ import (
 	"time"
 
 	"github.com/oapi-codegen/runtime"
-	externalRef0 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	externalRef0 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	externalRef1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
+
+// Defines values for ApplicationOIDCProofKind.
+const (
+	Oidc ApplicationOIDCProofKind = "oidc"
+)
+
+// Valid indicates whether the value is a known member of the ApplicationOIDCProofKind enum.
+func (e ApplicationOIDCProofKind) Valid() bool {
+	switch e {
+	case Oidc:
+		return true
+	default:
+		return false
+	}
+}
 
 // Defines values for ApplicationPublicationAccessMode.
 const (
@@ -48,6 +64,21 @@ const (
 func (e ApplicationPublicationVersion) Valid() bool {
 	switch e {
 	case ApplicationPublicationVersionN1:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ApplicationRegisteredKeyProofKind.
+const (
+	RegisteredKey ApplicationRegisteredKeyProofKind = "registered_key"
+)
+
+// Valid indicates whether the value is a known member of the ApplicationRegisteredKeyProofKind enum.
+func (e ApplicationRegisteredKeyProofKind) Valid() bool {
+	switch e {
+	case RegisteredKey:
 		return true
 	default:
 		return false
@@ -287,6 +318,18 @@ type AcceptedPublication struct {
 	Registration Registration `json:"registration"`
 }
 
+// ApplicationOIDCProof Transient proof from an explicitly selected OIDC source. Never persist or log the assertion.
+type ApplicationOIDCProof struct {
+	Assertion string                   `json:"assertion"`
+	Kind      ApplicationOIDCProofKind `json:"kind"`
+
+	// MachineId Explicit approved machine identity, pinned before the first exchange. A retry cannot switch identity policies after an uncertain reply.
+	MachineId string `json:"machine_id"`
+}
+
+// ApplicationOIDCProofKind defines model for ApplicationOIDCProof.Kind.
+type ApplicationOIDCProofKind string
+
 // ApplicationPublication Exactly one of resource_id and allocate is required. The bound target is independent of resource selection. Auth is an explicit private IPC handoff and must never be persisted in observations or logs.
 type ApplicationPublication struct {
 	AccessMode *ApplicationPublicationAccessMode `json:"access_mode,omitempty"`
@@ -298,7 +341,7 @@ type ApplicationPublication struct {
 	Auth               json.RawMessage                          `json:"auth"`
 	InvocationId       string                                   `json:"invocation_id"`
 	Ip                 *[]string                                `json:"ip,omitempty"`
-	Limits             *externalRef0.PublisherApplicationLimits `json:"limits,omitempty"`
+	Limits             *externalRef1.PublisherApplicationLimits `json:"limits,omitempty"`
 	Owner              string                                   `json:"owner"`
 	Pid                int                                      `json:"pid"`
 	RequirePostQuantum *bool                                    `json:"require_post_quantum,omitempty"`
@@ -313,6 +356,19 @@ type ApplicationPublicationAccessMode string
 
 // ApplicationPublicationVersion defines model for ApplicationPublication.Version.
 type ApplicationPublicationVersion int
+
+// ApplicationRegisteredKeyProof Explicit registered source selection. Challenge requests omit reply; publication requests require the defining authority IdentitySourceReply for the native-issued challenge. The source key never crosses IPC.
+type ApplicationRegisteredKeyProof struct {
+	KeyId     string                            `json:"key_id"`
+	Kind      ApplicationRegisteredKeyProofKind `json:"kind"`
+	MachineId string                            `json:"machine_id"`
+
+	// Reply Transient reply to the exact native-issued challenge. Native consumes its challenge once before the authority request. Neither this reply nor its assertion may enter durable state, metadata, observations or logs.
+	Reply *IdentitySourceReply `json:"reply,omitempty"`
+}
+
+// ApplicationRegisteredKeyProofKind defines model for ApplicationRegisteredKeyProof.Kind.
+type ApplicationRegisteredKeyProofKind string
 
 // Assignment defines model for Assignment.
 type Assignment struct {
@@ -369,12 +425,18 @@ type Event struct {
 	Type        string       `json:"type"`
 }
 
+// IdentitySourceChallenge Private native-to-source challenge shared by publication and visitor transports. The source checks its prepared server, source and exact selection, recomputes the machineproof scope and exact authority audience, then uses publisherproof.Sign(machine_id, key_id, scope, audience, source_key, now). The separate native key never leaves its owner. The native owner binds challenge delivery to its immutable local request and revision and rejects replaced, expired or cross-owner replies. No assertion or source key is persisted in this challenge.
+type IdentitySourceChallenge = externalRef0.IdentitySourceChallenge
+
+// IdentitySourceReply Transient reply to the exact native-issued challenge. Native consumes its challenge once before the authority request. Neither this reply nor its assertion may enter durable state, metadata, observations or logs.
+type IdentitySourceReply = externalRef0.IdentitySourceReply
+
 // Invocation defines model for Invocation.
 type Invocation struct {
 	AccessMode              *InvocationAccessMode                    `json:"access_mode,omitempty"`
 	InvocationId            string                                   `json:"invocation_id"`
 	Ip                      *[]string                                `json:"ip,omitempty"`
-	Limits                  *externalRef0.PublisherApplicationLimits `json:"limits,omitempty"`
+	Limits                  *externalRef1.PublisherApplicationLimits `json:"limits,omitempty"`
 	Owner                   string                                   `json:"owner"`
 	Pid                     int                                      `json:"pid"`
 	PublisherCredentialFile string                                   `json:"publisher_credential_file,omitempty"`
@@ -448,7 +510,7 @@ type Publication struct {
 	PublishRunNumber *int64                        `json:"publish_run_number,omitempty"`
 	Server           string                        `json:"server"`
 	Service          *string                       `json:"service,omitempty"`
-	ServiceProtocol  *externalRef0.ServiceProtocol `json:"service_protocol,omitempty"`
+	ServiceProtocol  *externalRef1.ServiceProtocol `json:"service_protocol,omitempty"`
 	StartedAt        time.Time                     `json:"started_at"`
 	State            PublicationState              `json:"state"`
 	Target           *string                       `json:"target,omitempty"`
@@ -494,7 +556,7 @@ type Service struct {
 	Routable          bool                          `json:"routable"`
 	RunNumber         *int64                        `json:"run_number,omitempty"`
 	Service           string                        `json:"service"`
-	ServiceProtocol   *externalRef0.ServiceProtocol `json:"service_protocol,omitempty"`
+	ServiceProtocol   *externalRef1.ServiceProtocol `json:"service_protocol,omitempty"`
 	Target            *string                       `json:"target,omitempty"`
 	TunnelId          *string                       `json:"tunnel_id,omitempty"`
 }
@@ -531,6 +593,9 @@ type IssueCapabilityJSONRequestBody = CapabilityRequest
 
 // CheckJSONRequestBody defines body for Check for application/json ContentType.
 type CheckJSONRequestBody = Check
+
+// ChallengeApplicationIdentitySourceJSONRequestBody defines body for ChallengeApplicationIdentitySource for application/json ContentType.
+type ChallengeApplicationIdentitySourceJSONRequestBody = ApplicationPublication
 
 // AcquireLeaseJSONRequestBody defines body for AcquireLease for application/json ContentType.
 type AcquireLeaseJSONRequestBody = Lease
@@ -672,6 +737,18 @@ type ClientInterface interface {
 
 	// Health performs a GET /v1/health (the `Health` operationId) request.
 	Health(ctx context.Context, params *HealthParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ChallengeApplicationIdentitySourceWithBody performs a POST /v1/identity-source-challenges (the `ChallengeApplicationIdentitySource` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Invocation capability only. Validate the same immutable publication request, sync its original native key/nonce and explicit registered source before delivering one short-lived challenge. Omit reply in registered auth. A replacement challenge invalidates the previous reply; no current source proof or serving token is acquired by native. Known denial, expiry and cleanup cannot issue another challenge.
+	ChallengeApplicationIdentitySourceWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ChallengeApplicationIdentitySource performs a POST /v1/identity-source-challenges (the `ChallengeApplicationIdentitySource` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Invocation capability only. Validate the same immutable publication request, sync its original native key/nonce and explicit registered source before delivering one short-lived challenge. Omit reply in registered auth. A replacement challenge invalidates the previous reply; no current source proof or serving token is acquired by native. Known denial, expiry and cleanup cannot issue another challenge.
+	ChallengeApplicationIdentitySource(ctx context.Context, body ChallengeApplicationIdentitySourceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AcquireLeaseWithBody performs a POST /v1/leases (the `AcquireLease` operationId) request,
 	// with any type of body and a specified content type.
@@ -880,6 +957,38 @@ func (c *Client) Events(ctx context.Context, params *EventsParams, reqEditors ..
 // Health performs a GET /v1/health (the `Health` operationId) request.
 func (c *Client) Health(ctx context.Context, params *HealthParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewHealthRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ChallengeApplicationIdentitySourceWithBody performs a POST /v1/identity-source-challenges (the `ChallengeApplicationIdentitySource` operationId) request,
+// with any type of body and a specified content type.
+//
+// Invocation capability only. Validate the same immutable publication request, sync its original native key/nonce and explicit registered source before delivering one short-lived challenge. Omit reply in registered auth. A replacement challenge invalidates the previous reply; no current source proof or serving token is acquired by native. Known denial, expiry and cleanup cannot issue another challenge.
+func (c *Client) ChallengeApplicationIdentitySourceWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewChallengeApplicationIdentitySourceRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ChallengeApplicationIdentitySource performs a POST /v1/identity-source-challenges (the `ChallengeApplicationIdentitySource` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Invocation capability only. Validate the same immutable publication request, sync its original native key/nonce and explicit registered source before delivering one short-lived challenge. Omit reply in registered auth. A replacement challenge invalidates the previous reply; no current source proof or serving token is acquired by native. Known denial, expiry and cleanup cannot issue another challenge.
+func (c *Client) ChallengeApplicationIdentitySource(ctx context.Context, body ChallengeApplicationIdentitySourceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewChallengeApplicationIdentitySourceRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1348,6 +1457,46 @@ func NewHealthRequest(server string, params *HealthParams) (*http.Request, error
 	return req, nil
 }
 
+// NewChallengeApplicationIdentitySourceRequest calls the generic ChallengeApplicationIdentitySource builder with application/json body
+func NewChallengeApplicationIdentitySourceRequest(server string, body ChallengeApplicationIdentitySourceJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewChallengeApplicationIdentitySourceRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewChallengeApplicationIdentitySourceRequestWithBody constructs an http.Request for the ChallengeApplicationIdentitySource method, with any body, and a specified content type
+func NewChallengeApplicationIdentitySourceRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/identity-source-challenges")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewAcquireLeaseRequest calls the generic AcquireLease builder with application/json body
 func NewAcquireLeaseRequest(server string, body AcquireLeaseJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -1720,6 +1869,20 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	HealthWithResponse(ctx context.Context, params *HealthParams, reqEditors ...RequestEditorFn) (*HealthResponse, error)
 
+	// ChallengeApplicationIdentitySourceWithBodyWithResponse performs a POST /v1/identity-source-challenges (the `ChallengeApplicationIdentitySource` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Invocation capability only. Validate the same immutable publication request, sync its original native key/nonce and explicit registered source before delivering one short-lived challenge. Omit reply in registered auth. A replacement challenge invalidates the previous reply; no current source proof or serving token is acquired by native. Known denial, expiry and cleanup cannot issue another challenge.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ChallengeApplicationIdentitySourceWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ChallengeApplicationIdentitySourceResponse, error)
+
+	// ChallengeApplicationIdentitySourceWithResponse performs a POST /v1/identity-source-challenges (the `ChallengeApplicationIdentitySource` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Invocation capability only. Validate the same immutable publication request, sync its original native key/nonce and explicit registered source before delivering one short-lived challenge. Omit reply in registered auth. A replacement challenge invalidates the previous reply; no current source proof or serving token is acquired by native. Known denial, expiry and cleanup cannot issue another challenge.
+	ChallengeApplicationIdentitySourceWithResponse(ctx context.Context, body ChallengeApplicationIdentitySourceJSONRequestBody, reqEditors ...RequestEditorFn) (*ChallengeApplicationIdentitySourceResponse, error)
+
 	// AcquireLeaseWithBodyWithResponse performs a POST /v1/leases (the `AcquireLease` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -2080,6 +2243,54 @@ func (r HealthResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r HealthResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ChallengeApplicationIdentitySourceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *IdentitySourceChallenge
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ChallengeApplicationIdentitySourceResponse) GetJSON200() *IdentitySourceChallenge {
+	return r.JSON200
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r ChallengeApplicationIdentitySourceResponse) GetJSONDefault() *Problem {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ChallengeApplicationIdentitySourceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ChallengeApplicationIdentitySourceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ChallengeApplicationIdentitySourceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ChallengeApplicationIdentitySourceResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -2516,6 +2727,32 @@ func (c *ClientWithResponses) HealthWithResponse(ctx context.Context, params *He
 	return ParseHealthResponse(rsp)
 }
 
+// ChallengeApplicationIdentitySourceWithBodyWithResponse performs a POST /v1/identity-source-challenges (the `ChallengeApplicationIdentitySource` operationId) request,
+// with any type of body and a specified content type.
+//
+// Invocation capability only. Validate the same immutable publication request, sync its original native key/nonce and explicit registered source before delivering one short-lived challenge. Omit reply in registered auth. A replacement challenge invalidates the previous reply; no current source proof or serving token is acquired by native. Known denial, expiry and cleanup cannot issue another challenge.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ChallengeApplicationIdentitySourceWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ChallengeApplicationIdentitySourceResponse, error) {
+	rsp, err := c.ChallengeApplicationIdentitySourceWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseChallengeApplicationIdentitySourceResponse(rsp)
+}
+
+// ChallengeApplicationIdentitySourceWithResponse performs a POST /v1/identity-source-challenges (the `ChallengeApplicationIdentitySource` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Invocation capability only. Validate the same immutable publication request, sync its original native key/nonce and explicit registered source before delivering one short-lived challenge. Omit reply in registered auth. A replacement challenge invalidates the previous reply; no current source proof or serving token is acquired by native. Known denial, expiry and cleanup cannot issue another challenge.
+func (c *ClientWithResponses) ChallengeApplicationIdentitySourceWithResponse(ctx context.Context, body ChallengeApplicationIdentitySourceJSONRequestBody, reqEditors ...RequestEditorFn) (*ChallengeApplicationIdentitySourceResponse, error) {
+	rsp, err := c.ChallengeApplicationIdentitySource(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseChallengeApplicationIdentitySourceResponse(rsp)
+}
+
 // AcquireLeaseWithBodyWithResponse performs a POST /v1/leases (the `AcquireLease` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -2875,6 +3112,39 @@ func ParseHealthResponse(rsp *http.Response) (*HealthResponse, error) {
 	return response, nil
 }
 
+// ParseChallengeApplicationIdentitySourceResponse parses an HTTP response from a ChallengeApplicationIdentitySourceWithResponse call
+func ParseChallengeApplicationIdentitySourceResponse(rsp *http.Response) (*ChallengeApplicationIdentitySourceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ChallengeApplicationIdentitySourceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest IdentitySourceChallenge
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseAcquireLeaseResponse parses an HTTP response from a AcquireLeaseWithResponse call
 func ParseAcquireLeaseResponse(rsp *http.Response) (*AcquireLeaseResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -3115,6 +3385,9 @@ type ServerInterface interface {
 	// (GET /v1/health)
 	Health(w http.ResponseWriter, r *http.Request, params HealthParams)
 
+	// (POST /v1/identity-source-challenges)
+	ChallengeApplicationIdentitySource(w http.ResponseWriter, r *http.Request)
+
 	// (POST /v1/leases)
 	AcquireLease(w http.ResponseWriter, r *http.Request)
 
@@ -3259,6 +3532,20 @@ func (siw *ServerInterfaceWrapper) Health(w http.ResponseWriter, r *http.Request
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.Health(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ChallengeApplicationIdentitySource operation middleware
+func (siw *ServerInterfaceWrapper) ChallengeApplicationIdentitySource(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ChallengeApplicationIdentitySource(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3498,6 +3785,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/leases", wrapper.AcquireLease)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/ad-hoc/register", wrapper.RegisterInvocation)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publications", wrapper.PublishApplication)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/identity-source-challenges", wrapper.ChallengeApplicationIdentitySource)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/capability", wrapper.ReleaseInvocationCapability)
 
 	return m

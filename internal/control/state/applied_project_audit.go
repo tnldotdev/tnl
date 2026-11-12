@@ -3,7 +3,6 @@ package state
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -39,7 +38,7 @@ func recordAppliedGroupChange(ctx context.Context, tx pgx.Tx, s controlstatedb.C
 func recordPublisherGroupUpdate(ctx context.Context, tx pgx.Tx, group string, actor publisherIssuer, publisher, request string, now time.Time) error {
 	var team, project string
 	var revision int64
-	if err := tx.QueryRow(ctx, `SELECT g.team_id,g.project_key,p.revision FROM control.project_publisher_groups g JOIN control.applied_projects p ON p.team_id=g.team_id AND p.project_key=g.project_key WHERE g.id=$1`, group).Scan(&team, &project, &revision); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT owner.team_id,owner.project_key,owner.mutation_revision FROM control.project_publisher_groups assignment JOIN control.environments owner ON owner.id=assignment.environment_id AND owner.group_id=assignment.id AND owner.team_id=assignment.team_id AND owner.project_key=assignment.project_key WHERE assignment.id=$1`, group).Scan(&team, &project, &revision); err != nil {
 		return err
 	}
 	services, err := controlstatedb.New(tx).ListAppliedProjectServices(ctx, controlstatedb.ListAppliedProjectServicesParams{TeamID: team, ProjectKey: project})
@@ -49,26 +48,6 @@ func recordPublisherGroupUpdate(ctx context.Context, tx pgx.Tx, group string, ac
 	for _, s := range services {
 		if s.GroupID.String == group {
 			if err = recordAppliedGroupChange(ctx, tx, s, actor, publisher, request, revision, now); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func recordAppliedGroupConfiguration(ctx context.Context, tx pgx.Tx, oldServices, newServices []controlstatedb.ControlAppliedProjectService, changed map[string]bool, actor publisherIssuer, revision int64, now time.Time) error {
-	seen := map[string]bool{}
-	for _, rows := range [][]controlstatedb.ControlAppliedProjectService{oldServices, newServices} {
-		for _, s := range rows {
-			if !changed[s.GroupID.String] {
-				continue
-			}
-			key := s.GroupID.String + "/" + s.ServiceID.String + "/" + s.PublicURLID.String
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			if err := recordAppliedGroupChange(ctx, tx, s, actor, "", fmt.Sprintf("group/%s/configuration/%d", s.GroupID.String, revision), revision, now); err != nil {
 				return err
 			}
 		}

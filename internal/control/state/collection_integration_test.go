@@ -10,7 +10,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
-func createTestCollection(t *testing.T, d *Database, r ApplyProjectConfigurationRequest, name string, revision int64) (Collection, CreateCollectionRequest) {
+func createTestCollection(t *testing.T, d *Database, r environmentPublisherTestProject, name string, revision int64) (Collection, CreateCollectionRequest) {
 	t.Helper()
 	request := CreateCollectionRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, Name: name, DefaultDefinitionRevision: revision, Now: r.Now}
 	collection, err := d.CreateCollection(t.Context(), request)
@@ -20,13 +20,13 @@ func createTestCollection(t *testing.T, d *Database, r ApplyProjectConfiguration
 	return collection, request
 }
 
-func collectionEnvironmentRequest(r ApplyProjectConfigurationRequest, c Collection, name, address string) CreateEnvironmentRequest {
+func collectionEnvironmentRequest(r environmentPublisherTestProject, c Collection, name, address string) CreateEnvironmentRequest {
 	return CreateEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, SourceFingerprint: r.SourceFingerprint, Name: name, IdempotencyKey: "collection/" + name, CollectionID: c.ID, ExpectedCollectionRevision: c.MutationRevision, Targets: EnvironmentTargets{"api": {Address: address}}, Now: r.Now}
 }
 
 func TestIntegrationCollectionDefaultsOnlySelectNewEnvironments(t *testing.T) {
 	d, now, _, _ := newPublishRunPrerequisites(t)
-	r := appliedProjectRequest(t, d, now)
+	r := retainedEnvironmentProject(t, d, now)
 	d1 := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"api": {Protocol: "http"}})
 	c, creation := createTestCollection(t, d, r, "Customer previews", d1.Revision)
 	if !opaqueid.Valid(c.ID, opaqueid.CollectionPrefix) || c.MutationRevision != 1 || c.DefaultDefinitionRevision != d1.Revision {
@@ -39,11 +39,11 @@ func TestIntegrationCollectionDefaultsOnlySelectNewEnvironments(t *testing.T) {
 	}
 	member := enrollTestEnvironment(t, d, r, existing)
 	assignment := member.assignments.Services[0]
-	if member.member.GroupID == c.ID || assignment.ServiceID == c.ID || member.member.PublisherIdentityID == c.ID {
+	if member.member.EnvironmentID == c.ID || assignment.ServiceID == c.ID || member.member.PublisherIdentityID == c.ID {
 		t.Fatal("collection identity was reused for a publisher or service")
 	}
-	access := groupAssignmentAccess(t, d, member, assignment, now)
-	prepared, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "collection-default-run", now, ServiceMetadata{Protocol: "http", PublisherPool: true, TrustRevision: assignment.TrustRevision}, assignment.Environment)
+	access := environmentAssignmentAccess(t, d, member, assignment, now)
+	prepared, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "collection-default-run", now, ServiceMetadata{Protocol: "http", PublisherPool: true, TrustRevision: assignment.TrustRevision}, &member.assignments.Environment)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestIntegrationCollectionDefaultsOnlySelectNewEnvironments(t *testing.T) {
 		if err != nil || !reflect.DeepEqual(afterRun, beforeRun) {
 			t.Fatal("default update changed an installed service run", afterRun, err)
 		}
-		assignments, err := d.GetPublisherGroupAssignments(t.Context(), member.lease.AccessToken, now)
+		assignments, err := d.GetEnvironmentPublisherAssignments(t.Context(), member.lease.AccessToken, now)
 		if err != nil || !reflect.DeepEqual(assignments, member.assignments) {
 			t.Fatal("default update reconciled installed publisher assignments or grants", assignments, err)
 		}
@@ -176,7 +176,7 @@ func TestIntegrationCollectionDefaultsOnlySelectNewEnvironments(t *testing.T) {
 
 func TestIntegrationCollectionScopeAndDurableMembership(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "collection_scope")
-	r := appliedProjectRequest(t, d, now)
+	r := retainedEnvironmentProject(t, d, now)
 	d1 := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"api": {Protocol: "http"}})
 	c, creation := createTestCollection(t, d, r, "same name", d1.Revision)
 	member, err := d.CreateEnvironment(t.Context(), collectionEnvironmentRequest(r, c, "member", "member.internal:3000"))
@@ -201,7 +201,7 @@ func TestIntegrationCollectionScopeAndDurableMembership(t *testing.T) {
 	}
 	otherTeam := r
 	otherTeam.TeamID = team.ID
-	for _, scope := range []ApplyProjectConfigurationRequest{otherProject, otherTeam} {
+	for _, scope := range []environmentPublisherTestProject{otherProject, otherTeam} {
 		foreignDefinition := environmentDefinition(t, d, scope, d1.Definition.Services)
 		foreign, _ := createTestCollection(t, d, scope, creation.Name, foreignDefinition.Revision)
 		if foreign.ID == c.ID {
@@ -281,7 +281,7 @@ func TestIntegrationCollectionScopeAndDurableMembership(t *testing.T) {
 
 func TestIntegrationCollectionEnvironmentCreationRollsBackMembershipAndResources(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "collection_rollback")
-	r := appliedProjectRequest(t, d, now)
+	r := retainedEnvironmentProject(t, d, now)
 	d1 := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"api": {Protocol: "http"}})
 	c, _ := createTestCollection(t, d, r, "rollback", d1.Revision)
 	counts := func() string {

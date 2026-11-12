@@ -583,13 +583,13 @@ func TestIntegrationConnectorPeerPairExactAuthority(t *testing.T) {
 func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *testing.T) {
 	d, now, _, leases := newConnectorPairPrerequisites(t)
 	ctx := t.Context()
-	r := appliedProjectRequest(t, d, now)
-	r.Configuration = workloadConfiguration()
-	api := r.Configuration.Services["api"]
-	api.Target = "http://api.internal:3000"
-	api.HTTP = &config.HTTPService{Access: &config.Access{Mode: "restricted", IP: []string{"192.0.2.0/24"}}}
-	r.Configuration.Services["api"] = api
-	applied, err := d.ApplyProjectConfiguration(ctx, r)
+	f := newRetainedVisitorFixture(t, d, now, retainedGitHubTrust(), 3600, false)
+	r := f.project
+	targets := f.environment.Targets
+	api := targets["api"]
+	api.HTTP = &EnvironmentServiceHTTP{Access: &config.Access{Mode: "restricted", IP: []string{"192.0.2.0/24"}}}
+	targets["api"] = api
+	applied, err := d.ApplyEnvironment(ctx, ApplyEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, EnvironmentApplication: EnvironmentApplication{EnvironmentID: f.environment.ID, ExpectedRevision: f.environment.MutationRevision, DefinitionRevision: f.environment.AppliedDefinitionRevision, Targets: targets}, Now: now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -602,20 +602,17 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 	if serviceID == "" {
 		t.Fatal("no applied api service")
 	}
-	enrollment, err := d.IssuePublisherGroupEnrollment(ctx, r.TeamID, r.ProjectKey, "production", r.ActorID, 1, time.Hour, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	replica := enrollAppliedGroup(t, d, r, enrollment, now)
-	var assignment PublisherGroupServiceAssignment
+	f.environment = applied
+	replica := enrollTestEnvironment(t, d, r, applied)
+	var assignment EnvironmentPublisherAssignment
 	for _, candidate := range replica.assignments.Services {
 		if candidate.ServiceID == serviceID {
 			assignment = candidate
 		}
 	}
-	access := groupAssignmentAccess(t, d, replica, assignment, now)
+	access := environmentAssignmentAccess(t, d, replica, assignment, now)
 	prep, err := d.PrepareServiceRun(ctx, serviceID, access.PublisherIdentity, "peer-pair", now,
-		ServiceMetadata{Protocol: assignment.Configuration.Protocol, PublisherPool: true, TrustRevision: assignment.TrustRevision}, nil)
+		ServiceMetadata{Protocol: assignment.Configuration.Protocol, PublisherPool: true, TrustRevision: assignment.TrustRevision}, &replica.assignments.Environment)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -642,13 +639,14 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 			t.Fatal(err)
 		}
 	}
-	exchange, private := workloadExchange(t, r, now)
-	exchange.Services = []string{"api"}
-	signWorkloadRequest(&exchange, private)
-	workload, err := d.ExchangeWorkload(ctx, exchange, now)
+	exchange, private := retainedVisitorPreparation(t, f, now)
+	exchange.Services = map[string]string{"api": "http"}
+	signRetainedVisitorPreparation(&exchange, private)
+	prepared, err := d.PrepareEnvironmentVisitor(ctx, exchange, now)
 	if err != nil {
 		t.Fatal(err)
 	}
+	workload := prepared.Session
 	request := ConnectorPeerPairRequest{ServiceID: serviceID, ServiceRunID: run.RunID, RunNumber: run.RunNumber,
 		PublisherIdentityID: access.PublisherIdentity.ID, Subject: workload.Subject, Source: WorkloadTokenSource{Credential: workload.Credential}, IdempotencyKey: "workload",
 		Action: "create", RequestedAt: now, ExpectedRelays: testConnectorPairRelays(run, leases)}
@@ -717,10 +715,12 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 	if _, err := d.HeartbeatServiceRun(ctx, serviceID, run.RunID, run.Token, now.Add(30*time.Second), ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); err != nil {
 		t.Fatal(err)
 	}
-	if workload, err = d.RenewWorkloadSession(ctx, workload.ID, workload.Credential, signWorkloadRenewal(workload, private), now.Add(31*time.Second)); err != nil {
+	if workload, err = d.RenewEnvironmentVisitorSession(ctx, workload.ID, workload.Credential, signWorkloadRenewal(workload, private), now.Add(31*time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	unchanged, err := d.PrepareConnectorPeerPair(ctx, request, now.Add(31*time.Second))
+	// synthetic clocks must follow the committed renewal clock. reusing its
+	// entry timestamp can legitimately precede the row's post-lock check time.
+	unchanged, err := d.PrepareConnectorPeerPair(ctx, request, workload.RenewAfter.Add(-WorkloadRenewAfter))
 	if err != nil || unchanged.ID != pair.ID || unchanged.Key != pair.Key || unchanged.DeliveryID != pair.DeliveryID || unchanged.DeliveryGeneration != pair.DeliveryGeneration || !unchanged.ExpiresAt.Equal(pair.ExpiresAt) {
 		t.Fatal("creation retry extended pair after parent leases renewed", err)
 	}
@@ -742,7 +742,7 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 	if _, err := d.HeartbeatServiceRun(ctx, serviceID, run.RunID, run.Token, now.Add(60*time.Second), ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); err != nil {
 		t.Fatal(err)
 	}
-	if workload, err = d.RenewWorkloadSession(ctx, workload.ID, workload.Credential, signWorkloadRenewal(workload, private), now.Add(62*time.Second)); err != nil {
+	if workload, err = d.RenewEnvironmentVisitorSession(ctx, workload.ID, workload.Credential, signWorkloadRenewal(workload, private), now.Add(62*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	uncertain, err := d.RenewConnectorPeerPair(ctx, "https://control.example.test", renew, now.Add(63*time.Second))
@@ -778,7 +778,7 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 	if _, err := d.HeartbeatServiceRun(ctx, serviceID, run.RunID, run.Token, now.Add(90*time.Second), ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); err != nil {
 		t.Fatal(err)
 	}
-	if workload, err = d.RenewWorkloadSession(ctx, workload.ID, workload.Credential, signWorkloadRenewal(workload, private), now.Add(93*time.Second)); err != nil {
+	if workload, err = d.RenewEnvironmentVisitorSession(ctx, workload.ID, workload.Credential, signWorkloadRenewal(workload, private), now.Add(93*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	late := now.Add(106 * time.Second)
@@ -809,7 +809,7 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 	if err != nil || newPair.ID == pair.ID || newPair.Key == pair.Key || newPair.DeliveryID == pair.DeliveryID || newPair.DeliveryGeneration <= pair.DeliveryGeneration {
 		t.Fatal("fresh signed replacement did not recover after expiry", err)
 	}
-	if err := d.RevokeWorkloadSession(ctx, workload.ID, workload.Credential, late.Add(time.Second)); err != nil {
+	if err := d.RevokeEnvironmentVisitorSession(ctx, workload.ID, workload.Credential, late.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.PrepareConnectorPeerPair(ctx, replacement, late.Add(time.Second)); !errors.Is(err, ErrWorkloadDenied) {

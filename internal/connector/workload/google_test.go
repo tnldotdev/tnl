@@ -7,8 +7,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-
-	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 )
 
 type googleTransport func(*http.Request) (*http.Response, error)
@@ -49,7 +47,7 @@ func TestGoogleMetadataAcquisition(t *testing.T) {
 	if !errors.Is(err, ErrAssertionUnavailable) {
 		t.Fatal("canceled acquisition succeeded", err)
 	}
-	source := workloadmanifest.Acquisition{Method: "google-metadata", Audience: "https://control.example"}
+	source := Acquisition{Method: "google-metadata", Audience: "https://control.example"}
 	if RefreshSource(t.TempDir(), source, func(string) string { t.Fatal("metadata refresh read environment"); return "" }) == nil {
 		t.Fatal("metadata source cannot refresh independently")
 	}

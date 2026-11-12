@@ -106,16 +106,12 @@ type ControlAdminAuditEvent struct {
 }
 
 type ControlAppliedProject struct {
-	TeamID                  string
-	ProjectKey              string
-	SourceFingerprint       string
-	ProjectLabel            string
-	Revision                int64
-	ConfigurationHash       string
-	ConfigurationCiphertext []byte
-	StorageKeyID            string
-	CreatedByIdentityID     string
-	UpdatedAt               pgtype.Timestamptz
+	TeamID              string
+	ProjectKey          string
+	SourceFingerprint   string
+	ProjectLabel        string
+	CreatedByIdentityID string
+	UpdatedAt           pgtype.Timestamptz
 }
 
 type ControlAppliedProjectService struct {
@@ -448,7 +444,9 @@ type ControlEnvironment struct {
 	ConfigurationHash         string
 	InitialDefinitionRevision int64
 	CreationDigest            []byte
-	CreatedByIdentityID       string
+	CreatedByIdentityID       pgtype.Text
+	CreatedByMachineID        pgtype.Text
+	ProvisioningGrantID       pgtype.Text
 	CreatedAt                 pgtype.Timestamptz
 	UpdatedAt                 pgtype.Timestamptz
 	RetiredAt                 pgtype.Timestamptz
@@ -459,6 +457,37 @@ type ControlEnvironmentCreation struct {
 	ProjectKey     string
 	IdempotencyKey string
 	EnvironmentID  string
+}
+
+type ControlEnvironmentProvisioningEnrollment struct {
+	GrantID        string
+	IdempotencyKey string
+	EnvironmentID  string
+	EnrollmentID   string
+	RequestDigest  []byte
+	StorageKeyID   string
+	KeyCiphertext  []byte
+}
+
+type ControlEnvironmentPublisherEnrollmentService struct {
+	EnrollmentID string
+	Service      string
+	ServiceID    string
+}
+
+type ControlEnvironmentPublisherGrantRequest struct {
+	TeamID              string
+	ProjectKey          string
+	EnvironmentID       string
+	IdempotencyKey      string
+	PublisherIdentityID string
+	ServiceID           string
+	RequestDigest       []byte
+	GrantID             string
+	CreatedByIdentityID pgtype.Text
+	CreatedByMachineID  pgtype.Text
+	ProvisioningGrantID pgtype.Text
+	CreatedAt           pgtype.Timestamptz
 }
 
 type ControlFeedbackEvent struct {
@@ -695,18 +724,21 @@ type ControlMachineProofUse struct {
 }
 
 type ControlMachineProvisioningGrant struct {
-	ID                   string
-	MachineID            string
-	TeamID               string
-	ProjectKey           string
-	Templates            []string
-	Operations           []string
-	MaxEnrollmentMembers int32
-	MaxEnrollmentSeconds int32
-	EnrollmentBudget     int32
-	EnrollmentUsed       int32
-	ExpiresAt            pgtype.Timestamptz
-	RevokedAt            pgtype.Timestamptz
+	ID                        string
+	MachineID                 string
+	TeamID                    string
+	ProjectKey                string
+	CollectionID              pgtype.Text
+	IncludeFutureEnvironments bool
+	EnvironmentIds            []string
+	Services                  []string
+	Operations                []string
+	MaxEnrollmentMembers      int32
+	MaxEnrollmentSeconds      int32
+	EnrollmentBudget          int32
+	EnrollmentUsed            int32
+	ExpiresAt                 pgtype.Timestamptz
+	RevokedAt                 pgtype.Timestamptz
 }
 
 type ControlMachineProvisioningSession struct {
@@ -750,14 +782,17 @@ type ControlMachinePublicationSession struct {
 }
 
 type ControlMachineWorkloadPermission struct {
-	ID         string
-	MachineID  string
-	TeamID     string
-	ProjectKey string
-	Workload   string
-	Templates  []string
-	ExpiresAt  pgtype.Timestamptz
-	RevokedAt  pgtype.Timestamptz
+	ID                        string
+	MachineID                 string
+	TeamID                    string
+	ProjectKey                string
+	CollectionID              pgtype.Text
+	IncludeFutureEnvironments bool
+	EnvironmentIds            []string
+	Services                  []string
+	MaxDurationSeconds        int32
+	ExpiresAt                 pgtype.Timestamptz
+	RevokedAt                 pgtype.Timestamptz
 }
 
 type ControlMaintenanceControl struct {
@@ -1771,6 +1806,16 @@ type ControlVisitorVerificationKeyRevision struct {
 	Revision int64
 }
 
+type ControlWorkloadApproval struct {
+	TeamID       string
+	IntentKey    string
+	Request      []byte
+	MachineID    string
+	PermissionID string
+	Protocols    []byte
+	CreatedAt    pgtype.Timestamptz
+}
+
 type ControlWorkloadAssertion struct {
 	JtiDigest         []byte
 	AssertionDigest   []byte
@@ -1822,11 +1867,13 @@ type ControlWorkloadSession struct {
 }
 
 type ControlWorkloadSessionMachine struct {
-	SessionID        string
-	MachineID        string
-	IdentityRevision int64
-	PermissionID     string
-	GroupID          string
+	SessionID          string
+	MachineID          string
+	IdentityRevision   int64
+	PermissionID       string
+	EnvironmentID      string
+	PermissionDeadline pgtype.Timestamptz
+	ExpectedProtocols  []byte
 }
 
 type ControlWorkloadSessionService struct {

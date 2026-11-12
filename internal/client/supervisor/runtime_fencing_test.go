@@ -54,10 +54,10 @@ func TestInstalledGroupRuntimeConflictBlocksWithoutReclaim(t *testing.T) {
 				return
 			}
 			until := time.Now().Add(100 * time.Millisecond)
-			_ = json.NewEncoder(w).Encode(controlv1.PublisherRuntimeResponse{Epoch: 1, LeaseExpiresAt: &until, GroupLease: &controlv1.PublisherGroupLease{AccessToken: "pgl_fixture", ExpiresAt: until}})
-		case "/v1/publisher-groups/assignments":
-			_ = json.NewEncoder(w).Encode(controlv1.PublisherGroupAssignments{Member: member, Revision: 1, ConfigurationHash: strings.Repeat("a", 64), Services: []controlv1.PublisherGroupServiceAssignment{}})
-		case "/v1/publisher-groups/ack":
+			_ = json.NewEncoder(w).Encode(controlv1.PublisherRuntimeResponse{Epoch: 1, LeaseExpiresAt: &until, EnvironmentLease: &controlv1.EnvironmentPublisherLease{AccessToken: "epl_fixture", ExpiresAt: until}})
+		case "/v1/environment-publishers/assignments":
+			_ = json.NewEncoder(w).Encode(controlv1.EnvironmentPublisherAssignments{Publisher: member, Environment: controlv1.EnvironmentPublication{EnvironmentId: member.EnvironmentId, MutationRevision: 1, ConfigurationHash: strings.Repeat("a", 64)}, Services: []controlv1.EnvironmentPublisherAssignment{}})
+		case "/v1/environment-publishers/ack":
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			t.Errorf("unexpected request: %s", request.URL.Path)
@@ -80,7 +80,7 @@ func TestInstalledGroupRuntimeConflictBlocksWithoutReclaim(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		return (publishergroup.Runtime{Control: client, Member: current, Private: private, Observe: observe, PollInterval: 5 * time.Millisecond, Publish: func(context.Context, controlv1.PublisherGroupServiceAssignment, func(bool)) error {
+		return (publishergroup.Runtime{Control: client, Publisher: current, Private: private, Observe: observe, PollInterval: 5 * time.Millisecond, Publish: func(context.Context, controlv1.EnvironmentPublication, controlv1.EnvironmentPublisherAssignment, func(bool)) error {
 			t.Error("empty group published a service")
 			return ErrScope
 		}}).Serve(ctx)

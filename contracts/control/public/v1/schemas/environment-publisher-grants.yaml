@@ -1,0 +1,61 @@
+schemas:
+  EnvironmentPublisherGrant:
+    type: [object, "null"]
+    additionalProperties: false
+    description: The exact mapped publisher grant, including a revoked tombstone. Null means this tuple has no saved mapping. These are management facts, never a credential or an authorization decision. The issuer is provenance and does not control the installed publisher's lifetime.
+    required: [id, created_at]
+    properties:
+      id: { type: string, pattern: "^pgrant_[A-Za-z0-9]{22}$" }
+      created_at: { type: string, format: date-time }
+      created_by_identity_id: { $ref: "../openapi.yaml#/components/schemas/IdentityID" }
+      created_by_machine_id: { type: string }
+      provisioning_grant_id: { type: string }
+      expires_at: { type: string, format: date-time }
+      revoked_at: { type: string, format: date-time }
+  EnvironmentPublisherGrantState:
+    type: object
+    additionalProperties: false
+    description: Current exact environment, installed publisher member and saved service selection. Inspection grants no access. A successful authorization returns its current non-null mapped grant; an inspect may return null or a revoked tombstone.
+    required:
+      [
+        team_id,
+        project_key,
+        environment_id,
+        publisher_identity_id,
+        service_id,
+        mutation_revision,
+        configuration_hash,
+        grant,
+      ]
+    properties:
+      team_id: { type: string, pattern: "^tm_[A-Za-z0-9]{22}$" }
+      project_key: { type: string, maxLength: 63, pattern: "^[a-z][a-z0-9-]*$" }
+      environment_id: { type: string, pattern: "^env_[A-Za-z0-9]{22}$" }
+      publisher_identity_id: { type: string, pattern: "^pub_[A-Za-z0-9]{22}$" }
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      mutation_revision: { type: integer, format: int64, minimum: 1 }
+      configuration_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+      grant: { $ref: "../openapi.yaml#/components/schemas/EnvironmentPublisherGrant" }
+  AuthorizeEnvironmentPublisherServiceRequest:
+    type: object
+    additionalProperties: false
+    description: Explicit current-manager intent for one already-installed environment publisher and one saved service. Requests are limited to 8 KiB. The previous-grant field is required; null means no mapped grant, while a grant ID must match the current active grant or revoked tombstone. Reauthorization after revocation requires the exact tombstone and a new idempotency key. Replaying revoked or replaced intent never creates authority. Environment apply and rollback do not issue these grants.
+    required:
+      [
+        team_id,
+        expected_revision,
+        expected_configuration_hash,
+        expected_previous_grant_id,
+        idempotency_key,
+      ]
+    properties:
+      team_id: { type: string, pattern: "^tm_[A-Za-z0-9]{22}$" }
+      expected_revision: { type: integer, format: int64, minimum: 1 }
+      expected_configuration_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+      expected_previous_grant_id:
+        type: [string, "null"]
+        pattern: "^pgrant_[A-Za-z0-9]{22}$"
+      idempotency_key:
+        $ref: "../openapi.yaml#/components/schemas/IdempotencyKey"
+        description: At most 128 UTF-8 bytes, with no control characters or leading/trailing whitespace.
+        pattern: '^[^\u0000-\u001f\u007f-\u009f]*$'

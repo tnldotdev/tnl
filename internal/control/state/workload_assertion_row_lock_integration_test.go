@@ -3,41 +3,35 @@ package state
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
 	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/control/oidc"
-	"github.com/tnldotdev/tnl/internal/security/workloadproof"
 )
 
 func TestIntegrationWorkloadAssertionExpiryDuringSessionRowLock(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "workload_assertion_row_lock")
-	r := appliedProjectRequest(t, d, now)
-	r.Configuration = workloadConfiguration()
 	trust := oidc.WorkloadTrust{Provider: "vercel", Issuer: "https://oidc.vercel.com/acme", JWKSURL: "https://oidc.vercel.com/acme/.well-known/jwks", Audience: "https://vercel.com/acme", Claims: map[string]string{"owner": "acme", "owner_id": "team_one", "project_id": "prj_store", "environment": "production"}}
-	r.Configuration.Workloads = map[string]ProjectWorkload{"test": {Provider: "vercel", Trust: trust, Services: []string{"api"}, MaxDurationSeconds: 3600}}
-	if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
-		t.Fatal(err)
-	}
-	exchange, key := workloadExchange(t, r, now)
+	f := newRetainedVisitorFixture(t, d, now, trust, 3600, false)
+	exchange, key := retainedVisitorPreparation(t, f, now)
+	exchange.Services = map[string]string{"api": "http"}
 	// a reusable provider isolates the session update: GitHub's assertion insert
 	// can instead wait on this row while checking its foreign key.
-	exchange.Execution = oidc.WorkloadExecution{Provider: "vercel", Issuer: trust.Issuer, Audience: trust.Audience, TrustDigest: trust.Digest(), Subject: "owner:acme:project:store:environment:production", IssuedAt: now.Unix(), NotBefore: now.Unix(), ExpiresAt: now.Add(45 * time.Second).Unix(), Vercel: &oidc.VercelExecution{Owner: "acme", OwnerID: "team_one", Project: "store", ProjectID: "prj_store", Environment: "production"}}
-	signWorkloadRequest(&exchange, key)
-	session, err := d.ExchangeWorkload(t.Context(), exchange, now)
+	exchange.Proof.Execution = oidc.WorkloadExecution{Provider: "vercel", Issuer: trust.Issuer, Audience: trust.Audience, TrustDigest: trust.Digest(), Subject: "owner:acme:project:store:environment:production", IssuedAt: now.Unix(), NotBefore: now.Unix(), ExpiresAt: now.Add(45 * time.Second).Unix(), Vercel: &oidc.VercelExecution{Owner: "acme", OwnerID: "team_one", Project: "store", ProjectID: "prj_store", Environment: "production"}}
+	signRetainedVisitorPreparation(&exchange, key)
+	prepared, err := d.PrepareEnvironmentVisitor(t.Context(), exchange, now)
 	if err != nil {
 		t.Fatal(err)
 	}
+	session := prepared.Session
 	if !session.LeaseExpiresAt.Equal(session.IdentityExpiresAt) || !session.IdentityExpiresAt.Equal(now.Add(45*time.Second)) {
 		t.Fatal("initial session was not capped by the old platform proof")
 	}
 	fresh := exchange
-	fresh.Execution.ExpiresAt = now.Add(5 * time.Minute).Unix()
-	signWorkloadRequest(&fresh, key)
-	signature := ed25519.Sign(key, workloadproof.Attach(session.ID, fresh.Execution.AssertionDigest))
+	fresh.Proof.Execution.ExpiresAt = now.Add(5 * time.Minute).Unix()
+	proof, signature, audience := retainedVisitorAssertion(t, d, session, key, fresh.Proof.Execution)
 	saved := func() []byte {
 		t.Helper()
 		var value []byte
@@ -71,7 +65,7 @@ func TestIntegrationWorkloadAssertionExpiryDuringSessionRowLock(t *testing.T) {
 	workers.Go(func() {
 		entered <- time.Now()
 		var err error
-		attached, err = d.AttachWorkloadAssertion(ctx, session.ID, session.Credential, fresh.Execution, signature, at)
+		attached, err = d.AttachEnvironmentVisitorAssertion(ctx, session.ID, session.Credential, proof, signature, audience, at)
 		done <- err
 	})
 	pid := waitForPostgresBlock(t, ctx, d, int32(gate.Conn().PgConn().PID()), done)

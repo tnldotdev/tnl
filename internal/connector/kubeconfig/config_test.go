@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -26,6 +27,31 @@ func privateTemp(t *testing.T) string {
 
 func options() Options {
 	return Options{Owner: Owner{ControlURL: "https://control.example.test", TeamID: "team", SourceID: "source", ServiceID: "cluster"}, ProjectLabel: "shop", Service: "cluster", Namespace: "development", Server: "https://cluster.example.test:25443", TLSServerName: "cluster.example.test", Helper: "/opt/tnl", Profile: "/state/profile.json"}
+}
+
+func TestEnvironmentOwnerUsesExactReferenceWithoutInventingTeamIdentity(t *testing.T) {
+	root := privateTemp(t)
+	selected := options()
+	selected.Owner = Owner{ControlURL: "https://control.example.test", ProjectKey: "project", EnvironmentID: "env_" + strings.Repeat("e", 22), ServiceID: "svc_" + strings.Repeat("s", 22)}
+	if err := selected.validate(); err != nil { t.Fatal("exact environment scope rejected", err) }
+	for _, mutate := range []func(*Owner){
+		func(o *Owner) { o.TeamID = "team" },
+		func(o *Owner) { o.SourceID = "source" },
+		func(o *Owner) { o.ProjectKey = "" },
+		func(o *Owner) { o.EnvironmentID = "pgrp_" + strings.Repeat("e", 22) },
+	} {
+		invalid := selected
+		mutate(&invalid.Owner)
+		if invalid.validate() == nil { t.Fatal("mixed or invalid environment scope accepted") }
+	}
+	plan, err := PlanSession(root, "environment")
+	if err != nil { t.Fatal(err) }
+	result, err := plan.Prepare(t.Context(), selected)
+	if err != nil { t.Fatal(err) }
+	if filepath.Dir(result.File) != root { t.Fatal("environment kubeconfig escaped private owner directory") }
+	_, data := loadConfig(t, result.File)
+	if !bytes.Contains(data, []byte(selected.Owner.EnvironmentID)) || bytes.Contains(data, []byte("team_id")) || bytes.Contains(data, []byte("source_id")) { t.Fatal("environment owner acquired invented team/source identity") }
+	if err := plan.CleanupSession(t.Context(), result); err != nil { t.Fatal(err) }
 }
 
 func loadConfig(t *testing.T, path string) (kubev1.Config, []byte) {

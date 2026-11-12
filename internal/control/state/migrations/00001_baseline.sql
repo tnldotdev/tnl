@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-explicit-capabilities-environment-collections-provider-regions')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-cohesive-environments-explicit-approval')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-explicit-capabilities-environment-collections-provider-regions');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-cohesive-environments-explicit-approval');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -1901,8 +1901,8 @@ SELECT publisher_connection_id,run_id AS service_run_id,service_id AS service_id
 FROM control.publisher_service_connection_slots WHERE service_kind='private' WITH LOCAL CHECK OPTION;
 ALTER VIEW control.service_connection_slots ALTER COLUMN service_kind SET DEFAULT 'private';
 
--- workload executions are visitor principals, independent of people and
--- publishers. the unique execution fence prevents a new key stealing a job.
+-- visitor sessions are independent of people and publishers. the original nonce
+-- pins one admitted key and selection; the same source can admit other sessions.
 CREATE TABLE control.workload_sessions (
     id text PRIMARY KEY CHECK (id ~ '^wls_[A-Za-z0-9]{22}$'),
     team_id text NOT NULL REFERENCES control.teams(id),
@@ -1928,7 +1928,6 @@ CREATE TABLE control.workload_sessions (
     revoked_at timestamptz,
     renewal_sequence bigint NOT NULL DEFAULT 0 CHECK (renewal_sequence >= 0),
     identity_expires_at timestamptz NOT NULL,
-    UNIQUE(team_id,project_key,repository_id,run_id,run_attempt,check_run_id),
     UNIQUE(team_id,project_key,session_nonce),
     CHECK ((provider='github' AND repository_id IS NOT NULL AND run_id IS NOT NULL AND run_attempt IS NOT NULL AND check_run_id IS NOT NULL) OR
            (provider<>'github' AND repository_id IS NULL AND run_id IS NULL AND run_attempt IS NULL AND check_run_id IS NULL)),
@@ -2113,17 +2112,13 @@ $$;
 CREATE TRIGGER advance_connector_visitor_revision AFTER INSERT OR UPDATE ON control.visitor_grants
     FOR EACH ROW WHEN (NEW.service_id IS NOT NULL) EXECUTE FUNCTION control.advance_connector_visitor_revision();
 
--- applied project desired state is independent of local worktree previews.
--- the normalized document, including targets, is encrypted under the storage key.
+-- project rows record source provenance only. definitions, approved environment
+-- targets and authorization have independent owners and mutation clocks.
 CREATE TABLE control.applied_projects (
     team_id text NOT NULL REFERENCES control.teams(id) ON DELETE RESTRICT,
     project_key text NOT NULL CHECK (project_key ~ '^[a-z][a-z0-9-]{0,62}$'),
     source_fingerprint text NOT NULL CHECK (source_fingerprint ~ '^[0-9a-f]{64}$'),
     project_label text NOT NULL DEFAULT '' CHECK (project_label = '' OR project_label ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'),
-    revision bigint NOT NULL DEFAULT 0 CHECK (revision >= 0),
-    configuration_hash text NOT NULL DEFAULT '',
-    configuration_ciphertext bytea NOT NULL,
-    storage_key_id text NOT NULL,
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     updated_at timestamptz NOT NULL,
     PRIMARY KEY (team_id, project_key)
@@ -2200,12 +2195,17 @@ CREATE TABLE control.environments (
     configuration_hash text NOT NULL CHECK (configuration_hash ~ '^[0-9a-f]{64}$'),
     initial_definition_revision bigint NOT NULL,
     creation_digest bytea NOT NULL CHECK (octet_length(creation_digest)=32),
-    created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
+    created_by_identity_id text REFERENCES control.identities(id) ON DELETE RESTRICT,
+    created_by_machine_id text,
+    provisioning_grant_id text,
+    CHECK ((created_by_identity_id IS NOT NULL) <> (created_by_machine_id IS NOT NULL)),
+    CHECK ((created_by_machine_id IS NULL) = (provisioning_grant_id IS NULL)),
     created_at timestamptz NOT NULL,
     updated_at timestamptz NOT NULL,
     retired_at timestamptz,
     UNIQUE(id,team_id,project_key),
     UNIQUE(id,team_id),
+    UNIQUE(id,group_id),
     UNIQUE(team_id,project_key,name),
     FOREIGN KEY(collection_id,team_id,project_key) REFERENCES control.collections(id,team_id,project_key) ON DELETE RESTRICT,
     FOREIGN KEY(group_id,team_id,project_key) REFERENCES control.project_publisher_groups(id,team_id,project_key) ON DELETE RESTRICT,
@@ -2409,6 +2409,23 @@ CREATE TABLE control.publisher_group_members (
     UNIQUE (group_id, publisher_identity_id),
     FOREIGN KEY (key_id, publisher_identity_id) REFERENCES control.publisher_identity_keys(id, publisher_identity_id) ON DELETE RESTRICT
 );
+-- enrollment captures exact saved services once. a later definition revision,
+-- collection default or repeated redemption cannot expand this set.
+CREATE TABLE control.environment_publisher_enrollment_services (
+    enrollment_id text NOT NULL REFERENCES control.publisher_group_enrollments(id) ON DELETE RESTRICT,
+    service text NOT NULL,
+    service_id text NOT NULL REFERENCES control.services(id) ON DELETE RESTRICT,
+    PRIMARY KEY(enrollment_id,service),
+    UNIQUE(enrollment_id,service_id)
+);
+-- +goose StatementBegin
+CREATE FUNCTION control.reject_environment_publisher_enrollment_service_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'environment publisher enrollment services are immutable' USING ERRCODE='23514';
+END;
+$$;
+-- +goose StatementEnd
+CREATE TRIGGER environment_publisher_enrollment_services_immutable BEFORE UPDATE OR DELETE ON control.environment_publisher_enrollment_services FOR EACH ROW EXECUTE FUNCTION control.reject_environment_publisher_enrollment_service_mutation();
 -- enrollment issuance and redemption check the current manager. installed
 -- team publishers depend on their own membership, identity/key and exact grant,
 -- never on the human bootstrap issuer or bootstrap key lifetime.
@@ -2417,7 +2434,7 @@ CREATE FUNCTION control.environment_group_manager(group_identity text, actor_ide
 RETURNS boolean LANGUAGE sql STABLE AS $$
     SELECT EXISTS(SELECT 1 FROM control.project_publisher_groups publisher_group
         WHERE publisher_group.id=group_identity AND publisher_group.deleted_at IS NULL
-        AND ((publisher_group.environment_id IS NULL AND NOT EXISTS(SELECT 1 FROM control.environments reverse_owner WHERE reverse_owner.group_id=publisher_group.id)) OR EXISTS(
+        AND EXISTS(
             SELECT 1 FROM control.environments environment
             JOIN control.teams team ON team.id=environment.team_id AND team.deleted_at IS NULL
             JOIN control.team_memberships member ON member.team_id=team.id AND member.identity_id=actor_identity
@@ -2425,7 +2442,7 @@ RETURNS boolean LANGUAGE sql STABLE AS $$
             WHERE environment.id=publisher_group.environment_id AND environment.group_id=publisher_group.id
                 AND environment.team_id=publisher_group.team_id AND environment.project_key=publisher_group.project_key
                 AND environment.retired_at IS NULL AND member.role IN('owner','admin')
-                AND control.active_membership(member.id,at_time))))
+                AND control.active_membership(member.id,at_time)))
 $$;
 -- +goose StatementEnd
 -- +goose StatementBegin
@@ -2436,7 +2453,7 @@ RETURNS boolean LANGUAGE sql STABLE AS $$
         AND NOT EXISTS(SELECT 1 FROM control.publisher_group_members member
             JOIN control.project_publisher_groups publisher_group ON publisher_group.id=member.group_id
             LEFT JOIN control.environments environment ON environment.group_id=publisher_group.id
-            WHERE member.publisher_identity_id=p.id AND (publisher_group.environment_id IS NOT NULL OR environment.id IS NOT NULL)
+            WHERE member.publisher_identity_id=p.id
                 AND (publisher_group.environment_id IS NULL OR environment.id IS NULL
                     OR publisher_group.environment_id<>environment.id OR publisher_group.team_id<>environment.team_id
                     OR publisher_group.project_key<>environment.project_key OR publisher_group.deleted_at IS NOT NULL
@@ -2461,6 +2478,36 @@ CREATE TABLE control.publisher_group_service_grants (
     FOREIGN KEY (grant_id, publisher_identity_id) REFERENCES control.publisher_grants(id, publisher_identity_id) ON DELETE RESTRICT
 );
 
+-- requests outlive revocation, service removal, and mapping replacement. a
+-- receipt records intent and provenance; it is never reusable authority.
+CREATE TABLE control.environment_publisher_grant_requests (
+    team_id text NOT NULL,
+    project_key text NOT NULL,
+    environment_id text NOT NULL,
+    idempotency_key text NOT NULL CHECK (octet_length(idempotency_key) BETWEEN 1 AND 128),
+    publisher_identity_id text NOT NULL,
+    service_id text NOT NULL REFERENCES control.services(id) ON DELETE RESTRICT,
+    request_digest bytea NOT NULL CHECK (octet_length(request_digest)=32),
+    grant_id text NOT NULL,
+    created_by_identity_id text REFERENCES control.identities(id) ON DELETE RESTRICT,
+    created_by_machine_id text,
+    provisioning_grant_id text,
+    CHECK ((created_by_identity_id IS NOT NULL) <> (created_by_machine_id IS NOT NULL)),
+    CHECK ((created_by_machine_id IS NULL) = (provisioning_grant_id IS NULL)),
+    created_at timestamptz NOT NULL,
+    PRIMARY KEY(team_id,project_key,environment_id,idempotency_key),
+    FOREIGN KEY(environment_id,team_id,project_key) REFERENCES control.environments(id,team_id,project_key) ON DELETE RESTRICT,
+    FOREIGN KEY(grant_id,publisher_identity_id) REFERENCES control.publisher_grants(id,publisher_identity_id) ON DELETE RESTRICT
+);
+-- +goose StatementBegin
+CREATE FUNCTION control.reject_environment_publisher_grant_request_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'environment publisher grant requests are immutable' USING ERRCODE='23514';
+END;
+$$;
+-- +goose StatementEnd
+CREATE TRIGGER environment_publisher_grant_request_immutable BEFORE UPDATE OR DELETE ON control.environment_publisher_grant_requests FOR EACH ROW EXECUTE FUNCTION control.reject_environment_publisher_grant_request_mutation();
+
 -- one current epoch per immutable replica, not one row per service or heartbeat.
 -- retain the final observation after orderly stop, expiry, or revocation.
 CREATE TABLE control.publisher_runtimes (
@@ -2484,7 +2531,8 @@ CREATE TABLE control.publisher_runtimes (
     FOREIGN KEY (deployment_group_id,publisher_identity_id) REFERENCES control.publisher_group_members(group_id,publisher_identity_id) ON DELETE RESTRICT,
     CHECK ((deployment_report IS NULL) = (deployment_group_id IS NULL)),
     CHECK ((deployment_report IS NULL) = (deployment_first_observed_at IS NULL)),
-    CHECK (deployment_report IS NULL OR (jsonb_typeof(deployment_report) = 'object' AND octet_length(deployment_report::text) <= 2048 AND deployment_group_id = scope_id)),
+    CHECK (deployment_report IS NULL OR (jsonb_typeof(deployment_report) = 'object' AND octet_length(deployment_report::text) <= 2048)),
+    FOREIGN KEY (scope_id,deployment_group_id) REFERENCES control.environments(id,group_id) ON DELETE RESTRICT,
     FOREIGN KEY (publisher_identity_id,team_id) REFERENCES control.publisher_identities(id,team_id) ON DELETE CASCADE,
     FOREIGN KEY (key_id,publisher_identity_id) REFERENCES control.publisher_identity_keys(id,publisher_identity_id) ON DELETE RESTRICT,
     CHECK ((address IS NULL) = (address_family = 'unknown')),
@@ -2900,24 +2948,8 @@ CREATE TRIGGER visitor_policy_guest AFTER UPDATE ON control.guest_trials FOR EAC
         OR (OLD.used_ready_ns<1200000000000 AND NEW.used_ready_ns>=1200000000000))
     EXECUTE FUNCTION control.visitor_policy_fact_changed('guest');
 
--- +goose StatementBegin
-CREATE FUNCTION control.visitor_policy_project_changed() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE resource record;
-BEGIN
-    FOR resource IN SELECT 'public_url'::text AS kind,public_url_id AS id FROM control.applied_project_services
-        WHERE team_id=NEW.team_id AND project_key=NEW.project_key AND public_url_id IS NOT NULL
-        UNION SELECT 'service'::text,service_id FROM control.applied_project_services
-        WHERE team_id=NEW.team_id AND project_key=NEW.project_key AND service_id IS NOT NULL
-        ORDER BY 1,2 LOOP
-        PERFORM control.touch_visitor_policy(resource.kind,resource.id);
-    END LOOP;
-    RETURN NULL;
-END;
-$$;
--- +goose StatementEnd
-CREATE TRIGGER visitor_policy_project AFTER UPDATE ON control.applied_projects FOR EACH ROW
-    WHEN (OLD.configuration_hash IS DISTINCT FROM NEW.configuration_hash)
-    EXECUTE FUNCTION control.visitor_policy_project_changed();
+-- project provenance and definition publication carry no visitor authority.
+-- environment service changes invalidate only their own saved resources.
 
 -- key rotation is ordered separately from resource permission. ordinary
 -- rotation does not revoke otherwise valid tokens or reverse resource locks.
@@ -3087,8 +3119,8 @@ CREATE TABLE control.machine_identities (
     revoked_at timestamptz,
     UNIQUE(id,team_id)
 );
--- a subject cannot evade revocation by selecting a duplicate registration.
-CREATE UNIQUE INDEX machine_oidc_subject ON control.machine_identities(team_id,(trust->>'issuer'),(trust->>'audience'),(trust->'claims'->>'sub')) WHERE proof_kind='oidc';
+-- independently approved exact policies may share a source subject. requests
+-- select saved permission and machine IDs; revocation follows those exact links.
 CREATE TABLE control.machine_identity_keys (
     machine_id text NOT NULL REFERENCES control.machine_identities(id),
     key_id text NOT NULL,
@@ -3102,7 +3134,10 @@ CREATE TABLE control.machine_provisioning_grants (
     machine_id text NOT NULL,
     team_id text NOT NULL,
     project_key text NOT NULL,
-    templates text[] NOT NULL CHECK (cardinality(templates) BETWEEN 1 AND 32),
+    collection_id text,
+    include_future_environments boolean NOT NULL DEFAULT false,
+    environment_ids text[] NOT NULL CHECK (cardinality(environment_ids)<=1024),
+    services text[] NOT NULL CHECK (cardinality(services) BETWEEN 1 AND 128),
     operations text[] NOT NULL CHECK (cardinality(operations) BETWEEN 1 AND 6),
     max_enrollment_members integer NOT NULL CHECK (max_enrollment_members BETWEEN 0 AND 256),
     max_enrollment_seconds integer NOT NULL CHECK (max_enrollment_seconds BETWEEN 0 AND 86400),
@@ -3111,7 +3146,9 @@ CREATE TABLE control.machine_provisioning_grants (
     expires_at timestamptz NOT NULL,
     revoked_at timestamptz,
     FOREIGN KEY(machine_id,team_id) REFERENCES control.machine_identities(id,team_id),
-    FOREIGN KEY(team_id,project_key) REFERENCES control.applied_projects(team_id,project_key)
+    FOREIGN KEY(team_id,project_key) REFERENCES control.applied_projects(team_id,project_key),
+    FOREIGN KEY(collection_id,team_id,project_key) REFERENCES control.collections(id,team_id,project_key),
+    CHECK (collection_id IS NOT NULL OR (NOT include_future_environments AND cardinality(environment_ids)>0))
 );
 CREATE TABLE control.machine_provisioning_sessions (
     credential_digest bytea PRIMARY KEY CHECK (octet_length(credential_digest)=32),
@@ -3123,6 +3160,17 @@ CREATE TABLE control.machine_provisioning_sessions (
     expires_at timestamptz NOT NULL CHECK (expires_at>created_at)
 );
 CREATE INDEX machine_provisioning_sessions_expiry ON control.machine_provisioning_sessions(expires_at,credential_digest);
+-- retry receipts preserve exact issuance, not reusable enrollment authority.
+CREATE TABLE control.environment_provisioning_enrollments (
+    grant_id text NOT NULL REFERENCES control.machine_provisioning_grants(id),
+    idempotency_key text NOT NULL CHECK (octet_length(idempotency_key) BETWEEN 1 AND 128),
+    environment_id text NOT NULL REFERENCES control.environments(id),
+    enrollment_id text NOT NULL UNIQUE REFERENCES control.publisher_group_enrollments(id),
+    request_digest bytea NOT NULL CHECK (octet_length(request_digest)=32),
+    storage_key_id text NOT NULL,
+    key_ciphertext bytea NOT NULL,
+    PRIMARY KEY(grant_id,idempotency_key)
+);
 CREATE TABLE control.machine_proof_uses (
     machine_id text NOT NULL REFERENCES control.machine_identities(id),
     proof_digest bytea NOT NULL CHECK (octet_length(proof_digest)=32),
@@ -3135,25 +3183,70 @@ CREATE TABLE control.machine_workload_permissions (
     machine_id text NOT NULL,
     team_id text NOT NULL,
     project_key text NOT NULL,
-    workload text NOT NULL,
-    templates text[] NOT NULL CHECK (cardinality(templates) BETWEEN 1 AND 32),
+    collection_id text,
+    include_future_environments boolean NOT NULL DEFAULT false,
+    environment_ids text[] NOT NULL CHECK (cardinality(environment_ids)<=1024),
+    services text[] NOT NULL CHECK (cardinality(services) BETWEEN 1 AND 128),
+    max_duration_seconds integer NOT NULL CHECK (max_duration_seconds BETWEEN 0 AND 31557600),
     expires_at timestamptz NOT NULL,
     revoked_at timestamptz,
     FOREIGN KEY(machine_id,team_id) REFERENCES control.machine_identities(id,team_id),
-    FOREIGN KEY(team_id,project_key) REFERENCES control.applied_projects(team_id,project_key)
+    UNIQUE(id,machine_id,team_id),
+    FOREIGN KEY(team_id,project_key) REFERENCES control.applied_projects(team_id,project_key),
+    FOREIGN KEY(collection_id,team_id,project_key) REFERENCES control.collections(id,team_id,project_key),
+    CHECK (collection_id IS NOT NULL OR (NOT include_future_environments AND cardinality(environment_ids)>0))
 );
 CREATE TABLE control.workload_session_machines (
     session_id text PRIMARY KEY REFERENCES control.workload_sessions(id) ON DELETE CASCADE,
     machine_id text NOT NULL REFERENCES control.machine_identities(id),
     identity_revision bigint NOT NULL,
     permission_id text NOT NULL REFERENCES control.machine_workload_permissions(id),
-    group_id text NOT NULL REFERENCES control.project_publisher_groups(id)
+    environment_id text NOT NULL REFERENCES control.environments(id),
+    permission_deadline timestamptz NOT NULL,
+    expected_protocols jsonb NOT NULL CHECK (jsonb_typeof(expected_protocols)='object')
 );
+
+-- explicit approval receipts survive permission expiry and revocation. a retry
+-- returns these exact IDs rather than inserting replacement authority.
+CREATE TABLE control.workload_approvals (
+    team_id text NOT NULL REFERENCES control.teams(id),
+    intent_key text NOT NULL CHECK (intent_key ~ '^[A-Za-z0-9_-]{1,128}$'),
+    request jsonb NOT NULL CHECK (jsonb_typeof(request)='object'),
+    machine_id text NOT NULL,
+    permission_id text NOT NULL UNIQUE,
+    protocols jsonb NOT NULL CHECK (jsonb_typeof(protocols)='object'),
+    created_at timestamptz NOT NULL,
+    PRIMARY KEY(team_id,intent_key),
+    FOREIGN KEY(machine_id,team_id) REFERENCES control.machine_identities(id,team_id),
+    FOREIGN KEY(permission_id,machine_id,team_id) REFERENCES control.machine_workload_permissions(id,machine_id,team_id)
+);
+-- linked visitor sessions cannot outlive revoked permission or identity. session
+-- revocation also advances each issued service's visitor-policy revision.
+-- +goose StatementBegin
+CREATE FUNCTION control.revoke_machine_visitor_sessions() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    UPDATE control.workload_sessions session SET revoked_at=COALESCE(session.revoked_at,statement_timestamp())
+    FROM control.workload_session_machines binding
+    WHERE binding.session_id=session.id AND session.revoked_at IS NULL
+        AND ((TG_TABLE_NAME='machine_identities' AND binding.machine_id=NEW.id)
+            OR (TG_TABLE_NAME='machine_workload_permissions' AND binding.permission_id=NEW.id));
+    RETURN NULL;
+END;
+$$;
+-- +goose StatementEnd
+CREATE TRIGGER machine_identity_visitor_revocation AFTER UPDATE ON control.machine_identities FOR EACH ROW
+    WHEN ((OLD.revision,OLD.revoked_at) IS DISTINCT FROM (NEW.revision,NEW.revoked_at))
+    EXECUTE FUNCTION control.revoke_machine_visitor_sessions();
+CREATE TRIGGER machine_permission_visitor_revocation AFTER UPDATE ON control.machine_workload_permissions FOR EACH ROW
+    WHEN (OLD.revoked_at IS DISTINCT FROM NEW.revoked_at)
+    EXECUTE FUNCTION control.revoke_machine_visitor_sessions();
 ALTER TABLE control.publisher_identities ADD FOREIGN KEY(created_by_machine_id,team_id) REFERENCES control.machine_identities(id,team_id), ADD FOREIGN KEY(provisioning_grant_id) REFERENCES control.machine_provisioning_grants(id);
 ALTER TABLE control.publisher_grants ADD FOREIGN KEY(created_by_machine_id) REFERENCES control.machine_identities(id), ADD FOREIGN KEY(provisioning_grant_id) REFERENCES control.machine_provisioning_grants(id);
 ALTER TABLE control.services ADD FOREIGN KEY(created_by_machine_id,team_id) REFERENCES control.machine_identities(id,team_id), ADD FOREIGN KEY(provisioning_grant_id) REFERENCES control.machine_provisioning_grants(id);
 ALTER TABLE control.visitor_grants ADD FOREIGN KEY(created_by_machine_id,team_id) REFERENCES control.machine_identities(id,team_id), ADD FOREIGN KEY(provisioning_grant_id) REFERENCES control.machine_provisioning_grants(id);
 ALTER TABLE control.publisher_group_enrollments ADD FOREIGN KEY(created_by_machine_id) REFERENCES control.machine_identities(id), ADD FOREIGN KEY(provisioning_grant_id) REFERENCES control.machine_provisioning_grants(id);
+ALTER TABLE control.environments ADD FOREIGN KEY(created_by_machine_id,team_id) REFERENCES control.machine_identities(id,team_id), ADD FOREIGN KEY(provisioning_grant_id) REFERENCES control.machine_provisioning_grants(id);
+ALTER TABLE control.environment_publisher_grant_requests ADD FOREIGN KEY(created_by_machine_id,team_id) REFERENCES control.machine_identities(id,team_id), ADD FOREIGN KEY(provisioning_grant_id) REFERENCES control.machine_provisioning_grants(id);
 CREATE UNIQUE INDEX services_machine_idempotency ON control.services(created_by_machine_id,idempotency_key) WHERE created_by_machine_id IS NOT NULL;
 CREATE UNIQUE INDEX visitor_grants_machine_idempotency ON control.visitor_grants(resource_kind,created_by_machine_id,kind,idempotency_key) WHERE created_by_machine_id IS NOT NULL;
 ALTER TABLE control.public_urls ADD FOREIGN KEY(created_by_machine_id,team_id) REFERENCES control.machine_identities(id,team_id);

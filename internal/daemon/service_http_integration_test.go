@@ -112,20 +112,15 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	// use a local CA for target trust, separately from Pebble's visitor roots.
 	caPEM := string(targetCA.certificatePEM)
 	trust := serviceHTTPTestTargetTrust(hostname, caPEM)
-	group := "production"
 	public := true
 	protocol := controlv1.ServiceProtocolHTTP
-	configuration := controlv1.ProjectConfiguration{PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {Public: &public}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {PublisherGroup: &group, Protocol: &protocol, Target: target.URL, TargetTls: &trust, Http: &controlv1.ProjectServiceHTTP{Limits: &controlv1.ProjectHTTPApplicationLimits{Concurrency: new(1)}}}}, Webhooks: map[string]controlv1.ProjectWebhook{}}
-	applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "http-auth", controlv1.ApplyProjectConfigurationRequest{TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64), Configuration: configuration})
-	if err != nil {
-		t.Fatal(err)
+	applied := createServiceRuntimeEnvironment(t, f, "http-auth", controlv1.ServiceDefinition{Services: map[string]controlv1.ServiceDefinitionService{"api": {Protocol: protocol}}}, controlv1.CreateEnvironmentRequest{Name: "production", Public: &public, Targets: controlv1.EnvironmentTargets{"api": {Address: &target.URL, Tls: &controlv1.EnvironmentTargetTLS{Hostname: &trust.Hostname, CaPem: trust.CaPem, Digest: &trust.Digest}, Http: &controlv1.EnvironmentServiceHTTP{Limits: &controlv1.ProjectHTTPApplicationLimits{Concurrency: new(1)}}}}})
+	if !applied.Services[0].Public {
+		t.Fatal("environment HTTP did not use its public managed endpoint", applied.Services)
 	}
-	if applied.Services[0].ServiceKind != "service" || applied.Services[0].Public == nil || !*applied.Services[0].Public {
-		t.Fatal("group HTTP did not use its managed endpoint", applied.Services)
-	}
-	serviceID := *applied.Services[0].ServiceId
-	// a group assignment is the only publisher grant for this service.
-	publisherMetrics := startServiceHTTPGroupPublisher(t, f, applied, "http-auth", group, target.Listener.Addr().String())
+	serviceID := applied.Services[0].ServiceId
+	// an environment assignment is the only publisher grant for this service.
+	publisherMetrics := startServiceHTTPEnvironmentPublisher(t, f, applied, "http-auth", target.Listener.Addr().String())
 	services, err := f.identity.routes.ListAvailableServices(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -464,14 +459,11 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	closeResponse(request(mtls, "/", "", "", 403))
 	// stale public DNS cannot override current private reachability, and neither
 	// the stable hostname nor allocated port changes during the transition.
-	g := applied.Configuration.PublisherGroups[group]
-	g.Public = new(false)
-	applied.Configuration.PublisherGroups[group] = g
-	updated, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "http-auth", controlv1.ApplyProjectConfigurationRequest{TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64), ExpectedRevision: applied.Revision, Configuration: applied.Configuration})
+	updated, err := f.identity.routes.ApplyEnvironment(t.Context(), "http-auth", applied.Id, controlv1.ApplyEnvironmentRequest{TeamId: f.identity.teamID, ExpectedRevision: applied.MutationRevision, DefinitionRevision: applied.AppliedDefinitionRevision, Public: new(false)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if *updated.Services[0].Hostname != service.Endpoint.Hostname || *updated.Services[0].Port != service.Endpoint.Port {
+	if updated.Services[0].Hostname != service.Endpoint.Hostname || updated.Services[0].Port != service.Endpoint.Port {
 		t.Fatal("reachability changed endpoint")
 	}
 	client.Transport.(*http.Transport).CloseIdleConnections()
@@ -479,9 +471,7 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 		_ = response.Body.Close()
 		t.Fatal("stale DNS admitted service directly")
 	}
-	g.Public = new(true)
-	updated.Configuration.PublisherGroups[group] = g
-	if _, err = f.identity.routes.ApplyProjectConfiguration(t.Context(), "http-auth", controlv1.ApplyProjectConfigurationRequest{TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64), ExpectedRevision: updated.Revision, Configuration: updated.Configuration}); err != nil {
+	if _, err = f.identity.routes.ApplyEnvironment(t.Context(), "http-auth", updated.Id, controlv1.ApplyEnvironmentRequest{TeamId: f.identity.teamID, ExpectedRevision: updated.MutationRevision, DefinitionRevision: updated.AppliedDefinitionRevision, Public: new(true)}); err != nil {
 		t.Fatal(err)
 	}
 	checkServiceHTTPCompany(t, f, issuer, client, base, service, person.Identity.Id)
@@ -642,21 +632,21 @@ func serviceHTTPTestTargetTrust(hostname, caPEM string) controlv1.ProjectTargetT
 	return controlv1.ProjectTargetTLS{Hostname: hostname, CaPem: &caPEM, Digest: hex.EncodeToString(digest[:])}
 }
 
-func startServiceHTTPGroupPublisher(t *testing.T, f *privateSeparatedFixture, applied controlv1.AppliedProjectConfiguration, project, group, target string) *observability.Metrics {
+func startServiceHTTPEnvironmentPublisher(t *testing.T, f *privateSeparatedFixture, applied controlv1.Environment, project, target string) *observability.Metrics {
 	t.Helper()
 	public, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrollment, err := f.identity.routes.CreatePublisherGroupEnrollment(t.Context(), project, group, controlv1.CreatePublisherGroupEnrollmentRequest{TeamId: f.identity.teamID, MaxMembers: 1, ExpiresIn: 600})
+	enrollment, err := f.identity.routes.CreateEnvironmentPublisherEnrollment(t.Context(), project, applied.Id, "", controlv1.CreateEnvironmentPublisherEnrollmentRequest{TeamId: f.identity.teamID, ExpectedRevision: applied.MutationRevision, ConfigurationHash: applied.ConfigurationHash, Services: []string{"api"}, MaxMembers: 1, ExpiresIn: 600})
 	if err != nil {
 		t.Fatal(err)
 	}
-	member, err := f.identity.routes.RedeemPublisherGroupEnrollment(t.Context(), enrollment.EnrollmentKey, public)
+	member, err := f.identity.routes.RedeemEnvironmentPublisherEnrollment(t.Context(), enrollment.EnrollmentKey, public)
 	if err != nil {
 		t.Fatal(err)
 	}
-	owner, err := publisheridentity.NewGroup(publisheridentity.NativeControl{PublicURLControl: f.identity.routes, Services: f.identity.routes}, f.identity.routes, f.identity.authority, f.identity.routes.ControlURL(), member, key)
+	owner, err := publisheridentity.NewEnvironment(publisheridentity.NativeControl{PublicURLControl: f.identity.routes, Services: f.identity.routes}, f.identity.routes, f.identity.authority, f.identity.routes.ControlURL(), member, key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -665,10 +655,10 @@ func startServiceHTTPGroupPublisher(t *testing.T, f *privateSeparatedFixture, ap
 		t.Fatal(err)
 	}
 	assignment := assignments.Services[0]
-	if assignment.ServiceId != *applied.Services[0].ServiceId {
-		t.Fatal("group selected another service")
+	if assignment.ServiceId != applied.Services[0].ServiceId {
+		t.Fatal("environment selected another service")
 	}
-	native, err := owner.Service(assignment)
+	native, err := owner.Service(assignments.Environment, assignment)
 	if err != nil {
 		t.Fatal(err)
 	}

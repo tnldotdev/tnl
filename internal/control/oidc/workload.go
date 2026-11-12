@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +25,7 @@ type WorkloadTrust struct {
 	JWKSURL  string            `json:"jwks_url"`
 	Audience string            `json:"audience"`
 	Claims   map[string]string `json:"claims"`
+	Events   []string          `json:"events,omitempty"`
 }
 
 type VercelExecution struct {
@@ -166,6 +168,13 @@ func (c WorkloadExecution) Matches(p WorkloadTrust) bool {
 		return false
 	}
 	claims := c.Claims
+	if c.GitHub != nil {
+		g := c.GitHub
+		if !slices.Contains(p.Events, g.Event) {
+			return false
+		}
+		claims = map[string]string{"repository": g.Repository, "repository_id": g.RepositoryID, "repository_owner_id": g.RepositoryOwnerID, "workflow_ref": g.WorkflowRef, "ref": g.Ref, "environment": g.Environment, "job_workflow_ref": g.JobWorkflowRef}
+	}
 	if c.Vercel != nil {
 		v := c.Vercel
 		claims = map[string]string{"owner": v.Owner, "owner_id": v.OwnerID, "project": v.Project, "project_id": v.ProjectID, "environment": v.Environment}
@@ -217,12 +226,22 @@ func NewWorkloadVerifier(origin string, client *http.Client) (*WorkloadVerifier,
 }
 
 func (v *WorkloadVerifier) Verify(ctx context.Context, p WorkloadTrust, raw string) (c WorkloadExecution, err error) {
+	if p.Validate() != nil {
+		return c, ErrUnauthenticated
+	}
 	if p.Provider == "github" {
+		if p.Audience != v.github.audience {
+			return c, ErrUnauthenticated
+		}
 		g, e := v.github.Verify(ctx, raw)
 		if e != nil {
 			return c, e
 		}
-		return WorkloadExecution{Provider: "github", Issuer: GitHubIssuer, Subject: g.Subject, IssuedAt: g.IssuedAt, NotBefore: g.NotBefore, ExpiresAt: g.ExpiresAt, GitHub: &g, AssertionDigest: g.AssertionDigest}, nil
+		c = WorkloadExecution{Provider: "github", Issuer: GitHubIssuer, Subject: g.Subject, Audience: p.Audience, TrustDigest: p.Digest(), IssuedAt: g.IssuedAt, NotBefore: g.NotBefore, ExpiresAt: g.ExpiresAt, GitHub: &g, AssertionDigest: g.AssertionDigest}
+		if !c.Matches(p) {
+			return WorkloadExecution{}, ErrUnauthenticated
+		}
+		return c, nil
 	}
 	if !config.WorkloadHTTPS(p.Issuer) || !config.WorkloadHTTPS(p.JWKSURL) || !validClaim(p.Audience, 1024) || len(raw) == 0 || len(raw) > 32<<10 || strings.TrimSpace(raw) != raw {
 		return c, ErrUnauthenticated

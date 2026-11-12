@@ -3,6 +3,7 @@ package public
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -53,20 +54,13 @@ func TestIntegrationPublisherRuntimeDeployment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	group := "production"
-	applied, err := owner.ApplyProjectConfiguration(ctx, "deployment", controlv1.ApplyProjectConfigurationRequest{TeamId: team, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {PublisherGroup: &group, Target: "api.internal:3000"}}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	enrollment, err := owner.CreatePublisherGroupEnrollment(ctx, "deployment", group, controlv1.CreatePublisherGroupEnrollmentRequest{TeamId: team, MaxMembers: 2, ExpiresIn: 600})
-	if err != nil {
-		t.Fatal(err)
-	}
+	environment := retainedHTTPEnvironment(t, owner, team, "deployment", "production", map[string]controlv1.ServiceDefinitionService{"api": {Protocol: "http"}}, controlv1.EnvironmentTargets{"api": {Address: new("api.internal:3000")}})
+	enrollment := retainedHTTPEnrollment(t, owner, environment, []string{"api"}, 2)
 	public, key, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	member, err := client.RedeemPublisherGroupEnrollment(ctx, enrollment.EnrollmentKey, public)
+	member, err := client.RedeemEnvironmentPublisherEnrollment(ctx, enrollment.EnrollmentKey, public)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,19 +68,19 @@ func TestIntegrationPublisherRuntimeDeployment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, err := client.RedeemPublisherGroupEnrollment(ctx, enrollment.EnrollmentKey, otherPublic)
+	other, err := client.RedeemEnvironmentPublisherEnrollment(ctx, enrollment.EnrollmentKey, otherPublic)
 	if err != nil {
 		t.Fatal(err)
 	}
 	report := controlv1.PublisherDeploymentReport{DeploymentId: "aws-" + strings.Repeat("a", 40), Provider: "aws", ReplicaKey: "replica-1", Instance: "aws-instance", Image: "ghcr.io/tnldotdev/tnl@sha256:" + strings.Repeat("a", 64), SoftwareVersion: "v1.2.3", TemplateVersion: "1", TemplateSha256: strings.Repeat("b", 64)}
-	request := func(m controlv1.PublisherGroupMember, key ed25519.PrivateKey, action controlv1.PublisherRuntimeRequestAction, run string, epoch int64, report *controlv1.PublisherDeploymentReport) controlv1.PublisherRuntimeRequest {
+	request := func(m controlv1.EnvironmentPublisher, key ed25519.PrivateKey, action controlv1.PublisherRuntimeRequestAction, run string, epoch int64, report *controlv1.PublisherDeploymentReport) controlv1.PublisherRuntimeRequest {
 		t.Helper()
-		scope := publisherproof.RuntimeScope(m.GroupId, string(action), run, epoch, publisherprovenance.Digest(report))
+		scope := publisherproof.RuntimeScope(m.EnvironmentId, string(action), run, epoch, publisherprovenance.Digest(report))
 		proof, err := publisherproof.Sign(m.PublisherIdentityId, m.KeyId, scope, server+"/v1/publisher-runtime", key, time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}
-		return controlv1.PublisherRuntimeRequest{PublisherIdentityId: m.PublisherIdentityId, ScopeId: m.GroupId, ProcessRunId: run, ExpectedEpoch: epoch, Action: action, Assertion: proof, Deployment: report}
+		return controlv1.PublisherRuntimeRequest{PublisherIdentityId: m.PublisherIdentityId, ScopeId: m.EnvironmentId, ProcessRunId: run, ExpectedEpoch: epoch, Action: action, Assertion: proof, Deployment: report}
 	}
 	read := func(id string) *controlv1.PublisherRuntimeStatus {
 		t.Helper()
@@ -122,7 +116,7 @@ func TestIntegrationPublisherRuntimeDeployment(t *testing.T) {
 			t.Fatal("unsigned deployment change accepted", err)
 		}
 	}
-	for _, field := range []string{"team_id", "group_id", "publisher_identity_id"} {
+	for _, field := range []string{"team_id", "group_id", "environment_id", "publisher_identity_id"} {
 		r := request(member, key, controlv1.RuntimeStart, runA, 0, &report)
 		data, _ := json.Marshal(r)
 		var body map[string]any
@@ -145,7 +139,7 @@ func TestIntegrationPublisherRuntimeDeployment(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := read(member.PublisherIdentityId)
-	if first == nil || first.Deployment == nil || first.TeamId != team || first.PublisherIdentityId != member.PublisherIdentityId || first.Deployment.GroupId != member.GroupId || first.Deployment.Evidence != "publisher_reported" || first.Deployment.Report != report || first.Deployment.FirstObservedAt.IsZero() || first.Deployment.ObservedAt.Before(first.Deployment.FirstObservedAt) {
+	if first == nil || first.Deployment == nil || first.TeamId != team || first.PublisherIdentityId != member.PublisherIdentityId || first.Deployment.EnvironmentId != member.EnvironmentId || first.Deployment.Evidence != "publisher_reported" || first.Deployment.Report != report || first.Deployment.FirstObservedAt.IsZero() || first.Deployment.ObservedAt.Before(first.Deployment.FirstObservedAt) {
 		t.Fatal("deployment observation lost server identity or receipt times")
 	}
 	if _, err := client.PublisherRuntime(ctx, firstRequest); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
@@ -205,7 +199,7 @@ func TestIntegrationPublisherRuntimeDeployment(t *testing.T) {
 		t.Fatal("independent replica", err)
 	}
 	wrong := request(member, key, controlv1.RuntimeRenew, runB, 2, &changed)
-	wrong.ScopeId = "pgrp_foreign"
+	wrong.ScopeId = "env_foreign"
 	if _, err := client.PublisherRuntime(ctx, wrong); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("foreign group accepted", err)
 	}
@@ -214,15 +208,16 @@ func TestIntegrationPublisherRuntimeDeployment(t *testing.T) {
 	if _, err := client.PublisherRuntime(ctx, wrong); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("another publisher identity accepted the original signing key", err)
 	}
-	if _, err := owner.RenamePublisherGroup(ctx, "deployment", group, controlv1.RenamePublisherGroupRequest{TeamId: team, Name: "live", ExpectedRevision: applied.Revision}); err != nil {
+	targets := controlv1.EnvironmentTargets{"api": {Address: new("replacement.internal:3000")}}
+	if _, err := owner.ApplyEnvironment(ctx, "deployment", environment.Id, controlv1.ApplyEnvironmentRequest{TeamId: team, ExpectedRevision: environment.MutationRevision, DefinitionRevision: environment.AppliedDefinitionRevision, Targets: &targets}); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(replaced, read(member.PublisherIdentityId)) {
-		t.Fatal("group rename changed observed deployment")
+		t.Fatal("environment update changed observed deployment")
 	}
-	project, err := owner.GetProjectConfiguration(ctx, team, "deployment")
-	if err != nil || len(project.Members) != 2 || project.Members[0].Runtime == nil || project.Members[0].Runtime.Deployment == nil {
-		t.Fatal("applied project omitted provenance", err)
+	members, err := owner.ListEnvironmentPublishers(ctx, team, "deployment", environment.Id)
+	if err != nil || len(members) != 2 || members[0].Runtime == nil || members[0].Runtime.Deployment == nil {
+		t.Fatal("environment publisher status omitted provenance", err)
 	}
 	metadata, err := owner.GetProjectPublicMetadata(ctx, team, "deployment")
 	if err != nil {
@@ -232,10 +227,14 @@ func TestIntegrationPublisherRuntimeDeployment(t *testing.T) {
 	if bytes.Contains(publicJSON, []byte("publisher_reported")) || bytes.Contains(publicJSON, []byte(report.TemplateSha256)) || bytes.Contains(publicJSON, []byte(report.DeploymentId)) {
 		t.Fatal("deployment report leaked into browser-safe metadata")
 	}
-	if _, err := owner.GetProjectConfiguration(ctx, "team_foreign", "deployment"); !errors.Is(err, clientcontrol.ErrNotFound) {
+	foreignTeam, err := d.CreateTeam(ctx, controlstate.CreateTeamRequest{IdentityID: session.Identity.Identity.ID, DisplayName: "foreign", IdempotencyKey: "foreign-deployment-team", RequestDigest: sha256.Sum256([]byte("foreign-deployment-team"))}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := owner.ListEnvironmentPublishers(ctx, foreignTeam.ID, "deployment", environment.Id); !errors.Is(err, clientcontrol.ErrNotFound) {
 		t.Fatal("foreign team read deployment", err)
 	}
-	if err := owner.RevokePublisherGroupMember(ctx, team, "deployment", "live", member.PublisherIdentityId); err != nil {
+	if err := owner.RevokeEnvironmentPublisher(ctx, team, "deployment", environment.Id, member.PublisherIdentityId); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := client.PublisherRuntime(ctx, request(member, key, controlv1.RuntimeRenew, runB, 2, &changed)); !errors.Is(err, clientcontrol.ErrUnauthenticated) {

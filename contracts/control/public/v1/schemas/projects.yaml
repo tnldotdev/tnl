@@ -28,7 +28,7 @@ schemas:
       worktree_label: { type: string, minLength: 1, maxLength: 63 }
       domain_id: { $ref: "../openapi.yaml#/components/schemas/DomainID" }
       public_url_id: { $ref: "../openapi.yaml#/components/schemas/PublicURLID" }
-      configuration: { $ref: "../openapi.yaml#/components/schemas/ProjectServiceConfiguration" }
+      configuration: { $ref: "../openapi.yaml#/components/schemas/LocalServiceDeclaration" }
   LocalProjectService:
     type: object
     additionalProperties: false
@@ -40,63 +40,6 @@ schemas:
       service_id: { type: string }
       hostname: { type: string }
       metadata: { $ref: "../openapi.yaml#/components/schemas/ServiceMetadata" }
-  ApplyProjectConfigurationRequest:
-    type: object
-    additionalProperties: false
-    required: [team_id, source_fingerprint, expected_revision, configuration]
-    properties:
-      team_id: { type: string }
-      source_fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
-      project_label:
-        { type: string, minLength: 1, maxLength: 63, pattern: "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$" }
-      expected_revision: { type: integer, format: int64, minimum: 0 }
-      configuration: { $ref: "../openapi.yaml#/components/schemas/ProjectConfiguration" }
-      group_bindings:
-        type: object
-        maxProperties: 1024
-        description: Complete replacement binding sets keyed by concrete group ID, saved atomically with this declaration. Omitted groups retain their saved target and approved protocol. Changing a bound service's protocol requires an explicit replacement set for every affected group in this same apply.
-        additionalProperties: { $ref: "../openapi.yaml#/components/schemas/PublisherGroupBindings" }
-  ProjectConfiguration:
-    type: object
-    description: Normalized declarative configuration, at most 512 KiB encoded. All local declarations defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its groups.
-    additionalProperties: false
-    required: [publisher_groups, services, oauth, webhooks]
-    properties:
-      workloads:
-        type: object
-        maxProperties: 32
-        additionalProperties: { $ref: "../openapi.yaml#/components/schemas/ProjectWorkload" }
-      oauth:
-        type: boolean
-        default: false
-        description: Desired local app-led OAuth integration URL declaration. Applying it does not provision a handler on a named publisher group.
-      webhooks:
-        type: object
-        maxProperties: 32
-        additionalProperties: { $ref: "../openapi.yaml#/components/schemas/ProjectWebhook" }
-        description: Desired exact endpoints for the existing local webhook integration handler. Each endpoint names a declared local HTTP service with public_url enabled, including app, address, compose, and docker targets. Control does not fetch provider catalogs or provision remote webhook handlers during apply.
-      publisher_groups:
-        {
-          type: object,
-          maxProperties: 32,
-          additionalProperties:
-            { $ref: "../openapi.yaml#/components/schemas/ProjectPublisherGroup" },
-        }
-      services:
-        {
-          type: object,
-          maxProperties: 128,
-          additionalProperties:
-            { $ref: "../openapi.yaml#/components/schemas/ProjectServiceConfiguration" },
-        }
-  ProjectPublisherGroup:
-    type: object
-    additionalProperties: false
-    properties:
-      template: { type: boolean, default: false }
-      description: { type: string, maxLength: 1024 }
-      domain_id: { type: string }
-      public: { type: boolean, default: false }
   ProjectWorkload:
     type: object
     additionalProperties: false
@@ -196,16 +139,11 @@ schemas:
         maxItems: 256
         uniqueItems: true
         items: { type: string, minLength: 1, maxLength: 64 }
-  ProjectServiceConfiguration:
+  LocalServiceDeclaration:
     type: object
     additionalProperties: false
     required: [target]
     properties:
-      target_binding:
-        type: string
-        enum: [fixed, group]
-        description: Only template services may use group. Each concrete group must supply an exact saved binding; target, target_tls and target_discovery must be omitted or empty in the declaration. Omitted or fixed uses the template target and forbids instance overrides.
-      publisher_group: { type: string, default: local }
       name: { type: string, maxLength: 32 }
       protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
       target:
@@ -220,10 +158,8 @@ schemas:
   ProjectServiceHTTP:
     type: object
     additionalProperties: false
-    description: Local readiness and path mounts, or named-group restricted HTTP access and request limits. A group owns its endpoint and reachability.
+    description: Local listener readiness, browser opening and path mounts. Remote environment HTTP policy has its own serving-owner contract.
     properties:
-      access: { $ref: "../openapi.yaml#/components/schemas/ProjectPublicAccess" }
-      limits: { $ref: "../openapi.yaml#/components/schemas/ProjectHTTPApplicationLimits" }
       readiness:
         type: object
         additionalProperties: false
@@ -254,7 +190,7 @@ schemas:
         type: boolean
         default: false
         description: Local declarations may request an ephemeral worktree URL.
-    description: Enables a local service's public URL. Named publisher groups use http settings and reject this block.
+    description: Enables a local service's public URL. Remote environment service endpoints are separate resources.
   ProjectPublicAccess:
     type: object
     additionalProperties: false
@@ -302,73 +238,6 @@ schemas:
     required: [team]
     properties:
       team: { type: boolean, enum: [true] }
-  AppliedProjectConfiguration:
-    type: object
-    additionalProperties: false
-    required:
-      [
-        team_id,
-        project_key,
-        source_fingerprint,
-        revision,
-        configuration_hash,
-        configuration,
-        services,
-        members,
-      ]
-    properties:
-      team_id: { type: string }
-      project_key: { type: string }
-      source_fingerprint: { type: string }
-      revision: { type: integer, format: int64 }
-      configuration_hash: { type: string }
-      configuration: { $ref: "../openapi.yaml#/components/schemas/ProjectConfiguration" }
-      services:
-        {
-          type: array,
-          items: { $ref: "../openapi.yaml#/components/schemas/AppliedProjectService" },
-        }
-      members:
-        {
-          type: array,
-          items: { $ref: "../openapi.yaml#/components/schemas/PublisherGroupMemberStatus" },
-        }
-      groups:
-        {
-          type: array,
-          items: { $ref: "../openapi.yaml#/components/schemas/AppliedPublisherGroup" },
-        }
-  AppliedPublisherGroup:
-    type: object
-    required: [id, name, group_names, namespace, domain_id, public, ingress_pool_id]
-    properties:
-      ingress_pool_id:
-        { type: string, description: Ingress pool permanently assigned to this group. }
-      bindings: { $ref: "../openapi.yaml#/components/schemas/PublisherGroupBindings" }
-      retired: { type: boolean }
-      template: { type: string, description: Source template followed by this concrete group. }
-      id: { type: string }
-      name: { type: string }
-      group_names:
-        type: array
-        description: Authoritative current and historical selectors permanently bound to this group ID.
-        items: { type: string }
-      namespace: { type: string }
-      domain_id: { type: string }
-      public: { type: boolean }
-  AppliedProjectService:
-    type: object
-    required: [service, publisher_group, service_kind, desired_revision, trust_revision]
-    properties:
-      service: { type: string }
-      publisher_group: { type: string }
-      service_kind: { type: string, enum: [public_url, service, local] }
-      service_id: { type: string }
-      hostname: { type: string }
-      desired_revision: { type: integer, format: int64 }
-      trust_revision: { type: integer, format: int64 }
-      port: { type: integer, minimum: 1024, maximum: 65535 }
-      public: { type: boolean }
   LocalServiceSource:
     type: object
     additionalProperties: false

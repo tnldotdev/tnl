@@ -138,18 +138,26 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 		}
 	}
 	configFile, state := filepath.Join(root, "tnl.json"), filepath.Join(root, "state")
-	if err := os.WriteFile(configFile, []byte(`{"version":1,"tnl":{"publisher_groups":{"production":{}},"services":{"remote":{"publisher_group":"production","target":{"type":"address","address":"http://app.internal:3000"}},"localdb":{"target":{"type":"app"}}}}}`), 0600); err != nil {
+	if err := os.WriteFile(configFile, []byte(`{"version":1,"tnl":{"services":{"remote":{},"localdb":{}},"environments":{"local":{"targets":{"localdb":{}}},"production":{"targets":{"remote":{"address":"http://app.internal:3000"},"localdb":{"address":"http://localdb.internal:3000"}}}}}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	call := func(token, command string, args ...string) ([]byte, error) {
 		t.Helper()
 		argv := []string{"--config", configFile, "--no-telemetry"}
 		if command == "apply" {
-			argv = append(argv, "apply")
+			argv = append(argv, "apply", "--environment", "production")
 		} else {
 			argv = append(argv, "share", "service", command)
 		}
 		argv = append(argv, args...)
+		if command != "apply" {
+			for _, argument := range args {
+				if argument == "remote" {
+					argv = append(argv, "--environment", "production")
+					break
+				}
+			}
+		}
 		argv = append(argv, "--server", server.URL, "--access-token", token, "--team", team.Id, "--state-dir", state, "--output=json")
 		var output, diagnostics bytes.Buffer
 		err := run(ctx, argv, &output, &diagnostics)
@@ -162,7 +170,7 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var applied controlv1.AppliedProjectConfiguration
+	var applied controlv1.Environment
 	if err := json.Unmarshal(data, &applied); err != nil {
 		t.Fatal(err)
 	}
@@ -170,16 +178,18 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, err := project.SourceIdentity(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
 	localSource := project.LocalPublicationIdentity()
-	local, err := ownerControl.RealizeLocalProjectService(ctx, localSource.Key, "localdb", controlv1.RealizeLocalProjectServiceRequest{TeamId: team.Id, SourceFingerprint: localSource.Fingerprint, WorktreeKey: project.LocalWorktreeKey(), WorktreeLabel: new(project.Worktree.Label.FullLabel), Configuration: applied.Configuration.Services["localdb"]})
+	local, err := ownerControl.RealizeLocalProjectService(ctx, localSource.Key, "localdb", controlv1.RealizeLocalProjectServiceRequest{TeamId: team.Id, SourceFingerprint: localSource.Fingerprint, WorktreeKey: project.LocalWorktreeKey(), WorktreeLabel: new(project.Worktree.Label.FullLabel), Configuration: controlv1.LocalServiceDeclaration{Target: "app"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	remote, err := ownerControl.GetProjectService(ctx, source.Key, "remote", controlv1.GetProjectServiceParams{TeamId: team.Id, SourceFingerprint: source.Fingerprint})
+	remoteID := ""
+	for _, service := range applied.Services {
+		if service.Service == "remote" {
+			remoteID = string(service.ServiceId)
+		}
+	}
+	remote, err := ownerControl.GetService(ctx, remoteID)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -64,11 +64,11 @@ func TestInitApplyOwnsInstallEditsGenerationAndTypeWiringOrder(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if generationCalls != 1 || !result.Changed || !result.ConfigurationCreated || result.Root != root || result.ConfigurationPath != plan.ConfigurationPath || result.DeclarationsPath != filepath.Join(root, ".tnl/generated/project.d.ts") || result.PythonPackagePath != filepath.Join(root, ".tnl/generated/python") ||
+			if generationCalls != 1 || !result.Changed || !result.ConfigurationCreated || result.Root != root || result.ConfigurationPath != plan.ConfigurationPath || result.ProjectPath != filepath.Join(root, ".tnl/generated/project.ts") || result.PythonPackagePath != filepath.Join(root, ".tnl/generated/python") ||
 				!slices.Equal(result.UpdatedPaths, []string{filepath.Join(root, "vite.config.ts"), filepath.Join(root, ".gitignore"), filepath.Join(root, "tsconfig.json")}) {
 				t.Fatalf("result = %+v; generation calls = %d", result, generationCalls)
 			}
-			if data, err := os.ReadFile(filepath.Join(root, "tsconfig.json")); err != nil || !bytes.Contains(data, []byte(".tnl/generated/project.d.ts")) || !bytes.Contains(data, []byte("// keep source patterns")) {
+			if data, err := os.ReadFile(filepath.Join(root, "tsconfig.json")); err != nil || !bytes.Contains(data, []byte(".tnl/generated/project.ts")) || !bytes.Contains(data, []byte("// keep source patterns")) {
 				t.Fatalf("type wiring = %s, %v", data, err)
 			}
 			data, err := os.ReadFile(log)

@@ -24,8 +24,7 @@ import (
 func TestScopedGroupDiscoveryDeniesAmbientAndOtherTeamBinding(t *testing.T) {
 	jobA, _, keyA := kindFixture(t, KindGroup)
 	jobB, _, keyB := kindFixture(t, KindGroup)
-	jobB.GroupMember.TeamId = "other-team"
-	jobB.GroupMember.GroupName = jobA.GroupMember.GroupName
+	jobB.GroupMember.EnvironmentId = jobA.GroupMember.EnvironmentId
 	jobB.GroupMember.ProjectKey = jobA.GroupMember.ProjectKey
 	jobB.GroupInstance = jobA.GroupInstance
 	a, err := credentialfile.NewGroup(jobA.Server, jobA.GroupInstance, *jobA.GroupMember, keyA)

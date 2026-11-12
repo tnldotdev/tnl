@@ -117,13 +117,6 @@ export type TnlConnection<Config, Name extends TnlServiceNames<Config>> = Config
     : never
   : never;
 
-export interface TnlGroupClientForConfig<Config> {
-  connect<Name extends TnlServiceNames<Config>>(
-    name: Name,
-  ): TnlConnectionHandle<TnlConnection<Config, Name>>;
-  close(): Promise<void>;
-  [Symbol.asyncDispose](): Promise<void>;
-}
 type Origins<Values> = {
   readonly [Name in keyof Values]: DeepReadonly<
     | ({ hostname: string; url: `https://${string}` } & Pick<
@@ -140,10 +133,6 @@ export type TnlProjectFromConfig<Config> = Config extends unknown
       readonly [Key in keyof Config as Key extends "aliases" | "webhooks" ? Key : never]: Origins<
         Config[Key]
       >;
-    } & {
-      readonly [
-        Key in keyof Config as Key extends "publisherGroups" | "workloads" ? Key : never
-      ]: DeepReadonly<Config[Key]>;
     } & {
       readonly [Key in keyof Config as Key extends "oauth" ? Key : never]:
         | { readonly hostname: string; readonly url: `https://${string}` }

@@ -52,7 +52,12 @@ func testAppRuntimeWorkers(t *testing.T, realWorkers bool, defaultProtection ...
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(a.manager.Close)
+	t.Cleanup(func() {
+		a.manager.Close()
+		if a.publications != nil {
+			_ = a.publications.Close()
+		}
+	})
 	a.workers.Manager = a.manager
 	server := httptest.NewUnstartedServer(nil)
 	a.capabilities, err = publisherprotocol.NewCapabilities("http://" + server.Listener.Addr().String())

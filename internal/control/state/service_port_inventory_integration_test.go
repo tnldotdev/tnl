@@ -34,37 +34,35 @@ func TestIntegrationServicePortInventory(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertCapacity(1, 0, 0, 1)
-	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{
-		"api": {PublisherGroup: "production", Target: "localhost:3000"},
-	}}
-	first, err := d.ApplyProjectConfiguration(ctx, r)
-	if err != nil || first.Services[0].Port != 25443 {
-		t.Fatal("allocation ignored pool inventory", first, err)
+	r := retainedEnvironmentProject(t, d, now)
+	definition := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"api": {Protocol: "http"}})
+	first, _ := createTestEnvironment(t, d, r, "production", definition.Revision, EnvironmentTargets{"api": {Address: "localhost:3000"}})
+	if first.Services[0].Port != 25443 {
+		t.Fatal("allocation ignored pool inventory", first)
 	}
 	assertCapacity(1, 1, 0, 0)
-	if err = d.ConfigureIngressServicePorts(ctx, PrimaryIngressPoolID, []tcpport.Range{{First: 25000, Last: 25001}}); !errors.Is(err, ErrServicePortsInUse) {
+	if err := d.ConfigureIngressServicePorts(ctx, PrimaryIngressPoolID, []tcpport.Range{{First: 25000, Last: 25001}}); !errors.Is(err, ErrServicePortsInUse) {
 		t.Fatal("removed a held port", err)
 	}
-	r.ExpectedRevision = first.Revision
-	r.Configuration.Services["orders"] = ProjectServiceConfiguration{PublisherGroup: "production", Protocol: "postgres", Target: "localhost:5432"}
-	if _, err = d.ApplyProjectConfiguration(ctx, r); !errors.Is(err, ErrServicePortsExhausted) {
+	expandedDefinition := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"api": {Protocol: "http"}, "orders": {Protocol: "postgres"}})
+	apply := ApplyEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, EnvironmentApplication: EnvironmentApplication{EnvironmentID: first.ID, ExpectedRevision: first.MutationRevision, DefinitionRevision: expandedDefinition.Revision, Targets: EnvironmentTargets{"api": {Address: "localhost:3000"}, "orders": {Address: "localhost:5432"}}}, Now: now}
+	if _, err := d.ApplyEnvironment(ctx, apply); !errors.Is(err, ErrServicePortsExhausted) {
 		t.Fatal("exhaustion lost its classification", err)
 	}
-	current, err := d.GetProjectConfiguration(ctx, r.TeamID, r.ProjectKey, r.ActorID)
-	if err != nil || current.Revision != first.Revision || len(current.Services) != 1 {
+	current, err := d.GetEnvironment(ctx, r.TeamID, r.ProjectKey, first.ID, r.ActorID)
+	if err != nil || current.MutationRevision != first.MutationRevision || len(current.Services) != 1 {
 		t.Fatal("exhausted allocation partially applied", current, err)
 	}
 	if err = d.ConfigureIngressServicePorts(ctx, PrimaryIngressPoolID, []tcpport.Range{{First: 25443, Last: 25443}, {First: 30000, Last: 30000}}); err != nil {
 		t.Fatal(err)
 	}
-	expanded, err := d.ApplyProjectConfiguration(ctx, r)
+	expanded, err := d.ApplyEnvironment(ctx, apply)
 	if err != nil || expanded.Services[0].Port != 25443 || expanded.Services[1].Port != 30000 {
 		t.Fatal("expansion changed an existing profile", expanded, err)
 	}
-	r.ExpectedRevision = expanded.Revision
-	delete(r.Configuration.Services, "orders")
-	if _, err = d.ApplyProjectConfiguration(ctx, r); err != nil {
+	apply.ExpectedRevision, apply.DefinitionRevision = expanded.MutationRevision, definition.Revision
+	apply.Targets = EnvironmentTargets{"api": {Address: "localhost:3000"}}
+	if _, err = d.ApplyEnvironment(ctx, apply); err != nil {
 		t.Fatal(err)
 	}
 	if err = d.ConfigureIngressServicePorts(ctx, PrimaryIngressPoolID, []tcpport.Range{{First: 25443, Last: 25443}}); !errors.Is(err, ErrServicePortsInUse) {

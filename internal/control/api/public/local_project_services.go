@@ -22,7 +22,7 @@ func (h *handler) GetLocalProjectService(w http.ResponseWriter, r *http.Request,
 	}
 	result, err := store.GetLocalProjectService(r.Context(), controlstate.GetLocalProjectServiceRequest{TeamID: params.TeamId, ProjectKey: project, Service: service, SourceFingerprint: params.SourceFingerprint, WorktreeKey: params.WorktreeKey, ActorID: principal.identityID, Now: time.Now()})
 	if errors.Is(err, controlstate.ErrProjectConfigurationInvalid) || errors.Is(err, controlstate.ErrProjectSourceConflict) {
-		projectConfigurationProblem(r.Context(), w, "get local project service", err)
+		projectOperationProblem(r.Context(), w, "get local project service", err)
 		return
 	}
 	if err != nil {
@@ -35,13 +35,13 @@ func (h *handler) GetLocalProjectService(w http.ResponseWriter, r *http.Request,
 func (h *handler) RealizeLocalProjectService(w http.ResponseWriter, r *http.Request, project, service string) {
 	w.Header().Set("Cache-Control", "no-store")
 	var body struct {
-		TeamID            string                                    `json:"team_id"`
-		SourceFingerprint string                                    `json:"source_fingerprint"`
-		WorktreeKey       string                                    `json:"worktree_key"`
-		WorktreeLabel     string                                    `json:"worktree_label"`
-		DomainID          string                                    `json:"domain_id"`
-		PublicURLID       string                                    `json:"public_url_id"`
-		Configuration     *controlstate.ProjectServiceConfiguration `json:"configuration"`
+		TeamID            string                                `json:"team_id"`
+		SourceFingerprint string                                `json:"source_fingerprint"`
+		WorktreeKey       string                                `json:"worktree_key"`
+		WorktreeLabel     string                                `json:"worktree_label"`
+		DomainID          string                                `json:"domain_id"`
+		PublicURLID       string                                `json:"public_url_id"`
+		Configuration     *controlstate.LocalServiceDeclaration `json:"configuration"`
 	}
 	if decodeJSONLimited(w, r, &body, 2<<20) != nil || body.Configuration == nil {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid local project service declaration")
@@ -58,7 +58,7 @@ func (h *handler) RealizeLocalProjectService(w http.ResponseWriter, r *http.Requ
 	}
 	result, err := store.RealizeLocalProjectService(r.Context(), controlstate.RealizeLocalProjectServiceRequest{TeamID: body.TeamID, ProjectKey: project, SourceFingerprint: body.SourceFingerprint, Service: service, WorktreeKey: body.WorktreeKey, WorktreeLabel: body.WorktreeLabel, DomainID: body.DomainID, DNSAutomation: h.config.DNSAutomation, PublicURLID: body.PublicURLID, ActorID: actor, Configuration: *body.Configuration, Now: time.Now()})
 	if err != nil {
-		projectConfigurationProblem(r.Context(), w, "realize local project service", err)
+		projectOperationProblem(r.Context(), w, "realize local project service", err)
 		return
 	}
 	writeJSON(w, 200, result)

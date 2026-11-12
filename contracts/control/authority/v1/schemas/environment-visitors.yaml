@@ -1,0 +1,93 @@
+schemas:
+  EnvironmentVisitorRenewal:
+    type: object
+    additionalProperties: false
+    required: [sequence, signature]
+    properties:
+      sequence: { type: integer, format: int64, minimum: 1 }
+      signature:
+        type: string
+        pattern: "^[A-Za-z0-9_-]{86}$"
+        description: Unpadded base64url Ed25519 signature over SHA-256 of compact JSON ["tnl-workload-renew/v1", session_id, sequence]. Retrying the current sequence does not extend the lease again.
+  EnvironmentVisitorPrepareRequest:
+    type: object
+    additionalProperties: false
+    description: The saved visitor permission selects the registered identity and trust policy. The assertion is either its current OIDC token or a one-use registered-key JWT bound to this exact environment, permission, ephemeral key, nonce and service/protocol map. A separate ephemeral-key signature binds every field and the assertion digest. Neither the environment reference nor the expected protocol map grants access.
+    required: [permission_id, assertion, nonce, public_key, services, signature]
+    properties:
+      permission_id: { type: string, minLength: 1, maxLength: 128 }
+      assertion: { type: string, minLength: 1, maxLength: 32768 }
+      nonce: { type: string, pattern: "^[A-Za-z0-9_-]{16,128}$" }
+      public_key: { type: string, pattern: "^[A-Za-z0-9_-]{43}$" }
+      services:
+        type: object
+        minProperties: 1
+        maxProperties: 32
+        additionalProperties:
+          { $ref: "../../../public/v1/openapi.yaml#/components/schemas/ServiceProtocol" }
+      signature: { type: string, pattern: "^[A-Za-z0-9_-]{86}$" }
+  EnvironmentVisitorService:
+    type: object
+    additionalProperties: false
+    description: Exact saved service and approved visitor endpoint. No publisher target, target trust, workload policy, template, or assignment-group identifier is exposed.
+    required: [service_id, protocol, endpoint]
+    properties:
+      service_id: { $ref: "../../../public/v1/openapi.yaml#/components/schemas/ServiceID" }
+      protocol: { $ref: "../../../public/v1/openapi.yaml#/components/schemas/ServiceProtocol" }
+      endpoint: { $ref: "../../../public/v1/openapi.yaml#/components/schemas/ServiceEndpoint" }
+      kubernetes_auth:
+        { $ref: "../../../public/v1/openapi.yaml#/components/schemas/KubernetesAuth" }
+  EnvironmentVisitorSession:
+    type: object
+    additionalProperties: false
+    description: Native-owned visitor session. The exact service IDs and ephemeral key are immutable. Every permission lease is capped by verified identity expiry, permission expiry and the optional original hard deadline. Renewal or same-identity attachment never revives an expired or revoked session.
+    required:
+      [
+        id,
+        credential,
+        subject,
+        service_ids,
+        renewal_sequence,
+        lease_expires_at,
+        identity_expires_at,
+        renew_after,
+      ]
+    properties:
+      id: { type: string, pattern: "^wls_[A-Za-z0-9]{22}$" }
+      credential: { type: string }
+      subject: { $ref: "../../../public/v1/openapi.yaml#/components/schemas/VisitorSubject" }
+      service_ids:
+        {
+          type: array,
+          maxItems: 32,
+          uniqueItems: true,
+          items: { $ref: "../../../public/v1/openapi.yaml#/components/schemas/ServiceID" },
+        }
+      renewal_sequence: { type: integer, format: int64, minimum: 0 }
+      lease_expires_at: { type: string, format: date-time }
+      identity_expires_at: { type: string, format: date-time }
+      renew_after: { type: string, format: date-time }
+      expires_at: { type: string, format: date-time }
+  EnvironmentVisitorPreparation:
+    type: object
+    additionalProperties: false
+    required: [environment, applied_definition_revision, mutation_revision, session, services]
+    properties:
+      environment:
+        { $ref: "../../../public/v1/openapi.yaml#/components/schemas/EnvironmentReference" }
+      applied_definition_revision: { type: integer, format: int64, minimum: 1 }
+      mutation_revision: { type: integer, format: int64, minimum: 1 }
+      session: { $ref: "../openapi.yaml#/components/schemas/EnvironmentVisitorSession" }
+      services:
+        type: object
+        minProperties: 1
+        maxProperties: 32
+        additionalProperties:
+          { $ref: "../openapi.yaml#/components/schemas/EnvironmentVisitorService" }
+  EnvironmentVisitorAssertion:
+    type: object
+    additionalProperties: false
+    required: [assertion, signature]
+    properties:
+      assertion: { type: string, minLength: 1, maxLength: 32768 }
+      signature: { type: string, pattern: "^[A-Za-z0-9_-]{86}$" }

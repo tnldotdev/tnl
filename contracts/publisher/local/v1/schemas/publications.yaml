@@ -1,4 +1,29 @@
 schemas:
+  ApplicationOIDCProof:
+    type: object
+    additionalProperties: false
+    required: [kind, machine_id, assertion]
+    description: Transient proof from an explicitly selected OIDC source. Never persist or log the assertion.
+    properties:
+      kind: { type: string, enum: [oidc] }
+      machine_id:
+        type: string
+        description: Explicit approved machine identity, pinned before the first exchange. A retry cannot switch identity policies after an uncertain reply.
+      assertion:
+        type: string
+        minLength: 1
+        maxLength: 32768
+        pattern: '^[^\s\u0000]+$'
+  ApplicationRegisteredKeyProof:
+    type: object
+    additionalProperties: false
+    required: [kind, machine_id, key_id]
+    description: Explicit registered source selection. Challenge requests omit reply; publication requests require the defining authority IdentitySourceReply for the native-issued challenge. The source key never crosses IPC.
+    properties:
+      kind: { type: string, enum: [registered_key] }
+      machine_id: { type: string, pattern: '^mci_[A-Za-z0-9]{22}$' }
+      key_id: { type: string, minLength: 1, maxLength: 128 }
+      reply: { $ref: '../openapi.yaml#/components/schemas/IdentitySourceReply' }
   ApplicationPublication:
     type: object
     additionalProperties: false
@@ -12,7 +37,9 @@ schemas:
       target: { type: string, maxLength: 4096 }
       server_url: { type: string, maxLength: 4096 }
       auth:
-        type: object
+        oneOf:
+          - $ref: "../openapi.yaml#/components/schemas/ApplicationOIDCProof"
+          - $ref: "../openapi.yaml#/components/schemas/ApplicationRegisteredKeyProof"
         x-go-type: json.RawMessage
         description: Identity-source proof interpreted only by the application publication authority. No environment, saved login, or publisher-file fallback is permitted.
       resource_id: { type: string, maxLength: 128 }

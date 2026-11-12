@@ -2,132 +2,108 @@ package tnl
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
-	"net/http"
-	"os"
+	"time"
 
-	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
-	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
-	clientserver "github.com/tnldotdev/tnl/internal/client/server"
-	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
+	"github.com/tnldotdev/tnl/internal/security/machineproof"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
-// PublisherIdentity holds one signing identity and selected namespace grant.
-// prepare it once to reuse it across independent ad-hoc invocations.
-type PublisherIdentity struct {
-	value *publisheridentity.Native
+// OIDCAssertion is a transient proof from the application's selected source.
+// control verifies its claims and may impose an earlier serving deadline.
+type OIDCAssertion struct {
+	Token     string
+	ExpiresAt time.Time
 }
 
-type StateProtection string
+// OIDCSource selects one approved machine identity. Assertion must honor its
+// context and return fresh proof; no saved login or publisher file is consulted.
+type OIDCSource struct {
+	MachineID string
+	Assertion func(context.Context) (OIDCAssertion, error)
+}
 
-const (
-	ProtectionFile     StateProtection = "file"
-	ProtectionKeychain StateProtection = "keychain"
-)
+// RegisteredKeySource keeps an explicitly selected source key in the SDK. only
+// a reply to native's validated common challenge crosses private IPC.
+type RegisteredKeySource struct {
+	MachineID  string
+	KeyID      string
+	PrivateKey ed25519.PrivateKey
+}
+
+func (RegisteredKeySource) String() string   { return "private registered identity source" }
+func (RegisteredKeySource) GoString() string { return "private registered identity source" }
+
+type registeredApplicationSource struct {
+	selection authorityv1.IdentitySourceSelection
+	sign      func(context.Context, authorityv1.IdentitySourceChallenge) (string, time.Time, error)
+}
+
+// PublisherIdentity holds an explicit source and server, not a native signing key
+// or control client. independent invocations get independent native session keys.
+type PublisherIdentity struct {
+	server     string
+	source     OIDCSource
+	registered *registeredApplicationSource
+}
+
+func (*PublisherIdentity) String() string   { return "prepared application identity source" }
+func (*PublisherIdentity) GoString() string { return "prepared application identity source" }
 
 var ErrPublisherScope = publisheridentity.ErrScope
 var ErrPublisherSelection = publisheridentity.ErrSelection
+var ErrIdentitySourceRequired = errors.New("exactly one explicit OIDC or registered-key identity source is required")
 
-// PreparePublisherIdentity loads a selected namespace identity
-// using protected local state. it closes the database before returning; Open
-// opens its own certificate state for the duration of each publication.
+// PreparePublisherIdentity validates an explicit source without acquiring proof.
+// it grants no authority; control checks every exchange and refresh.
 func PreparePublisherIdentity(ctx context.Context, options Options) (*PublisherIdentity, error) {
-	state, _, _, publisher, err := preparePublisher(ctx, options)
-	if err != nil {
+	if err := context.Cause(ctx); err != nil {
 		return nil, err
 	}
-	if err := state.Close(); err != nil {
-		return nil, err
+	if options.PublisherIdentity != nil || (options.OIDCSource == nil) == (options.RegisteredKeySource == nil) {
+		return nil, ErrIdentitySourceRequired
 	}
-	return &PublisherIdentity{value: publisher}, nil
-}
-
-func preparePublisher(ctx context.Context, options Options) (*clientstate.Database, *clientstate.Store, string, *publisheridentity.Native, error) {
-	selected := 0
-	if options.EnrollmentKey != "" {
-		selected++
+	server, err := naming.CanonicalControlURL(options.ServerURL)
+	if err != nil || server != options.ServerURL {
+		return nil, ErrPublisherScope
 	}
-	if options.PublisherIdentityID != "" {
-		selected++
-	}
-	if options.PublisherIdentity != nil {
-		selected++
-	}
-	if options.PublisherCredentialFile != "" {
-		selected++
-	}
-	if selected > 1 {
-		return nil, nil, "", nil, ErrPublisherSelection
-	}
-	server := options.ServerURL
-	if options.PublisherIdentity != nil {
-		if options.PublisherIdentity.value == nil {
-			return nil, nil, "", nil, ErrPublisherScope
+	if options.RegisteredKeySource != nil {
+		source := options.RegisteredKeySource
+		selection := authorityv1.IdentitySourceSelection{Kind: "registered_key", MachineId: source.MachineID, KeyId: source.KeyID}
+		if !machineproof.ValidSource(selection) || len(source.PrivateKey) != ed25519.PrivateKeySize || !ed25519.NewKeyFromSeed(source.PrivateKey[:32]).Equal(source.PrivateKey) {
+			return nil, ErrIdentitySourceRequired
 		}
-		origin := options.PublisherIdentity.value.ControlURL()
-		if origin == "" {
-			return nil, nil, "", nil, ErrPublisherScope
-		}
-		if server != "" {
-			canonical, err := clientstate.CanonicalServer(server)
-			if err != nil || canonical != origin {
-				return nil, nil, "", nil, ErrPublisherScope
+		private := append(ed25519.PrivateKey(nil), source.PrivateKey...)
+		registered := &registeredApplicationSource{selection: selection}
+		registered.sign = func(ctx context.Context, challenge authorityv1.IdentitySourceChallenge) (string, time.Time, error) {
+			if err := context.Cause(ctx); err != nil {
+				return "", time.Time{}, err
 			}
+			now := time.Now()
+			assertion, err := publisherproof.Sign(selection.MachineId, selection.KeyId, challenge.Scope, challenge.Audience, private, now)
+			return assertion, time.Unix(now.Unix(), 0).Add(publisherproof.AssertionLifetime), errors.Join(context.Cause(ctx), err)
 		}
-		server = origin
-	} else if server == "" {
-		server = os.Getenv("TNL_SERVER")
+		return &PublisherIdentity{server: server, registered: registered}, nil
 	}
-	root := options.StateDir
-	if root == "" {
-		root = os.Getenv("TNL_STATE_DIR")
+	source := *options.OIDCSource
+	if !opaqueid.Valid(source.MachineID, "mci_") || source.Assertion == nil {
+		return nil, ErrIdentitySourceRequired
 	}
-	if root == "" {
-		var err error
-		root, err = clientstate.DefaultDir()
-		if err != nil {
-			return nil, nil, "", nil, err
-		}
-	}
-	database, err := clientstate.OpenWithOptions(ctx, root, clientstate.OpenOptions{Protection: clientstate.ProtectionMode(options.StateProtection)})
-	if err != nil {
-		return nil, nil, "", nil, err
-	}
-	fail := func(err error) (*clientstate.Database, *clientstate.Store, string, *publisheridentity.Native, error) {
-		return nil, nil, "", nil, errors.Join(err, database.Close())
-	}
-	server, err = clientserver.Select(ctx, database, server)
-	if err != nil {
-		return fail(err)
-	}
-	profile, err := database.Server(ctx, server)
-	if err != nil {
-		return fail(err)
-	}
-	control, authority, err := publisherClients(server, options.HTTPClient)
-	if err != nil {
-		return fail(err)
-	}
-	var selectedIdentity *publisheridentity.Native
-	if options.PublisherIdentity != nil {
-		selectedIdentity = options.PublisherIdentity.value
-	}
-	native, err := publisheridentity.ResolveAdHoc(ctx, profile, publisheridentity.NativeControl{PublicURLControl: control}, authority, server, "", "", "", options.PublisherCredentialFile, options.EnrollmentKey, options.PublisherIdentityID, selectedIdentity)
-	if err != nil {
-		return fail(err)
-	}
-	if err := native.NamespaceScope(); err != nil {
-		return fail(err)
-	}
-	return database, profile, server, native, nil
+	return &PublisherIdentity{server: server, source: source}, nil
 }
 
-func publisherClients(server string, httpClient *http.Client) (*clientcontrol.Client, *clientauthority.Client, error) {
-	control, err := clientcontrol.New(server, httpClient, "")
-	if err != nil {
-		return nil, nil, err
+func applicationIdentity(ctx context.Context, options Options) (*PublisherIdentity, error) {
+	if options.PublisherIdentity == nil {
+		return PreparePublisherIdentity(ctx, options)
 	}
-	authority, err := clientauthority.New(server, httpClient, "")
-	return control, authority, err
+	identity := options.PublisherIdentity
+	if options.OIDCSource != nil || options.RegisteredKeySource != nil || identity.server == "" || (identity.source.Assertion == nil && identity.registered == nil) || options.ServerURL != "" && options.ServerURL != identity.server {
+		return nil, ErrPublisherSelection
+	}
+	return identity, nil
 }

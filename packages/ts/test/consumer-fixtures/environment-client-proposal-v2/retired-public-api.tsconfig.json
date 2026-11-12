@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["retired-public-api.ts"]
+}

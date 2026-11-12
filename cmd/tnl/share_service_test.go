@@ -115,9 +115,9 @@ func TestServiceShareSelectionUsesSourceBindingAndManagerRead(t *testing.T) {
 		}
 	}
 	saved, group := "orders-saved", "production"
-	project := projectConfiguration{Project: clientproject.Project{Root: root, Selection: clientproject.Selection{Path: filepath.Join(root, "tnl.json")}, Worktree: clientproject.Worktree{Root: root, IsGit: true}, Config: config.TNL{PublisherGroups: map[string]config.PublisherGroup{group: {}}, Services: config.Services{
-		"orders": {Name: &saved}, "remote": {PublisherGroup: &group, HTTP: &config.HTTPService{}, Target: &config.ServiceTarget{Type: "address", Address: new(config.Target("http://app.internal:3000"))}}, "web": {Tunnel: &config.Tunnel{}},
-	}}}}
+	project := projectConfiguration{Project: clientproject.Project{Root: root, Selection: clientproject.Selection{Path: filepath.Join(root, "tnl.json")}, Worktree: clientproject.Worktree{Root: root, IsGit: true}, Config: config.TNL{Services: config.Services{
+		"orders": {Name: &saved}, "remote": {}, "web": {Tunnel: &config.Tunnel{}},
+	}, Environments: map[string]config.Environment{"local": {Targets: map[string]config.EnvironmentTarget{"orders": {Name: &saved}, "web": {Tunnel: &config.Tunnel{}}}}, group: {Targets: map[string]config.EnvironmentTarget{"orders": {Address: new(config.Target("http://orders.internal:3000"))}, "remote": {Address: new(config.Target("http://app.internal:3000"))}, "web": {Address: new(config.Target("http://web.internal:3000"))}}}}}}}
 	source, err := project.SourceIdentity(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -125,6 +125,10 @@ func TestServiceShareSelectionUsesSourceBindingAndManagerRead(t *testing.T) {
 	for _, selector := range []string{"orders", "remote", shareTestService, saved, group, "web", "url_0123456789abcdefghijkl"} {
 		t.Run(selector, func(t *testing.T) {
 			lookups, reads := 0, 0
+			environment := ""
+			if selector == "remote" {
+				environment = group
+			}
 			scope := controlv1.LocalServiceSource{ProjectKey: source.Key, SourceFingerprint: source.Fingerprint, Service: selector}
 			if selector == "orders" {
 				local := project.LocalPublicationIdentity()
@@ -138,6 +142,12 @@ func TestServiceShareSelectionUsesSourceBindingAndManagerRead(t *testing.T) {
 					return
 				}
 				switch r.URL.Path {
+				case "/v1/projects/" + source.Key + "/environments":
+					lookups++
+					if r.URL.Query().Get("team_id") != shareTestTeam {
+						t.Error("environment inventory lost selected team")
+					}
+					_ = json.NewEncoder(w).Encode([]controlv1.Environment{{Id: "production-id", Name: group, TeamId: shareTestTeam, ProjectKey: source.Key, Services: []controlv1.EnvironmentService{{Service: "remote", ServiceId: shareTestService, Protocol: "http"}}}})
 				case "/v1/services":
 					lookups++
 					if r.URL.Query().Get("team_id") != shareTestTeam {
@@ -159,10 +169,16 @@ func TestServiceShareSelectionUsesSourceBindingAndManagerRead(t *testing.T) {
 				}
 			})
 			s := clientteam.NewSession(nil, nil, &auth.Client{Control: control}, authorityv1.IdentityContext{Memberships: []authorityv1.Membership{{TeamId: shareTestTeam}}}, clientteam.Options{SelectedTeam: shareTestTeam})
-			service, err := selectServiceShare(t.Context(), s, project, selector)
+			service, err := selectServiceShare(t.Context(), s, project, selector, environment)
 			valid := selector == "orders" || selector == "remote" || selector == shareTestService
 			if valid {
-				if err != nil || service.Id != shareTestService || reads != 1 || selector != shareTestService && lookups != 2 || selector == shareTestService && lookups != 0 {
+				wantLookups := 2
+				if selector == shareTestService {
+					wantLookups = 0
+				} else if selector == "remote" {
+					wantLookups = 1
+				}
+				if err != nil || service.Id != shareTestService || reads != 1 || lookups != wantLookups {
 					t.Fatalf("exact service selection = %+v, %v; lookups=%d reads=%d", service, err, lookups, reads)
 				}
 			} else if err == nil || lookups != 0 || reads != 0 {
@@ -242,7 +258,7 @@ func TestServiceShareSelectionUsesSourceBindingAndManagerRead(t *testing.T) {
 				}
 			})
 			s := clientteam.NewSession(nil, nil, &auth.Client{Control: control}, authorityv1.IdentityContext{Memberships: []authorityv1.Membership{{TeamId: shareTestTeam}}}, clientteam.Options{SelectedTeam: shareTestTeam})
-			_, err := selectServiceShare(t.Context(), s, project, "orders")
+			_, err := selectServiceShare(t.Context(), s, project, "orders", "")
 			if reason, ok := failure.ReasonOf(err); !ok || reason != test.reason {
 				t.Fatalf("unsafe source selection = %v; want %s", err, test.reason)
 			}
@@ -259,6 +275,7 @@ func TestServiceShareSelectionUsesSourceBindingAndManagerRead(t *testing.T) {
 	project.Config.Server, project.Config.Team = &server, &team
 	var flags cli
 	flags.Share.Service.List.Name = "remote"
+	flags.Share.Service.List.Environment = group
 	if err := applyProjectCommandContext("share service list <name>", project, &flags); err != nil || flags.Share.Service.List.ServerURL != server || flags.Share.Service.List.ProjectTeam != team {
 		t.Fatal("service share did not inherit project scope", err)
 	}

@@ -2,6 +2,7 @@ package state
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -11,56 +12,109 @@ import (
 
 func TestIntegrationServiceGroupMove(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "managed_group_move")
-	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}, "staging": {}}, Services: map[string]ProjectServiceConfiguration{
-		"orders": {PublisherGroup: "production", Name: "database", Protocol: "postgres", Target: "orders.internal:5432", Access: &ProjectServiceAccess{Team: true}},
-		"testdb": {PublisherGroup: "staging", Name: "database", Protocol: "postgres", Target: "staging.internal:5432"},
-	}}
-	first, err := d.ApplyProjectConfiguration(t.Context(), r)
+	r := retainedEnvironmentProject(t, d, now)
+	ctx := t.Context()
+	environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"database": {Protocol: "postgres"}})
+	production, err := retainedNamespaceClaim(t, d, r, "production", "", now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	old := first.Services[0]
-	grants, _, err := d.ListServiceGrants(t.Context(), old.ServiceID, r.ActorID, "")
+	staging, err := retainedNamespaceClaim(t, d, r, "staging", "", now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.ListServiceAudit(t.Context(), r.TeamID, r.ActorID, ServiceAuditFilter{Service: "database"}, now); !errors.Is(err, serviceaudit.ErrInvalid) {
-		t.Fatal("ambiguous name selected an arbitrary service", err)
-	}
-	// a colliding destination must roll back the complete apply.
-	r.ExpectedRevision = first.Revision
-	s := r.Configuration.Services["orders"]
-	s.PublisherGroup = "staging"
-	r.Configuration.Services["orders"] = s
-	if _, err = d.ApplyProjectConfiguration(t.Context(), r); !errors.Is(err, ErrServiceConflict) {
-		t.Fatal("accepted a conflicting destination", err)
-	}
-	current, err := d.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, r.ActorID)
-	if err != nil || current.Revision != first.Revision || current.Services[0] != old {
-		t.Fatal("failed move changed the endpoint", current, err)
-	}
-	delete(r.Configuration.Services, "testdb")
-	r.Now = now.Add(time.Second)
-	moved, err := d.ApplyProjectConfiguration(t.Context(), r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	endpoint := moved.Services[0]
-	if endpoint.ServiceID != old.ServiceID || endpoint.Port != old.Port || endpoint.Hostname == old.Hostname || !strings.HasPrefix(endpoint.Hostname, "database.staging.") {
-		t.Fatal("move did not retain identity and change namespace", old, endpoint)
-	}
-	after, _, err := d.ListServiceGrants(t.Context(), old.ServiceID, r.ActorID, "")
-	if err != nil || len(after) != len(grants) {
-		t.Fatal("move lost visitor grants", after, err)
-	}
-	for i, grant := range grants {
-		if after[i].ID != grant.ID || after[i].RevokedAt != nil {
-			t.Fatal("move replaced visitor grants", grants, after)
+	// these are namespace-owner fixtures, not environment-owned service IDs.
+	// environments never adopt or transfer another environment's saved services.
+	var records []ServiceRecord
+	for i, group := range []string{production, staging} {
+		name := "database"
+		if i == 1 {
+			name = "staging-database"
+		}
+		service, err := d.CreateServiceAt(ctx, r.TeamID, r.ActorID, name, group, ServicePlacement{}, now, ServiceMetadata{Protocol: "postgres"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		tx, err := d.pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback(ctx)
+		if _, err := tx.Exec(ctx, `UPDATE control.services SET name='database',name_scope=$2 WHERE id=$1`, service.ID, group); err != nil {
+			t.Fatal(err)
+		}
+		if err := ensurePublisherGroupIngressPool(ctx, tx, group, 1, nil, []string{PrimaryIngressPoolID}); err != nil {
+			t.Fatal(err)
+		}
+		if err := d.ensureServiceEndpoint(ctx, tx, service.ID, group, false, now); err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+		record, err := d.GetService(ctx, service.ID, r.ActorID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		records = append(records, record)
+		if i == 0 {
+			if _, err := d.CreateServiceGrant(ctx, service.ID, r.ActorID, "endpoint-team", "team", "", nil, now); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
-	retry, err := d.ApplyProjectConfiguration(t.Context(), r)
-	if err != nil || retry.Services[0] != endpoint || retry.Revision != moved.Revision {
-		t.Fatal("move retry changed endpoint", retry, err)
+	old := records[0]
+	grants, _, err := d.ListServiceGrants(ctx, old.ID, r.ActorID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.ListServiceAudit(ctx, r.TeamID, r.ActorID, ServiceAuditFilter{Service: "database"}, now); !errors.Is(err, serviceaudit.ErrInvalid) {
+		t.Fatal("ambiguous name chose an arbitrary service", err)
+	}
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if err := d.ensureServiceEndpoint(ctx, tx, old.ID, staging, false, now); !errors.Is(err, ErrServiceConflict) {
+		t.Fatal("colliding namespace destination accepted", err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	current, err := d.GetService(ctx, old.ID, r.ActorID)
+	if err != nil || !reflect.DeepEqual(current, old) {
+		t.Fatal("failed move changed endpoint", err)
+	}
+	if err := d.DeleteService(ctx, records[1].ID, r.ActorID, now); err != nil {
+		t.Fatal(err)
+	}
+	move := func(at time.Time) {
+		t.Helper()
+		tx, err := d.pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback(ctx)
+		if err := d.ensureServiceEndpoint(ctx, tx, old.ID, staging, false, at); err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	move(now.Add(time.Second))
+	endpoint, err := d.GetService(ctx, old.ID, r.ActorID)
+	if err != nil || endpoint.ID != old.ID || endpoint.Endpoint.Port != old.Endpoint.Port || endpoint.Endpoint.Hostname == old.Endpoint.Hostname || !strings.HasPrefix(endpoint.Endpoint.Hostname, "database.staging.") {
+		t.Fatal("namespace owner lost service identity/reservation", err)
+	}
+	after, _, err := d.ListServiceGrants(ctx, old.ID, r.ActorID, "")
+	if err != nil || !reflect.DeepEqual(after, grants) {
+		t.Fatal("endpoint mutation changed visitor grants", err)
+	}
+	move(now.Add(2 * time.Second))
+	retry, err := d.GetService(ctx, old.ID, r.ActorID)
+	if err != nil || !reflect.DeepEqual(retry, endpoint) {
+		t.Fatal("endpoint retry changed saved identity", err)
 	}
 }

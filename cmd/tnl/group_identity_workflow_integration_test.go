@@ -4,16 +4,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"encoding/pem"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +19,6 @@ import (
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/client/supervisor"
-	"github.com/tnldotdev/tnl/internal/connector"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
@@ -36,9 +32,9 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 	f := newCLIWorkflow(t)
 	identityDir := filepath.Join(t.TempDir(), "identities")
 	person := f.state(t, "person")
-	t.Setenv("TNL_GROUP_ENROLL_KEY", "")
-	t.Setenv("TNL_GROUP_IDENTITY", "")
-	if err := os.Unsetenv("TNL_GROUP_IDENTITY"); err != nil {
+	t.Setenv("TNL_ENVIRONMENT_ENROLL_KEY", "")
+	t.Setenv("TNL_ENVIRONMENT_PUBLISHER_IDENTITY", "")
+	if err := os.Unsetenv("TNL_ENVIRONMENT_PUBLISHER_IDENTITY"); err != nil {
 		t.Fatal(err)
 	}
 	f.loginPerson(t, person)
@@ -48,33 +44,12 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 	}
 	defer session.Close()
 	team, control := session.Identity().PersonalTeamId, session.Authenticated().Control
-	root := t.TempDir()
-	for _, args := range [][]string{{"init", "--quiet", root}, {"-C", root, "remote", "add", "origin", "https://example.test/cli/portable.git"}} {
-		if output, err := exec.CommandContext(t.Context(), "git", args...).CombinedOutput(); err != nil {
-			t.Fatalf("fixture Git setup: %v %s", err, output)
-		}
-	}
 	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "portable group worker") }))
 	defer target.Close()
-	if err := os.WriteFile(filepath.Join(root, "target.pem"), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: target.Certificate().Raw}), 0600); err != nil {
-		t.Fatal(err)
-	}
-	configuration := filepath.Join(root, "tnl.json")
-	data, err := json.Marshal(map[string]any{"version": 1, "tnl": map[string]any{"server": f.url, "team": team, "publisher_groups": map[string]any{"production": map[string]any{}}, "services": map[string]any{
-		"api": map[string]any{"publisher_group": "production", "target": map[string]any{"type": "address", "address": target.URL, "tls": map[string]any{"server_name": "example.com", "ca_file": "target.pem"}}, "access": map[string]any{"team": true}},
-	}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(configuration, data, 0600); err != nil {
-		t.Fatal(err)
-	}
-	var applied controlv1.AppliedProjectConfiguration
-	if err := json.Unmarshal(cliCall(t, t.Context(), []string{"--config", configuration, "apply", "--state-dir", person, "--output", "json"}), &applied); err != nil {
-		t.Fatal(err)
-	}
+	ca := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: target.Certificate().Raw}))
+	applied := workflowPublisherEnvironment(t, control, team, "portable", controlv1.EnvironmentTarget{Address: &target.URL, Tls: &controlv1.EnvironmentTargetTLS{Hostname: new("example.com"), CaPem: &ca}, Http: &controlv1.EnvironmentServiceHTTP{Access: &controlv1.ProjectPublicAccess{Mode: new(controlv1.Restricted)}}})
 	credential := filepath.Join(t.TempDir(), "replica.json")
-	provision := []string{"--config", configuration, "publisher", "provision", "--group", "production", "--instance", "replica-1", "--output-file", credential, "--state-dir", person}
+	provision := []string{"--no-config", "publisher", "provision", "--server", f.url, "--team", team, "--project-key", applied.ProjectKey, "--environment", applied.Id, "--services", "api", "--instance", "replica-1", "--output-file", credential, "--state-dir", person}
 	output := cliCall(t, t.Context(), provision)
 	value, err := credentialfile.ReadGroup(credential)
 	if err != nil {
@@ -128,10 +103,10 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 	listener := workflowListen(t)
 	address := listener.Addr().String()
 	_ = listener.Close()
-	if len(applied.Services) != 1 || applied.Services[0].ServiceId == nil {
+	if len(applied.Services) != 1 || applied.Services[0].ServiceId == "" {
 		t.Fatal("missing service binding")
 	}
-	service, err := control.GetService(t.Context(), *applied.Services[0].ServiceId)
+	service, err := control.GetService(t.Context(), applied.Services[0].ServiceId)
 	if err != nil || service.Endpoint == nil {
 		t.Fatal("missing service endpoint", err)
 	}
@@ -144,15 +119,11 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 	f.certificateWorkPaused.Store(true)
 	var firstIssuance string
 	for replacement := range 4 {
-		selector := "production"
-		if replacement == 1 || replacement == 3 {
-			selector = "live"
-		}
-		args := []string{"--no-config", "publisher", "serve", "--server", f.url, "--group", selector, "--project-key", applied.ProjectKey, "--instance", "replica-1", "--state-dir", task, "--identity-dir", identityDir}
+		args := []string{"--no-config", "publisher", "serve", "--server", f.url, "--environment", applied.Id, "--project-key", applied.ProjectKey, "--instance", "replica-1", "--state-dir", task, "--identity-dir", identityDir}
 		if replacement == 0 {
 			args = append(args, "--identity-file", credential)
 		} else if replacement == 1 {
-			if err := os.Setenv("TNL_GROUP_IDENTITY", string(encoded)); err != nil {
+			if err := os.Setenv("TNL_ENVIRONMENT_PUBLISHER_IDENTITY", string(encoded)); err != nil {
 				t.Fatal(err)
 			}
 		} else if replacement == 3 {
@@ -170,27 +141,21 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 			if err := inspect.QueryRow(t.Context(), `SELECT id FROM control.service_runs WHERE publisher_identity_id=$1 AND closed_at IS NULL`, value.Member.PublisherIdentityId).Scan(&oldRun); err != nil {
 				t.Fatal(err)
 			}
-			// an OLD task keeps polling while a manager renames and re-exports its
-			// exact member. verification must not replace that task's lease/run.
-			cliCall(t, t.Context(), []string{"--config", configuration, "publisher", "rename", "production", "live", "--state-dir", person})
-			applied, err = control.GetProjectConfiguration(t.Context(), team, applied.ProjectKey)
-			if err != nil {
-				t.Fatal(err)
-			}
+			// re-exporting an installed identity must not replace its lease/run.
 			if err := inspect.QueryRow(t.Context(), `SELECT token_digest FROM control.publisher_group_leases WHERE publisher_identity_id=$1`, value.Member.PublisherIdentityId).Scan(&oldLease); err != nil {
 				t.Fatal(err)
 			}
-			for _, name := range []string{"live", "production"} {
+			for range 2 {
 				exported := filepath.Join(t.TempDir(), "renamed.json")
-				cliCall(t, t.Context(), []string{"--no-config", "publisher", "provision", "--server", f.url, "--team", team, "--project-key", applied.ProjectKey, "--group", name, "--instance", "replica-1", "--output-file", exported, "--state-dir", person})
+				cliCall(t, t.Context(), []string{"--no-config", "publisher", "provision", "--server", f.url, "--team", team, "--project-key", applied.ProjectKey, "--environment", applied.Id, "--services", "api", "--instance", "replica-1", "--output-file", exported, "--state-dir", person})
 				repeated, err := credentialfile.ReadGroup(exported)
-				if err != nil || repeated.PrivateKey != value.PrivateKey || !credentialfile.SameGroupIdentity(repeated.Member, value.Member) || repeated.Member.GroupName != "live" {
+				if err != nil || repeated.PrivateKey != value.PrivateKey || !credentialfile.SameGroupIdentity(repeated.Member, value.Member) || repeated.Member.EnvironmentId != applied.Id {
 					t.Fatal("renamed provision replaced identity", err)
 				}
 			}
 			workflowWait(t, 12*time.Second, func() bool {
-				status, err := control.GetProjectConfiguration(t.Context(), team, applied.ProjectKey)
-				return err == nil && len(status.Members) == 1 && status.Members[0].ObservedRevision == applied.Revision
+				status, err := control.ListEnvironmentPublishers(t.Context(), team, applied.ProjectKey, applied.Id)
+				return err == nil && len(status) == 1 && status[0].ObservedRevision == applied.MutationRevision
 			})
 			var keptRun string
 			var keptLease []byte
@@ -203,10 +168,6 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 			if kept := assertWorkflowPublisherRuntime(t, control, team, value.Member.PublisherIdentityId, 1, true); kept.ProcessRunId != runtime.ProcessRunId {
 				t.Fatal("provision replaced running task observation")
 			}
-			statusOutput := cliCall(t, t.Context(), []string{"--config", configuration, "status", "--scope", "server", "--state-dir", person})
-			if !strings.Contains(string(statusOutput), "live") {
-				t.Fatal("status retained the old selector")
-			}
 			stop()
 			select {
 			case <-joined:
@@ -214,11 +175,11 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 				t.Fatal("pending issuer did not join before state deletion")
 			}
 			missing := f.state(t, "missing-certificate-state")
-			missingErr := run(t.Context(), []string{"--no-config", "publisher", "serve", "--group", "production", "--project-key", applied.ProjectKey, "--instance", "replica-1", "--identity-file", credential, "--state-dir", missing}, io.Discard, io.Discard)
+			missingErr := run(t.Context(), []string{"--no-config", "publisher", "serve", "--environment", applied.Id, "--project-key", applied.ProjectKey, "--instance", "replica-1", "--identity-file", credential, "--state-dir", missing}, io.Discard, io.Discard)
 			if reason, _ := failure.ReasonOf(missingErr); reason != failure.PublisherCertificateStateMissing {
 				t.Fatal("identity-only replacement silently generated fresh certificate keys", missingErr)
 			}
-			if err := run(t.Context(), []string{"--no-config", "publisher", "serve", "--group", "production", "--project-key", applied.ProjectKey, "--instance", "replica-1", "--identity-file", wrongCredential, "--state-dir", task}, io.Discard, io.Discard); err == nil {
+			if err := run(t.Context(), []string{"--no-config", "publisher", "serve", "--environment", applied.Id, "--project-key", applied.ProjectKey, "--instance", "replica-1", "--identity-file", wrongCredential, "--state-dir", task}, io.Discard, io.Discard); err == nil {
 				t.Fatal("invalid signing key fell back to the saved group identity")
 			}
 			assertWorkflowPublisherRuntime(t, control, team, value.Member.PublisherIdentityId, 1, false)
@@ -249,7 +210,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 			// session with its old signed run, source, or replay history.
 			connectCtx, cancel := context.WithCancel(t.Context())
 			stopConnect = cancel
-			connectReady, joined := f.command(t, connectCtx, cancel, []string{"--no-config", "connect", "api", "--team", team, "--listen", address, "--server", f.url, "--state-dir", person}, connectorstream.ErrServiceConnection, clientcontrol.ErrNotFound)
+			connectReady, joined := f.command(t, connectCtx, cancel, []string{"--no-config", "connect", service.Id, "--team", team, "--listen", address, "--server", f.url, "--state-dir", person}, connectorstream.ErrServiceConnection, clientcontrol.ErrNotFound)
 			connectorJoined = joined
 			select {
 			case <-connectReady:
@@ -270,7 +231,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 			}
 		}
 		startConnector()
-		if _, supplied := os.LookupEnv("TNL_GROUP_IDENTITY"); supplied {
+		if _, supplied := os.LookupEnv("TNL_ENVIRONMENT_PUBLISHER_IDENTITY"); supplied {
 			t.Fatal("injected identity remains in the worker environment")
 		}
 		workflowWait(t, 10*time.Second, func() bool {
@@ -282,8 +243,8 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 			body, _ := io.ReadAll(response.Body)
 			return response.StatusCode == http.StatusOK && string(body) == "portable group worker"
 		})
-		status, err := control.GetProjectConfiguration(t.Context(), team, applied.ProjectKey)
-		if err != nil || len(status.Members) != 1 || status.Members[0].PublisherIdentityId != value.Member.PublisherIdentityId || !status.Members[0].Healthy || status.Members[0].ObservedRevision != applied.Revision {
+		status, err := control.ListEnvironmentPublishers(t.Context(), team, applied.ProjectKey, applied.Id)
+		if err != nil || len(status) != 1 || status[0].PublisherIdentityId != value.Member.PublisherIdentityId || !status[0].Healthy || status[0].ObservedRevision != applied.MutationRevision {
 			t.Fatal("replacement changed membership or did not acknowledge its assignment", err)
 		}
 		state, err := clientstate.Open(t.Context(), task)
@@ -294,7 +255,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		saved, found, err := profile.SelectedPublisherIdentity(t.Context(), "project", credentialfile.GroupSelection(applied.ProjectKey, value.Member.GroupId, "replica-1"))
+		saved, found, err := profile.SelectedPublisherIdentity(t.Context(), "project", credentialfile.GroupSelection(applied.ProjectKey, value.Member.EnvironmentId, "replica-1"))
 		if err != nil || !found || saved.ID != value.Member.PublisherIdentityId {
 			t.Fatal("CLI did not save the restored signing identity", err)
 		}
@@ -314,31 +275,17 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 		if replacement == 3 {
 			stopConnect()
 			joinConnector()
-			oldHostname := service.Endpoint.Hostname
-			cliCall(t, t.Context(), []string{"--config", configuration, "publisher", "namespace", "rename", "production", "new-dns", "--expected-revision", strconv.FormatInt(applied.Revision, 10), "--request-id", "dns-move", "--state-dir", person})
-			project, err := loadProjectConfiguration(t.Context(), cli{ConfigPath: configuration}, person)
+			// an independently reapplied definition keeps this environment's saved
+			// service, endpoint and certificate identity. no publisher namespace
+			// mutation API exists alongside environment management.
+			updatedEnvironment, err := control.ApplyEnvironment(t.Context(), applied.ProjectKey, applied.Id, controlv1.ApplyEnvironmentRequest{TeamId: team, ExpectedRevision: applied.MutationRevision, DefinitionRevision: applied.AppliedDefinitionRevision})
 			if err != nil {
 				t.Fatal(err)
 			}
-			selected, err := connector.Select(t.Context(), control, project.Project, "api", team, "")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if selected.Endpoint == nil || selected.Endpoint.Hostname == oldHostname || selected.Id != service.Id {
-				t.Fatal("source-bound service kept old hostname or changed identity")
-			}
-			device, err := session.Store().EnsureEnrolledVisitorDevice(t.Context(), session.Identity().Identity.Id, control.EnrollVisitorDevice)
-			if err != nil {
-				t.Fatal(err)
-			}
-			workflowWait(t, 25*time.Second, func() bool {
-				run, err := control.SelectServiceRun(t.Context(), service.Id, device.ID)
-				return err == nil && run.Endpoint != nil && run.Endpoint.Hostname == selected.Endpoint.Hostname
-			})
+			applied = updatedEnvironment
 			startConnector()
-			newClient := workflowNativeHTTPClient(t, f, selected.Endpoint.Hostname)
 			workflowWait(t, 25*time.Second, func() bool {
-				response, err := newClient.Get("https://" + address + "/renamed-dns")
+				response, err := client.Get("https://" + address + "/reapplied")
 				if err != nil {
 					return false
 				}
@@ -346,13 +293,9 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 				body, _ := io.ReadAll(response.Body)
 				return response.StatusCode == http.StatusOK && string(body) == "portable group worker"
 			})
-			if response, err := client.Get("https://" + address + "/old-name"); err == nil {
-				_ = response.Body.Close()
-				t.Fatal("old hostname still authenticated the new namespace")
-			}
 			updated, err := control.GetService(t.Context(), service.Id)
-			if err != nil || updated.Endpoint.Hostname != selected.Endpoint.Hostname || updated.Endpoint.Port != service.Endpoint.Port {
-				t.Fatal("namespace change lost port or service", err)
+			if err != nil || updated.Id != service.Id || *updated.Endpoint != *service.Endpoint {
+				t.Fatal("environment reapply lost endpoint or service identity", err)
 			}
 		}
 		stop()
@@ -375,11 +318,11 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer registry.Close()
-	private, err := value.Validate(f.url, applied.ProjectKey, "production", "replica-1")
+	private, err := value.Validate(f.url, applied.ProjectKey, applied.Id, "replica-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	job := supervisor.Job{Kind: supervisor.KindGroup, ID: supervisor.JobKey(f.url, "group", value.Member.GroupId+":replica-1"), Name: "production-replica-1", Server: f.url, PublisherIdentityID: value.Member.PublisherIdentityId, GroupMember: &value.Member, GroupInstance: "replica-1", IdentityDir: identityDir}
+	job := supervisor.Job{Kind: supervisor.KindGroup, ID: supervisor.JobKey(f.url, "env", value.Member.EnvironmentId+":replica-1"), Name: "production-replica-1", Server: f.url, PublisherIdentityID: value.Member.PublisherIdentityId, GroupMember: &value.Member, GroupInstance: "replica-1", IdentityDir: identityDir}
 	if err := registry.InstallGroup(t.Context(), job, value.Member, private); err != nil {
 		t.Fatal(err)
 	}
@@ -402,8 +345,8 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 	})
 	assertWorkflowPublisherRuntime(t, control, team, value.Member.PublisherIdentityId, 5, true)
 	var installedStatus bytes.Buffer
-	if err := writeSystemJobs(t.Context(), registry, &installedStatus, "tnl service status", job.ID); err != nil || !strings.Contains(installedStatus.String(), "live") {
-		t.Fatal("installed status retained old selector", err)
+	if err := writeSystemJobs(t.Context(), registry, &installedStatus, "tnl service status", job.ID); err != nil || !strings.Contains(installedStatus.String(), applied.Id) {
+		t.Fatal("installed status lost immutable environment identity", err)
 	}
 	if f.groupEnrollmentRequests.Load() != 2 {
 		t.Fatal("installed supervisor enrolled a replacement identity")
@@ -414,10 +357,10 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 	}
 	close(supervisorDone)
 	assertWorkflowPublisherRuntime(t, control, team, value.Member.PublisherIdentityId, 5, false)
-	if err := control.RevokePublisherGroupMember(t.Context(), team, applied.ProjectKey, "production", value.Member.PublisherIdentityId); err != nil {
+	if err := control.RevokeEnvironmentPublisher(t.Context(), team, applied.ProjectKey, applied.Id, value.Member.PublisherIdentityId); err != nil {
 		t.Fatal(err)
 	}
-	if err := run(t.Context(), []string{"--no-config", "publisher", "serve", "--group", "production", "--project-key", applied.ProjectKey, "--instance", "replica-1", "--identity-file", credential, "--state-dir", person}, io.Discard, io.Discard); err == nil {
+	if err := run(t.Context(), []string{"--no-config", "publisher", "serve", "--environment", applied.Id, "--project-key", applied.ProjectKey, "--instance", "replica-1", "--identity-file", credential, "--state-dir", person}, io.Discard, io.Discard); err == nil {
 		t.Fatal("revoked identity fell back to another publisher")
 	}
 	if f.groupEnrollmentRequests.Load() != 2 {

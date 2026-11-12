@@ -12,13 +12,10 @@ import (
 	"reflect"
 	"slices"
 	"syscall"
-	"time"
 
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
-	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	clientserver "github.com/tnldotdev/tnl/internal/client/server"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	"github.com/tnldotdev/tnl/internal/config"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	"github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -27,7 +24,7 @@ import (
 )
 
 type ContextOptions struct {
-	Directory, Workload, Manifest, TeamID, StateDir string
+	Directory, TeamID, StateDir string
 	Service                                         []string
 }
 
@@ -47,17 +44,13 @@ type OwnerServeOptions struct {
 }
 
 func connectionProject(ctx context.Context, options ContextOptions) (projectConfiguration, connectorruntime.Context, error) {
-	if options.Manifest != "" {
-		return connectionManifest(options)
-	}
 	if options.TeamID != "" && !opaqueid.Valid(options.TeamID, opaqueid.TeamPrefix) {
 		return projectConfiguration{}, connectorruntime.Context{}, connectorruntime.ErrInvalid
 	}
 	directory, err := filepath.Abs(options.Directory)
-	if err != nil {
-		return projectConfiguration{}, connectorruntime.Context{}, err
+	if err == nil {
+		directory, err = filepath.EvalSymlinks(directory)
 	}
-	directory, err = filepath.EvalSymlinks(directory)
 	if err != nil {
 		return projectConfiguration{}, connectorruntime.Context{}, err
 	}
@@ -65,22 +58,16 @@ func connectionProject(ctx context.Context, options ContextOptions) (projectConf
 	if err != nil {
 		return projectConfiguration{}, connectorruntime.Context{}, err
 	}
-	// CI source/worktree scope does not depend on a local human state database.
 	project, err := clientproject.Resolve(ctx, selection, directory, [32]byte{})
 	if err != nil {
 		return projectConfiguration{}, connectorruntime.Context{}, err
 	}
-	source, err := project.SourceIdentity(ctx)
-	if err != nil {
-		return projectConfiguration{}, connectorruntime.Context{}, err
-	}
-	server := clientserver.DefaultURL
-	if project.Config.Server != nil {
+	source := project.LocalPublicationIdentity()
+	server := os.Getenv("TNL_SERVER")
+	if server == "" && project.Config.Server != nil {
 		server = *project.Config.Server
 	}
-	if selected := os.Getenv("TNL_SERVER"); selected != "" {
-		server = selected
-	} else if options.Workload == "" && project.Config.Server == nil {
+	if server == "" {
 		selected, database, err := clientserver.Open(ctx, options.StateDir, "")
 		if err != nil {
 			return projectConfiguration{}, connectorruntime.Context{}, err
@@ -95,29 +82,12 @@ func connectionProject(ctx context.Context, options ContextOptions) (projectConf
 		return projectConfiguration{}, connectorruntime.Context{}, err
 	}
 	services := slices.Clone(options.Service)
-	if options.Workload == "" && len(services) == 0 {
+	if len(services) == 0 {
 		for name, service := range project.Config.Services {
 			if !isConnectPublicURL(service) {
 				services = append(services, name)
 			}
 		}
-	}
-	if options.Workload != "" {
-		policy, ok := project.Config.Workloads[options.Workload]
-		if !ok {
-			return projectConfiguration{}, connectorruntime.Context{}, connectorruntime.ErrInvalid
-		}
-		if len(services) == 0 {
-			services = slices.Clone(policy.Services)
-		}
-		for _, name := range services {
-			if !slices.Contains(policy.Services, name) {
-				return projectConfiguration{}, connectorruntime.Context{}, connectorruntime.ErrInvalid
-			}
-		}
-	}
-	if len(services) == 0 {
-		return projectConfiguration{}, connectorruntime.Context{}, connectorruntime.ErrInvalid
 	}
 	slices.Sort(services)
 	for _, name := range services {
@@ -139,74 +109,13 @@ func connectionProject(ctx context.Context, options ContextOptions) (projectConf
 	if team == "" && project.Config.Team != nil {
 		team = *project.Config.Team
 	}
-	var appliedBinding *connectorruntime.Binding
-	if binding, err := connectorruntime.ReadBinding(project.Root); err == nil && binding.Server == server && binding.ProjectKey == source.Key && binding.SourceID == source.Fingerprint {
-		appliedBinding = &binding
-	}
-	if options.Workload != "" && !opaqueid.Valid(team, opaqueid.TeamPrefix) {
-		if appliedBinding != nil && appliedBinding.Team == team {
-			team = appliedBinding.TeamID
-		}
-		if team == "" {
-			return projectConfiguration{}, connectorruntime.Context{}, connectorruntime.ErrTeam
-		}
-	}
-	encoded, err := json.Marshal(struct {
-		Config   config.TNL
-		Server   string
-		Source   clientproject.SourceIdentity
-		Worktree string
-		Binding  *connectorruntime.Binding
-	}{project.Config, server, source, project.LocalWorktreeKey(), appliedBinding})
+	encoded, err := json.Marshal([]any{project.Config, server, source, project.LocalWorktreeKey()})
 	if err != nil {
 		return projectConfiguration{}, connectorruntime.Context{}, err
 	}
 	digest := sha256.Sum256(encoded)
-	scope := connectorruntime.Context{Schema: 1, Directory: project.Root, ConfigDigest: hex.EncodeToString(digest[:]), Server: server, Audience: server, TeamID: team, ProjectKey: source.Key, SourceID: source.Fingerprint, WorktreeKey: project.LocalWorktreeKey(), ProjectLabel: source.Label, Workload: options.Workload, Services: services}
+	scope := connectorruntime.Context{Schema: 1, Directory: project.Root, ConfigDigest: hex.EncodeToString(digest[:]), Server: server, Audience: server, TeamID: team, ProjectKey: source.Key, SourceID: source.Fingerprint, WorktreeKey: project.LocalWorktreeKey(), ProjectLabel: project.Worktree.Label.Project, Services: services}
 	return projectConfiguration{Project: project}, scope, scope.Validate()
-}
-
-// deployed artifacts need neither Git nor a project config loader at runtime.
-// the manifest selects a saved policy; only control grants service rights.
-func connectionManifest(options ContextOptions) (projectConfiguration, connectorruntime.Context, error) {
-	m, err := workloadmanifest.Read(options.Manifest)
-	if err != nil {
-		return projectConfiguration{}, connectorruntime.Context{}, err
-	}
-	w, ok := m.Workloads[options.Workload]
-	if !ok || options.TeamID != "" && options.TeamID != m.Team {
-		return projectConfiguration{}, connectorruntime.Context{}, connectorruntime.ErrInvalid
-	}
-	directory, err := filepath.Abs(options.Directory)
-	if err == nil {
-		directory, err = filepath.EvalSymlinks(directory)
-	}
-	if err != nil {
-		return projectConfiguration{}, connectorruntime.Context{}, err
-	}
-	services := slices.Clone(options.Service)
-	if len(services) == 0 {
-		services = slices.Clone(w.Services)
-	}
-	slices.Sort(services)
-	for _, s := range services {
-		if !slices.Contains(w.Services, s) {
-			return projectConfiguration{}, connectorruntime.Context{}, connectorruntime.ErrInvalid
-		}
-	}
-	b, _ := json.Marshal(m)
-	digest := sha256.Sum256(b)
-	configuration := config.TNL{Server: &m.Server, Team: &m.Team, Services: config.Services{}, Workloads: map[string]config.Workload{options.Workload: {Services: w.Services, MaxDuration: new(config.Duration(time.Duration(w.MaxDurationSeconds) * time.Second))}}}
-	if w.MaxDurationSeconds == 0 {
-		policy := configuration.Workloads[options.Workload]
-		policy.MaxDuration = nil
-		configuration.Workloads[options.Workload] = policy
-	}
-	for _, s := range services {
-		configuration.Services[s] = config.Service{Protocol: new(m.Services[s])}
-	}
-	scope := connectorruntime.Context{PublisherGroupID: m.PublisherGroupID, Schema: 1, Directory: directory, ConfigDigest: hex.EncodeToString(digest[:]), Server: m.Server, Audience: m.Server, TeamID: m.Team, ProjectKey: m.ProjectKey, SourceID: m.SourceFingerprint, WorktreeKey: "deployment", ProjectLabel: m.ProjectLabel, Workload: options.Workload, Services: services}
-	return projectConfiguration{Project: clientproject.Project{Root: directory, Config: configuration}}, scope, scope.Validate()
 }
 
 func (o Operations) ServeOwner(ctx context.Context, options OwnerServeOptions, input io.Reader, output io.Writer) error {
@@ -218,29 +127,10 @@ func (o Operations) ServeOwner(ctx context.Context, options OwnerServeOptions, i
 		return err
 	}
 	var request connectorruntime.StartRequest
-	if connectorruntime.ReadJSON(input, &request) != nil || request.Schema != 1 || !reflect.DeepEqual(request.Context, scope) || (scope.Workload == "") != (request.Assertion == "") {
+	if connectorruntime.ReadJSON(input, &request) != nil || request.Schema != 1 || !reflect.DeepEqual(request.Context, scope) {
 		return connectorruntime.ErrInvalid
 	}
-	if err := validateGitHubActionsRefresh(options.OwnerStartOptions, project, request); err != nil {
-		return err
-	}
-	backend := &connectorConnectionBackend{openSession: o.OpenSession, project: project, scope: scope, stateDir: options.StateDir, assertion: request.Assertion, directory: options.OwnerDirectory, runnerTemp: options.RunnerTemp, parentPID: options.ParentPID}
-	if request.Refresh != nil {
-		if scope.Workload == "" || workload.ValidateRefreshSource(*request.Refresh) != nil {
-			return connectorruntime.ErrInvalid
-		}
-		source := *request.Refresh
-		backend.refreshAssertion = func(ctx context.Context) (string, error) {
-			return workload.Acquire(ctx, source, nil, func(string) string { return "" })
-		}
-	}
-	if request.GitHubActionsRefresh != nil {
-		source := *request.GitHubActionsRefresh
-		backend.refreshAssertion = func(ctx context.Context) (string, error) {
-			return workload.Acquire(ctx, workloadmanifest.Acquisition{Method: "github-actions", Audience: scope.Audience}, nil, source.Getenv)
-		}
-		request.GitHubActionsRefresh = nil
-	}
+	backend := &connectorConnectionBackend{openSession: o.OpenSession, project: project, scope: scope, stateDir: options.StateDir, directory: options.OwnerDirectory, runnerTemp: options.RunnerTemp, parentPID: options.ParentPID}
 	if options.SDKRegistry != "" {
 		if options.ParentPID <= 0 || connectorruntime.VerifyDirectory(options.SDKRegistry) != nil {
 			return connectorruntime.ErrInvalid
@@ -250,23 +140,11 @@ func (o Operations) ServeOwner(ctx context.Context, options OwnerServeOptions, i
 	if options.ParentPID == 0 {
 		backend.initialServices = slices.Clone(scope.Services)
 	}
-	if options.Manifest != "" {
-		m, err := workloadmanifest.Read(options.Manifest)
-		if err != nil {
-			return err
-		}
-		backend.acquisition = m.Workloads[scope.Workload].Acquisition
-		if backend.acquisition.TokenFile != "" && !filepath.IsAbs(backend.acquisition.TokenFile) {
-			backend.acquisition.TokenFile = filepath.Join(scope.Directory, backend.acquisition.TokenFile)
-		}
-	}
-	request.Assertion = ""
 	backend.kubeOptions = StartOptions{KubeTokenFile: options.KubeTokenFile, KubeUserConfig: options.KubeUserConfig, KubeUser: options.KubeUser, Namespace: options.Namespace}
 	executable, err := os.Executable()
-	if err != nil {
-		return err
+	if err == nil {
+		executable, err = filepath.EvalSymlinks(executable)
 	}
-	executable, err = filepath.EvalSymlinks(executable)
 	if err != nil {
 		return err
 	}
@@ -298,6 +176,7 @@ func (w *connectionReadinessWriter) Close() error {
 	}
 	return nil
 }
+
 func Reason(err error) failure.Reason {
 	if err == nil {
 		return ""
@@ -306,12 +185,6 @@ func Reason(err error) failure.Reason {
 		return reason
 	}
 	switch {
-	case errors.Is(err, workloadmanifest.ErrInvalid):
-		return failure.WorkloadManifestInvalid
-	case errors.Is(err, workloadmanifest.ErrRequired):
-		return failure.WorkloadRequired
-	case errors.Is(err, workloadmanifest.ErrDenied):
-		return failure.WorkloadServiceDenied
 	case errors.Is(err, workload.ErrAssertionSource), errors.Is(err, workload.ErrAssertionUnavailable):
 		return failure.WorkloadAssertionUnavailable
 	case errors.Is(err, connectorruntime.ErrTeam):

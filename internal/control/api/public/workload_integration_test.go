@@ -4,14 +4,11 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -19,109 +16,85 @@ import (
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/connector/workload"
-	controlauthority "github.com/tnldotdev/tnl/internal/control/api/authority"
 	"github.com/tnldotdev/tnl/internal/control/oidc"
-	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/workloadproof"
-	"github.com/tnldotdev/tnl/internal/testutil"
-	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 	"github.com/tnldotdev/tnl/internal/testutil/githubtest"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
-	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	ctx := t.Context()
-	databaseURL := testutil.NewDisposablePostgresDatabaseURL(t, "workload_http")
-	if err := controlstate.Migrate(ctx, databaseURL); err != nil {
-		t.Fatal(err)
-	}
-	d, err := controlstate.Open(ctx, databaseURL, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", naming.ManagedURLModeSimple)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(d.Close)
-	now := time.Now().UTC()
-	human, err := controltest.Session(ctx, d, "example.test", time.Hour, 24*time.Hour, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	team := human.Identity.Memberships[0].TeamID
-	mux := http.NewServeMux()
-	server := httptest.NewTLSServer(mux)
-	t.Cleanup(server.Close)
-	issuer := githubtest.New(t)
-	if _, err = controlauthority.Register(mux, controlauthority.Config{ControlURL: server.URL, HTTPClient: issuer.Client}, d); err != nil {
-		t.Fatal(err)
-	}
-	h, err := NewHandler(Config{ControlURL: server.URL, ManagedURLMode: naming.ManagedURLModeSimple}, DatabaseStores(d), d, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	mux.Handle("/", h)
-	owner, err := clientcontrol.New(server.URL, server.Client(), human.AccessToken)
-	if err != nil {
-		t.Fatal(err)
-	}
-	group, protocol := "production", controlv1.Kubernetes
-	policies := map[string]controlv1.ProjectWorkload{"test": {Provider: controlv1.WorkloadGitHub, Github: &controlv1.ProjectWorkloadGitHub{Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}, Environment: new("ci"), JobWorkflowRef: new("example/shared/.github/workflows/reuse.yml@refs/tags/v1")}, Services: []string{"cluster"}, MaxDurationSeconds: 3600}}
-	continuous := policies["test"]
-	continuous.MaxDurationSeconds = 0
-	policies["continuous"] = continuous
-	body := controlv1.ApplyProjectConfigurationRequest{TeamId: team, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{Workloads: &policies, PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"cluster": {PublisherGroup: &group, Protocol: &protocol, Target: "", TargetDiscovery: &controlv1.ProjectTargetDiscovery{Type: controlv1.Eks, Region: "us-east-1", Cluster: new("production")}}}, Webhooks: map[string]controlv1.ProjectWebhook{}}}
-	applied, err := owner.ApplyProjectConfiguration(ctx, "example", body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if applied.Configuration.Services["cluster"].TargetDiscovery == nil || applied.Configuration.Services["cluster"].Target != "" {
-		t.Fatal("cloud selector did not survive apply")
+	f := newRetainedVisitorHTTPFixture(t, oidc.WorkloadTrust{Provider: "github", Issuer: oidc.GitHubIssuer, JWKSURL: oidc.GitHubIssuer + "/.well-known/jwks", Claims: map[string]string{"sub": "repo:example/repository:ref:refs/heads/main", "repository": "example/repository", "repository_id": "12345", "repository_owner_id": "6789", "workflow_ref": "example/repository/.github/workflows/test.yml@refs/heads/main", "ref": "refs/heads/main", "environment": "ci", "job_workflow_ref": "example/shared/.github/workflows/reuse.yml@refs/tags/v1"}, Events: []string{"push"}}, map[string]controlv1.ServiceDefinitionService{"cluster": {Protocol: "kubernetes"}}, controlv1.EnvironmentTargets{"cluster": {Discovery: &controlv1.ProjectTargetDiscovery{Type: controlv1.Eks, Region: "us-east-1", Cluster: new("production")}}})
+	ctx, d, server, team := t.Context(), f.database, f.server, f.team
+	if f.environment.Targets["cluster"].Discovery == nil || f.environment.Targets["cluster"].Address != nil {
+		t.Fatal("cloud selector did not survive environment creation")
 	}
 	job, err := workload.New(server.URL, server.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
-	claims := githubtest.Claims(server.URL, now)
-	claims["environment"] = "ci"
-	claims["job_workflow_ref"] = "example/shared/.github/workflows/reuse.yml@refs/tags/v1"
-	assertion := issuer.Sign(t, claims)
-	session, err := job.Exchange(ctx, team, "example", body.SourceFingerprint, "test", assertion, nil)
+	claims := githubtest.Claims(server.URL, time.Now())
+	claims["environment"], claims["job_workflow_ref"] = "ci", "example/shared/.github/workflows/reuse.yml@refs/tags/v1"
+	assertion := f.issuer.Sign(t, claims)
+	// provider metadata belongs to the verified source, not the narrowed native
+	// visitor session. retain its signed execution assertions at that boundary.
+	verifier, err := oidc.NewGitHubWorkloadVerifier(server.URL, f.issuer.Client)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if g := session.Github; g == nil || g.RepositoryId != "12345" || g.RepositoryOwnerId != "6789" || g.RunId != "111" || g.RunAttempt != "1" || g.CheckRunId != "222" {
-		t.Fatal("GitHub session omitted signed execution metadata")
+	g, err := verifier.Verify(ctx, assertion)
+	if err != nil || g.RepositoryID != "12345" || g.RepositoryOwnerID != "6789" || g.RunID != "111" || g.RunAttempt != "1" || g.CheckRunID != "222" {
+		t.Fatal("verified GitHub source omitted signed execution metadata", err)
 	}
-	retry, err := job.Exchange(ctx, team, "example", body.SourceFingerprint, "test", assertion, nil)
-	if err != nil || retry.Id != session.Id || retry.Credential != session.Credential || !retry.ExpiresAt.Equal(*session.ExpiresAt) {
+	prepared, err := job.Prepare(ctx, f.environment.Ref, f.permission, assertion, f.services)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := prepared.Session
+	var provider string
+	var admitted []byte
+	if err := f.inspect.QueryRow(ctx, `SELECT provider,claims FROM control.workload_sessions WHERE id=$1`, session.Id).Scan(&provider, &admitted); err != nil {
+		t.Fatal("read the actual HTTP-admitted source identity", err)
+	}
+	var execution oidc.WorkloadExecution
+	if err := json.Unmarshal(admitted, &execution); err != nil || provider != "github" || execution.GitHub == nil || execution.GitHub.RepositoryID != g.RepositoryID || execution.GitHub.RepositoryOwnerID != g.RepositoryOwnerID || execution.GitHub.RunID != g.RunID || execution.GitHub.RunAttempt != g.RunAttempt || execution.GitHub.CheckRunID != g.CheckRunID {
+		t.Fatal("HTTP admission did not bind its session to the verified GitHub execution", err)
+	}
+	retry, err := job.Prepare(ctx, f.environment.Ref, f.permission, assertion, f.services)
+	if err != nil || retry.Session.Id != session.Id || retry.Session.Credential != session.Credential || !retry.Session.ExpiresAt.Equal(*session.ExpiresAt) {
 		t.Fatal("HTTP lost-reply recovery changed execution", err)
 	}
 	services, err := job.ListServices(ctx)
 	if err != nil || len(services.Services) != 1 || services.Services[0].Protocol != controlv1.Kubernetes {
-		t.Fatal("native workload inventory", services, err)
+		t.Fatal("native visitor inventory", err)
 	}
-	service := services.Services[0].Id
-	hint := services.Services[0].KubernetesAuth
+	service, hint := services.Services[0].Id, services.Services[0].KubernetesAuth
 	if hint == nil || hint.Provider != controlv1.KubernetesEKS || hint.Cluster != "production" || hint.Region != "us-east-1" {
-		t.Fatal("missing approved native Kubernetes auth hint")
+		t.Fatal("missing approved Kubernetes auth hint")
 	}
-	humanServices, err := owner.ListAvailableServices(ctx)
+	// environment management does not itself grant visitor inventory access.
+	if ungranted, err := f.owner.ListAvailableServices(ctx); err != nil || len(ungranted) != 0 {
+		t.Fatal("environment manager acquired visitor inventory without a grant", err)
+	}
+	if _, err := d.CreateServiceGrant(ctx, service, f.human.Identity.Identity.ID, "human-cluster-visitor", "identity", f.human.Identity.Identity.ID, nil, time.Now()); err != nil {
+		t.Fatal("grant the human exact service visitor access", err)
+	}
+	humanServices, err := f.owner.ListAvailableServices(ctx)
 	if err != nil || len(humanServices) != 1 || humanServices[0].KubernetesAuth == nil || *humanServices[0].KubernetesAuth != *hint {
 		t.Fatal("human inventory lost approved auth hint", err)
 	}
 	if decision, err := job.CheckService(ctx, service); err != nil || decision.Subject.WorkloadSessionId == nil || *decision.Subject.WorkloadSessionId != session.Id {
-		t.Fatal("native workload authorization", decision, err)
+		t.Fatal("native visitor authorization", err)
 	}
-	if _, err = job.ServiceClientCertificate(ctx, service); err != nil {
-		t.Fatal("workload public-path certificate", err)
+	if _, err := job.ServiceClientCertificate(ctx, service); err != nil {
+		t.Fatal("visitor public-path certificate", err)
 	}
 	if certificate, err := job.ClientTLSCertificate(ctx, service); err != nil || certificate.PrivateKey == nil || certificate.Leaf == nil {
-		t.Fatal("native workload TLS adapter", err)
+		t.Fatal("native visitor TLS adapter", err)
 	}
 	t.Run("connector peer pair", func(t *testing.T) {
-		exerciseWorkloadConnectorPeerPair(t, d, job, server, human.Identity.Identity.ID, team, service, session.Credential, databaseURL)
+		exerciseWorkloadConnectorPeerPair(t, d, job, server, f.human, team, f.environment, service, session.Credential, f.databaseURL)
 		if t.Failed() {
 			return
 		}
@@ -130,14 +103,12 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			uncappedClaims := githubtest.Claims(server.URL, time.Now())
-			uncappedClaims["environment"], uncappedClaims["job_workflow_ref"] = claims["environment"], claims["job_workflow_ref"]
-			uncappedClaims["check_run_id"], uncappedClaims["jti"] = "223", "uncapped-rebinding"
-			current, err := uncapped.Exchange(t.Context(), team, "example", body.SourceFingerprint, "continuous", issuer.Sign(t, uncappedClaims), nil)
-			if err != nil || current.ExpiresAt != nil {
-				t.Fatal("uncapped session acquired a hard limit", err)
+			permission := f.issuePermission(t, []string{"cluster"}, 0)
+			current, err := uncapped.Prepare(t.Context(), f.environment.Ref, permission, assertion, f.services)
+			if err != nil || current.Session.ExpiresAt != nil {
+				t.Fatal("uncapped session acquired hard limit", err)
 			}
-			exerciseUncappedWorkloadConnectorRebind(t, uncapped, service, databaseURL)
+			exerciseUncappedWorkloadConnectorRebind(t, uncapped, service, f.databaseURL)
 		})
 	})
 	if t.Failed() {
@@ -152,7 +123,7 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 			t.Fatal(err)
 		}
 		sequence := current.RenewalSequence + 1
-		proof := authorityv1.WorkloadRenewal{Sequence: sequence, Signature: base64.RawURLEncoding.EncodeToString(job.Sign(workloadproof.Renew(current.Id, sequence)))}
+		proof := authorityv1.EnvironmentVisitorRenewal{Sequence: sequence, Signature: base64.RawURLEncoding.EncodeToString(job.Sign(workloadproof.Renew(current.Id, sequence)))}
 		encoded, _ := json.Marshal(proof)
 		_, otherKey, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
@@ -169,20 +140,18 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 			{`{"sequence":0,"signature":"` + proof.Signature + `"}`, 400},
 			{`{"sequence":9223372036854775808,"signature":"` + proof.Signature + `"}`, 400},
 			{`{"sequence":2,"signature":"invalid"}`, 400},
-			{string(encoded) + ` {}`, 400},
-			{strings.Repeat(" ", 65<<10) + string(encoded), 400},
-			{string(wrongBody), 403},
-			{`{"sequence":3,"signature":"` + proof.Signature + `"}`, 403},
+			{string(encoded) + ` {}`, 400}, {strings.Repeat(" ", 65<<10) + string(encoded), 400},
+			{string(wrongBody), 403}, {`{"sequence":3,"signature":"` + proof.Signature + `"}`, 403},
 			{`{"sequence":2,"signature":"` + base64.RawURLEncoding.EncodeToString(job.Sign(workloadproof.Renew("other", sequence))) + `"}`, 403},
 			{string(encoded), 200}, {string(encoded), 200},
 		} {
-			request, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/v1/workload-sessions/"+current.Id+"/renew", strings.NewReader(test.body))
+			r, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/v1/environment-visitor-sessions/"+current.Id+"/renew", strings.NewReader(test.body))
 			if err != nil {
 				t.Fatal(err)
 			}
-			request.Header.Set("Content-Type", "application/json")
-			request.Header.Set("Authorization", "Bearer "+current.Credential)
-			response, err := server.Client().Do(request)
+			r.Header.Set("Content-Type", "application/json")
+			r.Header.Set("Authorization", "Bearer "+current.Credential)
+			response, err := server.Client().Do(r)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -197,56 +166,50 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 				}
 				continue
 			}
-			var renewed authorityv1.WorkloadSession
+			var renewed authorityv1.EnvironmentVisitorSession
 			if err := json.Unmarshal(data, &renewed); err != nil || renewed.RenewalSequence != sequence || !renewed.LeaseExpiresAt.Equal(current.LeaseExpiresAt) || !renewed.ExpiresAt.Equal(*current.ExpiresAt) {
-				t.Fatal("HTTP early renewal or retry changed its lease", err)
+				t.Fatal("early renewal or retry changed lease", err)
 			}
 		}
-		// the native adapter can acknowledge the raw request's committed step
-		// by retrying the same next proof; it must not skip over it.
 		if renewed, err := job.Renew(ctx); err != nil || renewed.RenewalSequence != sequence {
-			t.Fatal("native retry did not recover committed HTTP renewal", err)
+			t.Fatal("native retry did not recover committed renewal", err)
 		}
 	})
 	for _, bad := range []struct {
 		field string
 		value any
-	}{{"repository_id", "999"}, {"repository_owner_id", "999"}, {"environment", "production"}, {"job_workflow_ref", "example/shared/.github/workflows/reuse.yml@refs/tags/v2"}, {"ref", "refs/heads/other"}} {
-		mutated := githubtest.Claims(server.URL, now)
-		mutated["environment"] = "ci"
-		mutated["job_workflow_ref"] = "example/shared/.github/workflows/reuse.yml@refs/tags/v1"
+	}{{"repository_id", "999"}, {"repository_owner_id", "999"}, {"environment", "production"}, {"job_workflow_ref", "example/shared/.github/workflows/reuse.yml@refs/tags/v2"}, {"ref", "refs/heads/other"}, {"event_name", "pull_request"}, {"run_id", "not-a-run-id"}, {"check_run_id", nil}} {
+		mutated := githubtest.Claims(server.URL, time.Now())
+		mutated["environment"], mutated["job_workflow_ref"] = claims["environment"], claims["job_workflow_ref"]
 		mutated[bad.field] = bad.value
-		if _, err = job.Exchange(ctx, team, "example", body.SourceFingerprint, "test", issuer.Sign(t, mutated), nil); err == nil {
+		if _, err := job.Prepare(ctx, f.environment.Ref, f.permission, f.issuer.Sign(t, mutated), f.services); err == nil {
 			t.Fatalf("HTTP accepted wrong %s", bad.field)
 		}
 	}
-	workloadControl, err := clientcontrol.New(server.URL, server.Client(), credentials.AccessToken(session.Credential))
+	visitorControl, err := clientcontrol.New(server.URL, server.Client(), credentials.AccessToken(session.Credential))
 	if err != nil {
 		t.Fatal(err)
 	}
-	body.ExpectedRevision = applied.Revision
-	if _, err = workloadControl.ApplyProjectConfiguration(ctx, "example", body); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
-		t.Fatal("workload self-applied policy", err)
+	if _, err := visitorControl.ApplyEnvironment(ctx, "example", f.environment.Id, controlv1.ApplyEnvironmentRequest{TeamId: team, ExpectedRevision: f.environment.MutationRevision, DefinitionRevision: f.environment.AppliedDefinitionRevision}); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+		t.Fatal("visitor self-applied environment", err)
 	}
-	if _, err = workloadControl.GetProjectConfiguration(ctx, team, "example"); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
-		t.Fatal("workload read manager target inventory", err)
+	if _, err := visitorControl.GetEnvironment(ctx, team, "example", f.environment.Id); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+		t.Fatal("visitor read manager targets", err)
 	}
 	authority, err := clientauthority.New(server.URL, server.Client(), credentials.AccessToken(session.Credential))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = authority.IdentityContext(ctx); !errors.Is(err, clientauthority.ErrUnauthenticated) {
-		t.Fatal("workload became a human control session", err)
+	if _, err := authority.IdentityContext(ctx); !errors.Is(err, clientauthority.ErrUnauthenticated) {
+		t.Fatal("visitor became human session", err)
 	}
-	if _, err = workloadControl.GetPublisherGroupAssignments(ctx, session.Credential); err == nil {
-		t.Fatal("workload became a publisher")
+	if _, err := visitorControl.GetEnvironmentPublisherAssignments(ctx, session.Credential); err == nil {
+		t.Fatal("visitor became publisher")
 	}
-	// verify actual response bodies contain no assertion, provider selector or
-	// application credential in visitor inventory and error envelopes.
 	for _, path := range []string{"/v1/workload/services", "/v1/identity"} {
-		request, _ := http.NewRequestWithContext(ctx, "GET", server.URL+path, nil)
-		request.Header.Set("Authorization", "Bearer "+session.Credential)
-		response, err := server.Client().Do(request)
+		r, _ := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+path, nil)
+		r.Header.Set("Authorization", "Bearer "+session.Credential)
+		response, err := server.Client().Do(r)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -256,18 +219,17 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 			t.Fatal(err)
 		}
 		if bytes.Contains(data, []byte(assertion)) || bytes.Contains(data, []byte("target_discovery")) || bytes.Contains(data, []byte(session.Credential)) {
-			t.Fatal("visitor response leaked credential or target configuration")
+			t.Fatal("visitor response leaked credential or target")
 		}
 	}
-	if err = job.Revoke(ctx); err != nil {
+	if err := job.Revoke(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = job.CheckService(ctx, service); err == nil {
-		t.Fatal("revoked workload retained visitor access")
+	if _, err := job.CheckService(ctx, service); err == nil {
+		t.Fatal("revoked visitor retained access")
 	}
-	// human administration remains independently usable after job revocation.
-	if _, err = owner.GetProjectConfiguration(ctx, team, "example"); err != nil {
-		t.Fatal(err)
+	if _, err := f.owner.GetEnvironment(ctx, team, "example", f.environment.Id); err != nil {
+		t.Fatal("visitor revoke affected manager", err)
 	}
 	t.Run("retained and collected deletion ownership", func(t *testing.T) {
 		requestStatus := func(method, path, credential string, want int) {
@@ -276,62 +238,63 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 			if strings.HasSuffix(path, "/renew") {
 				body = strings.NewReader(`{"sequence":1,"signature":"` + base64.RawURLEncoding.EncodeToString(make([]byte, ed25519.SignatureSize)) + `"}`)
 			}
-			req, err := http.NewRequestWithContext(ctx, method, server.URL+path, body)
+			r, err := http.NewRequestWithContext(ctx, method, server.URL+path, body)
 			if err != nil {
 				t.Fatal(err)
 			}
-			req.Header.Set("Authorization", "Bearer "+credential)
-			req.Header.Set("Content-Type", "application/json")
-			response, err := server.Client().Do(req)
+			r.Header.Set("Authorization", "Bearer "+credential)
+			r.Header.Set("Content-Type", "application/json")
+			response, err := server.Client().Do(r)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer response.Body.Close()
 			data, err := io.ReadAll(response.Body)
 			if err != nil || response.StatusCode != want {
-				t.Fatalf("%s %s: status=%d want=%d err=%v", method, path, response.StatusCode, want, err)
+				t.Fatal(method, path, response.StatusCode, want, err)
 			}
 			if bytes.Contains(data, []byte(credential)) {
-				t.Fatal("deletion response exposed a bearer credential")
+				t.Fatal("deletion response exposed bearer")
 			}
 		}
 		for i, name := range []string{"lease-expired", "old-expired", "old-revoked"} {
-			at := now.Add(-40 * 24 * time.Hour)
+			other, err := workload.New(server.URL, server.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			created, err := other.Prepare(ctx, f.environment.Ref, f.permission, assertion, f.services)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s := created.Session
+			at := time.Now().Add(-40 * 24 * time.Hour)
 			if i == 0 {
-				at = now.Add(-2 * time.Minute)
+				at = time.Now().Add(-2 * time.Minute)
 			}
-			// historical verifier-produced state uses the store's explicit clock;
-			// all HTTP handlers and cleanup below run at the actual current time.
-			encoded, _ := json.Marshal(claims)
-			var g oidc.GitHubExecution
-			if err := json.Unmarshal(encoded, &g); err != nil {
+			// age only the real admitted session's clocks and receipt history;
+			// cleanup must also observe the original source proof's expiry.
+			if _, err := f.inspect.Exec(ctx, `UPDATE control.workload_sessions SET created_at=$2::timestamptz,renewed_at=$2::timestamptz,lease_expires_at=$2::timestamptz+interval '90 seconds',identity_expires_at=$2::timestamptz+interval '5 minutes',expires_at=$2::timestamptz+interval '1 hour',claims=claims||jsonb_build_object('iat',extract(epoch FROM $2::timestamptz)::bigint,'nbf',extract(epoch FROM $2::timestamptz)::bigint,'exp',extract(epoch FROM $2::timestamptz+interval '5 minutes')::bigint) WHERE id=$1`, s.Id, at); err != nil {
 				t.Fatal(err)
 			}
-			g.JTI, g.CheckRunID = name, fmt.Sprint(9000+i)
-			g.IssuedAt, g.NotBefore, g.ExpiresAt = at.Unix(), at.Unix(), at.Add(5*time.Minute).Unix()
-			public, key, err := ed25519.GenerateKey(rand.Reader)
-			if err != nil {
-				t.Fatal(err)
-			}
-			c := oidc.WorkloadExecution{Provider: "github", Issuer: oidc.GitHubIssuer, Subject: g.Subject, GitHub: &g, IssuedAt: g.IssuedAt, NotBefore: g.NotBefore, ExpiresAt: g.ExpiresAt, AssertionDigest: sha256.Sum256([]byte(name))}
-			exchange := controlstate.ExchangeWorkloadRequest{TeamID: team, ProjectKey: "example", Workload: "test", SourceFingerprint: body.SourceFingerprint, Nonce: rand.Text(), Execution: c, PublicKey: public}
-			exchange.Signature = ed25519.Sign(key, workloadproof.Exchange(team, "example", "test", body.SourceFingerprint, exchange.Nonce, c.AssertionDigest, nil))
-			s, err := d.ExchangeWorkload(ctx, exchange, at)
-			if err != nil {
+			if _, err := f.inspect.Exec(ctx, `UPDATE control.workload_audit SET occurred_at=$2 WHERE workload_session_id=$1`, s.Id, at); err != nil {
 				t.Fatal(err)
 			}
 			if name == "old-revoked" {
-				if err := d.RevokeWorkloadSession(ctx, s.ID, s.Credential, at.Add(time.Second)); err != nil {
+				if err := d.RevokeEnvironmentVisitorSession(ctx, s.Id, s.Credential, at.Add(time.Second)); err != nil {
 					t.Fatal(err)
 				}
 			}
-			sessionPath := "/v1/workload-sessions/" + s.ID
+			path := "/v1/environment-visitor-sessions/" + s.Id
+			renewStatus := http.StatusForbidden
+			if name == "old-expired" {
+				renewStatus = http.StatusGone
+			}
 			for range 2 {
-				requestStatus("DELETE", sessionPath, session.Credential, 403)
+				requestStatus("DELETE", path, session.Credential, 403)
 				if name != "old-expired" {
-					requestStatus("DELETE", sessionPath, s.Credential, 204)
+					requestStatus("DELETE", path, s.Credential, 204)
 				}
-				requestStatus("POST", sessionPath+"/renew", s.Credential, 403)
+				requestStatus("POST", path+"/renew", s.Credential, renewStatus)
 			}
 			if name == "lease-expired" {
 				continue
@@ -346,9 +309,12 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 				}
 			}
 			for range 2 {
-				requestStatus("DELETE", sessionPath, s.Credential, 403)
-				requestStatus("POST", sessionPath+"/renew", s.Credential, 403)
+				requestStatus("DELETE", path, s.Credential, 403)
+				requestStatus("POST", path+"/renew", s.Credential, 403)
 			}
 		}
 	})
+	for _, path := range []string{"/v1/workload-sessions/exchange", "/v1/workload-sessions/identity", "/v1/workload-sessions/" + session.Id + "/assertions"} {
+		assertRetainedHTTPRemoved(t, server.Client(), server.URL, session.Credential, http.MethodPost, path)
+	}
 }

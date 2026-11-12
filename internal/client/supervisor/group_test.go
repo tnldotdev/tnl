@@ -27,7 +27,7 @@ func TestInstalledGroupTasksKeepIndependentProtectedKeys(t *testing.T) {
 		}
 		return value
 	}
-	groupID := newID("pgrp_")
+	groupID := newID(opaqueid.EnvironmentPrefix)
 	team := newID(opaqueid.TeamPrefix)
 	var jobs []Job
 	var keys []ed25519.PrivateKey
@@ -36,8 +36,8 @@ func TestInstalledGroupTasksKeepIndependentProtectedKeys(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		member := controlv1.PublisherGroupMember{TeamId: team, ProjectKey: "project-one", GroupName: "cluster", GroupId: groupID, PublisherIdentityId: newID(opaqueid.PublisherIdentityPrefix), KeyId: newID(opaqueid.PublisherIdentityKeyPrefix)}
-		job := Job{Kind: KindGroup, ID: JobKey("https://control.example", "group", groupID+":"+name), Name: "cluster-" + name, Server: "https://control.example", PublisherIdentityID: member.PublisherIdentityId, GroupMember: &member, GroupInstance: name}
+		member := controlv1.EnvironmentPublisher{TeamId: team, ProjectKey: "project-one", EnvironmentId: groupID, PublisherIdentityId: newID(opaqueid.PublisherIdentityPrefix), KeyId: newID(opaqueid.PublisherIdentityKeyPrefix)}
+		job := Job{Kind: KindGroup, ID: JobKey("https://control.example", "env", groupID+":"+name), Name: "cluster-" + name, Server: "https://control.example", PublisherIdentityID: member.PublisherIdentityId, GroupMember: &member, GroupInstance: name}
 		if err := registry.InstallGroup(t.Context(), job, member, key); err != nil {
 			t.Fatal(err)
 		}
@@ -105,11 +105,10 @@ func TestInstalledGroupIdentitySurvivesRuntimeDatabaseDeletion(t *testing.T) {
 		t.Fatal("reinstall could not reuse the durable key", err)
 	}
 	oldJob := job
-	member.GroupName = "renamed"
 	job.GroupMember = &member
 	job.Name = "renamed-" + job.GroupInstance
 	if err := registry.InstallGroup(t.Context(), job, member, private); err != nil {
-		t.Fatal("selector rename replaced installed identity", err)
+		t.Fatal("local job rename replaced installed identity", err)
 	}
 	current, key, _, err := registry.GroupIdentity(t.Context(), oldJob)
 	if err != nil || current != member || !bytes.Equal(key, private) {

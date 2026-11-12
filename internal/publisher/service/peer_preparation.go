@@ -69,7 +69,10 @@ func (b *Bound) ServeConnectorPeers(ctx context.Context, control ConnectorPeerCo
 			stop()
 			if err != nil {
 				if life.Err() != nil {
-					return nil
+					if failure.Only(err, life.Err()) {
+						return nil
+					}
+					return err
 				}
 				if !transientControlError(err) {
 					return err

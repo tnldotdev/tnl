@@ -22,15 +22,15 @@ import (
 )
 
 func TestIdentityScopesDoNotCrossAuthenticationBoundaries(t *testing.T) {
-	ctx := ReplaceIdentity(t.Context(), Identity{TeamID: "team-a", PublisherGroupID: "group-a", PublisherIdentityID: "publisher-a", DeploymentID: "deployment-a", ReplicaKey: "replica-a", ServiceID: "service-a"})
+	ctx := ReplaceIdentity(t.Context(), Identity{TeamID: "team-a", EnvironmentID: "environment-a", PublisherGroupID: "group-a", PublisherIdentityID: "publisher-a", DeploymentID: "deployment-a", ReplicaKey: "replica-a", ServiceID: "service-a"})
 	child := NarrowIdentity(ctx, Identity{PublicURLID: "url-a"})
 	id := IdentityFromContext(child)
-	if id.ServiceID != "" || id.PublicURLID != "url-a" || id.ServiceKind != PublicURL || id.DeploymentID != "deployment-a" {
+	if id.ServiceID != "" || id.PublicURLID != "url-a" || id.ServiceKind != PublicURL || id.DeploymentID != "deployment-a" || id.EnvironmentID != "environment-a" {
 		t.Fatal(id)
 	}
 	other := NarrowIdentity(child, Identity{TeamID: "team-b", ServiceID: "service-b"})
 	id = IdentityFromContext(other)
-	if id.PublisherGroupID != "" || id.DeploymentID != "" || id.ReplicaKey != "" || id.PublisherIdentityID != "" || id.PublicURLID != "" || id.ServiceKind != Service {
+	if id.EnvironmentID != "" || id.PublisherGroupID != "" || id.DeploymentID != "" || id.ReplicaKey != "" || id.PublisherIdentityID != "" || id.PublicURLID != "" || id.ServiceKind != Service {
 		t.Fatal("cross-team scope inherited", id)
 	}
 	for _, invalid := range []Identity{{ServiceID: "service", PublicURLID: "url"}, {ServiceID: "service", ServiceKind: PublicURL}, {TeamID: strings.Repeat("x", 129)}} {
@@ -43,6 +43,9 @@ func TestIdentityScopesDoNotCrossAuthenticationBoundaries(t *testing.T) {
 	}
 	if got := IdentityFromContext(NarrowIdentity(child, Identity{})); got.ServiceKind != 0 || got.PublicURLID != "" || got.DeploymentID != "deployment-a" {
 		t.Fatal("narrow did not clear service", got)
+	}
+	if got := IdentityFromContext(NarrowIdentity(child, Identity{EnvironmentID: "environment-b"})); got.EnvironmentID != "environment-b" || got.TeamID != "" || got.PublisherGroupID != "" || got.PublisherIdentityID != "" || got.DeploymentID != "" || got.PublicURLID != "" {
+		t.Fatal("cross-environment scope inherited", got)
 	}
 }
 

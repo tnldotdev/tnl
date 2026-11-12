@@ -20,6 +20,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/smithy-go/logging"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/publisherprovenance"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	publisherdiscovery "github.com/tnldotdev/tnl/internal/publisher/target/discovery"
@@ -29,14 +30,14 @@ import (
 // GroupScope binds operator-owned dependencies to immutable authority, never
 // to a friendly group/project name or a credential file's location.
 type GroupScope struct {
-	Server    string `json:"control_url"`
-	Team      string `json:"team_id"`
-	Group     string `json:"group_id"`
-	Publisher string `json:"publisher_identity_id"`
+	Server      string `json:"control_url"`
+	Team        string `json:"team_id"`
+	Environment string `json:"environment_id"`
+	Publisher   string `json:"publisher_identity_id"`
 }
 
 func ScopeForGroup(value credentialfile.GroupFile) GroupScope {
-	return GroupScope{value.ControlURL, value.Member.TeamId, value.Member.GroupId, value.Member.PublisherIdentityId}
+	return GroupScope{value.ControlURL, value.Member.TeamId, value.Member.EnvironmentId, value.Member.PublisherIdentityId}
 }
 
 type AWSBinding struct {
@@ -68,8 +69,8 @@ type GroupBinding struct {
 	Deployment  *controlv1.PublisherDeploymentReport `json:"deployment,omitempty"`
 }
 
-func (GroupBinding) String() string   { return "publisher group local binding" }
-func (GroupBinding) GoString() string { return "publisher group local binding" }
+func (GroupBinding) String() string   { return "environment publisher local binding" }
+func (GroupBinding) GoString() string { return "environment publisher local binding" }
 
 // ReadGroupBinding accepts bounded, private operator input. identity documents
 // remain identity-only; this file contains local permissions and source paths.
@@ -106,7 +107,7 @@ var localAWSRegion = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-[0-9]+$`)
 
 func (b GroupBinding) Validate() error {
 	canonical, err := clientstate.CanonicalServer(b.Scope.Server)
-	if err != nil || canonical != b.Scope.Server || b.Version != 1 || b.Scope.Team == "" || b.Scope.Group == "" || b.Scope.Publisher == "" || ValidateTrust([]byte(b.ServerCAPEM)) != nil || len(b.Discovery) > 128 || publisherprovenance.Validate(b.Deployment) != nil {
+	if err != nil || canonical != b.Scope.Server || b.Version != 1 || !opaqueid.Valid(b.Scope.Team, opaqueid.TeamPrefix) || !opaqueid.Valid(b.Scope.Environment, opaqueid.EnvironmentPrefix) || !opaqueid.Valid(b.Scope.Publisher, opaqueid.PublisherIdentityPrefix) || ValidateTrust([]byte(b.ServerCAPEM)) != nil || len(b.Discovery) > 128 || publisherprovenance.Validate(b.Deployment) != nil {
 		return ErrScope
 	}
 	requests := map[publisherdiscovery.Request]bool{}
@@ -139,7 +140,7 @@ func (b GroupBinding) Validate() error {
 // workers start. AWS credentials refresh only from the selected private file;
 // the SDK default config loader and process AWS environment are never consulted.
 func ScopedGroupRunner(value credentialfile.GroupFile, binding *GroupBinding, startup, providers *OperationLimiter) (GroupRunner, []byte, error) {
-	private, err := value.Validate(value.ControlURL, value.Member.ProjectKey, value.Member.GroupName, value.Instance)
+	private, err := value.Validate(value.ControlURL, value.Member.ProjectKey, value.Member.EnvironmentId, value.Instance)
 	if err != nil {
 		return GroupRunner{}, nil, errors.Join(ErrScope, err)
 	}
@@ -222,7 +223,7 @@ func (p fileCredentials) Retrieve(ctx context.Context) (aws.Credentials, error) 
 	if readLocalJSON(p.path, 16384, &value) != nil || value.AccessKeyID == "" || value.SecretAccessKey == "" || !value.ExpiresAt.IsZero() && !value.ExpiresAt.After(time.Now()) {
 		return aws.Credentials{}, publisherdiscovery.CredentialError(ErrUnsafeState)
 	}
-	return aws.Credentials{AccessKeyID: value.AccessKeyID, SecretAccessKey: value.SecretAccessKey, SessionToken: value.SessionToken, CanExpire: !value.ExpiresAt.IsZero(), Expires: value.ExpiresAt, Source: "publisher group binding"}, nil
+	return aws.Credentials{AccessKeyID: value.AccessKeyID, SecretAccessKey: value.SecretAccessKey, SessionToken: value.SessionToken, CanExpire: !value.ExpiresAt.IsZero(), Expires: value.ExpiresAt, Source: "environment publisher binding"}, nil
 }
 
 func scopedAWSConfig(region string, credentials aws.CredentialsProvider) aws.Config {

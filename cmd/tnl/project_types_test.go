@@ -14,7 +14,7 @@ func TestInitStaticGenerationNeedsNoExternalTooling(t *testing.T) {
 	if err := runInit(t.Context(), initCommand{}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(root, ".tnl/generated/project.d.ts")); err != nil {
+	if _, err := os.Stat(filepath.Join(root, ".tnl/generated/project.ts")); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"package.json", "tsconfig.json", "node_modules"} {

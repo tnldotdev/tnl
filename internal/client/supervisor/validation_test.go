@@ -38,10 +38,11 @@ func kindFixture(t *testing.T, kind Kind) (Job, authorityv1.PublisherEnrollmentR
 			job.IdentityID, job.StateDir = id(opaqueid.IdentityPrefix), t.TempDir()
 		}
 	case KindGroup:
+		identity.TeamId = id(opaqueid.TeamPrefix)
 		job.GroupInstance = "replica-1"
 		job.PublicURLID, job.GrantID, job.Target, job.Protocol = "", "", "", ""
-		job.GroupMember = &controlv1.PublisherGroupMember{PublisherIdentityId: job.PublisherIdentityID, KeyId: identity.KeyId,
-			TeamId: identity.TeamId, ProjectKey: "project-one", GroupName: "cluster", GroupId: id("pgrp_")}
+		job.GroupMember = &controlv1.EnvironmentPublisher{PublisherIdentityId: job.PublisherIdentityID, KeyId: identity.KeyId,
+			TeamId: identity.TeamId, ProjectKey: "project-one", EnvironmentId: id(opaqueid.EnvironmentPrefix)}
 	}
 	return job, identity, key
 }
@@ -154,7 +155,7 @@ func TestInstallationRejectsCrossKindMetadata(t *testing.T) {
 				"server trust": func(j *Job) { j.ServerCAPEM = []byte("not a certificate") },
 			}
 			if kind != KindGroup {
-				mutations["group metadata"] = func(j *Job) { j.GroupMember = &controlv1.PublisherGroupMember{} }
+				mutations["environment metadata"] = func(j *Job) { j.GroupMember = &controlv1.EnvironmentPublisher{} }
 			}
 			if kind != KindConnector {
 				mutations["visitor identity"] = func(j *Job) { j.IdentityID = "visitor" }

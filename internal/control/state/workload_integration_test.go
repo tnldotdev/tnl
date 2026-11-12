@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -18,28 +19,87 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/security/machineproof"
 	"github.com/tnldotdev/tnl/internal/security/workloadproof"
 )
 
-func workloadConfiguration() ProjectConfiguration {
-	return ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"api": {PublisherGroup: "production", Target: "api.internal:3000"}, "db": {PublisherGroup: "production", Protocol: "postgres", Target: "db.internal:5432"}}, Workloads: map[string]ProjectWorkload{"test": {Provider: "github", GitHub: &ProjectWorkloadGitHub{Repository: "example/repository", RepositoryID: "12345", RepositoryOwnerID: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}}, Services: []string{"api", "db"}, MaxDurationSeconds: 3600}}}
+type retainedVisitorFixture struct {
+	project     environmentPublisherTestProject
+	environment Environment
+	machine     MachineIdentity
+	permission  EnvironmentVisitorPermission
 }
 
-func workloadExchange(t *testing.T, r ApplyProjectConfigurationRequest, now time.Time) (ExchangeWorkloadRequest, ed25519.PrivateKey) {
+func retainedGitHubTrust() oidc.WorkloadTrust {
+	return oidc.WorkloadTrust{Provider: "github", Issuer: oidc.GitHubIssuer, JWKSURL: "https://token.actions.githubusercontent.com/.well-known/jwks", Audience: machineTestServer, Claims: map[string]string{"repository": "example/repository", "repository_id": "12345", "repository_owner_id": "6789", "workflow_ref": "example/repository/.github/workflows/test.yml@refs/heads/main", "ref": "refs/heads/main"}, Events: []string{"push"}}
+}
+
+func newRetainedVisitorFixture(t *testing.T, d *Database, now time.Time, trust oidc.WorkloadTrust, duration int, public bool) retainedVisitorFixture {
+	t.Helper()
+	r := retainedEnvironmentProject(t, d, now)
+	definition := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"api": {Protocol: "http"}, "db": {Protocol: "postgres"}})
+	environment, err := d.CreateEnvironment(t.Context(), CreateEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, ActorID: r.ActorID, Name: "production", DefinitionRevision: definition.Revision, Targets: EnvironmentTargets{"api": {Address: "api.internal:3000"}, "db": {Address: "db.internal:5432"}}, Public: public, IdempotencyKey: "visitor-environment", Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	machine, err := d.RegisterMachineIdentity(t.Context(), RegisterMachineRequest{TeamID: r.TeamID, ActorID: r.ActorID, Name: "test", ProofKind: "oidc", Trust: trust}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	permission, err := d.CreateEnvironmentVisitorPermission(t.Context(), EnvironmentVisitorPermission{MachineID: machine.ID, TeamID: r.TeamID, ProjectKey: r.ProjectKey, Scope: EnvironmentPermissionScope{EnvironmentIDs: []string{environment.ID}}, Services: []string{"api", "db"}, MaxDurationSeconds: duration, ExpiresAt: now.Add(48 * time.Hour)}, r.ActorID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return retainedVisitorFixture{project: r, environment: environment, machine: machine, permission: permission}
+}
+
+func retainedVisitorPreparation(t *testing.T, f retainedVisitorFixture, now time.Time) (PrepareEnvironmentVisitorRequest, ed25519.PrivateKey) {
 	t.Helper()
 	public, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
 	c := oidc.GitHubExecution{Subject: "repo:example/repository:ref:refs/heads/main", JTI: "assertion", Repository: "example/repository", RepositoryID: "12345", RepositoryOwnerID: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Event: "push", RunID: "111", RunAttempt: "1", CheckRunID: "222", IssuedAt: now.Unix(), NotBefore: now.Unix(), ExpiresAt: now.Add(5 * time.Minute).Unix()}
-	request := ExchangeWorkloadRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Nonce: rand.Text(), Workload: "test", Execution: oidc.WorkloadExecution{Provider: "github", Issuer: oidc.GitHubIssuer, Subject: c.Subject, GitHub: &c, IssuedAt: c.IssuedAt, NotBefore: c.NotBefore, ExpiresAt: c.ExpiresAt}, PublicKey: public}
-	signWorkloadRequest(&request, key)
+	request := PrepareEnvironmentVisitorRequest{ProjectKey: f.project.ProjectKey, EnvironmentID: f.environment.ID, PermissionID: f.permission.ID, Audience: machineTestServer + "/v1/environment-visitor-sessions/prepare", Nonce: rand.Text(), PublicKey: public, Services: map[string]string{"api": "http", "db": "postgres"}, Proof: MachineProof{Execution: oidc.WorkloadExecution{Provider: "github", Issuer: oidc.GitHubIssuer, Audience: machineTestServer, TrustDigest: f.machine.Trust.Digest(), Subject: c.Subject, GitHub: &c, IssuedAt: c.IssuedAt, NotBefore: c.NotBefore, ExpiresAt: c.ExpiresAt}}}
+	signRetainedVisitorPreparation(&request, key)
 	return request, key
 }
-func signWorkloadRequest(r *ExchangeWorkloadRequest, key ed25519.PrivateKey) {
-	data, _ := json.Marshal(r.Execution)
-	r.Execution.AssertionDigest = sha256.Sum256(data)
-	r.Signature = ed25519.Sign(key, workloadproof.Exchange(r.TeamID, r.ProjectKey, r.Workload, r.SourceFingerprint, r.Nonce, r.Execution.AssertionDigest, r.Services))
+func retainedVisitorProof(execution oidc.WorkloadExecution) MachineProof {
+	execution.AssertionDigest = [32]byte{}
+	data, _ := json.Marshal(execution)
+	execution.AssertionDigest = sha256.Sum256(data)
+	return MachineProof{Assertion: string(data), Execution: execution}
+}
+
+func signRetainedVisitorPreparation(r *PrepareEnvironmentVisitorRequest, key ed25519.PrivateKey) {
+	r.Proof = retainedVisitorProof(r.Proof.Execution)
+	digest := sha256.Sum256([]byte(r.Proof.Assertion))
+	r.Signature = ed25519.Sign(key, machineproof.EnvironmentVisitorPossession(r.ProjectKey, r.PermissionID, r.EnvironmentID, "prepare", base64.RawURLEncoding.EncodeToString(r.PublicKey), r.Nonce, r.Services, digest))
+}
+
+func retainedVisitorAssertion(t *testing.T, d *Database, session WorkloadSession, key ed25519.PrivateKey, execution oidc.WorkloadExecution) (MachineProof, []byte, string) {
+	t.Helper()
+	var permission, environment string
+	var encoded, public []byte
+	if err := d.pool.QueryRow(t.Context(), `SELECT binding.permission_id,binding.environment_id,binding.expected_protocols,session.public_key FROM control.workload_session_machines binding JOIN control.workload_sessions session ON session.id=binding.session_id WHERE binding.session_id=$1`, session.ID).Scan(&permission, &environment, &encoded, &public); err != nil {
+		t.Fatal(err)
+	}
+	var services map[string]string
+	if err := json.Unmarshal(encoded, &services); err != nil {
+		t.Fatal(err)
+	}
+	return retainedVisitorAssertionForPreparation(PrepareEnvironmentVisitorRequest{ProjectKey: session.ProjectKey, PermissionID: permission, EnvironmentID: environment, PublicKey: public, Services: services}, session, key, execution)
+}
+
+func retainedVisitorAttachmentMessage(request PrepareEnvironmentVisitorRequest, session WorkloadSession, proof MachineProof) []byte {
+	digest := sha256.Sum256([]byte(proof.Assertion))
+	return machineproof.EnvironmentVisitorPossession(request.ProjectKey, request.PermissionID, request.EnvironmentID, "attach", base64.RawURLEncoding.EncodeToString(request.PublicKey), session.ID, request.Services, digest)
+}
+
+func retainedVisitorAssertionForPreparation(request PrepareEnvironmentVisitorRequest, session WorkloadSession, key ed25519.PrivateKey, execution oidc.WorkloadExecution) (MachineProof, []byte, string) {
+	proof := retainedVisitorProof(execution)
+	signature := ed25519.Sign(key, retainedVisitorAttachmentMessage(request, session, proof))
+	return proof, signature, machineTestServer + "/v1/environment-visitor-sessions/" + session.ID + "/assertions"
 }
 
 func signWorkloadRenewal(session WorkloadSession, key ed25519.PrivateKey) WorkloadRenewal {
@@ -49,29 +109,25 @@ func signWorkloadRenewal(session WorkloadSession, key ed25519.PrivateKey) Worklo
 
 func TestIntegrationWorkloadReusableProviderFixedWindow(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "workload_reusable")
-	r := appliedProjectRequest(t, d, now)
-	r.Configuration = workloadConfiguration()
 	trust := oidc.WorkloadTrust{Provider: "vercel", Issuer: "https://oidc.vercel.com/acme", JWKSURL: "https://oidc.vercel.com/acme/.well-known/jwks", Audience: "https://vercel.com/acme", Claims: map[string]string{"owner": "acme", "owner_id": "team_one", "project_id": "prj_store", "environment": "production"}}
-	r.Configuration.Workloads = map[string]ProjectWorkload{"storefront": {Provider: "vercel", Trust: trust, Services: []string{"api"}, MaxDurationSeconds: 3600}}
-	if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
-		t.Fatal(err)
-	}
-	request, key := workloadExchange(t, r, now)
-	request.Workload = "storefront"
-	request.Execution = oidc.WorkloadExecution{Provider: "vercel", Issuer: trust.Issuer, Audience: trust.Audience, TrustDigest: trust.Digest(), Subject: "owner:acme:project:store:environment:production", IssuedAt: now.Unix(), NotBefore: now.Unix(), ExpiresAt: now.Add(2 * time.Hour).Unix(), Vercel: &oidc.VercelExecution{Owner: "acme", OwnerID: "team_one", Project: "store", ProjectID: "prj_store", Environment: "production"}}
-	signWorkloadRequest(&request, key)
-	session, err := d.ExchangeWorkload(t.Context(), request, now)
+	f := newRetainedVisitorFixture(t, d, now, trust, 3600, false)
+	request, key := retainedVisitorPreparation(t, f, now)
+	request.Services = map[string]string{"api": "http"}
+	request.Proof.Execution = oidc.WorkloadExecution{Provider: "vercel", Issuer: trust.Issuer, Audience: trust.Audience, TrustDigest: trust.Digest(), Subject: "owner:acme:project:store:environment:production", IssuedAt: now.Unix(), NotBefore: now.Unix(), ExpiresAt: now.Add(2 * time.Hour).Unix(), Vercel: &oidc.VercelExecution{Owner: "acme", OwnerID: "team_one", Project: "store", ProjectID: "prj_store", Environment: "production"}}
+	signRetainedVisitorPreparation(&request, key)
+	prepared, err := d.PrepareEnvironmentVisitor(t.Context(), request, now)
 	if err != nil {
 		t.Fatal(err)
 	}
+	session := prepared.Session
 	for at := now.Add(30 * time.Second); at.Before(*session.ExpiresAt); at = at.Add(30 * time.Second) {
-		renewed, e := d.RenewWorkloadSession(t.Context(), session.ID, session.Credential, signWorkloadRenewal(session, key), at)
+		renewed, e := d.RenewEnvironmentVisitorSession(t.Context(), session.ID, session.Credential, signWorkloadRenewal(session, key), at)
 		if e != nil || !renewed.ExpiresAt.Equal(*session.ExpiresAt) {
 			t.Fatal("renew changed fixed window", e)
 		}
 		session = renewed
 	}
-	if _, err = d.ExchangeWorkload(t.Context(), request, session.ExpiresAt.Add(time.Second)); !errors.Is(err, ErrWorkloadDenied) {
+	if _, err = d.PrepareEnvironmentVisitor(t.Context(), request, session.ExpiresAt.Add(time.Second)); !errors.Is(err, ErrWorkloadDenied) {
 		t.Fatal("nonce retry resurrected expired window", err)
 	}
 	_, otherKey, err := ed25519.GenerateKey(rand.Reader)
@@ -80,14 +136,14 @@ func TestIntegrationWorkloadReusableProviderFixedWindow(t *testing.T) {
 	}
 	other := request
 	other.PublicKey = otherKey.Public().(ed25519.PublicKey)
-	signWorkloadRequest(&other, otherKey)
-	if _, err = d.ExchangeWorkload(t.Context(), other, now); !errors.Is(err, ErrWorkloadConflict) {
+	signRetainedVisitorPreparation(&other, otherKey)
+	if _, err = d.PrepareEnvironmentVisitor(t.Context(), other, now); !errors.Is(err, ErrWorkloadConflict) {
 		t.Fatal("new key took over original nonce", err)
 	}
 	other.Nonce = rand.Text()
-	signWorkloadRequest(&other, otherKey)
-	next, err := d.ExchangeWorkload(t.Context(), other, session.ExpiresAt.Add(time.Second))
-	if err != nil || next.ID == session.ID || !next.ExpiresAt.Equal(session.ExpiresAt.Add(time.Hour+time.Second)) {
+	signRetainedVisitorPreparation(&other, otherKey)
+	next, err := d.PrepareEnvironmentVisitor(t.Context(), other, session.ExpiresAt.Add(time.Second))
+	if err != nil || next.Session.ID == session.ID || !next.Session.ExpiresAt.Equal(session.ExpiresAt.Add(time.Hour+time.Second)) {
 		t.Fatal("valid reusable token did not start a new fixed session", err)
 	}
 }
@@ -95,19 +151,16 @@ func TestIntegrationWorkloadReusableProviderFixedWindow(t *testing.T) {
 func TestIntegrationWorkloadHandleCapacityAndExpiredCleanup(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "workload_handles")
 	ctx := t.Context()
-	r := appliedProjectRequest(t, d, now)
-	r.Configuration = workloadConfiguration()
-	applied, err := d.ApplyProjectConfiguration(ctx, r)
+	f := newRetainedVisitorFixture(t, d, now, retainedGitHubTrust(), 3600, false)
+	applied := f.environment
+	exchange, firstKey := retainedVisitorPreparation(t, f, now)
+	prepared, err := d.PrepareEnvironmentVisitor(ctx, exchange, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	exchange, firstKey := workloadExchange(t, r, now)
-	first, err := d.ExchangeWorkload(ctx, exchange, now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	first := prepared.Session
 	service := applied.Services[0].ServiceID
-	renewed, err := d.RenewWorkloadSession(ctx, first.ID, first.Credential, signWorkloadRenewal(first, firstKey), now.Add(31*time.Second))
+	renewed, err := d.RenewEnvironmentVisitorSession(ctx, first.ID, first.Credential, signWorkloadRenewal(first, firstKey), now.Add(31*time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,32 +171,71 @@ func TestIntegrationWorkloadHandleCapacityAndExpiredCleanup(t *testing.T) {
 	if _, err := d.CheckWorkloadService(ctx, first.Credential, service, expired); !errors.Is(err, ErrWorkloadDenied) {
 		t.Fatal("service permission revived expired lease", err)
 	}
-	secondRequest, key := workloadExchange(t, r, expired)
-	secondRequest.Execution.GitHub.CheckRunID, secondRequest.Execution.GitHub.JTI = "333", "second"
-	signWorkloadRequest(&secondRequest, key)
-	second, err := d.ExchangeWorkload(ctx, secondRequest, expired)
+	secondRequest, secondKey := retainedVisitorPreparation(t, f, expired)
+	secondRequest.Proof.Execution.GitHub.CheckRunID, secondRequest.Proof.Execution.GitHub.JTI = "333", "second"
+	signRetainedVisitorPreparation(&secondRequest, secondKey)
+	second, err := d.PrepareEnvironmentVisitor(ctx, secondRequest, expired)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if authorization, err := d.CheckWorkloadService(ctx, second.Credential, service, expired); err != nil || authorization.Subject != second.Subject {
+	if authorization, err := d.CheckWorkloadService(ctx, second.Session.Credential, service, expired); err != nil || authorization.Subject != second.Session.Subject {
 		t.Fatal("independent workload was blocked by expired sibling", err)
 	}
-	r.ExpectedRevision = applied.Revision
-	policy := r.Configuration.Workloads["test"]
-	policy.MaxDurationSeconds = 6 * 60 * 60
-	r.Configuration.Workloads["test"] = policy
-	if _, err := d.ApplyProjectConfiguration(ctx, r); err != nil {
-		t.Fatal(err)
-	}
-	maximumRequest, key := workloadExchange(t, r, expired)
-	maximumRequest.Execution.GitHub.CheckRunID, maximumRequest.Execution.GitHub.JTI = "444", "maximum"
-	signWorkloadRequest(&maximumRequest, key)
-	maximum, err := d.ExchangeWorkload(ctx, maximumRequest, expired)
+	maximumPermission, err := d.CreateEnvironmentVisitorPermission(ctx, EnvironmentVisitorPermission{MachineID: f.machine.ID, TeamID: f.project.TeamID, ProjectKey: f.project.ProjectKey, Scope: EnvironmentPermissionScope{EnvironmentIDs: []string{f.environment.ID}}, Services: []string{"api", "db"}, MaxDurationSeconds: 6 * 60 * 60, ExpiresAt: now.Add(48 * time.Hour)}, f.project.ActorID, expired)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !maximum.ExpiresAt.Equal(expired.Add(6 * time.Hour)) {
+	maximumFixture := f
+	maximumFixture.permission = maximumPermission
+	maximumRequest, key := retainedVisitorPreparation(t, maximumFixture, expired)
+	maximumRequest.Proof.Execution.GitHub.CheckRunID, maximumRequest.Proof.Execution.GitHub.JTI = "444", "maximum"
+	signRetainedVisitorPreparation(&maximumRequest, key)
+	maximumPreparation, err := d.PrepareEnvironmentVisitor(ctx, maximumRequest, expired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	maximum := maximumPreparation.Session
+	if maximumPermission.ID == f.permission.ID || maximum.ID == first.ID || maximum.ID == second.Session.ID || !maximum.ExpiresAt.Equal(expired.Add(6*time.Hour)) {
 		t.Fatal("six-hour fixed window changed")
+	}
+	for _, original := range []struct {
+		request PrepareEnvironmentVisitorRequest
+		key     ed25519.PrivateKey
+	}{{exchange, firstKey}, {secondRequest, secondKey}} {
+		rebound := original.request
+		rebound.PermissionID = maximumPermission.ID
+		signRetainedVisitorPreparation(&rebound, original.key)
+		if _, err := d.PrepareEnvironmentVisitor(ctx, rebound, expired); !errors.Is(err, ErrWorkloadConflict) {
+			t.Fatal("original nonce rebound to the six-hour permission", err)
+		}
+	}
+	if recovered, err := d.PrepareEnvironmentVisitor(ctx, secondRequest, expired); err != nil || !reflect.DeepEqual(recovered.Session, second.Session) {
+		t.Fatal("same-permission retry adopted the six-hour window", err)
+	}
+	at := expired.Add(30 * time.Second)
+	fresh := secondRequest.Proof.Execution
+	fresh.GitHub = new(*fresh.GitHub)
+	fresh.IssuedAt, fresh.NotBefore, fresh.ExpiresAt = at.Unix(), at.Unix(), at.Add(5*time.Minute).Unix()
+	fresh.GitHub.IssuedAt, fresh.GitHub.NotBefore, fresh.GitHub.ExpiresAt = fresh.IssuedAt, fresh.NotBefore, fresh.ExpiresAt
+	fresh.GitHub.JTI = "second-refreshed"
+	proof, signature, audience := retainedVisitorAssertion(t, d, second.Session, secondKey, fresh)
+	rebound := secondRequest
+	rebound.PermissionID = maximumPermission.ID
+	reboundSignature := ed25519.Sign(secondKey, retainedVisitorAttachmentMessage(rebound, second.Session, proof))
+	if _, err := d.AttachEnvironmentVisitorAssertion(ctx, second.Session.ID, second.Session.Credential, proof, reboundSignature, audience, at); !errors.Is(err, ErrMachineDenied) {
+		t.Fatal("attachment rebound the original session to the six-hour permission", err)
+	}
+	attached, err := d.AttachEnvironmentVisitorAssertion(ctx, second.Session.ID, second.Session.Credential, proof, signature, audience, at)
+	if err != nil || !attached.ExpiresAt.Equal(*second.Session.ExpiresAt) || attached.Binding != second.Session.Binding {
+		t.Fatal("fresh proof adopted the six-hour window", err)
+	}
+	if renewed, err := d.RenewEnvironmentVisitorSession(ctx, second.Session.ID, second.Session.Credential, signWorkloadRenewal(attached, secondKey), at); err != nil || !renewed.ExpiresAt.Equal(expired.Add(time.Hour)) || renewed.Binding != second.Session.Binding {
+		t.Fatal("renewal adopted the six-hour window", err)
+	}
+	var boundPermission string
+	var originalDuration int
+	if err := d.pool.QueryRow(ctx, `SELECT binding.permission_id,permission.max_duration_seconds FROM control.workload_session_machines binding JOIN control.machine_workload_permissions permission ON permission.id=binding.permission_id WHERE binding.session_id=$1`, second.Session.ID).Scan(&boundPermission, &originalDuration); err != nil || boundPermission != f.permission.ID || originalDuration != 3600 {
+		t.Fatal("attachment or renewal changed the original duration permission", err)
 	}
 	csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
 	if err != nil {
@@ -169,19 +261,14 @@ func TestIntegrationWorkloadHandleCapacityAndExpiredCleanup(t *testing.T) {
 func TestIntegrationWorkloadReplayNarrowingAndFixedWindow(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "workload_replay")
 	ctx := t.Context()
-	r := appliedProjectRequest(t, d, now)
-	r.Configuration = workloadConfiguration()
-	applied, err := d.ApplyProjectConfiguration(ctx, r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	r.ExpectedRevision = applied.Revision
-	exchange, key := workloadExchange(t, r, now)
+	f := newRetainedVisitorFixture(t, d, now, retainedGitHubTrust(), 3600, false)
+	r := f.project
+	exchange, key := retainedVisitorPreparation(t, f, now)
 	var wg sync.WaitGroup
 	results := make(chan WorkloadSession, 8)
 	errs := make(chan error, 8)
 	for range 8 {
-		wg.Go(func() { v, err := d.ExchangeWorkload(ctx, exchange, now); results <- v; errs <- err })
+		wg.Go(func() { v, err := d.PrepareEnvironmentVisitor(ctx, exchange, now); results <- v.Session; errs <- err })
 	}
 	wg.Wait()
 	close(results)
@@ -204,88 +291,84 @@ func TestIntegrationWorkloadReplayNarrowingAndFixedWindow(t *testing.T) {
 	_, newKey, _ := ed25519.GenerateKey(rand.Reader)
 	replacement := exchange
 	replacement.PublicKey = newKey.Public().(ed25519.PublicKey)
-	signWorkloadRequest(&replacement, newKey)
-	if _, err = d.ExchangeWorkload(ctx, replacement, now); !errors.Is(err, ErrWorkloadConflict) {
+	signRetainedVisitorPreparation(&replacement, newKey)
+	if _, err := d.PrepareEnvironmentVisitor(ctx, replacement, now); !errors.Is(err, ErrWorkloadConflict) {
 		t.Fatal("new key stole session", err)
 	}
-	for name, edit := range map[string]func(*ExchangeWorkloadRequest){"repository-id": func(r *ExchangeWorkloadRequest) { r.Execution.GitHub.RepositoryID = "999" }, "owner-id": func(r *ExchangeWorkloadRequest) { r.Execution.GitHub.RepositoryOwnerID = "999" }, "workflow": func(r *ExchangeWorkloadRequest) {
-		r.Execution.GitHub.WorkflowRef = "example/repository/.github/workflows/evil.yml@refs/heads/main"
-	}, "ref": func(r *ExchangeWorkloadRequest) { r.Execution.GitHub.Ref = "refs/heads/other" }, "event": func(r *ExchangeWorkloadRequest) { r.Execution.GitHub.Event = "pull_request" }} {
+	for name, edit := range map[string]func(*PrepareEnvironmentVisitorRequest){"repository-id": func(r *PrepareEnvironmentVisitorRequest) { r.Proof.Execution.GitHub.RepositoryID = "999" }, "owner-id": func(r *PrepareEnvironmentVisitorRequest) { r.Proof.Execution.GitHub.RepositoryOwnerID = "999" }, "workflow": func(r *PrepareEnvironmentVisitorRequest) {
+		r.Proof.Execution.GitHub.WorkflowRef = "example/repository/.github/workflows/evil.yml@refs/heads/main"
+	}, "ref": func(r *PrepareEnvironmentVisitorRequest) { r.Proof.Execution.GitHub.Ref = "refs/heads/other" }, "event": func(r *PrepareEnvironmentVisitorRequest) { r.Proof.Execution.GitHub.Event = "pull_request" }} {
 		t.Run(name, func(t *testing.T) {
 			bad := exchange
-			bad.Execution.GitHub = new(*exchange.Execution.GitHub)
+			bad.Proof.Execution.GitHub = new(*exchange.Proof.Execution.GitHub)
 			edit(&bad)
-			signWorkloadRequest(&bad, key)
-			if _, err := d.ExchangeWorkload(ctx, bad, now); !errors.Is(err, ErrWorkloadDenied) {
+			signRetainedVisitorPreparation(&bad, key)
+			if _, err := d.PrepareEnvironmentVisitor(ctx, bad, now); !errors.Is(err, ErrMachineDenied) {
 				t.Fatal("wrong claims accepted", err)
 			}
 		})
 	}
 	replay := exchange
-	replay.Execution.GitHub = new(*exchange.Execution.GitHub)
-	replay.Execution.GitHub.CheckRunID = "333"
-	signWorkloadRequest(&replay, key)
-	if _, err = d.ExchangeWorkload(ctx, replay, now); !errors.Is(err, ErrWorkloadConflict) {
+	replay.Proof.Execution.GitHub = new(*exchange.Proof.Execution.GitHub)
+	replay.Proof.Execution.GitHub.CheckRunID = "333"
+	signRetainedVisitorPreparation(&replay, key)
+	if _, err := d.PrepareEnvironmentVisitor(ctx, replay, now); !errors.Is(err, ErrWorkloadConflict) {
 		t.Fatal("jti moved to another execution", err)
 	}
-	renewed, err := d.RenewWorkloadSession(ctx, original.ID, original.Credential, signWorkloadRenewal(original, key), now.Add(30*time.Second))
+	renewed, err := d.RenewEnvironmentVisitorSession(ctx, original.ID, original.Credential, signWorkloadRenewal(original, key), now.Add(30*time.Second))
 	if err != nil || !renewed.ExpiresAt.Equal(*original.ExpiresAt) || !renewed.LeaseExpiresAt.Equal(now.Add(120*time.Second)) {
-		t.Fatal("renew changed absolute window", err)
+		t.Fatalf("renew changed absolute window: lease=%s want=%s fixed=%s want=%s err=%v", renewed.LeaseExpiresAt, now.Add(120*time.Second), renewed.ExpiresAt, original.ExpiresAt, err)
 	}
 	for _, id := range original.ServiceIDs {
-		if _, err = d.CheckWorkloadService(ctx, original.Credential, id, now.Add(time.Minute)); err != nil {
+		if _, err := d.CheckWorkloadService(ctx, original.Credential, id, now.Add(time.Minute)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	p := r.Configuration.Workloads["test"]
-	p.Services = []string{"api"}
-	r.Configuration.Workloads["test"] = p
-	applied, err = d.ApplyProjectConfiguration(ctx, r)
+	// removal retires the exact accepted database ID; re-adding its logical name
+	// cannot restore the issued right, even with the original permission intact.
+	definition := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"api": {Protocol: "http"}})
+	applied, err := d.ApplyEnvironment(ctx, ApplyEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, EnvironmentApplication: EnvironmentApplication{EnvironmentID: f.environment.ID, ExpectedRevision: f.environment.MutationRevision, DefinitionRevision: definition.Revision, Targets: EnvironmentTargets{"api": {Address: "api.internal:3000"}}}, Now: now})
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.ExpectedRevision = applied.Revision
 	services, err := d.ListWorkloadServices(ctx, original.Credential, now.Add(time.Minute))
 	if err != nil || len(services) != 1 || services[0].Service != "api" {
 		t.Fatal("narrowing failed", services, err)
 	}
-	p.Services = []string{"api", "db"}
-	r.Configuration.Workloads["test"] = p
-	applied, err = d.ApplyProjectConfiguration(ctx, r)
+	definition = environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"api": {Protocol: "http"}, "db": {Protocol: "postgres"}})
+	_, err = d.ApplyEnvironment(ctx, ApplyEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, EnvironmentApplication: EnvironmentApplication{EnvironmentID: applied.ID, ExpectedRevision: applied.MutationRevision, DefinitionRevision: definition.Revision, Targets: f.environment.Targets}, Now: now})
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.ExpectedRevision = applied.Revision
 	services, err = d.ListWorkloadServices(ctx, original.Credential, now.Add(time.Minute))
 	if err != nil || len(services) != 1 {
 		t.Fatal("re-added service expanded issued session", services, err)
 	}
-	if _, err = d.ExchangeWorkload(ctx, exchange, now.Add(time.Minute)); err != nil {
-		t.Fatal("same JWT/key could not resume after policy addition", err)
+	if _, err = d.PrepareEnvironmentVisitor(ctx, exchange, now.Add(time.Minute)); !errors.Is(err, ErrWorkloadConflict) {
+		t.Fatal("same nonce accepted a replacement immutable service ID", err)
 	}
 	for at := now.Add(90 * time.Second); at.Before(*original.ExpiresAt); at = at.Add(30 * time.Second) {
 		if !renewed.IdentityExpiresAt.After(at.Add(WorkloadLease)) {
-			fresh := exchange.Execution
+			fresh := exchange.Proof.Execution
 			fresh.GitHub = new(*fresh.GitHub)
 			fresh.IssuedAt, fresh.NotBefore, fresh.ExpiresAt = at.Unix(), at.Unix(), at.Add(5*time.Minute).Unix()
 			fresh.GitHub.IssuedAt, fresh.GitHub.NotBefore, fresh.GitHub.ExpiresAt = fresh.IssuedAt, fresh.NotBefore, fresh.ExpiresAt
 			fresh.GitHub.JTI = fmt.Sprint("refresh-", at.Unix())
-			data, _ := json.Marshal(fresh)
-			fresh.AssertionDigest = sha256.Sum256(data)
+			proof, signature, audience := retainedVisitorAssertion(t, d, original, key, fresh)
 			var err error
-			renewed, err = d.AttachWorkloadAssertion(ctx, original.ID, original.Credential, fresh, ed25519.Sign(key, workloadproof.Attach(original.ID, fresh.AssertionDigest)), at)
+			renewed, err = d.AttachEnvironmentVisitorAssertion(ctx, original.ID, original.Credential, proof, signature, audience, at)
 			if err != nil {
 				t.Fatal("fresh same-identity proof could not renew the fixed session", err)
 			}
 		}
-		if renewed, err = d.RenewWorkloadSession(ctx, original.ID, original.Credential, signWorkloadRenewal(renewed, key), at); err != nil {
+		if renewed, err = d.RenewEnvironmentVisitorSession(ctx, original.ID, original.Credential, signWorkloadRenewal(renewed, key), at); err != nil {
 			t.Fatal(err)
 		}
 		if len(renewed.ServiceIDs) != 1 || renewed.ServiceIDs[0] != services[0].ID {
 			t.Fatal("renewal restored narrowed rights")
 		}
 	}
-	if _, err = d.RenewWorkloadSession(ctx, original.ID, original.Credential, signWorkloadRenewal(renewed, key), *original.ExpiresAt); !errors.Is(err, ErrWorkloadDenied) {
+	if _, err = d.RenewEnvironmentVisitorSession(ctx, original.ID, original.Credential, signWorkloadRenewal(renewed, key), *original.ExpiresAt); !errors.Is(err, ErrWorkloadDenied) {
 		t.Fatal("renew crossed absolute deadline", err)
 	}
 	if _, err = d.CheckWorkloadService(ctx, original.Credential, services[0].ID, *original.ExpiresAt); !errors.Is(err, ErrWorkloadDenied) {
@@ -296,40 +379,27 @@ func TestIntegrationWorkloadReplayNarrowingAndFixedWindow(t *testing.T) {
 func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	d, now, _, leases := newConnectorPairPrerequisites(t)
 	ctx := t.Context()
-	r := appliedProjectRequest(t, d, now)
-	r.Configuration = workloadConfiguration()
-	p := r.Configuration.Workloads["test"]
-	p.MaxDurationSeconds = 10
-	r.Configuration.Workloads["test"] = p
-	group := r.Configuration.PublisherGroups["production"]
-	group.Public = true
-	r.Configuration.PublisherGroups["production"] = group
-	applied, err := d.ApplyProjectConfiguration(ctx, r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	e, err := d.IssuePublisherGroupEnrollment(ctx, r.TeamID, r.ProjectKey, "production", r.ActorID, 1, time.Hour, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	replica := enrollAppliedGroup(t, d, r, e, now)
-	var a PublisherGroupServiceAssignment
+	f := newRetainedVisitorFixture(t, d, now, retainedGitHubTrust(), 10, true)
+	r, applied := f.project, f.environment
+	replica := enrollTestEnvironment(t, d, r, applied)
+	var a EnvironmentPublisherAssignment
 	for _, candidate := range replica.assignments.Services {
 		if candidate.Configuration.Protocol == "postgres" {
 			a = candidate
 		}
 	}
-	access := groupAssignmentAccess(t, d, replica, a, now)
+	access := environmentAssignmentAccess(t, d, replica, a, now)
 	service, err := d.GetServiceForPublisher(ctx, a.ServiceID, access.PublisherIdentity, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	run := readyAppliedServiceRun(t, d, access, replica.private, service, leases, now)
-	exchange, key := workloadExchange(t, r, now)
-	session, err := d.ExchangeWorkload(ctx, exchange, now)
+	run := readyAppliedServiceRun(t, d, access, replica.private, service, leases, now, &replica.assignments.Environment)
+	exchange, key := retainedVisitorPreparation(t, f, now)
+	prepared, err := d.PrepareEnvironmentVisitor(ctx, exchange, now)
 	if err != nil {
 		t.Fatal(err)
 	}
+	session := prepared.Session
 	port := 0
 	for _, s := range applied.Services {
 		if s.ServiceID == service.ID {
@@ -428,9 +498,7 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 		t.Fatal("public stream outlived job", err)
 	}
 	// policy removal denies still-live admissions before their earlier deadline.
-	r.ExpectedRevision = applied.Revision
-	r.Configuration.Workloads = nil
-	if _, err = d.ApplyProjectConfiguration(ctx, r); err != nil {
+	if err = d.RevokeEnvironmentVisitorPermission(ctx, r.TeamID, f.permission.ID, r.ActorID, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.DeliverConnectorPeerPair(ctx, service.ID, run.RunID, pair.ID, pair.DeliveryGeneration, run.Token, now.Add(2*time.Second)); err == nil {
@@ -444,27 +512,23 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 func TestIntegrationWorkloadApplyRaceAndExplicitScope(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "workload_policy_race")
 	ctx := t.Context()
-	r := appliedProjectRequest(t, d, now)
-	r.Configuration = workloadConfiguration()
-	applied, err := d.ApplyProjectConfiguration(ctx, r)
+	f := newRetainedVisitorFixture(t, d, now, retainedGitHubTrust(), 3600, false)
+	r := f.project
+	exchange, key := retainedVisitorPreparation(t, f, now)
+	exchange.Services = map[string]string{"api": "http"}
+	signRetainedVisitorPreparation(&exchange, key)
+	prepared, err := d.PrepareEnvironmentVisitor(ctx, exchange, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.ExpectedRevision = applied.Revision
-	exchange, key := workloadExchange(t, r, now)
-	exchange.Services = []string{"api"}
-	signWorkloadRequest(&exchange, key)
-	first, err := d.ExchangeWorkload(ctx, exchange, now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	first := prepared.Session
 	if len(first.ServiceIDs) != 1 {
 		t.Fatal("subset was not preserved")
 	}
 	broader := exchange
-	broader.Services = []string{"api", "db"}
-	signWorkloadRequest(&broader, key)
-	if _, err = d.ExchangeWorkload(ctx, broader, now); !errors.Is(err, ErrWorkloadConflict) {
+	broader.Services = map[string]string{"api": "http", "db": "postgres"}
+	signRetainedVisitorPreparation(&broader, key)
+	if _, err = d.PrepareEnvironmentVisitor(ctx, broader, now); !errors.Is(err, ErrWorkloadConflict) {
 		t.Fatal("execution unioned service grants", err)
 	}
 	var wg sync.WaitGroup
@@ -474,21 +538,24 @@ func TestIntegrationWorkloadApplyRaceAndExplicitScope(t *testing.T) {
 		wg.Go(func() {
 			<-start
 			request := exchange
-			request.Execution.GitHub = new(*exchange.Execution.GitHub)
+			request.Proof.Execution.GitHub = new(*exchange.Proof.Execution.GitHub)
 			request.Nonce = rand.Text()
-			request.Execution.GitHub.CheckRunID = fmt.Sprint(1000 + i)
-			request.Execution.GitHub.JTI = fmt.Sprint(1000 + i)
-			signWorkloadRequest(&request, key)
-			_, err := d.ExchangeWorkload(ctx, request, now)
-			if err != nil && !errors.Is(err, ErrWorkloadDenied) {
+			request.Proof.Execution.GitHub.CheckRunID = fmt.Sprint(1000 + i)
+			request.Proof.Execution.GitHub.JTI = fmt.Sprint(1000 + i)
+			signRetainedVisitorPreparation(&request, key)
+			_, err := d.PrepareEnvironmentVisitor(ctx, request, now)
+			if err != nil && !errors.Is(err, ErrMachineDenied) {
 				errs <- err
 			} else {
 				errs <- nil
 			}
 		})
 	}
-	r.Configuration.Workloads = nil
-	wg.Go(func() { <-start; _, err := d.ApplyProjectConfiguration(ctx, r); errs <- err })
+	wg.Go(func() {
+		<-start
+		err := d.RevokeEnvironmentVisitorPermission(ctx, r.TeamID, f.permission.ID, r.ActorID, now)
+		errs <- err
+	})
 	close(start)
 	wg.Wait()
 	close(errs)
@@ -501,7 +568,7 @@ func TestIntegrationWorkloadApplyRaceAndExplicitScope(t *testing.T) {
 		t.Fatal("apply race left a usable workload", err)
 	}
 	var active int
-	if err = d.pool.QueryRow(ctx, `SELECT count(*) FROM control.workload_sessions WHERE team_id=$1 AND revoked_at IS NULL`, r.TeamID).Scan(&active); err != nil || active != 0 {
+	if err = d.pool.QueryRow(ctx, `SELECT count(*) FROM control.workload_sessions session JOIN control.workload_session_machines binding ON binding.session_id=session.id JOIN control.machine_workload_permissions permission ON permission.id=binding.permission_id WHERE session.team_id=$1 AND session.revoked_at IS NULL AND permission.revoked_at IS NULL`, r.TeamID).Scan(&active); err != nil || active != 0 {
 		t.Fatal("apply failed to fence concurrent starts", active, err)
 	}
 	var people, devices int

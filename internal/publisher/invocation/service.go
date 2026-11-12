@@ -27,7 +27,7 @@ func RealizeLocalService(ctx context.Context, control *clientcontrol.Client, sel
 	project := projectConfiguration{Project: selected.Project, targetResolver: selected.TargetResolver}
 	current, name, publicURLID := selected.Team, selected.Name, selected.PublicURLID
 	source := project.LocalPublicationIdentity()
-	declaration, err := resolve.Declaration(ctx, project.Project, current.Context(), func(ctx context.Context, name string) (string, error) {
+	declaration, err := resolve.LocalServiceDeclaration(ctx, project.Project, current.Context(), name, func(ctx context.Context, name string) (string, error) {
 		resolver := project.targetResolver
 		if resolver == nil {
 			resolver = target.Resolver{}
@@ -37,11 +37,11 @@ func RealizeLocalService(ctx context.Context, control *clientcontrol.Client, sel
 			return "", err
 		}
 		return string(*resolved.Target), nil
-	}, name)
+	})
 	if err != nil {
 		return controlv1.LocalProjectService{}, err
 	}
-	request := controlv1.RealizeLocalProjectServiceRequest{TeamId: current.team.Id, SourceFingerprint: source.Fingerprint, WorktreeKey: project.LocalWorktreeKey(), Configuration: declaration.Services[name]}
+	request := controlv1.RealizeLocalProjectServiceRequest{TeamId: current.team.Id, SourceFingerprint: source.Fingerprint, WorktreeKey: project.LocalWorktreeKey(), Configuration: declaration}
 	label := project.Worktree.Label.FullLabel
 	if label != "" {
 		request.WorktreeLabel = &label

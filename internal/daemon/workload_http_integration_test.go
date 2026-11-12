@@ -8,11 +8,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -80,44 +80,63 @@ func TestIntegrationWorkloadHTTPPublicTLS(t *testing.T) {
 	target.StartTLS()
 	t.Cleanup(target.Close)
 	targetTrust := serviceHTTPTestTargetTrust(targetHostname, string(targetCA.certificatePEM))
-	group, private, protocol := "public", "private", controlv1.ServiceProtocolHTTP
-	policy := controlv1.ProjectWorkload{Provider: controlv1.WorkloadGitHub, Github: &controlv1.ProjectWorkloadGitHub{Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}}, Services: []string{"api", "other", "private"}, MaxDurationSeconds: 120}
-	policies := map[string]controlv1.ProjectWorkload{"test": policy, "provider": policy, "narrow": policy, "short": policy}
-	short := policy
-	short.MaxDurationSeconds = 8
-	policies["short"] = short
-	configuration := controlv1.ProjectConfiguration{Workloads: &policies, PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {Public: new(true)}, private: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{
-		"api":     {PublisherGroup: &group, Protocol: &protocol, Target: target.URL, TargetTls: &targetTrust},
-		"other":   {PublisherGroup: &group, Protocol: &protocol, Target: target.URL, TargetTls: &targetTrust},
-		"private": {PublisherGroup: &private, Protocol: &protocol, Target: target.URL, TargetTls: &targetTrust},
-	}, Webhooks: map[string]controlv1.ProjectWebhook{}}
-	applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64), Configuration: configuration})
-	if err != nil {
-		t.Fatal(err)
+	targetTLS := controlv1.EnvironmentTargetTLS{Hostname: &targetTrust.Hostname, CaPem: targetTrust.CaPem, Digest: &targetTrust.Digest}
+	public := createServiceRuntimeEnvironment(t, f, "workload", controlv1.ServiceDefinition{Services: map[string]controlv1.ServiceDefinitionService{
+		"api": {Protocol: controlv1.ServiceProtocolHTTP}, "other": {Protocol: controlv1.ServiceProtocolHTTP},
+	}}, controlv1.CreateEnvironmentRequest{Name: "public", Public: new(true), Targets: controlv1.EnvironmentTargets{
+		"api": {Address: &target.URL, Tls: &targetTLS}, "other": {Address: &target.URL, Tls: &targetTLS},
+	}})
+	private := createServiceRuntimeEnvironment(t, f, "workload", controlv1.ServiceDefinition{Services: map[string]controlv1.ServiceDefinitionService{
+		"private": {Protocol: controlv1.ServiceProtocolHTTP},
+	}}, controlv1.CreateEnvironmentRequest{Name: "private", Targets: controlv1.EnvironmentTargets{"private": {Address: &target.URL, Tls: &targetTLS}}})
+	startEnvironmentPublishers(t, f, public, "tls-tcp")
+	// register both identities before issuing sessions: registration is itself a
+	// revocation boundary for previously issued matching OIDC subjects.
+	machine := registerRuntimeWorkload(t, f, "http", "")
+	providerMachine := registerRuntimeWorkload(t, f, "provider", "provider")
+	permissions := map[string]string{}
+	for _, name := range []string{"test", "narrow", "short"} {
+		duration := 120
+		if name == "short" {
+			duration = 8
+		}
+		permissions[name] = runtimeWorkloadPermission(t, f, machine, public, duration)
 	}
-	startWorkloadPublishers(t, f, group, "tls-tcp")
+	permissions["provider"] = runtimeWorkloadPermission(t, f, providerMachine, public, 120)
 	newJob := func(name, execution string) *workload.Client {
 		t.Helper()
-		job, err := workload.New(f.controlConfig.ControlOrigin(), f.publicHTTP)
-		if err != nil {
-			t.Fatal(err)
-		}
 		claims := githubtest.Claims(f.controlConfig.ControlOrigin(), time.Now())
 		claims["check_run_id"], claims["jti"] = execution, execution
-		if _, err := job.Exchange(t.Context(), f.identity.teamID, "workload", strings.Repeat("a", 64), name, issuer.Sign(t, claims), nil); err != nil {
-			t.Fatal(err)
+		if name == "provider" {
+			claims["sub"] = providerMachine.Trust.Claims["sub"]
+			claims["environment"] = providerMachine.Trust.Claims["environment"]
 		}
+		job, _ := prepareRuntimeWorkload(t, f, public, permissions[name], issuer.Sign(t, claims))
 		return job
 	}
 	job := newJob("test", "301")
-	inventory, err := job.ListServices(t.Context())
+	prepared, err := job.Preparation()
 	if err != nil {
 		t.Fatal(err)
 	}
 	ids := map[string]string{}
 	endpoints := map[string]controlv1.ServiceEndpoint{}
-	for _, s := range inventory.Services {
-		ids[s.Service], endpoints[s.Service] = s.Id, s.Endpoint
+	for name, s := range prepared.Services {
+		ids[name], endpoints[name] = s.ServiceId, s.Endpoint
+	}
+	if _, err := job.ClientTLSCertificate(t.Context(), private.Services[0].ServiceId); err == nil {
+		t.Fatal("public environment visitor reached connector-only sibling")
+	} else if problem := new(clientcontrol.ProblemError); !errors.As(err, &problem) || problem.Status != http.StatusForbidden {
+		t.Fatal("out-of-scope HTTP certificate request did not reach an authorization denial", err)
+	}
+	privateProbe, err := workload.New(f.controlConfig.ControlOrigin(), f.publicHTTP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := privateProbe.Prepare(t.Context(), runtimeEnvironmentReference(f, private), permissions["test"], issuer.Sign(t, githubtest.Claims(f.controlConfig.ControlOrigin(), time.Now())), runtimeEnvironmentProtocols(private)); err == nil {
+		t.Fatal("public environment permission selected connector-only sibling")
+	} else if problem := new(clientauthority.ProblemError); !errors.As(err, &problem) || problem.Status != http.StatusForbidden {
+		t.Fatal("sibling environment request did not reach an authority denial", err)
 	}
 	endpoint := func(name string) string {
 		e := endpoints[name]
@@ -184,7 +203,7 @@ func TestIntegrationWorkloadHTTPPublicTLS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := httpAsHuman.GetProjectConfiguration(t.Context(), f.identity.teamID, "workload"); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+	if _, err := httpAsHuman.GetEnvironment(t.Context(), f.identity.teamID, "workload", public.Id); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("HTTP credential gained management rights", err)
 	}
 	// an application response loss cannot cause arbitrary POST-body replay.
@@ -256,16 +275,30 @@ func TestIntegrationWorkloadHTTPPublicTLS(t *testing.T) {
 	if err := upgradeJob.Revoke(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	narrow := policy
-	narrow.Services = []string{"other"}
-	policies["narrow"] = narrow
-	changed := policy
-	changed.Github = new(*policy.Github)
-	changed.Github.Ref = "refs/heads/other"
-	changed.Github.WorkflowRef = "example/repository/.github/workflows/test.yml@refs/heads/other"
-	policies["provider"] = changed
-	if _, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{TeamId: f.identity.teamID, ExpectedRevision: applied.Revision, SourceFingerprint: strings.Repeat("a", 64), Configuration: configuration}); err != nil {
+	// permissions are immutable. replace a broad grant with a separately scoped
+	// one, then revoke the original; old streams cannot adopt the replacement.
+	replacement := runtimeWorkloadPermission(t, f, machine, public, 120, "other")
+	person, err := f.identity.authority.IdentityContext(t.Context())
+	if err != nil {
 		t.Fatal(err)
+	}
+	if err := f.database.RevokeEnvironmentVisitorPermission(t.Context(), f.identity.teamID, permissions["narrow"], person.Identity.Id, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.database.RevokeMachineIdentity(t.Context(), f.identity.teamID, providerMachine.ID, person.Identity.Id, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	narrowProbe, err := workload.New(f.controlConfig.ControlOrigin(), f.publicHTTP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := narrowProbe.Prepare(t.Context(), runtimeEnvironmentReference(f, public), replacement, issuer.Sign(t, githubtest.Claims(f.controlConfig.ControlOrigin(), time.Now())), map[string]string{"api": "http"}); err == nil {
+		t.Fatal("narrow replacement restored removed service permission")
+	} else if problem := new(clientauthority.ProblemError); !errors.As(err, &problem) || problem.Status != http.StatusForbidden {
+		t.Fatal("removed-service request did not reach an authority denial", err)
+	}
+	if _, err := narrowProbe.Prepare(t.Context(), runtimeEnvironmentReference(f, public), replacement, issuer.Sign(t, githubtest.Claims(f.controlConfig.ControlOrigin(), time.Now())), map[string]string{"other": "http"}); err != nil {
+		t.Fatal("narrow replacement lost its independently allowed service", err)
 	}
 	deadline := time.Now().Add(30 * time.Second)
 	for _, done := range []<-chan error{revoked, narrowed, provider, upgradeDone} {
@@ -276,5 +309,7 @@ func TestIntegrationWorkloadHTTPPublicTLS(t *testing.T) {
 		}
 	}
 	response = request(client, endpoint("api"), "/", nil, 403)
+	response.Body.Close()
+	response = request(newClient("other", narrowProbe), endpoint("other"), "/", nil, 200)
 	response.Body.Close()
 }

@@ -46,7 +46,7 @@ func (m *contractMeter) describe(name, semantics string, kind InstrumentKind, bo
 	// exception is boolean true only, never a caller-supplied dimension.
 	dimensions = append(dimensions, MetricOverflow.key())
 	if strings.HasPrefix(name, "tnl_publisher_") {
-		for _, k := range []MetricKey{TeamID, DeploymentID, ReplicaKey, PublisherGroupID, PublisherIdentityID, ServiceID, PublicURLID, ServiceKindKey} {
+		for _, k := range []MetricKey{TeamID, EnvironmentID, DeploymentID, ReplicaKey, PublisherGroupID, PublisherIdentityID, ServiceID, PublicURLID, ServiceKindKey} {
 			dimensions = append(dimensions, k.key())
 		}
 	}

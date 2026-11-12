@@ -19,36 +19,32 @@ import (
 
 func TestIntegrationManagedCertificateRunAuthority(t *testing.T) {
 	d, now, _, leases := newPublishRunPrerequisites(t)
-	r := appliedProjectRequest(t, d, now)
-	r.ProjectLabel = "storefront"
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{
-		"orders": {PublisherGroup: "production", Protocol: "postgres", Target: "orders.internal:5432"},
-		"api":    {PublisherGroup: "production", Target: "api.internal:3000"},
-	}}
-	applied, err := d.ApplyProjectConfiguration(t.Context(), r)
+	r := retainedEnvironmentProject(t, d, now)
+	definition, err := d.CreateServiceDefinition(t.Context(), CreateServiceDefinitionRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, ProjectLabel: "storefront", ActorID: r.ActorID, Definition: ServiceDefinition{Services: map[string]ServiceDefinitionService{"orders": {Protocol: "postgres"}, "api": {Protocol: "http"}}}, Now: now})
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := d.IssuePublisherGroupEnrollment(t.Context(), r.TeamID, r.ProjectKey, "production", r.ActorID, 2, time.Hour, now)
+	applied, err := d.CreateEnvironment(t.Context(), CreateEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, ProjectLabel: "storefront", ActorID: r.ActorID, Name: "production", DefinitionRevision: definition.Revision, Targets: EnvironmentTargets{"orders": {Address: "orders.internal:5432"}, "api": {Address: "api.internal:3000"}}, IdempotencyKey: "certificate-environment", Now: now})
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, b := enrollAppliedGroup(t, d, r, e, now), enrollAppliedGroup(t, d, r, e, now)
+	e := retainedPublisherEnrollment(t, d, r, applied, 2)
+	a, b := retainedPublisherReplica(t, d, e, now), retainedPublisherReplica(t, d, e, now)
 	if len(a.assignments.CertificateStatePlans) != 0 || len(b.assignments.CertificateStatePlans) != 0 {
 		t.Fatal("fresh replicas required nonexistent certificate state")
 	}
 	attempt := 0
-	start := func(replica enrolledGroupReplica, name string) (ServiceRunPreparation, ServiceRunState) {
+	start := func(replica environmentPublisherReplica, name string) (ServiceRunPreparation, ServiceRunState) {
 		t.Helper()
-		var assignment PublisherGroupServiceAssignment
+		var assignment EnvironmentPublisherAssignment
 		for _, candidate := range replica.assignments.Services {
 			if candidate.Service == name {
 				assignment = candidate
 			}
 		}
-		access := groupAssignmentAccess(t, d, replica, assignment, now)
+		access := environmentAssignmentAccess(t, d, replica, assignment, now)
 		attempt++
-		prep, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, fmt.Sprintf("managed-test-%d", attempt), now, ServiceMetadata{Protocol: assignment.Configuration.Protocol, TrustRevision: assignment.TrustRevision}, nil)
+		prep, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, fmt.Sprintf("managed-test-%d", attempt), now, ServiceMetadata{Protocol: assignment.Configuration.Protocol, TrustRevision: assignment.TrustRevision}, &replica.assignments.Environment)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -78,7 +74,11 @@ func TestIntegrationManagedCertificateRunAuthority(t *testing.T) {
 	_, other := start(b, "orders")
 	_, sibling := start(a, "api")
 	plan := prep.CertificatePlan
-	if plan.Scope != applied.Groups[0].Namespace || !slices.Equal(plan.Identifiers, []string{"*." + applied.Groups[0].Namespace}) || plan.ChallengeMethod != "dns-01" {
+	var namespace string
+	if err := d.pool.QueryRow(t.Context(), `SELECT assignment.namespace FROM control.environments environment JOIN control.project_publisher_groups assignment ON assignment.id=environment.group_id WHERE environment.id=$1`, applied.ID).Scan(&namespace); err != nil {
+		t.Fatal(err)
+	}
+	if plan.Scope != namespace || !slices.Equal(plan.Identifiers, []string{"*." + namespace}) || plan.ChallengeMethod != "dns-01" {
 		t.Fatal("private run did not capture its exact group plan", plan)
 	}
 	const directory = "https://acme.example.test/directory"
@@ -97,7 +97,7 @@ func TestIntegrationManagedCertificateRunAuthority(t *testing.T) {
 	if err != nil || issue.PublicURLID != "" || issue.PublishRunID != "" || issue.ServiceRunID != run.RunID {
 		t.Fatal("private issuance required a public subject", issue, err)
 	}
-	checkpointBoundary, err := d.GetPublisherGroupAssignments(t.Context(), a.lease.AccessToken, now)
+	checkpointBoundary, err := d.GetEnvironmentPublisherAssignments(t.Context(), a.lease.AccessToken, now)
 	if err != nil || len(checkpointBoundary.CertificateStatePlans) == 0 {
 		t.Fatal("issuance did not require durable state for future replacements", err)
 	}
@@ -121,7 +121,7 @@ func TestIntegrationManagedCertificateRunAuthority(t *testing.T) {
 			t.Fatal("order cleanup erased durable plan checkpoint", err)
 		}
 	})
-	independent, err := d.GetPublisherGroupAssignments(t.Context(), b.lease.AccessToken, now)
+	independent, err := d.GetEnvironmentPublisherAssignments(t.Context(), b.lease.AccessToken, now)
 	if err != nil || len(independent.CertificateStatePlans) != 0 {
 		t.Fatal("another replica inherited the certificate-state requirement", err)
 	}
@@ -251,24 +251,22 @@ func TestIntegrationManagedCertificateRunAuthority(t *testing.T) {
 		if _, err := d.pool.Exec(t.Context(), `UPDATE control.acme_orders SET finalization_possible=true WHERE id=$1`, uncertain.ID); err != nil {
 			t.Fatal(err)
 		}
-		testServiceNamespaceCertificateRetirement(t, d, r, now, uncertain.ID)
+		testServiceNamespaceCertificateRetirement(t, d, r, applied.ID, now, uncertain.ID)
 	})
 }
 
-func testServiceNamespaceCertificateRetirement(t *testing.T, d *Database, r ApplyProjectConfigurationRequest, now time.Time, uncertain string) {
+func testServiceNamespaceCertificateRetirement(t *testing.T, d *Database, r environmentPublisherTestProject, environment string, now time.Time, uncertain string) {
 	t.Helper()
-	current, err := d.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, r.ActorID)
+	current, err := d.GetEnvironment(t.Context(), r.TeamID, r.ProjectKey, environment, r.ActorID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	saved := current.Configuration
-	oldGroup := current.Groups[0]
-	renamed, err := d.RenamePublisherNamespace(t.Context(), RenamePublisherNamespaceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, Group: oldGroup.Name, NamespaceLabel: "new-dns", ActorID: r.ActorID, ExpectedRevision: current.Revision, IdempotencyKey: "certificate-retirement", Now: now.Add(time.Second)})
-	if err != nil {
+	var oldGroup, namespace, namespaceLabel string
+	if err := d.pool.QueryRow(t.Context(), `SELECT assignment.id,assignment.namespace,assignment.name FROM control.environments environment JOIN control.project_publisher_groups assignment ON assignment.id=environment.group_id WHERE environment.id=$1`, current.ID).Scan(&oldGroup, &namespace, &namespaceLabel); err != nil {
 		t.Fatal(err)
 	}
-	if renamed.Groups[0].ID != oldGroup.ID || renamed.Groups[0].Namespace == oldGroup.Namespace {
-		t.Fatal("namespace operation replaced the group")
+	if err := d.RetireEnvironment(t.Context(), RetireEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, EnvironmentID: current.ID, ExpectedRevision: current.MutationRevision, Now: now.Add(time.Second)}); err != nil {
+		t.Fatal(err)
 	}
 	// settle the DNS retirement receipts introduced by the direct-exposure test
 	// before checking the independent certificate quarantine deadline.
@@ -288,13 +286,20 @@ func testServiceNamespaceCertificateRetirement(t *testing.T, d *Database, r Appl
 			t.Fatal(err)
 		}
 	}
-	r.Configuration, r.ExpectedRevision, r.Now = saved, 0, now.Add(8*24*time.Hour)
-	r.ProjectKey, r.SourceFingerprint = "replacement", fmt.Sprintf("%064x", 5)
-	if _, err = d.ApplyProjectConfiguration(t.Context(), r); !errors.Is(err, ErrServiceConflict) {
+	replacement := r
+	replacement.ProjectKey, replacement.SourceFingerprint = "replacement", fmt.Sprintf("%064x", 5)
+	services := map[string]ServiceDefinitionService{}
+	for _, service := range current.Services {
+		services[service.Service] = ServiceDefinitionService{Protocol: service.Protocol}
+	}
+	_, err = d.CreateServiceDefinition(t.Context(), CreateServiceDefinitionRequest{TeamID: r.TeamID, ProjectKey: replacement.ProjectKey, SourceFingerprint: replacement.SourceFingerprint, ProjectLabel: "storefront", ActorID: r.ActorID, Definition: ServiceDefinition{Services: services}, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = retainedNamespaceClaim(t, d, replacement, namespaceLabel, current.DomainID, now.Add(8*24*time.Hour)); !errors.Is(err, ErrServiceConflict) {
 		t.Fatal("quarantine elapsed before the outstanding certificate expired", err)
 	}
-	r.Now = now.Add(31 * 24 * time.Hour)
-	if _, err = d.ApplyProjectConfiguration(t.Context(), r); !errors.Is(err, ErrServiceConflict) {
+	if _, err = retainedNamespaceClaim(t, d, replacement, namespaceLabel, current.DomainID, now.Add(31*24*time.Hour)); !errors.Is(err, ErrServiceConflict) {
 		t.Fatal("uncertain finalization allowed namespace reuse", err)
 	}
 	// the provider has now resolved uncertain work and established its actual
@@ -302,12 +307,18 @@ func testServiceNamespaceCertificateRetirement(t *testing.T, d *Database, r Appl
 	if _, err = d.pool.Exec(t.Context(), `UPDATE control.acme_orders SET state='canceled',not_after=$2,not_before=$3 WHERE id=$1`, uncertain, now.Add(45*24*time.Hour), now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.ApplyProjectConfiguration(t.Context(), r); !errors.Is(err, ErrServiceConflict) {
+	if _, err = retainedNamespaceClaim(t, d, replacement, namespaceLabel, current.DomainID, now.Add(31*24*time.Hour)); !errors.Is(err, ErrServiceConflict) {
 		t.Fatal("late certificate lifetime ignored", err)
 	}
-	r.Now = now.Add(46 * 24 * time.Hour)
-	reused, err := d.ApplyProjectConfiguration(t.Context(), r)
-	if err != nil || len(reused.Groups) != 1 || reused.Groups[0].ID == oldGroup.ID || reused.Groups[0].Namespace != oldGroup.Namespace {
+	reused, err := retainedNamespaceClaim(t, d, replacement, namespaceLabel, current.DomainID, now.Add(46*24*time.Hour))
+	if err != nil {
+		t.Fatal("retired certificate authority burned the namespace forever", err)
+	}
+	var reusedNamespace string
+	if err := d.pool.QueryRow(t.Context(), `SELECT namespace FROM control.project_publisher_groups WHERE id=$1`, reused).Scan(&reusedNamespace); err != nil {
+		t.Fatal(err)
+	}
+	if reused == oldGroup || reusedNamespace != namespace {
 		t.Fatal("retired certificate authority burned the namespace forever", reused, err)
 	}
 }

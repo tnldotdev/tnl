@@ -6,11 +6,11 @@ import (
 	"errors"
 	"io"
 	"os"
-	"slices"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	publishergroup "github.com/tnldotdev/tnl/internal/publisher/group"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	"github.com/tnldotdev/tnl/internal/publisher/setup"
@@ -18,18 +18,19 @@ import (
 )
 
 type groupIdentityProvisionOptions struct {
-	Remote     remoteFlags
-	Group      string
-	ProjectKey string
-	Instance   string
-	OutputFile string
+	Remote      remoteFlags
+	Environment string
+	Services    []string
+	ProjectKey  string
+	Instance    string
+	OutputFile  string
 }
 
 // runPublisherGroupProvision redeems once on the operator's machine, saving its
 // retry key before the first request. replacement tasks only prove that key.
 func runPublisherGroupProvision(ctx context.Context, options groupIdentityProvisionOptions, project projectConfiguration, output, diagnostics io.Writer) error {
-	if options.Group == "local" || !naming.ValidServiceName(options.Group) || !naming.ValidServiceName(options.Instance) || options.OutputFile == "" {
-		return publisherCLIError("select --group, --instance, and a new --output-file for one replica")
+	if !opaqueid.Valid(options.Environment, opaqueid.EnvironmentPrefix) || !naming.ValidServiceName(options.Instance) || options.OutputFile == "" || len(options.Services) == 0 {
+		return publisherCLIError("select --environment ID, --services, --instance, and a new --output-file for one replica")
 	}
 	if _, err := os.Lstat(options.OutputFile); err == nil {
 		return credentialfile.ErrExists
@@ -57,24 +58,16 @@ func runPublisherGroupProvision(ctx context.Context, options groupIdentityProvis
 	if err != nil {
 		return err
 	}
-	applied, err := session.Authenticated().Control.GetProjectConfiguration(ctx, current.Team().Id, options.ProjectKey)
+	environment, err := session.Authenticated().Control.GetEnvironment(ctx, current.Team().Id, options.ProjectKey, options.Environment)
 	if err != nil {
 		return err
 	}
-	var groupID string
-	if applied.Groups == nil {
+	if environment.Id != options.Environment || environment.ProjectKey != options.ProjectKey || environment.TeamId != current.Team().Id {
 		return credentialfile.ErrInvalid
 	}
-	for _, group := range *applied.Groups {
-		if slices.Contains(group.GroupNames, options.Group) {
-			groupID = group.Id
-		}
-	}
-	if groupID == "" {
-		return publisherCLIError("publisher group is not in this applied project's selector history")
-	}
 	value, err := setup.Ensure(ctx, session.Store(), session.Authenticated().Control, client, setup.Scope{
-		Server: server, Team: current.Team().Id, Project: options.ProjectKey, GroupID: groupID, Group: options.Group, Instance: options.Instance,
+		Server: server, Team: current.Team().Id, Project: options.ProjectKey, EnvironmentID: environment.Id, Instance: options.Instance,
+		MutationRevision: environment.MutationRevision, ConfigurationHash: environment.ConfigurationHash, Services: options.Services,
 	})
 	if err != nil {
 		return err
@@ -84,7 +77,7 @@ func runPublisherGroupProvision(ctx context.Context, options groupIdentityProvis
 		return err
 	}
 	return writeHumanFrame(output, "tnl publisher provision", "created", "store the private file in this replica's secret", clioutput.Fields(
-		clioutput.Field{Label: "file", Value: options.OutputFile}, clioutput.Field{Label: "publisher", Value: member.PublisherIdentityId}, clioutput.Field{Label: "group", Value: member.GroupName}, clioutput.Field{Label: "instance", Value: options.Instance},
+		clioutput.Field{Label: "file", Value: options.OutputFile}, clioutput.Field{Label: "publisher", Value: member.PublisherIdentityId}, clioutput.Field{Label: "environment ID", Value: member.EnvironmentId}, clioutput.Field{Label: "instance", Value: options.Instance},
 	))
 }
 
@@ -92,13 +85,13 @@ func runPublisherGroupProvision(ctx context.Context, options groupIdentityProvis
 // JSON secret. clearing the environment prevents inheritance by child processes.
 // call before enrollment; a supplied invalid secret must never fall back to it.
 func publisherGroupIdentityInput(path string) (credentialfile.GroupFile, bool, error) {
-	encoded, supplied := os.LookupEnv("TNL_GROUP_IDENTITY")
+	encoded, supplied := os.LookupEnv("TNL_ENVIRONMENT_PUBLISHER_IDENTITY")
 	if supplied {
-		if err := os.Unsetenv("TNL_GROUP_IDENTITY"); err != nil {
+		if err := os.Unsetenv("TNL_ENVIRONMENT_PUBLISHER_IDENTITY"); err != nil {
 			return credentialfile.GroupFile{}, true, credentialfile.ErrInvalid
 		}
 		if path != "" {
-			return credentialfile.GroupFile{}, true, publisherCLIError("select --identity-file or TNL_GROUP_IDENTITY, not both")
+			return credentialfile.GroupFile{}, true, publisherCLIError("select --identity-file or TNL_ENVIRONMENT_PUBLISHER_IDENTITY, not both")
 		}
 		value, err := credentialfile.ParseGroup([]byte(encoded))
 		return value, true, err
@@ -118,7 +111,7 @@ func preparePublisherGroupIdentity(flags *publisherServeCommand) error {
 	}
 	path := ""
 	if len(flags.IdentityFile) > 1 {
-		return publisherCLIError("omit --group when supplying multiple identities")
+		return publisherCLIError("omit --environment when supplying multiple identities")
 	}
 	if len(flags.IdentityFile) == 1 {
 		path = flags.IdentityFile[0]
@@ -129,7 +122,7 @@ func preparePublisherGroupIdentity(flags *publisherServeCommand) error {
 	}
 	if supplied {
 		if flags.EnrollmentKey != "" {
-			return publisherCLIError("select a portable group identity or an enrollment key, not both")
+			return publisherCLIError("select a portable environment publisher identity or an enrollment key, not both")
 		}
 		server := value.ControlURL
 		if flags.ServerURL != "" {
@@ -142,7 +135,7 @@ func preparePublisherGroupIdentity(flags *publisherServeCommand) error {
 		if project == "" {
 			project = value.Member.ProjectKey
 		}
-		if _, err := value.Validate(server, project, flags.Group, flags.Instance); err != nil {
+		if _, err := value.Validate(server, project, flags.Environment, flags.Instance); err != nil {
 			return err
 		}
 		flags.ServerURL = server
@@ -155,17 +148,17 @@ func preparePublisherGroupIdentity(flags *publisherServeCommand) error {
 
 // importPublisherGroupIdentity requires the caller's existing group identity
 // lock. verify the signing key and exact current membership before saving it.
-func importPublisherGroupIdentity(ctx context.Context, profile *clientstate.Store, client *publishergroup.Client, value credentialfile.GroupFile, server, project, group, instance string) (controlv1.PublisherGroupMember, ed25519.PrivateKey, error) {
+func importPublisherGroupIdentity(ctx context.Context, profile *clientstate.Store, client *publishergroup.Client, value credentialfile.GroupFile, server, project, group, instance string) (controlv1.EnvironmentPublisher, ed25519.PrivateKey, error) {
 	value, err := credentialfile.ResolveGroup(ctx, client, value, server, project, group, instance)
 	if err != nil {
-		return controlv1.PublisherGroupMember{}, nil, err
+		return controlv1.EnvironmentPublisher{}, nil, err
 	}
 	if err := credentialfile.RetainGroup(ctx, profile, value); err != nil {
-		return controlv1.PublisherGroupMember{}, nil, err
+		return controlv1.EnvironmentPublisher{}, nil, err
 	}
 	private, err := credentialfile.ImportGroup(ctx, profile, value, server, project, group, instance)
 	if err != nil {
-		return controlv1.PublisherGroupMember{}, nil, err
+		return controlv1.EnvironmentPublisher{}, nil, err
 	}
 	return value.Member, private, nil
 }

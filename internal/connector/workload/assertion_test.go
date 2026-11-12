@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	"golang.org/x/sys/unix"
 )
 
@@ -43,10 +42,10 @@ func TestAssertionSourceOneOfAndRotation(t *testing.T) {
 	if err := os.WriteFile(file, nil, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Acquire(t.Context(), workloadmanifest.Acquisition{Method: "vercel-oidc"}, nil, os.Getenv); !errors.Is(err, ErrAssertionUnavailable) {
+	if _, err := Acquire(t.Context(), Acquisition{Method: "vercel-oidc"}, nil, os.Getenv); !errors.Is(err, ErrAssertionUnavailable) {
 		t.Fatal("empty configured file fell back to env", err)
 	}
-	if raw, err := Acquire(t.Context(), workloadmanifest.Acquisition{Method: "vercel-oidc"}, func(context.Context) (string, error) { return "request.jwt.value", nil }, os.Getenv); err != nil || raw != "request.jwt.value" {
+	if raw, err := Acquire(t.Context(), Acquisition{Method: "vercel-oidc"}, func(context.Context) (string, error) { return "request.jwt.value", nil }, os.Getenv); err != nil || raw != "request.jwt.value" {
 		t.Fatal("request callback did not own acquisition", err)
 	}
 	if _, err := (AssertionSource{Assertion: strings.Repeat("x", (32<<10)+1)}).Acquire(t.Context()); !errors.Is(err, ErrAssertionUnavailable) {
@@ -55,7 +54,7 @@ func TestAssertionSourceOneOfAndRotation(t *testing.T) {
 }
 
 func TestAssertionEnvironmentOverride(t *testing.T) {
-	hints := workloadmanifest.Acquisition{Method: "token-env", TokenEnv: "JOB_ID_TOKEN"}
+	hints := Acquisition{Method: "token-env", TokenEnv: "JOB_ID_TOKEN"}
 	for _, token := range []string{"first.private.jwt", "second.private.jwt"} {
 		t.Setenv("JOB_ID_TOKEN", token)
 		if actual, err := Acquire(t.Context(), hints, nil, os.Getenv); err != nil || actual != token {
@@ -221,7 +220,7 @@ func TestGitHubAssertionWireAndBounds(t *testing.T) {
 	if _, err := acquire(); !errors.Is(err, ErrAssertionUnavailable) {
 		t.Fatal("acquired outside Actions", err)
 	}
-	if token, err := Acquire(t.Context(), workloadmanifest.Acquisition{Method: "github-actions"}, func(context.Context) (string, error) { return "explicit.current.job", nil }, os.Getenv); err != nil || token != "explicit.current.job" {
+	if token, err := Acquire(t.Context(), Acquisition{Method: "github-actions"}, func(context.Context) (string, error) { return "explicit.current.job", nil }, os.Getenv); err != nil || token != "explicit.current.job" {
 		t.Fatal("explicit current-job callback rejected", err)
 	}
 }

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import atexit
-import hashlib
 import json
 import os
 import selectors
@@ -20,13 +19,14 @@ from concurrent.futures import Future
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, Literal, cast
+from types import TracebackType
+from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, Self, cast, overload
 from urllib.parse import urlsplit
 
 from ._connection_ipc import OwnerIPC, _InterruptedError
 from ._native import native_binary
 from ._protocol import TnlError, hostname, service_name
-from ._workload import Selection, select_workload, uses_workload
+from ._service_facts import ServiceFacts
 
 if TYPE_CHECKING:
     from ._client import ClientFactory
@@ -148,6 +148,142 @@ type Connection = (
 type _TLSConnections = PostgresConnection | MySQLConnection | HTTPConnection | KubernetesConnection
 
 
+@dataclass(frozen=True, slots=True)
+class _ResolvedService:
+    service: str
+    protocol: str
+    # only the native adapter interprets its captured immutable selection.
+    binding: object
+
+
+class _SelectionContext(Protocol):
+    async def resolve(self, service: str) -> _ResolvedService: ...
+    async def prepare(self, resolution: _ResolvedService) -> object: ...
+    async def aclose(self) -> None: ...
+
+
+class _EnvironmentClient:
+    """one selection and lifetime; generated subclasses add name overloads only."""
+
+    def __init__(self, services: ServiceFacts, context: _SelectionContext) -> None:
+        self._facts = ServiceFacts(services)
+        self._selection = context
+        self._closed = False
+        self._pending: set[asyncio.Task[Connection]] = set()
+        self._closing: asyncio.Task[None] | None = None
+        self._terminal: list[BaseException] = []
+        self._cleaned = False
+        self._pid = os.getpid()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._stopped_error = _error("closed")
+
+    def _context(self) -> None:
+        if self._pid != os.getpid():
+            raise TnlError("sdk.client_context_invalid", "create the environment client in this process")
+        loop = asyncio.get_running_loop()
+        if self._loop is None:
+            self._loop = loop
+        elif self._loop is not loop:
+            raise TnlError("sdk.client_context_invalid", "create the environment client in this event loop")
+
+    async def _connect(self, service: str) -> Connection:
+        self._context()
+        if self._closed:
+            raise _error("closed")
+        if service not in self._facts or len(self._pending) >= 64:
+            raise _error("input")
+        expected = self._facts[service]["protocol"]
+
+        async def prepare() -> Connection:
+            try:
+                resolution = await self._selection.resolve(service)
+                if resolution.service != service or resolution.protocol != expected:
+                    raise _error("invalid")
+                raw = await self._selection.prepare(resolution)
+                if self._closed:
+                    raise self._stopped_error
+                return _decode_snapshot(expected, raw)
+            except asyncio.CancelledError:
+                if self._closed:
+                    raise self._stopped_error from None
+                raise
+
+        task = asyncio.create_task(prepare())
+        self._pending.add(task)
+
+        def finished(done: asyncio.Task[Connection]) -> None:
+            self._pending.discard(done)
+            if not done.cancelled():
+                error = done.exception()
+                if self._closed and error is not None and error is not self._stopped_error:
+                    self._terminal.append(error)
+
+        task.add_done_callback(finished)
+        return await asyncio.shield(task)
+
+    async def aclose(self) -> None:
+        self._context()
+        self._closed = True
+        if self._closing is None:
+            self._closing = asyncio.create_task(self._close())
+        closing = self._closing
+        canceled: asyncio.CancelledError | None = None
+        try:
+            while not closing.done():
+                try:
+                    await asyncio.shield(closing)
+                except asyncio.CancelledError as error:
+                    canceled = error
+                except BaseException:
+                    if not closing.done():
+                        raise
+            try:
+                closing.result()
+            except BaseException as error:
+                if canceled is not None:
+                    raise BaseExceptionGroup("environment cancellation and cleanup failed", [canceled, error]) from None
+                raise
+            if canceled is not None:
+                raise canceled
+        finally:
+            if closing.done() and self._closing is closing:
+                self._closing = None
+
+    async def _close(self) -> None:
+        pending = tuple(self._pending)
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        failures = list(self._terminal)
+        if not self._cleaned:
+            try:
+                await self._selection.aclose()
+                self._cleaned = True
+            except BaseException as error:
+                failures.append(error)
+        if len(failures) == 1:
+            raise failures[0]
+        if failures:
+            raise BaseExceptionGroup("environment client cleanup failed", failures)
+
+    async def __aenter__(self) -> Self:
+        if self._closed:
+            raise _error("closed")
+        return self
+
+    async def __aexit__(
+        self, _: type[BaseException] | None, error: BaseException | None, __: TracebackType | None
+    ) -> None:
+        try:
+            await self.aclose()
+        except BaseException as cleanup:
+            if error is not None:
+                raise BaseExceptionGroup(
+                    "environment operation and cleanup failed", [error, cleanup]
+                ) from None
+            raise
+
+
 def _object(value: object, allowed: set[str]) -> dict[str, object]:
     if not isinstance(value, dict) or set(value) - allowed:
         raise _error("invalid")
@@ -246,13 +382,61 @@ def _snapshot(value: object) -> Connection:
     if protocol == "http" and not any(key in obj for key in ("kubeconfig", "context")):
         return HTTPConnection(*fields, url, _transport_id=transport)
     if protocol == "kubernetes":
+        kubeconfig = _text(obj.get("kubeconfig"))
+        selected_context = _text(obj.get("context"))
+        if (
+            not Path(kubeconfig).is_absolute()
+            or not selected_context.startswith("tnl:")
+            or len(selected_context) > 1024
+        ):
+            raise _error("invalid")
         return KubernetesConnection(
             *fields,
             url,
-            _text(obj.get("kubeconfig")),
-            _text(obj.get("context")),
+            kubeconfig,
+            selected_context,
             _transport_id=transport,
         )
+    raise _error("invalid")
+
+
+@overload
+def _decode_snapshot(protocol: Literal["postgres"], value: object) -> PostgresConnection: ...
+
+
+@overload
+def _decode_snapshot(protocol: Literal["mysql"], value: object) -> MySQLConnection: ...
+
+
+@overload
+def _decode_snapshot(protocol: Literal["http"], value: object) -> HTTPConnection: ...
+
+
+@overload
+def _decode_snapshot(protocol: Literal["tcp"], value: object) -> TCPConnection: ...
+
+
+@overload
+def _decode_snapshot(protocol: Literal["kubernetes"], value: object) -> KubernetesConnection: ...
+
+
+@overload
+def _decode_snapshot(protocol: str, value: object) -> Connection: ...
+
+
+def _decode_snapshot(protocol: str, value: object) -> Connection:
+    """select an exact decoder from captured facts, never from a caller override."""
+    connection = _snapshot(value)
+    if protocol == "postgres" and isinstance(connection, PostgresConnection):
+        return connection
+    if protocol == "mysql" and isinstance(connection, MySQLConnection):
+        return connection
+    if protocol == "http" and isinstance(connection, HTTPConnection):
+        return connection
+    if protocol == "tcp" and isinstance(connection, TCPConnection):
+        return connection
+    if protocol == "kubernetes" and isinstance(connection, KubernetesConnection):
+        return connection
     raise _error("invalid")
 
 
@@ -436,7 +620,7 @@ class _Session:
         with self.scope.lock:
             self.scope.request_handles.pop(reference, None)
 
-    def prepare(self, service: str, selection: Selection | None) -> tuple[Connection, _Session]:
+    def prepare(self, service: str, selection: None) -> tuple[Connection, _Session]:
         # the SDK joins its worker threads; native still decides which capability
         # a request selects and whether that owner can be reused or replaced.
         with self.scope.lock, self.changed:
@@ -460,14 +644,13 @@ class _Session:
         if self.creator_pid != os.getpid() or self.closed:
             raise _error("closed")
         selected = self
-        if not uses_workload():
-            # human reads may use the latest already-prepared owner. cleanup
-            # still holds this handle's exact observed owner, never that alias.
-            with self.scope.lock:
-                selected = self.scope.selected
-            if self.handle is None and self.attached is None and selected.handle is not None:
-                with self.changed:
-                    self.attached = selected
+        # local reads may use the latest already-prepared local owner. explicit
+        # environment clients never participate in this local alias or registry.
+        with self.scope.lock:
+            selected = self.scope.selected
+        if self.handle is None and self.attached is None and selected.handle is not None:
+            with self.changed:
+                self.attached = selected
         if selected.handle is None:
             raise _error("not_prepared")
         if selected.closed:
@@ -604,7 +787,7 @@ class _Scope:
             return self._binary
 
     def prepare(
-        self, service: str, selection: Selection | None, requester: _Session | None = None
+        self, service: str, selection: None, requester: _Session | None = None
     ) -> tuple[Connection, _Session]:
         requested_at = datetime.now(UTC).isoformat()
         binary = self.binary()
@@ -637,23 +820,11 @@ class _Scope:
             requested_at,
             "--retain-start-failure",
         ]
-        private_input = {
-            "schema": 1,
-            **(selection.private_input() if selection is not None else {}),
-        }
-        selector = (
-            "human"
-            if selection is None
-            else hashlib.sha256(
-                json.dumps([selection.name, selection.policy, selection.assertion]).encode()
-            ).hexdigest()
-        )
+        if selection is not None:
+            raise _error("input")
+        private_input = {"schema": 1}
+        selector = "human"
         key = (selector, service)
-        if selection is not None and selection.assertion is None:
-            # native must acquire this request's current token before coalescing
-            # owner startup by verified identity. no SDK assertion cache applies.
-            selector = uuid.uuid4().hex
-            key = (selector, service)
         with self.lock:
             entry = self.requests.get(key)
             leading = entry is None
@@ -754,7 +925,7 @@ class _Scope:
         raw: object,
         binary: Path,
         service: str,
-        selection: Selection | None,
+        selection: None,
         request: _Session,
     ) -> tuple[Connection, _Session]:
         value = _object(raw, {"schema", "owner", "prepared"})
@@ -787,8 +958,7 @@ class _Scope:
                 if held is not session or old == file
             }
             self.handles[file] = session
-            if selection is None:
-                self.selected = session
+            self.selected = session
         request.resolve_request(session)
         with self.lock:
             if self.entry is None:
@@ -804,7 +974,7 @@ class _Scope:
         arguments: list[str],
         private_input: object,
         service: str,
-        selection: Selection | None,
+        selection: None,
         requested_at: str,
         request: _Session,
     ) -> object:
@@ -818,9 +988,7 @@ class _Scope:
             try:
                 raw = entry[1].prepare(
                     service,
-                    selection.assertion if selection else None,
                     sdk=True,
-                    selection=selection.private_input() if selection else None,
                     requested_at=requested_at,
                     request_handle=request_handle,
                 )
@@ -869,29 +1037,6 @@ class _Scope:
             ):
                 request.interrupted = True
             raise error
-        return raw
-
-    def workload(self, service: str, request: dict[str, object]) -> object:
-        entry = self.entry
-        raw: object
-        try:
-            if entry is None:
-                raise _error("unavailable")
-            raw = entry[1].prepare(
-                service, sdk=True, preview=True, selection={"sdk_workload": request}
-            )
-        except TnlError:
-            raw = _command(
-                self.binary(),
-                "sdk-workload",
-                "--directory",
-                self.directory,
-                "--service",
-                service,
-                input_value={"schema": 1, "sdk_workload": request},
-            )
-        if isinstance(raw, dict) and "reason" in raw:
-            raise _native_error(raw["reason"])
         return raw
 
     @staticmethod
@@ -1004,7 +1149,6 @@ class ConnectionHandle[C: Connection]:
         self._protocol = protocol
         assert service is not None
         self._service = service
-        self._verified_workload = False
 
     def __repr__(self) -> str:
         return "<tnl connection handle (private)>"
@@ -1013,8 +1157,6 @@ class ConnectionHandle[C: Connection]:
         """read a prepared owner's current snapshot, without startup or sign-in."""
         if self._lifetime.closed:
             raise _error("closed")
-        if uses_workload() and (not self._verified_workload or self._session.handle is None):
-            raise _error("not_prepared")
         return self._check(self._session.read(service=self._service))
 
     def _check(self, connection: Connection) -> C:
@@ -1031,8 +1173,6 @@ class ConnectionHandle[C: Connection]:
             raise _error("closed")
         unprepared = self._session if self._session.handle is None else None
         selection = None
-        if uses_workload():
-            selection = await select_workload(self._service, self._session.scope.workload)
         with self._lifetime.changed:
             if self._lifetime.closed:
                 raise _error("closed")
@@ -1066,7 +1206,6 @@ class ConnectionHandle[C: Connection]:
             self._session = session
             self._lifetime.attached = session
             self._lifetime.preparations.remove(preparation)
-        self._verified_workload = selection is not None
         return self._check(connection)
 
     def __await__(self) -> Generator[object, None, C]:
@@ -1191,12 +1330,9 @@ def connect(
         if scope is None:
             scope = _Scope(str(root), mounted)
             _sessions[key] = scope
-        if uses_workload():
-            session = _Session(scope)
-        else:
-            if scope.selected.closed:
-                scope.selected = _Session(scope, mounted)
-            session = scope.selected
+        if scope.selected.closed:
+            scope.selected = _Session(scope, mounted)
+        session = scope.selected
     return ConnectionHandle(session, service=name)
 
 

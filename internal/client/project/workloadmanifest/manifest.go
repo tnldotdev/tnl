@@ -12,8 +12,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	clientproject "github.com/tnldotdev/tnl/internal/client/project"
-	clientserver "github.com/tnldotdev/tnl/internal/client/server"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -51,38 +49,6 @@ type Manifest struct {
 	ProjectLabel      string              `json:"project_label"`
 	Workloads         map[string]Workload `json:"workloads"`
 	Services          map[string]string   `json:"services"`
-}
-
-func Generate(c config.TNL, source clientproject.SourceIdentity) ([]byte, error) {
-	m := Manifest{Schema: 1, Server: clientserver.DefaultURL, ProjectKey: source.Key, SourceFingerprint: source.Fingerprint, ProjectLabel: source.Label, Workloads: map[string]Workload{}, Services: map[string]string{}}
-	if c.Server != nil {
-		m.Server = *c.Server
-	}
-	if c.Team != nil {
-		m.Team = *c.Team
-	}
-	var err error
-	m.Server, err = clientstate.CanonicalServer(m.Server)
-	if err != nil {
-		return nil, err
-	}
-	for name, p := range c.Workloads {
-		a, err := AcquisitionFor(p, m.Server)
-		if err != nil {
-			return nil, err
-		}
-		services := slices.Clone(p.Services)
-		slices.Sort(services)
-		m.Workloads[name] = Workload{Provider: p.Provider(), Services: services, MaxDurationSeconds: int(p.DurationLimit().Seconds()), Acquisition: a}
-		for _, key := range services {
-			m.Services[key] = config.Protocol(c.Services[key])
-		}
-	}
-	if err = m.Validate(); err != nil {
-		return nil, err
-	}
-	b, err := json.MarshalIndent(m, "", "  ")
-	return append(b, '\n'), err
 }
 
 func (m Manifest) Validate() error {

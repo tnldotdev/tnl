@@ -12,7 +12,7 @@ import (
 )
 
 const getEnvironment = `-- name: GetEnvironment :one
-SELECT id, team_id, project_key, collection_id, name, group_id, applied_definition_revision, mutation_revision, configuration_hash, initial_definition_revision, creation_digest, created_by_identity_id, created_at, updated_at, retired_at FROM control.environments WHERE team_id=$1 AND project_key=$2 AND id=$3
+SELECT id, team_id, project_key, collection_id, name, group_id, applied_definition_revision, mutation_revision, configuration_hash, initial_definition_revision, creation_digest, created_by_identity_id, created_by_machine_id, provisioning_grant_id, created_at, updated_at, retired_at FROM control.environments WHERE team_id=$1 AND project_key=$2 AND id=$3
 `
 
 type GetEnvironmentParams struct {
@@ -37,6 +37,8 @@ func (q *Queries) GetEnvironment(ctx context.Context, arg GetEnvironmentParams) 
 		&i.InitialDefinitionRevision,
 		&i.CreationDigest,
 		&i.CreatedByIdentityID,
+		&i.CreatedByMachineID,
+		&i.ProvisioningGrantID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.RetiredAt,
@@ -45,7 +47,7 @@ func (q *Queries) GetEnvironment(ctx context.Context, arg GetEnvironmentParams) 
 }
 
 const getEnvironmentForGroup = `-- name: GetEnvironmentForGroup :one
-SELECT environment.id, environment.team_id, environment.project_key, environment.collection_id, environment.name, environment.group_id, environment.applied_definition_revision, environment.mutation_revision, environment.configuration_hash, environment.initial_definition_revision, environment.creation_digest, environment.created_by_identity_id, environment.created_at, environment.updated_at, environment.retired_at FROM control.project_publisher_groups publisher_group
+SELECT environment.id, environment.team_id, environment.project_key, environment.collection_id, environment.name, environment.group_id, environment.applied_definition_revision, environment.mutation_revision, environment.configuration_hash, environment.initial_definition_revision, environment.creation_digest, environment.created_by_identity_id, environment.created_by_machine_id, environment.provisioning_grant_id, environment.created_at, environment.updated_at, environment.retired_at FROM control.project_publisher_groups publisher_group
 JOIN control.environments environment ON environment.id=publisher_group.environment_id
     AND environment.group_id=publisher_group.id
     AND environment.team_id=publisher_group.team_id AND environment.project_key=publisher_group.project_key
@@ -68,6 +70,8 @@ func (q *Queries) GetEnvironmentForGroup(ctx context.Context, id string) (Contro
 		&i.InitialDefinitionRevision,
 		&i.CreationDigest,
 		&i.CreatedByIdentityID,
+		&i.CreatedByMachineID,
+		&i.ProvisioningGrantID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.RetiredAt,
@@ -101,7 +105,7 @@ func (q *Queries) GetEnvironmentPublisherGroup(ctx context.Context, id string) (
 }
 
 const listEnvironments = `-- name: ListEnvironments :many
-SELECT id, team_id, project_key, collection_id, name, group_id, applied_definition_revision, mutation_revision, configuration_hash, initial_definition_revision, creation_digest, created_by_identity_id, created_at, updated_at, retired_at FROM control.environments WHERE team_id=$1 AND project_key=$2 ORDER BY id
+SELECT id, team_id, project_key, collection_id, name, group_id, applied_definition_revision, mutation_revision, configuration_hash, initial_definition_revision, creation_digest, created_by_identity_id, created_by_machine_id, provisioning_grant_id, created_at, updated_at, retired_at FROM control.environments WHERE team_id=$1 AND project_key=$2 ORDER BY id
 `
 
 type ListEnvironmentsParams struct {
@@ -131,6 +135,8 @@ func (q *Queries) ListEnvironments(ctx context.Context, arg ListEnvironmentsPara
 			&i.InitialDefinitionRevision,
 			&i.CreationDigest,
 			&i.CreatedByIdentityID,
+			&i.CreatedByMachineID,
+			&i.ProvisioningGrantID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.RetiredAt,
@@ -146,7 +152,7 @@ func (q *Queries) ListEnvironments(ctx context.Context, arg ListEnvironmentsPara
 }
 
 const lockEnvironment = `-- name: LockEnvironment :one
-SELECT id, team_id, project_key, collection_id, name, group_id, applied_definition_revision, mutation_revision, configuration_hash, initial_definition_revision, creation_digest, created_by_identity_id, created_at, updated_at, retired_at FROM control.environments WHERE team_id=$1 AND project_key=$2 AND id=$3 FOR UPDATE
+SELECT id, team_id, project_key, collection_id, name, group_id, applied_definition_revision, mutation_revision, configuration_hash, initial_definition_revision, creation_digest, created_by_identity_id, created_by_machine_id, provisioning_grant_id, created_at, updated_at, retired_at FROM control.environments WHERE team_id=$1 AND project_key=$2 AND id=$3 FOR UPDATE
 `
 
 type LockEnvironmentParams struct {
@@ -171,6 +177,8 @@ func (q *Queries) LockEnvironment(ctx context.Context, arg LockEnvironmentParams
 		&i.InitialDefinitionRevision,
 		&i.CreationDigest,
 		&i.CreatedByIdentityID,
+		&i.CreatedByMachineID,
+		&i.ProvisioningGrantID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.RetiredAt,

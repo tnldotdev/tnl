@@ -1,0 +1,109 @@
+paths:
+  /v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id}/services/{service_id}/grant:
+    parameters:
+      - {
+          name: project_key,
+          in: path,
+          required: true,
+          schema: { type: string, maxLength: 63, pattern: "^[a-z][a-z0-9-]*$" },
+        }
+      - {
+          name: environment_id,
+          in: path,
+          required: true,
+          schema: { type: string, pattern: "^env_[A-Za-z0-9]{22}$" },
+        }
+      - {
+          name: publisher_identity_id,
+          in: path,
+          required: true,
+          schema: { type: string, pattern: "^pub_[A-Za-z0-9]{22}$" },
+        }
+      - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
+    get:
+      operationId: getEnvironmentPublisherGrant
+      security: [{ bearerAuth: [] }]
+      description: Inspect one exact environment/member/service mapping using a current manager control session or a machine provisioning session with read authority for this environment and logical service. Returns null when no mapping exists, or its exact active/revoked grant and current environment fence. Never searches another scope or treats these facts as credentials.
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
+      responses:
+        "200":
+          description: Current exact mapping and environment fence; never cache
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/EnvironmentPublisherGrantState" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+    post:
+      operationId: authorizeEnvironmentPublisherService
+      security: [{ bearerAuth: [] }]
+      description: Explicitly authorize only this already-enrolled environment member for this saved service using a current manager control session or exact machine enroll authority. A machine spends one member from its cumulative enrollment budget only when a fresh grant is created; retries and active no-ops spend nothing. Does not enroll a publisher, change its key, apply a definition or grant visitor access. Current authority and the original access deadline are checked after lock waits and on every replay/no-op.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              {
+                $ref: "../openapi.yaml#/components/schemas/AuthorizeEnvironmentPublisherServiceRequest",
+              }
+      responses:
+        "201":
+          description: A fresh exact publisher grant and mapping were created atomically
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/EnvironmentPublisherGrantState" }
+        "200":
+          description: The same active grant for authorized replay or active no-op; issuer and health are unchanged
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/EnvironmentPublisherGrantState" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id}/services/{service_id}/grant/{grant_id}:
+    delete:
+      operationId: revokeEnvironmentPublisherGrant
+      security: [{ bearerAuth: [] }]
+      description: Revoke this exact mapped grant using a current manager control session or exact machine revoke_member authority, retain its tombstone and close only its exact publisher/service run. An already-revoked grant is a current-authority and precondition-checked no-op; deleting an old grant never revokes a replacement or another publisher's grant. Apply and rollback do not restore it.
+      parameters:
+        - {
+            name: project_key,
+            in: path,
+            required: true,
+            schema: { type: string, maxLength: 63, pattern: "^[a-z][a-z0-9-]*$" },
+          }
+        - {
+            name: environment_id,
+            in: path,
+            required: true,
+            schema: { type: string, pattern: "^env_[A-Za-z0-9]{22}$" },
+          }
+        - {
+            name: publisher_identity_id,
+            in: path,
+            required: true,
+            schema: { type: string, pattern: "^pub_[A-Za-z0-9]{22}$" },
+          }
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
+        - {
+            name: grant_id,
+            in: path,
+            required: true,
+            schema: { type: string, pattern: "^pgrant_[A-Za-z0-9]{22}$" },
+          }
+        - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
+        - {
+            name: expected_revision,
+            in: query,
+            required: true,
+            schema: { type: integer, format: int64, minimum: 1 },
+          }
+        - {
+            name: expected_configuration_hash,
+            in: query,
+            required: true,
+            schema: { type: string, pattern: "^[0-9a-f]{64}$" },
+          }
+      responses:
+        "204":
+          {
+            description: Exact grant revoked or already revoked; current authority and fence checked,
+          }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

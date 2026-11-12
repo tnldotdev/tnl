@@ -4,12 +4,11 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	"github.com/tnldotdev/tnl/internal/config"
 )
 
 func TestGitLabJobTokenIsCurrentNativeInputNotBackgroundCredential(t *testing.T) {
-	hints := workloadmanifest.Acquisition{Method: "token-env", TokenEnv: config.GitLabTokenEnv, Audience: "https://control.example"}
+	hints := Acquisition{Method: "token-env", TokenEnv: config.GitLabTokenEnv, Audience: "https://control.example"}
 	value := "first.signed.token"
 	getenv := func(name string) string {
 		if name != config.GitLabTokenEnv {

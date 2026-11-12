@@ -171,14 +171,8 @@ func validateTrustedAncestors(path string) error {
 		if err != nil {
 			return fmt.Errorf("clientstate: inspect state directory ancestor: %w", err)
 		}
-		writable := info.Mode().Perm()&0o022 != 0
-		sticky := info.Mode()&os.ModeSticky != 0
-		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || writable && !sticky {
-			return errors.New("clientstate: state directory has an untrusted writable ancestor")
-		}
-		stat, ok := info.Sys().(*syscall.Stat_t)
-		if !ok || stat.Uid != 0 && stat.Uid != uint32(os.Geteuid()) {
-			return errors.New("clientstate: state directory has an untrusted owner")
+		if err := validateTrustedAncestor(info); err != nil {
+			return err
 		}
 		parent := filepath.Dir(cursor)
 		if parent == cursor {
@@ -186,6 +180,19 @@ func validateTrustedAncestors(path string) error {
 		}
 		cursor = parent
 	}
+}
+
+func validateTrustedAncestor(info os.FileInfo) error {
+	writable := info.Mode().Perm()&0o022 != 0
+	sticky := info.Mode()&os.ModeSticky != 0
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || writable && !sticky {
+		return errors.New("clientstate: state directory has an untrusted writable ancestor")
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Uid != 0 && stat.Uid != uint32(os.Geteuid()) {
+		return errors.New("clientstate: state directory has an untrusted owner")
+	}
+	return nil
 }
 
 func openLock(path, kind string) (*Lock, error) {

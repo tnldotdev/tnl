@@ -32,20 +32,18 @@ func TestIntegrationWorkloadAuthorizationAfterLockWait(t *testing.T) {
 			t.Run(operation+"/"+change, func(t *testing.T) {
 				d, now, _, leases := newConnectorPairPrerequisites(t)
 				created := now.Add(-31 * time.Second)
-				r := appliedProjectRequest(t, d, created)
-				r.Configuration = workloadConfiguration()
-				applied, err := d.ApplyProjectConfiguration(t.Context(), r)
+				f := newRetainedVisitorFixture(t, d, created, retainedGitHubTrust(), 3600, false)
+				applied := f.environment
+				exchange, key := retainedVisitorPreparation(t, f, created)
+				prepared, err := d.PrepareEnvironmentVisitor(t.Context(), exchange, created)
 				if err != nil {
 					t.Fatal(err)
 				}
-				exchange, key := workloadExchange(t, r, created)
-				session, err := d.ExchangeWorkload(t.Context(), exchange, created)
-				if err != nil {
-					t.Fatal(err)
-				}
+				session := prepared.Session
+				proof, signature, audience := retainedVisitorAssertion(t, d, session, key, exchange.Proof.Execution)
 				var pairRequest ConnectorPeerPairRequest
 				if operation == "pair renewal" {
-					pairRequest = workloadPairRenewalRequest(t, d, r, applied.Services[0].ServiceID, session, key, leases, now)
+					pairRequest = workloadPairRenewalRequest(t, d, f, applied.Services[0].ServiceID, session, key, leases, now)
 				}
 				gate, err := d.pool.Begin(t.Context())
 				if err != nil {
@@ -65,15 +63,15 @@ func TestIntegrationWorkloadAuthorizationAfterLockWait(t *testing.T) {
 						return err
 					}
 					if operation == "session renewal" {
-						_, err := d.RenewWorkloadSession(ctx, session.ID, session.Credential, signWorkloadRenewal(session, key), at)
+						_, err := d.RenewEnvironmentVisitorSession(ctx, session.ID, session.Credential, signWorkloadRenewal(session, key), at)
 						return err
 					}
 					if operation == "assertion attachment" {
-						_, err := d.AttachWorkloadAssertion(ctx, session.ID, session.Credential, exchange.Execution, ed25519.Sign(key, workloadproof.Attach(session.ID, exchange.Execution.AssertionDigest)), at)
+						_, err := d.AttachEnvironmentVisitorAssertion(ctx, session.ID, session.Credential, proof, signature, audience, at)
 						return err
 					}
 					if operation == "exchange retry" {
-						_, err := d.ExchangeWorkload(ctx, exchange, at)
+						_, err := d.PrepareEnvironmentVisitor(ctx, exchange, at)
 						return err
 					}
 					if operation == "pair renewal" {
@@ -158,16 +156,13 @@ func TestIntegrationWorkloadAuthorizationAfterLockWait(t *testing.T) {
 func TestIntegrationWorkloadRenewalProofAndIdempotence(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "workload_renewal_proof")
 	ctx := t.Context()
-	r := appliedProjectRequest(t, d, now)
-	r.Configuration = workloadConfiguration()
-	if _, err := d.ApplyProjectConfiguration(ctx, r); err != nil {
-		t.Fatal(err)
-	}
-	exchange, key := workloadExchange(t, r, now)
-	session, err := d.ExchangeWorkload(ctx, exchange, now)
+	f := newRetainedVisitorFixture(t, d, now, retainedGitHubTrust(), 3600, false)
+	exchange, key := retainedVisitorPreparation(t, f, now)
+	prepared, err := d.PrepareEnvironmentVisitor(ctx, exchange, now)
 	if err != nil {
 		t.Fatal(err)
 	}
+	session := prepared.Session
 	_, wrongKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -193,7 +188,7 @@ func TestIntegrationWorkloadRenewalProofAndIdempotence(t *testing.T) {
 		"skipped sequence":  {Sequence: 2, Signature: ed25519.Sign(key, workloadproof.Renew(session.ID, 2))},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := d.RenewWorkloadSession(ctx, session.ID, session.Credential, proof, now.Add(31*time.Second)); !errors.Is(err, ErrWorkloadDenied) {
+			if _, err := d.RenewEnvironmentVisitorSession(ctx, session.ID, session.Credential, proof, now.Add(31*time.Second)); !errors.Is(err, ErrWorkloadDenied) {
 				t.Fatal("invalid proof renewed the lease", err)
 			}
 			if state() != before {
@@ -205,7 +200,7 @@ func TestIntegrationWorkloadRenewalProofAndIdempotence(t *testing.T) {
 	results := make(chan WorkloadSession, 8)
 	for range 8 {
 		workers.Go(func() {
-			renewed, err := d.RenewWorkloadSession(ctx, session.ID, session.Credential, first, now.Add(31*time.Second))
+			renewed, err := d.RenewEnvironmentVisitorSession(ctx, session.ID, session.Credential, first, now.Add(31*time.Second))
 			if err != nil {
 				t.Error(err)
 				return
@@ -217,33 +212,33 @@ func TestIntegrationWorkloadRenewalProofAndIdempotence(t *testing.T) {
 	close(results)
 	for result := range results {
 		if result.RenewalSequence != 1 || !result.LeaseExpiresAt.Equal(now.Add(121*time.Second)) || !result.ExpiresAt.Equal(*session.ExpiresAt) {
-			t.Fatal("concurrent proof changed lease or fixed window")
+			t.Fatalf("concurrent proof: sequence=%d want=1 lease=%s want=%s fixed=%s want=%s", result.RenewalSequence, result.LeaseExpiresAt, now.Add(121*time.Second), result.ExpiresAt, session.ExpiresAt)
 		}
 		session = result
 	}
 	before = state()
-	retry, err := d.RenewWorkloadSession(ctx, session.ID, session.Credential, first, now.Add(62*time.Second))
+	retry, err := d.RenewEnvironmentVisitorSession(ctx, session.ID, session.Credential, first, now.Add(62*time.Second))
 	if err != nil || !reflect.DeepEqual(retry, session) || state() != before {
 		t.Fatal("lost-response retry extended or changed the lease", err)
 	}
-	next, err := d.RenewWorkloadSession(ctx, session.ID, session.Credential, signWorkloadRenewal(session, key), now.Add(63*time.Second))
+	next, err := d.RenewEnvironmentVisitorSession(ctx, session.ID, session.Credential, signWorkloadRenewal(session, key), now.Add(63*time.Second))
 	if err != nil || next.RenewalSequence != 2 || !next.LeaseExpiresAt.Equal(now.Add(153*time.Second)) {
 		t.Fatal("next signed step did not renew", err)
 	}
 	before = state()
-	if _, err := d.RenewWorkloadSession(ctx, session.ID, session.Credential, first, now.Add(64*time.Second)); !errors.Is(err, ErrWorkloadDenied) || state() != before {
+	if _, err := d.RenewEnvironmentVisitorSession(ctx, session.ID, session.Credential, first, now.Add(64*time.Second)); !errors.Is(err, ErrWorkloadDenied) || state() != before {
 		t.Fatal("old signed proof replayed after a later renewal", err)
 	}
 	earlyProof := signWorkloadRenewal(next, key)
-	early, err := d.RenewWorkloadSession(ctx, session.ID, session.Credential, earlyProof, now.Add(64*time.Second))
+	early, err := d.RenewEnvironmentVisitorSession(ctx, session.ID, session.Credential, earlyProof, now.Add(64*time.Second))
 	if err != nil || early.RenewalSequence != 3 || !early.LeaseExpiresAt.Equal(next.LeaseExpiresAt) || !early.RenewAfter.Equal(next.RenewAfter) {
 		t.Fatal("early proof extended the lease", err)
 	}
 	before = state()
-	if retried, err := d.RenewWorkloadSession(ctx, session.ID, session.Credential, earlyProof, now.Add(95*time.Second)); err != nil || !reflect.DeepEqual(retried, early) || state() != before {
+	if retried, err := d.RenewEnvironmentVisitorSession(ctx, session.ID, session.Credential, earlyProof, now.Add(95*time.Second)); err != nil || !reflect.DeepEqual(retried, early) || state() != before {
 		t.Fatal("early proof became a fresh renewal on retry", err)
 	}
-	if _, err := d.RenewWorkloadSession(ctx, session.ID, session.Credential, earlyProof, early.LeaseExpiresAt); !errors.Is(err, ErrWorkloadDenied) || state() != before {
+	if _, err := d.RenewEnvironmentVisitorSession(ctx, session.ID, session.Credential, earlyProof, early.LeaseExpiresAt); !errors.Is(err, ErrWorkloadDenied) || state() != before {
 		t.Fatal("idempotent proof resurrected an expired lease", err)
 	}
 	var audits int
@@ -254,16 +249,13 @@ func TestIntegrationWorkloadRenewalProofAndIdempotence(t *testing.T) {
 
 func TestIntegrationWorkloadRenewalSequenceLimit(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "workload_renewal_limit")
-	r := appliedProjectRequest(t, d, now)
-	r.Configuration = workloadConfiguration()
-	if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
-		t.Fatal(err)
-	}
-	exchange, key := workloadExchange(t, r, now)
-	session, err := d.ExchangeWorkload(t.Context(), exchange, now)
+	f := newRetainedVisitorFixture(t, d, now, retainedGitHubTrust(), 3600, false)
+	exchange, key := retainedVisitorPreparation(t, f, now)
+	prepared, err := d.PrepareEnvironmentVisitor(t.Context(), exchange, now)
 	if err != nil {
 		t.Fatal(err)
 	}
+	session := prepared.Session
 	if _, err := d.pool.Exec(t.Context(), `UPDATE control.workload_sessions SET renewal_sequence=-1 WHERE id=$1`, session.ID); err == nil {
 		t.Fatal("schema accepted negative sequence")
 	}
@@ -272,38 +264,78 @@ func TestIntegrationWorkloadRenewalSequenceLimit(t *testing.T) {
 	}
 	session.RenewalSequence = math.MaxInt64 - 1
 	proof := signWorkloadRenewal(session, key)
-	last, err := d.RenewWorkloadSession(t.Context(), session.ID, session.Credential, proof, now.Add(31*time.Second))
+	last, err := d.RenewEnvironmentVisitorSession(t.Context(), session.ID, session.Credential, proof, now.Add(31*time.Second))
 	if err != nil || last.RenewalSequence != math.MaxInt64 {
 		t.Fatal("last sequence failed", err)
 	}
-	if retry, err := d.RenewWorkloadSession(t.Context(), session.ID, session.Credential, proof, now.Add(62*time.Second)); err != nil || !reflect.DeepEqual(last, retry) {
+	if retry, err := d.RenewEnvironmentVisitorSession(t.Context(), session.ID, session.Credential, proof, now.Add(62*time.Second)); err != nil || !reflect.DeepEqual(last, retry) {
 		t.Fatal("last sequence retry changed lease", err)
 	}
 	for _, sequence := range []int64{math.MinInt64, 0, math.MaxInt64 - 1} {
 		proof := WorkloadRenewal{Sequence: sequence, Signature: ed25519.Sign(key, workloadproof.Renew(session.ID, sequence))}
-		if _, err := d.RenewWorkloadSession(t.Context(), session.ID, session.Credential, proof, now.Add(63*time.Second)); !errors.Is(err, ErrWorkloadDenied) {
+		if _, err := d.RenewEnvironmentVisitorSession(t.Context(), session.ID, session.Credential, proof, now.Add(63*time.Second)); !errors.Is(err, ErrWorkloadDenied) {
 			t.Fatal("sequence limit wrapped or accepted stale proof", err)
 		}
 	}
 }
 
-func workloadPairRenewalRequest(t *testing.T, d *Database, r ApplyProjectConfigurationRequest, service string, session WorkloadSession, key ed25519.PrivateKey, leases map[string]RelayLease, now time.Time) ConnectorPeerPairRequest {
-	t.Helper()
-	ctx := t.Context()
-	enrollment, err := d.IssuePublisherGroupEnrollment(ctx, r.TeamID, r.ProjectKey, "production", r.ActorID, 1, time.Hour, now)
+func TestIntegrationWorkloadRenewalSpendsEntryBudgetWhileWaiting(t *testing.T) {
+	d, now := newControlStateIntegrationDatabase(t, "workload_renewal_entry_budget")
+	f := newRetainedVisitorFixture(t, d, now.Add(-31*time.Second), retainedGitHubTrust(), 3600, false)
+	request, key := retainedVisitorPreparation(t, f, f.project.Now)
+	prepared, err := d.PrepareEnvironmentVisitor(t.Context(), request, f.project.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replica := enrollAppliedGroup(t, d, r, enrollment, now)
-	var assignment PublisherGroupServiceAssignment
+	session := prepared.Session
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	workers := newIntegrationWorkers(t, cancel)
+	gate, err := d.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollbackTestTransaction(t, gate)
+	if _, err := controlstatedb.New(gate).LockLocalTeamForMutation(ctx, session.TeamID); err != nil {
+		t.Fatal(err)
+	}
+	var renewed WorkloadSession
+	entered := make(chan time.Time, 1)
+	done := make(chan error, 1)
+	workers.Go(func() {
+		at := time.Now()
+		entered <- at
+		var err error
+		renewed, err = d.RenewEnvironmentVisitorSession(ctx, session.ID, session.Credential, signWorkloadRenewal(session, key), at)
+		done <- err
+	})
+	waitForPostgresBlock(t, ctx, d, int32(gate.Conn().PgConn().PID()), done)
+	requested := awaitIntegrationResult(t, ctx, entered)
+	if err := gate.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := awaitIntegrationResult(t, ctx, done); err != nil {
+		t.Fatal(err)
+	}
+	want := requested.Add(WorkloadLease)
+	if renewed.RenewalSequence != 1 || !renewed.ExpiresAt.Equal(*session.ExpiresAt) || renewed.LeaseExpiresAt.After(want) {
+		t.Fatalf("lock wait extended renewal budget: requested=%s returned lease=%s budget=%s sequence=%d", requested, renewed.LeaseExpiresAt, want, renewed.RenewalSequence)
+	}
+}
+
+func workloadPairRenewalRequest(t *testing.T, d *Database, visitor retainedVisitorFixture, service string, session WorkloadSession, key ed25519.PrivateKey, leases map[string]RelayLease, now time.Time) ConnectorPeerPairRequest {
+	t.Helper()
+	ctx := t.Context()
+	replica := enrollTestEnvironment(t, d, visitor.project, visitor.environment)
+	var assignment EnvironmentPublisherAssignment
 	for _, candidate := range replica.assignments.Services {
 		if candidate.ServiceID == service {
 			assignment = candidate
 		}
 	}
-	access := groupAssignmentAccess(t, d, replica, assignment, now)
+	access := environmentAssignmentAccess(t, d, replica, assignment, now)
 	prepared, err := d.PrepareServiceRun(ctx, service, access.PublisherIdentity, "renewal-wait", now,
-		ServiceMetadata{Protocol: assignment.Configuration.Protocol, PublisherPool: true, TrustRevision: assignment.TrustRevision}, nil)
+		ServiceMetadata{Protocol: assignment.Configuration.Protocol, PublisherPool: true, TrustRevision: assignment.TrustRevision}, &replica.assignments.Environment)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -341,17 +373,14 @@ func workloadPairRenewalRequest(t *testing.T, d *Database, r ApplyProjectConfigu
 func TestIntegrationWorkloadRenewalOverlapsObservation(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "workload_renewal_observation")
 	ctx := t.Context()
-	r := appliedProjectRequest(t, d, now)
-	r.Configuration = workloadConfiguration()
-	applied, err := d.ApplyProjectConfiguration(ctx, r)
+	f := newRetainedVisitorFixture(t, d, now, retainedGitHubTrust(), 3600, false)
+	applied := f.environment
+	exchange, key := retainedVisitorPreparation(t, f, now)
+	prepared, err := d.PrepareEnvironmentVisitor(ctx, exchange, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	exchange, key := workloadExchange(t, r, now)
-	session, err := d.ExchangeWorkload(ctx, exchange, now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	session := prepared.Session
 	if err := d.PrepareVisitorSigningKeys(ctx, testVisitorIssuer, now); err != nil {
 		t.Fatal(err)
 	}
@@ -422,7 +451,7 @@ func TestIntegrationWorkloadRenewalOverlapsObservation(t *testing.T) {
 	if err := guard.AllowRenewal(); err != nil {
 		t.Fatal(err)
 	}
-	renewed, err := d.RenewWorkloadSession(ctx, session.ID, session.Credential, signWorkloadRenewal(session, key), observed.Add(time.Millisecond))
+	renewed, err := d.RenewEnvironmentVisitorSession(ctx, session.ID, session.Credential, signWorkloadRenewal(session, key), observed.Add(time.Millisecond))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -449,7 +478,7 @@ func TestIntegrationWorkloadRenewalOverlapsObservation(t *testing.T) {
 		}
 	})
 	t.Run("revocation", func(t *testing.T) {
-		if err := d.RevokeWorkloadSession(ctx, session.ID, session.Credential, observed.Add(2*time.Millisecond)); err != nil {
+		if err := d.RevokeEnvironmentVisitorSession(ctx, session.ID, session.Credential, observed.Add(2*time.Millisecond)); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := d.IssueVisitorToken(ctx, testVisitorIssuer, scope, WorkloadTokenSource{Credential: session.Credential}, observed.Add(3*time.Millisecond)); !errors.Is(err, ErrWorkloadDenied) {

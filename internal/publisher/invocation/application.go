@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -20,6 +21,7 @@ type ApplicationAuthority interface {
 type ApplicationSelection struct {
 	ServerURL, InvocationID, Target string
 	ResourceID, Namespace           string
+	Publication                     *clientstate.ApplicationPublication
 	// auth is valid only during ResolveApplicationPublication. the identity
 	// source parses any retained refresh state before returning.
 	Auth               json.RawMessage
@@ -55,4 +57,8 @@ type ApplicationGrant struct {
 	// identity or grant. source bytes are valid only for the duration of the call.
 	RefreshAuth func(context.Context, json.RawMessage) error
 	Cleanup     func(context.Context) error
+	// release retires private session state without deleting a saved URL.
+	Release      func(context.Context) error
+	CheckServing func() error
+	Run          func(context.Context, func(context.Context) error) error
 }

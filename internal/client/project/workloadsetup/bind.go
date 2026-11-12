@@ -18,9 +18,9 @@ import (
 )
 
 var ErrBinding = errors.New("workload setup could not bind the selected platform identity; check provider authentication and project selection")
-var ErrRebinding = errors.New("the selected workload resolves to a different platform identity; use a new workload name to grant it access")
-var ErrVercelAuthentication = errors.New("first Vercel workload apply needs VERCEL_TOKEN with read access to the selected project and team")
-var ErrVercelProject = errors.New("select vercel.project or link this project with vercel link before applying")
+var ErrRebinding = errors.New("the selected workload resolves to a different platform identity; review it before creating a new explicit approval intent")
+var ErrVercelAuthentication = errors.New("Vercel workload approval needs VERCEL_TOKEN with read access to the selected project and team")
+var ErrVercelProject = errors.New("select vercel.project or link this project with vercel link before approving")
 
 type Options struct {
 	Directory  string
@@ -37,8 +37,8 @@ type resolver struct {
 	run    func(context.Context, string, string, ...string) ([]byte, error)
 }
 
-// resolve uses existing authentication only. successful applies save exact
-// identities so unchanged applies do not need provider account credentials.
+// resolve uses existing provider authentication only. explicit approval saves
+// exact identities; receipt recovery never resolves provider names again.
 func Resolve(ctx context.Context, options Options) (map[string]controlv1.ProjectWorkload, error) {
 	bounded, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -56,10 +56,10 @@ func (r resolver) resolve(ctx context.Context, o Options) (map[string]controlv1.
 	services := config.Services{}
 	for _, workload := range o.Workloads {
 		for _, name := range workload.Services {
-			services[name] = config.Service{PublisherGroup: new("workload")}
+			services[name] = config.Service{}
 		}
 	}
-	if err := config.ValidateWorkloads(config.TNL{Services: services, Workloads: o.Workloads}); err != nil {
+	if err := config.ValidateWorkloads(services, o.Workloads); err != nil {
 		return nil, errors.Join(ErrBinding, err)
 	}
 	result := make(map[string]controlv1.ProjectWorkload, len(o.Workloads))

@@ -212,12 +212,12 @@ func assertCollectionHTTPCreateConflict(t *testing.T, f environmentHTTPFixture, 
 
 func startCollectionHTTPRun(t *testing.T, f environmentHTTPFixture, inspect *pgx.Conn, environment controlv1.Environment) controlstate.ServiceRunState {
 	t.Helper()
-	var group string
-	if err := inspect.QueryRow(t.Context(), `SELECT group_id FROM control.environments WHERE id=$1`, environment.Id).Scan(&group); err != nil {
+	manager, err := f.database.AuthenticateEnvironmentPublisherManager(t.Context(), f.session.AccessToken)
+	if err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	enrollment, err := f.database.IssuePublisherGroupEnrollment(t.Context(), f.team, f.project, group, f.session.Identity.Identity.ID, 1, time.Hour, now)
+	enrollment, err := f.database.IssueEnvironmentPublisherEnrollment(t.Context(), controlstate.IssueEnvironmentPublisherEnrollmentRequest{EnvironmentPublisherSelection: controlstate.EnvironmentPublisherSelection{TeamID: f.team, ProjectKey: f.project, EnvironmentID: environment.Id, Manager: manager}, ExpectedRevision: environment.MutationRevision, ExpectedConfigurationHash: environment.ConfigurationHash, Services: []string{"api"}, MaxMembers: 1, Lifetime: time.Hour, Now: now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,20 +225,20 @@ func startCollectionHTTPRun(t *testing.T, f environmentHTTPFixture, inspect *pgx
 	if err != nil {
 		t.Fatal(err)
 	}
-	member, err := f.database.RedeemPublisherGroupEnrollment(t.Context(), enrollment.Key, public, now)
+	member, err := f.database.RedeemEnvironmentPublisherEnrollment(t.Context(), enrollment.Key, public, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	const leaseAudience = "https://control.example.test/v1/publisher-groups/lease"
-	assertion, err := publisherproof.Sign(member.PublisherIdentityID, member.KeyID, group, leaseAudience, private, now)
+	const leaseAudience = "https://control.example.test/v1/environment-publishers/lease"
+	assertion, err := publisherproof.Sign(member.PublisherIdentityID, member.KeyID, environment.Id, leaseAudience, private, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, err := f.database.AcquirePublisherGroupLease(t.Context(), member.PublisherIdentityID, group, assertion, leaseAudience, now)
+	lease, err := f.database.AcquireEnvironmentPublisherLease(t.Context(), member.PublisherIdentityID, environment.Id, assertion, leaseAudience, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assignments, err := f.database.GetPublisherGroupAssignments(t.Context(), lease.AccessToken, now)
+	assignments, err := f.database.GetEnvironmentPublisherAssignments(t.Context(), lease.AccessToken, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +260,7 @@ func startCollectionHTTPRun(t *testing.T, f environmentHTTPFixture, inspect *pgx
 		if err != nil {
 			t.Fatal(err)
 		}
-		prepared, err := f.database.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "collection-installed-run", now, controlstate.ServiceMetadata{Protocol: "http", PublisherPool: true, TrustRevision: assignment.TrustRevision}, assignment.Environment)
+		prepared, err := f.database.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "collection-installed-run", now, controlstate.ServiceMetadata{Protocol: string(assignment.Configuration.Protocol), PublisherPool: true, TrustRevision: assignment.TrustRevision}, &assignments.Environment)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -353,7 +353,7 @@ func TestIntegrationCollectionHTTPCurrentManagerAndScope(t *testing.T) {
 	}
 	checkAll(reviewer.client, 403, controlv1.Forbidden)
 	outsider := f.as(session)
-	outsider.team = f.session.Identity.PersonalTeamID
+	outsider.team = session.Identity.PersonalTeamID
 	foreign, err := outsider.client.GetCollectionWithResponse(t.Context(), f.project, c.CollectionId, &controlv1.GetCollectionParams{TeamId: outsider.team})
 	if err != nil || foreign == nil {
 		t.Fatal(err)

@@ -14,21 +14,21 @@ import (
 )
 
 func (f publisherServeCommand) fixedList() bool {
-	return len(f.IdentityFile) > 1 || len(f.BindingFile) > 0 || len(f.IdentityFile) == 1 && f.Group == ""
+	return len(f.IdentityFile) > 1 || len(f.BindingFile) > 0 || len(f.IdentityFile) == 1 && f.Environment == ""
 }
 
 func validateFixedPublisherGroups(f publisherServeCommand) error {
 	if len(f.IdentityFile) < 1 || len(f.IdentityFile) > 256 || len(f.BindingFile) > len(f.IdentityFile) {
 		return publisherCLIError("select from 1 to 256 --identity-file inputs and at most one --binding-file per identity")
 	}
-	if f.Group != "" || f.ProjectKey != "" || f.ServerURL != "" || f.Team != "" || f.AccessToken != "" || f.EnrollmentKey != "" || f.Instance != "" && f.Instance != "default" {
-		return publisherCLIError("fixed-list publishers use each identity's server, team, group, project, and instance; omit selection and enrollment overrides")
+	if f.Environment != "" || f.ProjectKey != "" || f.ServerURL != "" || f.Team != "" || f.AccessToken != "" || f.EnrollmentKey != "" || f.Instance != "" && f.Instance != "default" {
+		return publisherCLIError("fixed-list publishers use each identity's server, team, environment, project, and instance; omit selection and enrollment overrides")
 	}
 	if f.Detach || f.Install || f.System || f.SystemStateDir != "" || f.DetachedChild != "" {
 		return publisherCLIError("run fixed-list publishers in the foreground under your process supervisor")
 	}
-	if _, present := os.LookupEnv("TNL_GROUP_IDENTITY"); present {
-		return publisherCLIError("fixed-list publishers require --identity-file inputs; remove TNL_GROUP_IDENTITY")
+	if _, present := os.LookupEnv("TNL_ENVIRONMENT_PUBLISHER_IDENTITY"); present {
+		return publisherCLIError("fixed-list publishers require --identity-file inputs; remove TNL_ENVIRONMENT_PUBLISHER_IDENTITY")
 	}
 	if f.StateDir == "" || f.IdentityDir == "" {
 		return publisherCLIError("fixed-list publishers require --state-dir and --identity-dir")
@@ -68,7 +68,7 @@ func readFixedPublisherGroups(f publisherServeCommand) ([]fixedGroupInput, error
 			return nil, err
 		}
 		publisherKey := supervisor.JobKey(value.ControlURL, "publisher", value.Member.PublisherIdentityId)
-		replicaKey := supervisor.JobKey(value.ControlURL, "group", value.Member.GroupId+":"+value.Instance)
+		replicaKey := supervisor.JobKey(value.ControlURL, "env", value.Member.EnvironmentId+":"+value.Instance)
 		if seenPublishers[publisherKey] || seenReplicas[replicaKey] {
 			return nil, supervisor.ErrJobExists
 		}
@@ -83,7 +83,7 @@ func readFixedPublisherGroups(f publisherServeCommand) ([]fixedGroupInput, error
 		if err != nil {
 			return nil, err
 		}
-		job := supervisor.Job{Kind: supervisor.KindGroup, ID: replicaKey, Name: value.Member.GroupName + "-" + value.Instance, Server: value.ControlURL, PublisherIdentityID: value.Member.PublisherIdentityId, GroupMember: &value.Member, GroupInstance: value.Instance, ServerCAPEM: trust}
+		job := supervisor.Job{Kind: supervisor.KindGroup, ID: replicaKey, Name: value.Instance, Server: value.ControlURL, PublisherIdentityID: value.Member.PublisherIdentityId, GroupMember: &value.Member, GroupInstance: value.Instance, ServerCAPEM: trust}
 		inputs = append(inputs, fixedGroupInput{value, runner, job})
 	}
 	if len(bindings) != 0 {
@@ -109,7 +109,7 @@ func runFixedPublisherGroups(ctx context.Context, flags publisherServeCommand, d
 	runners := map[string]supervisor.GroupRunner{}
 	var jobs []supervisor.GroupInstall
 	for _, input := range inputs {
-		private, err := input.value.Validate(input.value.ControlURL, input.value.Member.ProjectKey, input.value.Member.GroupName, input.value.Instance)
+		private, err := input.value.Validate(input.value.ControlURL, input.value.Member.ProjectKey, input.value.Member.EnvironmentId, input.value.Instance)
 		if err != nil {
 			return err
 		}
@@ -135,7 +135,7 @@ func runFixedPublisherGroups(ctx context.Context, flags publisherServeCommand, d
 	}, Observe: func(job supervisor.Job, status supervisor.Status) error {
 		outputMu.Lock()
 		defer outputMu.Unlock()
-		fields := []clioutput.Field{{Label: "job ID", Value: job.ID}, {Label: "server", Value: job.Server}, {Label: "team ID", Value: job.GroupMember.TeamId}, {Label: "group ID", Value: job.GroupMember.GroupId}, {Label: "publisher", Value: job.PublisherIdentityID}, {Label: "instance", Value: job.GroupInstance}, {Label: "observed revision", Value: strconv.FormatInt(status.ObservedRevision, 10)}}
+		fields := []clioutput.Field{{Label: "job ID", Value: job.ID}, {Label: "server", Value: job.Server}, {Label: "team ID", Value: job.GroupMember.TeamId}, {Label: "environment ID", Value: job.GroupMember.EnvironmentId}, {Label: "publisher", Value: job.PublisherIdentityID}, {Label: "instance", Value: job.GroupInstance}, {Label: "observed revision", Value: strconv.FormatInt(status.ObservedRevision, 10)}}
 		if status.Failure != "" {
 			fields = append(fields, clioutput.Field{Label: "failure", Value: status.Failure})
 		}

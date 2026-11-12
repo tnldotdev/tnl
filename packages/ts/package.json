@@ -49,13 +49,6 @@
       "import": "./dist/config.js",
       "default": "./dist/config.js"
     },
-    "./workload": {
-      "types": "./dist/workload.d.ts",
-      "node": {
-        "import": "./dist/workload.js",
-        "require": "./dist/workload.js"
-      }
-    },
     "./next": {
       "types": "./dist/next.d.ts",
       "import": "./dist/next.js",

@@ -112,27 +112,18 @@ func TestIntegrationProviderRegionRegistrationFence(t *testing.T) {
 func TestIntegrationProviderRegionServiceRun(t *testing.T) {
 	d, now, _, _ := newPublishRunPrerequisites(t)
 	regionalRelays(t, d, now)
-	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{
-		"orders": {PublisherGroup: "production", Protocol: "postgres", Target: "orders.internal:5432"},
-	}}
-	if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
-		t.Fatal(err)
-	}
-	e, err := d.IssuePublisherGroupEnrollment(t.Context(), r.TeamID, r.ProjectKey, "production", r.ActorID, 1, time.Hour, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	replica := enrollAppliedGroup(t, d, r, e, now)
+	r := retainedEnvironmentProject(t, d, now)
+	e, _ := retainedServiceEnvironment(t, d, r, "production", map[string]EnvironmentServicePublication{"orders": {Protocol: "postgres", Target: "orders.internal:5432"}})
+	replica := enrollTestEnvironment(t, d, r, e)
 	assignment := replica.assignments.Services[0]
-	access := groupAssignmentAccess(t, d, replica, assignment, now)
+	access := environmentAssignmentAccess(t, d, replica, assignment, now)
 	metadata := ServiceMetadata{Protocol: assignment.Configuration.Protocol, TrustRevision: assignment.TrustRevision}
 	preferences := []string{"fly:sjc", "aws:us-west-1"}
-	prep, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "regional", now, metadata, nil, preferences...)
+	prep, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "regional", now, metadata, &replica.assignments.Environment, preferences...)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "regional", now, metadata, nil, "aws:us-west-1"); !errors.Is(err, ErrServiceConflict) {
+	if _, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "regional", now, metadata, &replica.assignments.Environment, "aws:us-west-1"); !errors.Is(err, ErrServiceConflict) {
 		t.Fatal("preparation retry changed preferences", err)
 	}
 	run, err := d.StartServiceRun(t.Context(), assignment.ServiceID, prep.RunID, prep.RunNumber, access.PublisherIdentity, now)

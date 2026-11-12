@@ -29,7 +29,7 @@ func TestPublicationInputsRejectApplicationAuthSettings(t *testing.T) {
 			}
 			path := filepath.Join(root, name)
 			for _, extra := range []string{"", `,"auth":{}`} {
-				source := `{"services":{"api":{"target":{"type":"address","address":"https://api.example","tls":{}` + extra + `}}}}`
+				source := `{"services":{"api":{}},"environments":{"local":{"targets":{"api":{"address":"https://api.example","tls":{}` + extra + `}}}}}`
 				if extension == "ts" {
 					source = "export default " + source
 				} else {
@@ -49,7 +49,7 @@ func TestPublicationInputsRejectApplicationAuthSettings(t *testing.T) {
 		body string
 		out  any
 	}{
-		{`{"target":"https://api.example","target_auth":{}}`, new(controlv1.ProjectServiceConfiguration)},
+		{`{"target":"https://api.example","target_auth":{}}`, new(controlv1.LocalServiceDeclaration)},
 		{`{"target":"https://api.example","target_auth":{}}`, new(supervisor.Job)},
 		{`{"secrets":[]}`, new(supervisor.GroupBinding)},
 	} {

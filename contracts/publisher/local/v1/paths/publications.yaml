@@ -1,4 +1,20 @@
 paths:
+  /v1/identity-source-challenges:
+    post:
+      operationId: challengeApplicationIdentitySource
+      description: Invocation capability only. Validate the same immutable publication request, sync its original native key/nonce and explicit registered source before delivering one short-lived challenge. Omit reply in registered auth. A replacement challenge invalidates the previous reply; no current source proof or serving token is acquired by native. Known denial, expiry and cleanup cannot issue another challenge.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '../openapi.yaml#/components/schemas/ApplicationPublication' }
+      responses:
+        default: { $ref: '../openapi.yaml#/components/responses/Problem' }
+        '200':
+          description: Original native intent synced and challenge issued, not publication authority.
+          content:
+            application/json:
+              schema: { $ref: '../openapi.yaml#/components/schemas/IdentitySourceChallenge' }
   /v1/publications:
     post:
       operationId: publishApplication

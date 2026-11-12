@@ -19,12 +19,13 @@ func TestSharedOwnerKeepsGroupPhasesAndWorkersInTheirIdentity(t *testing.T) {
 	identities := make(chan observability.Identity, 2)
 	for _, suffix := range []string{"one", "two"} {
 		control, private := groupFixture(t)
-		member := &control.assignment.Member
-		member.TeamId, member.GroupId, member.PublisherIdentityId = "team-"+suffix, "group-"+suffix, "publisher-"+suffix
+		member := &control.assignment.Publisher
+		member.TeamId, member.EnvironmentId, member.PublisherIdentityId = "team-"+suffix, "environment-"+suffix, "publisher-"+suffix
+		control.assignment.Environment.EnvironmentId = member.EnvironmentId
 		control.assignment.Services[0].ServiceId = "service-" + suffix
-		identity := observability.Identity{TeamID: member.TeamId, PublisherGroupID: member.GroupId, PublisherIdentityID: member.PublisherIdentityId}
+		identity := observability.Identity{TeamID: member.TeamId, EnvironmentID: member.EnvironmentId, PublisherIdentityID: member.PublisherIdentityId}
 		go func() {
-			done <- (Runtime{Control: control, Member: *member, Private: private, PollInterval: time.Millisecond, Publish: func(worker context.Context, _ controlv1.PublisherGroupServiceAssignment, health func(bool)) error {
+			done <- (Runtime{Control: control, Publisher: *member, Private: private, PollInterval: time.Millisecond, Publish: func(worker context.Context, _ controlv1.EnvironmentPublication, _ controlv1.EnvironmentPublisherAssignment, health func(bool)) error {
 				identities <- observability.IdentityFromContext(worker)
 				health(true)
 				<-worker.Done()
@@ -33,7 +34,7 @@ func TestSharedOwnerKeepsGroupPhasesAndWorkersInTheirIdentity(t *testing.T) {
 		}()
 		select {
 		case id := <-identities:
-			if id.TeamID != identity.TeamID || id.PublisherGroupID != identity.PublisherGroupID || id.PublisherIdentityID != identity.PublisherIdentityID || id.ServiceID != "service-"+suffix {
+			if id.TeamID != identity.TeamID || id.EnvironmentID != identity.EnvironmentID || id.PublisherGroupID != "" || id.PublisherIdentityID != identity.PublisherIdentityID || id.ServiceID != "service-"+suffix {
 				t.Fatal("worker crossed group scope", id)
 			}
 		case <-time.After(3 * time.Second):
@@ -70,7 +71,7 @@ func TestSharedOwnerKeepsGroupPhasesAndWorkersInTheirIdentity(t *testing.T) {
 				continue
 			}
 			suffix := strings.TrimPrefix(labels["tnl_team_id"], "team-")
-			if (suffix != "one" && suffix != "two") || labels["tnl_publisher_group_id"] != "group-"+suffix || labels["tnl_publisher_identity_id"] != "publisher-"+suffix || labels["tnl_service_id"] != "" {
+			if (suffix != "one" && suffix != "two") || labels["tnl_environment_id"] != "environment-"+suffix || labels["tnl_publisher_group_id"] != "" || labels["tnl_publisher_identity_id"] != "publisher-"+suffix || labels["tnl_service_id"] != "" {
 				t.Fatal("group phase crossed scope", labels)
 			}
 			seen[suffix+":"+operation] = true

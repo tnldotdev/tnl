@@ -5,224 +5,176 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"testing"
-	"time"
 
-	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
-	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/naming/tcpport"
-	"github.com/tnldotdev/tnl/internal/security/targettrust"
 )
 
 func TestIntegrationPublisherGroupBindings(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "group_bindings")
 	ctx := t.Context()
-	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"customer": {Template: true}}, Services: map[string]ProjectServiceConfiguration{
-		"api":   {PublisherGroup: "customer", Protocol: "http", TargetBinding: "group"},
-		"fixed": {PublisherGroup: "customer", Protocol: "tcp", Target: "localhost:22"},
-	}}
-	current, err := d.ApplyProjectConfiguration(ctx, r)
-	if err != nil {
-		t.Fatal(err)
+	r := retainedEnvironmentProject(t, d, now)
+	definition := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"api": {Protocol: "http"}, "fixed": {Protocol: "tcp"}})
+	create := func(key, target string) CreateEnvironmentRequest {
+		return CreateEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, SourceFingerprint: r.SourceFingerprint, Name: key, DefinitionRevision: definition.Revision, Targets: EnvironmentTargets{"api": {Address: target}, "fixed": {Address: "localhost:22"}}, IdempotencyKey: key, Now: now}
 	}
-	create := func(key, target string, revision int64) CreateBoundPublisherGroupRequest {
-		return CreateBoundPublisherGroupRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, ExpectedRevision: revision, Now: now, Creation: PublisherGroupCreation{Template: "customer", IdempotencyKey: key, Bindings: PublisherGroupBindings{"api": {Target: target}}}}
+	bad := create("missing", "localhost:3000")
+	bad.Targets = nil
+	if _, err := d.CreateEnvironment(ctx, bad); !errors.Is(err, ErrEnvironmentInvalid) {
+		t.Fatal("missing target", err)
 	}
-	bad := create("missing", "localhost:3000", current.Revision)
-	bad.Creation.Bindings = nil
-	if _, err = d.CreateBoundPublisherGroup(ctx, bad); !errors.Is(err, ErrProjectConfigurationInvalid) {
-		t.Fatal("missing binding", err)
-	}
-	firstRequest := create("external/customer/42", "http://192.0.2.42:3000/", current.Revision)
+	firstRequest := create("external/customer/42", "http://192.0.2.42:3000/")
 	beforeRequest, _ := json.Marshal(firstRequest)
-	first, err := d.CreateBoundPublisherGroup(ctx, firstRequest)
+	first, err := d.CreateEnvironment(ctx, firstRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
 	afterRequest, _ := json.Marshal(firstRequest)
 	if !bytes.Equal(beforeRequest, afterRequest) {
-		t.Fatal("creation mutated its caller's generated-name or binding inputs")
+		t.Fatal("creation mutated its caller")
 	}
-	if first.ID == "" || !naming.ValidServiceName(first.Name) || first.Name == firstRequest.Creation.IdempotencyKey || first.From != "customer" || len(first.Services) != 2 {
-		t.Fatal("invalid generated identity", first)
+	if !opaqueid.Valid(first.ID, opaqueid.EnvironmentPrefix) || first.Name != firstRequest.Name || first.AppliedDefinitionRevision != definition.Revision || len(first.Services) != 2 {
+		t.Fatal("invalid exact environment", first)
 	}
-	second, err := d.CreateBoundPublisherGroup(ctx, create("external/customer/43", "192.0.2.43:3000", first.Revision))
+	second, err := d.CreateEnvironment(ctx, create("external/customer/43", "192.0.2.43:3000"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if first.ID == second.ID || first.Services[0].ServiceID == second.Services[0].ServiceID {
 		t.Fatal("shared customer identities")
 	}
-	firstRequest.Creation.Bindings["api"] = PublisherGroupTargetBinding{Target: "192.0.2.42:3000"}
-	replayed, err := d.CreateBoundPublisherGroup(ctx, firstRequest)
-	if err != nil || replayed.ID != first.ID || replayed.Revision != second.Revision {
-		t.Fatal("semantic replay", replayed, err)
+	firstRequest.Targets["api"] = EnvironmentTarget{Address: "192.0.2.42:3000"}
+	replayed, err := d.CreateEnvironment(ctx, firstRequest)
+	if err != nil || !reflect.DeepEqual(replayed, first) {
+		t.Fatal("semantic replay", err)
 	}
 	changed := firstRequest
-	changed.Creation.Bindings = PublisherGroupBindings{"api": {Target: "192.0.2.99:3000"}}
-	if _, err = d.CreateBoundPublisherGroup(ctx, changed); !errors.Is(err, ErrServiceConflict) {
-		t.Fatal("key admitted a changed request", err)
+	changed.Targets = EnvironmentTargets{"api": {Address: "192.0.2.99:3000"}, "fixed": {Address: "localhost:22"}}
+	if _, err := d.CreateEnvironment(ctx, changed); !errors.Is(err, ErrServiceConflict) {
+		t.Fatal("key admitted changed intent", err)
 	}
 	unauthorized := firstRequest
 	unauthorized.ActorID = "missing"
-	if _, err = d.CreateBoundPublisherGroup(ctx, unauthorized); !errors.Is(err, ErrServiceAccess) {
+	if _, err := d.CreateEnvironment(ctx, unauthorized); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("replay bypassed authorization", err)
 	}
-
-	e1, err := d.IssuePublisherGroupEnrollment(ctx, r.TeamID, r.ProjectKey, first.ID, r.ActorID, 2, 10*time.Minute, now)
-	if err != nil {
-		t.Fatal(err)
+	e1 := retainedPublisherEnrollment(t, d, r, first, 2)
+	if e1.ProjectKey != r.ProjectKey || e1.EnvironmentID != first.ID || e1.TeamID != r.TeamID {
+		t.Fatal("missing exact installation context")
 	}
-	if e1.Publisher.Project != r.ProjectKey || e1.Publisher.Group != first.Name {
-		t.Fatal("missing installation context")
-	}
-	m1 := enrollAppliedGroup(t, d, r, e1, now)
-	e2, err := d.IssuePublisherGroupEnrollment(ctx, r.TeamID, r.ProjectKey, second.ID, r.ActorID, 1, 10*time.Minute, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	m2 := enrollAppliedGroup(t, d, r, e2, now)
-	assertTarget := func(member enrolledGroupReplica, target string) PublisherGroupServiceAssignment {
+	m1 := retainedPublisherReplica(t, d, e1, now)
+	m2 := enrollTestEnvironment(t, d, r, second)
+	assertTarget := func(member environmentPublisherReplica, target string) EnvironmentPublisherAssignment {
 		t.Helper()
-		assignments, err := d.GetPublisherGroupAssignments(ctx, member.lease.AccessToken, now)
+		assignments, err := d.GetEnvironmentPublisherAssignments(ctx, member.lease.AccessToken, now)
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, assignment := range assignments.Services {
 			if assignment.Service == "api" {
-				if assignment.Configuration.Target != target || assignment.Configuration.TargetBinding != "" {
-					t.Fatal("wrong exact assigned target", assignment)
+				if assignment.Configuration.Target != target {
+					t.Fatal("wrong exact target", assignment)
 				}
 				return assignment
 			}
 		}
 		t.Fatal("missing api assignment")
-		return PublisherGroupServiceAssignment{}
+		return EnvironmentPublisherAssignment{}
 	}
 	oldAssignment := assertTarget(m1, "192.0.2.42:3000")
 	_ = assertTarget(m2, "192.0.2.43:3000")
-	snapshot, err := targettrust.NewCache(nil).Capture(ctx, "", "192.0.2.42:8443", config.TrustSource{Hostname: new("api.customer.internal"), CA: "system"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	trust, err := snapshot.Declaration()
-	if err != nil {
-		t.Fatal(err)
-	}
-	updated, err := d.UpdatePublisherGroupBindings(ctx, r.TeamID, r.ProjectKey, first.ID, r.ActorID, second.Revision, PublisherGroupBindings{"api": {Target: "192.0.2.42:8443", TargetTLS: &ProjectTargetTLS{Hostname: trust.Hostname, Digest: trust.Digest}}}, false, now)
+	trust := appliedTargetTrust(t, "api.customer.internal")
+	targets := EnvironmentTargets{"api": {Address: "192.0.2.42:8443", TLS: trust}, "fixed": {Address: "localhost:22"}}
+	updated, err := d.ApplyEnvironment(ctx, ApplyEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, EnvironmentApplication: EnvironmentApplication{EnvironmentID: first.ID, ExpectedRevision: first.MutationRevision, DefinitionRevision: first.AppliedDefinitionRevision, Targets: targets}, Now: now})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if updated.ID != first.ID || updated.Services[0].ServiceID != first.Services[0].ServiceID || updated.Services[0].Hostname != first.Services[0].Hostname || updated.Services[0].Port != first.Services[0].Port {
-		t.Fatal("binding update replaced endpoint", updated)
+		t.Fatal("target update replaced endpoint")
 	}
 	newAssignment := assertTarget(m1, "192.0.2.42:8443")
-	if newAssignment.GrantID == oldAssignment.GrantID || newAssignment.TrustRevision <= oldAssignment.TrustRevision || newAssignment.Configuration.TargetTLS.Digest != trust.Digest {
-		t.Fatal("binding update retained old trust/grant", oldAssignment, newAssignment)
+	if newAssignment.GrantID != oldAssignment.GrantID || newAssignment.TrustRevision <= oldAssignment.TrustRevision || newAssignment.Configuration.TargetTLS.Digest != trust.Digest {
+		t.Fatal("apply conflated trust and grant authority")
 	}
-	_ = assertTarget(m2, "192.0.2.43:3000")
-	if _, err := d.UpdatePublisherGroupBindings(ctx, r.TeamID, r.ProjectKey, first.ID, r.ActorID, second.Revision, updated.Bindings, false, now); !errors.Is(err, ErrProjectConfigurationStale) {
-		t.Fatal("stale no-op binding update", err)
-	}
-	current, err = d.GetProjectConfiguration(ctx, r.TeamID, r.ProjectKey, r.ActorID)
-	if err != nil {
+	mutation := retainedPublisherGrantMutation(t, d, r, updated, m1.member.PublisherIdentityID, newAssignment.ServiceID)
+	if err := d.RevokeEnvironmentPublisherGrant(ctx, RevokeEnvironmentPublisherGrantRequest{EnvironmentPublisherGrantMutation: mutation, GrantID: oldAssignment.GrantID}); err != nil {
 		t.Fatal(err)
 	}
-	if current.Configuration.Services["api"].Target != "" || current.Configuration.Services["api"].TargetBinding != "group" {
-		t.Fatal("instance settings entered desired config")
+	if _, err := d.AuthorizeEnvironmentPublisherService(ctx, AuthorizeEnvironmentPublisherServiceRequest{EnvironmentPublisherGrantMutation: mutation, ExpectedPreviousGrantID: environmentPublisherGrantExpected(t, oldAssignment.GrantID), IdempotencyKey: "target-rotation"}); err != nil {
+		t.Fatal(err)
+	}
+	if assertTarget(m1, "192.0.2.42:8443").GrantID == oldAssignment.GrantID {
+		t.Fatal("explicit rotation retained old grant")
+	}
+	_ = assertTarget(m2, "192.0.2.43:3000")
+	if _, err := d.ApplyEnvironment(ctx, ApplyEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, EnvironmentApplication: EnvironmentApplication{EnvironmentID: first.ID, ExpectedRevision: first.MutationRevision, DefinitionRevision: first.AppliedDefinitionRevision, Targets: targets}, Now: now}); !errors.Is(err, ErrEnvironmentStale) {
+		t.Fatal("stale no-op target update", err)
+	}
+	stored, err := d.CreateServiceDefinition(ctx, CreateServiceDefinitionRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, ActorID: r.ActorID, Definition: definition.Definition, Now: now})
+	if err != nil || stored.Revision != definition.Revision || !reflect.DeepEqual(stored.Definition, definition.Definition) {
+		t.Fatal("instance targets entered shared definition", err)
 	}
 	var ciphertext []byte
-	if err := d.pool.QueryRow(ctx, `SELECT bindings_ciphertext FROM control.publisher_group_bindings WHERE group_id=$1`, first.ID).Scan(&ciphertext); err != nil {
-		t.Fatal(err)
+	if err := d.pool.QueryRow(ctx, `SELECT bindings_ciphertext FROM control.publisher_group_bindings WHERE group_id=(SELECT group_id FROM control.environments WHERE id=$1)`, first.ID).Scan(&ciphertext); err != nil || bytes.Contains(ciphertext, []byte("192.0.2.42")) || bytes.Contains(ciphertext, []byte(trust.Hostname)) {
+		t.Fatal("plaintext instance settings", err)
 	}
-	if bytes.Contains(ciphertext, []byte("192.0.2.42")) || bytes.Contains(ciphertext, []byte(trust.Hostname)) {
-		t.Fatal("plaintext instance settings")
-	}
-	r.ExpectedRevision = current.Revision
-	r.Configuration = current.Configuration
-	g := r.Configuration.PublisherGroups["customer"]
-	g.Description = "updated template"
-	r.Configuration.PublisherGroups["customer"] = g
-	current, err = d.ApplyProjectConfiguration(ctx, r)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// authoring a newer shared shape does not mutate existing environments.
+	environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"api": {Protocol: "postgres"}, "fixed": {Protocol: "tcp"}})
 	_ = assertTarget(m1, "192.0.2.42:8443")
 	_ = assertTarget(m2, "192.0.2.43:3000")
-	if err := d.RevokePublisherGroupMember(ctx, r.TeamID, r.ProjectKey, first.ID, m2.member.PublisherIdentityID, r.ActorID, now); err == nil {
+	if err := d.RevokeEnvironmentPublisher(ctx, environmentPublisherSelection(t, d, r, updated), m2.member.PublisherIdentityID, now); err == nil {
 		t.Fatal("cross-customer revocation")
 	}
-	if err := d.RevokePublisherGroupMember(ctx, r.TeamID, r.ProjectKey, first.ID, m1.member.PublisherIdentityID, r.ActorID, now); err != nil {
+	if err := d.RevokeEnvironmentPublisher(ctx, environmentPublisherSelection(t, d, r, updated), m1.member.PublisherIdentityID, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.GetPublisherGroupAssignments(ctx, m1.lease.AccessToken, now); !errors.Is(err, ErrPublisherGroup) {
-		t.Fatal("revoked exact member retains access", err)
+	if _, err := d.GetEnvironmentPublisherAssignments(ctx, m1.lease.AccessToken, now); !errors.Is(err, ErrEnvironmentPublisher) {
+		t.Fatal("revoked member retains access", err)
 	}
-	current, err = d.RemovePublisherGroup(ctx, r.TeamID, r.ProjectKey, first.ID, r.ActorID, current.Revision, false, now)
-	if err != nil {
+	if err := d.RetireEnvironment(ctx, RetireEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, EnvironmentID: first.ID, ExpectedRevision: updated.MutationRevision, Now: now}); err != nil {
 		t.Fatal(err)
 	}
-	retired, err := d.CreateBoundPublisherGroup(ctx, firstRequest)
-	if !errors.Is(err, ErrPublisherGroupRetired) || retired.ID != "" {
-		t.Fatal("retired key returned a usable create identity", retired, err)
+	retired, err := d.CreateEnvironment(ctx, firstRequest)
+	if !errors.Is(err, ErrEnvironmentRetired) || retired.ID != "" {
+		t.Fatal("retired create returned usable identity", err)
 	}
-	read, err := d.GetManagedPublisherGroup(ctx, r.TeamID, r.ProjectKey, first.ID, r.ActorID)
+	read, err := d.GetEnvironment(ctx, r.TeamID, r.ProjectKey, first.ID, r.ActorID)
 	if err != nil || !read.Retired || read.ID != first.ID {
-		t.Fatal("retired get", read, err)
+		t.Fatal("retired get", err)
 	}
-	if len(current.Groups) != 1 || current.Groups[0].ID != second.ID {
-		t.Fatal("retirement changed other group")
+	other, err := d.GetEnvironment(ctx, r.TeamID, r.ProjectKey, second.ID, r.ActorID)
+	if err != nil || other.Retired {
+		t.Fatal("retirement changed sibling", err)
 	}
 	_ = assertTarget(m2, "192.0.2.43:3000")
-	current, err = d.RemovePublisherGroup(ctx, r.TeamID, r.ProjectKey, second.ID, r.ActorID, current.Revision, false, now)
-	if err != nil {
+	if err := d.RetireEnvironment(ctx, RetireEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, EnvironmentID: second.ID, ExpectedRevision: second.MutationRevision, Now: now}); err != nil {
 		t.Fatal(err)
 	}
-	r.ExpectedRevision = current.Revision
-	r.Configuration = ProjectConfiguration{}
-	if _, err := d.ApplyProjectConfiguration(ctx, r); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := d.CreateBoundPublisherGroup(ctx, firstRequest); !errors.Is(err, ErrPublisherGroupRetired) {
-		t.Fatal("removed template changed retired key behavior", err)
+	environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"unrelated": {Protocol: "tcp"}})
+	if _, err := d.CreateEnvironment(ctx, firstRequest); !errors.Is(err, ErrEnvironmentRetired) {
+		t.Fatal("new definition changed retired key behavior", err)
 	}
 }
 
 func TestIntegrationPublisherGroupBoundDiscoveryAndReplayNormalization(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "bound_discovery")
 	ctx := t.Context()
-	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"customer": {Template: true}}, Services: map[string]ProjectServiceConfiguration{
-		"api":     {PublisherGroup: "customer", TargetBinding: "group"},
-		"cluster": {PublisherGroup: "customer", Protocol: "kubernetes", TargetBinding: "group"},
-		"db":      {PublisherGroup: "customer", Protocol: "postgres", TargetBinding: "group"},
-	}}
-	current, err := d.ApplyProjectConfiguration(ctx, r)
+	r := retainedEnvironmentProject(t, d, now)
+	definition := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"api": {Protocol: "http"}, "cluster": {Protocol: "kubernetes"}, "db": {Protocol: "postgres"}})
+	request := CreateEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, SourceFingerprint: r.SourceFingerprint, Name: "customer", DefinitionRevision: definition.Revision, Targets: EnvironmentTargets{"api": {Address: "http://192.0.2.1:3000/"}, "cluster": {Discovery: &ProjectTargetDiscovery{Type: "eks", Region: "us-east-1", Cluster: new("customer-one")}}, "db": {Discovery: &ProjectTargetDiscovery{Type: "rds", Region: "us-east-1", Cluster: new("customer-db")}}}, IdempotencyKey: "same-key", Now: now}
+	first, err := d.CreateEnvironment(ctx, request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := CreateBoundPublisherGroupRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, ExpectedRevision: current.Revision, Now: now, Creation: PublisherGroupCreation{Template: "customer", IdempotencyKey: "same-key", Bindings: PublisherGroupBindings{
-		"api":     {Target: "http://192.0.2.1:3000/"},
-		"cluster": {TargetDiscovery: &ProjectTargetDiscovery{Type: "eks", Region: "us-east-1", Cluster: new("customer-one")}},
-		"db":      {TargetDiscovery: &ProjectTargetDiscovery{Type: "rds", Region: "us-east-1", Cluster: new("customer-db")}},
-	}}}
-	first, err := d.CreateBoundPublisherGroup(ctx, request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// provider defaults and address shorthand are part of semantic equality.
 	canonical := request
-	canonical.Creation.Bindings = PublisherGroupBindings{
-		"db":      {TargetDiscovery: &ProjectTargetDiscovery{Type: "rds", Region: "us-east-1", Cluster: new("customer-db"), Endpoint: new("writer")}},
-		"cluster": {TargetDiscovery: &ProjectTargetDiscovery{Type: "eks", Region: "us-east-1", Cluster: new("customer-one")}},
-		"api":     {Target: "192.0.2.1:3000"},
-	}
-	replayed, err := d.CreateBoundPublisherGroup(ctx, canonical)
+	canonical.Targets = EnvironmentTargets{"api": {Address: "192.0.2.1:3000"}, "cluster": request.Targets["cluster"], "db": {Discovery: &ProjectTargetDiscovery{Type: "rds", Region: "us-east-1", Cluster: new("customer-db"), Endpoint: new("writer")}}}
+	replayed, err := d.CreateEnvironment(ctx, canonical)
 	if err != nil || replayed.ID != first.ID {
-		t.Fatal("provider-default replay", replayed, err)
+		t.Fatal("provider-default replay", err)
 	}
 	var clusterService string
 	for _, service := range first.Services {
@@ -232,111 +184,90 @@ func TestIntegrationPublisherGroupBoundDiscoveryAndReplayNormalization(t *testin
 	}
 	auth, err := d.visitorKubernetesAuth(ctx, controlstatedb.New(d.pool), clusterService)
 	if err != nil || auth == nil || auth.Cluster != "customer-one" || auth.Region != "us-east-1" {
-		t.Fatal("visitor projection lost exact bound EKS selector", auth, err)
+		t.Fatal("visitor lost exact EKS selector", err)
 	}
-	// the template's current protocol is not the normalization authority for an
-	// older create request. the immutable create record retains that context.
-	r.ExpectedRevision = first.Revision
-	api := r.Configuration.Services["api"]
-	api.Protocol = "postgres"
-	r.Configuration.Services["api"] = api
-	if _, err := d.ApplyProjectConfiguration(ctx, r); !errors.Is(err, ErrProjectConfigurationInvalid) {
-		t.Fatal("protocol changed without explicit approval", err)
+	changed := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"api": {Protocol: "postgres"}, "cluster": {Protocol: "kubernetes"}, "db": {Protocol: "postgres"}})
+	if _, err := d.ApplyEnvironment(ctx, ApplyEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, EnvironmentApplication: EnvironmentApplication{EnvironmentID: first.ID, ExpectedRevision: first.MutationRevision, DefinitionRevision: changed.Revision}, Now: now}); !errors.Is(err, ErrEnvironmentInvalid) {
+		t.Fatal("protocol changed without target approval", err)
 	}
-	r.GroupBindings = map[string]PublisherGroupBindings{first.ID: canonical.Creation.Bindings}
-	current, err = d.ApplyProjectConfiguration(ctx, r)
+	updated, err := d.ApplyEnvironment(ctx, ApplyEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, EnvironmentApplication: EnvironmentApplication{EnvironmentID: first.ID, ExpectedRevision: first.MutationRevision, DefinitionRevision: changed.Revision, Targets: canonical.Targets}, Now: now})
 	if err != nil {
 		t.Fatal(err)
 	}
-	replayed, err = d.CreateBoundPublisherGroup(ctx, request)
-	if err != nil || replayed.ID != first.ID || replayed.Revision != current.Revision {
-		t.Fatal("template change broke immutable replay", replayed, err)
+	replayed, err = d.CreateEnvironment(ctx, request)
+	if err != nil || replayed.ID != first.ID || replayed.MutationRevision != updated.MutationRevision {
+		t.Fatal("new definition broke immutable replay", err)
 	}
-	// keys are project-scoped rather than global customer identifiers.
-	r.ProjectKey = "other"
-	r.ExpectedRevision = 0
-	r.GroupBindings = nil
-	current, err = d.ApplyProjectConfiguration(ctx, r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	canonical.ProjectKey = r.ProjectKey
-	canonical.ExpectedRevision = current.Revision
-	second, err := d.CreateBoundPublisherGroup(ctx, canonical)
+	other := r
+	other.ProjectKey = "other"
+	otherDefinition := environmentDefinition(t, d, other, definition.Definition.Services)
+	canonical.ProjectKey = other.ProjectKey
+	canonical.DefinitionRevision = otherDefinition.Revision
+	second, err := d.CreateEnvironment(ctx, canonical)
 	if err != nil || second.ID == first.ID {
-		t.Fatal("key was not project-scoped", second, err)
+		t.Fatal("key was not project scoped", err)
 	}
 }
 
 func TestIntegrationPublisherGroupBindingsAtomicApply(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "group_bindings_atomic")
 	ctx := t.Context()
+	r := retainedEnvironmentProject(t, d, now)
 	if err := d.ConfigureIngressServicePorts(ctx, PrimaryIngressPoolID, []tcpport.Range{{First: 25443, Last: 25444}}); err != nil {
 		t.Fatal(err)
 	}
-	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"customer": {Template: true}}, Services: map[string]ProjectServiceConfiguration{"api": {PublisherGroup: "customer", TargetBinding: "group"}}}
-	current, err := d.ApplyProjectConfiguration(ctx, r)
-	if err != nil {
-		t.Fatal(err)
+	definition := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"api": {Protocol: "http"}})
+	var environments []Environment
+	for i := range 2 {
+		e, _ := createTestEnvironment(t, d, r, fmt.Sprintf("customer-%d", i), definition.Revision, EnvironmentTargets{"api": {Address: fmt.Sprintf("192.0.2.%d:3000", i+1)}})
+		environments = append(environments, e)
 	}
-	groups := []PublisherGroupResource{}
-	for i := 0; i < 2; i++ {
-		group, err := d.CreateBoundPublisherGroup(ctx, CreateBoundPublisherGroupRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, ExpectedRevision: current.Revision, Now: now, Creation: PublisherGroupCreation{Name: fmt.Sprintf("customer-%d", i), Template: "customer", Bindings: PublisherGroupBindings{"api": {Target: fmt.Sprintf("192.0.2.%d:3000", i+1)}}}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		current.Revision = group.Revision
-		groups = append(groups, group)
+	grown := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"api": {Protocol: "http"}, "db": {Protocol: "postgres"}})
+	request := ApplyEnvironmentsRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, Now: now}
+	for i, e := range environments {
+		request.Items = append(request.Items, EnvironmentApplication{EnvironmentID: e.ID, ExpectedRevision: e.MutationRevision, DefinitionRevision: grown.Revision, Targets: EnvironmentTargets{"api": {Address: fmt.Sprintf("192.0.2.%d:3001", i+1)}, "db": {Address: fmt.Sprintf("192.0.2.%d:5432", i+1)}}})
 	}
-	r.ExpectedRevision = current.Revision
-	r.Configuration.Services["db"] = ProjectServiceConfiguration{PublisherGroup: "customer", Protocol: "postgres", TargetBinding: "group"}
-	r.GroupBindings = map[string]PublisherGroupBindings{groups[0].ID: {"api": {Target: "192.0.2.1:3001"}, "db": {Target: "192.0.2.1:5432"}}}
-	if _, err := d.ApplyProjectConfiguration(ctx, r); !errors.Is(err, ErrProjectConfigurationInvalid) {
-		t.Fatal("missing customer binding accepted", err)
+	before := privateOwnershipSnapshot(t, d)
+	bad := request
+	bad.Items = append([]EnvironmentApplication(nil), request.Items...)
+	bad.Items[1].Targets = nil
+	if _, err := d.ApplyEnvironments(ctx, bad); !errors.Is(err, ErrEnvironmentInvalid) {
+		t.Fatal("missing environment approval accepted", err)
 	}
-	r.GroupBindings[groups[1].ID] = PublisherGroupBindings{"api": {Target: "192.0.2.2:3001"}, "db": {Target: "192.0.2.2:5432"}}
-	if _, err := d.ApplyProjectConfiguration(ctx, r); !errors.Is(err, ErrServicePortsExhausted) {
+	if _, err := d.ApplyEnvironments(ctx, request); !errors.Is(err, ErrServicePortsExhausted) {
 		t.Fatal("capacity failure accepted", err)
 	}
-	after, err := d.GetProjectConfiguration(ctx, r.TeamID, r.ProjectKey, r.ActorID)
-	if err != nil || after.Revision != current.Revision || len(after.Services) != 2 || after.Groups[0].Bindings["api"].Target != "192.0.2.1:3000" {
-		t.Fatal("failed apply partially saved", after, err)
+	if !reflect.DeepEqual(before, privateOwnershipSnapshot(t, d)) {
+		t.Fatal("failed batch partially committed")
 	}
 	if err := d.ConfigureIngressServicePorts(ctx, PrimaryIngressPoolID, []tcpport.Range{{First: 25443, Last: 25446}}); err != nil {
 		t.Fatal(err)
 	}
-	after, err = d.ApplyProjectConfiguration(ctx, r)
-	if err != nil || len(after.Services) != 4 {
-		t.Fatal("atomic apply failed", after, err)
+	after, err := d.ApplyEnvironments(ctx, request)
+	if err != nil || len(after) != 2 {
+		t.Fatal("atomic batch failed", err)
 	}
-	for _, before := range groups {
-		for _, group := range after.Groups {
-			if group.ID == before.ID && group.Bindings["api"].Target == before.Bindings["api"].Target {
-				t.Fatal("binding batch not applied")
-			}
+	for _, e := range after {
+		if len(e.Services) != 2 || e.Targets["api"].Address == environments[0].Targets["api"].Address || e.MutationRevision != 2 {
+			t.Fatal("batch target/revision not applied")
 		}
 	}
 }
 
 func TestIntegrationPublisherGroupCreateIdempotencyConcurrency(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "group_creation_race")
-	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"customer": {Template: true}}, Services: map[string]ProjectServiceConfiguration{"api": {PublisherGroup: "customer", TargetBinding: "group"}}}
-	current, err := d.ApplyProjectConfiguration(t.Context(), r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	request := CreateBoundPublisherGroupRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, ExpectedRevision: current.Revision, Now: now, Creation: PublisherGroupCreation{Template: "customer", IdempotencyKey: "customer/id", Bindings: PublisherGroupBindings{"api": {Target: "192.0.2.1:3000"}}}}
+	r := retainedEnvironmentProject(t, d, now)
+	definition := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"api": {Protocol: "http"}})
+	request := CreateEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, SourceFingerprint: r.SourceFingerprint, Name: "customer", DefinitionRevision: definition.Revision, Targets: EnvironmentTargets{"api": {Address: "192.0.2.1:3000"}}, IdempotencyKey: "customer/id", Now: now}
 	const workers = 8
 	var wg sync.WaitGroup
-	results := make(chan PublisherGroupResource, workers)
+	results := make(chan Environment, workers)
 	failures := make(chan error, workers)
 	start := make(chan struct{})
 	for range workers {
 		wg.Go(func() {
 			<-start
-			result, err := d.CreateBoundPublisherGroup(t.Context(), request)
+			result, err := d.CreateEnvironment(t.Context(), request)
 			results <- result
 			failures <- err
 		})
@@ -359,8 +290,12 @@ func TestIntegrationPublisherGroupCreateIdempotencyConcurrency(t *testing.T) {
 			t.Fatal("duplicate allocation", id, result.ID)
 		}
 	}
-	after, err := d.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, r.ActorID)
-	if err != nil || len(after.Groups) != 1 || len(after.Services) != 1 || after.Revision != current.Revision+1 {
-		t.Fatal("race allocated more than once", after, err)
+	after, err := d.GetEnvironment(t.Context(), r.TeamID, r.ProjectKey, id, r.ActorID)
+	if err != nil || len(after.Services) != 1 || after.MutationRevision != 1 {
+		t.Fatal("race allocated more than once", err)
+	}
+	var count int
+	if err := d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.environments WHERE team_id=$1 AND project_key=$2`, r.TeamID, r.ProjectKey).Scan(&count); err != nil || count != 1 {
+		t.Fatal("race created extra environments", err)
 	}
 }

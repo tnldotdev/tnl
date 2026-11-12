@@ -57,7 +57,7 @@ func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, i
 	for _, path := range result.UpdatedPaths {
 		fields = append(fields, clioutput.Field{Label: "updated", Value: path})
 	}
-	fields = append(fields, clioutput.Field{Label: "types", Value: result.DeclarationsPath})
+	fields = append(fields, clioutput.Field{Label: "services", Value: result.ProjectPath})
 	if result.PythonPackagePath != "" {
 		fields = append(fields, clioutput.Field{Label: "python", Value: result.PythonPackagePath})
 	}

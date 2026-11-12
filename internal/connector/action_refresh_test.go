@@ -3,109 +3,108 @@ package connector
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
+	"sync/atomic"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
-	"github.com/tnldotdev/tnl/internal/config"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
+	"github.com/tnldotdev/tnl/internal/connector/workload"
 )
 
 func TestConnectionActionRefreshRequiresSelectedGitHubPolicy(t *testing.T) {
 	for _, test := range []struct {
 		name   string
-		change func(*OwnerStartOptions, *projectConfiguration, *connectorruntime.StartRequest)
+		change func(*connectorConnectionBackend, *connectorruntime.EnvironmentStart)
 	}{
-		{"selected policy", nil},
-		{"other audience", func(_ *OwnerStartOptions, _ *projectConfiguration, r *connectorruntime.StartRequest) {
+		{"selected explicit source", nil},
+		{"other audience", func(_ *connectorConnectionBackend, r *connectorruntime.EnvironmentStart) {
 			r.GitHubActionsRefresh.Audience = "https://other.example.test"
 		}},
-		{"initial assertion required", func(_ *OwnerStartOptions, _ *projectConfiguration, r *connectorruntime.StartRequest) {
-			r.Assertion = ""
+		{"initial native acquisition required", func(_ *connectorConnectionBackend, r *connectorruntime.EnvironmentStart) {
+			r.Acquisition = nil
 		}},
-		{"workload required", func(_ *OwnerStartOptions, _ *projectConfiguration, r *connectorruntime.StartRequest) {
-			r.Context.Workload = ""
+		{"one refresh source", func(_ *connectorConnectionBackend, r *connectorruntime.EnvironmentStart) {
+			r.Environment = &connectorruntime.SDKEnvironment{GitHubRequestToken: "other.private.bearer"}
 		}},
-		{"one refresh source", func(_ *OwnerStartOptions, _ *projectConfiguration, r *connectorruntime.StartRequest) {
-			r.Refresh = &workloadmanifest.Acquisition{Method: "token-file", TokenFile: "/run/current.jwt"}
+		{"SDK parent is not Action ownership", func(b *connectorConnectionBackend, _ *connectorruntime.EnvironmentStart) {
+			b.parentPID = 123
 		}},
-		{"SDK parent is not Action ownership", func(o *OwnerStartOptions, _ *projectConfiguration, _ *connectorruntime.StartRequest) {
-			o.ParentPID = 123
+		{"SDK registry is not Action ownership", func(b *connectorConnectionBackend, _ *connectorruntime.EnvironmentStart) {
+			b.sdk = &SDKOptions{}
 		}},
-		{"SDK registry is not Action ownership", func(o *OwnerStartOptions, _ *projectConfiguration, _ *connectorruntime.StartRequest) {
-			o.SDKRegistry = "/run/sdk"
+		{"other native method with the same OIDC kind", func(_ *connectorConnectionBackend, r *connectorruntime.EnvironmentStart) {
+			r.Acquisition.Method = "fly-machine-api"
 		}},
-		{"other provider", func(_ *OwnerStartOptions, p *projectConfiguration, _ *connectorruntime.StartRequest) {
-			p.Config.Workloads["job"] = config.Workload{Fly: &config.WorkloadFly{App: "example"}}
+		{"selected file is not job runtime acquisition", func(_ *connectorConnectionBackend, r *connectorruntime.EnvironmentStart) {
+			r.Acquisition = &workload.Acquisition{Method: "token-file", TokenFile: "/run/current.jwt"}
 		}},
-		{"selected file is not runtime acquisition", func(_ *OwnerStartOptions, p *projectConfiguration, _ *connectorruntime.StartRequest) {
-			policy := p.Config.Workloads["job"]
-			policy.Token = &config.WorkloadToken{File: new("current.jwt")}
-			p.Config.Workloads["job"] = policy
-		}},
-		{"insecure source", func(_ *OwnerStartOptions, _ *projectConfiguration, r *connectorruntime.StartRequest) {
+		{"insecure source", func(_ *connectorConnectionBackend, r *connectorruntime.EnvironmentStart) {
 			r.GitHubActionsRefresh.RequestURL = "http://runtime.example.test/token"
 		}},
-		{"missing source credential", func(_ *OwnerStartOptions, _ *projectConfiguration, r *connectorruntime.StartRequest) {
+		{"missing source credential", func(_ *connectorConnectionBackend, r *connectorruntime.EnvironmentStart) {
 			r.GitHubActionsRefresh.RequestToken = ""
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			options := OwnerStartOptions{ContextOptions: ContextOptions{Workload: "job"}}
-			project := projectConfiguration{}
-			project.Config.Workloads = map[string]config.Workload{"job": {GitHub: &config.WorkloadGitHub{Workflow: ".github/workflows/job.yml"}}}
-			request := connectorruntime.StartRequest{Schema: 1, Context: connectorruntime.Context{Workload: "job", Audience: "https://control.example.test"}, Assertion: "initial.private.jwt", GitHubActionsRefresh: &connectorruntime.GitHubActionsRefresh{Audience: "https://control.example.test", RequestURL: "https://runtime.example.test/token", RequestToken: "private-runtime-bearer"}}
+			b := &connectorConnectionBackend{}
+			request := explicitEnvironmentStart()
+			request.Acquisition = &workload.Acquisition{Method: "github-actions", Audience: request.Selection.Environment.Server}
+			request.GitHubActionsRefresh = &connectorruntime.GitHubActionsRefresh{Audience: request.Acquisition.Audience, RequestURL: "https://runtime.example.test/token", RequestToken: "private-runtime-bearer"}
 			if test.change != nil {
-				test.change(&options, &project, &request)
+				test.change(b, &request)
 			}
-			err := validateGitHubActionsRefresh(options, project, request)
+			err := b.configureEnvironmentAcquisition(request)
 			if test.change == nil && err != nil || test.change != nil && !errors.Is(err, connectorruntime.ErrInvalid) {
 				t.Fatal("Action refresh did not retain its selected source boundary", err)
+			}
+			if err != nil && (b.environmentAcquire != nil || b.environmentAcquisition != nil || b.refreshAssertion != nil) {
+				t.Fatal("invalid private job source installed acquisition or refresh")
 			}
 		})
 	}
 }
 
 func TestConnectionActionRefreshPinsManifestSelection(t *testing.T) {
-	manifest := workloadmanifest.Manifest{Schema: 1, Server: "https://control.example.test", Team: "team", ProjectKey: "project", ProjectLabel: "app", SourceFingerprint: strings.Repeat("a", 64), Services: map[string]string{"db": "postgres"}, Workloads: map[string]workloadmanifest.Workload{"job": {Provider: "github", Services: []string{"db"}, MaxDurationSeconds: 3600, Acquisition: workloadmanifest.Acquisition{Method: "github-actions", Audience: "https://control.example.test"}}}}
-	file := filepath.Join(t.TempDir(), "workloads.json")
-	write := func() {
-		t.Helper()
-		data, err := json.Marshal(manifest)
-		if err != nil {
-			t.Fatal(err)
+	// retain this selector while moving its pin from an implicit manifest to the
+	// explicit private source. saved provider policy is authority-owned, not read
+	// from the checkout. the external suite proves its exact Prepare 403 boundary.
+	var calls atomic.Int32
+	provider := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.URL.Query().Get("audience") != "approved-audience" || r.Header.Get("Authorization") != "Bearer private.original.bearer" {
+			t.Error("native resampled its selected job source")
+			w.WriteHeader(http.StatusForbidden)
+			return
 		}
-		if err := os.WriteFile(file, data, 0600); err != nil {
-			t.Fatal(err)
-		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"value": "private.original.proof"})
+	}))
+	defer provider.Close()
+	previous := http.DefaultTransport
+	http.DefaultTransport = provider.Client().Transport
+	defer func() { http.DefaultTransport = previous }()
+	request := explicitEnvironmentStart()
+	request.Acquisition = &workload.Acquisition{Method: "github-actions", Audience: "approved-audience"}
+	request.GitHubActionsRefresh = &connectorruntime.GitHubActionsRefresh{Audience: request.Acquisition.Audience, RequestURL: provider.URL, RequestToken: "private.original.bearer"}
+	client, err := workload.New(request.Selection.Environment.Server, nil)
+	if err != nil { t.Fatal(err) }
+	directory := t.TempDir()
+	b := &connectorConnectionBackend{scope: environmentContext(request.Selection, directory), directory: directory, environmentSource: request.Source, connectorConnectionSession: connectorConnectionSession{workload: client}}
+	if err := b.configureEnvironmentAcquisition(request); err != nil { t.Fatal(err) }
+	if calls.Load() != 0 { t.Fatal("source selection acquired an assertion") }
+	request.Acquisition.Method = "fly-machine-api"
+	request.Acquisition.Audience = "replacement-audience"
+	request.GitHubActionsRefresh.RequestURL = "https://must-not-read.invalid/token"
+	request.GitHubActionsRefresh.RequestToken = "private.replacement.bearer"
+	if err := os.WriteFile(filepath.Join(directory, "workloads.json"), []byte(`{"provider":"fly","max_duration_seconds":1}`), 0o600); err != nil { t.Fatal(err) }
+	for _, acquire := range []func() (string, error){
+		func() (string, error) { return b.acquireEnvironmentAssertion(t.Context()) },
+		func() (string, error) { return b.refreshAssertion(t.Context()) },
+	} {
+		proof, err := acquire()
+		if err != nil || proof != "private.original.proof" { t.Fatal("native switched its pinned private source", err) }
 	}
-	write()
-	options := OwnerStartOptions{ContextOptions: ContextOptions{Directory: filepath.Dir(file), Manifest: file, Workload: "job"}}
-	project, scope, err := connectionProject(t.Context(), options.ContextOptions)
-	if err != nil {
-		t.Fatal(err)
-	}
-	request := connectorruntime.StartRequest{Schema: 1, Context: scope, Assertion: "initial.private.jwt", GitHubActionsRefresh: &connectorruntime.GitHubActionsRefresh{Audience: scope.Audience, RequestURL: "https://runtime.example.test/token", RequestToken: "private-runtime-bearer"}}
-	if err := validateGitHubActionsRefresh(options, project, request); err != nil {
-		t.Fatal("selected GitHub manifest rejected", err)
-	}
-	policy := manifest.Workloads["job"]
-	policy.MaxDurationSeconds = 1800
-	manifest.Workloads["job"] = policy
-	write()
-	if err := validateGitHubActionsRefresh(options, project, request); !errors.Is(err, connectorruntime.ErrInvalid) {
-		t.Fatal("refresh silently switched to a changed manifest", err)
-	}
-	policy.Provider, policy.Acquisition = "vercel", workloadmanifest.Acquisition{Method: "vercel-oidc"}
-	manifest.Workloads["job"] = policy
-	write()
-	project, request.Context, err = connectionProject(t.Context(), options.ContextOptions)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := validateGitHubActionsRefresh(options, project, request); !errors.Is(err, connectorruntime.ErrInvalid) {
-		t.Fatal("GitHub source accepted a non-GitHub manifest", err)
-	}
+	if calls.Load() != 2 { t.Fatal("startup and refresh did not each acquire exactly once", calls.Load()) }
 }

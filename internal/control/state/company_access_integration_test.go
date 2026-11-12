@@ -620,14 +620,15 @@ func TestIntegrationCompanyOffboardingClosesMemberPublicAndServiceRuns(t *testin
 	}
 	memberPrivate, memberPrivateKey := servicePublisher("member")
 	teamPrivate, teamPrivateKey := servicePublisher("team")
-	groupRequest := ApplyProjectConfigurationRequest{TeamID: team, ActorID: f.member.IdentityID, ProjectKey: "company-publishers", SourceFingerprint: strings.Repeat("a", 64), Configuration: ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"group-database": {PublisherGroup: "production", Protocol: "postgres", Target: "localhost:5432"}}}, Now: now}
-	if _, err = d.ApplyProjectConfiguration(t.Context(), groupRequest); err != nil {
-		t.Fatal(err)
-	}
-	groupEnrollment, err := d.IssuePublisherGroupEnrollment(t.Context(), team, groupRequest.ProjectKey, "production", f.member.IdentityID, 1, time.Hour, now)
+	memberSession, err := d.createControlSession(t.Context(), controlstatedb.New(d.pool), f.member.IdentityID, time.Hour, 24*time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
+	groupRequest := environmentPublisherTestProject{TeamID: team, ActorID: f.member.IdentityID, ProjectKey: "company-publishers", SourceFingerprint: strings.Repeat("a", 64), AccessToken: memberSession.AccessToken, Now: now}
+	group, _ := retainedServiceEnvironment(t, d, groupRequest, "production", map[string]EnvironmentServicePublication{"group-database": {Protocol: "postgres", Target: "localhost:5432"}})
+	groupEnrollment := retainedPublisherEnrollment(t, d, groupRequest, group, 1)
+	replica := retainedPublisherReplica(t, d, groupEnrollment, now)
+	pendingEnrollment := retainedPublisherEnrollment(t, d, groupRequest, group, 1)
 	ownerSession, err := createTestControlSession(t.Context(), d, "managed.example.test", time.Hour, 24*time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
@@ -651,8 +652,8 @@ func TestIntegrationCompanyOffboardingClosesMemberPublicAndServiceRuns(t *testin
 		name := fmt.Sprintf("plan-relay-%d", i)
 		leases[name] = RelayLease{RelayLeaseIdentity: RelayLeaseIdentity{RelayServiceID: name, RelayID: name, RelayRunID: name + "-run", RelayLeaseRevision: 1}}
 	}
-	serviceRun := readyAppliedServiceRun(t, d, PublisherAccess{PublisherIdentity: memberPrivate}, memberPrivateKey, service, leases, now)
-	teamServiceRun := readyAppliedServiceRun(t, d, PublisherAccess{PublisherIdentity: teamPrivate}, teamPrivateKey, service, leases, now)
+	serviceRun := readyAppliedServiceRun(t, d, PublisherAccess{PublisherIdentity: memberPrivate}, memberPrivateKey, service, leases, now, nil)
+	teamServiceRun := readyAppliedServiceRun(t, d, PublisherAccess{PublisherIdentity: teamPrivate}, teamPrivateKey, service, leases, now, nil)
 	var beforeRefresh int64
 	if err = d.pool.QueryRow(t.Context(), `SELECT policy_revision FROM control.teams WHERE id=$1`, team).Scan(&beforeRefresh); err != nil {
 		t.Fatal(err)
@@ -679,7 +680,16 @@ func TestIntegrationCompanyOffboardingClosesMemberPublicAndServiceRuns(t *testin
 	if _, err = d.HeartbeatServiceRun(t.Context(), service.ID, serviceRun.RunID, serviceRun.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64}); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("offboarded member private run renewed", err)
 	}
-	replica := enrollAppliedGroup(t, d, groupRequest, groupEnrollment, now)
+	pendingPublic, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.RedeemEnvironmentPublisherEnrollment(t.Context(), pendingEnrollment.Key, pendingPublic, now); !errors.Is(err, ErrEnvironmentPublisher) {
+		t.Fatal("pending enrollment bypassed offboarded issuer", err)
+	}
+	if _, err := d.GetEnvironmentPublisherAssignments(t.Context(), replica.lease.AccessToken, now); err != nil {
+		t.Fatal("installed team publisher depended on creator", err)
+	}
 	var groupOwnership string
 	if err = d.pool.QueryRow(t.Context(), `SELECT ownership FROM control.publisher_identities WHERE id=$1`, replica.member.PublisherIdentityID).Scan(&groupOwnership); err != nil || groupOwnership != "team" {
 		t.Fatal("group creator remained runtime owner", groupOwnership, err)

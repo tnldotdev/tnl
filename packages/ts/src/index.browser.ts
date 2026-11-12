@@ -4,7 +4,7 @@ import type { TnlRuntime } from "./index.js";
 import { TnlError } from "./errors.js";
 import { awaitableConnection } from "./internal/connector/awaitable_connection.js";
 export type * from "./project.js";
-export type { TnlRuntime, TnlProjectConfig } from "./index.js";
+export type { TnlRuntime } from "./index.js";
 export { TnlError, type TnlErrorCode } from "./errors.js";
 
 declare const process: { readonly env?: { readonly TNL_PROJECT_RUNTIME?: string } } | undefined;
@@ -14,7 +14,7 @@ const runtime = parseRuntimePayload(
 );
 
 /** Browser-safe project metadata; listener registration is server-only. */
-export const tnl = Object.freeze({
+export const tnl: TnlRuntime = Object.freeze({
   ...runtime,
   get services() {
     return serviceMetadata(runtime);
@@ -40,4 +40,4 @@ export const tnl = Object.freeze({
   client(): never {
     throw new TnlError("sdk.connection_server_only");
   },
-}) as unknown as TnlRuntime;
+});

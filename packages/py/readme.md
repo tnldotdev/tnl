@@ -74,3 +74,45 @@ Use `await tnl.connect("database")` to get settings for a declared service.
 The platform wheel includes the native tnl binary required for every protocol.
 See [Python connection examples](https://github.com/tnldotdev/tnl/blob/main/packages/py/connections.md) for PostgreSQL, TCP, Kubernetes,
 and the current MySQL and HTTP adapter limits.
+
+For a deployed app, run `tnl generate` and install its generated facts:
+
+```console
+uv add --editable ./.tnl/generated/python
+```
+
+Then construct an independent client with an approved environment reference and
+visitor identity. This example rereads an explicitly selected OIDC token file:
+
+```python
+import asyncio
+from pathlib import Path
+
+import tnl
+from tnl_project import services
+
+
+async def assertion(challenge: tnl.IdentityChallenge) -> str:
+    return (await asyncio.to_thread(Path("/var/run/secrets/tnl/token").read_text)).strip()
+
+
+async def connect_database() -> None:
+    async with tnl.client(
+        services=services,
+        environment=tnl.EnvironmentReference(
+            "https://control.example", "catalog", "env_1234567890123456789012"
+        ),
+        identity=tnl.IdentitySource("oidc", "mwp_1234567890123456789012", assertion),
+    ) as client:
+        database = await client.connect("database")
+        # pass database's address and verified TLS settings to your driver.
+        print(database.host, database.port)
+```
+
+Use your server's saved reference and visitor permission, not these example
+values. Generated facts supply names and protocols; they grant no access and
+contain no targets or credentials. The client never selects an environment from
+the working directory or a mutable process-wide default. Closing it leaves other
+clients and local `tnl.connect` alone. A `registered-key` identity callback signs
+the native challenge's `scope` and `audience` using its registered identity key,
+not a publisher credential or the native session key.

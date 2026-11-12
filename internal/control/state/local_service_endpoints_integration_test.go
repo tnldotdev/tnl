@@ -12,8 +12,8 @@ import (
 
 func TestIntegrationPrivateManagedLocalNamespacesAndCapturedPlans(t *testing.T) {
 	d, now, _, _ := newPublishRunPrerequisites(t)
-	r := appliedProjectRequest(t, d, now)
-	declaration := ProjectServiceConfiguration{Name: "orders", Protocol: "postgres", Target: "db.internal:5432"}
+	r := retainedEnvironmentProject(t, d, now)
+	declaration := LocalServiceDeclaration{Name: "orders", Protocol: "postgres", Target: "db.internal:5432"}
 	request := RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ActorID: r.ActorID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Service: "orders", WorktreeKey: "source-worktree-a", WorktreeLabel: "feature-a", Configuration: declaration, Now: now}
 	first, err := d.RealizeLocalProjectService(t.Context(), request)
 	if err != nil {

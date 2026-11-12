@@ -8,6 +8,9 @@ func NormalizePublicURLs(config *TNL) {
 	for _, service := range config.Services {
 		normalizeTunnelPublicURL(service.Tunnel)
 	}
+	for _, target := range config.Environments["local"].Targets {
+		normalizeTunnelPublicURL(target.Tunnel)
+	}
 	for name, alias := range config.Aliases {
 		if alias.PublicURL != nil {
 			hostname, err := naming.ParseExactPublicURL(*alias.PublicURL)

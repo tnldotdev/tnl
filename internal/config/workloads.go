@@ -12,7 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 )
 
-// workload declares provider identity constraints and exact service rights.
+// workload declares provider identity constraints and exact visitor approval intent.
 type Workload struct {
 	GitHub      *WorkloadGitHub     `json:"github,omitempty" yaml:"github,omitempty"`
 	GitLab      *WorkloadGitLab     `json:"gitlab,omitempty" yaml:"gitlab,omitempty"`
@@ -22,7 +22,7 @@ type Workload struct {
 	Kubernetes  *WorkloadKubernetes `json:"kubernetes,omitempty" yaml:"kubernetes,omitempty"`
 	OIDC        *WorkloadOIDC       `json:"oidc,omitempty" yaml:"oidc,omitempty"`
 	Token       *WorkloadToken      `json:"token,omitempty" yaml:"token,omitempty"`
-	Services    []string            `json:"services" yaml:"services" jsonschema:"required,minItems=1,maxItems=32,uniqueItems=true" jsonschema_description:"exact configured service keys assigned to named publisher groups; local services cannot be workload targets."`
+	Services    []string            `json:"visit" yaml:"visit" jsonschema:"required,minItems=1,maxItems=32,uniqueItems=true" jsonschema_description:"Explicit service allowlist within this environment. New service names never receive access automatically."`
 	MaxDuration *Duration           `json:"max_duration,omitempty" yaml:"max_duration,omitempty" jsonschema_description:"Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof."`
 }
 
@@ -30,7 +30,7 @@ type WorkloadGitHub struct {
 	Repository       *string  `json:"repository,omitempty" yaml:"repository,omitempty"`
 	Workflow         string   `json:"workflow" yaml:"workflow"`
 	Environment      *string  `json:"environment,omitempty" yaml:"environment,omitempty"`
-	Branch           *string  `json:"branch,omitempty" yaml:"branch,omitempty" jsonschema_description:"Exact branch; defaults to the repository default branch resolved during apply. Mutually exclusive with tag."`
+	Branch           *string  `json:"branch,omitempty" yaml:"branch,omitempty" jsonschema_description:"Exact branch; defaults to the repository default branch resolved during explicit workload approval. Mutually exclusive with tag."`
 	Tag              *string  `json:"tag,omitempty" yaml:"tag,omitempty" jsonschema_description:"Exact tag; mutually exclusive with branch."`
 	Events           []string `json:"events,omitempty" yaml:"events,omitempty" jsonschema_description:"Allowed workflow events; defaults to push."`
 	ReusableWorkflow *string  `json:"reusable_workflow,omitempty" yaml:"reusable_workflow,omitempty"`
@@ -50,13 +50,13 @@ type WorkloadFly struct {
 
 type WorkloadOIDC struct {
 	Issuer   string            `json:"issuer" yaml:"issuer" jsonschema:"required"`
-	JWKSURL  string            `json:"jwks_url,omitempty" yaml:"jwks_url,omitempty" jsonschema_description:"Signing-key endpoint; defaults to issuer discovery during apply."`
+	JWKSURL  string            `json:"jwks_url,omitempty" yaml:"jwks_url,omitempty" jsonschema_description:"Signing-key endpoint; defaults to issuer discovery during explicit workload approval."`
 	Audience string            `json:"audience,omitempty" yaml:"audience,omitempty" jsonschema_description:"Intended token recipient; defaults to the control URL."`
 	Claims   map[string]string `json:"claims" yaml:"claims" jsonschema:"required,minProperties=1,maxProperties=32"`
 }
 
 type WorkloadGoogle struct {
-	ServiceAccount string `json:"service_account" yaml:"service_account" jsonschema:"required" jsonschema_description:"Google service account email or immutable numeric ID. Trusted apply resolves an email with gcloud and saves the numeric identity."`
+	ServiceAccount string `json:"service_account" yaml:"service_account" jsonschema:"required" jsonschema_description:"Google service account email or immutable numeric ID. Explicit workload approval resolves an email with gcloud and saves the numeric identity."`
 	Audience       string `json:"audience,omitempty" yaml:"audience,omitempty" jsonschema_description:"Intended token recipient; defaults to the control URL."`
 }
 
@@ -184,11 +184,11 @@ func WorkloadHTTPS(s string) bool {
 	return e == nil && u.Scheme == "https" && u.Host != "" && u.User == nil && u.RawQuery == "" && u.Fragment == "" && u.Opaque == ""
 }
 
-func ValidateWorkloads(c TNL) error {
-	if len(c.Workloads) > 32 {
+func ValidateWorkloads(services Services, workloads map[string]Workload) error {
+	if len(workloads) > 32 {
 		return errors.New("workloads may contain at most 32 policies")
 	}
-	for name, p := range c.Workloads {
+	for name, p := range workloads {
 		if !naming.ValidServiceName(name) {
 			return errors.New("workload name must be a lowercase DNS label")
 		}
@@ -287,12 +287,9 @@ func ValidateWorkloads(c TNL) error {
 		}
 		seen := map[string]bool{}
 		for _, s := range p.Services {
-			service, ok := c.Services[s]
+			_, ok := services[s]
 			if !ok || seen[s] {
 				return bad()
-			}
-			if PublisherGroupName(service) == "local" {
-				return fmt.Errorf("workloads.%s: service %q must use a named publisher group", name, s)
 			}
 			seen[s] = true
 		}

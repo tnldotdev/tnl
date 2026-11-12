@@ -142,9 +142,13 @@ import { defineConfig } from "@tnldotdev/tnl/config";
 export default defineConfig({
   feedback: true,
   services: {
-    app: {
-      publicURL: {},
-      target: { type: "app" },
+    app: { protocol: "http" },
+  },
+  environments: {
+    local: {
+      targets: {
+        app: { publicURL: {} },
+      },
     },
   },
 });
@@ -268,99 +272,111 @@ and [webhook providers](https://tnl.dev/docs/webhooks).
 
 ### from your laptop
 
-For example, connect to a private PostgreSQL instance in Amazon RDS:
+For example, give staging and production separate PostgreSQL instances in Amazon
+RDS. Declare the protocol once; each environment owns its target:
 
 ```ts
 export default defineConfig({
-  // ...existing config
-  publisherGroups: {
-    production: {},
-  },
   services: {
-    orders: {
-      publisherGroup: "production",
-      protocol: "postgres",
-      target: {
-        type: "rds",
-        instance: "orders",
-        region: "us-east-1",
+    orders: { protocol: "postgres" },
+  },
+  environments: {
+    staging: {
+      targets: {
+        orders: {
+          discovery: {
+            type: "rds",
+            instance: "orders-staging",
+            region: "us-east-1",
+          },
+        },
       },
-      access: { team: true },
+    },
+    production: {
+      targets: {
+        orders: {
+          discovery: {
+            type: "rds",
+            instance: "orders-production",
+            region: "us-east-1",
+          },
+        },
+      },
     },
   },
 });
 ```
 
-Use your RDS instance name and region. Apply it with `pnpm exec tnl apply`, then run a `production` publisher in your VPC. From your laptop:
+Use your RDS instance names and regions. This is a separate remote-service
+configuration; the local app configuration above keeps its own listener and
+preview settings. Check the configuration, then apply staging:
 
 ```bash
-pnpm exec tnl connect orders
+pnpm exec tnl check
+pnpm exec tnl apply --environment staging
 ```
 
-Team members use the printed connection settings with `psql` or their database driver and their normal database credentials. Kubernetes works with `kubectl` and your cluster's existing credentials.
+Apply production separately with `pnpm exec tnl apply --environment production`
+when you intend to change it. Saving a shared definition changes no installed
+environment; applying staging does not update production or a local worktree.
+Targets, TLS trust, settings, saved service IDs, and the applied definition revision
+belong to each environment. An environment can select its own control server;
+names and server-qualified references select resources, not permission.
 
-Read about [setting up private services](https://tnl.dev/docs/private-services) or [generating AWS publisher infrastructure](https://tnl.dev/docs/aws-publishers).
+Enroll independent publisher replicas into that exact environment and explicitly
+approve the services they can publish. Run them in the VPC with their own AWS
+discovery permissions. Preserve each replica's original signing key and durable
+TLS/certificate state across replacement; it does not sign in or reenroll.
+
+Approve visitor access separately. An environment name, successful apply, or
+publisher enrollment gives no visitor permission. Once authorized, select the
+production `orders` service's saved ID from its environment response:
+
+```bash
+pnpm exec tnl connect svc_REPLACE_WITH_PRODUCTION_ORDERS_ID
+```
+
+Use the printed settings with `psql` or your database driver and normal database
+credentials. Kubernetes works with `kubectl` and your cluster's existing credentials.
+An acknowledged apply is not a successful database query; check the target through
+a real client. Existing connections are not replayed or transferred between replicas.
+
+Read about [setting up environments](https://tnl.dev/docs/environments),
+[private services](https://tnl.dev/docs/private-services), or
+[running publishers in AWS](https://tnl.dev/docs/aws-publishers).
 
 ### or from ci
 
-Let a GitHub Actions workflow connect to `orders`:
+Give a deployment its own approved identity rather than your personal tnl login.
+Approve a visitor permission for the exact environment or explicitly scoped
+collection and a fixed service allowlist, such as `orders`. At runtime, use the
+shared generated `services` snapshot with the normal SDK, selected environment,
+and current identity proof. Database migrations still use the database's own
+username and password; close the driver before the tnl client.
 
-```ts
-export default defineConfig({
-  // ...existing config
-  workloads: {
-    migrate: {
-      provider: "github",
-      services: ["orders"],
-      github: {
-        // your GitHub repo details
-        repository: "acme/demo",
-        workflow: ".github/workflows/deploy.yml",
-        ref: "refs/heads/main",
-      },
-    },
-  },
-});
+If automation also creates installations or issues publisher enrollment, approve
+a separate provisioning grant with explicit scope, services, operations, expiry,
+and enrollment budget. That grant cannot visit services. Publishing requires its
+own exact publisher grants; adding a service or rolling back a definition cannot
+mint or restore them automatically.
+
+`tnl apply` never creates or restores workload permissions. Approve one workload
+declared under `environments.production.workloads` explicitly:
+
+```bash
+pnpm exec tnl auth approve --environment production --workload migrations \
+  --intent production-migrations-1 --expires-at 2026-12-01T00:00:00Z
 ```
 
-Apply the config, then add the action to your deploy job. For example, with Drizzle:
+Keep the intent and expiry unchanged when retrying a lost reply. The server
+returns the original machine and permission IDs without looking up provider names
+again. A revoked or expired permission stays revoked or expired; granting access
+again requires a new explicit intent. The receipt contains no credential.
 
-```yaml
-# .github/workflows/deploy.yml
-permissions:
-  contents: read
-  id-token: write
-steps:
-  # git checkout or package installation...
-  - uses: tnldotdev/tnl/connect@<sha>
-    with:
-      workload: migrate
-  - run: pnpm exec drizzle-kit migrate
-    env:
-      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-```
-
-The action uses GitHub's OIDC with secure, short-lived tokens to connect to the `orders` service. Then, in your Drizzle config:
-
-```ts
-// drizzle.config.ts
-import { defineConfig } from "drizzle-kit";
-import { tnl } from "@tnldotdev/tnl";
-
-export default defineConfig({
-  dialect: "postgresql",
-  dbCredentials: {
-    ...tnl.connect("orders"),
-    user: "postgres",
-    database: "orders",
-    password: process.env.DB_PASSWORD!,
-  },
-});
-```
-
-`tnl.connect("orders")` reads the local host, port, and TLS settings prepared by the action. The db password comes from GitHub secrets.
-
-See [GitHub Actions setup](https://tnl.dev/docs/workloads#connect-a-github-actions-job).
+The explicit provider setup and canonical admission checks still need final
+qualification before this is a supported CI recipe. See
+[workload access](https://tnl.dev/docs/workloads) and the intended
+[GitHub identity requirements](https://tnl.dev/docs/workloads#github-actions).
 
 ## custom domains or self-hosting
 

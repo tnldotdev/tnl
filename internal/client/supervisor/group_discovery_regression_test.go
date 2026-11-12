@@ -61,7 +61,7 @@ func discoveryRegressionRunner(t *testing.T, role bool) (GroupRunner, string) {
 
 func assignmentRegressionRequest(t *testing.T) publisherdiscovery.Request {
 	t.Helper()
-	r, err := publishergroup.AssignmentDiscovery(controlv1.ProjectServiceConfiguration{Protocol: new(controlv1.ServiceProtocol("postgres")), PublisherGroup: new("cloud"), TargetDiscovery: &controlv1.ProjectTargetDiscovery{Type: controlv1.Rds, Region: "us-east-1", Instance: new("database")}})
+	r, err := publishergroup.AssignmentDiscovery(controlv1.EnvironmentServicePublication{Protocol: controlv1.ServiceProtocol("postgres"), TargetDiscovery: &controlv1.ProjectTargetDiscovery{Type: controlv1.Rds, Region: "us-east-1", Instance: new("database")}})
 	if err != nil {
 		t.Fatal(err)
 	}

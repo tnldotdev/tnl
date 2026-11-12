@@ -13,7 +13,6 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -331,20 +330,10 @@ func TestIntegrationPublisherObservabilityPublicService(t *testing.T) {
 			f := newServiceRuntimeFixtureContext(t, false, nil, true, func(role string) context.Context { return collector.process(t, role) })
 			process := startSeparatedPrivateIngress(t, f, 0, transport, nil)
 			target := startPrivateEchoTarget(t)
-			group, protocol, public := "trace", controlv1.Tcp, true
-			applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{
-				TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64),
-				Configuration: controlv1.ProjectConfiguration{
-					PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {Public: &public}},
-					Services:        map[string]controlv1.ProjectServiceConfiguration{"echo": {PublisherGroup: &group, Protocol: &protocol, Target: target.address}},
-					Webhooks:        map[string]controlv1.ProjectWebhook{},
-				},
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			startWorkloadPublishers(t, f, group, transport)
-			service, err := f.identity.routes.GetService(t.Context(), *applied.Services[0].ServiceId)
+			protocol, public := controlv1.Tcp, true
+			applied := createServiceRuntimeEnvironment(t, f, "workload", controlv1.ServiceDefinition{Services: map[string]controlv1.ServiceDefinitionService{"echo": {Protocol: protocol}}}, controlv1.CreateEnvironmentRequest{Name: "trace", Public: &public, Targets: controlv1.EnvironmentTargets{"echo": {Address: &target.address}}})
+			startEnvironmentPublishers(t, f, applied, transport)
+			service, err := f.identity.routes.GetService(t.Context(), applied.Services[0].ServiceId)
 			if err != nil || service.Endpoint == nil {
 				t.Fatal("public service endpoint", err)
 			}

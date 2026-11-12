@@ -5,11 +5,17 @@ SELECT * FROM control.workload_sessions WHERE id = $1;
 SELECT * FROM control.workload_sessions WHERE id = $1 FOR UPDATE;
 
 -- name: ListWorkloadSessionServices :many
-SELECT service_id,service FROM control.workload_session_services WHERE workload_session_id=$1 ORDER BY service;
+SELECT rights.service_id,rights.service FROM control.workload_session_services rights
+JOIN control.workload_session_machines source ON source.session_id=rights.workload_session_id
+JOIN control.machine_workload_permissions permission ON permission.id=source.permission_id
+JOIN control.environments environment ON environment.id=source.environment_id
+JOIN control.applied_project_services binding ON binding.service_id=rights.service_id AND binding.group_id=environment.group_id
+JOIN control.services service ON service.id=rights.service_id AND service.enabled AND service.deleted_at IS NULL
+    AND service.protocol=source.expected_protocols->>rights.service
+WHERE rights.workload_session_id=$1 AND rights.service=ANY(permission.services) ORDER BY rights.service;
 -- name: VisitorServiceConfiguration :one
-SELECT project.team_id,project.project_key,project.configuration_ciphertext,project.storage_key_id,service.service,service.group_id,COALESCE(publisher_group.environment_id,environment.id,'')::text AS environment_id
+SELECT service.service,service.group_id,COALESCE(publisher_group.environment_id,environment.id,'')::text AS environment_id
 FROM control.applied_project_services service
-JOIN control.applied_projects project ON project.team_id=service.team_id AND project.project_key=service.project_key
 LEFT JOIN control.project_publisher_groups publisher_group ON publisher_group.id=service.group_id
 LEFT JOIN control.environments environment ON environment.group_id=publisher_group.id
 WHERE service.service_id=$1;

@@ -8,7 +8,6 @@ import (
 	"slices"
 
 	"github.com/tnldotdev/tnl/internal/client/auth"
-	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/client/project/meta"
 	clientserver "github.com/tnldotdev/tnl/internal/client/server"
@@ -17,7 +16,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
-	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type MetadataResolver struct {
@@ -51,7 +49,7 @@ func (r *MetadataResolver) Seed(server string, client *auth.Client) {
 func (r *MetadataResolver) Generate(ctx context.Context) (meta.Metadata, error) {
 	hasPublic := r.project.Config.OAuth || len(r.project.Config.Webhooks) != 0 || len(r.project.Config.Aliases) != 0
 	for _, service := range r.project.Config.Services {
-		hasPublic = hasPublic || config.IsPublicService(service) || config.PublisherGroupName(service) != "local"
+		hasPublic = hasPublic || config.IsPublicService(service)
 	}
 	if !hasPublic {
 		metadata := meta.Metadata{Version: meta.Version, Services: map[string]meta.Service{}}
@@ -97,7 +95,7 @@ func (r *MetadataResolver) Generate(ctx context.Context) (meta.Metadata, error) 
 	}
 	names := make([]string, 0, len(r.project.Config.Services))
 	for name := range r.project.Config.Services {
-		if !config.IsPublicService(r.project.Config.Services[name]) && config.PublisherGroupName(r.project.Config.Services[name]) == "local" {
+		if !config.IsPublicService(r.project.Config.Services[name]) {
 			continue
 		}
 		names = append(names, name)
@@ -112,43 +110,7 @@ func (r *MetadataResolver) Generate(ctx context.Context) (meta.Metadata, error) 
 		if err != nil {
 			return meta.Metadata{}, fmt.Errorf("service %q: %w", name, err)
 		}
-		var serviceMetadata meta.Service
-		if config.PublisherGroupName(r.project.Config.Services[name]) != "local" {
-			serviceServer, serverErr := r.server(ctx, effective.Server)
-			if serverErr != nil {
-				return meta.Metadata{}, serverErr
-			}
-			source, sourceErr := r.project.SourceIdentity(ctx)
-			if sourceErr != nil {
-				return meta.Metadata{}, sourceErr
-			}
-			client, clientErr := r.client(ctx, serviceServer)
-			if clientErr != nil {
-				return meta.Metadata{}, clientErr
-			}
-			// the source-bound visitor lookup provides the current endpoint and
-			// exposure. never infer managed exposure from protocol or local config.
-			assigned, lookupErr := client.Control.GetProjectService(ctx, source.Key, name, controlv1.GetProjectServiceParams{TeamId: serviceContext.Team().Id, SourceFingerprint: source.Fingerprint})
-			if errors.Is(lookupErr, clientcontrol.ErrNotFound) {
-				// local startup does not apply remote services. include their
-				// endpoints only after control has a current visitor projection.
-				continue
-			}
-			if lookupErr != nil {
-				return meta.Metadata{}, fmt.Errorf("read applied remote service %q: %w", name, lookupErr)
-			}
-			if assigned.TeamId != serviceContext.Team().Id || assigned.Id == "" || string(assigned.Name) != config.ServiceName(name, r.project.Config.Services[name]) || assigned.Endpoint == nil || !assigned.Enabled || string(assigned.Protocol) != config.Protocol(r.project.Config.Services[name]) {
-				return meta.Metadata{}, fmt.Errorf("remote service %q has no matching current endpoint; run tnl apply", name)
-			}
-			endpoint := assigned.Endpoint
-			domain, domainErr := team.ReadyDomainForHostname(serviceContext.Domains(), endpoint.Hostname)
-			if domainErr != nil {
-				return meta.Metadata{}, domainErr
-			}
-			serviceMetadata, err = meta.NewEndpoint(domain.CanonicalDomain, endpoint.Hostname, string(assigned.Protocol), endpoint.Port, endpoint.Public)
-		} else {
-			serviceMetadata, err = ConfiguredService(name, r.project.Worktree, effective, serviceContext)
-		}
+		serviceMetadata, err := ConfiguredService(name, r.project.Worktree, effective, serviceContext)
 		if err != nil {
 			return meta.Metadata{}, fmt.Errorf("service %q: %w", name, err)
 		}

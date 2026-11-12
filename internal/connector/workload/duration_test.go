@@ -6,12 +6,10 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestSessionOptionalHardDuration(t *testing.T) {
-	session := sessionFixture(controlv1.WorkloadOIDC)
+	session := sessionFixture()
 	session.ExpiresAt = nil
 	if err := validateSession(session); err != nil || !SessionDeadline(session).Equal(session.IdentityExpiresAt) {
 		t.Fatal("uncapped session lost its finite proof horizon", err)

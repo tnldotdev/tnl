@@ -9,11 +9,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/githubtest"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -42,34 +40,20 @@ func TestIntegrationWorkloadHTTPReplacementKeepsSubjectsSeparate(t *testing.T) {
 		}
 	}))
 	t.Cleanup(target.Close)
-	group, protocol := "public", controlv1.ServiceProtocolHTTP
-	policy := controlv1.ProjectWorkload{Provider: controlv1.WorkloadGitHub, Github: &controlv1.ProjectWorkloadGitHub{Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}}, Services: []string{"api"}, MaxDurationSeconds: 120}
-	short := policy
-	short.MaxDurationSeconds = 8
-	policies := map[string]controlv1.ProjectWorkload{"old": short, "new": policy}
-	_, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{Workloads: &policies, PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {Public: new(true)}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {PublisherGroup: &group, Protocol: &protocol, Target: target.URL}}, Webhooks: map[string]controlv1.ProjectWebhook{}}})
-	if err != nil {
-		t.Fatal(err)
+	environment := createServiceRuntimeEnvironment(t, f, "workload", controlv1.ServiceDefinition{Services: map[string]controlv1.ServiceDefinitionService{"api": {Protocol: controlv1.ServiceProtocolHTTP}}}, controlv1.CreateEnvironmentRequest{Name: "public", Public: new(true), Targets: controlv1.EnvironmentTargets{"api": {Address: &target.URL}}})
+	startEnvironmentPublishers(t, f, environment, "tls-tcp")
+	machine := registerRuntimeWorkload(t, f, "replacement", "")
+	permissions := map[string]string{
+		"old": runtimeWorkloadPermission(t, f, machine, environment, 8),
+		"new": runtimeWorkloadPermission(t, f, machine, environment, 120),
 	}
-	startWorkloadPublishers(t, f, group, "tls-tcp")
 	open := func(name, execution string) (*http.Response, string, time.Time) {
 		t.Helper()
-		job, err := workload.New(f.controlConfig.ControlOrigin(), f.publicHTTP)
-		if err != nil {
-			t.Fatal(err)
-		}
 		claims := githubtest.Claims(f.controlConfig.ControlOrigin(), time.Now())
 		claims["check_run_id"], claims["jti"] = execution, execution
-		session, err := job.Exchange(t.Context(), f.identity.teamID, "workload", strings.Repeat("a", 64), name, issuer.Sign(t, claims), []string{"api"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		inventory, err := job.ListServices(t.Context())
-		if err != nil || len(inventory.Services) != 1 {
-			t.Fatal("inventory", err)
-		}
-		service := inventory.Services[0]
-		certificate, err := job.ClientTLSCertificate(t.Context(), service.Id)
+		job, prepared := prepareRuntimeWorkload(t, f, environment, permissions[name], issuer.Sign(t, claims))
+		session, service := prepared.Session, prepared.Services["api"]
+		certificate, err := job.ClientTLSCertificate(t.Context(), service.ServiceId)
 		if err != nil {
 			t.Fatal(err)
 		}

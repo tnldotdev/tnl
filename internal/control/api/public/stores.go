@@ -14,40 +14,39 @@ import (
 // Stores declares each API capability explicitly. nil optional stores retain
 // their existing unavailable responses; methods on another store never enable them.
 type Stores struct {
-	PublicURLs                PublicURLStore
-	Certificates              CertificateStore
-	Admin                     AdminStore
-	Visitors                  VisitorStore
-	Previews                  PreviewStore
-	PreviewTeamAccess         PreviewTeamAccessStore
-	BrowserAccess             BrowserAccessStore
-	Shares                    ShareStore
-	ShareAccess               ShareAccessStore
-	Feedback                  FeedbackStore
-	Guests                    GuestStore
-	GuestAuthorization        guestAuthorizationStore
-	GuestPublishers           GuestPublisherStore
-	PublisherRuns             PublisherRunStore
-	PublisherIdentities       PublisherIdentityStore
-	PublisherGroups           GroupStore
-	PublisherRuntime          PublisherRuntimeStore
-	ProjectConfiguration      ProjectConfigurationStore
-	Environments              EnvironmentStore
-	Collections               CollectionStore
-	ProjectServices           ProjectServiceStore
-	LocalProjects             LocalProjectStore
-	Services                  ServiceStore
-	ServiceRuns               ServiceRunStore
-	ServiceCertificates       managedCertificateStore
-	ServiceClientCertificates ServiceClientCertificateStore
-	ServiceHTTP               ServiceHTTPStore
-	ServiceAudit              ServiceAuditStore
-	ConnectorPeerPairs        ConnectorPeerPairStore
-	VisitorPolicy             publisherVisitorPolicyStore
-	VisitorTokens             visitorTokenIssuer
-	CompanyBrowser            CompanyBrowserStore
-	BrowserSessions           BrowserSessionStore
-	Workloads                 WorkloadVisitorStore
+	PublicURLs                 PublicURLStore
+	Certificates               CertificateStore
+	Admin                      AdminStore
+	Visitors                   VisitorStore
+	Previews                   PreviewStore
+	PreviewTeamAccess          PreviewTeamAccessStore
+	BrowserAccess              BrowserAccessStore
+	Shares                     ShareStore
+	ShareAccess                ShareAccessStore
+	Feedback                   FeedbackStore
+	Guests                     GuestStore
+	GuestAuthorization         guestAuthorizationStore
+	GuestPublishers            GuestPublisherStore
+	PublisherRuns              PublisherRunStore
+	PublisherIdentities        PublisherIdentityStore
+	EnvironmentPublishers      EnvironmentPublisherStore
+	EnvironmentPublisherGrants EnvironmentPublisherGrantStore
+	PublisherRuntime           PublisherRuntimeStore
+	Environments               EnvironmentStore
+	Collections                CollectionStore
+	LocalProjects              LocalProjectStore
+	Services                   ServiceStore
+	ServiceRuns                ServiceRunStore
+	ServiceCertificates        managedCertificateStore
+	ServiceClientCertificates  ServiceClientCertificateStore
+	ServiceHTTP                ServiceHTTPStore
+	ServiceAudit               ServiceAuditStore
+	ConnectorPeerPairs         ConnectorPeerPairStore
+	VisitorPolicy              publisherVisitorPolicyStore
+	VisitorTokens              visitorTokenIssuer
+	CompanyBrowser             CompanyBrowserStore
+	BrowserSessions            BrowserSessionStore
+	Workloads                  WorkloadVisitorStore
 }
 
 type GuestStore interface {
@@ -59,27 +58,8 @@ type GuestStore interface {
 	GuestIssuanceAllowed(context.Context, netip.Addr, time.Time) error
 }
 
-type GroupStore interface {
-	PublisherGroupStore
-	ListManagedPublisherGroups(context.Context, string, string, controlstate.GroupCaller, time.Time) ([]controlstate.PublisherGroupResource, error)
-	GetManagedPublisherGroupForCaller(context.Context, string, string, string, controlstate.GroupCaller, time.Time) (controlstate.PublisherGroupResource, error)
-	UpdateBoundPublisherGroup(context.Context, controlstate.GroupBindingMutationRequest) (controlstate.PublisherGroupResource, error)
-	RetireBoundPublisherGroup(context.Context, controlstate.GroupBindingMutationRequest) error
-	CreateBoundPublisherGroup(context.Context, controlstate.CreateBoundPublisherGroupRequest) (controlstate.PublisherGroupResource, error)
-	UpdatePublisherGroupBindings(context.Context, string, string, string, string, int64, controlstate.PublisherGroupBindings, bool, time.Time) (controlstate.PublisherGroupResource, error)
-	GetManagedPublisherGroup(context.Context, string, string, string, string) (controlstate.PublisherGroupResource, error)
-	CreatePublisherGroup(context.Context, string, string, string, string, string, int64, bool, time.Time) (controlstate.AppliedProjectConfiguration, error)
-	RemovePublisherGroup(context.Context, string, string, string, string, int64, bool, time.Time) (controlstate.AppliedProjectConfiguration, error)
-	RenamePublisherNamespace(context.Context, controlstate.RenamePublisherNamespaceRequest) (controlstate.AppliedProjectConfiguration, error)
-	RenamePublisherGroup(context.Context, string, string, string, string, string, int64, time.Time) (controlstate.AppliedProjectConfiguration, error)
-}
-
 type PublisherRuntimeStore interface {
 	PublisherRuntime(context.Context, controlstate.PublisherRuntimeRequest) (controlstate.PublisherRuntimeResponse, error)
-}
-
-type ProjectServiceStore interface {
-	GetProjectService(context.Context, controlstate.GetProjectServiceRequest) (controlstate.ServiceRecord, error)
 }
 
 type LocalProjectStore interface {
@@ -141,8 +121,8 @@ func DatabaseStores(database *controlstate.Database) Stores {
 		Visitors: database, Previews: database, PreviewTeamAccess: database,
 		BrowserAccess: database, Shares: database, ShareAccess: database, Feedback: database,
 		Guests: database, GuestAuthorization: database, GuestPublishers: database,
-		PublisherRuns: database, PublisherIdentities: database, PublisherGroups: database,
-		PublisherRuntime: database, ProjectConfiguration: database, Environments: database, Collections: database, ProjectServices: database,
+		PublisherRuns: database, PublisherIdentities: database, EnvironmentPublishers: database,
+		PublisherRuntime: database, Environments: database, Collections: database, EnvironmentPublisherGrants: database,
 		LocalProjects: database, Services: database, ServiceRuns: database,
 		ServiceCertificates: database, ServiceClientCertificates: database, ServiceHTTP: database,
 		ServiceAudit: database, ConnectorPeerPairs: database, VisitorPolicy: database,

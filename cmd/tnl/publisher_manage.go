@@ -20,20 +20,13 @@ import (
 )
 
 type publisherCommand struct {
-	Create     publisherCreateCommand `cmd:"" help:"Create an independent publisher group following an applied template."`
-	Connection publisherGroupCommand  `cmd:"" help:"Read nonsecret connection context for a concrete publisher group."`
-	Remove     publisherGroupCommand  `cmd:"" help:"Retire a template-created group and revoke its publishers and services."`
-	Namespace  struct {
-		Rename publisherNamespaceRenameCommand `cmd:"" help:"Change managed DNS hostnames and certificate scope, retaining service IDs and ports."`
-	} `cmd:"" help:"Manage a group's DNS namespace separately from its configuration selector."`
-	Rename    publisherGroupRenameCommand `cmd:"" help:"Rename a group selector while preserving its endpoints and publisher identities."`
-	Serve     publisherServeCommand       `cmd:"" help:"Run this replica's assigned services with a saved or portable group identity."`
-	Current   publisherCurrentCommand     `cmd:"" help:"Show the selected local or file-backed publisher without exposing its key."`
-	Setup     publisherSetupCommand       `cmd:"" help:"Set up a local publisher for your HTTP namespace."`
-	Provision publisherProvisionCommand   `cmd:"" help:"Write a portable scoped publisher file for deployment."`
-	Enroll    publisherEnrollCommand      `cmd:"" help:"Issue one-use enrollment for a public URL, HTTP namespace, or service."`
-	List      publisherListCommand        `cmd:"" help:"List publisher identities and grants."`
-	Revoke    publisherRevokeCommand      `cmd:"" help:"Revoke a publisher identity."`
+	Serve     publisherServeCommand     `cmd:"" help:"Run this replica's assigned services with an exact environment publisher identity."`
+	Current   publisherCurrentCommand   `cmd:"" help:"Show the selected local or file-backed publisher without exposing its key."`
+	Setup     publisherSetupCommand     `cmd:"" help:"Set up a local publisher for your HTTP namespace."`
+	Provision publisherProvisionCommand `cmd:"" help:"Write a portable scoped publisher file for deployment."`
+	Enroll    publisherEnrollCommand    `cmd:"" help:"Issue one-use enrollment for a public URL, HTTP namespace, or service."`
+	List      publisherListCommand      `cmd:"" help:"List publisher identities and grants."`
+	Revoke    publisherRevokeCommand    `cmd:"" help:"Revoke a publisher identity."`
 	Grant     struct {
 		Add    publisherGrantAddCommand    `cmd:"" help:"Add a public URL, HTTP namespace, or service grant."`
 		Revoke publisherGrantRevokeCommand `cmd:"" help:"Revoke one publisher grant."`
@@ -41,21 +34,22 @@ type publisherCommand struct {
 }
 type publisherSetupCommand struct {
 	scopedTeamFlags `embed:""`
-	Namespace       bool   `help:"Set up this team's HTTP namespace for tnl.open."`
+	Namespace       bool   `help:"Set up this team's local HTTP namespace publisher."`
 	URL             string `name:"url" help:"Set up one saved development public URL by ID."`
 	ServiceID       string `name:"service" help:"Set up one exact saved service publisher."`
 	Domain          string `help:"Ready team domain; defaults to the team's default domain."`
 }
 type publisherProvisionCommand struct {
 	scopedTeamFlags `embed:""`
-	Group           string `name:"group" help:"Configured publisher group for one replica's portable signing identity."`
-	ProjectKey      string `name:"project-key" help:"Applied project key for a group identity; defaults to this Git configuration source."`
-	Instance        string `name:"instance" help:"Replica identity name; required with --group and bound into the private file."`
-	Namespace       bool   `help:"Grant temporary HTTP URLs in your namespace."`
-	URL             string `name:"url" help:"Saved public URL ID for an exact grant."`
-	ServiceID       string `name:"service" help:"Saved service ID for an exact grant."`
-	Domain          string `help:"Ready team domain for a namespace grant."`
-	OutputFile      string `name:"output-file" type:"path" required:"" help:"New private file for deployment; never overwrites an existing file."`
+	Environment     string   `name:"environment" help:"Exact environment ID for one replica's portable signing identity."`
+	Services        []string `name:"services" help:"Fixed logical service allowlist for environment enrollment; added services are never included automatically."`
+	ProjectKey      string   `name:"project-key" help:"Project key for an environment identity; defaults to this Git configuration source."`
+	Instance        string   `name:"instance" help:"Replica identity name; required with --environment and bound into the private file."`
+	Namespace       bool     `help:"Grant temporary HTTP URLs in your namespace."`
+	URL             string   `name:"url" help:"Saved public URL ID for an exact grant."`
+	ServiceID       string   `name:"service" help:"Saved service ID for an exact grant."`
+	Domain          string   `help:"Ready team domain for a namespace grant."`
+	OutputFile      string   `name:"output-file" type:"path" required:"" help:"New private file for deployment; never overwrites an existing file."`
 }
 
 func runPublisherSetup(ctx context.Context, f publisherSetupCommand, output, diagnostics io.Writer) error {
@@ -115,20 +109,20 @@ func runPublisherSetup(ctx context.Context, f publisherSetupCommand, output, dia
 	if err != nil {
 		return err
 	}
-	return writeHumanFrame(output, "tnl publisher setup", "ready", "tnl.open can now publish in this namespace", clioutput.Fields(
+	return writeHumanFrame(output, "tnl publisher setup", "ready", "namespace publisher is set up", clioutput.Fields(
 		clioutput.Field{Label: "namespace", Value: namespace}, clioutput.Field{Label: "publisher", Value: identity.ClientId}, clioutput.Field{Label: "grant", Value: identity.GrantId},
 	))
 }
 
 func runPublisherProvision(ctx context.Context, f publisherProvisionCommand, project projectConfiguration, output, diagnostics io.Writer) error {
-	if f.Group != "" {
+	if f.Environment != "" {
 		if f.Namespace || f.URL != "" || f.ServiceID != "" || f.Domain != "" {
-			return publisherCLIError("select --group, --namespace, --url, or --service")
+			return publisherCLIError("select --environment, --namespace, --url, or --service")
 		}
-		return runPublisherGroupProvision(ctx, groupIdentityProvisionOptions{Remote: f.selection(), Group: f.Group, ProjectKey: f.ProjectKey, Instance: f.Instance, OutputFile: f.OutputFile}, project, output, diagnostics)
+		return runPublisherGroupProvision(ctx, groupIdentityProvisionOptions{Remote: f.selection(), Environment: f.Environment, Services: f.Services, ProjectKey: f.ProjectKey, Instance: f.Instance, OutputFile: f.OutputFile}, project, output, diagnostics)
 	}
-	if f.ProjectKey != "" || f.Instance != "" {
-		return publisherCLIError("--project-key and --instance require --group")
+	if f.ProjectKey != "" || f.Instance != "" || len(f.Services) != 0 {
+		return publisherCLIError("--project-key, --services, and --instance require --environment")
 	}
 	if f.OutputFile == "" {
 		return publisherCLIError("pass --output-file for the portable publisher identity")
@@ -210,10 +204,11 @@ func runPublisherProvision(ctx context.Context, f publisherProvisionCommand, pro
 
 type publisherEnrollCommand struct {
 	scopedTeamFlags `embed:""`
-	Group           string        `name:"group" help:"Issue one-use bootstrap for one replica of this configured publisher group."`
-	ProjectKey      string        `name:"project-key" help:"Applied project key for group bootstrap; defaults to this Git configuration source."`
-	Members         int           `name:"members" default:"1" help:"Maximum distinct task keys redeeming a group bootstrap, from 1 to 256."`
-	ExpiresIn       time.Duration `name:"expires-in" default:"10m" help:"Group bootstrap lifetime, from 1m to 24h; each replica creates its own protected key."`
+	Environment     string        `name:"environment" help:"Issue one-use publisher bootstrap for this exact environment ID."`
+	Services        []string      `name:"services" help:"Fixed logical service allowlist captured with the environment's current revision and configuration hash."`
+	ProjectKey      string        `name:"project-key" help:"Project key for environment bootstrap; defaults to this Git configuration source."`
+	Members         int           `name:"members" default:"1" help:"Maximum distinct replica keys redeeming enrollment, from 1 to 256."`
+	ExpiresIn       time.Duration `name:"expires-in" default:"10m" help:"Environment bootstrap lifetime, from 1m to 24h; each replica creates its own protected key."`
 	PublicURLID     string        `arg:"" optional:"" name:"public-url-id" help:"Enabled saved public URL ID."`
 	ServiceID       string        `name:"service" help:"Exact saved service ID."`
 	Name            string        `default:"publisher" help:"Lowercase publisher name."`

@@ -62,8 +62,8 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 		return err
 	}
 	flags.Service = service
-	if service != "" && config.PublisherGroupName(c.Config.Services[service]) != "local" {
-		return publisherCLIError("this service belongs to a remote publisher group; run tnl apply and tnl publisher serve --group NAME")
+	if service != "" && !c.HasLocalService(service) {
+		return publisherCLIError("this service has no target in environments.local; serve a remote environment with tnl publisher serve --environment NAME")
 	}
 	flags.project = c
 	flags.projectRoot = c.Root
@@ -169,12 +169,12 @@ func (c projectConfiguration) applyInstalledService(flags *publishCommand) error
 	if flags.ServiceName != "" && flags.ServiceName != service {
 		return publisherCLIError("--service-name must match the configured service; use its name with tnl service start, stop, and remove")
 	}
+	if !c.HasLocalService(service) {
+		return publisherCLIError("this service has no target in environments.local; install the selected environment publisher instead")
+	}
 	flags.Service, flags.project, flags.projectRoot = service, c, c.Root
 	if !flags.inspectionModeFromCLI {
 		flags.InspectionMode = config.InspectionNone
-	}
-	if config.PublisherGroupName(definition) != "local" {
-		return publisherCLIError("install the assigned publisher group with tnl publisher serve --group NAME --install")
 	}
 	flags.service = !config.IsPublicService(definition)
 	flags.ServiceName = service
@@ -384,14 +384,10 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		}
 	}
 	switch command {
-	case "publisher create <group>":
-		apply(&flags.Publisher.Create.remoteFlags, true)
-	case "publisher connection <group>":
-		apply(&flags.Publisher.Connection.remoteFlags, true)
-	case "publisher remove <group>":
-		apply(&flags.Publisher.Remove.remoteFlags, true)
 	case "apply":
-		apply(&flags.Apply.remoteFlags, true)
+		contextErr = applyEnvironmentCommandContext(project, &flags.Apply)
+	case "auth approve":
+		contextErr = authApproveCommandContext(project, &flags.Auth.Approve)
 	case "audit list":
 		apply(&flags.Audit.List.remoteFlags, true)
 	case "publisher serve":

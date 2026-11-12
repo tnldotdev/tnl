@@ -11,14 +11,23 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/project/meta"
-	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	credentialv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
 )
 
 const Schema = 1
 const MaxBytes = 128 << 10
+
+type Capabilities struct {
+	Schema int `json:"schema"`
+	Operations []string `json:"capabilities"`
+	EnvironmentVisitors bool `json:"environment_visitors"`
+}
 
 var (
 	ErrInvalid      = errors.New("connection request is invalid")
@@ -34,32 +43,67 @@ var (
 // Context is nonsecret. the action requests an OIDC assertion for Audience only
 // after checking this version and the selected project/policy/service scope.
 type Context struct {
-	PublisherGroupID string   `json:"publisher_group_id,omitempty"`
-	Schema           int      `json:"schema"`
-	Directory        string   `json:"directory"`
-	ConfigDigest     string   `json:"config_digest"`
-	Server           string   `json:"server"`
-	Audience         string   `json:"audience"`
-	TeamID           string   `json:"team_id"`
-	ProjectKey       string   `json:"project_key"`
-	SourceID         string   `json:"source_id"`
-	WorktreeKey      string   `json:"worktree_key"`
-	ProjectLabel     string   `json:"project_label"`
-	Workload         string   `json:"workload,omitempty"`
-	Services         []string `json:"services"`
+	Environment      *EnvironmentSelection `json:"environment,omitempty"`
+	Schema           int                   `json:"schema"`
+	Directory        string                `json:"directory"`
+	ConfigDigest     string                `json:"config_digest"`
+	Server           string                `json:"server"`
+	Audience         string                `json:"audience"`
+	TeamID           string                `json:"team_id"`
+	ProjectKey       string                `json:"project_key"`
+	SourceID         string                `json:"source_id"`
+	WorktreeKey      string                `json:"worktree_key"`
+	ProjectLabel     string                `json:"project_label"`
+	Services         []string              `json:"services"`
+}
+
+// environmentSelection is nonsecret intent. only authority preparation grants
+// access, and its returned service IDs stay fixed for this owner's lifetime.
+type EnvironmentSelection struct {
+	Environment  controlv1.EnvironmentReference `json:"environment"`
+	PermissionID string                         `json:"permission_id"`
+	Services     map[string]string              `json:"services"`
+}
+
+func (s EnvironmentSelection) Validate() error {
+	server, err := clientstate.CanonicalServer(s.Environment.Server)
+	if err != nil || server != s.Environment.Server || !naming.ValidProjectKey(s.Environment.ProjectKey) || !opaqueid.Valid(s.Environment.EnvironmentId, opaqueid.EnvironmentPrefix) || !opaqueid.Valid(s.PermissionID, "mwp_") || len(s.Services) < 1 || len(s.Services) > 32 {
+		return ErrInvalid
+	}
+	for name, protocol := range s.Services {
+		if !naming.ValidServiceName(name) || (protocol != "http" && protocol != "tcp" && protocol != "postgres" && protocol != "mysql" && protocol != "kubernetes") {
+			return ErrInvalid
+		}
+	}
+	return nil
+}
+
+type EnvironmentStart struct {
+	Schema    int                  `json:"schema"`
+	Selection EnvironmentSelection `json:"selection"`
+	Source authorityv1.IdentitySourceSelection `json:"source"`
+	// acquisition and environment are private startup inputs, never observations.
+	// absent acquisition selects the shared challenge/reply callback transport.
+	Acquisition *workload.Acquisition `json:"acquisition,omitempty"`
+	Environment *SDKEnvironment `json:"source_environment,omitempty"`
+	GitHubActionsRefresh *GitHubActionsRefresh `json:"github_actions_refresh,omitempty"`
+}
+
+func (EnvironmentStart) String() string { return "private environment startup request" }
+func (EnvironmentStart) GoString() string { return "private environment startup request" }
+
+// environmentBinding is a projection of the canonical authority response,
+// excluding the native-owned session credential and ephemeral signing key.
+type EnvironmentBinding struct {
+	Environment               controlv1.EnvironmentReference                   `json:"environment"`
+	AppliedDefinitionRevision int64                                            `json:"applied_definition_revision"`
+	MutationRevision          int64                                            `json:"mutation_revision"`
+	Services                  map[string]authorityv1.EnvironmentVisitorService `json:"services"`
 }
 
 type StartRequest struct {
 	Schema  int     `json:"schema"`
 	Context Context `json:"context"`
-	// Assertion is accepted on stdin/private IPC only. never persist this request.
-	Assertion string `json:"assertion,omitempty"`
-	// refresh carries only a selected native file or local platform source.
-	// callbacks, environment token values and provider request bearers stay out.
-	Refresh *workloadmanifest.Acquisition `json:"refresh,omitempty"`
-	// github_actions_refresh is an explicit job-owned source from the action,
-	// not an SDK request environment. it travels only over private startup stdin.
-	GitHubActionsRefresh *GitHubActionsRefresh `json:"github_actions_refresh,omitempty"`
 }
 
 func (StartRequest) String() string   { return "private connection startup request" }
@@ -95,34 +139,11 @@ type Request struct {
 	ConfigDigest      string              `json:"config_digest"`
 	Service           string              `json:"service,omitempty"`
 	Assertion         string              `json:"assertion,omitempty"`
+	IdentityReply *authorityv1.IdentitySourceReply `json:"identity_reply,omitempty"`
 	AcquireAssertion  bool                `json:"acquire_assertion,omitempty"`
-	Workload          string              `json:"workload,omitempty"`
-	Manifest          string              `json:"manifest,omitempty"`
 	RequestedAt       string              `json:"requested_at,omitempty"`
 	SDKRequestHandle  string              `json:"sdk_request_handle,omitempty"`
-	SDKWorkload       *SDKWorkloadRequest `json:"sdk_workload,omitempty"`
-	SDKWorkloadPolicy string              `json:"sdk_workload_policy,omitempty"`
 	SDKEnvironment    *SDKEnvironment     `json:"sdk_environment,omitempty"`
-}
-
-// SDKWorkloadRequest carries application selection hints, never provider tokens.
-type SDKWorkloadRequest struct {
-	Name      string                   `json:"name,omitempty"`
-	Callback  bool                     `json:"callback,omitempty"`
-	TokenFile string                   `json:"token_file,omitempty"`
-	Runtime   workloadmanifest.Runtime `json:"runtime"`
-}
-
-// SDKWorkload describes the language callback needed after native selection.
-// native acquisition returns no assertion to the language binding.
-type SDKWorkload struct {
-	Schema    int    `json:"schema"`
-	Name      string `json:"name"`
-	Directory string `json:"directory"`
-	Manifest  string `json:"manifest"`
-	Policy    string `json:"policy"`
-	Source    string `json:"source"`
-	TokenEnv  string `json:"token_env,omitempty"`
 }
 
 // SDKEnvironment is request-private provider input from the application process.
@@ -204,6 +225,7 @@ func (c Connection) Validate() error {
 // Prepared pairs one owner's public metadata with its current private snapshot.
 // readers never re-evaluate project configuration, Git, or authentication.
 type Prepared struct {
+	Environment    *EnvironmentBinding    `json:"environment,omitempty"`
 	Schema         int                    `json:"schema"`
 	ProjectRuntime meta.PublicMetadata    `json:"project_runtime"`
 	Connection     Connection             `json:"connection"`
@@ -249,6 +271,7 @@ func (p Prepared) Validate() error {
 }
 
 type Status struct {
+	Environment      *EnvironmentBinding `json:"environment,omitempty"`
 	Schema           int                 `json:"schema"`
 	State            string              `json:"state"`
 	PID              int                 `json:"pid"`
@@ -258,6 +281,7 @@ type Status struct {
 	Executable       string              `json:"executable"`
 	Kubeconfig       string              `json:"kubeconfig,omitempty"`
 	Reason           string              `json:"reason,omitempty"`
+	CleanupComplete *bool `json:"cleanup_complete,omitempty"`
 }
 
 // Backend is implemented by the native CLI's human/workload adapters. Start
@@ -290,12 +314,16 @@ type OwnerConfig struct {
 	AuthorizationDeadline func() (time.Time, <-chan struct{})
 	// persistent owners follow their application instead of a session deadline.
 	// their service snapshots and admissions still retain finite authorization.
-	Persistent  bool
-	OwnerAlive  func() bool
-	Done        <-chan error
-	SDKWorkload func(context.Context, Request) (SDKWorkload, error)
-	SDKPrepare  func(context.Context, Request) (SDKPrepared, error)
-	Kubernetes  KubernetesBackend
+	Persistent        bool
+	OwnerAlive        func() bool
+	Done              <-chan error
+	SDKPrepare        func(context.Context, Request) (SDKPrepared, error)
+	Kubernetes        KubernetesBackend
+	Environment       func() *EnvironmentBinding
+	IdentityChallenge func() (authorityv1.IdentitySourceChallenge, error)
+	UseIdentityReply func(context.Context, Request) error
+	// closed reports the actual joined cleanup result, including failed startup.
+	Closed func(error)
 }
 
 // KubernetesBackend owns generated kubeconfig files and exec credentials.
@@ -316,8 +344,18 @@ func ReadJSON(reader io.Reader, destination any) error {
 }
 
 func (c Context) Validate() error {
-	if c.PublisherGroupID != "" && !opaqueid.Valid(c.PublisherGroupID, "pgrp_") {
-		return ErrInvalid
+	if c.Environment != nil {
+		if c.Environment.Validate() != nil || c.Schema != Schema || !filepath.IsAbs(c.Directory) || len(c.Directory) > 4096 || len(c.ConfigDigest) != 64 || c.Server != c.Environment.Environment.Server || c.Audience != c.Server || c.ProjectKey != c.Environment.Environment.ProjectKey || c.TeamID != "" || c.SourceID != "" || len(c.Services) != len(c.Environment.Services) {
+			return ErrInvalid
+		}
+		seen := map[string]bool{}
+		for _, name := range c.Services {
+			if _, ok := c.Environment.Services[name]; !ok || seen[name] {
+				return ErrInvalid
+			}
+			seen[name] = true
+		}
+		return nil
 	}
 	if c.Schema != Schema || !filepath.IsAbs(c.Directory) || len(c.Directory) > 4096 || len(c.ConfigDigest) != 64 ||
 		c.Server == "" || c.Audience != c.Server || c.ProjectKey == "" || c.SourceID == "" || c.WorktreeKey == "" ||

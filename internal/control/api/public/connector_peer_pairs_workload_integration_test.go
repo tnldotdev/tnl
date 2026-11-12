@@ -26,11 +26,15 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-func exerciseWorkloadConnectorPeerPair(t *testing.T, d *controlstate.Database, job *clientworkload.Client, server *httptest.Server, actor, team, service, credential, databaseURL string) {
+func exerciseWorkloadConnectorPeerPair(t *testing.T, d *controlstate.Database, job *clientworkload.Client, server *httptest.Server, human controlstate.ControlSession, team string, environment controlv1.Environment, service, credential, databaseURL string) {
 	t.Helper()
 	ctx := t.Context()
 	now := time.Now().UTC()
-	enrollment, err := d.IssuePublisherGroupEnrollment(ctx, team, "example", "production", actor, 1, time.Hour, now)
+	manager, err := d.AuthenticateEnvironmentPublisherManager(ctx, human.AccessToken)
+	if err != nil {
+		t.Fatal("authenticate publisher manager", err)
+	}
+	enrollment, err := d.IssueEnvironmentPublisherEnrollment(ctx, controlstate.IssueEnvironmentPublisherEnrollmentRequest{EnvironmentPublisherSelection: controlstate.EnvironmentPublisherSelection{TeamID: team, ProjectKey: environment.ProjectKey, EnvironmentID: environment.Id, Manager: manager}, ExpectedRevision: environment.MutationRevision, ExpectedConfigurationHash: environment.ConfigurationHash, Services: []string{"cluster"}, MaxMembers: 1, Lifetime: time.Hour, Now: now})
 	if err != nil {
 		t.Fatal("group enrollment", err)
 	}
@@ -38,23 +42,23 @@ func exerciseWorkloadConnectorPeerPair(t *testing.T, d *controlstate.Database, j
 	if err != nil {
 		t.Fatal(err)
 	}
-	member, err := d.RedeemPublisherGroupEnrollment(ctx, enrollment.Key, pub, now)
+	member, err := d.RedeemEnvironmentPublisherEnrollment(ctx, enrollment.Key, pub, now)
 	if err != nil {
 		t.Fatal("redeem group", err)
 	}
-	leaseProof, err := publisherproof.Sign(member.PublisherIdentityID, member.KeyID, member.GroupID, server.URL+"/v1/publisher-groups/lease", key, now)
+	leaseProof, err := publisherproof.Sign(member.PublisherIdentityID, member.KeyID, member.EnvironmentID, server.URL+"/v1/environment-publishers/lease", key, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, err := d.AcquirePublisherGroupLease(ctx, member.PublisherIdentityID, member.GroupID, leaseProof, server.URL+"/v1/publisher-groups/lease", now)
+	lease, err := d.AcquireEnvironmentPublisherLease(ctx, member.PublisherIdentityID, member.EnvironmentID, leaseProof, server.URL+"/v1/environment-publishers/lease", now)
 	if err != nil {
 		t.Fatal("group lease", err)
 	}
-	assignments, err := d.GetPublisherGroupAssignments(ctx, lease.AccessToken, now)
+	assignments, err := d.GetEnvironmentPublisherAssignments(ctx, lease.AccessToken, now)
 	if err != nil {
 		t.Fatal("group assignments", err)
 	}
-	var grant controlstate.PublisherGroupServiceAssignment
+	var grant controlstate.EnvironmentPublisherAssignment
 	for _, candidate := range assignments.Services {
 		if candidate.ServiceID == service {
 			grant = candidate
@@ -82,7 +86,7 @@ func exerciseWorkloadConnectorPeerPair(t *testing.T, d *controlstate.Database, j
 		}
 		relays[id] = relay
 	}
-	prep, err := d.PrepareServiceRun(ctx, service, access.PublisherIdentity, "workload-connector-pair", now, controlstate.ServiceMetadata{Protocol: grant.Configuration.Protocol, PublisherPool: true, TrustRevision: grant.TrustRevision}, nil)
+	prep, err := d.PrepareServiceRun(ctx, service, access.PublisherIdentity, "workload-connector-pair", now, controlstate.ServiceMetadata{Protocol: grant.Configuration.Protocol, PublisherPool: true, TrustRevision: grant.TrustRevision}, &assignments.Environment)
 	if err != nil {
 		t.Fatal("prepare service run", err)
 	}

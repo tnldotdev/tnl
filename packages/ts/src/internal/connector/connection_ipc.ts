@@ -7,13 +7,20 @@ import { TnlError } from "../../errors.js";
 import { connectionHandleSchema } from "./contract.js";
 import { operation, traceHeaders } from "../tracing.js";
 import { context, type CachedIPC } from "./context.js";
-import type { SelectionOptions, WorkloadRequest } from "./workload/contract.js";
+import type { LocalSelection } from "./contract.js";
+import type { IdentitySourceReply } from "../identity/models.gen.js";
+import * as z from "zod";
 
 export interface OwnerIPC {
   readonly expiresAt: number;
-  prepare(service: string, assertion?: string, selection?: SelectionOptions): Promise<unknown>;
-  workload(service: string, request: WorkloadRequest): Promise<unknown>;
+  prepare(service: string, assertion?: string, selection?: LocalSelection): Promise<unknown>;
   close(): void;
+}
+
+export interface EnvironmentOwnerIPC extends OwnerIPC {
+  prepareIdentity(service: string, reply?: IdentitySourceReply, environment?: Readonly<Record<string, string>>): Promise<unknown>;
+  challenge(): Promise<unknown>;
+  stop(): Promise<unknown>;
 }
 
 const { external } = context;
@@ -118,6 +125,14 @@ async function readHandle(filename: string) {
 
 /** private capability loading mirrors connector ownership/symlink/size checks. */
 export async function ownerIPC(filename: string): Promise<OwnerIPC> {
+  return loadOwner(filename);
+}
+
+export async function environmentOwnerIPC(filename: string): Promise<EnvironmentOwnerIPC> {
+  return loadOwner(filename);
+}
+
+async function loadOwner(filename: string): Promise<EnvironmentOwnerIPC> {
   try {
     const handle = await readHandle(filename);
     const { expires_at: initialExpiry, ...identity } = handle;
@@ -170,10 +185,12 @@ export async function ownerIPC(filename: string): Promise<OwnerIPC> {
     };
     scheduleExpiry();
     const send = (
-      operationName: "prepare" | "sdk-prepare" | "sdk-workload",
+      operationName: "prepare" | "sdk-prepare" | "identity-challenge" | "stop",
       service: string,
       assertion?: string,
-      selection?: SelectionOptions,
+      selection?: LocalSelection,
+      identityReply?: IdentitySourceReply,
+      environment?: Readonly<Record<string, string>>,
     ): Promise<unknown> => {
       return operation("sdk.native.request", async () => {
         if (closed || pending >= 64) throw new TnlError("sdk.connection_unavailable");
@@ -185,6 +202,8 @@ export async function ownerIPC(filename: string): Promise<OwnerIPC> {
               ...scope,
               service,
               ...(assertion === undefined ? {} : { assertion }),
+              ...(identityReply === undefined ? {} : { identity_reply: identityReply }),
+              ...(environment === undefined ? {} : { sdk_environment: environment }),
               ...selection,
             });
             const req = request(
@@ -212,9 +231,16 @@ export async function ownerIPC(filename: string): Promise<OwnerIPC> {
                 response.on("error", () => reject(new TnlError("sdk.connection_unavailable")));
                 response.on("end", () => {
                   if (
-                    (response.statusCode !== 200 && operationName === "prepare") ||
+                    (response.statusCode !== 200 && operationName !== "sdk-prepare") ||
                     response.headers["content-type"]?.split(";")[0] !== "application/json"
                   ) {
+                    if (response.headers["content-type"]?.split(";")[0] === "application/json") {
+                      try {
+                        const value: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+                        const failure = z.strictObject({ schema: z.literal(1), reason: z.literal("TNL_CLIENT_WORKLOAD_ASSERTION_UNAVAILABLE") }).safeParse(value);
+                        if (failure.success) { reject(new TnlError("sdk.workload_assertion_unavailable")); return; }
+                      } catch { /* malformed errors remain unavailable, never rendered. */ }
+                    }
                     reject(new TnlError("sdk.connection_unavailable"));
                     return;
                   }
@@ -243,10 +269,15 @@ export async function ownerIPC(filename: string): Promise<OwnerIPC> {
       get expiresAt() {
         return expires;
       },
-      prepare: (service: string, assertion?: string, selection?: SelectionOptions) =>
+      prepare: (service: string, assertion?: string, selection?: LocalSelection) =>
         send(selection === undefined ? "prepare" : "sdk-prepare", service, assertion, selection),
-      workload: (service: string, request: WorkloadRequest) =>
-        send("sdk-workload", service, undefined, { sdk_workload: request }),
+      challenge: () => send("identity-challenge", ""),
+      prepareIdentity: (service: string, reply?: IdentitySourceReply, environment?: Readonly<Record<string, string>>) => send("prepare", service, undefined, undefined, reply, environment),
+      stop: async () => {
+        const { expires_at: _next, ...nextIdentity } = await readHandle(filename).catch(() => { throw new TnlError("sdk.connection_unavailable"); });
+        if (!isDeepStrictEqual(identity, nextIdentity)) throw new TnlError("sdk.connection_unavailable");
+        return send("stop", "");
+      },
       close,
     });
   } catch {

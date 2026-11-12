@@ -14,8 +14,8 @@ func TestVercelProjectNameValidation(t *testing.T) {
 			if !ValidVercelProjectName(name) {
 				t.Fatal("valid Vercel project name rejected")
 			}
-			configuration := TNL{Services: Services{"db": {PublisherGroup: new("production")}}, Workloads: map[string]Workload{"web": {Vercel: &WorkloadVercel{Project: name, Team: "acme", Environment: "production"}, Services: []string{"db"}}}}
-			if err := ValidateWorkloads(configuration); err != nil {
+			configuration := Environment{Workloads: map[string]Workload{"web": {Vercel: &WorkloadVercel{Project: name, Team: "acme", Environment: "production"}, Services: []string{"db"}}}}
+			if err := ValidateWorkloads(Services{"db": {}}, configuration.Workloads); err != nil {
 				t.Fatal("valid Vercel project declaration rejected", err)
 			}
 		})
@@ -33,8 +33,8 @@ func TestVercelProjectNameValidation(t *testing.T) {
 }
 
 func TestVercelWorkloadTeamRemainsDNSLabel(t *testing.T) {
-	configuration := TNL{Services: Services{"db": {PublisherGroup: new("production")}}, Workloads: map[string]Workload{"web": {Vercel: &WorkloadVercel{Project: "store_front", Team: "acme_inc", Environment: "production"}, Services: []string{"db"}}}}
-	if err := ValidateWorkloads(configuration); err == nil {
+	configuration := Environment{Workloads: map[string]Workload{"web": {Vercel: &WorkloadVercel{Project: "store_front", Team: "acme_inc", Environment: "production"}, Services: []string{"db"}}}}
+	if err := ValidateWorkloads(Services{"db": {}}, configuration.Workloads); err == nil {
 		t.Fatal("Vercel project-name rules were applied to the team slug")
 	}
 }

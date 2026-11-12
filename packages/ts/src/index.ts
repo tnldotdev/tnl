@@ -1,77 +1,63 @@
 import { developmentPort } from "./internal/publisher/port.js";
-import { loadConnection } from "./internal/connector/connection_bridge.js";
+import { loadConnection, loadEnvironmentClient } from "./internal/connector/connection_bridge.js";
+import type { EnvironmentClientOptions } from "./internal/connector/environment_client.js";
+import type { ServiceFacts } from "./internal/project/service_facts.js";
+import type { SelectedClient } from "./internal/connector/selected_client.js";
+export type {
+  EnvironmentClientOptions,
+  EnvironmentReference,
+  IdentitySource,
+  IdentitySourceChallenge,
+  IdentitySourceReply,
+  IdentitySourceSelection,
+  OIDCAssertion,
+  NativeAcquisition,
+} from "./internal/connector/environment_client.js";
 import { serviceMetadata } from "./internal/project/service_metadata.js";
 import {
   parseRuntimePayload,
   parseProjectRuntime,
   type ProjectMetadata,
+  type ProjectServiceMetadata,
 } from "./internal/project/runtime.js";
 import { TnlError } from "./errors.js";
 import type { PrepareOptions, PreparedService } from "./internal/publisher/app.js";
 import type { AdHocTunnel, OpenOptions } from "./internal/publisher/open.js";
 import type { LocalHTTPServer } from "./internal/publisher/register.js";
 import type { FetchHandler } from "./internal/publisher/fetch_types.js";
-import type { TnlGroupClientOptions } from "./internal/connector/group_client.js";
-export type {
-  TnlGroupClientOptions,
-  TnlGroupClient,
-  TnlGroupConnection,
-} from "./internal/connector/group_client.js";
 import type {
-  TnlConnection,
   TnlConnectionHandle,
-  TnlProjectFromConfig,
-  TnlResolvedConfig,
-  TnlServiceNames,
-  TnlService,
-  TnlProtocolRegistry,
   TnlConnectionRegistry,
   TnlClientFactory,
   TnlClientOptions,
-  TnlGroupClientForConfig,
 } from "./project.js";
 export type * from "./project.js";
 export type { PrepareOptions, PreparedService } from "./internal/publisher/app.js";
 export type {
   AdHocTunnel,
   OpenOptions,
-  PublisherCredentialFile,
-  PublisherIdentityID,
 } from "./internal/publisher/open.js";
 export type { FetchHandler } from "./internal/publisher/fetch_types.js";
 export { TnlError, type TnlErrorCode } from "./errors.js";
 
-/** extended by the portable `.tnl/generated/project.d.ts` declaration. */
-export interface TnlProjectConfig {}
-
-type Config = TnlProjectConfig extends { config: infer Input }
-  ? TnlResolvedConfig<Input>
-  : { services: Record<string, { protocol: keyof TnlProtocolRegistry }> };
-type RegisteredTnlProject = keyof TnlProjectConfig extends never
-  ? {
-      services: Readonly<
-        Record<string, TnlService<{ protocol: keyof TnlProtocolRegistry }> | undefined>
-      >;
-    }
-  : TnlProjectFromConfig<Config>;
+type Settings = TnlConnectionRegistry[keyof TnlConnectionRegistry];
 
 export type TnlRuntime = Readonly<
-  Partial<Omit<ProjectMetadata, "services">> &
-    Partial<Omit<RegisteredTnlProject, "publisherGroups" | "workloads" | "services">> & {
-      services: RegisteredTnlProject["services"];
-      readonly port: number;
-      readonly dev: boolean;
-      prepare(options?: PrepareOptions): Promise<PreparedService>;
-      open(server: LocalHTTPServer | FetchHandler, options?: OpenOptions): Promise<AdHocTunnel>;
-      connect<Name extends TnlServiceNames<Config>>(
-        name: Name,
-      ): TnlConnectionHandle<TnlConnection<Config, Name>>;
-      client<Name extends TnlServiceNames<Config>, Client>(
-        name: Name,
-        options: TnlClientOptions<TnlConnection<Config, Name>, Client>,
-      ): TnlClientFactory<Client>;
-      client(options: TnlGroupClientOptions): TnlGroupClientForConfig<Config>;
-    }
+  Partial<Omit<ProjectMetadata, "services">> & {
+    services: Readonly<Record<string, ProjectServiceMetadata | undefined>>;
+    readonly port: number;
+    readonly dev: boolean;
+    prepare(options?: PrepareOptions): Promise<PreparedService>;
+    open(server: LocalHTTPServer | FetchHandler, options: OpenOptions): Promise<AdHocTunnel>;
+    connect(name: string): TnlConnectionHandle<Settings>;
+    client<Client>(
+      name: string,
+      options: TnlClientOptions<Settings, Client>,
+    ): TnlClientFactory<Client>;
+    client<const Services extends ServiceFacts>(
+      options: EnvironmentClientOptions<Services>,
+    ): SelectedClient<Services>;
+  }
 >;
 
 declare const process:
@@ -90,10 +76,9 @@ const serializedRuntime =
   typeof process === "undefined" ? undefined : process.env?.TNL_PROJECT_RUNTIME;
 
 /** Server port and optional browser-safe project metadata for this process. */
-// the parser validates the runtime shape; generated project declarations supply
-// project-specific service names and literals unavailable to this shared module.
+// runtime endpoints do not establish a caller's compiled service contract.
 let runtime = parseRuntimePayload(serializedRuntime);
-export const tnl = Object.freeze({
+export const tnl: TnlRuntime = Object.freeze({
   ...runtime,
   get services() {
     return serviceMetadata(runtime);
@@ -110,7 +95,7 @@ export const tnl = Object.freeze({
   },
   async open(
     server: LocalHTTPServer | FetchHandler,
-    options: OpenOptions = {},
+    options: OpenOptions,
   ): Promise<AdHocTunnel> {
     if (typeof process === "undefined") throw new TnlError("sdk.configuration_invalid");
     const { openServer, openFetch } = await import("./internal/publisher/open.js");
@@ -130,23 +115,34 @@ export const tnl = Object.freeze({
             });
     });
   },
-  client<Client>(
-    name: string | TnlGroupClientOptions,
-    options?: TnlClientOptions<TnlConnectionRegistry[keyof TnlConnectionRegistry], Client>,
-  ) {
-    if (typeof process === "undefined" || typeof process.versions?.node !== "string")
-      throw new TnlError("sdk.connection_server_only");
-    if (typeof name !== "string") return loadConnection().groupClient(name);
-    if (options === undefined) throw new TnlError("sdk.configuration_invalid");
-    const { connectionClient } = loadConnection();
-    return connectionClient(name, options, (project) => {
-      runtime =
-        runtime === undefined
-          ? project
-          : parseProjectRuntime({
-              ...runtime,
-              services: { ...runtime.services, ...project.services },
-            });
-    });
-  },
-}) as unknown as TnlRuntime;
+  client: createClient,
+});
+
+function createClient<const Services extends ServiceFacts>(
+  options: EnvironmentClientOptions<Services>,
+): SelectedClient<Services>;
+function createClient<Client>(
+  name: string,
+  options: TnlClientOptions<Settings, Client>,
+): TnlClientFactory<Client>;
+function createClient<const Services extends ServiceFacts, Client>(
+  name: string | EnvironmentClientOptions<Services>,
+  options?: TnlClientOptions<Settings, Client>,
+): SelectedClient<Services> | TnlClientFactory<Client> {
+  if (typeof process === "undefined" || typeof process.versions?.node !== "string")
+    throw new TnlError("sdk.connection_server_only");
+  if (typeof name === "object" && name !== null && options === undefined)
+    return loadEnvironmentClient().environmentClient(name);
+  if (typeof name !== "string" || options === undefined)
+    throw new TnlError("sdk.configuration_invalid");
+  const { connectionClient } = loadConnection();
+  return connectionClient(name, options, (project) => {
+    runtime =
+      runtime === undefined
+        ? project
+        : parseProjectRuntime({
+            ...runtime,
+            services: { ...runtime.services, ...project.services },
+          });
+  });
+}

@@ -1,42 +1,4 @@
 paths:
-  /v1/projects/{project_key}/services/{service}:
-    get:
-      operationId: getProjectService
-      security: [{ bearerAuth: [] }]
-      description: Resolve an applied service by its exact Git source and configuration key using current visitor access. Does not return targets or require project-manager permission.
-      parameters:
-        - {
-            name: publisher_group,
-            in: query,
-            schema: { type: string },
-            description: Exact group ID or current/historical selector within this project; never a visitor grant.,
-          }
-        - { name: project_key, in: path, required: true, schema: { type: string } }
-        - {
-            name: service,
-            in: path,
-            required: true,
-            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceName" },
-          }
-        - {
-            name: team_id,
-            in: query,
-            required: true,
-            schema: { $ref: "../openapi.yaml#/components/schemas/TeamID" },
-          }
-        - {
-            name: source_fingerprint,
-            in: query,
-            required: true,
-            schema: { type: string, pattern: "^[0-9a-f]{64}$" },
-          }
-      responses:
-        "200":
-          description: Exact saved service from the applied configuration, including offline services
-          content:
-            application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/Service" }
-        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/services:
     get:
       operationId: listServices

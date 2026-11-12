@@ -104,6 +104,14 @@ func (d *Database) CreateCollection(ctx context.Context, r CreateCollectionReque
 }
 
 func (d *Database) GetCollection(ctx context.Context, team, project, id, actor string) (result Collection, retErr error) {
+	return d.inspectCollection(ctx, team, project, id, actor, EnvironmentPublisherManager{})
+}
+
+func (d *Database) InspectCollection(ctx context.Context, team, project, id string, manager EnvironmentPublisherManager) (Collection, error) {
+	return d.inspectCollection(ctx, team, project, id, "", manager)
+}
+
+func (d *Database) inspectCollection(ctx context.Context, team, project, id, actor string, manager EnvironmentPublisherManager) (result Collection, retErr error) {
 	defer func() { retErr = collectionOperationError(retErr) }()
 	if !naming.ValidProjectKey(project) || !opaqueid.Valid(id, opaqueid.CollectionPrefix) {
 		return result, ErrCollectionInvalid
@@ -113,14 +121,22 @@ func (d *Database) GetCollection(ctx context.Context, team, project, id, actor s
 		return result, err
 	}
 	defer rollback(ctx, tx, "get collection", &retErr)()
-	if err = authorizeEnvironmentManager(ctx, tx, team, actor); err != nil {
+	manager, err = environmentManagement(ctx, tx, team, actor, manager)
+	if err != nil {
 		return result, err
 	}
 	row, err := controlstatedb.New(tx).GetCollection(ctx, controlstatedb.GetCollectionParams{TeamID: team, ProjectKey: project, ID: id})
 	if err != nil {
 		return result, err
 	}
-	if err = serviceManager(ctx, tx, team, actor); err != nil {
+	definition, err := loadServiceDefinition(ctx, tx, team, project, row.DefaultDefinitionRevision)
+	if err != nil {
+		return result, err
+	}
+	if err = manager.authorize(ctx, tx, ProvisioningScope{Operation: ProvisioningRead, TeamID: team, ProjectKey: project, CollectionID: row.ID, Services: definitionServiceNames(definition.Definition)}, false); err != nil {
+		return result, err
+	}
+	if err = manager.finish(ctx, tx, team); err != nil {
 		return result, err
 	}
 	return collectionStatus(row), tx.Commit(ctx)

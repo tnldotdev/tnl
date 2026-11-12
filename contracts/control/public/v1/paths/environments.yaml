@@ -24,7 +24,7 @@ paths:
     post:
       operationId: createEnvironment
       security: [{ bearerAuth: [] }]
-      description: Materialize one environment from an immutable definition and complete approved targets as a current team manager. With a collection, require its expected mutation revision and save membership atomically; an explicit definition revision overrides its default. Creation grants no visitor or workload permission. Authorized identical retries return the saved environment without following a changed default; changing the original collection precondition or other creation intent with a used key conflicts, as do retired keys. Names and references select resources, not authorization scope.
+      description: Materialize one environment from an immutable definition and complete approved targets using current team manager access or an exact machine create provisioning session. Machine creation requires its granted collection including future environments, and the complete selected definition must fit its fixed service allowlist. With a collection, require its expected mutation revision and save membership atomically; an explicit definition revision overrides its default. Creation grants no visitor or workload permission. Authorized identical retries return the saved environment without following a changed default; changing the original collection precondition or other creation intent with a used key conflicts, as do retired keys. Names and references select resources, not authorization scope.
       requestBody:
         required: true
         content:
@@ -40,7 +40,7 @@ paths:
     get:
       operationId: listEnvironments
       security: [{ bearerAuth: [] }]
-      description: List active environments in this project as a current team manager. Contains sensitive target settings; never use as browser metadata.
+      description: List active environments in this project using current team manager access or a machine read provisioning session. Machine results include only environments within its current saved scope whose complete applied definition fits its fixed service allowlist. Contains sensitive target settings; never use as browser metadata.
       parameters:
         - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
       responses:
@@ -59,7 +59,7 @@ paths:
     get:
       operationId: getEnvironment
       security: [{ bearerAuth: [] }]
-      description: Read one exact immutable environment in this project as a current team manager. Does not search names, another project, or another team.
+      description: Read one exact environment in this project using current team manager access or exact machine read authority for its complete applied service set. Does not search names, another project, or another team.
       parameters:
         - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
       responses:
@@ -72,7 +72,7 @@ paths:
     delete:
       operationId: retireEnvironment
       security: [{ bearerAuth: [] }]
-      description: Retire only this environment and its publications as a current team manager. Its saved creation key cannot recreate it. Other environments, local worktrees, and their authorizations remain unchanged.
+      description: Retire only this environment and its publications using current team manager access or exact machine retire authority for its complete applied service set. Its saved creation key cannot recreate it. Other environments, local worktrees, and their authorizations remain unchanged.
       parameters:
         - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
         - {
@@ -88,7 +88,7 @@ paths:
     post:
       operationId: applyEnvironment
       security: [{ bearerAuth: [] }]
-      description: Apply one pinned definition and approved targets to this exact environment as a current team manager. A rollback still advances its mutation revision. No other environment is reconciled; no current permission is restored from definition history.
+      description: Apply one pinned definition and approved targets to this exact environment using current team manager access or exact machine update authority. A machine must cover every old and selected service; it cannot remove an unauthorized service to gain control of the remainder. A rollback still advances its mutation revision. No other environment is reconciled; no current permission is restored from definition history.
       parameters:
         - { name: project_key, in: path, required: true, schema: { type: string } }
         - { name: environment_id, in: path, required: true, schema: { type: string } }
@@ -108,7 +108,7 @@ paths:
     post:
       operationId: applyEnvironments
       security: [{ bearerAuth: [] }]
-      description: Atomically apply the selected environments as a current team manager. Check every expected environment revision in one transaction; any validation, capacity, or revision failure saves nothing. Definition rollout does not reconcile current authorization.
+      description: Atomically apply the selected environments using current team manager access or exact machine update authority for every environment and every old and selected service. Check every expected environment revision in one transaction; any authorization, validation, capacity, or revision failure saves nothing. Definition rollout does not reconcile current authorization.
       parameters:
         - { name: project_key, in: path, required: true, schema: { type: string } }
       requestBody:

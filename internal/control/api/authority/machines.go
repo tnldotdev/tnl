@@ -10,11 +10,11 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/control/oidc"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	"github.com/tnldotdev/tnl/internal/security/credentials"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 type MachineStore interface {
+	WorkloadApprovalStore
 	RegisterMachineIdentity(context.Context, controlstate.RegisterMachineRequest, time.Time) (controlstate.MachineIdentity, error)
 	RotateMachineIdentityKey(context.Context, string, string, string, string, ed25519.PublicKey, time.Time) error
 	RevokeMachineIdentity(context.Context, string, string, string, time.Time) error
@@ -22,28 +22,23 @@ type MachineStore interface {
 	ProvisioningIdentityPolicy(context.Context, string, time.Time) (controlstate.MachineIdentity, error)
 	CreateProvisioningGrant(context.Context, controlstate.ProvisioningGrant, string, time.Time) (controlstate.ProvisioningGrant, error)
 	RevokeProvisioningGrant(context.Context, string, string, string, time.Time) error
-	CreateMachineWorkloadPermission(context.Context, controlstate.MachineWorkloadPermission, string, time.Time) (controlstate.MachineWorkloadPermission, error)
-	RevokeMachineWorkloadPermission(context.Context, string, string, string, time.Time) error
+	CreateEnvironmentVisitorPermission(context.Context, controlstate.EnvironmentVisitorPermission, string, time.Time) (controlstate.EnvironmentVisitorPermission, error)
+	RevokeEnvironmentVisitorPermission(context.Context, string, string, string, time.Time) error
 	ExchangeProvisioning(context.Context, string, string, controlstate.ProvisioningOperation, controlstate.MachineProof, string, time.Time) (controlstate.ProvisioningSession, error)
-	PublisherGroupWorkloadPolicy(context.Context, string, string) (controlstate.ProjectWorkload, error)
-	ResolvePublisherGroupWorkload(context.Context, string, string, string, oidc.WorkloadExecution, *controlstate.MachineWorkloadProof, time.Time) (controlstate.PublisherGroupWorkloadResolution, error)
-	ExchangeMachineWorkload(context.Context, controlstate.ExchangeWorkloadRequest, controlstate.MachineWorkloadProof, time.Time) (controlstate.WorkloadSession, error)
-	MachineWorkloadAssertionPolicy(context.Context, string, string, time.Time) (controlstate.MachineWorkloadProof, error)
-	AttachMachineWorkloadAssertion(context.Context, string, string, controlstate.MachineProof, []byte, string, time.Time) (controlstate.WorkloadSession, error)
 }
 
 var _ MachineStore = (*controlstate.Database)(nil)
 
 func machineProblem(ctx context.Context, w http.ResponseWriter, err error) {
 	if errors.Is(err, controlstate.ErrMachineDenied) || errors.Is(err, controlstate.ErrPublisherIdentity) || errors.Is(err, controlstate.ErrWorkloadDenied) || errors.Is(err, oidc.ErrUnauthenticated) {
-		writeProblem(w, 403, authorityv1.Forbidden, "current machine proof or workload policy does not authorize this operation")
+		writeProblem(w, 403, authorityv1.Forbidden, "current machine proof or saved permission does not authorize this operation")
 		return
 	}
-	if errors.Is(err, controlstate.ErrProjectConfigurationInvalid) {
+	if errors.Is(err, controlstate.ErrProjectConfigurationInvalid) || errors.Is(err, controlstate.ErrEnvironmentInvalid) {
 		writeProblem(w, 400, authorityv1.InvalidRequest, "invalid machine identity or scoped permission")
 		return
 	}
-	workloadProblem(ctx, w, err)
+	environmentVisitorProblem(ctx, w, err)
 }
 
 func (h *handler) machineStore(w http.ResponseWriter) (MachineStore, bool) {
@@ -92,6 +87,9 @@ func (h *handler) RegisterMachineIdentity(w http.ResponseWriter, r *http.Request
 	}
 	if t := body.Trust; t != nil {
 		request.Trust = oidc.WorkloadTrust{Provider: string(t.Provider), Issuer: t.Issuer, JWKSURL: t.JwksUrl, Audience: t.Audience, Claims: t.Claims}
+		if t.Events != nil {
+			request.Trust.Events = *t.Events
+		}
 	}
 	result, err := s.RegisterMachineIdentity(r.Context(), request, time.Now())
 	if err != nil {
@@ -142,7 +140,7 @@ func (h *handler) CreateProvisioningGrant(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var body authorityv1.ProvisioningGrantRequest
-	if decodeJSON(w, r, &body) != nil {
+	if decodeEnvironmentVisitorJSON(w, r, &body, "project_key", "scope", "services", "operations", "max_enrollment_members", "max_enrollment_seconds", "enrollment_budget", "expires_at") != nil {
 		machineProblem(r.Context(), w, controlstate.ErrProjectConfigurationInvalid)
 		return
 	}
@@ -150,7 +148,12 @@ func (h *handler) CreateProvisioningGrant(w http.ResponseWriter, r *http.Request
 	for i, op := range body.Operations {
 		ops[i] = controlstate.ProvisioningOperation(op)
 	}
-	g, err := s.CreateProvisioningGrant(r.Context(), controlstate.ProvisioningGrant{TeamID: team, MachineID: machine, ProjectKey: body.ProjectKey, Templates: body.Templates, Operations: ops, MaxEnrollmentMembers: body.MaxEnrollmentMembers, MaxEnrollmentSeconds: body.MaxEnrollmentSeconds, EnrollmentBudget: body.EnrollmentBudget, ExpiresAt: body.ExpiresAt}, actor, time.Now())
+	scope, err := environmentPermissionScopeFromAPI(body.Scope)
+	if err != nil {
+		machineProblem(r.Context(), w, err)
+		return
+	}
+	g, err := s.CreateProvisioningGrant(r.Context(), controlstate.ProvisioningGrant{TeamID: team, MachineID: machine, ProjectKey: body.ProjectKey, Scope: scope, Services: body.Services, Operations: ops, MaxEnrollmentMembers: body.MaxEnrollmentMembers, MaxEnrollmentSeconds: body.MaxEnrollmentSeconds, EnrollmentBudget: body.EnrollmentBudget, ExpiresAt: body.ExpiresAt}, actor, time.Now())
 	if err != nil {
 		machineProblem(r.Context(), w, err)
 		return
@@ -170,17 +173,22 @@ func (h *handler) RevokeProvisioningGrant(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(204)
 }
 
-func (h *handler) CreateMachineWorkloadPermission(w http.ResponseWriter, r *http.Request, team, machine string) {
+func (h *handler) CreateEnvironmentVisitorPermission(w http.ResponseWriter, r *http.Request, team, machine string) {
 	s, actor, ok := h.machineAdmin(w, r)
 	if !ok {
 		return
 	}
-	var body authorityv1.MachineWorkloadPermissionRequest
-	if decodeJSON(w, r, &body) != nil {
+	var body authorityv1.EnvironmentVisitorPermissionRequest
+	if decodeEnvironmentVisitorJSON(w, r, &body, "project_key", "scope", "services", "max_duration_seconds", "expires_at") != nil {
 		machineProblem(r.Context(), w, controlstate.ErrProjectConfigurationInvalid)
 		return
 	}
-	p, err := s.CreateMachineWorkloadPermission(r.Context(), controlstate.MachineWorkloadPermission{TeamID: team, MachineID: machine, ProjectKey: body.ProjectKey, Workload: body.Workload, Templates: body.Templates, ExpiresAt: body.ExpiresAt}, actor, time.Now())
+	scope, err := environmentPermissionScopeFromAPI(body.Scope)
+	if err != nil {
+		machineProblem(r.Context(), w, err)
+		return
+	}
+	p, err := s.CreateEnvironmentVisitorPermission(r.Context(), controlstate.EnvironmentVisitorPermission{TeamID: team, MachineID: machine, ProjectKey: body.ProjectKey, Scope: scope, Services: body.Services, MaxDurationSeconds: body.MaxDurationSeconds, ExpiresAt: body.ExpiresAt}, actor, time.Now())
 	if err != nil {
 		machineProblem(r.Context(), w, err)
 		return
@@ -188,12 +196,12 @@ func (h *handler) CreateMachineWorkloadPermission(w http.ResponseWriter, r *http
 	writeJSON(w, 201, authorityv1.MachinePermissionResult{Id: p.ID})
 }
 
-func (h *handler) RevokeMachineWorkloadPermission(w http.ResponseWriter, r *http.Request, team, permission string) {
+func (h *handler) RevokeEnvironmentVisitorPermission(w http.ResponseWriter, r *http.Request, team, permission string) {
 	s, actor, ok := h.machineAdmin(w, r)
 	if !ok {
 		return
 	}
-	if err := s.RevokeMachineWorkloadPermission(r.Context(), team, permission, actor, time.Now()); err != nil {
+	if err := s.RevokeEnvironmentVisitorPermission(r.Context(), team, permission, actor, time.Now()); err != nil {
 		machineProblem(r.Context(), w, err)
 		return
 	}
@@ -251,119 +259,18 @@ func (h *handler) ExchangeProvisioning(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, result)
 }
 
-func (h *handler) ResolvePublisherGroupWorkload(w http.ResponseWriter, r *http.Request, group string) {
-	s, ok := h.machineStore(w)
-	if !ok {
-		return
-	}
-	var body authorityv1.ResolvePublisherGroupWorkload
-	if decodeJSON(w, r, &body) != nil {
-		machineProblem(r.Context(), w, controlstate.ErrProjectConfigurationInvalid)
-		return
-	}
-	var execution oidc.WorkloadExecution
-	var machine *controlstate.MachineWorkloadProof
-	if body.MachineId != nil {
-		proof, err := h.machineProof(r, s, *body.MachineId, body.Assertion)
-		if err != nil {
-			machineProblem(r.Context(), w, err)
-			return
+func environmentPermissionScopeFromAPI(scope authorityv1.EnvironmentPermissionScope) (controlstate.EnvironmentPermissionScope, error) {
+	result := controlstate.EnvironmentPermissionScope{IncludeFutureEnvironments: scope.IncludeFutureEnvironments}
+	if scope.CollectionId != nil {
+		if *scope.CollectionId == "" || scope.EnvironmentIds != nil || scope.IncludeFutureEnvironments == nil {
+			return result, controlstate.ErrEnvironmentInvalid
 		}
-		machine = &controlstate.MachineWorkloadProof{MachineID: *body.MachineId, GroupID: group, Proof: proof, Audience: h.config.ControlURL + "/v1/publisher-groups/" + group + "/resolve"}
-	} else {
-		policy, err := s.PublisherGroupWorkloadPolicy(r.Context(), group, body.Workload)
-		if err != nil {
-			machineProblem(r.Context(), w, err)
-			return
-		}
-		execution, err = h.workloads.Verify(r.Context(), policy.Trust, body.Assertion)
-		if err != nil {
-			machineProblem(r.Context(), w, err)
-			return
-		}
+		result.CollectionID = *scope.CollectionId
+	} else if scope.IncludeFutureEnvironments != nil || scope.EnvironmentIds == nil {
+		return result, controlstate.ErrEnvironmentInvalid
 	}
-	result, err := s.ResolvePublisherGroupWorkload(r.Context(), group, body.Workload, h.config.ControlURL, execution, machine, time.Now())
-	if err != nil {
-		machineProblem(r.Context(), w, err)
-		return
+	if scope.EnvironmentIds != nil {
+		result.EnvironmentIDs = *scope.EnvironmentIds
 	}
-	writeJSON(w, 200, result)
-}
-
-func (h *handler) ExchangeMachineWorkload(w http.ResponseWriter, r *http.Request) {
-	s, ok := h.machineStore(w)
-	if !ok {
-		return
-	}
-	var body authorityv1.MachineWorkloadExchange
-	if decodeJSON(w, r, &body) != nil {
-		machineProblem(r.Context(), w, controlstate.ErrProjectConfigurationInvalid)
-		return
-	}
-	b := body.Exchange
-	public, err := base64.RawURLEncoding.Strict().DecodeString(b.PublicKey)
-	if err != nil || len(public) != 32 {
-		machineProblem(r.Context(), w, controlstate.ErrProjectConfigurationInvalid)
-		return
-	}
-	signature, err := base64.RawURLEncoding.Strict().DecodeString(b.Signature)
-	if err != nil || len(signature) != 64 {
-		machineProblem(r.Context(), w, controlstate.ErrProjectConfigurationInvalid)
-		return
-	}
-	proof, err := h.machineProof(r, s, body.MachineId, b.Assertion)
-	if err != nil {
-		machineProblem(r.Context(), w, err)
-		return
-	}
-	var services []string
-	if b.Services != nil {
-		services = *b.Services
-	}
-	result, err := s.ExchangeMachineWorkload(r.Context(), controlstate.ExchangeWorkloadRequest{TeamID: b.TeamId, ProjectKey: b.ProjectKey, Workload: b.Workload, SourceFingerprint: b.SourceFingerprint, Nonce: b.Nonce, PublicKey: public, Signature: signature, Services: services}, controlstate.MachineWorkloadProof{MachineID: body.MachineId, GroupID: body.GroupId, Proof: proof, Audience: h.config.ControlURL + "/v1/machine-workload-sessions/exchange"}, time.Now())
-	if err != nil {
-		machineProblem(r.Context(), w, err)
-		return
-	}
-	// the state caps assertion expiry to the separately approved permission.
-	result.AssertionExpiresAt = new(result.IdentityExpiresAt)
-	writeJSON(w, 200, result)
-}
-
-func (h *handler) AttachMachineWorkloadAssertion(w http.ResponseWriter, r *http.Request, id string) {
-	s, ok := h.machineStore(w)
-	if !ok {
-		return
-	}
-	token, err := credentials.Bearer(r.Header)
-	if err != nil {
-		writeBearerProblem(w)
-		return
-	}
-	var body authorityv1.WorkloadAssertion
-	if decodeJSON(w, r, &body) != nil {
-		machineProblem(r.Context(), w, controlstate.ErrProjectConfigurationInvalid)
-		return
-	}
-	signature, err := base64.RawURLEncoding.Strict().DecodeString(body.Signature)
-	if err != nil || len(signature) != ed25519.SignatureSize {
-		machineProblem(r.Context(), w, controlstate.ErrProjectConfigurationInvalid)
-		return
-	}
-	policy, err := s.MachineWorkloadAssertionPolicy(r.Context(), id, token, time.Now())
-	if err != nil {
-		machineProblem(r.Context(), w, err)
-		return
-	}
-	proof, err := h.machineProof(r, s, policy.MachineID, body.Assertion)
-	if err != nil {
-		machineProblem(r.Context(), w, err)
-		return
-	}
-	result, err := s.AttachMachineWorkloadAssertion(r.Context(), id, token, proof, signature, h.config.ControlURL+"/v1/machine-workload-sessions/"+id+"/assertions", time.Now())
-	if err != nil {
-		machineProblem(r.Context(), w, err)
-		return
-	}
-	writeJSON(w, 200, result)
+	return result, nil
 }

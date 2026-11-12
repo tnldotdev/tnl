@@ -81,12 +81,22 @@ func TestWorkloadJWKSigningAlgorithms(t *testing.T) {
 			// the generic key-fetch configuration must not widen GitHub or the
 			// RS256-only provider profiles, even with a valid signed assertion.
 			github := sign(githubtest.Claims("https://control.example", now))
-			if _, err := v.Verify(t.Context(), oidc.WorkloadTrust{Provider: "github"}, github); !errors.Is(err, oidc.ErrUnauthenticated) {
+			if _, err := v.Verify(t.Context(), machineProviderTrusts()[0], github); !errors.Is(err, oidc.ErrUnauthenticated) {
 				t.Fatal("GitHub accepted a non-RS256 assertion", err)
 			}
-			for _, provider := range []string{"vercel", "fly"} {
-				p.Provider = provider
-				if _, err := v.Verify(t.Context(), p, raw); !errors.Is(err, oidc.ErrUnauthenticated) {
+			for _, policy := range machineProviderTrusts()[1:3] {
+				claims := map[string]any{"iss": policy.Issuer, "aud": policy.Audience, "iat": now.Unix(), "nbf": now.Unix(), "exp": now.Add(time.Minute).Unix()}
+				for name, value := range policy.Claims {
+					claims[name] = value
+				}
+				if policy.Provider == "vercel" {
+					claims["project"] = "storefront"
+					claims["sub"] = "owner:acme:project:storefront:environment:production"
+				} else {
+					claims["machine_name"], claims["machine_id"] = "store-one", "148e21ea7e46e8"
+					claims["sub"] = "acme:store:store-one"
+				}
+				if _, err := v.Verify(t.Context(), policy, sign(claims)); !errors.Is(err, oidc.ErrUnauthenticated) {
 					t.Fatal("provider accepted a non-RS256 assertion", err)
 				}
 			}

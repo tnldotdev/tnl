@@ -24,13 +24,16 @@ func TestGroupBootstrapRefreshKeepsTaskKeyAndServerScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope := "project-publisher:group:project-one:cloud:task-one"
+	scope := "project-publisher:environment:project-one:env-immutable:task-one"
 	pending := PendingPublisherEnrollment{EnrollmentID: "group-pending", SelectionKind: "project", SelectionKey: scope, PublicKey: public, SigningKey: private, ExpiresAt: time.Now().Add(time.Hour)}
 	if err := profile.SavePendingPublisherEnrollment(t.Context(), pending); err != nil {
 		t.Fatal(err)
 	}
+	if err := profile.SetEnvironmentPublisherEnrollmentSecret(t.Context(), pending.EnrollmentID, "project-publisher:group:project-one:cloud:task-one", []byte("retired-selection")); err == nil {
+		t.Fatal("retired group selection was accepted")
+	}
 	for _, secret := range []string{"first-bootstrap", "replacement-bootstrap"} {
-		if err := profile.SetPublisherGroupEnrollmentSecret(t.Context(), pending.EnrollmentID, scope, []byte(secret)); err != nil {
+		if err := profile.SetEnvironmentPublisherEnrollmentSecret(t.Context(), pending.EnrollmentID, scope, []byte(secret)); err != nil {
 			t.Fatal(err)
 		}
 		saved, found, err := profile.PendingPublisherEnrollmentForSelection(t.Context(), "project", scope)
@@ -42,13 +45,13 @@ func TestGroupBootstrapRefreshKeepsTaskKeyAndServerScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := other.SetPublisherGroupEnrollmentSecret(t.Context(), pending.EnrollmentID, scope, []byte("wrong-server")); !errors.Is(err, ErrPublisherStateConflict) {
+	if err := other.SetEnvironmentPublisherEnrollmentSecret(t.Context(), pending.EnrollmentID, scope, []byte("wrong-server")); !errors.Is(err, ErrPublisherStateConflict) {
 		t.Fatalf("server boundary: %v", err)
 	}
 	if err := profile.RecordPublisherEnrollmentResult(t.Context(), pending.EnrollmentID, []byte(`{"publisher_identity_id":"task"}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := profile.SetPublisherGroupEnrollmentSecret(t.Context(), pending.EnrollmentID, scope, []byte("after-redemption")); !errors.Is(err, ErrPublisherStateConflict) {
+	if err := profile.SetEnvironmentPublisherEnrollmentSecret(t.Context(), pending.EnrollmentID, scope, []byte("after-redemption")); !errors.Is(err, ErrPublisherStateConflict) {
 		t.Fatalf("redemption was overwritten: %v", err)
 	}
 }

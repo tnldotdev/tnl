@@ -9,6 +9,10 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example.com
 paths:
+  /v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id}/services/{service_id}/grant:
+    $ref: "./paths/environment-publisher-grants.yaml#/paths/~1v1~1projects~1{project_key}~1environments~1{environment_id}~1publishers~1{publisher_identity_id}~1services~1{service_id}~1grant"
+  /v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id}/services/{service_id}/grant/{grant_id}:
+    $ref: "./paths/environment-publisher-grants.yaml#/paths/~1v1~1projects~1{project_key}~1environments~1{environment_id}~1publishers~1{publisher_identity_id}~1services~1{service_id}~1grant~1{grant_id}"
   /v1/projects/{project_key}/collections:
     $ref: "./paths/collections.yaml#/paths/~1v1~1projects~1{project_key}~1collections"
   /v1/projects/{project_key}/collections/{collection_id}:
@@ -25,16 +29,12 @@ paths:
     $ref: "./paths/environments.yaml#/paths/~1v1~1projects~1{project_key}~1environments~1{environment_id}~1apply"
   /v1/projects/{project_key}/environments/apply:
     $ref: "./paths/environments.yaml#/paths/~1v1~1projects~1{project_key}~1environments~1apply"
-  /v1/projects/{project_key}/publisher-groups:
-    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1projects~1{project_key}~1publisher-groups"
-  /v1/projects/{project_key}/publisher-groups/{group_name}/bindings:
-    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1projects~1{project_key}~1publisher-groups~1{group_name}~1bindings"
-  /v1/projects/{project_key}/publisher-groups/{group_name}/members:
-    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1projects~1{project_key}~1publisher-groups~1{group_name}~1members"
-  /v1/projects/{project_key}/publisher-groups/{group_name}:
-    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1projects~1{project_key}~1publisher-groups~1{group_name}"
-  /v1/projects/{project_key}/publisher-groups/{group_name}/connection:
-    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1projects~1{project_key}~1publisher-groups~1{group_name}~1connection"
+  /v1/projects/{project_key}/environments/{environment_id}/publisher-enrollments:
+    $ref: "./paths/environment-publishers.yaml#/paths/~1v1~1projects~1{project_key}~1environments~1{environment_id}~1publisher-enrollments"
+  /v1/projects/{project_key}/environments/{environment_id}/publishers:
+    $ref: "./paths/environment-publishers.yaml#/paths/~1v1~1projects~1{project_key}~1environments~1{environment_id}~1publishers"
+  /v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id}:
+    $ref: "./paths/environment-publishers.yaml#/paths/~1v1~1projects~1{project_key}~1environments~1{environment_id}~1publishers~1{publisher_identity_id}"
   /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs:
     $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1connector-peer-pairs"
   /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery:
@@ -63,8 +63,6 @@ paths:
     $ref: "./paths/browser-access.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1browser~1handoff"
   /v1/services/{service_id}/runs/{service_run_id}/browser/session:
     $ref: "./paths/browser-access.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1browser~1session"
-  /v1/projects/{project_key}/services/{service}:
-    $ref: "./paths/services.yaml#/paths/~1v1~1projects~1{project_key}~1services~1{service}"
   /v1/services/{service_id}/runs/{service_run_id}/start:
     $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1start"
   /v1/services/{service_id}/client-certificates:
@@ -77,32 +75,22 @@ paths:
     $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1certificate-issuances~1{issuance_id}"
   /v1/services/{service_id}/runs/{service_run_id}/certificate-installed:
     $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1certificate-installed"
-  /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename:
-    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1projects~1{project_key}~1publisher-groups~1{group_name}~1namespace~1rename"
-  /v1/projects/{project_key}/publisher-groups/{group_name}/rename:
-    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1projects~1{project_key}~1publisher-groups~1{group_name}~1rename"
   /v1/projects/{project_key}/public-metadata:
     $ref: "./paths/projects.yaml#/paths/~1v1~1projects~1{project_key}~1public-metadata"
   /v1/projects/{project_key}/local-services/{service}:
     $ref: "./paths/projects.yaml#/paths/~1v1~1projects~1{project_key}~1local-services~1{service}"
-  /v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id}:
-    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1projects~1{project_key}~1publisher-groups~1{group_name}~1members~1{publisher_identity_id}"
-  /v1/projects/{project_key}/configuration:
-    $ref: "./paths/projects.yaml#/paths/~1v1~1projects~1{project_key}~1configuration"
-  /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments:
-    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1projects~1{project_key}~1publisher-groups~1{group_name}~1enrollments"
-  /v1/publisher-groups/enroll:
-    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1publisher-groups~1enroll"
-  /v1/publisher-groups/verify:
-    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1publisher-groups~1verify"
+  /v1/environment-publishers/enroll:
+    $ref: "./paths/environment-publishers.yaml#/paths/~1v1~1environment-publishers~1enroll"
+  /v1/environment-publishers/verify:
+    $ref: "./paths/environment-publishers.yaml#/paths/~1v1~1environment-publishers~1verify"
   /v1/publisher-runtime:
     $ref: "./paths/publishers.yaml#/paths/~1v1~1publisher-runtime"
-  /v1/publisher-groups/lease:
-    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1publisher-groups~1lease"
-  /v1/publisher-groups/assignments:
-    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1publisher-groups~1assignments"
-  /v1/publisher-groups/ack:
-    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1publisher-groups~1ack"
+  /v1/environment-publishers/lease:
+    $ref: "./paths/environment-publishers.yaml#/paths/~1v1~1environment-publishers~1lease"
+  /v1/environment-publishers/assignments:
+    $ref: "./paths/environment-publishers.yaml#/paths/~1v1~1environment-publishers~1assignments"
+  /v1/environment-publishers/ack:
+    $ref: "./paths/environment-publishers.yaml#/paths/~1v1~1environment-publishers~1ack"
   /v1/teams/{team_id}/service-audit:
     $ref: "./paths/admin.yaml#/paths/~1v1~1teams~1{team_id}~1service-audit"
   /v1/publish-runs/{run_id}/service-observations:
@@ -320,6 +308,12 @@ components:
     Problem:
       $ref: "./schemas/common.yaml#/responses/Problem"
   schemas:
+    EnvironmentPublisherGrant:
+      $ref: "./schemas/environment-publisher-grants.yaml#/schemas/EnvironmentPublisherGrant"
+    EnvironmentPublisherGrantState:
+      $ref: "./schemas/environment-publisher-grants.yaml#/schemas/EnvironmentPublisherGrantState"
+    AuthorizeEnvironmentPublisherServiceRequest:
+      $ref: "./schemas/environment-publisher-grants.yaml#/schemas/AuthorizeEnvironmentPublisherServiceRequest"
     CollectionID:
       $ref: "./schemas/collections.yaml#/schemas/CollectionID"
     CollectionReference:
@@ -436,12 +430,6 @@ components:
       $ref: "./schemas/projects.yaml#/schemas/RealizeLocalProjectServiceRequest"
     LocalProjectService:
       $ref: "./schemas/projects.yaml#/schemas/LocalProjectService"
-    ApplyProjectConfigurationRequest:
-      $ref: "./schemas/projects.yaml#/schemas/ApplyProjectConfigurationRequest"
-    ProjectConfiguration:
-      $ref: "./schemas/projects.yaml#/schemas/ProjectConfiguration"
-    ProjectPublisherGroup:
-      $ref: "./schemas/projects.yaml#/schemas/ProjectPublisherGroup"
     ProjectWorkload:
       $ref: "./schemas/projects.yaml#/schemas/ProjectWorkload"
     WorkloadProvider:
@@ -458,14 +446,10 @@ components:
       $ref: "./schemas/projects.yaml#/schemas/ProjectWorkloadGitLab"
     ProjectTargetDiscovery:
       $ref: "./schemas/projects.yaml#/schemas/ProjectTargetDiscovery"
-    RenamePublisherNamespaceRequest:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/RenamePublisherNamespaceRequest"
-    RenamePublisherGroupRequest:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/RenamePublisherGroupRequest"
     ProjectWebhook:
       $ref: "./schemas/projects.yaml#/schemas/ProjectWebhook"
-    ProjectServiceConfiguration:
-      $ref: "./schemas/projects.yaml#/schemas/ProjectServiceConfiguration"
+    LocalServiceDeclaration:
+      $ref: "./schemas/projects.yaml#/schemas/LocalServiceDeclaration"
     ProjectServiceHTTP:
       $ref: "./schemas/projects.yaml#/schemas/ProjectServiceHTTP"
     ProjectServicePublicURL:
@@ -482,36 +466,30 @@ components:
       $ref: "./schemas/projects.yaml#/schemas/ProjectTargetTLS"
     ProjectServiceAccess:
       $ref: "./schemas/projects.yaml#/schemas/ProjectServiceAccess"
-    AppliedProjectConfiguration:
-      $ref: "./schemas/projects.yaml#/schemas/AppliedProjectConfiguration"
-    AppliedPublisherGroup:
-      $ref: "./schemas/projects.yaml#/schemas/AppliedPublisherGroup"
-    CreatePublisherGroupRequest:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/CreatePublisherGroupRequest"
-    PublisherGroupBindings:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupBindings"
-    PublisherGroupTargetBinding:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupTargetBinding"
-    PublisherGroupResource:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupResource"
-    UpdatePublisherGroupBindingsRequest:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/UpdatePublisherGroupBindingsRequest"
-    PublisherGroupConnection:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupConnection"
-    PublisherGroupConnectionWorkload:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupConnectionWorkload"
-    AppliedProjectService:
-      $ref: "./schemas/projects.yaml#/schemas/AppliedProjectService"
-    CreatePublisherGroupEnrollmentRequest:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/CreatePublisherGroupEnrollmentRequest"
-    PublisherGroupEnrollment:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupEnrollment"
-    RedeemPublisherGroupEnrollmentRequest:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/RedeemPublisherGroupEnrollmentRequest"
-    PublisherGroupMember:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupMember"
-    PublisherGroupMemberStatus:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupMemberStatus"
+    EnvironmentServicePublication:
+      $ref: "./schemas/environment-publishers.yaml#/schemas/EnvironmentServicePublication"
+    EnvironmentServiceHTTP:
+      $ref: "./schemas/environment-publishers.yaml#/schemas/EnvironmentServiceHTTP"
+    EnvironmentPublisher:
+      $ref: "./schemas/environment-publishers.yaml#/schemas/EnvironmentPublisher"
+    EnvironmentPublisherStatus:
+      $ref: "./schemas/environment-publishers.yaml#/schemas/EnvironmentPublisherStatus"
+    CreateEnvironmentPublisherEnrollmentRequest:
+      $ref: "./schemas/environment-publishers.yaml#/schemas/CreateEnvironmentPublisherEnrollmentRequest"
+    EnvironmentPublisherEnrollment:
+      $ref: "./schemas/environment-publishers.yaml#/schemas/EnvironmentPublisherEnrollment"
+    RedeemEnvironmentPublisherEnrollmentRequest:
+      $ref: "./schemas/environment-publishers.yaml#/schemas/RedeemEnvironmentPublisherEnrollmentRequest"
+    EnvironmentPublisherProof:
+      $ref: "./schemas/environment-publishers.yaml#/schemas/EnvironmentPublisherProof"
+    EnvironmentPublisherLease:
+      $ref: "./schemas/environment-publishers.yaml#/schemas/EnvironmentPublisherLease"
+    EnvironmentPublisherAssignment:
+      $ref: "./schemas/environment-publishers.yaml#/schemas/EnvironmentPublisherAssignment"
+    EnvironmentPublisherAssignments:
+      $ref: "./schemas/environment-publishers.yaml#/schemas/EnvironmentPublisherAssignments"
+    EnvironmentPublisherAcknowledgement:
+      $ref: "./schemas/environment-publishers.yaml#/schemas/EnvironmentPublisherAcknowledgement"
     PublisherRuntimeRequest:
       $ref: "./schemas/publishers.yaml#/schemas/PublisherRuntimeRequest"
     PublisherDeploymentReport:
@@ -522,18 +500,6 @@ components:
       $ref: "./schemas/publishers.yaml#/schemas/PublisherRuntimeResponse"
     PublisherRuntimeStatus:
       $ref: "./schemas/publishers.yaml#/schemas/PublisherRuntimeStatus"
-    PublisherGroupLeaseRequest:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupLeaseRequest"
-    PublisherGroupLease:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupLease"
-    PublisherGroupVerification:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupVerification"
-    PublisherGroupAssignments:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupAssignments"
-    PublisherGroupServiceAssignment:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupServiceAssignment"
-    PublisherGroupAcknowledgement:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupAcknowledgement"
     ServiceAuditEvent:
       $ref: "./schemas/admin.yaml#/schemas/ServiceAuditEvent"
     ServiceAuditPage:

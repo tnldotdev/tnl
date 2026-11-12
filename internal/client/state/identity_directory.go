@@ -26,6 +26,10 @@ type PrivateDirectory struct {
 }
 
 func OpenPrivateDirectory(path string) (*PrivateDirectory, error) {
+	return openPrivateDirectory(path, nil)
+}
+
+func openPrivateDirectory(path string, syncFile func(*os.File) error) (*PrivateDirectory, error) {
 	root, err := prepareRoot(path)
 	if err != nil {
 		return nil, identityFileError(err)
@@ -34,7 +38,49 @@ func OpenPrivateDirectory(path string) (*PrivateDirectory, error) {
 	if err != nil {
 		return nil, identityFileError(err)
 	}
-	return &PrivateDirectory{path: root, pin: info}, nil
+	directory := &PrivateDirectory{path: root, pin: info, syncFile: syncFile}
+	// syncing a file and its immediate directory cannot make a newly created
+	// directory name durable in its parent. retry the entire path even when it
+	// already exists: a previous mkdir or ancestor sync may have been uncertain.
+	if err := directory.syncReachability(); err != nil {
+		return nil, err
+	}
+	return directory, nil
+}
+
+func (d *PrivateDirectory) syncReachability() error {
+	for cursor := d.path; ; cursor = filepath.Dir(cursor) {
+		info, err := os.Lstat(cursor)
+		if err == nil {
+			if cursor == d.path {
+				err = validatePrivateFile(info, true)
+			} else {
+				err = validateTrustedAncestor(info)
+			}
+		}
+		if err != nil {
+			return identityFileError(err)
+		}
+		file, err := os.OpenFile(cursor, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
+		if err != nil {
+			return identityFileError(err)
+		}
+		opened, err := file.Stat()
+		if err == nil && !os.SameFile(info, opened) {
+			err = ErrPublisherStateConflict
+		}
+		if err == nil {
+			err = d.sync(file)
+		}
+		err = errors.Join(err, file.Close())
+		if err != nil {
+			return identityFileError(err)
+		}
+		if filepath.Dir(cursor) == cursor {
+			break
+		}
+	}
+	return d.validate()
 }
 
 func (d *PrivateDirectory) Path() string { return d.path }
@@ -89,7 +135,7 @@ func (d *PrivateDirectory) Scoped(scope string) (*PrivateDirectory, error) {
 		return nil, err
 	}
 	digest := sha256.Sum256([]byte(scope))
-	return OpenPrivateDirectory(filepath.Join(d.path, hex.EncodeToString(digest[:])))
+	return openPrivateDirectory(filepath.Join(d.path, hex.EncodeToString(digest[:])), d.syncFile)
 }
 
 func privateFilename(name string) bool {
@@ -217,6 +263,34 @@ func (d *PrivateDirectory) Sync(name string) error {
 		err = d.syncDirectory(root)
 	}
 	return identityFileError(err)
+}
+
+// Remove verifies the exact private filename and syncs its directory even when
+// a previous removal already succeeded but its directory sync was uncertain.
+func (d *PrivateDirectory) Remove(name string) error {
+	if !privateFilename(name) {
+		return identityFileError(ErrPublisherStateConflict)
+	}
+	root, err := d.open()
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	info, err := root.Lstat(name)
+	if err == nil {
+		if err := validatePrivateFile(info, false); err != nil {
+			return identityFileError(err)
+		}
+		if err := d.validate(); err != nil {
+			return err
+		}
+		if err := root.Remove(name); err != nil {
+			return identityFileError(err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return identityFileError(err)
+	}
+	return identityFileError(d.syncDirectory(root))
 }
 
 func (d *PrivateDirectory) Lock(ctx context.Context, name string) (*Lock, error) {

@@ -16,9 +16,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/filelock"
-	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
-	"github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"golang.org/x/sys/unix"
@@ -34,10 +32,6 @@ type SDKOptions struct {
 	RequestedAt        string
 	startedAt          time.Time
 	RetainStartFailure bool
-	WorkloadSelection  *connectorruntime.SDKWorkloadRequest
-	WorkloadPolicy     string
-	Environment        *connectorruntime.SDKEnvironment
-	refresh            *workloadmanifest.Acquisition
 }
 
 type sdkRegistry struct {
@@ -46,7 +40,6 @@ type sdkRegistry struct {
 	Closed             bool                                              `json:"closed"`
 	RetainStartFailure bool                                              `json:"retain_start_failure"`
 	Owners             map[string]sdkOwnerRecord                         `json:"owners"`
-	Assertions         map[string]connectorruntime.AssertionVerification `json:"assertions"`
 }
 
 // an empty owner is a reserved startup or a completed failure, never a visitor
@@ -125,7 +118,6 @@ func sdkFailureHandle(key string, completed time.Time) string {
 // as the caller-prepared CLI and never trusts SDK-decoded assertion claims.
 type sdkOperations struct {
 	resolve  func(context.Context, ContextOptions) (connectorruntime.Context, error)
-	identify func(context.Context, connectorruntime.Context, string) (connectorruntime.AssertionVerification, error)
 	start    func(context.Context, OwnerStartOptions, connectorruntime.StartRequest, func(connectorruntime.Status) error) error
 	prepare  func(context.Context, connectorruntime.Status, string, string) (connectorruntime.Prepared, error)
 	stop     func(context.Context, string) error
@@ -134,14 +126,6 @@ type sdkOperations struct {
 
 func nativeSDKOperations() sdkOperations {
 	return sdkOperations{resolve: ResolveContext, start: launchOwner, stop: Stop, stopped: connectorruntime.OwnerStopped,
-		identify: func(ctx context.Context, scope connectorruntime.Context, assertion string) (connectorruntime.AssertionVerification, error) {
-			client, err := workload.New(scope.Server, nil)
-			if err != nil {
-				return connectorruntime.AssertionVerification{}, err
-			}
-			identity, err := client.IdentifyPolicy(ctx, scope.TeamID, scope.ProjectKey, scope.SourceID, scope.Workload, assertion)
-			return connectorruntime.AssertionVerification{Digest: sdkDigest(assertion), Binding: identity.Binding, ExpiresAt: identity.AssertionExpiresAt}, err
-		},
 		prepare: func(ctx context.Context, owner connectorruntime.Status, service, assertion string) (connectorruntime.Prepared, error) {
 			return connectionSnapshot(ctx, owner.ConnectionHandle, service, "prepare", assertion)
 		},
@@ -163,16 +147,11 @@ func PrepareSDK(ctx context.Context, options SDKOptions, input io.Reader) (conne
 func (o sdkOperations) prepareSDK(ctx context.Context, options SDKOptions, input io.Reader) (connectorruntime.SDKPrepared, error) {
 	var request struct {
 		Schema         int                                  `json:"schema"`
-		Assertion      string                               `json:"assertion,omitempty"`
-		Workload       *connectorruntime.SDKWorkloadRequest `json:"sdk_workload,omitempty"`
-		WorkloadPolicy string                               `json:"sdk_workload_policy,omitempty"`
-		Environment    *connectorruntime.SDKEnvironment     `json:"sdk_environment,omitempty"`
 	}
 	if connectorruntime.ReadJSON(input, &request) != nil || request.Schema != 1 {
 		return connectorruntime.SDKPrepared{}, connectorruntime.ErrInvalid
 	}
-	options.WorkloadSelection, options.WorkloadPolicy, options.Environment = request.Workload, request.WorkloadPolicy, request.Environment
-	return o.selectSDK(ctx, options, request.Assertion)
+	return o.selectSDK(ctx, options, "")
 }
 
 func (o sdkOperations) selectSDK(ctx context.Context, options SDKOptions, assertion string) (preparedResult connectorruntime.SDKPrepared, result error) {
@@ -210,55 +189,12 @@ func (o sdkOperations) selectSDK(ctx context.Context, options SDKOptions, assert
 			return connectorruntime.SDKPrepared{}, failure.Wrap("observe SDK owner recovery", failure.ConnectionUnavailable, err)
 		}
 	}
-	var selected workloadmanifest.Selection
-	var source string
-	if options.WorkloadSelection != nil {
-		var err error
-		selected, source, err = selectSDKWorkload(options.Directory, options.Service, *options.WorkloadSelection)
-		if err != nil {
-			return connectorruntime.SDKPrepared{}, err
-		}
-		if options.WorkloadPolicy != selected.Policy {
-			return connectorruntime.SDKPrepared{}, workloadmanifest.ErrInvalid
-		}
-		options.Workload, options.Manifest = selected.Name, selected.Path
-	}
-	if options.Workload == "" && assertion != "" {
+	if assertion != "" {
 		return connectorruntime.SDKPrepared{}, connectorruntime.ErrInvalid
 	}
 	scope, err := o.resolve(ctx, options.ContextOptions)
 	if err != nil {
 		return connectorruntime.SDKPrepared{}, err
-	}
-	if options.WorkloadSelection != nil {
-		if scope.ConfigDigest != selected.Policy {
-			return connectorruntime.SDKPrepared{}, workloadmanifest.ErrInvalid
-		}
-		environment := connectorruntime.SDKEnvironment{}
-		if options.Environment != nil {
-			environment = *options.Environment
-		}
-		options.refresh = sdkWorkloadRefresh(selected, source, *options.WorkloadSelection, environment, assertion)
-		assertion, err = acquireSDKWorkload(ctx, selected, source, *options.WorkloadSelection, environment, assertion)
-		if err != nil {
-			return connectorruntime.SDKPrepared{}, err
-		}
-	} else if options.Workload != "" && assertion == "" {
-		manifest, err := workloadmanifest.Read(options.Manifest)
-		if err != nil {
-			return connectorruntime.SDKPrepared{}, err
-		}
-		hints := manifest.Workloads[options.Workload].Acquisition
-		if hints.TokenFile != "" && !filepath.IsAbs(hints.TokenFile) {
-			hints.TokenFile = filepath.Join(scope.Directory, hints.TokenFile)
-		}
-		bounded, cancel := context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
-		assertion, err = workload.Acquire(bounded, hints, nil, os.Getenv)
-		if err != nil {
-			return connectorruntime.SDKPrepared{}, err
-		}
-		options.refresh = workload.RefreshSource(scope.Directory, hints, os.Getenv)
 	}
 	if !slices.Contains(scope.Services, options.Service) {
 		return connectorruntime.SDKPrepared{}, connectorruntime.ErrUnauthorized
@@ -266,13 +202,6 @@ func (o sdkOperations) selectSDK(ctx context.Context, options SDKOptions, assert
 	scopeBytes, _ := json.Marshal(scope)
 	policy := sdkDigest(string(scopeBytes))
 	key := policy
-	if options.Workload != "" {
-		proof, err := o.sdkIdentity(ctx, options, scope, policy, assertion)
-		if err != nil {
-			return connectorruntime.SDKPrepared{}, err
-		}
-		key = sdkDigest(policy + proof.Binding)
-	}
 	owner, created, err := o.sdkOwner(ctx, options, scope, key, assertion)
 	if err != nil {
 		return connectorruntime.SDKPrepared{}, sdkOwnerError(err, owner)
@@ -280,12 +209,6 @@ func (o sdkOperations) selectSDK(ctx context.Context, options SDKOptions, assert
 	prepared, err := o.prepare(ctx, owner, options.Service, assertion)
 	if err == nil {
 		err = connectorruntime.ValidatePrepared(prepared, options.Service)
-	}
-	if err == nil && options.Workload != "" {
-		proof := prepared.Verification
-		if proof == nil || proof.Digest != sdkDigest(assertion) || key != sdkDigest(policy+proof.Binding) {
-			err = connectorruntime.ErrInvalid
-		}
 	}
 	if err != nil {
 		if errors.Is(err, connectorruntime.ErrInvalid) {
@@ -301,59 +224,6 @@ func (o sdkOperations) selectSDK(ctx context.Context, options SDKOptions, assert
 		return connectorruntime.SDKPrepared{}, sdkOwnerError(err, owner)
 	}
 	return connectorruntime.SDKPrepared{Schema: 1, Owner: owner.SDKOwner(), Prepared: prepared}, nil
-}
-
-func (o sdkOperations) sdkIdentity(ctx context.Context, options SDKOptions, scope connectorruntime.Context, policy, assertion string) (connectorruntime.AssertionVerification, error) {
-	token := sdkDigest(policy + sdkDigest(assertion))
-	var proof connectorruntime.AssertionVerification
-	load := func(r *sdkRegistry) error {
-		if r.Closed {
-			return connectorruntime.ErrExpired
-		}
-		proof = r.Assertions[token]
-		return nil
-	}
-	if err := sdkUpdate(ctx, options, load); err != nil {
-		return proof, err
-	}
-	if proof.ExpiresAt.After(time.Now().Add(time.Second)) {
-		return proof, nil
-	}
-	// warm verified requests skip this gate, including while another assertion
-	// for the same policy is stalled at authority.
-	gate, err := filelock.AcquireContext(ctx, filepath.Join(options.Registry, "identity-"+policy+".lock"), os.Getuid())
-	if err != nil {
-		return proof, err
-	}
-	defer gate.Close()
-	if err := sdkUpdate(ctx, options, load); err != nil || proof.ExpiresAt.After(time.Now().Add(time.Second)) {
-		return proof, err
-	}
-	bounded, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	proof, err = o.identify(bounded, scope, assertion)
-	if err != nil {
-		return proof, err
-	}
-	if proof.Digest != sdkDigest(assertion) || len(proof.Binding) != 64 || !proof.ExpiresAt.After(time.Now()) || proof.ExpiresAt.After(time.Now().Add(12*time.Hour+time.Minute)) {
-		return proof, connectorruntime.ErrInvalid
-	}
-	err = sdkUpdate(ctx, options, func(r *sdkRegistry) error {
-		for token, p := range r.Assertions {
-			if !p.ExpiresAt.After(time.Now()) {
-				delete(r.Assertions, token)
-			}
-		}
-		if len(r.Assertions) >= 256 {
-			for token := range r.Assertions {
-				delete(r.Assertions, token)
-				break
-			}
-		}
-		r.Assertions[token] = proof
-		return nil
-	})
-	return proof, err
 }
 
 func (o sdkOperations) sdkOwner(ctx context.Context, options SDKOptions, scope connectorruntime.Context, key, assertion string) (connectorruntime.Status, bool, error) {
@@ -452,7 +322,7 @@ func (o sdkOperations) sdkOwner(ctx context.Context, options SDKOptions, scope c
 		return bindSDKRequest(options, key, filepath.Join(directory, "handle.json"))
 	}
 	closed := false
-	if err := o.start(ctx, start, connectorruntime.StartRequest{Schema: 1, Context: scope, Assertion: assertion, Refresh: options.refresh}, func(status connectorruntime.Status) error {
+	if err := o.start(ctx, start, connectorruntime.StartRequest{Schema: 1, Context: scope}, func(status connectorruntime.Status) error {
 		owner = status
 		if err := bindSDKRequest(options, key, status.ConnectionHandle); err != nil {
 			return err
@@ -494,16 +364,12 @@ func (b *connectorConnectionBackend) SDKPrepare(ctx context.Context, request con
 	}
 	defer finish()
 	options := *b.sdk
-	options.Workload, options.Manifest = request.Workload, request.Manifest
-	options.WorkloadSelection, options.WorkloadPolicy, options.Environment = request.SDKWorkload, request.SDKWorkloadPolicy, request.SDKEnvironment
 	options.Service = request.Service
 	options.RequestedAt = request.RequestedAt
 	options.RequestHandle = request.SDKRequestHandle
 	options.ContextOptions.Service = nil
 	operations := nativeSDKOperations()
-	if request.Workload == "" && request.SDKWorkload == nil && b.scope.Workload == "" {
-		operations.resolve = func(context.Context, ContextOptions) (connectorruntime.Context, error) { return b.scope, nil }
-	}
+	operations.resolve = func(context.Context, ContextOptions) (connectorruntime.Context, error) { return b.scope, nil }
 	remote := operations.prepare
 	operations.prepare = func(ctx context.Context, owner connectorruntime.Status, service, assertion string) (connectorruntime.Prepared, error) {
 		if owner.ConnectionHandle != filepath.Join(b.directory, "handle.json") {
@@ -622,7 +488,7 @@ func sdkUpdate(ctx context.Context, options SDKOptions, update func(*sdkRegistry
 	}
 	defer lock.Close()
 	path := filepath.Join(options.Registry, "registry.json")
-	r := sdkRegistry{Schema: 1, ParentPID: options.ParentPID, RetainStartFailure: options.RetainStartFailure, Owners: map[string]sdkOwnerRecord{}, Assertions: map[string]connectorruntime.AssertionVerification{}}
+	r := sdkRegistry{Schema: 1, ParentPID: options.ParentPID, RetainStartFailure: options.RetainStartFailure, Owners: map[string]sdkOwnerRecord{}}
 	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	existed := err == nil
 	if err == nil {
@@ -633,7 +499,7 @@ func sdkUpdate(ctx context.Context, options SDKOptions, update func(*sdkRegistry
 			return err
 		}
 		stat, ok := info.Sys().(*syscall.Stat_t)
-		if !ok || stat.Uid != uint32(os.Getuid()) || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || info.Size() > connectorruntime.MaxBytes || connectorruntime.ReadJSON(f, &r) != nil || r.Schema != 1 || r.ParentPID != options.ParentPID || r.Owners == nil || r.Assertions == nil || len(r.Owners) > sdkMaxOwnerRecords || r.activeOwners() > sdkMaxActiveOwners || len(r.Assertions) > 256 {
+		if !ok || stat.Uid != uint32(os.Getuid()) || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || info.Size() > connectorruntime.MaxBytes || connectorruntime.ReadJSON(f, &r) != nil || r.Schema != 1 || r.ParentPID != options.ParentPID || r.Owners == nil || len(r.Owners) > sdkMaxOwnerRecords || r.activeOwners() > sdkMaxActiveOwners {
 			return connectorruntime.ErrUnauthorized
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {

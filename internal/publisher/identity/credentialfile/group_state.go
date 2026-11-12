@@ -12,7 +12,7 @@ import (
 )
 
 type groupReference struct {
-	Member   controlv1.PublisherGroupMember `json:"member"`
+	Member   controlv1.EnvironmentPublisher `json:"publisher"`
 	Instance string                         `json:"instance"`
 }
 
@@ -22,7 +22,7 @@ type groupPin struct {
 }
 
 func groupStateName(ref groupReference) string {
-	digest := sha256.Sum256([]byte(GroupSelection(ref.Member.ProjectKey, ref.Member.GroupId, ref.Instance) + ":" + ref.Member.PublisherIdentityId))
+	digest := sha256.Sum256([]byte(GroupSelection(ref.Member.ProjectKey, ref.Member.EnvironmentId, ref.Instance) + ":" + ref.Member.PublisherIdentityId))
 	return "group-" + hex.EncodeToString(digest[:]) + ".json"
 }
 
@@ -37,7 +37,7 @@ func readGroupPin(directory *clientstate.PrivateDirectory, project, group, insta
 		return groupReference{}, found, err
 	}
 	var pin groupPin
-	if json.Unmarshal(data, &pin, json.RejectUnknownMembers(true)) != nil || pin.Version != 1 || pin.Reference.Member.ProjectKey != project || pin.Reference.Member.GroupId != group || pin.Reference.Instance != instance {
+	if json.Unmarshal(data, &pin, json.RejectUnknownMembers(true)) != nil || pin.Version != 1 || pin.Reference.Member.ProjectKey != project || pin.Reference.Member.EnvironmentId != group || pin.Reference.Instance != instance {
 		return groupReference{}, true, clientstate.ErrPublisherStateConflict
 	}
 	return pin.Reference, true, nil
@@ -70,7 +70,7 @@ func groupReferences(directory *clientstate.PrivateDirectory) ([]groupReference,
 		return nil, ErrInvalid
 	}
 	for _, ref := range refs {
-		pin, found, err := readGroupPin(directory, ref.Member.ProjectKey, ref.Member.GroupId, ref.Instance)
+		pin, found, err := readGroupPin(directory, ref.Member.ProjectKey, ref.Member.EnvironmentId, ref.Instance)
 		if err != nil {
 			return nil, err
 		}
@@ -126,7 +126,7 @@ func ResolveSavedGroup(ctx context.Context, profile *clientstate.Store, client G
 	}
 	var selected *groupReference
 	for _, ref := range refs {
-		if ref.Member.ProjectKey != project || ref.Instance != instance {
+		if ref.Member.ProjectKey != project || ref.Member.EnvironmentId != selector || ref.Instance != instance {
 			continue
 		}
 		// a task's replica-private directory pins one member. an ambiguous
@@ -147,9 +147,9 @@ func ResolveSavedGroup(ctx context.Context, profile *clientstate.Store, client G
 	return value, true, err
 }
 
-// RetainGroup pins one replica and refreshes only its current display name.
+// retain pins one replica's immutable environment and signing identity.
 func RetainGroup(ctx context.Context, profile *clientstate.Store, value GroupFile) error {
-	private, err := value.Validate(value.ControlURL, value.Member.ProjectKey, value.Member.GroupName, value.Instance)
+	private, err := value.Validate(value.ControlURL, value.Member.ProjectKey, value.Member.EnvironmentId, value.Instance)
 	if err != nil {
 		return err
 	}
@@ -164,7 +164,7 @@ func RetainGroup(ctx context.Context, profile *clientstate.Store, value GroupFil
 	defer lock.Close()
 	// a retired catalog entry keeps a selection pin and its original private
 	// file. reactivation can reuse that authority, never silently replace it.
-	pinned, exists, err := pinnedGroup(directory, value.ControlURL, value.Member.ProjectKey, value.Member.GroupId, value.Instance)
+	pinned, exists, err := pinnedGroup(directory, value.ControlURL, value.Member.ProjectKey, value.Member.EnvironmentId, value.Instance)
 	if err != nil {
 		return err
 	}
@@ -178,14 +178,14 @@ func RetainGroup(ctx context.Context, profile *clientstate.Store, value GroupFil
 	ref := groupReference{Member: value.Member, Instance: value.Instance}
 	found := false
 	for i, previous := range refs {
-		if previous.Member.ProjectKey != value.Member.ProjectKey || previous.Member.GroupId != value.Member.GroupId || previous.Instance != value.Instance {
+		if previous.Member.ProjectKey != value.Member.ProjectKey || previous.Member.EnvironmentId != value.Member.EnvironmentId || previous.Instance != value.Instance {
 			continue
 		}
 		saved, err := readGroupReference(directory, value.ControlURL, previous)
 		if err != nil {
 			return err
 		}
-		key, err := saved.Validate(value.ControlURL, value.Member.ProjectKey, value.Member.GroupName, value.Instance)
+		key, err := saved.Validate(value.ControlURL, value.Member.ProjectKey, value.Member.EnvironmentId, value.Instance)
 		if err != nil || !SameGroupIdentity(saved.Member, value.Member) || subtle.ConstantTimeCompare(key, private) != 1 {
 			return clientstate.ErrPublisherStateConflict
 		}
@@ -223,7 +223,7 @@ func RetainGroup(ctx context.Context, profile *clientstate.Store, value GroupFil
 	if err != nil {
 		return err
 	}
-	if err := directory.Write(groupPinName(value.Member.ProjectKey, value.Member.GroupId, value.Instance), pin); err != nil {
+	if err := directory.Write(groupPinName(value.Member.ProjectKey, value.Member.EnvironmentId, value.Instance), pin); err != nil {
 		return err
 	}
 	catalog, err := json.Marshal(refs)
@@ -237,7 +237,7 @@ func RetainGroup(ctx context.Context, profile *clientstate.Store, value GroupFil
 // private identity/certificate files and the immutable selection pin remain.
 // this reclaims catalog capacity without revoking or deleting issued authority.
 func RetireGroup(ctx context.Context, profile *clientstate.Store, value GroupFile) error {
-	if _, err := value.Validate(value.ControlURL, value.Member.ProjectKey, value.Member.GroupName, value.Instance); err != nil {
+	if _, err := value.Validate(value.ControlURL, value.Member.ProjectKey, value.Member.EnvironmentId, value.Instance); err != nil {
 		return err
 	}
 	directory, err := groupStateDirectory(profile, value.ControlURL)
@@ -254,7 +254,7 @@ func RetireGroup(ctx context.Context, profile *clientstate.Store, value GroupFil
 		return err
 	}
 	for i, ref := range refs {
-		if ref.Member.ProjectKey != value.Member.ProjectKey || ref.Member.GroupId != value.Member.GroupId || ref.Instance != value.Instance {
+		if ref.Member.ProjectKey != value.Member.ProjectKey || ref.Member.EnvironmentId != value.Member.EnvironmentId || ref.Instance != value.Instance {
 			continue
 		}
 		saved, err := readGroupReference(directory, value.ControlURL, ref)

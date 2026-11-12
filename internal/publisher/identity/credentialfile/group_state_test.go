@@ -35,7 +35,7 @@ func TestGroupIdentityCurrentCatalogRequiresSelectionPin(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			pin := groupPinName(value.Member.ProjectKey, value.Member.GroupId, value.Instance)
+			pin := groupPinName(value.Member.ProjectKey, value.Member.EnvironmentId, value.Instance)
 			if mode == "missing" {
 				err = os.Remove(filepath.Join(directory.Path(), pin))
 			} else {
@@ -44,7 +44,7 @@ func TestGroupIdentityCurrentCatalogRequiresSelectionPin(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := SavedGroup(profile, value.ControlURL, value.Member.ProjectKey, value.Member.GroupId, value.Instance); !errors.Is(err, clientstate.ErrPublisherStateConflict) {
+			if _, _, err := SavedGroup(profile, value.ControlURL, value.Member.ProjectKey, value.Member.EnvironmentId, value.Instance); !errors.Is(err, clientstate.ErrPublisherStateConflict) {
 				t.Fatal("catalog supplied authority without its current pin", err)
 			}
 			if err := RetainGroup(t.Context(), profile, value); !errors.Is(err, clientstate.ErrPublisherStateConflict) {

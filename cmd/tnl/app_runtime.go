@@ -30,7 +30,7 @@ type runtimeEndpointOptions struct {
 }
 
 func (o runtimeOptions) settings() local.Options {
-	settings := local.Options{Directory: o.Directory, StateDir: o.StateDir}
+	settings := local.Options{Directory: o.Directory, StateDir: o.StateDir, ApplicationAuthority: local.NewControlApplicationAuthority(nil)}
 	if o.SnapshotStdin {
 		settings.Snapshot = os.Stdin
 	}

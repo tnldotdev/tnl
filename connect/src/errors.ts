@@ -32,14 +32,14 @@ const messages = {
   TNL_ACTION_REQUEST_TOO_LARGE: "tnl startup request exceeds the native limit",
   TNL_ACTION_EXEC_FAILED: "could not execute the selected tnl binary",
   TNL_ACTION_COMMAND_FAILED:
-    "tnl native command failed; check the selected binary, applied binding, and saved workload policy",
+    "tnl native command failed; check the selected binary, environment, visitor permission, and this job's id-token: write permission",
   TNL_ACTION_COMMAND_TIMEOUT: "tnl native command timed out",
   TNL_ACTION_RESPONSE_TOO_LARGE: "tnl native response exceeds the limit",
   TNL_ACTION_JSON_INVALID:
     "tnl returned invalid machine JSON; use a release with connection schema 1",
   TNL_ACTION_CAPABILITIES_INVALID:
     "the selected tnl binary lacks connection schema 1 capabilities; select a compatible exact release",
-  TNL_ACTION_CONTEXT_INVALID: "tnl returned an invalid or mismatched workload context",
+  TNL_ACTION_CONTEXT_INVALID: "select an exact environment, visitor permission, machine identity, audience, and service protocol map",
   TNL_ACTION_OIDC_FAILED: "could not obtain GitHub OIDC proof; grant this job id-token: write",
   TNL_ACTION_READY_INVALID: "tnl did not return valid ready connections",
   TNL_ACTION_EXPORT_FAILED: "could not export the prepared tnl connections to the job environment",

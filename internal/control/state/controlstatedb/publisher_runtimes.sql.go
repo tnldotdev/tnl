@@ -49,7 +49,7 @@ WHERE r.publisher_identity_id=$1 AND r.process_run_id=$2 AND r.epoch=$3
 AND r.stopped_at IS NULL AND r.lease_expires_at>$4
 AND $5::boolean
 AND control.active_publisher(p.id,$4) AND k.retired_at IS NULL AND t.deleted_at IS NULL
-AND (EXISTS(SELECT 1 FROM control.publisher_group_members m JOIN control.project_publisher_groups g ON g.id=m.group_id WHERE m.publisher_identity_id=p.id AND m.key_id=k.id AND g.team_id=p.team_id AND g.id=r.scope_id AND g.deleted_at IS NULL)
+AND (EXISTS(SELECT 1 FROM control.publisher_group_members m JOIN control.project_publisher_groups g ON g.id=m.group_id JOIN control.environments environment ON environment.id=g.environment_id AND environment.group_id=g.id AND environment.team_id=g.team_id AND environment.project_key=g.project_key WHERE m.publisher_identity_id=p.id AND m.key_id=k.id AND g.team_id=p.team_id AND environment.id=r.scope_id AND environment.retired_at IS NULL AND g.deleted_at IS NULL)
  OR EXISTS(SELECT 1 FROM control.publisher_grants g
  LEFT JOIN control.public_urls u ON u.id=g.public_url_id
  LEFT JOIN control.services s ON s.id=g.service_id

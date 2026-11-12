@@ -51,27 +51,23 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 			}))
 			t.Cleanup(target.Close)
 			const project = "managed-runtime"
-			group := "production"
 			projectLabel := "storefront"
 			protocol := controlv1.ServiceProtocolHTTP
 			targetAddress := strings.TrimPrefix(target.URL, "http://")
-			applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), project, controlv1.ApplyProjectConfigurationRequest{TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64), ProjectLabel: &projectLabel, Configuration: controlv1.ProjectConfiguration{PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {PublisherGroup: &group, Protocol: &protocol, Target: targetAddress}}, Webhooks: map[string]controlv1.ProjectWebhook{}}})
-			if err != nil {
-				t.Fatal(err)
-			}
+			applied := createServiceRuntimeEnvironment(t, f, project, controlv1.ServiceDefinition{Services: map[string]controlv1.ServiceDefinitionService{"api": {Protocol: protocol}}}, controlv1.CreateEnvironmentRequest{Name: "production", ProjectLabel: &projectLabel, Targets: controlv1.EnvironmentTargets{"api": {Address: &targetAddress}}})
 			public, key, err := ed25519.GenerateKey(rand.Reader)
 			if err != nil {
 				t.Fatal(err)
 			}
-			enrollment, err := f.identity.routes.CreatePublisherGroupEnrollment(t.Context(), project, group, controlv1.CreatePublisherGroupEnrollmentRequest{TeamId: f.identity.teamID, MaxMembers: 1, ExpiresIn: 600})
+			enrollment, err := f.identity.routes.CreateEnvironmentPublisherEnrollment(t.Context(), project, applied.Id, "", controlv1.CreateEnvironmentPublisherEnrollmentRequest{TeamId: f.identity.teamID, ExpectedRevision: applied.MutationRevision, ConfigurationHash: applied.ConfigurationHash, Services: []string{"api"}, MaxMembers: 1, ExpiresIn: 600})
 			if err != nil {
 				t.Fatal(err)
 			}
-			member, err := f.identity.routes.RedeemPublisherGroupEnrollment(t.Context(), enrollment.EnrollmentKey, public)
+			member, err := f.identity.routes.RedeemEnvironmentPublisherEnrollment(t.Context(), enrollment.EnrollmentKey, public)
 			if err != nil {
 				t.Fatal(err)
 			}
-			owner, err := publisheridentity.NewGroup(publisheridentity.NativeControl{PublicURLControl: f.identity.routes, Services: f.identity.routes}, f.identity.routes, f.identity.authority, f.identity.routes.ControlURL(), member, key)
+			owner, err := publisheridentity.NewEnvironment(publisheridentity.NativeControl{PublicURLControl: f.identity.routes, Services: f.identity.routes}, f.identity.routes, f.identity.authority, f.identity.routes.ControlURL(), member, key)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -80,7 +76,7 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 				t.Fatal(err)
 			}
 			assignment := assignments.Services[0]
-			native, err := owner.Service(assignment)
+			native, err := owner.Service(assignments.Environment, assignment)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -88,7 +84,7 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if service.Endpoint == nil || applied.Services[0].Hostname == nil || *applied.Services[0].Hostname != service.Endpoint.Hostname {
+			if service.Endpoint == nil || applied.Services[0].Hostname != service.Endpoint.Hostname {
 				t.Fatal("missing managed TLS metadata", service)
 			}
 			identity := authorityv1.PublisherEnrollmentResult{ClientId: member.PublisherIdentityId, KeyId: member.KeyId, TeamId: member.TeamId, GrantId: assignment.GrantId, Kind: authorityv1.Service, ServiceId: &assignment.ServiceId}
@@ -208,7 +204,7 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 	}
 }
 
-func checkManagedPublicEndpointTLS(t *testing.T, f *privateSeparatedFixture, connector *ingress.PublicServices, applied controlv1.AppliedProjectConfiguration, service controlv1.Service, device string) {
+func checkManagedPublicEndpointTLS(t *testing.T, f *privateSeparatedFixture, connector *ingress.PublicServices, applied controlv1.Environment, service controlv1.Service, device string) {
 	t.Helper()
 	ctx := t.Context()
 	material := issueServiceClientCertificate(t, f, service.Id, device)
@@ -261,10 +257,7 @@ func checkManagedPublicEndpointTLS(t *testing.T, f *privateSeparatedFixture, con
 	assertDenied()
 	setPublic := func(public bool) {
 		t.Helper()
-		group := applied.Configuration.PublisherGroups["production"]
-		group.Public = &public
-		applied.Configuration.PublisherGroups["production"] = group
-		result, err := f.identity.routes.ApplyProjectConfiguration(ctx, "managed-runtime", controlv1.ApplyProjectConfigurationRequest{TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64), ExpectedRevision: applied.Revision, Configuration: applied.Configuration})
+		result, err := f.identity.routes.ApplyEnvironment(ctx, "managed-runtime", applied.Id, controlv1.ApplyEnvironmentRequest{TeamId: f.identity.teamID, ExpectedRevision: applied.MutationRevision, DefinitionRevision: applied.AppliedDefinitionRevision, Public: &public})
 		if err != nil {
 			t.Fatal(err)
 		}

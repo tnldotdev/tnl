@@ -16,23 +16,17 @@ import { parseValue } from "../validation.js";
 import { httpsOriginSchema, pathTextSchema, registrationIDSchema } from "../values.js";
 import { parseStatus } from "./status.js";
 import type { TnlRatePeriod } from "../../config.gen.js";
+import { captureIdentity, type IdentitySource, type OIDCAssertion } from "../identity/source.js";
+import { hostnameSchema } from "../values.js";
 
-export type PublisherCredentialFile = {
-  readonly publisherCredentialFile: string;
-  readonly publisherIdentityID?: never;
-};
-export type PublisherIdentityID = {
-  readonly publisherIdentityID: string;
-  readonly publisherCredentialFile?: never;
-};
 export type OpenOptions = OpenSettings &
   (
-    | PublisherCredentialFile
-    | PublisherIdentityID
-    | { readonly publisherCredentialFile?: never; readonly publisherIdentityID?: never }
+    | { readonly resourceID: string; readonly namespace?: never }
+    | { readonly namespace: string; readonly resourceID?: never }
   );
 interface OpenSettings {
-  readonly server?: string;
+  readonly server: string;
+  readonly identity: IdentitySource;
   readonly directory?: string;
   readonly stateDir?: string;
   /** hostname the publisher uses to reach this listener. */
@@ -81,7 +75,7 @@ const dependencies: Dependencies = {
 // registration acknowledges a listener; filtered status identifies its exact run.
 export function openServer(
   server: LocalHTTPServer,
-  options: OpenOptions = {},
+  options: OpenOptions,
   runtime: Dependencies = dependencies,
 ): Promise<AdHocTunnel> {
   return operation("sdk.open", () => openServerUntraced(server, options, runtime));
@@ -101,30 +95,17 @@ async function openServerUntraced(
     { length: 22 },
     () => "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"[randomInt(62)],
   ).join("")}`;
-  // the SDK process may receive this environment variable after the native
-  // owner starts. pass the path, never the credential contents, to that owner.
-  const publisherCredentialFile =
-    options.publisherIdentityID === undefined
-      ? (options.publisherCredentialFile ?? process.env.TNL_PUBLISHER_CREDENTIAL_FILE)
-      : undefined;
-  if (
-    publisherCredentialFile !== undefined &&
-    !validPublisherCredentialFile(publisherCredentialFile)
-  )
-    throw new TnlError("sdk.configuration_invalid");
+  const identity = captureIdentity(options.identity);
+  const acquire = identity.assertion;
+  if (acquire === undefined) throw new TnlError("sdk.configuration_invalid");
   const request = {
     version: 1,
     invocation_id: invocationID,
     owner,
     pid: process.pid,
     target,
-    ...(options.server === undefined ? {} : { server_url: options.server }),
-    ...(options.publisherIdentityID === undefined
-      ? {}
-      : { publisher_identity_id: options.publisherIdentityID }),
-    ...(publisherCredentialFile === undefined
-      ? {}
-      : { publisher_credential_file: publisherCredentialFile }),
+    server_url: options.server,
+    ...(options.resourceID === undefined ? { allocate: { namespace: options.namespace } } : { resource_id: options.resourceID }),
     ...(options.access === undefined
       ? {}
       : {
@@ -146,13 +127,48 @@ async function openServerUntraced(
     ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
   };
   let endpoint = await runtime.start(directory, undefined, selection);
-  if (options.signal?.aborted) throw aborted();
-  let registration = parseRegistration(
-    await runtime.request(endpoint, "ad-hoc/register", request),
-    owner,
-    target,
-  );
-  let currentURL: `https://${string}` | undefined;
+  const lifetime = new AbortController();
+  const sourceSignal = options.signal === undefined ? lifetime.signal : AbortSignal.any([lifetime.signal, options.signal]);
+  async function source(fence?: number): Promise<OIDCAssertion> {
+    const signal = AbortSignal.any([sourceSignal, AbortSignal.timeout(Math.max(1, Math.min(30_000, (fence ?? Infinity) - Date.now())))]);
+    signal.throwIfAborted();
+    return new Promise<OIDCAssertion>((resolve, reject) => {
+      const abort = () => reject(signal.reason);
+      signal.addEventListener("abort", abort, { once: true });
+      void acquire(signal).then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+    });
+  }
+  let proof: OIDCAssertion;
+  let accepted: z.output<typeof acceptedPublicationSchema>;
+  let registration = { version: 1 as const, registration_id: "", owner, target };
+  let requested = false;
+  const publish = async (fence?: number) => {
+    let next = await source(fence);
+    requested = true;
+    let response: unknown;
+    try { response = await runtime.request(endpoint, "publications", { ...request, auth: { ...identity.selector, assertion: next.token } }); }
+    catch (error) {
+      if (!(error instanceof TnlError) || error.code !== "sdk.dev_unavailable" && error.code !== "sdk.registration_stale" || sourceSignal.aborted) throw error;
+      endpoint = await runtime.start(directory, undefined, selection);
+      next = await source(next.expiresAt.getTime());
+      response = await runtime.request(endpoint, "publications", { ...request, auth: { ...identity.selector, assertion: next.token } });
+    }
+    const value = acceptedPublicationSchema.parse(response);
+    parseRegistration(value.registration, owner, target);
+    if (options.resourceID !== undefined && value.public_url_id !== options.resourceID || value.public_url !== `https://${value.hostname}` || options.namespace !== undefined && !value.hostname.endsWith(`.${options.namespace}`)) throw new TnlError("sdk.response_invalid");
+    return { accepted: value, proof: next };
+  };
+  try {
+    const initial = await publish();
+    accepted = initial.accepted; proof = initial.proof; registration = accepted.registration;
+  } catch (cause) {
+    try {
+      if (requested) await runtime.request(endpoint, "unregister", registration);
+      await runtime.request(endpoint, "capability");
+    } catch (cleanup) { throw new TnlCleanupError(cause, cleanup); }
+    throw cause;
+  }
+  let currentURL: `https://${string}` | undefined = `https://${accepted.hostname}`;
   let closed = false;
   let resolveClosing!: () => void;
   const closingSignal = new Promise<void>((resolve) => {
@@ -181,6 +197,7 @@ async function openServerUntraced(
   const close = (): Promise<void> => {
     if (closePromise !== undefined) return closePromise;
     closed = true;
+    lifetime.abort(aborted());
     resolveClosing();
     options.signal?.removeEventListener("abort", onAbort);
     process.off("beforeExit", beforeExit);
@@ -189,6 +206,7 @@ async function openServerUntraced(
     closePromise = operation("sdk.open.cleanup", async () => {
       await monitoring;
       await runtime.request(endpoint, "unregister", registration);
+      await runtime.request(endpoint, "capability");
     }).then(
       () => {
         if (!terminal) {
@@ -262,11 +280,9 @@ async function openServerUntraced(
   );
   const recover = independent("sdk.open.recover", async () => {
     endpoint = await runtime.start(directory, undefined, selection);
-    registration = parseRegistration(
-      await runtime.request(endpoint, "ad-hoc/register", request),
-      owner,
-      target,
-    );
+    const next = await publish(proof.expiresAt.getTime());
+    if (next.accepted.public_url_id !== accepted.public_url_id || next.accepted.hostname !== accepted.hostname || next.accepted.public_url !== accepted.public_url) throw new TnlError("sdk.response_invalid");
+    accepted = next.accepted; proof = next.proof; registration = accepted.registration;
   });
   const monitoring = background(async () => {
     while (!closed && !terminal) {
@@ -280,6 +296,11 @@ async function openServerUntraced(
         );
         if (status !== undefined) observe(status);
         if (closed || terminal) break;
+        if (Date.now() >= proof.expiresAt.getTime() - 5_000) {
+          const next = await publish(proof.expiresAt.getTime());
+          if (next.accepted.public_url_id !== accepted.public_url_id || next.accepted.hostname !== accepted.hostname || next.accepted.public_url !== accepted.public_url || next.accepted.registration.registration_id !== registration.registration_id) throw new TnlError("sdk.response_invalid");
+          proof = next.proof;
+        }
         await Promise.race([runtime.pause(250), closingSignal]);
         if (closed || terminal) break;
         if (Date.now() - lastRenew >= 5_000) {
@@ -356,7 +377,7 @@ const registrationSchema = z
     target: z.string(),
   })
   .readonly();
-const credentialFileSchema = pathTextSchema.refine(path.isAbsolute);
+const acceptedPublicationSchema = z.strictObject({ registration: registrationSchema, public_url_id: z.string().regex(/^url_[A-Za-z0-9]{22}$/), hostname: hostnameSchema, public_url: z.string() });
 const networkSchema = z
   .string()
   .max(64)
@@ -373,12 +394,10 @@ const networkSchema = z
 const accessModeSchema = z.enum(["restricted", "anonymous"]);
 const openOptionsSchema = z
   .strictObject({
-    publisherCredentialFile: credentialFileSchema.optional(),
-    publisherIdentityID: z
-      .string()
-      .regex(/^pub_[A-Za-z0-9]{22}$/)
-      .optional(),
-    server: httpsOriginSchema.refine((value) => value.length <= 4096).optional(),
+    identity: z.unknown().nonoptional(),
+    resourceID: z.string().regex(/^url_[A-Za-z0-9]{22}$/).optional(),
+    namespace: hostnameSchema.optional(),
+    server: httpsOriginSchema.refine((value) => value.length <= 4096),
     directory: pathTextSchema.optional(),
     stateDir: pathTextSchema.optional(),
     targetHostname: z.string().min(1).optional(),
@@ -398,14 +417,11 @@ const openOptionsSchema = z
   })
   .refine(
     (options) =>
-      options.publisherCredentialFile === undefined || options.publisherIdentityID === undefined,
+      (options.resourceID === undefined) !== (options.namespace === undefined) && (options.resourceID === undefined || options.access === undefined && options.limits === undefined),
   );
 
 function validateOptions(options: OpenOptions): void {
   parseValue(openOptionsSchema, options, "sdk.configuration_invalid");
-}
-function validPublisherCredentialFile(value: unknown): value is string {
-  return credentialFileSchema.safeParse(value).success;
 }
 
 function aborted(): DOMException {
@@ -415,7 +431,7 @@ function aborted(): DOMException {
 // inline Fetch handlers own their Node listener; a supplied server is never closed.
 export async function openFetch(
   handler: FetchHandler,
-  options: OpenOptions = {},
+  options: OpenOptions,
   runtime: Dependencies = dependencies,
 ): Promise<AdHocTunnel> {
   validateOptions(options);

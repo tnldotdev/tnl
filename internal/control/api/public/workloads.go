@@ -37,7 +37,7 @@ func workloadVisitorProblem(ctx context.Context, w http.ResponseWriter, err erro
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid workload certificate signing request")
 		return
 	}
-	if errors.Is(err, controlstate.ErrWorkloadDenied) || errors.Is(err, controlstate.ErrServiceAccess) {
+	if errors.Is(err, controlstate.ErrWorkloadDenied) || errors.Is(err, controlstate.ErrServiceAccess) || errors.Is(err, controlstate.ErrVisitorPermission) {
 		writeProblem(w, 403, controlv1.Forbidden, "workload session does not currently authorize this service")
 		return
 	}

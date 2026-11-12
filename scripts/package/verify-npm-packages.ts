@@ -70,11 +70,10 @@ for (const manager of ["npm", "pnpm"]) {
       import {defineConfig} from '@tnldotdev/tnl/config';
       import {withTnl} from '@tnldotdev/tnl/next';
       import vite from '@tnldotdev/tnl/vite';
-      import {configureWorkload} from '@tnldotdev/tnl/workload';
       const cjs = createRequire(import.meta.url)('@tnldotdev/tnl');
       assert.equal(cjs.tnl, tnl);
       assert.equal(typeof TnlError, 'function');
-      for (const value of [tnl.prepare, tnl.open, tnl.connect, tnl.client, defineConfig, withTnl, vite, configureWorkload]) assert.equal(typeof value, 'function');
+      for (const value of [tnl.prepare, tnl.open, tnl.connect, tnl.client, defineConfig, withTnl, vite]) assert.equal(typeof value, 'function');
       for (const root of [{tnl, TnlError}, cjs]) {
         const getClient = root.tnl.client('database', {
           create() { throw new Error('factory creation must remain lazy'); },
@@ -83,6 +82,16 @@ for (const manager of ["npm", "pnpm"]) {
         assert.equal(typeof getClient, 'function');
         await getClient.close();
         await assert.rejects(getClient(), error => error instanceof root.TnlError && error.code === 'sdk.client_closed');
+        const selected = root.tnl.client({
+          services: Object.freeze({database: Object.freeze({protocol: 'postgres'})}),
+          environment: {server: 'https://control.example', project_key: 'package-check', environment_id: 'env_' + 'e'.repeat(22)},
+          identity: {kind: 'oidc', machine_id: 'mci_' + 'm'.repeat(22), permission_id: 'mwp_' + 'p'.repeat(22),
+            async assertion() { throw new Error('unstarted client must not acquire identity proof'); }},
+        });
+        assert.equal(typeof selected.connect, 'function');
+        assert.equal(typeof selected.close, 'function');
+        await selected.close();
+        await assert.rejects(selected.connect('database'), error => error instanceof root.TnlError && error.code === 'sdk.connection_unavailable');
       }
     `,
       ],
@@ -103,6 +112,12 @@ for (const manager of ["npm", "pnpm"]) {
         assert.throws(() => root.tnl.client('database', {
           create() { throw new Error('browser must not invoke driver callbacks'); },
           close() { throw new Error('browser must not invoke driver callbacks'); },
+        }), error => error instanceof root.TnlError && error.code === 'sdk.connection_server_only');
+        assert.throws(() => root.tnl.client({
+          services: {database: {protocol: 'postgres'}},
+          environment: {server: 'https://control.example', project_key: 'package-check', environment_id: 'env_' + 'e'.repeat(22)},
+          identity: {kind: 'oidc', machine_id: 'mci_' + 'm'.repeat(22), permission_id: 'mwp_' + 'p'.repeat(22),
+            async assertion() { throw new Error('browser must not acquire identity proof'); }},
         }), error => error instanceof root.TnlError && error.code === 'sdk.connection_server_only');
       }
     `,

@@ -9,6 +9,8 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example
 paths:
+  /v1/teams/{team_id}/workload-approvals/{intent_key}:
+    $ref: './paths/workload-approvals.yaml#/paths/~1v1~1teams~1{team_id}~1workload-approvals~1{intent_key}'
   /v1/teams/{team_id}/machine-identities/{machine_id}/publication-permissions:
     $ref: "./paths/machine-publications.yaml#/paths/~1v1~1teams~1{team_id}~1machine-identities~1{machine_id}~1publication-permissions"
   /v1/teams/{team_id}/machine-publication-permissions/{permission_id}:
@@ -29,18 +31,20 @@ paths:
     $ref: "./paths/machines.yaml#/paths/~1v1~1teams~1{team_id}~1machine-identities~1{machine_id}~1provisioning-grants"
   /v1/teams/{team_id}/provisioning-grants/{grant_id}:
     $ref: "./paths/machines.yaml#/paths/~1v1~1teams~1{team_id}~1provisioning-grants~1{grant_id}"
-  /v1/teams/{team_id}/machine-identities/{machine_id}/workload-permissions:
-    $ref: "./paths/machines.yaml#/paths/~1v1~1teams~1{team_id}~1machine-identities~1{machine_id}~1workload-permissions"
-  /v1/teams/{team_id}/machine-workload-permissions/{permission_id}:
-    $ref: "./paths/machines.yaml#/paths/~1v1~1teams~1{team_id}~1machine-workload-permissions~1{permission_id}"
+  /v1/teams/{team_id}/machine-identities/{machine_id}/environment-visitor-permissions:
+    $ref: "./paths/machines.yaml#/paths/~1v1~1teams~1{team_id}~1machine-identities~1{machine_id}~1environment-visitor-permissions"
+  /v1/teams/{team_id}/environment-visitor-permissions/{permission_id}:
+    $ref: "./paths/machines.yaml#/paths/~1v1~1teams~1{team_id}~1environment-visitor-permissions~1{permission_id}"
   /v1/provisioning-sessions/exchange:
     $ref: "./paths/machines.yaml#/paths/~1v1~1provisioning-sessions~1exchange"
-  /v1/publisher-groups/{group_id}/resolve:
-    $ref: "./paths/machines.yaml#/paths/~1v1~1publisher-groups~1{group_id}~1resolve"
-  /v1/machine-workload-sessions/exchange:
-    $ref: "./paths/machines.yaml#/paths/~1v1~1machine-workload-sessions~1exchange"
-  /v1/machine-workload-sessions/{session_id}/assertions:
-    $ref: "./paths/machines.yaml#/paths/~1v1~1machine-workload-sessions~1{session_id}~1assertions"
+  /v1/projects/{project_key}/environments/{environment_id}/visitors/prepare:
+    $ref: "./paths/environment-visitors.yaml#/paths/~1v1~1projects~1{project_key}~1environments~1{environment_id}~1visitors~1prepare"
+  /v1/environment-visitor-sessions/{session_id}/renew:
+    $ref: "./paths/environment-visitors.yaml#/paths/~1v1~1environment-visitor-sessions~1{session_id}~1renew"
+  /v1/environment-visitor-sessions/{session_id}/assertions:
+    $ref: "./paths/environment-visitors.yaml#/paths/~1v1~1environment-visitor-sessions~1{session_id}~1assertions"
+  /v1/environment-visitor-sessions/{session_id}:
+    $ref: "./paths/environment-visitors.yaml#/paths/~1v1~1environment-visitor-sessions~1{session_id}"
   /v1/service/teams/{team_id}/services:
     $ref: "./paths/service.yaml#/paths/~1v1~1service~1teams~1{team_id}~1services"
   /v1/service/services/{service_id}:
@@ -61,16 +65,6 @@ paths:
     $ref: "./paths/service.yaml#/paths/~1v1~1service~1services~1{service_id}~1http-grants"
   /v1/service/services/{service_id}/http-grants/{grant_id}:
     $ref: "./paths/service.yaml#/paths/~1v1~1service~1services~1{service_id}~1http-grants~1{grant_id}"
-  /v1/workload-sessions/identity:
-    $ref: "./paths/workload.yaml#/paths/~1v1~1workload-sessions~1identity"
-  /v1/workload-sessions/{session_id}/assertions:
-    $ref: "./paths/workload.yaml#/paths/~1v1~1workload-sessions~1{session_id}~1assertions"
-  /v1/workload-sessions/exchange:
-    $ref: "./paths/workload.yaml#/paths/~1v1~1workload-sessions~1exchange"
-  /v1/workload-sessions/{session_id}/renew:
-    $ref: "./paths/workload.yaml#/paths/~1v1~1workload-sessions~1{session_id}~1renew"
-  /v1/workload-sessions/{session_id}:
-    $ref: "./paths/workload.yaml#/paths/~1v1~1workload-sessions~1{session_id}"
   /v1/service/teams/{team_id}/identity-connections:
     $ref: "./paths/company.yaml#/paths/~1v1~1service~1teams~1{team_id}~1identity-connections"
   /v1/service/teams/{team_id}/identity-connections/{identity_connection_id}:
@@ -180,6 +174,20 @@ components:
     BearerProblem:
       $ref: "./schemas/common.yaml#/responses/BearerProblem"
   schemas:
+    WorkloadApprovalRequest:
+      $ref: './schemas/workload-approvals.yaml#/schemas/WorkloadApprovalRequest'
+    WorkloadApproval:
+      $ref: './schemas/workload-approvals.yaml#/schemas/WorkloadApproval'
+    IdentitySourceSelection:
+      $ref: './schemas/identity-sources.yaml#/schemas/IdentitySourceSelection'
+    IdentitySourcePublicationSelection:
+      $ref: './schemas/identity-sources.yaml#/schemas/IdentitySourcePublicationSelection'
+    IdentitySourceVisitorSelection:
+      $ref: './schemas/identity-sources.yaml#/schemas/IdentitySourceVisitorSelection'
+    IdentitySourceChallenge:
+      $ref: './schemas/identity-sources.yaml#/schemas/IdentitySourceChallenge'
+    IdentitySourceReply:
+      $ref: './schemas/identity-sources.yaml#/schemas/IdentitySourceReply'
     MachinePublicationPermissionRequest:
       $ref: "./schemas/machine-publications.yaml#/schemas/MachinePublicationPermissionRequest"
     MachinePublicationExchange:
@@ -204,38 +212,30 @@ components:
       $ref: "./schemas/machines.yaml#/schemas/ProvisioningGrantRequest"
     MachinePermissionResult:
       $ref: "./schemas/machines.yaml#/schemas/MachinePermissionResult"
-    MachineWorkloadPermissionRequest:
-      $ref: "./schemas/machines.yaml#/schemas/MachineWorkloadPermissionRequest"
+    EnvironmentPermissionScope:
+      $ref: "./schemas/machines.yaml#/schemas/EnvironmentPermissionScope"
+    EnvironmentVisitorPermissionRequest:
+      $ref: "./schemas/machines.yaml#/schemas/EnvironmentVisitorPermissionRequest"
     ProvisioningExchange:
       $ref: "./schemas/machines.yaml#/schemas/ProvisioningExchange"
     ProvisioningSession:
       $ref: "./schemas/machines.yaml#/schemas/ProvisioningSession"
-    ResolvePublisherGroupWorkload:
-      $ref: "./schemas/machines.yaml#/schemas/ResolvePublisherGroupWorkload"
-    MachineWorkloadExchange:
-      $ref: "./schemas/machines.yaml#/schemas/MachineWorkloadExchange"
-    PublisherGroupWorkloadResolution:
-      $ref: "./schemas/machines.yaml#/schemas/PublisherGroupWorkloadResolution"
+    EnvironmentVisitorPrepareRequest:
+      $ref: "./schemas/environment-visitors.yaml#/schemas/EnvironmentVisitorPrepareRequest"
+    EnvironmentVisitorService:
+      $ref: "./schemas/environment-visitors.yaml#/schemas/EnvironmentVisitorService"
+    EnvironmentVisitorSession:
+      $ref: "./schemas/environment-visitors.yaml#/schemas/EnvironmentVisitorSession"
+    EnvironmentVisitorPreparation:
+      $ref: "./schemas/environment-visitors.yaml#/schemas/EnvironmentVisitorPreparation"
+    EnvironmentVisitorAssertion:
+      $ref: "./schemas/environment-visitors.yaml#/schemas/EnvironmentVisitorAssertion"
+    EnvironmentVisitorRenewal:
+      $ref: "./schemas/environment-visitors.yaml#/schemas/EnvironmentVisitorRenewal"
     ServiceInvitationCredential:
       $ref: "./schemas/service.yaml#/schemas/ServiceInvitationCredential"
     ServiceInvitationPreview:
       $ref: "./schemas/service.yaml#/schemas/ServiceInvitationPreview"
-    WorkloadIdentityRequest:
-      $ref: "./schemas/workload.yaml#/schemas/WorkloadIdentityRequest"
-    WorkloadIdentity:
-      $ref: "./schemas/workload.yaml#/schemas/WorkloadIdentity"
-    WorkloadAssertion:
-      $ref: "./schemas/workload.yaml#/schemas/WorkloadAssertion"
-    WorkloadRenewal:
-      $ref: "./schemas/workload.yaml#/schemas/WorkloadRenewal"
-    WorkloadExchange:
-      $ref: "./schemas/workload.yaml#/schemas/WorkloadExchange"
-    WorkloadSession:
-      $ref: "./schemas/workload.yaml#/schemas/WorkloadSession"
-    WorkloadSessionFields:
-      $ref: "./schemas/workload.yaml#/schemas/WorkloadSessionFields"
-    WorkloadGitHubExecution:
-      $ref: "./schemas/workload.yaml#/schemas/WorkloadGitHubExecution"
     CompanyConnections:
       $ref: "./schemas/company.yaml#/schemas/CompanyConnections"
     CompanyAdmissionPage:

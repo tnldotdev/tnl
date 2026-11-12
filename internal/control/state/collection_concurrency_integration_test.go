@@ -13,7 +13,7 @@ func TestIntegrationCollectionDefaultAndCreationSerializeTheirPreconditions(t *t
 	for _, firstOperation := range []string{"default", "environment"} {
 		t.Run(firstOperation, func(t *testing.T) {
 			d, now := newControlStateIntegrationDatabase(t, "collection_default_race")
-			r := appliedProjectRequest(t, d, now)
+			r := retainedEnvironmentProject(t, d, now)
 			d1 := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"api": {Protocol: "http"}})
 			d2 := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"api": {Protocol: "postgres"}})
 			c, _ := createTestCollection(t, d, r, "serialized", d1.Revision)

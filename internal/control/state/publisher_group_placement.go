@@ -3,8 +3,6 @@ package state
 import (
 	"context"
 	"errors"
-	"slices"
-	"strings"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -52,14 +50,4 @@ func ensurePublisherGroupIngressPool(ctx context.Context, tx pgx.Tx, group strin
 	}
 	_, err = tx.Exec(ctx, `UPDATE control.project_publisher_groups SET ingress_pool_id=$2 WHERE id=$1`, group, pool)
 	return err
-}
-
-// keep one group's allocation contiguous so the next placement sees all of its
-// reservations, not a partially allocated group with misleading free capacity.
-func placementOrderedServices(c ProjectConfiguration) []string {
-	keys := sortedProjectKeys(c.Services)
-	slices.SortStableFunc(keys, func(a, b string) int {
-		return strings.Compare(c.Services[a].PublisherGroup, c.Services[b].PublisherGroup)
-	})
-	return keys
 }

@@ -45,7 +45,7 @@ paths:
     get:
       operationId: getCollection
       security: [{ bearerAuth: [] }]
-      description: Read this exact collection in the authorized team and project as a current team manager. Neither its name nor its reference authorizes access; no other scope is searched.
+      description: Read this exact collection using current team manager access or a machine read provisioning session scoped to that collection and every service in its current default definition. Neither its name nor its reference authorizes access; no other scope is searched.
       parameters:
         - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
       responses:

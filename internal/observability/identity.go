@@ -12,6 +12,7 @@ import (
 // or invalid identity is cleared rather than attributed to the previous tenant.
 type Identity struct {
 	TeamID, PublisherGroupID, PublisherIdentityID, DeploymentID, ReplicaKey string
+	EnvironmentID                                                           string
 	ServiceID, PublicURLID                                                  string
 	ServiceKind                                                             ServiceKind
 }
@@ -42,7 +43,7 @@ func ReplaceIdentity(ctx context.Context, id Identity) context.Context {
 // publisher, group, or deployment starts a new scope instead of inheriting it.
 func NarrowIdentity(ctx context.Context, id Identity) context.Context {
 	p := IdentityFromContext(ctx)
-	if id.TeamID != "" && id.TeamID != p.TeamID || id.PublisherIdentityID != "" && id.PublisherIdentityID != p.PublisherIdentityID || id.PublisherGroupID != "" && id.PublisherGroupID != p.PublisherGroupID || id.DeploymentID != "" && id.DeploymentID != p.DeploymentID {
+	if id.TeamID != "" && id.TeamID != p.TeamID || id.PublisherIdentityID != "" && id.PublisherIdentityID != p.PublisherIdentityID || id.PublisherGroupID != "" && id.PublisherGroupID != p.PublisherGroupID || id.EnvironmentID != "" && id.EnvironmentID != p.EnvironmentID || id.DeploymentID != "" && id.DeploymentID != p.DeploymentID {
 		return ReplaceIdentity(ctx, id)
 	}
 	if id.TeamID == "" {
@@ -53,6 +54,9 @@ func NarrowIdentity(ctx context.Context, id Identity) context.Context {
 	}
 	if id.PublisherGroupID == "" {
 		id.PublisherGroupID = p.PublisherGroupID
+	}
+	if id.EnvironmentID == "" {
+		id.EnvironmentID = p.EnvironmentID
 	}
 	if id.DeploymentID == "" {
 		id.DeploymentID = p.DeploymentID
@@ -73,7 +77,7 @@ func validIdentity(id Identity) bool {
 	if id.ServiceID != "" && id.ServiceKind == PublicURL || id.PublicURLID != "" && id.ServiceKind == Service {
 		return false
 	}
-	for _, v := range []string{id.TeamID, id.PublisherGroupID, id.PublisherIdentityID, id.DeploymentID, id.ReplicaKey, id.ServiceID, id.PublicURLID} {
+	for _, v := range []string{id.TeamID, id.EnvironmentID, id.PublisherGroupID, id.PublisherIdentityID, id.DeploymentID, id.ReplicaKey, id.ServiceID, id.PublicURLID} {
 		if len(v) > 128 || strings.ContainsAny(v, "\r\n\x00") {
 			return false
 		}
@@ -87,7 +91,7 @@ func identityAttributes(ctx context.Context) []attribute.KeyValue {
 	for _, item := range []struct {
 		k metricStringKey
 		v string
-	}{{TeamID, id.TeamID}, {PublisherGroupID, id.PublisherGroupID}, {PublisherIdentityID, id.PublisherIdentityID}, {DeploymentID, id.DeploymentID}, {ReplicaKey, id.ReplicaKey}, {ServiceID, id.ServiceID}, {PublicURLID, id.PublicURLID}} {
+	}{{TeamID, id.TeamID}, {EnvironmentID, id.EnvironmentID}, {PublisherGroupID, id.PublisherGroupID}, {PublisherIdentityID, id.PublisherIdentityID}, {DeploymentID, id.DeploymentID}, {ReplicaKey, id.ReplicaKey}, {ServiceID, id.ServiceID}, {PublicURLID, id.PublicURLID}} {
 		if item.v != "" {
 			out = append(out, item.k.String(item.v))
 		}

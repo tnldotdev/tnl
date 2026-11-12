@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -71,7 +70,10 @@ func Resolve(ctx context.Context, selection Selection, cwd string, salt [32]byte
 	// retain evaluated declarations before resolving worktree-local defaults.
 	declared := project.Config
 	project.Declared = &declared
-	project.Config.Services = maps.Clone(project.Config.Services)
+	project.Config.Services = config.LocalServices(project.Config)
+	if server := project.Config.Environments["local"].Server; server != nil {
+		project.Config.Server = server
+	}
 
 	names := make([]string, 0, len(project.Config.Services))
 	for name := range project.Config.Services {
@@ -113,6 +115,19 @@ func Resolve(ctx context.Context, selection Selection, cwd string, salt [32]byte
 // Found reports whether the project has a selected configuration file.
 func (p Project) Found() bool { return p.Selection.Path != "" }
 
+// a project without environments can report ordinary local app listeners. once
+// environments are declared, only explicit local targets belong to this worktree.
+func (p Project) HasLocalService(name string) bool {
+	if _, found := p.Config.Services[name]; !found {
+		return false
+	}
+	if len(p.Config.Environments) == 0 {
+		return true
+	}
+	_, found := p.Config.Environments["local"].Targets[name]
+	return found
+}
+
 // AppService selects a configured app target. cwd identifies the project only;
 // when more than one app is configured, the caller must select one by name.
 func (p Project) AppService(cwd, selected string) (string, error) {
@@ -129,14 +144,14 @@ func (p Project) AppService(cwd, selected string) (string, error) {
 	}
 	if selected != "" {
 		service, found := p.Config.Services[selected]
-		if !found || config.PublisherGroupName(service) != "local" || service.TargetBinding == "group" || config.TargetType(service) != "app" {
+		if !found || !p.HasLocalService(selected) || config.TargetType(service) != "app" || config.Protocol(service) != "http" {
 			return "", fmt.Errorf("service %q is not an app service", selected)
 		}
 		return selected, nil
 	}
 	name := ""
 	for candidate, service := range p.Config.Services {
-		if config.PublisherGroupName(service) != "local" || service.TargetBinding == "group" || config.TargetType(service) != "app" {
+		if !p.HasLocalService(candidate) || config.TargetType(service) != "app" || config.Protocol(service) != "http" {
 			continue
 		}
 		if name != "" {

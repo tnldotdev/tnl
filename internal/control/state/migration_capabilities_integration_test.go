@@ -10,16 +10,13 @@ import (
 func TestIntegrationMigrationRejectsCompatibilityViewBaseline(t *testing.T) {
 	d, url, now := newControlStateIntegrationDatabaseWithURL(t, "compatibility_view_baseline")
 	ctx := t.Context()
-	r := appliedProjectRequest(t, d, now)
-	r.Configuration = workloadConfiguration()
-	if _, err := d.ApplyProjectConfiguration(ctx, r); err != nil {
-		t.Fatal(err)
-	}
-	exchange, _ := workloadExchange(t, r, now)
-	session, err := d.ExchangeWorkload(ctx, exchange, now)
+	f := newRetainedVisitorFixture(t, d, now, retainedGitHubTrust(), 3600, false)
+	exchange, _ := retainedVisitorPreparation(t, f, now)
+	prepared, err := d.PrepareEnvironmentVisitor(ctx, exchange, now)
 	if err != nil {
 		t.Fatal(err)
 	}
+	session := prepared.Session
 	// retain the predecessor identity literally so later baseline edits cannot
 	// silently turn this into a test of the current baseline.
 	const previous = "tnl-control-fresh-v1-workload-gitlab"

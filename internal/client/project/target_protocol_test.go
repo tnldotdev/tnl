@@ -6,7 +6,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 )
 
-func TestTargetTrustSnapshotsAgreeForAllProtocolsAndPublisherGroups(t *testing.T) {
+func TestTargetTrustSnapshotsAgreeForAllProtocolsAndEnvironmentProjections(t *testing.T) {
 	for _, protocol := range []string{"http", "tcp", "postgres", "mysql"} {
 		for _, publisher := range []string{"local", "production"} {
 			t.Run(protocol+"/"+publisher, func(t *testing.T) {
@@ -15,9 +15,8 @@ func TestTargetTrustSnapshotsAgreeForAllProtocolsAndPublisherGroups(t *testing.T
 				if protocol == "http" {
 					address = "https://127.0.0.1:8443"
 				}
-				project := Project{Root: t.TempDir(), Config: config.TNL{PublisherGroups: map[string]config.PublisherGroup{"production": {}}, Services: config.Services{
-					"service": {PublisherGroup: &publisher, Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &address, TLS: &config.TargetTLS{ServerName: &host}}},
-				}}}
+				project := Project{Root: t.TempDir(), Config: config.TNL{Services: config.Services{"service": {Protocol: &protocol}}, Environments: map[string]config.Environment{publisher: {Targets: map[string]config.EnvironmentTarget{"service": {Address: &address, TLS: &config.EnvironmentTargetTLS{Hostname: &host}}}}}}}
+				project.Config.Services["service"] = project.Config.Environments[publisher].Targets["service"].Service(&protocol)
 				publication, err := project.ResolvePublish("service", "")
 				if err != nil {
 					t.Fatal(err)

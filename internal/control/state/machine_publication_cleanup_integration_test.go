@@ -203,12 +203,18 @@ func TestIntegrationMachinePublicationCleanupIsolation(t *testing.T) {
 	}
 	// current remote-group ownership remains a deletion boundary, even if an
 	// operator attaches a formerly native allocation to a remote definition.
-	r := ApplyProjectConfigurationRequest{TeamID: f.base.TeamID, ActorID: f.base.ActingIdentityID, ProjectKey: "cleanup", SourceFingerprint: shaFingerprint(), Now: now, Configuration: ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"remote": {DomainID: "domain_session"}}, Services: map[string]ProjectServiceConfiguration{"remoteapp": {PublisherGroup: "remote", Target: "http://127.0.0.1:3000"}}}}
-	applied, err := d.ApplyProjectConfiguration(t.Context(), r)
+	r := environmentPublisherTestProject{TeamID: f.base.TeamID, ActorID: f.base.ActingIdentityID, ProjectKey: "cleanup", SourceFingerprint: shaFingerprint(), Now: now}
+	domain := retainedFixtureDomain(t, d, r)
+	definition := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"remoteapp": {Protocol: "http"}})
+	applied, err := d.CreateEnvironment(t.Context(), CreateEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, SourceFingerprint: r.SourceFingerprint, Name: "remote", DefinitionRevision: definition.Revision, Targets: EnvironmentTargets{"remoteapp": {Address: "127.0.0.1:3000"}}, DomainID: domain, IdempotencyKey: "cleanup-boundary", Now: now})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.pool.Exec(t.Context(), `INSERT INTO control.applied_project_services(team_id,project_key,service,group_id,public_url_id,desired_revision) VALUES($1,'cleanup','attached',$2,$3,1)`, f.base.TeamID, applied.Groups[0].ID, f.url.ID); err != nil {
+	var group string
+	if err := d.pool.QueryRow(t.Context(), `SELECT group_id FROM control.environments WHERE id=$1`, applied.ID).Scan(&group); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = d.pool.Exec(t.Context(), `INSERT INTO control.applied_project_services(team_id,project_key,service,group_id,public_url_id,desired_revision) VALUES($1,'cleanup','attached',$2,$3,1)`, f.base.TeamID, group, f.url.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err = d.CleanupMachinePublication(t.Context(), f.session.Id, f.invocation, f.cleanupAssertion(t, now), f.cleanupAudience(), now); !errors.Is(err, ErrMachineDenied) {

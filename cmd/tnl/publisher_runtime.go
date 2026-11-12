@@ -31,7 +31,7 @@ func publisherRuntimeFields(r *controlv1.PublisherRuntimeStatus) []clioutput.Fie
 		fields = append(fields,
 			clioutput.Field{Label: "deployment evidence", Value: string(d.Evidence)},
 			clioutput.Field{Label: "deployment", Value: d.Report.DeploymentId},
-			clioutput.Field{Label: "group ID", Value: d.GroupId},
+			clioutput.Field{Label: "environment ID", Value: d.EnvironmentId},
 			clioutput.Field{Label: "replica", Value: d.Report.ReplicaKey},
 			clioutput.Field{Label: "instance", Value: d.Report.Instance},
 			clioutput.Field{Label: "provider", Value: string(d.Report.Provider)},

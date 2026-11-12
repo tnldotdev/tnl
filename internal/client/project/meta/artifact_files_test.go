@@ -12,11 +12,12 @@ import (
 
 func artifactFiles(t *testing.T) map[string][]byte {
 	t.Helper()
-	files, err := PythonFacade(config.TNL{}, "tnl.yml")
+	facts, err := snapshotServices(config.TNL{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	files["project.d.ts"] = []byte("// portable declarations\n")
+	files := pythonServices(facts)
+	files[ProjectName] = typescriptServices(facts)
 	return files
 }
 
@@ -48,7 +49,7 @@ func TestArtifactReadOnlyChecksAndFixedOutputs(t *testing.T) {
 	if err := writeArtifacts(directory, files, false); err != nil {
 		t.Fatal(err)
 	}
-	before, err := os.Stat(filepath.Join(directory, "project.d.ts"))
+	before, err := os.Stat(filepath.Join(directory, ProjectName))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,12 +58,12 @@ func TestArtifactReadOnlyChecksAndFixedOutputs(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	after, err := os.Stat(filepath.Join(directory, "project.d.ts"))
+	after, err := os.Stat(filepath.Join(directory, ProjectName))
 	if err != nil || !before.ModTime().Equal(after.ModTime()) {
 		t.Fatal("unchanged output was rewritten", err)
 	}
 	writeArtifactFixture(t, filepath.Join(directory, "customer.txt"), []byte("preserve"))
-	writeArtifactFixture(t, filepath.Join(directory, "project.d.ts"), []byte("edited"))
+	writeArtifactFixture(t, filepath.Join(directory, ProjectName), []byte("edited"))
 	if writeArtifacts(directory, files, true) == nil {
 		t.Fatal("stale artifact accepted")
 	}
@@ -79,6 +80,16 @@ func TestArtifactReadOnlyChecksAndFixedOutputs(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(directory, "workloads.json")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("obsolete workload configuration remains")
 	}
+	writeArtifactFixture(t, filepath.Join(directory, "project.d.ts"), []byte("old ambient project types"))
+	if writeArtifacts(directory, files, true) == nil {
+		t.Fatal("obsolete ambient declarations accepted")
+	}
+	if err := writeArtifacts(directory, files, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(directory, "project.d.ts")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("ambient declarations can disagree with generated runtime facts")
+	}
 	if data, err := os.ReadFile(filepath.Join(directory, "customer.txt")); err != nil || string(data) != "preserve" {
 		t.Fatal("unrelated file changed", err)
 	}
@@ -90,15 +101,15 @@ func TestArtifactReadOnlyChecksAndFixedOutputs(t *testing.T) {
 func TestArtifactBounds(t *testing.T) {
 	files := artifactFiles(t)
 	directory := artifactDirectory(t)
-	files["project.d.ts"] = bytes.Repeat([]byte("x"), maxArtifactBytes+1)
+	files[ProjectName] = bytes.Repeat([]byte("x"), maxArtifactBytes+1)
 	if writeArtifacts(directory, files, false) == nil {
 		t.Fatal("unbounded rendered output accepted")
 	}
-	files["project.d.ts"] = []byte("types")
+	files[ProjectName] = []byte("facts")
 	if err := writeArtifacts(directory, files, false); err != nil {
 		t.Fatal(err)
 	}
-	writeArtifactFixture(t, filepath.Join(directory, "project.d.ts"), bytes.Repeat([]byte("x"), maxArtifactBytes+1))
+	writeArtifactFixture(t, filepath.Join(directory, ProjectName), bytes.Repeat([]byte("x"), maxArtifactBytes+1))
 	for _, check := range []bool{true, false} {
 		if writeArtifacts(directory, files, check) == nil {
 			t.Fatal("unbounded existing output accepted")
@@ -126,7 +137,7 @@ func TestArtifactRejectsSymlinks(t *testing.T) {
 				link = filepath.Join(directory, "parent")
 				directory = filepath.Join(link, "generated")
 			case "file":
-				link, target = filepath.Join(directory, "project.d.ts"), victim
+				link, target = filepath.Join(directory, ProjectName), victim
 			case "optional":
 				link, target = filepath.Join(directory, "workloads.json"), victim
 			}

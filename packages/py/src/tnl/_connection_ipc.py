@@ -13,9 +13,11 @@ import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlsplit
 
 from ._protocol import TnlError
+from ._identity_models import IdentitySourceReply
 
 _TIMEOUT = 35.0
 
@@ -94,8 +96,6 @@ class OwnerIPC:
             "config_digest",
             "expires_at",
             "executable",
-            "workload",
-            "team_id",
         }:
             raise ValueError("invalid handle")
         url, key, scope_directory, digest, expiry = (
@@ -161,6 +161,9 @@ class OwnerIPC:
         request_handle: str | None = None,
         selection: dict[str, object] | None = None,
         preview: bool = False,
+        operation: Literal["prepare", "identity-challenge", "stop"] = "prepare",
+        identity_reply: IdentitySourceReply | None = None,
+        source_environment: dict[str, object] | None = None,
     ) -> object:
         if self.creator_pid != os.getpid():
             self.discard_inherited()
@@ -175,7 +178,7 @@ class OwnerIPC:
             with self._expiry_lock:
                 if self.closed:
                     raise ValueError("closed capability")
-                if self.expires <= datetime.now(UTC):
+                if operation == "stop" or self.expires <= datetime.now(UTC):
                     self._load()
             connection = self.available.get(timeout=max(0.001, deadline - time.monotonic()))
             if self.closed:
@@ -205,6 +208,10 @@ class OwnerIPC:
                 body.update(selection)
             if assertion is not None:
                 body["assertion"] = assertion
+            if identity_reply is not None:
+                body["identity_reply"] = identity_reply
+            if source_environment is not None:
+                body["sdk_environment"] = source_environment
             if requested_at is not None:
                 body["requested_at"] = requested_at
             if request_handle is not None:
@@ -216,12 +223,16 @@ class OwnerIPC:
                 if preview
                 else "/v1/connections/sdk-prepare"
                 if sdk
-                else "/v1/connections/prepare",
+                else "/v1/connections/" + operation,
                 encoded,
                 {"Authorization": "Bearer " + self.key, "Content-Type": "application/json"},
             )
             response = connection.getresponse()
             data = response.read((128 << 10) + 1)
+            if not expired.is_set() and time.monotonic() < deadline and len(data) <= 128 << 10 and response.status != 200 and response.getheader("Content-Type", "").split(";")[0] == "application/json":
+                failure: object = json.loads(data)
+                if failure == {"schema": 1, "reason": "TNL_CLIENT_WORKLOAD_ASSERTION_UNAVAILABLE"}:
+                    raise TnlError("sdk.workload_assertion_unavailable", "the explicit identity source is unavailable")
             if (
                 expired.is_set()
                 or time.monotonic() >= deadline
@@ -233,6 +244,10 @@ class OwnerIPC:
                 raise ValueError("invalid owner response")
             result: object = json.loads(data)
             return result
+        except TnlError:
+            if connection is not None:
+                connection.close()
+            raise
         except Exception:
             if connection is not None:
                 connection.close()

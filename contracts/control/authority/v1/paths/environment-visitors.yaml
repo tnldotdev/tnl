@@ -1,0 +1,66 @@
+paths:
+  /v1/projects/{project_key}/environments/{environment_id}/visitors/prepare:
+    post:
+      operationId: prepareEnvironmentVisitor
+      security: []
+      description: Authorize exact environment services from current saved visitor permission, verify every expected protocol against the pinned definition and saved service, then create or resume the native-owned session. Exact replay repeats current identity, permission, membership, expiry and service checks. A changed selection with the same nonce conflicts. No project configuration or assignment-group selector is consulted.
+      parameters:
+        - { name: project_key, in: path, required: true, schema: { type: string } }
+        - { name: environment_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/EnvironmentVisitorPrepareRequest" }
+      responses:
+        "200":
+          description: Authorized nonsecret service discovery plus the native-owned visitor session, not a traffic-readiness acknowledgement
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/EnvironmentVisitorPreparation" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/environment-visitor-sessions/{session_id}/renew:
+    post:
+      operationId: renewEnvironmentVisitorSession
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: session_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/EnvironmentVisitorRenewal" }
+      responses:
+        "200":
+          description: Current fixed service snapshot and bounded lease
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/EnvironmentVisitorSession" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/environment-visitor-sessions/{session_id}/assertions:
+    post:
+      operationId: attachEnvironmentVisitorAssertion
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: session_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/EnvironmentVisitorAssertion" }
+      responses:
+        "200":
+          description: Current same-identity proof expiry, never a wider service snapshot or hard deadline
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/EnvironmentVisitorSession" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/environment-visitor-sessions/{session_id}:
+    delete:
+      operationId: revokeEnvironmentVisitorSession
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: session_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Exact authenticated session revoked }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

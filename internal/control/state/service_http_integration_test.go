@@ -29,22 +29,24 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 	if err := d.PrepareVisitorSigningKeys(t.Context(), testVisitorIssuer, now); err != nil {
 		t.Fatal(err)
 	}
-	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {Public: true}}, Services: map[string]ProjectServiceConfiguration{"a": {PublisherGroup: "production", Target: "app:3000"}, "b": {PublisherGroup: "production", Target: "other:3000"}}}
-	applied, err := d.ApplyProjectConfiguration(t.Context(), r)
+	r := retainedEnvironmentProject(t, d, now)
+	definition := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"a": {Protocol: "http"}, "b": {Protocol: "http"}})
+	applied, err := d.CreateEnvironment(t.Context(), CreateEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, SourceFingerprint: r.SourceFingerprint, Name: "production", DefinitionRevision: definition.Revision, Targets: EnvironmentTargets{"a": {Address: "app:3000"}, "b": {Address: "other:3000"}}, Public: true, IdempotencyKey: "http-production", Now: now})
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrollment, err := d.IssuePublisherGroupEnrollment(t.Context(), r.TeamID, r.ProjectKey, "production", r.ActorID, 2, time.Hour, now)
-	if err != nil {
-		t.Fatal(err)
+	enrollment := retainedPublisherEnrollment(t, d, r, applied, 2)
+	replica := retainedPublisherReplica(t, d, enrollment, now)
+	for _, s := range applied.Services {
+		if _, err := d.CreateServiceGrant(t.Context(), s.ServiceID, r.ActorID, "http-owner/"+s.ServiceID, "identity", r.ActorID, nil, now); err != nil {
+			t.Fatal(err)
+		}
 	}
-	replica := enrollAppliedGroup(t, d, r, enrollment, now)
 	start := func(index int, key string) ServiceHTTPRun {
 		t.Helper()
 		a := replica.assignments.Services[index]
-		access := groupAssignmentAccess(t, d, replica, a, now)
-		prep, err := d.PrepareServiceRun(t.Context(), a.ServiceID, access.PublisherIdentity, key, now, ServiceMetadata{Protocol: "http", TrustRevision: a.TrustRevision}, nil)
+		access := environmentAssignmentAccess(t, d, replica, a, now)
+		prep, err := d.PrepareServiceRun(t.Context(), a.ServiceID, access.PublisherIdentity, key, now, ServiceMetadata{Protocol: "http", TrustRevision: a.TrustRevision}, &replica.assignments.Environment)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -186,7 +188,7 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 	if _, err = d.RedeemServiceBrowserHandoff(t.Context(), b, handoff.Token, now); err == nil {
 		t.Fatal("other service redeemed handoff")
 	}
-	replica = enrollAppliedGroup(t, d, r, enrollment, now)
+	replica = retainedPublisherReplica(t, d, enrollment, now)
 	later := start(0, "later")
 	if _, err = d.RedeemServiceBrowserHandoff(t.Context(), later, handoff.Token, now); err == nil {
 		t.Fatal("later run redeemed handoff")

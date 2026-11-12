@@ -36,9 +36,9 @@ type PublisherRuntimeRequest struct {
 }
 
 type PublisherRuntimeResponse struct {
-	Epoch          int64                `json:"epoch"`
-	LeaseExpiresAt *time.Time           `json:"lease_expires_at,omitempty"`
-	GroupLease     *PublisherGroupLease `json:"group_lease,omitempty"`
+	Epoch            int64                      `json:"epoch"`
+	LeaseExpiresAt   *time.Time                 `json:"lease_expires_at,omitempty"`
+	EnvironmentLease *EnvironmentPublisherLease `json:"environment_lease,omitempty"`
 }
 
 type PublisherRuntimeStatus struct {
@@ -121,13 +121,13 @@ func (d *Database) PublisherRuntime(ctx context.Context, r PublisherRuntimeReque
 	if i.RevokedAt.Valid || i.Kind == "guest" {
 		return result, ErrPublisherIdentity
 	}
-	var group, groupKey string
-	err = tx.QueryRow(ctx, `SELECT m.group_id,m.key_id FROM control.publisher_group_members m JOIN control.project_publisher_groups g ON g.id=m.group_id WHERE m.publisher_identity_id=$1 AND g.deleted_at IS NULL AND g.team_id=$2 AND control.active_publisher(m.publisher_identity_id,$3)`, i.ID, team, r.Now).Scan(&group, &groupKey)
+	var group, environment, groupKey string
+	err = tx.QueryRow(ctx, `SELECT assignment.id,owner.id,member.key_id FROM control.publisher_group_members member JOIN control.project_publisher_groups assignment ON assignment.id=member.group_id JOIN control.environments owner ON owner.id=assignment.environment_id AND owner.group_id=assignment.id AND owner.team_id=assignment.team_id AND owner.project_key=assignment.project_key WHERE member.publisher_identity_id=$1 AND assignment.deleted_at IS NULL AND owner.retired_at IS NULL AND owner.team_id=$2 AND control.active_publisher(member.publisher_identity_id,$3)`, i.ID, team, r.Now).Scan(&group, &environment, &groupKey)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return result, err
 	}
 	if group != "" {
-		if group != r.ScopeID {
+		if environment != r.ScopeID {
 			return result, ErrPublisherIdentity
 		}
 	} else {
@@ -153,7 +153,7 @@ func (d *Database) PublisherRuntime(ctx context.Context, r PublisherRuntimeReque
 	if err != nil {
 		return result, ErrPublisherIdentity
 	}
-	identity := observability.Identity{TeamID: team, PublisherGroupID: group, PublisherIdentityID: i.ID}
+	identity := observability.Identity{TeamID: team, EnvironmentID: environment, PublisherGroupID: group, PublisherIdentityID: i.ID}
 	if r.Deployment != nil {
 		identity.DeploymentID, identity.ReplicaKey = r.Deployment.DeploymentId, r.Deployment.ReplicaKey
 	}
@@ -205,7 +205,7 @@ func (d *Database) PublisherRuntime(ctx context.Context, r PublisherRuntimeReque
 		deploymentFirst = timestamptz(r.Now)
 	}
 	address, family := publicPublisherAddress(r.SourceIP)
-	until := r.Now.Add(PublisherGroupLeaseLifetime)
+	until := r.Now.Add(EnvironmentPublisherLeaseLifetime)
 	if r.Action == "start" {
 		if current.ProcessRunID == r.ProcessRunID && current.Epoch == r.ExpectedEpoch+1 && current.ScopeID == r.ScopeID && current.KeyID == kid && !current.StoppedAt.Valid {
 			// a fresh one-use proof may recover a lost start reply. it must not
@@ -247,8 +247,8 @@ func (d *Database) PublisherRuntime(ctx context.Context, r PublisherRuntimeReque
 				_, err = tx.Exec(ctx, `UPDATE control.publisher_group_members SET lease_expires_at=$2,healthy=false WHERE publisher_identity_id=$1`, i.ID, r.Now)
 			}
 		} else {
-			lease, leaseErr := issuePublisherGroupLease(ctx, tx, i.ID, kid, current.LeaseExpiresAt.Time)
-			result.GroupLease, err = &lease, leaseErr
+			lease, leaseErr := issueEnvironmentPublisherLease(ctx, tx, i.ID, kid, current.LeaseExpiresAt.Time)
+			result.EnvironmentLease, err = &lease, leaseErr
 		}
 		if err != nil {
 			return result, err
@@ -281,7 +281,7 @@ func publisherRuntimeStatus(ctx context.Context, q *controlstatedb.Queries, id s
 		if err := json.Unmarshal(r.DeploymentReport, &report); err != nil {
 			return nil, err
 		}
-		s.Deployment = &controlv1.PublisherDeploymentObservation{Report: report, GroupId: r.DeploymentGroupID.String, Evidence: "publisher_reported", FirstObservedAt: r.DeploymentFirstObservedAt.Time, ObservedAt: r.LastSeenAt.Time}
+		s.Deployment = &controlv1.PublisherDeploymentObservation{Report: report, EnvironmentId: r.ScopeID, Evidence: "publisher_reported", FirstObservedAt: r.DeploymentFirstObservedAt.Time, ObservedAt: r.LastSeenAt.Time}
 	}
 	if r.StoppedAt.Valid {
 		s.StoppedAt = &r.StoppedAt.Time

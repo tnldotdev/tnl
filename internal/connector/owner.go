@@ -2,17 +2,13 @@ package connector
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"io"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -20,7 +16,6 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/project/meta"
-	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/connector/kubeconfig"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
@@ -40,11 +35,19 @@ type connectorConnectionBackend struct {
 	scope                                                  connectorruntime.Context
 	stateDir, assertion, directory, executable, runnerTemp string
 	httpClient                                             *http.Client
-	acquisition                                            workloadmanifest.Acquisition
+	acquisition                                            workload.Acquisition
 	refreshAssertion                                       func(context.Context) (string, error)
+	environmentAcquire func(context.Context) (string, error)
+	environmentAcquisition *workload.Acquisition
+	environmentPreparationUncertain bool
+	environmentSource authorityv1.IdentitySourceSelection
+	environmentChallenge *authorityv1.IdentitySourceChallenge
+	identityMu sync.Mutex
+	sourceGate chan struct{}
 	deadlineChanged                                        chan struct{}
 	listeners                                              map[string]*ownedServiceListener
 	initialServices                                        []string
+	environmentBinding                                     *connectorruntime.EnvironmentBinding
 	services                                               map[string]controlv1.Service
 	metadata                                               meta.PublicMetadata
 	lifetime                                               context.Context
@@ -70,7 +73,6 @@ type connectorConnectionSession struct {
 	human           *Session
 	teamID          string
 	workload        *workload.Client
-	replacement     *workloadReplacement
 	deadline        time.Time
 	sessionGate     chan struct{}
 	verification    *connectorruntime.AssertionVerification
@@ -191,51 +193,9 @@ func (b *connectorConnectionBackend) Start(ctx context.Context) (meta.PublicMeta
 	b.cancel = cancel
 	b.lifetime = lifetime
 	services := map[string]controlv1.Service{}
-	if b.scope.Workload != "" {
-		_, key, err := ed25519.GenerateKey(rand.Reader)
-		if err != nil {
-			return meta.PublicMetadata{}, time.Time{}, err
-		}
-		client, err := workload.NewWithKey(b.scope.Server, b.httpClient, key)
-		if err != nil {
-			return meta.PublicMetadata{}, time.Time{}, err
-		}
-		b.workload = client
-		identity, err := client.IdentifyPolicy(ctx, b.scope.TeamID, b.scope.ProjectKey, b.scope.SourceID, b.scope.Workload, b.assertion)
-		if err != nil {
-			return meta.PublicMetadata{}, time.Time{}, err
-		}
-		selected := []string{}
-		for _, name := range b.scope.Services {
-			if slices.Contains(identity.Services, name) {
-				selected = append(selected, name)
-			}
-		}
-		if len(selected) == 0 {
-			return meta.PublicMetadata{}, time.Time{}, connectorruntime.ErrUnauthorized
-		}
-		requested := b.scope
-		requested.Services = selected
-		assertion := b.assertion
-		session, err := exchangeConnectionWorkload(ctx, client, requested, assertion)
-		b.assertion = "" // neither the assertion nor GitHub's request bearer survives exchange.
-		if err != nil {
-			return meta.PublicMetadata{}, time.Time{}, err
-		}
-		b.deadline = workload.SessionDeadline(session)
-		if session.Binding != identity.Binding {
-			return meta.PublicMetadata{}, time.Time{}, connectorruntime.ErrUnauthorized
-		}
-		b.rememberAssertion(assertion, identity.AssertionExpiresAt, session)
-		limit := b.project.Config.Workloads[b.scope.Workload].DurationLimit()
-		if limit > 0 && (session.ExpiresAt == nil || session.ExpiresAt.After(time.Now().Add(limit))) || session.LeaseExpiresAt.After(time.Now().Add(91*time.Second)) {
-			return meta.PublicMetadata{}, time.Time{}, connectorruntime.ErrExpired
-		}
-		inventory, err := client.ListServices(ctx)
-		if err != nil {
-			return meta.PublicMetadata{}, time.Time{}, err
-		}
-		services, err = workloadInventoryServices(inventory, session.TeamId)
+	if b.scope.Environment != nil {
+		var err error
+		services, err = b.startEnvironment(ctx)
 		if err != nil {
 			return meta.PublicMetadata{}, time.Time{}, err
 		}
@@ -481,7 +441,7 @@ func (b *connectorConnectionBackend) SnapshotFor(name, assertion string) (connec
 		}
 		verification = &proof
 	}
-	return connectorruntime.Prepared{Schema: 1, ProjectRuntime: s.metadata, Connection: c, Verification: verification}, nil
+	return connectorruntime.Prepared{Schema: 1, ProjectRuntime: s.metadata, Connection: c, Verification: verification, Environment: b.EnvironmentBinding()}, nil
 }
 func (b *connectorConnectionBackend) healthy() (time.Time, error) {
 	b.mu.Lock()
@@ -558,17 +518,23 @@ func (b *connectorConnectionBackend) Renew(ctx context.Context) (time.Time, erro
 // process lifetime belongs to the application; session deadlines remain in
 // snapshots and data-plane admission, not in the local capability's lifetime.
 func (b *connectorConnectionBackend) Persistent() bool {
-	return b.scope.Workload == "" || b.parentPID > 0
+	if b.scope.Environment != nil { return b.parentPID > 0 }
+	return true
 }
 
 func (b *connectorConnectionBackend) ownerConfig() connectorruntime.OwnerConfig {
 	config := connectorruntime.OwnerConfig{
 		Backend: b, AuthorizationDeadline: b.AuthorizationDeadline,
 		Persistent: b.Persistent(), OwnerAlive: b.OwnerAlive,
-		Kubernetes: b,
+		Kubernetes:        b,
+		Environment:       b.EnvironmentBinding,
 	}
 	if b.sdk != nil {
-		config.SDKWorkload, config.SDKPrepare = b.SDKWorkload, b.SDKPrepare
+		config.SDKPrepare = b.SDKPrepare
+	}
+	if b.scope.Environment != nil {
+		config.IdentityChallenge = b.IdentityChallenge
+		config.UseIdentityReply = b.UseEnvironmentIdentity
 	}
 	return config
 }
@@ -590,6 +556,9 @@ func (b *connectorConnectionBackend) UseAssertion(ctx context.Context, assertion
 }
 
 func (b *connectorConnectionBackend) attach(ctx context.Context, assertion string, reuse bool) error {
+	if b.scope.Environment != nil && assertion == "" {
+		return connectorruntime.ErrInvalid
+	}
 	ctx, finish, err := b.begin(ctx)
 	if err != nil {
 		return err
@@ -618,7 +587,7 @@ func (b *connectorConnectionBackend) attach(ctx context.Context, assertion strin
 	if client == nil {
 		return connectorruntime.ErrInvalid
 	}
-	previous, err := client.Session()
+	_, err = client.Session()
 	if err != nil {
 		return err
 	}
@@ -638,14 +607,6 @@ func (b *connectorConnectionBackend) attach(ctx context.Context, assertion strin
 		}
 	}
 	b.mu.Unlock()
-	if errors.Is(err, workload.ErrSessionExpired) {
-		// replacement authorizes future accepts from scratch. the old adapter and
-		// its streams retain their old subject and never receive the new rights.
-		if previous.Provider == controlv1.WorkloadGitHub {
-			return connectorruntime.ErrExpired
-		}
-		return b.replaceWorkload(ctx, client, previous.Binding, assertion)
-	}
 	return err
 }
 
@@ -670,13 +631,13 @@ func (b *connectorConnectionBackend) reuseAssertion(assertion string) bool {
 	return true
 }
 
-func (b *connectorConnectionBackend) rememberAssertion(assertion string, expires time.Time, session authorityv1.WorkloadSession) {
+func (b *connectorConnectionBackend) rememberAssertion(assertion string, expires time.Time, session authorityv1.EnvironmentVisitorSession) {
 	if assertion == "" || !expires.After(time.Now()) {
 		b.verification = nil
 		return
 	}
 	digest := sha256.Sum256([]byte(assertion))
-	b.verification = &connectorruntime.AssertionVerification{Digest: hex.EncodeToString(digest[:]), Binding: session.Binding, ExpiresAt: expires}
+	b.verification = &connectorruntime.AssertionVerification{Digest: hex.EncodeToString(digest[:]), Binding: b.workload.Binding(), ExpiresAt: expires}
 	if b.assertions == nil || b.verifiedSession != session.Id {
 		b.assertions = map[string]verifiedAssertion{}
 	}
@@ -731,7 +692,7 @@ func (b *connectorConnectionBackend) prepareKube(ctx context.Context, name strin
 		return serviceKubeconfig{}, err
 	}
 	var plan kubeconfig.Plan
-	if b.scope.Workload != "" {
+	if b.scope.Environment != nil {
 		if b.sessionKubePlan.Path == "" {
 			b.sessionKubePlan, err = kubeconfig.PlanSession(b.directory, "session")
 		}
@@ -750,9 +711,12 @@ func (b *connectorConnectionBackend) prepareKube(ctx context.Context, name strin
 		return serviceKubeconfig{}, err
 	}
 	owner := kubeconfig.Owner{ControlURL: b.scope.Server, TeamID: b.teamID, SourceID: b.scope.SourceID, ServiceID: service.Id}
+	if b.scope.Environment != nil {
+		owner = kubeconfig.Owner{ControlURL: b.scope.Server, ProjectKey: b.scope.Environment.Environment.ProjectKey, EnvironmentID: b.scope.Environment.Environment.EnvironmentId, ServiceID: service.Id}
+	}
 	result, err := plan.Prepare(ctx, kubeconfig.Options{Owner: owner, ProjectLabel: b.scope.ProjectLabel, Service: name, Namespace: b.kubeOptions.Namespace, Server: "https://" + net.JoinHostPort(connection.Host, strconv.Itoa(connection.Port)), TLSServerName: service.Endpoint.Hostname, Helper: b.executable, Profile: filepath.Join(b.directory, "handle.json"), CredentialArgs: []string{"runtime", "connections", "kube-credential", "--handle", filepath.Join(b.directory, "handle.json"), "--service", name}})
 	if err == nil {
-		if b.scope.Workload != "" {
+		if b.scope.Environment != nil {
 			b.sessionKubeResult = result
 		}
 	}

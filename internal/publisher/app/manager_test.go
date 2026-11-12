@@ -26,6 +26,51 @@ func newTestManager(t *testing.T, project, root string, services []Service, run 
 	return New(t.Context(), project, database, services, run)
 }
 
+func TestApplicationPublicationShutdownCancelsSiblingsBeforeJoining(t *testing.T) {
+	started := make(chan struct{}, 2)
+	allCanceled := make(chan struct{})
+	force := make(chan struct{})
+	var canceled atomic.Int32
+	manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "web"}, {Name: "api"}}, func(ctx context.Context, _ Service, _ func(uint64, bool) error) error {
+		started <- struct{}{}
+		<-ctx.Done()
+		if canceled.Add(1) == 2 {
+			close(allCanceled)
+		}
+		select {
+		case <-allCanceled:
+		case <-force:
+		}
+		return ctx.Err()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"web", "api"} {
+		id, err := manager.Reserve(name, "owner", 1, "https://"+name+".example")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := manager.Register(id, "owner", "http://127.0.0.1:3000", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	<-started
+	<-started
+	done := make(chan error, 1)
+	go func() { done <- manager.CloseError() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		close(force)
+		<-done
+		t.Fatal("one publication's join delayed canceling its sibling")
+	}
+}
+
 func TestListenerOwnershipPublicationAndReplacementRejectsStaleRuns(t *testing.T) {
 	var runs atomic.Uint64
 	started := make(chan uint64, 4)

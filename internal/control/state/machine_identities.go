@@ -6,14 +6,12 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
-	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
@@ -51,29 +49,48 @@ func (d *Database) machineManagerTransaction(ctx context.Context, team, actor st
 }
 
 func (d *Database) RegisterMachineIdentity(ctx context.Context, r RegisterMachineRequest, now time.Time) (result MachineIdentity, retErr error) {
-	if !config.ExactWorkloadValue(r.Name) || len(r.Name) > 128 {
-		return result, ErrProjectConfigurationInvalid
-	}
-	switch r.ProofKind {
-	case "oidc":
-		// generic OIDC deliberately requires an exact subject, not a wildcard or
-		// provider metadata copied from an unverified token.
-		p := ProjectWorkload{Provider: "oidc", Trust: r.Trust}
-		if r.Trust.Provider != "oidc" || r.Trust.Claims["sub"] == "" || p.validateTrust() != nil || len(r.PublicKey) != 0 || r.KeyID != "" {
-			return result, ErrProjectConfigurationInvalid
-		}
-	case "signing_key":
-		if len(r.PublicKey) != ed25519.PublicKeySize || !config.ExactWorkloadValue(r.KeyID) || len(r.KeyID) > 128 || r.Trust.Provider != "" || r.Trust.Issuer != "" || r.Trust.JWKSURL != "" || r.Trust.Audience != "" || len(r.Trust.Claims) != 0 {
-			return result, ErrProjectConfigurationInvalid
-		}
-	default:
-		return result, ErrProjectConfigurationInvalid
+	if err := validateRegisterMachineRequest(r); err != nil {
+		return result, err
 	}
 	tx, err := d.machineManagerTransaction(ctx, r.TeamID, r.ActorID)
 	if err != nil {
 		return result, err
 	}
 	defer rollback(ctx, tx, "register machine identity", &retErr)()
+	result, err = registerMachineIdentity(ctx, tx, r, now)
+	if err != nil {
+		return result, err
+	}
+	return result, tx.Commit(ctx)
+}
+
+func validateRegisterMachineRequest(r RegisterMachineRequest) error {
+	if !config.ExactWorkloadValue(r.Name) || len(r.Name) > 128 {
+		return ErrProjectConfigurationInvalid
+	}
+	switch r.ProofKind {
+	case "oidc":
+		// saved provider policy pins stable identity; the serving verifier retains
+		// the provider's signed execution boundary for subsequent attachments.
+		if validateMachineOIDCTrust(r.Trust) != nil || len(r.PublicKey) != 0 || r.KeyID != "" {
+			return ErrProjectConfigurationInvalid
+		}
+	case "signing_key":
+		if len(r.PublicKey) != ed25519.PublicKeySize || !config.ExactWorkloadValue(r.KeyID) || len(r.KeyID) > 128 || r.Trust.Provider != "" || r.Trust.Issuer != "" || r.Trust.JWKSURL != "" || r.Trust.Audience != "" || len(r.Trust.Claims) != 0 || r.Trust.Events != nil {
+			return ErrProjectConfigurationInvalid
+		}
+	default:
+		return ErrProjectConfigurationInvalid
+	}
+	return nil
+}
+
+// callers hold the current team manager guard. approval composes this same
+// registration operation and its permission receipt in one transaction.
+func registerMachineIdentity(ctx context.Context, tx pgx.Tx, r RegisterMachineRequest, now time.Time) (result MachineIdentity, err error) {
+	if err := validateRegisterMachineRequest(r); err != nil {
+		return result, err
+	}
 	id, err := opaqueid.New("mci_")
 	if err != nil {
 		return result, err
@@ -87,15 +104,8 @@ func (d *Database) RegisterMachineIdentity(ctx context.Context, r RegisterMachin
 		if _, err = tx.Exec(ctx, `INSERT INTO control.machine_identity_keys(machine_id,key_id,public_key) VALUES($1,$2,$3)`, id, r.KeyID, []byte(r.PublicKey)); err != nil {
 			return result, err
 		}
-	} else {
-		// registration establishes a durable revocation boundary. sessions issued
-		// before registration have no machine link, so revoke matching subjects
-		// rather than leaving a legacy credential outside that boundary.
-		if _, err = tx.Exec(ctx, `UPDATE control.workload_sessions SET revoked_at=COALESCE(revoked_at,$5) WHERE team_id=$1 AND provider='oidc' AND claims->>'issuer'=$2 AND claims->>'audience'=$3 AND claims->>'subject'=$4`, r.TeamID, r.Trust.Issuer, r.Trust.Audience, r.Trust.Claims["sub"], now); err != nil {
-			return result, err
-		}
 	}
-	return MachineIdentity{ID: id, TeamID: r.TeamID, Name: r.Name, ProofKind: r.ProofKind, Trust: r.Trust, Revision: 1}, tx.Commit(ctx)
+	return MachineIdentity{ID: id, TeamID: r.TeamID, Name: r.Name, ProofKind: r.ProofKind, Trust: r.Trust, Revision: 1}, nil
 }
 
 // manager rotation invalidates all old provisioning tokens, linked visitor
@@ -226,20 +236,6 @@ func consumeMachineProof(ctx context.Context, tx pgx.Tx, id string, digest []byt
 	return nil
 }
 
-func approvedTemplates(c ProjectConfiguration, templates []string) bool {
-	if len(templates) == 0 || len(templates) > 32 {
-		return false
-	}
-	seen := map[string]bool{}
-	for _, name := range templates {
-		if !naming.ValidServiceName(name) || !c.PublisherGroups[name].Template || seen[name] {
-			return false
-		}
-		seen[name] = true
-	}
-	return true
-}
-
 func validMachineOperations(operations []ProvisioningOperation) bool {
 	if len(operations) == 0 || len(operations) > 6 {
 		return false
@@ -254,8 +250,9 @@ func validMachineOperations(operations []ProvisioningOperation) bool {
 	return true
 }
 
-func sortedTemplates(templates []string) []string {
-	v := slices.Clone(templates)
-	slices.Sort(v)
-	return v
+func validateMachineOIDCTrust(trust oidc.WorkloadTrust) error {
+	if trust.Validate() != nil {
+		return ErrEnvironmentInvalid
+	}
+	return nil
 }

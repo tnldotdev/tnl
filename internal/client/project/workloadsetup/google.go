@@ -9,7 +9,7 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-var ErrGoogleAuthentication = errors.New("first Google workload apply needs gcloud authentication with permission to describe the selected service account")
+var ErrGoogleAuthentication = errors.New("Google workload approval needs gcloud authentication with permission to describe the selected service account")
 
 func (r resolver) google(ctx context.Context, o Options, g *config.WorkloadGoogle, previous controlv1.ProjectWorkload) (controlv1.WorkloadTrust, *controlv1.ProjectWorkloadGoogle, error) {
 	t := controlv1.WorkloadTrust{Provider: controlv1.WorkloadGoogle, Issuer: config.GoogleWorkloadIssuer, JwksUrl: config.GoogleWorkloadJWKS, Audience: o.Server, Claims: map[string]string{}}

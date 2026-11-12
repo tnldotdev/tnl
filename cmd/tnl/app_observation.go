@@ -11,7 +11,6 @@ import (
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
-	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
@@ -148,12 +147,12 @@ func runAppWait(ctx context.Context, project projectConfiguration, root string, 
 		return failure.Wrap("wait for apps", failure.InvalidCommand, errors.New("timeout must be positive"))
 	}
 	for _, name := range flags.Service {
-		definition, found := project.Config.Services[name]
+		_, found := project.Config.Services[name]
 		if !found {
 			return failure.Wrap("wait for service", failure.ServiceNotConfigured, errors.New("service is not configured"))
 		}
-		if config.PublisherGroupName(definition) != "local" {
-			return failure.Wrap("wait for local service", failure.AppRemoteService, errors.New("service belongs to a remote publisher"))
+		if !project.HasLocalService(name) {
+			return failure.Wrap("wait for local service", failure.AppRemoteService, errors.New("service has no target in environments.local"))
 		}
 	}
 	if len(flags.Service) == 0 {

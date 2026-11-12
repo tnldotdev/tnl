@@ -83,7 +83,7 @@ func ObservePublisherRuntime(ctx context.Context, action string, outcome Outcome
 	if m == nil {
 		return
 	}
-	attrs := append(Attributes(ctx, TeamID, PublisherGroupID, PublisherIdentityID, DeploymentID, ReplicaKey), Operation.Value(operationName(action)), OutcomeKey.Value(outcome))
+	attrs := append(Attributes(ctx, TeamID, EnvironmentID, PublisherGroupID, PublisherIdentityID, DeploymentID, ReplicaKey), Operation.Value(operationName(action)), OutcomeKey.Value(outcome))
 	if value := reason.String(); value != "" {
 		attrs = append(attrs, Reason.String(value))
 	}

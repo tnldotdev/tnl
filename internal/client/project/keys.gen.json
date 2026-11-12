@@ -1,5 +1,6 @@
 {
   "ca_file": "caFile",
+  "ca_pem": "caPEM",
   "download_bytes": "downloadBytes",
   "jwks_url": "jwksUrl",
   "machine_id": "machineId",
@@ -7,8 +8,6 @@
   "max_duration": "maxDuration",
   "pipeline_source": "pipelineSource",
   "public_url": "publicURL",
-  "publisher_group": "publisherGroup",
-  "publisher_groups": "publisherGroups",
   "publisher_pool": "publisherPool",
   "rate_per": "ratePer",
   "require_post_quantum": "requirePostQuantum",
@@ -17,7 +16,6 @@
   "service_account": "serviceAccount",
   "source_ips": "sourceIPs",
   "strip_prefix": "stripPrefix",
-  "target_binding": "targetBinding",
   "total_connections": "totalConnections",
   "total_download_bytes": "totalDownloadBytes",
   "total_upload_bytes": "totalUploadBytes",

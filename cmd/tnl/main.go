@@ -33,8 +33,8 @@ type cli struct {
 	NoConfig    bool             `name:"no-config" help:"Skip project configuration; put this flag before the command."`
 	NoTelemetry bool             `name:"no-telemetry" env:"TNL_NO_TELEMETRY" help:"Disable pseudonymous usage telemetry."`
 	Init        initCommand      `cmd:"" help:"Set up tnl for the current project." group:"start"`
-	Apply       applyCommand     `cmd:"" help:"Reconcile this project's declared services and publisher groups with control." group:"manage"`
-	Generate    generateCommand  `cmd:"" help:"Generate portable project types and declared publisher infrastructure offline." group:"manage"`
+	Apply       applyCommand     `cmd:"" help:"Apply one environment's service shape and targets, or a collection default." group:"manage"`
+	Generate    generateCommand  `cmd:"" help:"Generate portable project service types offline." group:"manage"`
 	Check       struct{}         `cmd:"" help:"Validate project configuration and show its selected path." group:"manage"`
 	Audit       auditCommand     `cmd:"" help:"Read team service audit history." group:"manage"`
 	Runtime     runtimeCommand   `cmd:"" hidden:""`
@@ -49,7 +49,7 @@ type cli struct {
 	Ping        pingCommand      `cmd:"" help:"Check a public URL from this machine as an unauthenticated visitor." group:"start"`
 	Inspect     inspectCommand   `cmd:"" help:"Inspect recent local HTTP activity." group:"manage"`
 	Telemetry   telemetryCommand `cmd:"" help:"Manage the saved usage telemetry choice." group:"manage"`
-	Auth        authCommand      `cmd:"" help:"Inspect credentials and explicitly log in or out." group:"manage"`
+	Auth        authCommand      `cmd:"" help:"Inspect credentials, sign in or out, and explicitly approve workloads." group:"manage"`
 	Team        teamCommand      `cmd:"" help:"Manage teams and memberships." group:"manage"`
 	Domain      domainCommand    `cmd:"" help:"Manage team domains." group:"manage"`
 	URL         publicURLCommand `cmd:"" name:"url" help:"Manage public URLs." group:"manage"`
@@ -435,7 +435,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 			}
 			// the owning child consumes the injected secret before loading project
 			// configuration; clear the launching process's copy after handoff too.
-			defer os.Unsetenv("TNL_GROUP_IDENTITY")
+			defer os.Unsetenv("TNL_ENVIRONMENT_PUBLISHER_IDENTITY")
 			return detachPublish(ctx, args, serve.StateDir, stdout, "tnl publisher serve")
 		}
 		if err := preparePublisherGroupIdentity(serve); err != nil {
@@ -661,6 +661,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runTelemetryPreference(ctx, flags.Telemetry.Status, "status", stdout)
 	case "auth status":
 		return runAuthStatus(ctx, flags.Auth.Status, stdout, stderr)
+	case "auth approve":
+		return runAuthApprove(ctx, flags.Auth.Approve, project, stdout, stderr)
 	case "auth login", "auth login run":
 		return runLogin(ctx, flags.Auth.Login.loginCommand, os.Stdin, stdout, stderr)
 	case "auth login start":
@@ -695,29 +697,19 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	case "connect remove <name>":
 		return runConnectJobs(ctx, flags.Connect.Remove.connectListCommand, flags.Connect.Remove.Name, "remove", stdout)
 	case "publisher enroll <public-url-id>", "publisher enroll":
-		if flags.Publisher.Enroll.Group != "" {
+		if flags.Publisher.Enroll.Environment != "" {
 			return runPublisherGroupEnrollment(ctx, flags.Publisher.Enroll, project, stdout, stderr)
 		}
-		if flags.Publisher.Enroll.ProjectKey != "" || flags.Publisher.Enroll.Members != 1 || flags.Publisher.Enroll.ExpiresIn != 10*time.Minute {
-			return publisherCLIError("--project-key, --members, and --expires-in require --group")
+		if flags.Publisher.Enroll.ProjectKey != "" || flags.Publisher.Enroll.Members != 1 || flags.Publisher.Enroll.ExpiresIn != 10*time.Minute || len(flags.Publisher.Enroll.Services) != 0 {
+			return publisherCLIError("--project-key, --services, --members, and --expires-in require --environment")
 		}
 		return runPublisherEnroll(ctx, flags.Publisher.Enroll, stdout, stderr)
 	case "publisher current":
 		return runPublisherCurrent(ctx, flags.Publisher.Current, stdout)
-	case "publisher create <group>":
-		return runPublisherTemplate(ctx, flags.Publisher.Create.publisherGroupCommand, project, "create", flags.Publisher.Create.From, stdout, stderr)
-	case "publisher connection <group>":
-		return runPublisherTemplate(ctx, flags.Publisher.Connection, project, "connection", "", stdout, stderr)
-	case "publisher remove <group>":
-		return runPublisherTemplate(ctx, flags.Publisher.Remove, project, "remove", "", stdout, stderr)
 	case "publisher setup":
 		return runPublisherSetup(ctx, flags.Publisher.Setup, stdout, stderr)
 	case "publisher serve":
 		return runPublisherServe(ctx, flags.Publisher.Serve, project, stdout, stderr)
-	case "publisher rename <group> <name>":
-		return runPublisherGroupRename(ctx, flags.Publisher.Rename, project, stdout, stderr)
-	case "publisher namespace rename <group> <label>":
-		return runPublisherNamespaceRename(ctx, flags.Publisher.Namespace.Rename, project, stdout, stderr)
 	case "publisher provision":
 		return runPublisherProvision(ctx, flags.Publisher.Provision, project, stdout, stderr)
 	case "publisher list":

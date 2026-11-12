@@ -58,14 +58,19 @@ beforeEach(async () => {
   vi.stubEnv("RUNNER_TEMP", temp);
   vi.stubEnv("GITHUB_STATE", state);
   vi.stubEnv("GITHUB_ENV", envFile);
-  vi.stubEnv("INPUT_WORKLOAD", "deploy");
+  vi.stubEnv("INPUT_ENVIRONMENT", JSON.stringify({ server: "https://control.example", project_key: "project-fixture", environment_id: `env_${"e".repeat(22)}` }));
+  vi.stubEnv("INPUT_PERMISSION-ID", `mwp_${"p".repeat(22)}`);
+  vi.stubEnv("INPUT_MACHINE-ID", `mci_${"m".repeat(22)}`);
+  vi.stubEnv("INPUT_AUDIENCE", "https://control.example");
   vi.stubEnv("INPUT_CLI-PATH", binary);
   vi.stubEnv("INPUT_TIMEOUT", "5");
   vi.stubEnv("INPUT_VERSION", "");
-  vi.stubEnv("INPUT_SERVICES", "database");
+  vi.stubEnv("INPUT_SERVICES", JSON.stringify({ database: "postgres" }));
   vi.stubEnv("INPUT_WORKING-DIRECTORY", ".");
   vi.stubEnv("RUNNER_TRACKING_ID", "runner-fixture-tracking");
   vi.stubEnv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "fixture-bearer");
+  vi.stubEnv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://runtime.example.test/token?keep=yes&audience=wrong");
+  vi.stubEnv("GITHUB_ACTIONS", "true");
   vi.stubEnv("TNL_CONNECTION_HANDLE", "");
   vi.stubEnv("TNL_PROJECT_RUNTIME", "");
   vi.stubEnv("KUBECONFIG", "");
@@ -131,13 +136,13 @@ afterEach(async () => {
   }
 });
 
-const oidc = async (audience: string) => {
-  expect(audience).toBe("https://control.example");
-  const traces = await readFile(path.join(project, "trace.ndjson"), "utf8");
-  expect(traces).toContain('"op":"capabilities"');
-  expect(traces).toContain('"op":"context"');
-  return "fixture-jwt-never-log";
-};
+async function noSourceAcquisition(): Promise<void> {
+  try {
+    expect(await readFile(path.join(project, "trace.ndjson"), "utf8")).not.toContain('"op":"environment-start"');
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+  }
+}
 
 async function actionFailure(
   operation: Promise<unknown>,
@@ -180,9 +185,8 @@ describe("native main and post", () => {
       "ACTIONS_ID_TOKEN_REQUEST_URL",
       "https://runtime.example.test/token?keep=yes&audience=wrong",
     );
-    const getIDToken = vi.fn(oidc);
-    await main({ signal: new AbortController().signal, getIDToken });
-    expect(getIDToken).toHaveBeenCalledExactlyOnceWith("https://control.example");
+    await main({ signal: new AbortController().signal });
+    expect((await readFile(path.join(project, "trace.ndjson"), "utf8")).match(/"providerSourceRead":true/g)).toHaveLength(1);
     const owned = await saved();
     const traces = await readFile(path.join(project, "trace.ndjson"), "utf8");
     expect(traces).not.toContain('"argvHasRuntimeCredential":true');
@@ -206,15 +210,19 @@ describe("native main and post", () => {
 
   test("OIDC acquisition has a deadline even when the provider never settles", async () => {
     vi.stubEnv("INPUT_TIMEOUT", "1");
+    await writeFile(path.join(project, "fixture.json"), JSON.stringify({ providerDelay: true }));
     await actionFailure(
-      main({ signal: new AbortController().signal, getIDToken: () => new Promise(() => {}) }),
-      "TNL_ACTION_OIDC_FAILED",
+      main({ signal: new AbortController().signal }),
+      "TNL_ACTION_COMMAND_TIMEOUT",
     );
-    expect(await readFile(path.join(project, "trace.ndjson"), "utf8")).not.toContain(
-      '"op":"start"',
-    );
+    const trace = await readFile(path.join(project, "trace.ndjson"), "utf8");
+    expect(trace).toContain('"providerSourceRead":true');
+    expect(trace).toContain('"providerCanceled":true');
+    expect(trace).not.toContain('"op":"owner"');
+    expect(await readFile(envFile, "utf8")).toBe("");
     const owned = await saved();
-    await expect(stat(owned.session)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await stat(owned.session)).toBeDefined();
+    expect(owned.handle).toBeUndefined();
   });
   test("cancellation interrupts a pending OIDC provider and never starts connector connections", async () => {
     const controller = new AbortController();
@@ -222,35 +230,34 @@ describe("native main and post", () => {
     const ready = new Promise<void>((resolve) => {
       entered = resolve;
     });
-    let finish!: (token: string) => void;
-    const provider = new Promise<string>((resolve) => {
-      finish = resolve;
+    let finish!: () => void;
+    const server = http.createServer((_request, response) => {
+      finish = () => { response.setHeader("content-type", "application/json"); response.end(JSON.stringify({ value: "late.private.assertion" })); };
+      entered();
     });
-    let settled = false;
-    const running = main({
-      signal: controller.signal,
-      getIDToken: () => {
-        entered();
-        return provider.then((token) => {
-          settled = true;
-          return token;
-        });
-      },
-    }).catch((error: unknown) => error);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("fixture listener missing");
+    vi.stubEnv("ACTIONS_ID_TOKEN_REQUEST_URL", `http://127.0.0.1:${address.port}/oidc`);
+    const running = main({ signal: controller.signal }).catch((error: unknown) => error);
     try {
       await ready;
       controller.abort();
-      // cancellation joins owned cleanup without waiting for the provider.
+      // native startup joins cancellation without waiting for the issuer. no
+      // capability means cleanup is unconfirmed, never a fabricated success.
       expect(await running).toMatchObject({ code: "TNL_ACTION_CANCELLED" });
-      expect(settled).toBe(false);
       const owned = await saved();
-      await expect(stat(owned.session)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(owned.handle).toBeUndefined();
+      expect(await stat(owned.session)).toBeDefined();
+      expect(await readFile(envFile, "utf8")).toBe("");
     } finally {
-      finish("late.private.assertion");
+      finish();
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
     await running;
     expect(await readFile(path.join(project, "trace.ndjson"), "utf8")).not.toContain(
-      '"op":"start"',
+      '"op":"owner"',
     );
     expect(output.join("")).not.toContain("late.private.assertion");
   });
@@ -259,7 +266,7 @@ describe("native main and post", () => {
       path.join(project, "fixture.json"),
       JSON.stringify({ kube: true, worktree: true }),
     );
-    await main({ signal: new AbortController().signal, getIDToken: oidc });
+    await main({ signal: new AbortController().signal });
     const owned = await saved();
     const fields = fileCommands(await readFile(envFile, "utf8"));
     expect(fields.TNL_CONNECTION_HANDLE).toBe(owned.handle);
@@ -298,7 +305,7 @@ describe("native main and post", () => {
     expect(childPost.stdout).toContain("tnl connections stopped");
     await expect(readFile(owned.session)).rejects.toThrow();
     const traces = await readFile(path.join(project, "trace.ndjson"), "utf8");
-    expect(traces).toContain('"proofOnStdin":true');
+    expect(traces).toContain('"explicitSourceOnStdin":true');
     expect(traces).toContain('"joinedCleanup":true');
     expect(traces).not.toContain('"argvHasAssertion":true');
     expect(traces).not.toContain('"oidcBearer":true');
@@ -313,7 +320,7 @@ describe("native main and post", () => {
     async (config) => {
       await writeFile(path.join(project, "fixture.json"), JSON.stringify(config));
       await expect(
-        main({ signal: new AbortController().signal, getIDToken: oidc }),
+        main({ signal: new AbortController().signal }),
       ).rejects.toThrow("valid ready");
       expect(await readFile(path.join(project, "trace.ndjson"), "utf8")).toContain(
         '"joinedCleanup":true',
@@ -324,7 +331,7 @@ describe("native main and post", () => {
 
   test("rejects private material added to public runtime before environment exports", async () => {
     await writeFile(path.join(project, "fixture.json"), JSON.stringify({ secretRuntime: true }));
-    await expect(main({ signal: new AbortController().signal, getIDToken: oidc })).rejects.toThrow(
+    await expect(main({ signal: new AbortController().signal })).rejects.toThrow(
       "valid ready",
     );
     expect(await readFile(path.join(project, "trace.ndjson"), "utf8")).toContain(
@@ -336,37 +343,45 @@ describe("native main and post", () => {
 
   test("bounds native output and fails before OIDC", async () => {
     await writeFile(path.join(project, "fixture.json"), JSON.stringify({ largeOutput: true }));
-    const getIDToken = vi.fn(oidc);
     await actionFailure(
-      main({ signal: new AbortController().signal, getIDToken }),
+      main({ signal: new AbortController().signal }),
       "TNL_ACTION_RESPONSE_TOO_LARGE",
     );
-    expect(getIDToken).not.toHaveBeenCalled();
+    await noSourceAcquisition();
   });
 
-  test("workload is required before any OIDC or native startup", async () => {
-    vi.stubEnv("INPUT_WORKLOAD", "");
-    const getIDToken = vi.fn(oidc);
-    await expect(main({ signal: new AbortController().signal, getIDToken })).rejects.toThrow(
-      "workload",
+  test("an exact environment selection is required before any OIDC or native startup", async () => {
+    vi.stubEnv("INPUT_ENVIRONMENT", "");
+    await expect(main({ signal: new AbortController().signal })).rejects.toThrow(
+      "exact environment",
     );
-    expect(getIDToken).not.toHaveBeenCalled();
+    await noSourceAcquisition();
     await expect(readFile(path.join(project, "trace.ndjson"))).rejects.toThrow();
   });
 
+  test.each(["", "audience\tother", "audience-*", "audience?", "audience[other]", "a".repeat(1025)])(
+    "rejects an invalid explicit native audience before acquisition: %j",
+    async (audience) => {
+      vi.stubEnv("INPUT_AUDIENCE", audience);
+      await actionFailure(main({ signal: new AbortController().signal }), "TNL_ACTION_CONTEXT_INVALID");
+      await noSourceAcquisition();
+      await expect(readFile(path.join(project, "trace.ndjson"))).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await readFile(envFile, "utf8")).toBe("");
+    },
+  );
+
   test("old capabilities fail before requesting OIDC, without a fallback", async () => {
     await writeFile(path.join(project, "fixture.json"), JSON.stringify({ capabilities: "old" }));
-    const getIDToken = vi.fn(oidc);
-    await expect(main({ signal: new AbortController().signal, getIDToken })).rejects.toThrow(
+    await expect(main({ signal: new AbortController().signal })).rejects.toThrow(
       "capabilities",
     );
-    expect(getIDToken).not.toHaveBeenCalled();
+    await noSourceAcquisition();
     expect(await readFile(path.join(project, "trace.ndjson"), "utf8")).not.toContain(
-      '"op":"start"',
+      '"op":"environment-start"',
     );
   });
 
-  test("official OIDC client requests the context audience and masks proof before native stdin", async () => {
+  test("native OIDC acquisition receives the exact audience without toolkit debug or secret logging", async () => {
     const server = http.createServer((req, res) => {
       expect(new URL(req.url ?? "", "http://localhost").searchParams.get("audience")).toBe(
         "https://control.example",
@@ -384,6 +399,8 @@ describe("native main and post", () => {
       await main({ signal: new AbortController().signal });
       const rendered = output.filter((line) => !line.startsWith("::add-mask::"));
       expect(rendered.join("")).not.toContain("fixture-jwt");
+      expect(rendered.join("")).not.toContain("/oidc?fixture=1");
+      expect(rendered.join("")).not.toContain("fixture-bearer");
       expect(await readFile(envFile, "utf8")).not.toContain("fixture-jwt");
     } finally {
       server.closeAllConnections();
@@ -429,11 +446,11 @@ describe("native main and post", () => {
   });
 
   test("environment-file failure after readiness cleans only this action's owner", async () => {
-    await main({ signal: new AbortController().signal, getIDToken: oidc });
+    await main({ signal: new AbortController().signal });
     const first = await saved();
     vi.stubEnv("GITHUB_ENV", path.join(root, "missing/file"));
     await expect(
-      main({ signal: new AbortController().signal, getIDToken: oidc }),
+      main({ signal: new AbortController().signal }),
     ).rejects.toThrow();
     expect(
       await connectorJSON(first.binary, ["status", "--handle", first.handle ?? ""], {
@@ -449,7 +466,7 @@ describe("native main and post", () => {
     await writeFile(path.join(project, "fixture.json"), JSON.stringify({ failStopOnce: true }));
     vi.stubEnv("GITHUB_ENV", path.join(root, "fixture-private-env/missing"));
     const error = await actionFailure(
-      main({ signal: new AbortController().signal, getIDToken: oidc }),
+      main({ signal: new AbortController().signal }),
       "TNL_ACTION_EXPORT_FAILED",
     );
     expect(error.cause).toBeInstanceOf(AggregateError);
@@ -477,7 +494,7 @@ describe("native main and post", () => {
     async (config) => {
       await writeFile(path.join(project, "fixture.json"), JSON.stringify(config));
       await expect(
-        main({ signal: new AbortController().signal, getIDToken: oidc }),
+        main({ signal: new AbortController().signal }),
       ).rejects.toThrow("native command failed");
       expect(output.join("")).not.toContain("fixture-jwt");
       expect(await readFile(envFile, "utf8")).toBe("");
@@ -488,7 +505,7 @@ describe("native main and post", () => {
     await writeFile(path.join(project, "fixture.json"), JSON.stringify({ delay: 10_000 }));
     vi.stubEnv("INPUT_TIMEOUT", "1");
     await actionFailure(
-      main({ signal: new AbortController().signal, getIDToken: oidc }),
+      main({ signal: new AbortController().signal }),
       "TNL_ACTION_COMMAND_TIMEOUT",
     );
     expect(await readFile(path.join(project, "trace.ndjson"), "utf8")).toContain(
@@ -501,7 +518,7 @@ describe("native main and post", () => {
     const controller = new AbortController();
     const reason = new Error("fixture-private-abort-reason");
     const failed = actionFailure(
-      main({ signal: controller.signal, getIDToken: oidc }),
+      main({ signal: controller.signal }),
       "TNL_ACTION_CANCELLED",
     );
     try {
@@ -532,7 +549,7 @@ describe("native main and post", () => {
       JSON.stringify({ starterCrash: "after-response" }),
     );
     const error = await actionFailure(
-      main({ signal: new AbortController().signal, getIDToken: oidc }),
+      main({ signal: new AbortController().signal }),
       "TNL_ACTION_COMMAND_FAILED",
     );
     expect(error.cause).toEqual({ code: null, signal: "SIGKILL" });
@@ -553,7 +570,7 @@ describe("native main and post", () => {
       const controller = new AbortController();
       vi.stubEnv("INPUT_TIMEOUT", kind === "timeout" ? "3" : "15");
       const failed = actionFailure(
-        main({ signal: controller.signal, getIDToken: oidc }),
+        main({ signal: controller.signal }),
         kind === "timeout" ? "TNL_ACTION_COMMAND_TIMEOUT" : "TNL_ACTION_CANCELLED",
       );
       try {
@@ -586,7 +603,7 @@ describe("native main and post", () => {
       JSON.stringify({ starterCrash: "before-response", ownerLifetime: 500 }),
     );
     await actionFailure(
-      main({ signal: new AbortController().signal, getIDToken: oidc }),
+      main({ signal: new AbortController().signal }),
       "TNL_ACTION_COMMAND_FAILED",
     );
     const owned = await saved();
@@ -607,7 +624,7 @@ describe("native main and post", () => {
     async (config) => {
       await writeFile(path.join(project, "fixture.json"), JSON.stringify(config));
       const error = await actionFailure(
-        main({ signal: new AbortController().signal, getIDToken: oidc }),
+        main({ signal: new AbortController().signal }),
         "TNL_ACTION_READY_INVALID",
       );
       expect(error.cause).toMatchObject({ code: "TNL_ACTION_CLEANUP_PATH_INVALID" });
@@ -666,19 +683,26 @@ describe("safe failure boundaries", () => {
   });
 
   test("OIDC rejection retains its original cause and uses authored auth guidance", async () => {
-    const cause = new Error("fixture-private-oidc-body");
+    const server = http.createServer((_request, response) => response.writeHead(403, { "content-type": "application/json" }).end(JSON.stringify({ message: "fixture-private-oidc-body" })));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("fixture listener missing");
+    vi.stubEnv("ACTIONS_ID_TOKEN_REQUEST_URL", `http://127.0.0.1:${address.port}/oidc`);
+    try {
     const error = await actionFailure(
-      main({
-        signal: new AbortController().signal,
-        getIDToken: async () => {
-          throw cause;
-        },
-      }),
-      "TNL_ACTION_OIDC_FAILED",
+      main({ signal: new AbortController().signal }),
+      "TNL_ACTION_COMMAND_FAILED",
     );
-    expect(error.cause).toBe(cause);
+    expect(error.cause).toBeInstanceOf(AggregateError);
+    if (!(error.cause instanceof AggregateError)) throw new Error("missing native and cleanup causes");
+    expect(error.cause.errors[0]).toMatchObject({ code: "TNL_ACTION_COMMAND_FAILED", cause: { code: 1, signal: null } });
+    expect(error.cause.errors[1]).toMatchObject({ code: "TNL_ACTION_CLEANUP_UNCONFIRMED" });
     expect(safeActionMessage(error, "TNL_ACTION_SETUP_FAILED")).toContain("id-token: write");
-    expect(output.join("")).not.toContain(cause.message);
+    expect(output.join("")).not.toContain("fixture-private-oidc-body");
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
   });
 
   test("official OIDC rejection cannot leak a provider response through the shipped entrypoint", async () => {
@@ -695,7 +719,7 @@ describe("safe failure boundaries", () => {
         NO_PROXY: "127.0.0.1",
       });
       expect(result.code).toBe(1);
-      expect(result.stdout).toContain("TNL_ACTION_OIDC_FAILED");
+      expect(result.stdout).toContain("TNL_ACTION_COMMAND_FAILED");
       expect(result.stdout + result.stderr).not.toContain("fixture-private-oidc-response");
     } finally {
       server.closeAllConnections();
@@ -725,7 +749,7 @@ describe("safe failure boundaries", () => {
 
   test("the request byte bound rejects before spawning a child", async () => {
     await actionFailure(
-      connectorJSON(binary, ["start"], {
+      connectorJSON(binary, ["environment-start"], {
         cwd: project,
         timeout: 1000,
         input: "x".repeat(128 * 1024 + 1),
@@ -737,19 +761,24 @@ describe("safe failure boundaries", () => {
     });
   });
 
-  test("canonical context directory is checked before OIDC", async () => {
-    const alias = path.join(root, "alias");
-    await symlink(project, alias);
-    await writeFile(
-      path.join(project, "fixture.json"),
-      JSON.stringify({ contextDirectory: alias }),
-    );
-    const getIDToken = vi.fn(oidc);
+  test("the caller's environment reference is canonical before any provider or native operation", async () => {
+    vi.stubEnv("INPUT_ENVIRONMENT", JSON.stringify({ server: "https://control.example/", project_key: "project-fixture", environment_id: `env_${"e".repeat(22)}` }));
     await actionFailure(
-      main({ signal: new AbortController().signal, getIDToken }),
+      main({ signal: new AbortController().signal }),
       "TNL_ACTION_CONTEXT_INVALID",
     );
-    expect(getIDToken).not.toHaveBeenCalled();
+    await noSourceAcquisition();
+    await expect(readFile(path.join(project, "trace.ndjson"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  test("working-directory aliases resolve to the canonical caller directory", async () => {
+    const alias = path.join(root, "alias");
+    await symlink(project, alias);
+    vi.stubEnv("INPUT_WORKING-DIRECTORY", alias);
+    await main({ signal: new AbortController().signal });
+    const traces = await readFile(path.join(project, "trace.ndjson"), "utf8");
+    expect(traces).toContain(JSON.stringify(project));
+    expect(traces).not.toContain(JSON.stringify(alias));
   });
 
   test("post renders fixed text for malformed saved state without dumping its contents", async () => {
@@ -818,7 +847,7 @@ describe("installed exact package resolution", () => {
     await installFixture("1.2.3-rc.4");
     await npmFixture();
     vi.stubEnv("INPUT_VERSION", "1.2.3-rc.4");
-    await main({ signal: new AbortController().signal, getIDToken: oidc });
+    await main({ signal: new AbortController().signal });
     const args = JSON.parse(
       await readFile(path.join(project, "npm-args.json"), "utf8"),
     ) as string[];
@@ -855,13 +884,12 @@ describe("installed exact package resolution", () => {
     const platform = await installFixture();
     await rm(path.join(platform, "NOTICE"));
     vi.stubEnv("INPUT_CLI-PATH", "");
-    const getIDToken = vi.fn(oidc);
     const error = await actionFailure(
-      main({ signal: new AbortController().signal, getIDToken }),
+      main({ signal: new AbortController().signal }),
       "TNL_ACTION_LEGAL_FILES_MISSING",
     );
     expect(error.cause).toMatchObject({ code: "ENOENT", path: path.join(platform, "NOTICE") });
-    expect(getIDToken).not.toHaveBeenCalled();
+    await noSourceAcquisition();
     await expect(readFile(path.join(project, "trace.ndjson"))).rejects.toMatchObject({
       code: "ENOENT",
     });
@@ -873,7 +901,7 @@ describe("installed exact package resolution", () => {
     await mkdir(nested, { recursive: true });
     expect(await installedBinary(nested)).toBe(path.join(platform, "bin/tnl"));
     vi.stubEnv("INPUT_CLI-PATH", "");
-    await main({ signal: new AbortController().signal, getIDToken: oidc });
+    await main({ signal: new AbortController().signal });
     const owned = await saved();
     expect(await readFile(path.join(path.dirname(owned.binary), "LICENSE"), "utf8")).toBe(
       "fixture LICENSE",
@@ -882,11 +910,10 @@ describe("installed exact package resolution", () => {
 
   test("missing installed package does not use PATH or install latest", async () => {
     vi.stubEnv("INPUT_CLI-PATH", "");
-    const getIDToken = vi.fn(oidc);
-    await expect(main({ signal: new AbortController().signal, getIDToken })).rejects.toThrow(
+    await expect(main({ signal: new AbortController().signal })).rejects.toThrow(
       "installed exact",
     );
-    expect(getIDToken).not.toHaveBeenCalled();
+    await noSourceAcquisition();
     await expect(readFile(path.join(project, "trace.ndjson"))).rejects.toThrow();
   });
 

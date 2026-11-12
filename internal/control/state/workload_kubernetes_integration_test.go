@@ -7,16 +7,13 @@ import (
 
 func TestIntegrationWorkloadKubernetesMigration(t *testing.T) {
 	d, url, now := newControlStateIntegrationDatabaseWithURL(t, "workload_kubernetes_migration")
-	r := appliedProjectRequest(t, d, now)
-	r.Configuration = workloadConfiguration()
-	if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
-		t.Fatal(err)
-	}
-	exchange, _ := workloadExchange(t, r, now)
-	session, err := d.ExchangeWorkload(t.Context(), exchange, now)
+	f := newRetainedVisitorFixture(t, d, now, retainedGitHubTrust(), 3600, false)
+	exchange, _ := retainedVisitorPreparation(t, f, now)
+	prepared, err := d.PrepareEnvironmentVisitor(t.Context(), exchange, now)
 	if err != nil {
 		t.Fatal(err)
 	}
+	session := prepared.Session
 	var before string
 	if err := d.pool.QueryRow(t.Context(), `SELECT to_jsonb(w)::text FROM control.workload_sessions w WHERE id=$1`, session.ID).Scan(&before); err != nil {
 		t.Fatal(err)
@@ -31,8 +28,8 @@ func TestIntegrationWorkloadKubernetesMigration(t *testing.T) {
 	if err := d.pool.QueryRow(t.Context(), `SELECT to_jsonb(w)::text FROM control.workload_sessions w WHERE id=$1`, session.ID).Scan(&after); err != nil || after != before {
 		t.Fatal("Kubernetes migration changed an existing session row", err)
 	}
-	recovered, err := d.ExchangeWorkload(t.Context(), exchange, now)
-	if err != nil || !reflect.DeepEqual(recovered, session) {
+	recovered, err := d.PrepareEnvironmentVisitor(t.Context(), exchange, now)
+	if err != nil || !reflect.DeepEqual(recovered.Session, session) {
 		t.Fatal("Kubernetes migration changed existing session authority", err)
 	}
 }

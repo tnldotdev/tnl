@@ -8,11 +8,26 @@ import (
 
 func TestCloudSelectorsAndWorkloadReferences(t *testing.T) {
 	text := func(value string) *string { return &value }
-	configuration := TNL{PublisherGroups: map[string]PublisherGroup{"production": {}}, Services: Services{
-		"cluster": {PublisherGroup: text("production"), Protocol: text("kubernetes"), Target: &ServiceTarget{Type: "eks", Cluster: text("development"), Region: text("us-east-1")}},
-		"db":      {PublisherGroup: text("production"), Protocol: text("postgres"), Target: &ServiceTarget{Type: "rds", Cluster: text("orders"), Region: text("eu-west-1"), Endpoint: text("reader")}},
+	type fixture struct {
+		Services  Services
+		Workloads map[string]Workload
+	}
+	configuration := fixture{Services: Services{
+		"cluster": {Protocol: text("kubernetes"), Target: &ServiceTarget{Type: "eks", Cluster: text("development"), Region: text("us-east-1")}},
+		"db":      {Protocol: text("postgres"), Target: &ServiceTarget{Type: "rds", Cluster: text("orders"), Region: text("eu-west-1"), Endpoint: text("reader")}},
 	}, Workloads: map[string]Workload{"deploy": {GitHub: &WorkloadGitHub{Workflow: ".github/workflows/deploy.yml", Branch: new("main"), Events: []string{"push"}}, Services: []string{"cluster", "db"}}}}
-	if err := ValidateTNL(configuration); err != nil {
+	validate := func(c fixture) error {
+		if err := ValidateWorkloads(c.Services, c.Workloads); err != nil {
+			return err
+		}
+		for _, service := range c.Services {
+			if err := validateTarget(service); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := validate(configuration); err != nil {
 		t.Fatal(err)
 	}
 	if configuration.Workloads["deploy"].DurationLimit() != 0 || configuration.Workloads["deploy"].MaxDuration != nil {
@@ -22,41 +37,47 @@ func TestCloudSelectorsAndWorkloadReferences(t *testing.T) {
 	limit := Duration(24 * time.Hour)
 	policy.MaxDuration = &limit
 	configuration.Workloads["deploy"] = policy
-	if err := ValidateTNL(configuration); err != nil {
+	if err := validate(configuration); err != nil {
 		t.Fatal("an explicit day-long hard limit must be allowed", err)
 	}
 	for _, invalid := range []struct {
 		name   string
-		mutate func(*TNL)
+		mutate func(*fixture)
 	}{
-		{"wrong eks protocol", func(c *TNL) { s := c.Services["cluster"]; s.Protocol = text("http"); c.Services["cluster"] = s }},
-		{"rds xor", func(c *TNL) { c.Services["db"].Target.Instance = text("other") }},
-		{"instance reader", func(c *TNL) { c.Services["db"].Target.Instance, c.Services["db"].Target.Cluster = text("orders"), nil }},
-		{"wildcard resource", func(c *TNL) { c.Services["db"].Target.Cluster = text("orders*") }},
-		{"unknown service", func(c *TNL) { p := c.Workloads["deploy"]; p.Services = []string{"missing"}; c.Workloads["deploy"] = p }},
-		{"workflow wildcard", func(c *TNL) {
+		{"wrong eks protocol", func(c *fixture) { s := c.Services["cluster"]; s.Protocol = text("http"); c.Services["cluster"] = s }},
+		{"rds xor", func(c *fixture) { c.Services["db"].Target.Instance = text("other") }},
+		{"instance reader", func(c *fixture) {
+			c.Services["db"].Target.Instance, c.Services["db"].Target.Cluster = text("orders"), nil
+		}},
+		{"wildcard resource", func(c *fixture) { c.Services["db"].Target.Cluster = text("orders*") }},
+		{"unknown service", func(c *fixture) {
+			p := c.Workloads["deploy"]
+			p.Services = []string{"missing"}
+			c.Workloads["deploy"] = p
+		}},
+		{"workflow wildcard", func(c *fixture) {
 			p := c.Workloads["deploy"]
 			p.GitHub.Workflow = ".github/workflows/*.yml"
 			c.Workloads["deploy"] = p
 		}},
-		{"ref wildcard", func(c *TNL) { p := c.Workloads["deploy"]; p.GitHub.Branch = new("*"); c.Workloads["deploy"] = p }},
-		{"event unsupported", func(c *TNL) {
+		{"ref wildcard", func(c *fixture) { p := c.Workloads["deploy"]; p.GitHub.Branch = new("*"); c.Workloads["deploy"] = p }},
+		{"event unsupported", func(c *fixture) {
 			p := c.Workloads["deploy"]
 			p.GitHub.Events = []string{"anything"}
 			c.Workloads["deploy"] = p
 		}},
-		{"duration", func(c *TNL) {
+		{"duration", func(c *fixture) {
 			p := c.Workloads["deploy"]
 			duration := Duration(6*time.Hour + time.Nanosecond)
 			p.MaxDuration = &duration
 			c.Workloads["deploy"] = p
 		}},
-		{"explicit zero duration", func(c *TNL) {
+		{"explicit zero duration", func(c *fixture) {
 			p := c.Workloads["deploy"]
 			p.MaxDuration = new(Duration(0))
 			c.Workloads["deploy"] = p
 		}},
-		{"negative duration", func(c *TNL) {
+		{"negative duration", func(c *fixture) {
 			p := c.Workloads["deploy"]
 			p.MaxDuration = new(Duration(-time.Second))
 			c.Workloads["deploy"] = p
@@ -75,7 +96,7 @@ func TestCloudSelectorsAndWorkloadReferences(t *testing.T) {
 			p.GitHub = new(*p.GitHub)
 			copy.Workloads["deploy"] = p
 			invalid.mutate(&copy)
-			if err := ValidateTNL(copy); err == nil || strings.Contains(err.Error(), "orders*") {
+			if err := validate(copy); err == nil || strings.Contains(err.Error(), "orders*") {
 				t.Fatalf("invalid selector accepted or leaked: %v", err)
 			}
 		})

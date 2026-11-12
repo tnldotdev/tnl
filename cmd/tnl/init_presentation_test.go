@@ -70,11 +70,11 @@ func TestInitWiresProjectTypesIdempotently(t *testing.T) {
 				if err := runInit(t.Context(), initCommand{NoInstall: true}, &stdout, &bytes.Buffer{}); err != nil {
 					t.Fatal(err)
 				}
-				if !strings.Contains(stdout.String(), `.tnl/generated/project.d.ts`) || strings.Contains(stdout.String(), "add \".tnl/generated/project.d.ts\"") {
+				if !strings.Contains(stdout.String(), `.tnl/generated/project.ts`) || strings.Contains(stdout.String(), "add \".tnl/generated/project.ts\"") {
 					t.Fatalf("run %d stdout = %q", run, stdout.String())
 				}
 				after, err := os.ReadFile(path)
-				if err != nil || !bytes.Contains(after, []byte(`"src/**/*.ts"`)) || !bytes.Contains(after, []byte(`".tnl/generated/project.d.ts"`)) || run > 1 && !bytes.Equal(after, previous) || name == "jsonc" && !bytes.Contains(after, []byte("// preserve JSONC")) {
+				if err != nil || !bytes.Contains(after, []byte(`"src/**/*.ts"`)) || !bytes.Contains(after, []byte(`".tnl/generated/project.ts"`)) || run > 1 && !bytes.Equal(after, previous) || name == "jsonc" && !bytes.Contains(after, []byte("// preserve JSONC")) {
 					t.Fatalf("run %d tsconfig = %q, %v", run, after, err)
 				}
 				previous = after

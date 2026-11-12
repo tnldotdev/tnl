@@ -9,7 +9,7 @@ import (
 
 func TestIntegrationMigrationRejectsPreCollectionEnvironmentBaseline(t *testing.T) {
 	d, url, now := newControlStateIntegrationDatabaseWithURL(t, "pre_collection_baseline")
-	r := appliedProjectRequest(t, d, now)
+	r := retainedEnvironmentProject(t, d, now)
 	d1 := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"api": {Protocol: "http"}})
 	environment, _ := createTestEnvironment(t, d, r, "preserved", d1.Revision, EnvironmentTargets{"api": {Address: "preserved.internal:3000"}})
 	// reconstruct #670's version-one structure and literal identity. rejection
@@ -18,6 +18,8 @@ func TestIntegrationMigrationRejectsPreCollectionEnvironmentBaseline(t *testing.
 		`DROP TRIGGER environment_collection_pinned ON control.environments`,
 		`DROP FUNCTION control.reject_environment_collection_move()`,
 		`ALTER TABLE control.environments DROP COLUMN collection_id`,
+		`ALTER TABLE control.machine_provisioning_grants DROP COLUMN collection_id`,
+		`ALTER TABLE control.machine_workload_permissions DROP COLUMN collection_id`,
 		`DROP TABLE control.collections`,
 		`ALTER TABLE control.schema_identity DROP CONSTRAINT schema_identity_baseline_id_check`,
 		`UPDATE control.schema_identity SET baseline_id='tnl-control-fresh-v1-explicit-capabilities-environment-revisions-provider-regions' WHERE id=1`,

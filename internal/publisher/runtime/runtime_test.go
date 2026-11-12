@@ -95,7 +95,7 @@ func TestRuntimeDeploymentRetainedAcrossLostReply(t *testing.T) {
 	}
 	parent := observability.ReplaceIdentity(t.Context(), observability.Identity{TeamID: "old-team", DeploymentID: "old-deployment", PublicURLID: "old-url"})
 	scoped := owner.ObservabilityContext(parent, "team", "scope")
-	if id := observability.IdentityFromContext(scoped); id != (observability.Identity{TeamID: "team", PublisherGroupID: "scope", PublisherIdentityID: "publisher", DeploymentID: expected.DeploymentId, ReplicaKey: expected.ReplicaKey}) {
+	if id := observability.IdentityFromContext(scoped); id != (observability.Identity{TeamID: "team", EnvironmentID: "scope", PublisherIdentityID: "publisher", DeploymentID: expected.DeploymentId, ReplicaKey: expected.ReplicaKey}) {
 		t.Fatal("accepted immutable runtime deployment was not bound to a fresh identity", id)
 	}
 	service := observability.NarrowIdentity(scoped, observability.Identity{ServiceID: "service"})

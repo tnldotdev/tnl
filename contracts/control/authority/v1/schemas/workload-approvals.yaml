@@ -1,0 +1,29 @@
+schemas:
+  WorkloadApprovalRequest:
+    type: object
+    additionalProperties: false
+    required: [project_key, environment_id, expected_revision, workload, intent_hash, trust, services, max_duration_seconds, expires_at]
+    description: Explicit manager approval, separate from environment apply. An intent key is immutable. Reusing it with another request conflicts; an identical retry returns the original IDs even after expiry or revocation, without granting access again.
+    properties:
+      project_key: { type: string }
+      environment_id: { type: string }
+      expected_revision: { type: integer, format: int64, minimum: 1 }
+      workload: { type: string, minLength: 1, maxLength: 63 }
+      intent_hash: { type: string, pattern: '^[a-f0-9]{64}$', description: Digest of the evaluated workload declaration and selected service protocols. Recovery compares intent without resolving mutable provider names again. This digest grants no authority. }
+      trust: { $ref: '../openapi.yaml#/components/schemas/MachineTrust' }
+      services: { type: array, minItems: 1, maxItems: 32, uniqueItems: true, items: { type: string } }
+      max_duration_seconds: { type: integer, minimum: 0, maximum: 31557600 }
+      expires_at: { type: string, format: date-time }
+  WorkloadApproval:
+    type: object
+    additionalProperties: false
+    required: [intent_key, request, machine, selection, created_at]
+    description: Nonsecret approval receipt. Reads require current manager authority and include current revocation state. A receipt is not a credential. Revoked or expired permissions require a new explicit intent; old intents never create replacement permissions.
+    properties:
+      intent_key: { type: string, pattern: '^[A-Za-z0-9_-]{1,128}$' }
+      request: { $ref: '../openapi.yaml#/components/schemas/WorkloadApprovalRequest' }
+      machine: { $ref: '../openapi.yaml#/components/schemas/MachineIdentity' }
+      selection: { $ref: '../openapi.yaml#/components/schemas/IdentitySourceVisitorSelection' }
+      machine_revoked_at: { type: string, format: date-time }
+      permission_revoked_at: { type: string, format: date-time }
+      created_at: { type: string, format: date-time }

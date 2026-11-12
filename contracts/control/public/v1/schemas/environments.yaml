@@ -63,6 +63,7 @@ schemas:
       address: { type: string, minLength: 1, maxLength: 8192 }
       tls: { $ref: "../openapi.yaml#/components/schemas/EnvironmentTargetTLS" }
       discovery: { $ref: "../openapi.yaml#/components/schemas/ProjectTargetDiscovery" }
+      http: { $ref: "../openapi.yaml#/components/schemas/EnvironmentServiceHTTP" }
   EnvironmentTargets:
     type: object
     maxProperties: 128
@@ -100,6 +101,8 @@ schemas:
         team_id,
         project_key,
         name,
+        domain_id,
+        public,
         applied_definition_revision,
         mutation_revision,
         configuration_hash,
@@ -112,6 +115,12 @@ schemas:
       team_id: { type: string }
       project_key: { type: string }
       name: { type: string, minLength: 1, maxLength: 128 }
+      domain_id: { type: string }
+      public:
+        {
+          type: boolean,
+          description: Public endpoint reachability. Visitor access rules still apply.,
+        }
       collection_id: { $ref: "../openapi.yaml#/components/schemas/CollectionID" }
       applied_definition_revision: { type: integer, format: int64, minimum: 1 }
       mutation_revision: { type: integer, format: int64, minimum: 1 }
@@ -144,6 +153,17 @@ schemas:
       definition_revision: { type: integer, format: int64, minimum: 1 }
       collection_id: { $ref: "../openapi.yaml#/components/schemas/CollectionID" }
       expected_collection_revision: { type: integer, format: int64, minimum: 1 }
+      domain_id:
+        {
+          type: string,
+          description: Domain captured at creation. Omission captures the current team default; later default changes do not move endpoints.,
+        }
+      public:
+        {
+          type: boolean,
+          default: false,
+          description: "Public endpoint reachability, independent of visitor authorization.",
+        }
       targets: { $ref: "../openapi.yaml#/components/schemas/EnvironmentTargets" }
       idempotency_key: { type: string, minLength: 1, maxLength: 256 }
   ApplyEnvironmentRequest:
@@ -156,6 +176,11 @@ schemas:
       expected_revision: { type: integer, format: int64, minimum: 1 }
       definition_revision: { type: integer, format: int64, minimum: 1 }
       targets: { $ref: "../openapi.yaml#/components/schemas/EnvironmentTargets" }
+      public:
+        {
+          type: boolean,
+          description: Omit to retain reachability. Changing this setting does not create visitor grants.,
+        }
   EnvironmentApplication:
     type: object
     additionalProperties: false
@@ -165,6 +190,7 @@ schemas:
       expected_revision: { type: integer, format: int64, minimum: 1 }
       definition_revision: { type: integer, format: int64, minimum: 1 }
       targets: { $ref: "../openapi.yaml#/components/schemas/EnvironmentTargets" }
+      public: { type: boolean, description: Omit to retain reachability. }
   ApplyEnvironmentsRequest:
     type: object
     additionalProperties: false

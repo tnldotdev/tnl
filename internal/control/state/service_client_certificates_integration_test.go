@@ -17,13 +17,12 @@ import (
 
 func TestIntegrationServiceClientCertificateScopeAndRecovery(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "service_client_scope")
-	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"orders": {PublisherGroup: "production", Protocol: "postgres", Target: "orders.internal:5432"}}}
-	applied, err := d.ApplyProjectConfiguration(t.Context(), r)
-	if err != nil {
+	r := retainedEnvironmentProject(t, d, now)
+	applied, _ := retainedServiceEnvironment(t, d, r, "production", map[string]EnvironmentServicePublication{"orders": {Protocol: "postgres", Target: "orders.internal:5432"}})
+	service := applied.Services[0].ServiceID
+	if _, err := d.CreateServiceGrant(t.Context(), service, r.ActorID, "certificate-owner", "identity", r.ActorID, nil, now); err != nil {
 		t.Fatal(err)
 	}
-	service := applied.Services[0].ServiceID
 	devicePublic, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)

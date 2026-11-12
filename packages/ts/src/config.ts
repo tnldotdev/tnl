@@ -1,183 +1,156 @@
-import type { TnlConfig, TnlConfigInput, TnlConfigContext } from "./config.gen.js";
+import type { TnlConfig, TnlConfigContext } from "./config.gen.js";
 
 export type * from "./config.gen.js";
 
-type HTTPServiceNames<Config> = Config extends { readonly services: infer Services }
-  ? Extract<
-      {
-        [Name in keyof Services]: "protocol" extends keyof Services[Name]
-          ? Services[Name]["protocol"] extends "http" | undefined
-            ? Name
-            : never
-          : Name;
-      }[keyof Services],
-      string
-    >
-  : never;
-
-type ObjectReference<Names extends string> = { readonly service: Names };
-type LocalServiceNames<Config> = Config extends { readonly services: infer Services }
-  ? Extract<
-      {
-        [Name in keyof Services]: Services[Name] extends { readonly publisherGroup: infer Group }
-          ? Group extends "local"
-            ? Name
-            : never
-          : Name;
-      }[keyof Services],
-      string
-    >
-  : never;
-type LocalHTTPServiceNames<Config> = Extract<LocalServiceNames<Config>, HTTPServiceNames<Config>>;
-type NamedPublisherServiceNames<Config> = Config extends { readonly services: infer Services }
-  ? Exclude<Extract<keyof Services, string>, LocalServiceNames<Config>>
-  : never;
-type PublisherNames<Config> =
-  | "local"
-  | (Config extends { readonly publisherGroups: infer Groups }
-      ? Extract<keyof Groups, string>
-      : never);
-type TemplatePublisherNames<Config> = Config extends { readonly publisherGroups: infer Groups }
-  ? Extract<
-      {
-        [Name in keyof Groups]: Groups[Name] extends { readonly template: true } ? Name : never;
-      }[keyof Groups],
-      string
-    >
-  : never;
-type PublisherReference<Config, Service> = Service extends { readonly publisherGroup: infer Group }
-  ? {
-      readonly publisherGroup: Group extends PublisherNames<Config> ? Group : never;
-    } & (Group extends "local"
-      ? unknown
-      : (Service extends { readonly targetBinding: "group" }
-          ? Group extends TemplatePublisherNames<Config>
-            ? { readonly target?: never }
-            : never
-          : { readonly target: { readonly type: "address" | "eks" | "rds" } }) & {
-          readonly publicURL?: never;
-          readonly http?: {
-            readonly readiness?: never;
-            readonly paths?: never;
-            readonly open?: never;
-          };
-        })
-  : unknown;
-type PublicLocalHTTPServiceNames<Config> = Config extends { readonly services: infer Services }
-  ? Extract<
-      {
-        [Name in keyof Services]: Services[Name] extends { readonly publicURL: object }
-          ? Name
-          : never;
-      }[keyof Services],
-      LocalHTTPServiceNames<Config>
-    >
-  : never;
-
-type TargetReferences<Config> = {
-  [Field in keyof Config as Field extends "workloads" ? Field : never]: {
-    [Name in keyof Config[Field]]: {
-      services: readonly NamedPublisherServiceNames<Config>[];
-    };
-  };
-} & {
-  [Field in keyof Config as Field extends "aliases" | "webhooks" ? Field : never]: {
-    [Name in keyof Config[Field]]: ObjectReference<PublicLocalHTTPServiceNames<Config>>;
-  };
-} & {
-  [Field in keyof Config as Field extends "services" ? Field : never]: {
-    [Name in keyof Config[Field]]: PublisherReference<Config, Config[Field][Name]> & {
-      [HTTP in keyof Config[Field][Name] as HTTP extends "http" ? HTTP : never]: {
-        [Paths in keyof Config[Field][Name][HTTP] as Paths extends "paths" ? Paths : never]: {
-          [
-            Prefix in keyof Config[Field][Name][HTTP][Paths]
-          ]: Config[Field][Name][HTTP][Paths][Prefix] extends string
-            ? Exclude<LocalHTTPServiceNames<Config>, Name>
-            : ObjectReference<Exclude<LocalHTTPServiceNames<Config>, Name>>;
-        };
-      };
-    };
-  };
-} & {
-  [Field in keyof Config as Field extends "publisherGroups" ? Field : never]: {
-    [Name in keyof Config[Field]]: Name extends "local"
-      ? never
-      : {
-          [
-            Key in keyof Config[Field][Name] as Key extends keyof NonNullable<
-              NonNullable<TnlConfig["publisherGroups"]>[string]
-            >
-              ? never
-              : Key
-          ]: never;
-        };
-  };
-};
-
 type Service = NonNullable<NonNullable<TnlConfig["services"]>[string]>;
+type Environments = NonNullable<TnlConfig["environments"]>;
+type Environment = NonNullable<Environments[string]>;
+type LocalEnvironment = NonNullable<Environments["local"]>;
+type Target = NonNullable<NonNullable<LocalEnvironment["targets"]>[string]>;
 export type TnlServiceConfig = Service;
-export type TnlServiceTarget = NonNullable<Service["target"]>;
+export type TnlServiceTarget = Target;
 export type TnlProtocol = NonNullable<Service["protocol"]>;
-type Alias = NonNullable<NonNullable<TnlConfig["aliases"]>[string]>;
-type Webhook = NonNullable<NonNullable<TnlConfig["webhooks"]>[string]>;
-type WorkloadForNames<Policy, Names extends string> = Policy extends unknown
-  ? Omit<Policy, "services"> & { services: NoInfer<Names>[] }
-  : never;
-type MemberHTTP<Member> = Member extends { http?: infer HTTP } ? NonNullable<HTTP> : never;
-type MemberPaths<Member, Names extends string, Name extends Names> =
-  MemberHTTP<Member> extends { paths?: infer Paths }
-    ? [NonNullable<Paths>] extends [never]
-      ? never
-      : Record<
-          string,
-          | Exclude<NoInfer<Names>, Name>
-          | { service: Exclude<NoInfer<Names>, Name>; stripPrefix?: boolean }
-        >
-    : never;
-type ServiceForNames<Names extends string, Name extends Names, Member = Service> = Member extends {
-  protocol?: "http";
-}
-  ? Omit<Member, "http"> & {
-      http?: Omit<MemberHTTP<Member>, "paths"> & {
-        paths?: MemberPaths<Member, Names, Name>;
-      };
-    }
-  : Member;
 
-/**
- * project configuration whose service references are restricted to Names.
- * the generated TnlConfig describes the file shape, so its service fields are
- * strings; use defineConfig to infer Names from the configured service keys.
- */
-export type TnlConfigForServices<Names extends string> = Omit<
+type Services<C> = C extends { readonly services: infer S } ? S : never;
+type Names<C> = Extract<keyof Services<C>, string>;
+type HTTPNames<C> = {
+  [N in Names<C>]: Services<C>[N] extends { readonly protocol: infer P }
+    ? P extends "http"
+      ? N
+      : never
+    : N;
+}[Names<C>];
+type LocalTargets<C> = C extends {
+  readonly environments: { readonly local: { readonly targets: infer T } };
+}
+  ? T
+  : never;
+type PublicNames<C> = {
+  [N in Extract<keyof LocalTargets<C>, HTTPNames<C>>]: LocalTargets<C>[N] extends {
+    readonly publicURL: object;
+  }
+    ? N
+    : never;
+}[Extract<keyof LocalTargets<C>, HTTPNames<C>>];
+
+// recurse into inferred values as well as fresh literals. a union member must
+// accept the entire object, so mixed discovery and provider variants cannot pass.
+type Exact<Value, Shape> = Value extends object
+  ? Shape extends unknown
+    ? Value extends Shape
+      ? Value extends readonly unknown[]
+        ? Shape extends readonly (infer Item)[]
+          ? { [I in keyof Value]: Exact<Value[I], Item> }
+          : never
+        : { [K in keyof Value]: K extends keyof Shape ? Exact<Value[K], Shape[K]> : never }
+      : never
+    : never
+  : Value extends Shape
+    ? Value
+    : never;
+
+type ReferenceCheck<C> = {
+  [F in keyof C]: F extends "aliases" | "webhooks"
+    ? { [N in keyof C[F]]: { service: PublicNames<C> } }
+    : F extends "environments"
+      ? { [E in keyof C[F]]: EnvironmentCheck<C, C[F][E], E> }
+      : unknown;
+};
+type EnvironmentCheck<C, E, Name> = (Name extends "local"
+  ? unknown
+  : { targets: { [S in Names<C>]: unknown } }) & {
+  [F in keyof E]: F extends "targets"
+    ? { [S in keyof E[F]]: S extends Names<C> ? TargetCheck<C, E[F][S], S, Name> : never }
+    : F extends "workloads"
+      ? Name extends "local"
+        ? never
+        : { [W in keyof E[F]]: { visit: readonly Names<C>[] } }
+      : F extends "collection"
+        ? C extends { readonly collections: infer Collections }
+          ? Extract<keyof Collections, string>
+          : never
+        : unknown;
+};
+type TargetCheck<C, T, S, E> = (S extends HTTPNames<C>
+  ? unknown
+  : T extends { readonly address: unknown } | { readonly discovery: unknown }
+    ? unknown
+    : never) & {
+  [F in keyof T]: F extends "http"
+    ? S extends HTTPNames<C>
+      ? {
+          [H in keyof T[F]]: H extends "paths"
+            ? E extends "local"
+              ? T extends { readonly publicURL: object }
+                ? {
+                    [P in keyof T[F][H]]: T[F][H][P] extends string
+                      ? Exclude<HTTPNames<C>, S>
+                      : { service: Exclude<HTTPNames<C>, S> };
+                  }
+                : never
+              : never
+            : H extends "readiness" | "open"
+              ? E extends "local"
+                ? unknown
+                : never
+              : unknown;
+        }
+      : never
+    : F extends "publicURL" | "name" | "access" | "inspection"
+      ? E extends "local"
+        ? F extends "publicURL"
+          ? S extends HTTPNames<C>
+            ? unknown
+            : never
+          : unknown
+        : never
+      : F extends "discovery"
+        ? DiscoveryCheck<C, T[F], S, E>
+        : F extends "tls"
+          ? T extends { readonly discovery: { readonly type: "eks" | "rds" } }
+            ? never
+            : unknown
+          : unknown;
+};
+type DiscoveryCheck<C, D, S, E> = D extends { readonly type: infer Kind }
+  ? Kind extends "eks"
+    ? Services<C>[Extract<S, keyof Services<C>>] extends { readonly protocol: "kubernetes" }
+      ? unknown
+      : never
+    : Kind extends "rds"
+      ? Services<C>[Extract<S, keyof Services<C>>] extends {
+          readonly protocol: "postgres" | "mysql";
+        }
+        ? unknown
+        : never
+      : E extends "local"
+        ? unknown
+        : never
+  : never;
+
+type Valid<C> = [C] extends [Exact<C, TnlConfig> & ReferenceCheck<C>] ? true : false;
+type Check<C> = Valid<C> extends true ? [] : [invalidConfiguration: never];
+
+export type TnlConfigForServices<N extends string> = Omit<
   TnlConfig,
-  "services" | "aliases" | "webhooks" | "workloads"
+  "services" | "environments"
 > & {
-  services?: {
-    [Name in Names]: ServiceForNames<Names, Name>;
-  };
-  aliases?: Record<string, Omit<Alias, "service"> & { service: NoInfer<Names> }>;
-  webhooks?: Record<
+  services?: { [Name in N]: Service };
+  environments?: Record<
     string,
-    Omit<Webhook, "service"> & { service: NoInfer<[Names] extends [never] ? "" : Names> }
-  >;
-  workloads?: Record<
-    string,
-    WorkloadForNames<NonNullable<NonNullable<TnlConfig["workloads"]>[string]>, Names>
+    Omit<Environment, "targets"> & { targets?: Partial<Record<NoInfer<N>, Target>> }
   >;
 };
 
-/** infer config literals and check HTTP references. */
-// check factories after inferring their const return. intersecting the return
-// with its reference constraints widens async discriminants before inference.
-// keep this overload first so zero-argument factories receive the same context.
-export function defineConfig<const Config extends TnlConfig>(
-  config: ((context: TnlConfigContext) => Config | Promise<Config>) &
-    NoInfer<[Config] extends [TargetReferences<Config>] ? unknown : never>,
-): (context: TnlConfigContext) => Config | Promise<Config>;
-export function defineConfig<const Config extends TnlConfig>(
-  config: Config & NoInfer<TargetReferences<Config>>,
-): Config;
-export function defineConfig(config: TnlConfigInput): TnlConfigInput {
+// validation is a rest parameter so it cannot widen the inferred factory return
+// to TnlConfig. invalid sync and async factories require an impossible argument.
+export function defineConfig<const C extends TnlConfig>(
+  config: (context: TnlConfigContext) => C | Promise<C>,
+  ...check: NoInfer<Check<C>>
+): (context: TnlConfigContext) => C | Promise<C>;
+export function defineConfig<const C extends TnlConfig>(
+  config: C & NoInfer<Exact<C, TnlConfig> & ReferenceCheck<C>>,
+): C;
+export function defineConfig(config: unknown, ..._check: unknown[]): unknown {
   return config;
 }

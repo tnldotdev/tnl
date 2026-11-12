@@ -1,4 +1,4 @@
-// package grouppublisher reconciles one signed publisher-group replica.
+// package group reconciles enrolled environment publisher replicas.
 package group
 
 import (
@@ -23,8 +23,8 @@ func NewClient(server string, transport *http.Client) (*Client, error) {
 	return &Client{control: control, server: strings.TrimSuffix(server, "/")}, err
 }
 
-func (c *Client) Enroll(ctx context.Context, secret string, public ed25519.PublicKey) (controlv1.PublisherGroupMember, error) {
-	return c.control.RedeemPublisherGroupEnrollment(ctx, secret, public)
+func (c *Client) Enroll(ctx context.Context, secret string, public ed25519.PublicKey) (controlv1.EnvironmentPublisher, error) {
+	return c.control.RedeemEnvironmentPublisherEnrollment(ctx, secret, public)
 }
 
 func (c *Client) ServerURL() string { return c.server }
@@ -33,26 +33,26 @@ func (c *Client) PublisherRuntime(ctx context.Context, request controlv1.Publish
 	return c.control.PublisherRuntime(ctx, request)
 }
 
-func (c *Client) Lease(ctx context.Context, member controlv1.PublisherGroupMember, private ed25519.PrivateKey) (controlv1.PublisherGroupLease, error) {
-	assertion, err := publisherproof.Sign(member.PublisherIdentityId, member.KeyId, member.GroupId, c.server+"/v1/publisher-groups/lease", private, time.Now())
+func (c *Client) Lease(ctx context.Context, member controlv1.EnvironmentPublisher, private ed25519.PrivateKey) (controlv1.EnvironmentPublisherLease, error) {
+	assertion, err := publisherproof.Sign(member.PublisherIdentityId, member.KeyId, member.EnvironmentId, c.server+"/v1/environment-publishers/lease", private, time.Now())
 	if err != nil {
-		return controlv1.PublisherGroupLease{}, err
+		return controlv1.EnvironmentPublisherLease{}, err
 	}
-	return c.control.AcquirePublisherGroupLease(ctx, controlv1.PublisherGroupLeaseRequest{PublisherIdentityId: member.PublisherIdentityId, GroupId: member.GroupId, Assertion: assertion})
+	return c.control.AcquireEnvironmentPublisherLease(ctx, controlv1.EnvironmentPublisherProof{PublisherIdentityId: member.PublisherIdentityId, EnvironmentId: member.EnvironmentId, Assertion: assertion})
 }
 
-func (c *Client) Verify(ctx context.Context, member controlv1.PublisherGroupMember, private ed25519.PrivateKey) (controlv1.PublisherGroupVerification, error) {
-	assertion, err := publisherproof.Sign(member.PublisherIdentityId, member.KeyId, member.GroupId, c.server+"/v1/publisher-groups/verify", private, time.Now())
+func (c *Client) Verify(ctx context.Context, member controlv1.EnvironmentPublisher, private ed25519.PrivateKey) (controlv1.EnvironmentPublisher, error) {
+	assertion, err := publisherproof.Sign(member.PublisherIdentityId, member.KeyId, member.EnvironmentId, c.server+"/v1/environment-publishers/verify", private, time.Now())
 	if err != nil {
-		return controlv1.PublisherGroupVerification{}, err
+		return controlv1.EnvironmentPublisher{}, err
 	}
-	return c.control.VerifyPublisherGroupIdentity(ctx, controlv1.PublisherGroupLeaseRequest{PublisherIdentityId: member.PublisherIdentityId, GroupId: member.GroupId, Assertion: assertion})
+	return c.control.VerifyEnvironmentPublisher(ctx, controlv1.EnvironmentPublisherProof{PublisherIdentityId: member.PublisherIdentityId, EnvironmentId: member.EnvironmentId, Assertion: assertion})
 }
 
-func (c *Client) Assignments(ctx context.Context, access string) (controlv1.PublisherGroupAssignments, error) {
-	return c.control.GetPublisherGroupAssignments(ctx, access)
+func (c *Client) Assignments(ctx context.Context, access string) (controlv1.EnvironmentPublisherAssignments, error) {
+	return c.control.GetEnvironmentPublisherAssignments(ctx, access)
 }
 
-func (c *Client) Acknowledge(ctx context.Context, access string, ack controlv1.PublisherGroupAcknowledgement) error {
-	return c.control.AcknowledgePublisherGroupConfiguration(ctx, access, ack)
+func (c *Client) Acknowledge(ctx context.Context, access string, ack controlv1.EnvironmentPublisherAcknowledgement) error {
+	return c.control.AcknowledgeEnvironmentPublisher(ctx, access, ack)
 }

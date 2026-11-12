@@ -471,7 +471,7 @@ func TestIntegrationEnvironmentHTTPUsesCurrentManagerAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkDenied()
-	foreign, err := reviewer.client.GetEnvironmentWithResponse(t.Context(), f.project, production.Id, &controlv1.GetEnvironmentParams{TeamId: f.session.Identity.PersonalTeamID})
+	foreign, err := reviewer.client.GetEnvironmentWithResponse(t.Context(), f.project, production.Id, &controlv1.GetEnvironmentParams{TeamId: memberSession.Identity.PersonalTeamID})
 	if err != nil || foreign == nil {
 		t.Fatal("foreign-team lookup failed without an HTTP response", err)
 	}

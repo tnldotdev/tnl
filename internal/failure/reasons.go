@@ -193,14 +193,14 @@ const (
 )
 
 var definitions = map[Reason]Definition{
-	WorkloadRequired:                   {Class: Invalid, Message: "select one saved workload", Action: "set TNL_WORKLOAD or configure a workload source in the SDK", Retry: RetryAfterChange},
-	WorkloadManifestInvalid:            {Class: Invalid, Message: "the generated workload manifest is missing or invalid", Action: "run tnl generate during the build and package .tnl/generated/workloads.json with the application", Retry: RetryAfterChange},
-	WorkloadServiceDenied:              {Class: Forbidden, Message: "the selected workload does not include this service", Action: "check the selected workload and its saved service access", Retry: RetryAfterChange},
-	WorkloadAssertionUnavailable:       {Class: Unauthenticated, Message: "the workload provider assertion is unavailable", Action: "check the selected workload's token file or provider acquisition callback", Retry: RetryAfterChange},
+	WorkloadRequired:                   {Class: Invalid, Message: "select an environment and an explicit identity source", Action: "pass generated services, an exact environment reference, and identity to tnl.client", Retry: RetryAfterChange},
+	WorkloadManifestInvalid:            {Class: Invalid, Message: "the environment service facts are missing or invalid", Action: "regenerate service facts with tnl generate and pass them explicitly to tnl.client", Retry: RetryAfterChange},
+	WorkloadServiceDenied:              {Class: Forbidden, Message: "the visitor permission does not include this environment service", Action: "check the selected environment and its saved visitor permission", Retry: RetryAfterChange},
+	WorkloadAssertionUnavailable:       {Class: Unauthenticated, Message: "the selected identity proof is unavailable", Action: "check the explicit token file, provider acquisition, or OIDC callback", Retry: RetryAfterChange},
 	ConnectionTLSRejected:              {Class: Invalid, Message: "the native service TLS certificate could not be verified", Action: "check the service hostname and the client's server trust roots, then prepare connections again", Retry: RetryAfterChange},
 	ConnectionCleanupFailed:            {Class: Unavailable, Message: "the connector owner stopped with a cleanup failure", Action: "check the selected server's availability and revoke the workload session if it remains active", Retry: RetryAfterChange},
 	ConnectionPortInUse:                {Class: Conflict, Message: "the service's allocated loopback port is already in use", Action: "stop the process using that port and prepare connections again", Retry: RetryAfterChange},
-	ConnectionTeamBinding:              {Class: Invalid, Message: "the workload has no configured team selector", Action: "set team in project configuration and run tnl generate", Retry: RetryAfterChange},
+	ConnectionTeamBinding:              {Class: Invalid, Message: "the local project has no configured team selector", Action: "select a team in local project configuration", Retry: RetryAfterChange},
 	ConnectionTransportMissing:         {Class: Unavailable, Message: "this binary does not include the required connector transport", Action: "use a tnl binary with the required connection capabilities", Retry: RetryAfterChange},
 	ConnectionHandleInvalid:            {Class: Invalid, Message: "the private connection handle is not valid for this project or user", Action: "prepare connections again from the selected project", Retry: RetryAfterChange},
 	ConnectionExpired:                  {Class: Unavailable, Message: "the connector session has expired", Action: "prepare connections again within the authorized execution window", Retry: RetryAfterChange},

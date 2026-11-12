@@ -13,7 +13,7 @@ func TestPublisherGroupEnrollmentHasBoundedIndependentTaskBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := parser.Parse([]string{"publisher", "enroll", "--group", "cluster", "--members", "20", "--expires-in", "1h"}); err != nil {
+	if _, err := parser.Parse([]string{"publisher", "enroll", "--environment", testPublisherGroupIdentity(t).Member.EnvironmentId, "--services", "database", "--members", "20", "--expires-in", "1h"}); err != nil {
 		t.Fatal(err)
 	}
 	members, expires, err := publisherGroupEnrollmentBounds(flags.Publisher.Enroll)

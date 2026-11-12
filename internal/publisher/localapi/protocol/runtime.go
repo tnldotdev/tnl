@@ -20,6 +20,7 @@ var ownerPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
 var ErrApplicationAuthInvalid = errors.New("application publication authentication is invalid")
 var ErrApplicationDenied = errors.New("application publication is outside the current grant")
 var ErrApplicationUnavailable = errors.New("application publication authority is unavailable")
+var ErrApplicationChallengeStale = errors.New("application identity source challenge is stale")
 
 func ValidOwner(owner string) bool { return ownerPattern.MatchString(owner) }
 

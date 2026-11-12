@@ -10,24 +10,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 )
 
-// authorizationClock keeps the entry-time issuance budget separate from current
-// authority checks. elapsed database waits spend that budget on the same clock.
-type authorizationClock struct{ entered, started time.Time }
-
-func newAuthorizationClock(now time.Time) authorizationClock {
-	// a real request timestamp already carries its monotonic entry clock. do
-	// not restart that clock after proof preparation: doing so subtracts the
-	// preparation time and can mistake a concurrent renewal for clock rollback.
-	// synthetic/database timestamps have no monotonic reading; keep their
-	// explicit epoch and measure only work performed after entering this call.
-	if now != now.Round(0) {
-		return authorizationClock{entered: now, started: now}
-	}
-	return authorizationClock{entered: now, started: time.Now()}
-}
-
-func (c authorizationClock) current() time.Time { return c.entered.Add(time.Since(c.started)) }
-
 // workloadAuthority is checked once under the team and source row locks. callers
 // check selected-service membership separately, without rereading source clocks.
 type workloadAuthority struct {
@@ -66,9 +48,11 @@ func lockWorkloadCredential(ctx context.Context, tx pgx.Tx, credential string, c
 	if err = verifyMachineSession(ctx, tx, source.ID, source.CheckedAt); err != nil {
 		return workloadAuthority{}, err
 	}
-	if revoked || source.CheckedAt.Before(created) || source.CheckedAt.Before(renewed) ||
-		!source.LeaseExpiresAt.After(source.CheckedAt) || !source.IdentityExpiresAt.After(source.CheckedAt) || source.ExpiresAt != nil && !source.ExpiresAt.After(source.CheckedAt) {
+	if revoked || source.CheckedAt.Before(created) || source.CheckedAt.Before(renewed) {
 		return workloadAuthority{}, ErrWorkloadDenied
+	}
+	if !source.LeaseExpiresAt.After(source.CheckedAt) || !source.IdentityExpiresAt.After(source.CheckedAt) || source.ExpiresAt != nil && !source.ExpiresAt.After(source.CheckedAt) {
+		return workloadAuthority{}, ErrWorkloadExpired
 	}
 	observability.WorkloadExecution(ctx, source.ID, run, attempt, check)
 	return source, nil

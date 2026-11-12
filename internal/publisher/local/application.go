@@ -3,13 +3,14 @@ package local
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
@@ -21,6 +22,7 @@ import (
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
@@ -28,6 +30,14 @@ import (
 )
 
 func (a *appRuntime) publishApplication(ctx context.Context, request publisherprotocol.ApplicationPublication) (_ publisherprotocol.AcceptedPublication, result error) {
+	defer func() {
+		result = errors.Join(result, context.Cause(ctx))
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		if a.shuttingDown && result != nil && !failure.Only(result, context.Canceled) {
+			a.shutdownPreparationErr = errors.Join(a.shutdownPreparationErr, result)
+		}
+	}()
 	if err := validateApplication(request); err != nil {
 		return publisherprotocol.AcceptedPublication{}, err
 	}
@@ -39,13 +49,23 @@ func (a *appRuntime) publishApplication(ctx context.Context, request publisherpr
 	finish := a.manager.BeginPreparation()
 	defer finish()
 	// renewal/recovery keeps only a digest of public request facts, never auth.
-	publicRequest := request
-	publicRequest.Auth = nil
-	encoded, err := json.Marshal(publicRequest)
+	fingerprint, err := applicationRequestFingerprint(request)
 	if err != nil {
 		return publisherprotocol.AcceptedPublication{}, err
 	}
-	fingerprint := sha256.Sum256(encoded)
+	if a.ApplicationAuthority == nil {
+		return publisherprotocol.AcceptedPublication{}, publisherprotocol.ErrApplicationUnavailable
+	}
+	if _, err := applicationSourceProof(request.Auth, true); err != nil {
+		return publisherprotocol.AcceptedPublication{}, err
+	}
+	publication, err := a.applicationCheckpoint(ctx, request, fingerprint)
+	if err != nil {
+		return publisherprotocol.AcceptedPublication{}, err
+	}
+	if err := a.consumeApplicationChallenge(ctx, request, publication); err != nil {
+		return publisherprotocol.AcceptedPublication{}, err
+	}
 	for _, service := range a.manager.Snapshot().Services {
 		if service.Name != request.InvocationId || service.RegistrationID == "" {
 			continue
@@ -69,6 +89,11 @@ func (a *appRuntime) publishApplication(ctx context.Context, request publisherpr
 		if err := a.manager.RenewTarget(service.RegistrationID, request.Owner, request.Target); err != nil {
 			return publisherprotocol.AcceptedPublication{}, err
 		}
+		// register is idempotent for a running worker and restarts one stopped at
+		// its old confirmed fence after an uncertain refresh has been resolved.
+		if err := a.manager.RegisterContext(ctx, service.RegistrationID, request.Owner, request.Target, ""); err != nil {
+			return publisherprotocol.AcceptedPublication{}, err
+		}
 		accepted := *previous.application
 		accepted.Reused = true
 		return accepted, nil
@@ -77,6 +102,14 @@ func (a *appRuntime) publishApplication(ctx context.Context, request publisherpr
 		return publisherprotocol.AcceptedPublication{}, publisherprotocol.ErrApplicationUnavailable
 	}
 	selection := invocation.ApplicationSelection{ServerURL: request.ServerUrl, InvocationID: request.InvocationId, Target: request.Target, ResourceID: valueOrEmpty(request.ResourceId), Auth: slices.Clone(request.Auth), RequirePostQuantum: request.RequirePostQuantum, IP: request.Ip, Limits: request.Limits}
+	selection.Publication = publication
+	prior, err := publication.Snapshot(ctx)
+	if err != nil {
+		clear(selection.Auth)
+		return publisherprotocol.AcceptedPublication{}, err
+	}
+	recovered := prior.PublicURL != nil
+	clear(prior.NativeKey)
 	if request.Allocate != nil {
 		selection.Namespace = request.Allocate.Namespace
 	}
@@ -90,17 +123,74 @@ func (a *appRuntime) publishApplication(ctx context.Context, request publisherpr
 	if request.ResourceId != nil {
 		resourceCleanup = nil
 	}
-	cleanup := applicationCleanup(resourceCleanup)
+	retire := applicationCleanup(func(ctx context.Context) error {
+		ctx, cancel := a.applicationCleanupContext(ctx)
+		defer cancel()
+		var resourceErr, releaseErr error
+		if resourceCleanup != nil {
+			resourceErr = resourceCleanup(ctx)
+			if applicationResourceGone(resourceErr) {
+				resourceErr = nil
+			}
+		}
+		if grant.Release != nil {
+			releaseErr = grant.Release(ctx)
+		}
+		if err := errors.Join(resourceErr, releaseErr); err != nil {
+			return err
+		}
+		record, err := publication.Snapshot(ctx)
+		if err != nil {
+			return err
+		}
+		defer clear(record.NativeKey)
+		if record.Phase == clientstate.ApplicationCleanupDone {
+			return nil
+		}
+		record.Phase, record.NativeKey = clientstate.ApplicationCleanupDone, nil
+		return publication.Checkpoint(ctx, record)
+	})
+	var retainRecovery atomic.Bool
+	cleanup := func() error {
+		checkpoint, cancel := a.applicationCleanupContext(context.Background())
+		defer cancel()
+		record, err := publication.Snapshot(checkpoint)
+		if err != nil {
+			return err
+		}
+		clear(record.NativeKey)
+		if record.Phase != clientstate.ApplicationCleanupPending && record.Phase != clientstate.ApplicationDenied && (record.Phase == clientstate.ApplicationRefreshPending || retainRecovery.Load()) && time.Now().Before(record.OwnerExpiresAt) && (a.manager.Alive == nil || a.manager.Alive(record.Binding.PID)) {
+			return nil
+		}
+		if err := publication.RequestCleanup(checkpoint); err != nil {
+			return err
+		}
+		return retire()
+	}
 	transferred, cleanupOwned, id := false, false, ""
 	defer func() {
 		if !transferred {
+			// a live owner may resolve an uncertain remote reply using this same
+			// key/nonce. cancellation is an abort, not a request for recovery.
+			if id == "" && ctx.Err() == nil && errors.Is(resolveErr, publisheridentity.ErrApplicationSessionUncertain) {
+				return
+			}
+			checkpoint, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			var intentErr error
+			if recovered && ctx.Err() != nil {
+				retainRecovery.Store(true)
+			} else {
+				intentErr = publication.RequestCleanup(checkpoint)
+			}
+			cancel()
+			result = errors.Join(result, intentErr)
 			if id != "" {
 				result = errors.Join(result, a.manager.Unregister(id, request.Owner))
 				a.mu.Lock()
 				delete(a.prepared, id)
 				a.mu.Unlock()
 			}
-			if !cleanupOwned {
+			if !cleanupOwned && intentErr == nil {
 				result = errors.Join(result, cleanup())
 			}
 		}
@@ -154,16 +244,23 @@ func (a *appRuntime) publishApplication(ctx context.Context, request publisherpr
 	}
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13}
 	cfg := publisher.Config{Control: grant.Control, Identity: grant.Control, Audit: grant.Control, VisitorControl: grant.Control, BrowserControl: grant.Control, Shares: grant.Control, PublisherIdentityID: grant.PublisherIdentityID, ControlURL: request.ServerUrl, State: profile, TeamID: publicURL.TeamId, DomainID: publicURL.DomainId, PublicURLScope: publicURL.PublicUrlScope, Purpose: publicURL.Purpose, PolicyRevision: uint64(publicURL.PolicyRevision), Hostname: publicURL.CanonicalHostname, ProjectRoot: a.project.Root, Target: request.Target, ServiceProtocol: "http", Limits: limits, Ephemeral: publicURL.Ephemeral, AssignedPublicURL: &publicURL, AccessMode: publicURL.AccessMode, RequirePostQuantum: &publicURL.RequirePostQuantum, PreserveSavedPublicURLTarget: true, QUICConnector: muxsession.QUICConnector{TLSConfig: tlsConfig}, TCPConnector: muxsession.TLSYamuxConnector{TLSConfig: tlsConfig}}
+	// reserve part of the native owner's bounded shutdown window for original-key
+	// cleanup after all sibling visitor drains have finished.
+	cfg.DrainTime = 5 * time.Second
 	if publicURL.MembershipId != nil {
 		cfg.MembershipID = *publicURL.MembershipId
 	}
 	if publicURL.AllowedIpPrefixes != nil {
 		cfg.AllowedIPPrefixes = slices.Clone(*publicURL.AllowedIpPrefixes)
 	}
+	if grant.CheckServing != nil {
+		cfg.AdmitRequest = func(*http.Request, publisher.PublishRunIdentity) error { return grant.CheckServing() }
+		cfg.AdmitVisitor = func(context.Context, publisher.Visitor) error { return grant.CheckServing() }
+	}
 	// SetCleanup gave the registration ownership before the worker starts. do not
 	// also give it to Workers.Run: a failed attempt is retryable, not a permanent
 	// publication error after a later attempt succeeds.
-	configuration := publisherapp.Configuration{Publisher: cfg, Inspection: policy, SkipAutomaticReadiness: true}
+	configuration := publisherapp.Configuration{Publisher: cfg, Inspection: policy, SkipAutomaticReadiness: true, Authority: grant.Run}
 	if a.AttachPublication != nil {
 		if err := a.AttachPublication(ctx, publisherapp.Service{Name: request.InvocationId, RegistrationID: id, Target: request.Target}, &configuration.Publisher); err != nil {
 			return publisherprotocol.AcceptedPublication{}, err
@@ -172,6 +269,7 @@ func (a *appRuntime) publishApplication(ctx context.Context, request publisherpr
 	var accepted publisherprotocol.AcceptedPublication
 	accepted.Registration = publisherprotocol.Registration{Version: 1, RegistrationID: id, Owner: request.Owner, Target: request.Target}
 	accepted.PublicUrlId, accepted.Hostname, accepted.PublicUrl = publicURL.Id, publicURL.CanonicalHostname, address
+	accepted.Reused = recovered
 	a.mu.Lock()
 	a.prepared[id] = appPreparation{configuration: configuration, applicationFingerprint: fingerprint, application: &accepted, refreshApplicationAuth: grant.RefreshAuth}
 	a.mu.Unlock()
@@ -181,7 +279,7 @@ func (a *appRuntime) publishApplication(ctx context.Context, request publisherpr
 	if err := a.manager.RegisterContext(ctx, id, request.Owner, request.Target, ""); err != nil {
 		return publisherprotocol.AcceptedPublication{}, err
 	}
-	if err := ctx.Err(); err != nil {
+	if err := ctx.Err(); err != nil && !recovered {
 		return publisherprotocol.AcceptedPublication{}, err
 	}
 	transferred = true
@@ -189,11 +287,14 @@ func (a *appRuntime) publishApplication(ctx context.Context, request publisherpr
 }
 
 func applicationAuthorityError(err error) error {
+	if err == nil {
+		return nil
+	}
 	if errors.Is(err, publisherprotocol.ErrApplicationAuthInvalid) || errors.Is(err, publisherprotocol.ErrApplicationDenied) || errors.Is(err, publisherprotocol.ErrApplicationUnavailable) {
 		return err
 	}
 	reason, _ := failure.ReasonOf(err)
-	if errors.Is(err, clientcontrol.ErrUnauthenticated) || errors.Is(err, clientcontrol.ErrNotFound) || reason == failure.Authentication || reason == failure.ServerDenied || reason == failure.PublisherGrantMismatch {
+	if errors.Is(err, clientcontrol.ErrUnauthenticated) || errors.Is(err, clientcontrol.ErrNotFound) || errors.Is(err, publisheridentity.ErrScope) || reason == failure.Authentication || reason == failure.ServerResourceNotFound || reason == failure.ServerDenied || reason == failure.PublisherGrantMismatch {
 		return errors.Join(publisherprotocol.ErrApplicationDenied, err)
 	}
 	if reason == failure.ServerResponseInvalid {
@@ -244,10 +345,34 @@ func applicationCleanup(cleanup func(context.Context) error) func() error {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if err := cleanup(ctx); err != nil && !errors.Is(err, clientcontrol.ErrNotFound) {
+		if err := cleanup(ctx); err != nil && !applicationResourceGone(err) {
 			return err
 		}
 		done = true
 		return nil
 	}
+}
+
+// a missing resource is successful cleanup only when every cause is that exact
+// control result. the typed sentinel itself wraps a leaf, so do not strip it
+// before comparison or let errors.Is hide a separate joined failure.
+func applicationResourceGone(err error) bool {
+	if err == clientcontrol.ErrNotFound {
+		return true
+	}
+	if err == nil {
+		return false
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		if len(joined.Unwrap()) == 0 {
+			return false
+		}
+		for _, cause := range joined.Unwrap() {
+			if !applicationResourceGone(cause) {
+				return false
+			}
+		}
+		return true
+	}
+	return applicationResourceGone(errors.Unwrap(err))
 }

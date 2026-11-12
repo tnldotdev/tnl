@@ -110,24 +110,24 @@ const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; mes
     class: "invalid",
     retry: "after_change",
     message:
-      "select one saved workload with TNL_WORKLOAD or configureWorkload before calling tnl.connect",
+      "pass generated services, an exact environment reference, and an explicit identity source to tnl.client",
   },
   "sdk.workload_manifest_invalid": {
     class: "invalid",
     retry: "after_change",
     message:
-      "the workload manifest is missing or invalid; package .tnl/generated/workloads.json from tnl generate with the server artifact",
+      "the environment service facts are missing or invalid; regenerate them with tnl generate and pass them explicitly to tnl.client",
   },
   "sdk.workload_assertion_unavailable": {
     class: "unavailable",
     retry: "after_change",
     message:
-      "the selected workload assertion is unavailable; check its request-scoped provider or configured token source",
+      "the selected identity proof is unavailable; check its request-scoped provider or explicit native token source",
   },
   "sdk.workload_denied": {
     class: "conflict",
     retry: "after_change",
-    message: "workload access was denied; check the saved workload policy and service access",
+    message: "environment access was denied; check the saved visitor permission and service access",
   },
   "sdk.workload_unavailable": {
     class: "unavailable",

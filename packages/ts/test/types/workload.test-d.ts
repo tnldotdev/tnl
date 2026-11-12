@@ -1,24 +1,27 @@
-import { configureWorkload, type WorkloadOptions } from "@tnldotdev/tnl/workload";
+// @ts-expect-error workload configuration is retired, not an alias for a client.
+import type * as RetiredWorkload from "@tnldotdev/tnl/workload";
+import type { IdentitySource } from "@tnldotdev/tnl";
 import { assertType, expectTypeOf, test } from "vitest";
 import type { ServiceID, WorkloadSessionID, TransportID } from "../../src/internal/values.js";
 
 declare const serviceID: ServiceID;
 
-test("workload configuration selects a readonly request-scoped source", () => {
-  const options: WorkloadOptions = {
-    name: "worker",
-    token: async () => "request-scoped-assertion",
+test("explicit identity sources are readonly and do not carry authority policy", () => {
+  const options: IdentitySource = {
+    kind: "oidc",
+    permission_id: `mwp_${"a".repeat(22)}`,
+    assertion: async () => "request-scoped-assertion",
   };
-  expectTypeOf(configureWorkload(options)).toBeVoid();
-  configureWorkload({ name: "job", tokenFile: "/run/current-job.jwt" });
+  expectTypeOf(options.assertion).toBeFunction();
   // @ts-expect-error callback setup is readonly.
-  options.name = "another";
+  options.permission_id = "another";
   // @ts-expect-error static tokens are not a runtime source.
-  configureWorkload({ name: "worker", token: "global-token" });
-  // @ts-expect-error select one acquisition source.
-  configureWorkload({ name: "worker", token: async () => "token", tokenFile: "token" });
+  options.assertion = "global-token";
+  const accepts = (_source: IdentitySource) => {};
+  // @ts-expect-error a file is acquired inside the explicit callback, not a second source.
+  accepts({ ...options, tokenFile: "token" });
   // @ts-expect-error saved policy owns issuer and permissions.
-  configureWorkload({ name: "worker", token: async () => "token", issuer: "https://untrusted" });
+  accepts({ ...options, issuer: "https://untrusted" });
 });
 
 test("validated identifiers preserve their prefixes and cannot be interchanged", () => {

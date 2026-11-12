@@ -7,12 +7,15 @@ import (
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // collection management is an explicit capability, separate from environment
 // creation and its atomic membership/default selection.
 type CollectionStore interface {
+	AuthenticateEnvironmentPublisherManager(context.Context, credentials.AccessToken) (controlstate.EnvironmentPublisherManager, error)
+	InspectCollection(context.Context, string, string, string, controlstate.EnvironmentPublisherManager) (controlstate.Collection, error)
 	CreateCollection(context.Context, controlstate.CreateCollectionRequest) (controlstate.Collection, error)
 	GetCollection(context.Context, string, string, string, string) (controlstate.Collection, error)
 	ListCollections(context.Context, string, string, string) ([]controlstate.Collection, error)
@@ -76,11 +79,17 @@ func (h *handler) GetCollection(w http.ResponseWriter, r *http.Request, project,
 	if !ok {
 		return
 	}
-	actor, ok := h.projectManager(w, r, params.TeamId)
+	token, ok := requestBearerToken(r)
 	if !ok {
+		writeBearerProblem(w)
 		return
 	}
-	result, err := store.GetCollection(r.Context(), params.TeamId, project, id, actor)
+	manager, err := store.AuthenticateEnvironmentPublisherManager(r.Context(), credentials.AccessToken(token))
+	if err != nil {
+		collectionProblem(r.Context(), w, "authenticate collection read", err)
+		return
+	}
+	result, err := store.InspectCollection(r.Context(), params.TeamId, project, id, manager)
 	if err != nil {
 		collectionProblem(r.Context(), w, "get collection", err)
 		return

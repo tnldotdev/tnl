@@ -60,7 +60,7 @@ func TestFixedGroupsUseIdentityBindingWithoutSingleGroupOverrides(t *testing.T) 
 	if inputs[0].job.GroupInstance != value.Instance || inputs[0].job.Server != value.ControlURL || inputs[0].runner.Deployment != nil {
 		t.Fatal("fixed group did not retain exact identity scope")
 	}
-	for _, modify := range []func(*publisherServeCommand){func(f *publisherServeCommand) { f.Group = "production" }, func(f *publisherServeCommand) { f.Team = "another" }, func(f *publisherServeCommand) { f.EnrollmentKey = "secret" }, func(f *publisherServeCommand) { f.Detach = true }} {
+	for _, modify := range []func(*publisherServeCommand){func(f *publisherServeCommand) { f.Environment = value.Member.EnvironmentId }, func(f *publisherServeCommand) { f.Team = "another" }, func(f *publisherServeCommand) { f.EnrollmentKey = "secret" }, func(f *publisherServeCommand) { f.Detach = true }} {
 		invalid := flags
 		modify(&invalid)
 		if err := validateFixedPublisherGroups(invalid); err == nil {

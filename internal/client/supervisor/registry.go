@@ -59,12 +59,12 @@ const (
 	KindPublicURL Kind = "public_url"
 	KindService   Kind = "service"
 	KindConnector Kind = "connector"
-	KindGroup     Kind = "group"
+	KindGroup     Kind = "environment"
 )
 
 type Job struct {
 	PreferredRegions    []string                        `json:"preferred_regions,omitempty"`
-	GroupMember         *controlv1.PublisherGroupMember `json:"group_member,omitempty"`
+	GroupMember         *controlv1.EnvironmentPublisher `json:"environment_publisher,omitempty"`
 	GroupInstance       string                          `json:"group_instance,omitempty"`
 	IdentityDir         string                          `json:"identity_dir,omitempty"`
 	Kind                Kind                            `json:"kind,omitempty"`
@@ -567,9 +567,9 @@ func validateJob(job *Job) error {
 			return ErrScope
 		}
 		if job.GroupMember == nil || job.GroupMember.PublisherIdentityId != job.PublisherIdentityID ||
-			job.GroupMember.GroupName == "local" || !naming.ValidServiceName(job.GroupMember.GroupName) ||
+			!opaqueid.Valid(job.GroupMember.EnvironmentId, opaqueid.EnvironmentPrefix) ||
 			!opaqueid.Valid(job.PublisherIdentityID, opaqueid.PublisherIdentityPrefix) || !opaqueid.Valid(job.GroupMember.KeyId, opaqueid.PublisherIdentityKeyPrefix) ||
-			job.GroupMember.TeamId == "" || job.GroupMember.GroupId == "" || job.GroupMember.ProjectKey == "" ||
+			job.GroupMember.TeamId == "" || !naming.ValidProjectKey(job.GroupMember.ProjectKey) ||
 			job.ServiceID != "" || job.PublicURLID != "" || job.Target != "" || job.GrantID != "" || job.Protocol != "" ||
 			job.VerifyReadiness ||
 			job.TargetTLSName != "" || len(job.TargetCAPEM) != 0 || job.Limits != (publisher.ApplicationLimits{}) {

@@ -32,8 +32,6 @@ type Handle struct {
 	ConfigDigest string    `json:"config_digest"`
 	ExpiresAt    time.Time `json:"expires_at"`
 	Executable   string    `json:"executable"`
-	Workload     string    `json:"workload,omitempty"`
-	TeamID       string    `json:"team_id,omitempty"`
 }
 
 func (Handle) String() string   { return "private connection handle" }
@@ -112,7 +110,7 @@ func updateHandle(path string, previous, next Handle) error {
 func sameHandleCapability(a, b Handle) bool {
 	return a.Schema == b.Schema && a.Key == b.Key && a.URL == b.URL &&
 		a.Directory == b.Directory && a.ConfigDigest == b.ConfigDigest &&
-		a.Executable == b.Executable && a.Workload == b.Workload && a.TeamID == b.TeamID
+		a.Executable == b.Executable
 }
 
 func VerifyDirectory(path string) error {

@@ -9,10 +9,9 @@ import (
 func TestIntegrationServiceEndpointDNSRevisions(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "service_endpoint_dns")
 	ctx := t.Context()
-	r := appliedProjectRequest(t, d, now)
-	r.DNSAutomation = true
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"api": {PublisherGroup: "production", Target: "localhost:3000"}}}
-	applied, err := d.ApplyProjectConfiguration(ctx, r)
+	r := retainedEnvironmentProject(t, d, now)
+	definition := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"api": {Protocol: "http"}})
+	applied, err := d.CreateEnvironment(ctx, CreateEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, ActorID: r.ActorID, Name: "production", DefinitionRevision: definition.Revision, Targets: EnvironmentTargets{"api": {Address: "localhost:3000"}}, IdempotencyKey: "dns-environment", DNSAutomation: true, Now: now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,10 +27,10 @@ func TestIntegrationServiceEndpointDNSRevisions(t *testing.T) {
 		return work
 	}
 	private := claim(false, PublicURLDNSPending)
-	r.ExpectedRevision = applied.Revision
 	r.Now = now.Add(time.Second)
-	r.Configuration.PublisherGroups["production"] = ProjectPublisherGroup{Public: true}
-	applied, err = d.ApplyProjectConfiguration(ctx, r)
+	public := true
+	apply := ApplyEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, EnvironmentApplication: EnvironmentApplication{EnvironmentID: applied.ID, ExpectedRevision: applied.MutationRevision, DefinitionRevision: definition.Revision, Public: &public}, DNSAutomation: true, Now: r.Now}
+	applied, err = d.ApplyEnvironment(ctx, apply)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,10 +44,10 @@ func TestIntegrationServiceEndpointDNSRevisions(t *testing.T) {
 	if _, found, err := d.ClaimServiceEndpointDNSWork(ctx, "duplicate", r.Now, time.Minute); err != nil || found {
 		t.Fatal("public DNS became claimable without a ready publisher and exposed port", found, err)
 	}
-	r.ExpectedRevision = applied.Revision
 	r.Now = now.Add(2 * time.Second)
-	r.Configuration.PublisherGroups["production"] = ProjectPublisherGroup{}
-	applied, err = d.ApplyProjectConfiguration(ctx, r)
+	public = false
+	apply.ExpectedRevision, apply.Now = applied.MutationRevision, r.Now
+	applied, err = d.ApplyEnvironment(ctx, apply)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,10 +59,8 @@ func TestIntegrationServiceEndpointDNSRevisions(t *testing.T) {
 	if _, found, err := d.ClaimServiceEndpointDNSWork(ctx, "duplicate", r.Now, time.Minute); err != nil || found {
 		t.Fatal("completed DNS work remained queued", found, err)
 	}
-	r.ExpectedRevision = applied.Revision
 	r.Now = now.Add(3 * time.Second)
-	delete(r.Configuration.Services, "api")
-	if _, err = d.ApplyProjectConfiguration(ctx, r); err != nil {
+	if err = d.RetireEnvironment(ctx, RetireEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, EnvironmentID: applied.ID, ExpectedRevision: applied.MutationRevision, Now: r.Now}); err != nil {
 		t.Fatal(err)
 	}
 	removed := claim(false, PublicURLDNSRemoving)

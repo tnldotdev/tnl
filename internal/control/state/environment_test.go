@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 )
 
@@ -93,7 +94,7 @@ func TestEnvironmentTargetsRequireCompleteProtocolApproval(t *testing.T) {
 		"local registration":         {"api": {Address: "app"}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := normalizeEnvironmentTargets(targets, d1); !errors.Is(err, ErrProjectConfigurationInvalid) {
+			if _, err := normalizeEnvironmentTargets(targets, d1); !errors.Is(err, ErrEnvironmentInvalid) {
 				t.Fatal("invalid remote approval accepted", err)
 			}
 		})
@@ -103,7 +104,7 @@ func TestEnvironmentTargetsRequireCompleteProtocolApproval(t *testing.T) {
 		t.Fatal(bindings, err)
 	}
 	d2 := ServiceDefinition{Services: map[string]ServiceDefinitionService{"api": {Protocol: "postgres"}}}
-	if err := validateEnvironmentBindings(bindings, d2); !errors.Is(err, ErrProjectConfigurationInvalid) {
+	if err := validateEnvironmentBindings(bindings, d2); !errors.Is(err, ErrEnvironmentInvalid) {
 		t.Fatal("retained target approved a different protocol", err)
 	}
 	approved, err := normalizeEnvironmentTargets(EnvironmentTargets{"api": {Address: "internal:5432"}}, d2)
@@ -114,10 +115,11 @@ func TestEnvironmentTargetsRequireCompleteProtocolApproval(t *testing.T) {
 	if bytes.Contains(encoded, []byte("protocol")) {
 		t.Fatal("private protocol pins leaked into target metadata")
 	}
-	if environmentConfigurationHash(d1, bindings) == environmentConfigurationHash(d2, approved) {
+	endpoint := environmentEndpointSettings{DomainID: "domain"}
+	if environmentConfigurationHash(d1, bindings, endpoint) == environmentConfigurationHash(d2, approved, endpoint) {
 		t.Fatal("effective application hash ignored target/protocol changes")
 	}
-	if bytes.Equal(environmentCreationDigest("staging", 1, bindings, "", 0), environmentCreationDigest("staging", 2, bindings, "", 0)) {
+	if bytes.Equal(environmentCreationDigest("staging", 1, bindings, "", 0, endpoint), environmentCreationDigest("staging", 2, bindings, "", 0, endpoint)) {
 		t.Fatal("creation digest ignored original definition")
 	}
 }
@@ -136,6 +138,43 @@ func TestEnvironmentSelectorsAreNotDNSNames(t *testing.T) {
 	for input, expected := range map[error]error{ErrProjectConfigurationStale: ErrEnvironmentStale, ErrProjectConfigurationInvalid: ErrEnvironmentInvalid, ErrServiceDefinitionInvalid: ErrEnvironmentInvalid} {
 		if !errors.Is(environmentOperationError(input), expected) {
 			t.Fatal("wrong operation diagnostic", input)
+		}
+	}
+}
+
+func TestEnvironmentOperationalSettingsAffectPublicationFence(t *testing.T) {
+	definition := ServiceDefinition{Services: map[string]ServiceDefinitionService{"api": {Protocol: "http"}}}
+	base, err := normalizeEnvironmentTargets(EnvironmentTargets{"api": {Address: "api.internal:3000"}}, definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := &EnvironmentServiceHTTP{Access: &config.Access{IP: []string{"192.0.2.0/24"}}, Limits: &config.WorkLimits{Concurrency: new(2)}}
+	configured, err := normalizeEnvironmentTargets(EnvironmentTargets{"api": {Address: "api.internal:3000", HTTP: settings}}, definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publication, err := bindEnvironmentService("http", configured["api"])
+	if err != nil || publication.HTTP.Access.Mode != "restricted" || publication.HTTP.Limits.Concurrency == nil || *publication.HTTP.Limits.Concurrency != 2 {
+		t.Fatal("approved HTTP settings were not part of the publication", err)
+	}
+	endpoint := environmentEndpointSettings{DomainID: "domain"}
+	original := environmentConfigurationHash(definition, base, endpoint)
+	for _, hash := range []string{
+		environmentConfigurationHash(definition, configured, endpoint),
+		environmentConfigurationHash(definition, base, environmentEndpointSettings{DomainID: "another-domain"}),
+		environmentConfigurationHash(definition, base, environmentEndpointSettings{DomainID: "domain", Public: true}),
+	} {
+		if hash == original {
+			t.Fatal("HTTP policy, domain or reachability escaped the freshness fence")
+		}
+	}
+	for _, bad := range []*EnvironmentServiceHTTP{
+		{Access: &config.Access{Mode: "anonymous"}},
+		{Access: &config.Access{IP: []string{}}},
+		{Limits: &config.WorkLimits{Concurrency: new(-1)}},
+	} {
+		if _, err := normalizeEnvironmentTargets(EnvironmentTargets{"api": {Address: "api.internal:3000", HTTP: bad}}, definition); !errors.Is(err, ErrEnvironmentInvalid) {
+			t.Fatal("invalid environment HTTP policy was accepted", err)
 		}
 	}
 }

@@ -20,27 +20,19 @@ func TestIntegrationPublisherDiagnosticsFreshness(t *testing.T) {
 	t.Cleanup(func() { _ = m.Shutdown(t.Context()) })
 	d.Instrument(m)
 	ctx = observability.WithMetrics(ctx, m)
-	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"remote": {}}, Services: map[string]ProjectServiceConfiguration{"api": {PublisherGroup: "remote", Target: "localhost:3000"}}}
-	project, err := d.ApplyProjectConfiguration(ctx, r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	enrollment, err := d.IssuePublisherGroupEnrollment(ctx, r.TeamID, r.ProjectKey, "remote", r.ActorID, 1, time.Hour, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	replica := enrollAppliedGroup(t, d, r, enrollment, now)
+	r := retainedEnvironmentProject(t, d, now)
+	project, _ := retainedServiceEnvironment(t, d, r, "remote", map[string]EnvironmentServicePublication{"api": {Protocol: "http", Target: "localhost:3000"}})
+	replica := enrollTestEnvironment(t, d, r, project)
 	const audience = "https://control.example/v1/publisher-runtime"
 	const run = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	observe := func(action string, epoch int64) error {
-		proof, err := publisherproof.Sign(replica.member.PublisherIdentityID, replica.member.KeyID, publisherproof.RuntimeScope(replica.member.GroupID, action, run, epoch, publisherprovenance.Digest(nil)), audience, replica.private, now)
+		proof, err := publisherproof.Sign(replica.member.PublisherIdentityID, replica.member.KeyID, publisherproof.RuntimeScope(replica.member.EnvironmentID, action, run, epoch, publisherprovenance.Digest(nil)), audience, replica.private, now)
 		if err != nil {
 			t.Fatal(err)
 		}
-		result, err := d.PublisherRuntime(ctx, PublisherRuntimeRequest{PublisherIdentityID: replica.member.PublisherIdentityID, ScopeID: replica.member.GroupID, ProcessRunID: run, Action: action, Assertion: proof, Audience: audience, ExpectedEpoch: epoch, Now: now})
-		if err == nil && result.GroupLease != nil {
-			replica.lease = *result.GroupLease
+		result, err := d.PublisherRuntime(ctx, PublisherRuntimeRequest{PublisherIdentityID: replica.member.PublisherIdentityID, ScopeID: replica.member.EnvironmentID, ProcessRunID: run, Action: action, Assertion: proof, Audience: audience, ExpectedEpoch: epoch, Now: now})
+		if err == nil && result.EnvironmentLease != nil {
+			replica.lease = *result.EnvironmentLease
 		}
 		return err
 	}
@@ -50,12 +42,12 @@ func TestIntegrationPublisherDiagnosticsFreshness(t *testing.T) {
 	if err := observe("renew", 0); !errors.Is(err, ErrPublisherRuntimeStale) {
 		t.Fatal("stale runtime was not rejected", err)
 	}
-	if err := d.AcknowledgePublisherGroupConfiguration(ctx, replica.lease.AccessToken, project.Revision, project.ConfigurationHash, true, now); err != nil {
+	if err := d.AcknowledgeEnvironmentPublisher(ctx, replica.lease.AccessToken, environmentPublicationForTest(project), true, now); err != nil {
 		t.Fatal(err)
 	}
-	read := func() PublisherGroupMemberStatus {
+	read := func() EnvironmentPublisherStatus {
 		t.Helper()
-		status, err := d.GetProjectConfiguration(ctx, r.TeamID, r.ProjectKey, r.ActorID)
+		status, err := d.GetEnvironment(ctx, r.TeamID, r.ProjectKey, project.ID, r.ActorID)
 		if err != nil || len(status.Members) != 1 {
 			t.Fatal(status, err)
 		}
@@ -67,20 +59,18 @@ func TestIntegrationPublisherDiagnosticsFreshness(t *testing.T) {
 	}
 	restartedAt := now.Add(time.Second)
 	const replacement = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	proof, err := publisherproof.Sign(replica.member.PublisherIdentityID, replica.member.KeyID, publisherproof.RuntimeScope(replica.member.GroupID, "start", replacement, 1, publisherprovenance.Digest(nil)), audience, replica.private, restartedAt)
+	proof, err := publisherproof.Sign(replica.member.PublisherIdentityID, replica.member.KeyID, publisherproof.RuntimeScope(replica.member.EnvironmentID, "start", replacement, 1, publisherprovenance.Digest(nil)), audience, replica.private, restartedAt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.PublisherRuntime(ctx, PublisherRuntimeRequest{PublisherIdentityID: replica.member.PublisherIdentityID, ScopeID: replica.member.GroupID, ProcessRunID: replacement, Action: "start", Assertion: proof, Audience: audience, ExpectedEpoch: 1, Now: restartedAt}); err != nil {
+	if _, err := d.PublisherRuntime(ctx, PublisherRuntimeRequest{PublisherIdentityID: replica.member.PublisherIdentityID, ScopeID: replica.member.EnvironmentID, ProcessRunID: replacement, Action: "start", Assertion: proof, Audience: audience, ExpectedEpoch: 1, Now: restartedAt}); err != nil {
 		t.Fatal(err)
 	}
 	status = read()
 	if status.Healthy || status.Runtime == nil || !status.Runtime.Active || status.AcknowledgedAt != nil {
 		t.Fatal("replacement runtime inherited its predecessor's healthy acknowledgement", status)
 	}
-	r.ExpectedRevision = project.Revision
-	r.Configuration.PublisherGroups["remote"] = ProjectPublisherGroup{Description: "changed"}
-	if _, err := d.ApplyProjectConfiguration(ctx, r); err != nil {
+	if _, err := d.ApplyEnvironment(ctx, ApplyEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, EnvironmentApplication: EnvironmentApplication{EnvironmentID: project.ID, ExpectedRevision: project.MutationRevision, DefinitionRevision: project.AppliedDefinitionRevision}, Now: now}); err != nil {
 		t.Fatal(err)
 	}
 	status = read()

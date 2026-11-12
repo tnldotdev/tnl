@@ -16,8 +16,8 @@ func TestTypeScriptServiceDiscoveryAndPlacementValidation(t *testing.T) {
 		{"app default", `{services:{web:{}}}`, true},
 		{"removed HTTP publisher pool", `{services:{web:{publisherPool:true}}}`, false},
 		{"removed private publisher pool", `{services:{db:{publisherPool:true,protocol:"tcp",target:{type:"address",address:5432}}}}`, false},
-		{"remote group", `{publisherGroups:{cloud:{description:"database"}},services:{db:{publisherGroup:"cloud",protocol:"postgres",target:{type:"address",address:"db.internal:5432"},access:{team:true}}}}`, true},
-		{"template group bound target", `{publisherGroups:{customer:{template:true}},services:{db:{publisherGroup:"customer",protocol:"postgres",targetBinding:"group"}}}`, true},
+		{"retired remote group", `{publisherGroups:{cloud:{description:"database"}},services:{db:{publisherGroup:"cloud",protocol:"postgres",target:{type:"address",address:"db.internal:5432"},access:{team:true}}}}`, false},
+		{"retired template group bound target", `{publisherGroups:{customer:{template:true}},services:{db:{publisherGroup:"customer",protocol:"postgres",targetBinding:"group"}}}`, false},
 		{"direct group bound target", `{publisherGroups:{customer:{}},services:{db:{publisherGroup:"customer",protocol:"postgres",targetBinding:"group"}}}`, false},
 		{"template mixed target authority", `{publisherGroups:{customer:{template:true}},services:{db:{publisherGroup:"customer",protocol:"postgres",targetBinding:"group",target:{type:"address",address:"db.internal:5432"}}}}`, false},
 		{"no root pool default", `{publisherPool:true,services:{web:{}}}`, false},
@@ -25,13 +25,13 @@ func TestTypeScriptServiceDiscoveryAndPlacementValidation(t *testing.T) {
 		{"no duplicated public URL name", `{services:{web:{name:"site",publicURL:{name:"other",access:"anonymous"}}}}`, false},
 		{"removed directory", `{services:{web:{directory:"apps/web"}}}`, false},
 		{"removed publisher placement", `{publisher:{type:"compose",service:"publisher"},services:{web:{target:{type:"app"}}}}`, false},
-		{"mixed public defaults", `{publicURL:{access:"anonymous"},services:{web:{},db:{protocol:"tcp",target:{type:"address",address:5432}}}}`, true},
-		{"private TLS", `{services:{db:{protocol:"mysql",target:{type:"address",address:"db.internal:3306",tls:{serverName:"db.internal",caFile:"./ca.pem"}}}}}`, true},
-		{"Postgres pass-through", `{services:{db:{protocol:"postgres",target:{type:"address",address:"db.internal:5432"}}}}`, true},
+		{"mixed public defaults", `{publicURL:{access:"anonymous"},services:{web:{},db:{protocol:"tcp"}},environments:{local:{targets:{db:{address:5432}}}}}`, true},
+		{"private TLS", `{services:{db:{protocol:"mysql"}},environments:{local:{targets:{db:{address:"db.internal:3306",tls:{hostname:"db.internal",caFile:"./ca.pem"}}}}}}`, true},
+		{"Postgres pass-through", `{services:{db:{protocol:"postgres"}},environments:{local:{targets:{db:{address:"db.internal:5432"}}}}}`, true},
 		{"bad CA URL", `{services:{db:{protocol:"postgres",target:{type:"address",address:5432},tls:{ca:"http://certs.example.com/ca.pem"}}}}`, false},
-		{"compose", `{services:{web:{target:{type:"compose",project:"shop",file:"compose.yml",service:"web",port:3000}}}}`, true},
-		{"docker", `{services:{cache:{protocol:"tcp",target:{type:"docker",container:"shop-cache",port:6379}}}}`, true},
-		{"explicit private name", `{services:{orders:{protocol:"tcp",name:"database",target:{type:"address",address:5432}}}}`, true},
+		{"compose", `{services:{web:{}},environments:{local:{targets:{web:{discovery:{type:"compose",project:"shop",file:"compose.yml",service:"web",port:3000}}}}}}`, true},
+		{"docker", `{services:{cache:{protocol:"tcp"}},environments:{local:{targets:{cache:{discovery:{type:"docker",container:"shop-cache",port:6379}}}}}}`, true},
+		{"explicit private name", `{services:{orders:{protocol:"tcp"}},environments:{local:{targets:{orders:{name:"database",address:5432}}}}}`, true},
 		{"conflicting private names", `{services:{orders:{protocol:"tcp",target:{type:"address",address:5432}},database:{protocol:"tcp",name:"orders",target:{type:"address",address:3306}}}}`, false},
 		{"service public URL", `{services:{db:{protocol:"tcp",publicURL:{hostname:"db.example"},target:{type:"address",address:5432}}}}`, false},
 		{"inspection", `{inspection:{mode:"summary",retention:"24h",maxBytes:"64MiB"}}`, true},
@@ -136,7 +136,7 @@ func TestResolveFillsComposeTargetDefaultsPerProject(t *testing.T) {
 			t.Fatal(err)
 		}
 		path := filepath.Join(root, "tnl.json")
-		if err := os.WriteFile(path, []byte(`{"version":1,"tnl":{"services":{"db":{"protocol":"tcp","target":{"type":"compose","service":"db","port":5432}}}}}`), 0600); err != nil {
+		if err := os.WriteFile(path, []byte(`{"version":1,"tnl":{"services":{"db":{"protocol":"tcp"}},"environments":{"local":{"targets":{"db":{"discovery":{"type":"compose","service":"db","port":5432}}}}}}}`), 0600); err != nil {
 			t.Fatal(err)
 		}
 		project, err := Resolve(t.Context(), Selection{Path: path}, root, [32]byte{})
@@ -151,7 +151,7 @@ func TestResolveFillsComposeTargetDefaultsPerProject(t *testing.T) {
 			t.Fatalf("Compose target defaults = %+v", target)
 		}
 		names = append(names, *target.Project)
-		declaration := project.Declared.Services["db"].Target
+		declaration := project.Declared.Environments["local"].Targets["db"].Discovery
 		if declaration.Project != nil {
 			t.Fatal("static API shape contains a worktree Compose project")
 		}
@@ -215,17 +215,16 @@ func TestAppServiceRequiresExplicitNameForMultipleApps(t *testing.T) {
 	}
 }
 
-func TestAppServiceExcludesGroupBoundTargets(t *testing.T) {
+func TestAppServiceIgnoresAnotherEnvironmentsTargets(t *testing.T) {
 	root := t.TempDir()
-	p := Project{Root: root, Config: config.TNL{PublisherGroups: map[string]config.PublisherGroup{"customer": {Template: true}}, Services: config.Services{
+	p := Project{Root: root, Config: config.TNL{Services: config.Services{
 		"web": {},
-		"db":  {PublisherGroup: new("customer"), Protocol: new("postgres"), TargetBinding: "group"},
-		"api": {PublisherGroup: new("customer"), TargetBinding: "group"},
-	}}}
+		"db":  {Protocol: new("postgres")},
+	}, Environments: map[string]config.Environment{"local": {Targets: map[string]config.EnvironmentTarget{"web": {}}}, "staging": {Targets: map[string]config.EnvironmentTarget{"web": {Address: new(config.Target("http://web.staging:3000"))}, "db": {Address: new(config.Target("db.staging:5432"))}}}}}}
 	if name, err := p.AppService(root, ""); err != nil || name != "web" {
 		t.Fatal("bound targets confused local app selection", name, err)
 	}
-	for _, name := range []string{"db", "api"} {
+	for _, name := range []string{"db"} {
 		if _, err := p.AppService(root, name); err == nil {
 			t.Fatalf("remote service %s accepted a local app registration", name)
 		}
@@ -259,8 +258,8 @@ func TestResolvePublishNormalizesDiscoveryAndProjectCAPaths(t *testing.T) {
 
 func TestPublicHTTPSUpstreamTLSNameSurvivesConfigurationResolution(t *testing.T) {
 	for _, source := range []string{
-		`{services:{web:{publicURL:{},protocol:"http",target:{type:"address",address:"https://127.0.0.1:3000",tls:{serverName:"web.internal",caFile:"certs/ca.pem"}}}}}`,
-		`{services:{web:{publicURL:{},target:{type:"compose",project:"shop",file:"compose.yml",service:"web",port:3000,tls:{serverName:"web.internal",caFile:"certs/ca.pem"}}}}}`,
+		`{services:{web:{protocol:"http"}},environments:{local:{targets:{web:{publicURL:{},address:"https://127.0.0.1:3000",tls:{hostname:"web.internal",caFile:"certs/ca.pem"}}}}}}`,
+		`{services:{web:{}},environments:{local:{targets:{web:{publicURL:{},discovery:{type:"compose",project:"shop",file:"compose.yml",service:"web",port:3000},tls:{hostname:"web.internal",caFile:"certs/ca.pem"}}}}}}`,
 	} {
 		root := t.TempDir()
 		file := filepath.Join(root, "tnl.config.ts")
@@ -272,6 +271,7 @@ func TestPublicHTTPSUpstreamTLSNameSurvivesConfigurationResolution(t *testing.T)
 			t.Fatal(err)
 		}
 		project := Project{Root: root, Config: value}
+		project.Config.Services = config.LocalServices(value)
 		effective, err := project.EffectiveService("web")
 		if err != nil {
 			t.Fatal(err)

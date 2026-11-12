@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
@@ -51,6 +52,23 @@ func TestStatusSnapshotIncludesDirectAndNamedPublicationCursor(t *testing.T) {
 	events, err := publisherapp.EventsAfterFrom(t.Context(), state, projectRoot, snapshot.Cursor)
 	if err != nil || len(events) != 0 {
 		t.Fatalf("status cursor is not native exclusive cursor: %v", err)
+	}
+}
+
+func TestStatusEnvironmentProjectionOmitsTargetsAndChecksPublisherScope(t *testing.T) {
+	environment := controlv1.Environment{Id: "environment-id", Name: "staging", TeamId: "team", ProjectKey: "project", AppliedDefinitionRevision: 7, MutationRevision: 11, Targets: controlv1.EnvironmentTargets{"database": {Address: new("private-database:5432"), Tls: &controlv1.EnvironmentTargetTLS{CaPem: new("private-target-approval")}}}, Services: []controlv1.EnvironmentService{{Service: "database", ServiceId: "service-id", Protocol: "postgres"}}}
+	publisher := controlv1.EnvironmentPublisherStatus{PublisherIdentityId: "publisher-id", EnvironmentId: environment.Id, ProjectKey: environment.ProjectKey, TeamId: environment.TeamId, ObservedRevision: 11, Healthy: true}
+	summary, err := summarizeEnvironmentStatus(environment, []controlv1.EnvironmentPublisherStatus{publisher})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(summary)
+	if err != nil || strings.Contains(string(data), "private-database") || strings.Contains(string(data), "private-target-approval") || strings.Contains(string(data), "targets") || summary.MutationRevision != 11 || summary.DefinitionRevision != 7 || summary.Publishers[0].ObservedRevision != 11 {
+		t.Fatalf("unsafe or incomplete environment status: %s, %v", data, err)
+	}
+	publisher.EnvironmentId = "another-environment"
+	if _, err := summarizeEnvironmentStatus(environment, []controlv1.EnvironmentPublisherStatus{publisher}); err == nil {
+		t.Fatal("status included another environment's publisher")
 	}
 }
 

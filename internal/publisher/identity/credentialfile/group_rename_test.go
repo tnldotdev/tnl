@@ -13,25 +13,27 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-type groupVerifierFunc func(context.Context, controlv1.PublisherGroupMember, ed25519.PrivateKey) (controlv1.PublisherGroupVerification, error)
+type groupVerifierFunc func(context.Context, controlv1.EnvironmentPublisher, ed25519.PrivateKey) (controlv1.EnvironmentPublisher, error)
 
-func (f groupVerifierFunc) Verify(ctx context.Context, m controlv1.PublisherGroupMember, k ed25519.PrivateKey) (controlv1.PublisherGroupVerification, error) {
+func (f groupVerifierFunc) Verify(ctx context.Context, m controlv1.EnvironmentPublisher, k ed25519.PrivateKey) (controlv1.EnvironmentPublisher, error) {
 	return f(ctx, m, k)
 }
 
 func TestGroupIdentityRenameRequiresAuthorityAndKeepsDurableIdentity(t *testing.T) {
 	old := groupFixture(t)
-	key, _ := old.Validate(old.ControlURL, old.Member.ProjectKey, old.Member.GroupName, old.Instance)
+	key, _ := old.Validate(old.ControlURL, old.Member.ProjectKey, old.Member.EnvironmentId, old.Instance)
 	current := old.Member
-	current.GroupName = "live"
-	verify := groupVerifierFunc(func(_ context.Context, m controlv1.PublisherGroupMember, k ed25519.PrivateKey) (controlv1.PublisherGroupVerification, error) {
+	// display names no longer enter credentials; verify the immutable environment
+	// after each runtime database replacement instead of trusting a saved label.
+	verify := groupVerifierFunc(func(_ context.Context, m controlv1.EnvironmentPublisher, k ed25519.PrivateKey) (controlv1.EnvironmentPublisher, error) {
 		if !SameGroupIdentity(m, current) || !bytes.Equal(key, k) {
-			return controlv1.PublisherGroupVerification{}, ErrInvalid
+			return controlv1.EnvironmentPublisher{}, ErrInvalid
 		}
-		return controlv1.PublisherGroupVerification{Member: current, GroupNames: []string{"production", "live"}}, nil
+		return current, nil
 	})
 	durable := filepath.Join(t.TempDir(), "identity")
-	for iteration, selector := range []string{"production", "live", "production"} {
+	for iteration := range 3 {
+		selector := current.EnvironmentId
 		state, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "sqlite"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
 		if err != nil {
 			t.Fatal(err)
@@ -49,7 +51,7 @@ func TestGroupIdentityRenameRequiresAuthorityAndKeepsDurableIdentity(t *testing.
 			if err := RetainGroup(t.Context(), profile, old); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := ImportGroup(t.Context(), profile, old, old.ControlURL, old.Member.ProjectKey, "production", old.Instance); err != nil {
+			if _, err := ImportGroup(t.Context(), profile, old, old.ControlURL, old.Member.ProjectKey, selector, old.Instance); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -63,8 +65,8 @@ func TestGroupIdentityRenameRequiresAuthorityAndKeepsDurableIdentity(t *testing.
 		if _, err := ImportGroup(t.Context(), profile, value, old.ControlURL, old.Member.ProjectKey, selector, old.Instance); err != nil {
 			t.Fatal(err)
 		}
-		saved, found, err := profile.SelectedPublisherIdentity(t.Context(), "project", GroupSelection(old.Member.ProjectKey, current.GroupId, old.Instance))
-		var member controlv1.PublisherGroupMember
+		saved, found, err := profile.SelectedPublisherIdentity(t.Context(), "project", GroupSelection(old.Member.ProjectKey, current.EnvironmentId, old.Instance))
+		var member controlv1.EnvironmentPublisher
 		if err != nil || !found || !bytes.Equal(saved.SigningKey, key) || json.Unmarshal(saved.PublicDocument, &member) != nil || member != current {
 			t.Fatal("document and sealed key context were not updated together", err)
 		}

@@ -213,16 +213,21 @@ type appPreparation struct {
 }
 
 type appRuntime struct {
-	manager              *publisherapp.Manager
-	workers              *publisherapp.Workers
-	capabilities         *publisherprotocol.Capabilities
-	project              clientproject.Project
-	state                *clientstate.Database
-	TargetResolver       target.TargetResolver
-	ApplicationAuthority invocation.ApplicationAuthority
-	mu                   sync.Mutex
-	preparing            map[string]*appPreparationGate
-	prepared             map[string]appPreparation
+	manager                *publisherapp.Manager
+	workers                *publisherapp.Workers
+	capabilities           *publisherprotocol.Capabilities
+	project                clientproject.Project
+	state                  *clientstate.Database
+	publications           *clientstate.ApplicationPublications
+	cleanupDeadline        time.Time
+	shuttingDown           bool
+	shutdownPreparationErr error
+	applicationChallenges  map[string]applicationChallenge
+	TargetResolver         target.TargetResolver
+	ApplicationAuthority   invocation.ApplicationAuthority
+	mu                     sync.Mutex
+	preparing              map[string]*appPreparationGate
+	prepared               map[string]appPreparation
 	// visitor and admission integration is attached before worker fencing wraps
 	// callbacks. this applies equally to SDK, named CLI and invocation workers.
 	AttachPublication func(context.Context, publisherapp.Service, *publisher.Config) error
@@ -260,7 +265,7 @@ func (a *appRuntime) beginPreparation(ctx context.Context, name string) (func(),
 		return func() { <-gate.token; releaseUser() }, nil
 	case <-ctx.Done():
 		releaseUser()
-		return nil, ctx.Err()
+		return nil, context.Cause(ctx)
 	}
 }
 
@@ -298,6 +303,10 @@ func Serve(ctx context.Context, options Options) (result error) {
 	}
 	defer state.Close()
 	a := &appRuntime{project: project, state: state, capabilities: capabilities, prepared: map[string]appPreparation{}, TargetResolver: options.TargetResolver, AttachPublication: options.AttachPublication, ApplicationAuthority: options.ApplicationAuthority}
+	if _, err := a.applicationState(); err != nil {
+		return err
+	}
+	defer a.publications.Close()
 	a.workers = &publisherapp.Workers{Database: state, Configure: a.workerConfiguration, AutomaticReadiness: true}
 	a.manager, err = publisherapp.New(observability.Independent(ctx), project.Root, state, publisherapp.ConfiguredServices(project), a.workers.Run)
 	if err != nil {
@@ -307,20 +316,63 @@ func Serve(ctx context.Context, options Options) (result error) {
 	a.manager.Alive = func(pid int) bool { return syscall.Kill(pid, 0) == nil }
 	defer func() {
 		_, finish := observability.ClientOperation(observability.Independent(context.WithoutCancel(ctx)), "native.app.shutdown")
+		drain, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		a.mu.Lock()
+		a.cleanupDeadline, _ = drain.Deadline()
+		a.mu.Unlock()
+		// closing the native owner is an explicit end, including obligations
+		// created before a registration or its acknowledgment existed.
+		entries, intentErr := a.publications.Pending(drain)
+		for _, entry := range entries {
+			intentErr = errors.Join(intentErr, entry.RequestCleanup(drain))
+		}
 		closeErr := a.manager.CloseError()
-		result = errors.Join(result, closeErr)
-		finish(closeErr)
+		_, cleanupErr := a.retryApplicationCleanup(drain)
+		a.mu.Lock()
+		preparationErr := a.shutdownPreparationErr
+		a.mu.Unlock()
+		shutdownErr := errors.Join(intentErr, closeErr, cleanupErr, preparationErr)
+		result = errors.Join(result, shutdownErr)
+		finish(shutdownErr)
 	}()
 	// unregister joins the publication after draining its visitor streams.
-	requestBase := observability.Independent(ctx)
-	server := &http.Server{Handler: a.handler(), BaseContext: func(net.Listener) context.Context { return requestBase }, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 80 * time.Second, IdleTimeout: 10 * time.Second, MaxHeaderBytes: publisherprotocol.MaxBytes}
+	requestBase, cancelRequests := context.WithCancel(observability.Independent(ctx))
+	var requests sync.WaitGroup
+	var requestMu sync.Mutex
+	stopping := false
+	handler := a.handler()
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestMu.Lock()
+		if stopping {
+			requestMu.Unlock()
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		requests.Add(1)
+		requestMu.Unlock()
+		defer requests.Done()
+		handler.ServeHTTP(w, r)
+	}), BaseContext: func(net.Listener) context.Context { return requestBase }, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 80 * time.Second, IdleTimeout: 10 * time.Second, MaxHeaderBytes: publisherprotocol.MaxBytes}
 	done := make(chan error, 1)
-	go func() { done <- server.Serve(listener) }()
+	go func() { defer close(done); done <- server.Serve(listener) }()
 	defer func() {
+		requestMu.Lock()
+		stopping = true
+		requestMu.Unlock()
+		a.mu.Lock()
+		a.shuttingDown = true
+		a.mu.Unlock()
+		// stop every preparation before joining requests, then close publications.
+		// Shutdown alone neither cancels handlers nor proves they have returned.
+		cancelRequests()
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = server.Shutdown(shutdown)
-		_ = server.Close()
+		shutdownErr := server.Shutdown(shutdown)
+		closeErr := server.Close()
+		requests.Wait()
+		<-done
+		result = errors.Join(result, shutdownErr, closeErr)
 	}()
 	if err := publisherprotocol.WriteEndpoint(path, capabilities.Owner()); err != nil {
 		return err
@@ -340,7 +392,10 @@ func Serve(ctx context.Context, options Options) (result error) {
 			}
 			return err
 		case <-ticker.C:
-			if a.manager.Sweep(a.manager.Alive) {
+			attempt, cancel := context.WithTimeout(ctx, 10*time.Second)
+			pending, _ := a.retryApplicationCleanup(attempt)
+			cancel()
+			if a.manager.Sweep(a.manager.Alive) && !pending {
 				return nil
 			}
 			a.mu.Lock()
@@ -355,12 +410,12 @@ func Serve(ctx context.Context, options Options) (result error) {
 }
 
 func (a *appRuntime) handler() http.Handler {
-	return (&localapi.Server{Capabilities: a.capabilities, Manager: a.manager, Database: a.state, Project: a.project.Root, Prepare: a.prepare, RegisterContext: a.register, Acquire: a.acquire, Invocation: a.invocation, PublishApplication: a.publishApplication, Check: a.workers.Check, ConfigurationDigest: func() (string, error) {
+	return (&localapi.Server{Capabilities: a.capabilities, Manager: a.manager, Database: a.state, Project: a.project.Root, Prepare: a.prepare, RegisterContext: a.register, Acquire: a.acquire, Invocation: a.invocation, PublishApplication: a.publishApplication, ChallengeApplication: a.challengeApplication, UnregisterApplication: a.unregisterApplication, RenewApplication: a.renewApplication, ReleaseApplication: a.releaseApplication, Check: a.workers.Check, ConfigurationDigest: func() (string, error) {
 		_, digest, err := a.project.Snapshot()
 		return digest, err
 	}, AppService: func(name string) bool {
 		service, found := a.project.Config.Services[name]
-		return found && config.TargetType(service) == "app"
+		return found && a.project.HasLocalService(name) && config.TargetType(service) == "app"
 	}}).Handler()
 }
 

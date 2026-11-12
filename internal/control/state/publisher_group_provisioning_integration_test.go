@@ -1,71 +1,103 @@
 package state
 
 import (
-	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"encoding/json"
+	"crypto/sha256"
 	"errors"
+	"fmt"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/internal/security/machineproof"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
 
-func groupProvisioningFixture(t *testing.T) (machineFixture, AppliedProjectConfiguration) {
-	t.Helper()
-	f := newMachineFixture(t, "signing_key")
-	current, err := f.d.GetProjectConfiguration(t.Context(), f.r.TeamID, f.r.ProjectKey, f.r.ActorID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.r.ExpectedRevision = current.Revision
-	f.r.Configuration = current.Configuration
-	service := f.r.Configuration.Services["api"]
-	service.Access = &ProjectServiceAccess{Team: true}
-	f.r.Configuration.Services["api"] = service
-	f.r.Configuration.PublisherGroups["bound"] = ProjectPublisherGroup{Template: true}
-	f.r.Configuration.Services["boundapi"] = ProjectServiceConfiguration{PublisherGroup: "bound", TargetBinding: "group", Access: &ProjectServiceAccess{Team: true}}
-	current, err = f.d.ApplyProjectConfiguration(t.Context(), f.r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	g := f.grant
-	g.Templates = []string{"bound"}
-	f.grant, err = f.d.CreateProvisioningGrant(t.Context(), g, f.r.ActorID, f.now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return f, current
+// this fixture deliberately uses the canonical environment operations, not the
+// retired project/template fixture shared by older machine identity tests.
+type provisioningEnvironmentFixture struct {
+	*environmentPublisherGrantFixture
+	machine    MachineIdentity
+	grant      ProvisioningGrant
+	key        ed25519.PrivateKey
+	collection Collection
 }
 
-func provisioningToken(t *testing.T, f machineFixture, operation ProvisioningOperation) ProvisioningSession {
+func newProvisioningEnvironmentFixture(t *testing.T) provisioningEnvironmentFixture {
 	t.Helper()
-	session, err := f.d.ExchangeProvisioning(t.Context(), f.machine.ID, f.grant.ID, operation, f.provisioningProof(t, operation), machineTestAudience, f.now)
+	base := newEnvironmentPublisherGrantFixture(t)
+	collection, err := base.d.CreateCollection(t.Context(), CreateCollectionRequest{TeamID: base.r.TeamID, ProjectKey: base.r.ProjectKey, ActorID: base.r.ActorID, Name: "customers", DefaultDefinitionRevision: base.environment.AppliedDefinitionRevision, Now: base.now})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return session
+	public, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	machine, err := base.d.RegisterMachineIdentity(t.Context(), RegisterMachineRequest{TeamID: base.r.TeamID, ActorID: base.r.ActorID, Name: "onboarding", ProofKind: "signing_key", KeyID: "first", PublicKey: public}, base.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := base.d.CreateProvisioningGrant(t.Context(), ProvisioningGrant{MachineID: machine.ID, TeamID: base.r.TeamID, ProjectKey: base.r.ProjectKey, Scope: EnvironmentPermissionScope{CollectionID: collection.ID, IncludeFutureEnvironments: new(true)}, Services: []string{"api"}, Operations: []ProvisioningOperation{ProvisioningCreate, ProvisioningRead, ProvisioningUpdate, ProvisioningEnroll, ProvisioningRevokeMember, ProvisioningRetire}, MaxEnrollmentMembers: 2, MaxEnrollmentSeconds: 600, EnrollmentBudget: 3, ExpiresAt: base.now.Add(time.Hour)}, base.r.ActorID, base.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return provisioningEnvironmentFixture{environmentPublisherGrantFixture: base, machine: machine, grant: grant, key: key, collection: collection}
 }
 
-func provisionedGroupRequest(f machineFixture, current AppliedProjectConfiguration, token string) CreateBoundPublisherGroupRequest {
-	return CreateBoundPublisherGroupRequest{TeamID: f.r.TeamID, ProjectKey: f.r.ProjectKey, Caller: ProvisioningGroupCaller(token), ExpectedRevision: current.Revision, Now: f.now, Creation: PublisherGroupCreation{Template: "bound", IdempotencyKey: "customer/42", Bindings: PublisherGroupBindings{"boundapi": {Target: "192.0.2.42:3000"}}}}
+func (f provisioningEnvironmentFixture) authority(t *testing.T, operation ProvisioningOperation) (EnvironmentPublisherManager, ProvisioningSession) {
+	t.Helper()
+	const audience = "https://control.example/v1/provisioning-sessions/exchange"
+	proof, err := publisherproof.Sign(f.machine.ID, "first", machineproof.Provisioning(f.grant.ID, string(operation)), audience, f.key, f.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := f.d.ExchangeProvisioning(t.Context(), f.machine.ID, f.grant.ID, operation, MachineProof{Assertion: proof}, audience, f.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, err := f.d.AuthenticateEnvironmentPublisherManager(t.Context(), credentials.AccessToken(session.Credential))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return manager, session
+}
+
+func (f provisioningEnvironmentFixture) request(t *testing.T) CreateEnvironmentRequest {
+	t.Helper()
+	manager, _ := f.authority(t, ProvisioningCreate)
+	return CreateEnvironmentRequest{Manager: manager, TeamID: f.r.TeamID, ProjectKey: f.r.ProjectKey, SourceFingerprint: f.r.SourceFingerprint, Name: "customer-42", IdempotencyKey: "customer/42", CollectionID: f.collection.ID, ExpectedCollectionRevision: f.collection.MutationRevision, Targets: EnvironmentTargets{"api": {Address: "192.0.2.42:3000"}}, Now: f.now}
+}
+
+func (f provisioningEnvironmentFixture) create(t *testing.T) Environment {
+	t.Helper()
+	environment, err := f.d.CreateEnvironment(t.Context(), f.request(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return environment
+}
+
+func (f provisioningEnvironmentFixture) enrollment(t *testing.T, environment Environment, key string, members int) IssueEnvironmentPublisherEnrollmentRequest {
+	t.Helper()
+	manager, _ := f.authority(t, ProvisioningEnroll)
+	return IssueEnvironmentPublisherEnrollmentRequest{EnvironmentPublisherSelection: EnvironmentPublisherSelection{TeamID: f.r.TeamID, ProjectKey: f.r.ProjectKey, EnvironmentID: environment.ID, Manager: manager}, ExpectedRevision: environment.MutationRevision, ExpectedConfigurationHash: environment.ConfigurationHash, Services: []string{"api"}, MaxMembers: members, Lifetime: time.Minute, IdempotencyKey: key, Now: f.now}
 }
 
 func TestIntegrationPublisherGroupProvisioningScopeAndProvenance(t *testing.T) {
-	f, current := groupProvisioningFixture(t)
+	f := newProvisioningEnvironmentFixture(t)
 	ctx := t.Context()
-	create := provisioningToken(t, f, ProvisioningCreate)
-	request := provisionedGroupRequest(f, current, create.Credential)
-	resource, err := f.d.CreateBoundPublisherGroup(ctx, request)
+	request := f.request(t)
+	resource, err := f.d.CreateEnvironment(ctx, request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replayed, err := f.d.CreateBoundPublisherGroup(ctx, request)
-	if err != nil || replayed.ID != resource.ID || replayed.Revision != resource.Revision {
+	replayed, err := f.d.CreateEnvironment(ctx, request)
+	if err != nil || replayed.ID != resource.ID || replayed.MutationRevision != resource.MutationRevision {
 		t.Fatal("create replay changed identity or revision", err)
 	}
 	service := resource.Services[0].ServiceID
@@ -77,35 +109,28 @@ func TestIntegrationPublisherGroupProvisioningScopeAndProvenance(t *testing.T) {
 	if human != nil || machine != f.machine.ID || grant != f.grant.ID {
 		t.Fatal("service creator borrowed a human identity")
 	}
-	var owners, teams int
-	if err = f.d.pool.QueryRow(ctx, `SELECT count(*) FILTER(WHERE kind='identity' OR auto_owner),count(*) FILTER(WHERE kind='team' AND created_by_machine_id=$2 AND provisioning_grant_id=$3) FROM control.visitor_grants WHERE service_id=$1`, service, f.machine.ID, f.grant.ID).Scan(&owners, &teams); err != nil {
-		t.Fatal(err)
+	var visitors int
+	if err = f.d.pool.QueryRow(ctx, `SELECT count(*) FROM control.visitor_grants WHERE service_id=$1`, service).Scan(&visitors); err != nil || visitors != 0 {
+		t.Fatal("definition or provisioning minted visitor access", visitors, err)
 	}
-	if owners != 0 || teams != 1 {
-		t.Fatal("provisioning created personal access or lost explicit template policy", owners, teams)
+	read, session := f.authority(t, ProvisioningRead)
+	environments, err := f.d.InspectEnvironments(ctx, f.r.TeamID, f.r.ProjectKey, read)
+	if err != nil || len(environments) != 1 || environments[0].ID != resource.ID {
+		t.Fatal("collection-filtered list", err, environments)
 	}
-	read := provisioningToken(t, f, ProvisioningRead)
-	groups, err := f.d.ListManagedPublisherGroups(ctx, f.r.TeamID, f.r.ProjectKey, ProvisioningGroupCaller(read.Credential), f.now)
-	if err != nil || len(groups) != 1 || groups[0].ID != resource.ID {
-		t.Fatal("template-filtered list", err, len(groups))
+	if _, err = f.d.InspectEnvironment(ctx, f.r.TeamID, f.r.ProjectKey, f.environment.ID, read); !errors.Is(err, ErrMachineDenied) {
+		t.Fatal("other collection read", err)
 	}
-	if _, err = f.d.GetManagedPublisherGroupForCaller(ctx, f.r.TeamID, f.r.ProjectKey, f.group, ProvisioningGroupCaller(read.Credential), f.now); !errors.Is(err, ErrMachineDenied) {
-		t.Fatal("other template read", err)
+	if _, err = f.d.InspectEnvironment(ctx, f.r.TeamID, "other", resource.ID, read); err == nil {
+		t.Fatal("cross-project read accepted")
 	}
-	if _, err = f.d.GetManagedPublisherGroupForCaller(ctx, f.r.TeamID, "other", resource.ID, ProvisioningGroupCaller(read.Credential), f.now); !errors.Is(err, ErrMachineDenied) {
-		t.Fatal("cross-project read", err)
-	}
-	if _, err = f.d.GetProjectConfiguration(ctx, f.r.TeamID, f.r.ProjectKey, read.Credential); err == nil {
-		t.Fatal("provisioning became full configuration access")
-	}
-	if _, err = f.d.AuthenticateAccessToken(ctx, credentials.AccessToken(read.Credential), f.now); err == nil {
+	if _, err = f.d.AuthenticateAccessToken(ctx, credentials.AccessToken(session.Credential), f.now); err == nil {
 		t.Fatal("provisioning became human authentication")
 	}
-	if _, err = f.d.ListWorkloadServices(ctx, read.Credential, f.now); err == nil {
+	if _, err = f.d.ListWorkloadServices(ctx, session.Credential, f.now); err == nil {
 		t.Fatal("provisioning became visitor access")
 	}
-	enroll := provisioningToken(t, f, ProvisioningEnroll)
-	e, err := f.d.IssuePublisherGroupEnrollmentForCaller(ctx, f.r.TeamID, f.r.ProjectKey, resource.ID, ProvisioningGroupCaller(enroll.Credential), 1, time.Minute, f.now)
+	e, err := f.d.IssueEnvironmentPublisherEnrollment(ctx, f.enrollment(t, resource, "first", 1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +138,7 @@ func TestIntegrationPublisherGroupProvisioningScopeAndProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	member, err := f.d.RedeemPublisherGroupEnrollment(ctx, e.Key, public, f.now)
+	member, err := f.d.RedeemEnvironmentPublisherEnrollment(ctx, e.Key, public, f.now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,33 +149,30 @@ func TestIntegrationPublisherGroupProvisioningScopeAndProvenance(t *testing.T) {
 		t.Fatal("enrolled identity lost actual issuer")
 	}
 	var exact int
-	if err = f.d.pool.QueryRow(ctx, `SELECT count(*) FROM control.publisher_grants WHERE publisher_identity_id=$1 AND service_id=$2 AND created_by_identity_id IS NULL AND created_by_machine_id=$3 AND provisioning_grant_id=$4 AND revoked_at IS NULL`, member.PublisherIdentityID, service, f.machine.ID, f.grant.ID).Scan(&exact); err != nil {
-		t.Fatal(err)
+	if err = f.d.pool.QueryRow(ctx, `SELECT count(*) FROM control.publisher_grants WHERE publisher_identity_id=$1 AND service_id=$2 AND created_by_identity_id IS NULL AND created_by_machine_id=$3 AND provisioning_grant_id=$4 AND revoked_at IS NULL`, member.PublisherIdentityID, service, f.machine.ID, f.grant.ID).Scan(&exact); err != nil || exact != 1 {
+		t.Fatal("enrollment lost exact scope or provenance", exact, err)
 	}
-	if exact != 1 {
-		t.Fatal("enrollment lost exact service scope or provenance", exact)
+	update, _ := f.authority(t, ProvisioningUpdate)
+	wrong := ApplyEnvironmentRequest{Manager: update, TeamID: f.r.TeamID, ProjectKey: f.r.ProjectKey, EnvironmentApplication: EnvironmentApplication{EnvironmentID: f.environment.ID, ExpectedRevision: f.environment.MutationRevision, DefinitionRevision: f.environment.AppliedDefinitionRevision}, Now: f.now}
+	if _, err = f.d.ApplyEnvironment(ctx, wrong); !errors.Is(err, ErrMachineDenied) {
+		t.Fatal("updated outside collection", err)
 	}
-	update := provisioningToken(t, f, ProvisioningUpdate)
-	wrong := GroupBindingMutationRequest{TeamID: f.r.TeamID, ProjectKey: f.r.ProjectKey, Group: f.group, Caller: ProvisioningGroupCaller(update.Credential), ExpectedRevision: resource.Revision, Now: f.now}
-	if _, err = f.d.UpdateBoundPublisherGroup(ctx, wrong); !errors.Is(err, ErrMachineDenied) {
-		t.Fatal("updated another template", err)
-	}
-	wrong.Group, wrong.Caller = resource.ID, ProvisioningGroupCaller(read.Credential)
-	if _, err = f.d.UpdateBoundPublisherGroup(ctx, wrong); !errors.Is(err, ErrMachineDenied) {
+	wrong.EnvironmentID, wrong.ExpectedRevision, wrong.Manager = resource.ID, resource.MutationRevision, read
+	if _, err = f.d.ApplyEnvironment(ctx, wrong); !errors.Is(err, ErrMachineDenied) {
 		t.Fatal("read token authorized update", err)
 	}
-	updated, err := f.d.UpdateBoundPublisherGroup(ctx, GroupBindingMutationRequest{TeamID: f.r.TeamID, ProjectKey: f.r.ProjectKey, Group: resource.ID, Caller: ProvisioningGroupCaller(update.Credential), ExpectedRevision: resource.Revision, Bindings: PublisherGroupBindings{"boundapi": {Target: "192.0.2.42:3001"}}, Now: f.now})
+	wrong.Manager, wrong.Targets = update, EnvironmentTargets{"api": {Address: "192.0.2.42:3001"}}
+	updated, err := f.d.ApplyEnvironment(ctx, wrong)
 	if err != nil || updated.Services[0].ServiceID != service {
 		t.Fatal("update replaced service", err)
 	}
-	after, err := f.d.GetProjectConfiguration(ctx, f.r.TeamID, f.r.ProjectKey, f.r.ActorID)
-	if err != nil {
-		t.Fatal(err)
+	collection, err := f.d.GetCollection(ctx, f.r.TeamID, f.r.ProjectKey, f.collection.ID, f.r.ActorID)
+	if err != nil || !reflect.DeepEqual(collection, f.collection) {
+		t.Fatal("machine edited saved collection/default", err)
 	}
-	beforeJSON, _ := json.Marshal(current.Configuration)
-	afterJSON, _ := json.Marshal(after.Configuration)
-	if !bytes.Equal(beforeJSON, afterJSON) || current.ConfigurationHash != after.ConfigurationHash {
-		t.Fatal("machine edited saved declaration")
+	definition, err := loadServiceDefinitionForProvisioningTest(t, f, resource.AppliedDefinitionRevision)
+	if err != nil || len(definition.Definition.Services) != 1 || definition.Definition.Services["api"].Protocol != "http" {
+		t.Fatal("machine edited immutable definition", err)
 	}
 	page, err := f.d.ListServiceAudit(ctx, f.r.TeamID, f.r.ActorID, ServiceAuditFilter{ServiceID: service, Limit: 256}, f.now)
 	if err != nil {
@@ -170,61 +192,49 @@ func TestIntegrationPublisherGroupProvisioningScopeAndProvenance(t *testing.T) {
 	if !seenJoin || !seenApply {
 		t.Fatal("missing machine management audit")
 	}
-	revoke := provisioningToken(t, f, ProvisioningRevokeMember)
-	if err = f.d.RevokePublisherGroupMemberForCaller(ctx, f.r.TeamID, f.r.ProjectKey, resource.ID, member.PublisherIdentityID, ProvisioningGroupCaller(revoke.Credential), f.now); err != nil {
+	revoke, _ := f.authority(t, ProvisioningRevokeMember)
+	if err = f.d.RevokeEnvironmentPublisher(ctx, EnvironmentPublisherSelection{TeamID: f.r.TeamID, ProjectKey: f.r.ProjectKey, EnvironmentID: resource.ID, Manager: revoke}, member.PublisherIdentityID, f.now); err != nil {
 		t.Fatal(err)
 	}
-	retire := provisioningToken(t, f, ProvisioningRetire)
-	if err = f.d.RetireBoundPublisherGroup(ctx, GroupBindingMutationRequest{TeamID: f.r.TeamID, ProjectKey: f.r.ProjectKey, Group: resource.ID, Caller: ProvisioningGroupCaller(retire.Credential), ExpectedRevision: updated.Revision, Now: f.now}); err != nil {
+	retire, _ := f.authority(t, ProvisioningRetire)
+	if err = f.d.RetireEnvironment(ctx, RetireEnvironmentRequest{Manager: retire, TeamID: f.r.TeamID, ProjectKey: f.r.ProjectKey, EnvironmentID: resource.ID, ExpectedRevision: updated.MutationRevision, Now: f.now}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = f.d.GetManagedPublisherGroupForCaller(ctx, f.r.TeamID, f.r.ProjectKey, resource.ID, ProvisioningGroupCaller(read.Credential), f.now); !errors.Is(err, ErrMachineDenied) {
-		t.Fatal("retired group disclosed", err)
+	if _, err = f.d.InspectEnvironment(ctx, f.r.TeamID, f.r.ProjectKey, resource.ID, read); !errors.Is(err, ErrMachineDenied) {
+		t.Fatal("retired environment disclosed", err)
 	}
 }
 
+func loadServiceDefinitionForProvisioningTest(t *testing.T, f provisioningEnvironmentFixture, revision int64) (ServiceDefinitionRevision, error) {
+	t.Helper()
+	tx, err := f.d.pool.Begin(t.Context())
+	if err != nil {
+		return ServiceDefinitionRevision{}, err
+	}
+	defer rollbackTestTransaction(t, tx)
+	return loadServiceDefinition(t.Context(), tx, f.r.TeamID, f.r.ProjectKey, revision)
+}
+
 func TestIntegrationPublisherGroupProvisioningDoesNotRepairUnrelatedGrants(t *testing.T) {
-	f, current := groupProvisioningFixture(t)
+	f := newProvisioningEnvironmentFixture(t)
 	ctx := t.Context()
-	// make an unrelated existing assignment deliberately absent. a scoped
-	// mutation must not recreate it using the machine's authority.
-	e, err := f.d.IssuePublisherGroupEnrollment(ctx, f.r.TeamID, f.r.ProjectKey, f.group, f.r.ActorID, 1, time.Minute, f.now)
-	if err != nil {
+	member := f.publisher.member
+	if _, err := f.d.pool.Exec(ctx, `DELETE FROM control.publisher_group_service_grants WHERE publisher_identity_id=$1`, member.PublisherIdentityID); err != nil {
 		t.Fatal(err)
 	}
-	public, _, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	member, err := f.d.RedeemPublisherGroupEnrollment(ctx, e.Key, public, f.now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = f.d.pool.Exec(ctx, `DELETE FROM control.publisher_group_service_grants WHERE publisher_identity_id=$1`, member.PublisherIdentityID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = f.d.pool.Exec(ctx, `UPDATE control.publisher_grants SET revoked_at=$2 WHERE publisher_identity_id=$1`, member.PublisherIdentityID, f.now); err != nil {
-		t.Fatal(err)
-	}
-	// explicit team grants are independent too. remove their apply references
-	// without changing the saved declaration to exercise the repair boundary.
-	if _, err = f.d.pool.Exec(ctx, `UPDATE control.applied_project_services SET visitor_grant_id=NULL WHERE group_id=$1`, f.group); err != nil {
+	if _, err := f.d.pool.Exec(ctx, `UPDATE control.publisher_grants SET revoked_at=$2 WHERE publisher_identity_id=$1`, member.PublisherIdentityID, f.now); err != nil {
 		t.Fatal(err)
 	}
 	var beforeGrants, beforeVisitors int
-	if err = f.d.pool.QueryRow(ctx, `SELECT count(*) FROM control.publisher_grants WHERE publisher_identity_id=$1`, member.PublisherIdentityID).Scan(&beforeGrants); err != nil {
+	if err := f.d.pool.QueryRow(ctx, `SELECT count(*) FROM control.publisher_grants WHERE publisher_identity_id=$1`, member.PublisherIdentityID).Scan(&beforeGrants); err != nil {
 		t.Fatal(err)
 	}
-	if err = f.d.pool.QueryRow(ctx, `SELECT count(*) FROM control.visitor_grants WHERE service_id IN(SELECT service_id FROM control.applied_project_services WHERE group_id=$1)`, f.group).Scan(&beforeVisitors); err != nil {
+	if err := f.d.pool.QueryRow(ctx, `SELECT count(*) FROM control.visitor_grants WHERE service_id=$1`, f.environment.Services[0].ServiceID).Scan(&beforeVisitors); err != nil {
 		t.Fatal(err)
 	}
-	token := provisioningToken(t, f, ProvisioningCreate)
-	resource, err := f.d.CreateBoundPublisherGroup(ctx, provisionedGroupRequest(f, current, token.Credential))
-	if err != nil {
-		t.Fatal(err)
-	}
-	update := provisioningToken(t, f, ProvisioningUpdate)
-	_, err = f.d.UpdateBoundPublisherGroup(ctx, GroupBindingMutationRequest{TeamID: f.r.TeamID, ProjectKey: f.r.ProjectKey, Group: resource.ID, Caller: ProvisioningGroupCaller(update.Credential), ExpectedRevision: resource.Revision, Bindings: PublisherGroupBindings{"boundapi": {Target: "192.0.2.42:3001"}}, Now: f.now})
+	resource := f.create(t)
+	update, _ := f.authority(t, ProvisioningUpdate)
+	_, err := f.d.ApplyEnvironment(ctx, ApplyEnvironmentRequest{Manager: update, TeamID: f.r.TeamID, ProjectKey: f.r.ProjectKey, EnvironmentApplication: EnvironmentApplication{EnvironmentID: resource.ID, ExpectedRevision: resource.MutationRevision, DefinitionRevision: resource.AppliedDefinitionRevision, Targets: EnvironmentTargets{"api": {Address: "192.0.2.42:3001"}}}, Now: f.now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +242,7 @@ func TestIntegrationPublisherGroupProvisioningDoesNotRepairUnrelatedGrants(t *te
 	if err = f.d.pool.QueryRow(ctx, `SELECT count(*) FROM control.publisher_grants WHERE publisher_identity_id=$1`, member.PublisherIdentityID).Scan(&grants); err != nil {
 		t.Fatal(err)
 	}
-	if err = f.d.pool.QueryRow(ctx, `SELECT count(*) FROM control.visitor_grants WHERE service_id IN(SELECT service_id FROM control.applied_project_services WHERE group_id=$1)`, f.group).Scan(&visitors); err != nil {
+	if err = f.d.pool.QueryRow(ctx, `SELECT count(*) FROM control.visitor_grants WHERE service_id=$1`, f.environment.Services[0].ServiceID).Scan(&visitors); err != nil {
 		t.Fatal(err)
 	}
 	if err = f.d.pool.QueryRow(ctx, `SELECT count(*) FROM control.publisher_group_service_grants WHERE publisher_identity_id=$1`, member.PublisherIdentityID).Scan(&assignments); err != nil {
@@ -244,15 +254,18 @@ func TestIntegrationPublisherGroupProvisioningDoesNotRepairUnrelatedGrants(t *te
 }
 
 func TestIntegrationPublisherGroupEnrollmentIssuerIsHistoricalProvenance(t *testing.T) {
-	f, current := groupProvisioningFixture(t)
+	f := newProvisioningEnvironmentFixture(t)
 	ctx := t.Context()
-	create := provisioningToken(t, f, ProvisioningCreate)
-	group, err := f.d.CreateBoundPublisherGroup(ctx, provisionedGroupRequest(f, current, create.Credential))
+	environment := f.create(t)
+	e, err := f.d.IssueEnvironmentPublisherEnrollment(ctx, f.enrollment(t, environment, "first", 2))
 	if err != nil {
 		t.Fatal(err)
 	}
-	enroll := provisioningToken(t, f, ProvisioningEnroll)
-	e, err := f.d.IssuePublisherGroupEnrollmentForCaller(ctx, f.r.TeamID, f.r.ProjectKey, group.ID, ProvisioningGroupCaller(enroll.Credential), 1, time.Minute, f.now)
+	public, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, err := f.d.RedeemEnvironmentPublisherEnrollment(ctx, e.Key, public, f.now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,43 +275,39 @@ func TestIntegrationPublisherGroupEnrollmentIssuerIsHistoricalProvenance(t *test
 	if _, err = f.d.pool.Exec(ctx, `UPDATE control.identities SET disabled_at=$2 WHERE id=$1`, f.r.ActorID, f.now); err != nil {
 		t.Fatal(err)
 	}
-	public, key, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	member, err := f.d.RedeemPublisherGroupEnrollment(ctx, e.Key, public, f.now)
-	if err != nil {
-		t.Fatal("issued enrollment borrowed current manager or machine permissions", err)
-	}
 	var machine string
 	var human *string
-	if err = f.d.pool.QueryRow(ctx, `SELECT created_by_identity_id,created_by_machine_id FROM control.publisher_identities WHERE id=$1`, member.PublisherIdentityID).Scan(&human, &machine); err != nil {
-		t.Fatal(err)
+	if err = f.d.pool.QueryRow(ctx, `SELECT created_by_identity_id,created_by_machine_id FROM control.publisher_identities WHERE id=$1`, member.PublisherIdentityID).Scan(&human, &machine); err != nil || human != nil || machine != f.machine.ID {
+		t.Fatal("historical machine issuer changed", err)
 	}
-	if human != nil || machine != f.machine.ID {
-		t.Fatal("historical machine issuer changed")
-	}
-	assertion, err := publisherproof.Sign(member.PublisherIdentityID, member.KeyID, group.ID, machineTestServer+"/v1/publisher-groups/lease", key, f.now)
+	const audience = "https://control.example/v1/environment-publishers/lease"
+	assertion, err := publisherproof.Sign(member.PublisherIdentityID, member.KeyID, environment.ID, audience, key, f.now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, err := f.d.AcquirePublisherGroupLease(ctx, member.PublisherIdentityID, group.ID, assertion, machineTestServer+"/v1/publisher-groups/lease", f.now)
+	lease, err := f.d.AcquireEnvironmentPublisherLease(ctx, member.PublisherIdentityID, environment.ID, assertion, audience, f.now)
 	if err != nil {
-		t.Fatal("native publisher borrowed issuer permissions", err)
+		t.Fatal("installed publisher borrowed issuer permissions", err)
 	}
-	assignments, err := f.d.GetPublisherGroupAssignments(ctx, lease.AccessToken, f.now)
-	if err != nil || len(assignments.Services) != 1 || assignments.Services[0].ServiceID != group.Services[0].ServiceID {
-		t.Fatal("native publisher lost exact group scope", err)
+	assignments, err := f.d.GetEnvironmentPublisherAssignments(ctx, lease.AccessToken, f.now)
+	if err != nil || len(assignments.Services) != 1 || assignments.Services[0].ServiceID != environment.Services[0].ServiceID {
+		t.Fatal("publisher lost exact environment scope", err)
+	}
+	other, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.d.RedeemEnvironmentPublisherEnrollment(ctx, e.Key, other, f.now); !errors.Is(err, ErrEnvironmentPublisher) {
+		t.Fatal("pending enrollment ignored revoked issuer", err)
 	}
 }
 
 func TestIntegrationPublisherGroupProvisioningReauthorizesReplay(t *testing.T) {
-	for _, change := range []string{"grant", "identity", "rotation", "expiry", "operation", "template", "current-template"} {
+	for _, change := range []string{"grant", "identity", "rotation", "expiry", "operation", "collection", "current-services"} {
 		t.Run(change, func(t *testing.T) {
-			f, current := groupProvisioningFixture(t)
-			token := provisioningToken(t, f, ProvisioningCreate)
-			request := provisionedGroupRequest(f, current, token.Credential)
-			if _, err := f.d.CreateBoundPublisherGroup(t.Context(), request); err != nil {
+			f := newProvisioningEnvironmentFixture(t)
+			request := f.request(t)
+			if _, err := f.d.CreateEnvironment(t.Context(), request); err != nil {
 				t.Fatal(err)
 			}
 			var err error
@@ -314,39 +323,34 @@ func TestIntegrationPublisherGroupProvisioningReauthorizesReplay(t *testing.T) {
 				}
 				err = f.d.RotateMachineIdentityKey(t.Context(), f.r.TeamID, f.machine.ID, f.r.ActorID, "replacement", public, f.now)
 			case "expiry":
-				request.Now = token.ExpiresAt
+				digest := sha256.Sum256([]byte(request.Manager.provisioningCredential))
+				_, err = f.d.pool.Exec(t.Context(), `UPDATE control.machine_provisioning_sessions SET created_at=$2,expires_at=$3 WHERE credential_digest=$1`, digest[:], time.Now().Add(-time.Hour), time.Now().Add(-time.Minute))
 			case "operation":
-				read := provisioningToken(t, f, ProvisioningRead)
-				request.Caller = ProvisioningGroupCaller(read.Credential)
-			case "template":
-				request.Creation.Template = "production"
-			case "current-template":
-				_, err = f.d.pool.Exec(t.Context(), `UPDATE control.machine_provisioning_grants SET templates=ARRAY['production'] WHERE id=$1`, f.grant.ID)
+				request.Manager, _ = f.authority(t, ProvisioningRead)
+			case "collection":
+				_, err = f.d.pool.Exec(t.Context(), `UPDATE control.machine_provisioning_grants SET collection_id=NULL,include_future_environments=false,environment_ids=ARRAY[$2] WHERE id=$1`, f.grant.ID, f.environment.ID)
+			case "current-services":
+				_, err = f.d.pool.Exec(t.Context(), `UPDATE control.machine_provisioning_grants SET services=ARRAY['other'] WHERE id=$1`, f.grant.ID)
 			}
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err = f.d.CreateBoundPublisherGroup(t.Context(), request); !errors.Is(err, ErrMachineDenied) {
-				t.Fatal("replay bypassed current authorization", err)
+			if _, err = f.d.CreateEnvironment(t.Context(), request); err == nil {
+				t.Fatal("replay bypassed current authorization")
 			}
 		})
 	}
 }
 
 func TestIntegrationPublisherGroupProvisioningEnrollmentBudget(t *testing.T) {
-	f, current := groupProvisioningFixture(t)
-	create := provisioningToken(t, f, ProvisioningCreate)
-	group, err := f.d.CreateBoundPublisherGroup(t.Context(), provisionedGroupRequest(f, current, create.Credential))
+	f := newProvisioningEnvironmentFixture(t)
+	environment := f.create(t)
+	request := f.enrollment(t, environment, "failure", 2)
+	_, err := f.d.pool.Exec(t.Context(), `CREATE FUNCTION control.reject_test_enrollment() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test enrollment failure'; END $$; CREATE TRIGGER reject_test_enrollment BEFORE INSERT ON control.publisher_group_enrollments FOR EACH ROW EXECUTE FUNCTION control.reject_test_enrollment()`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	enroll := provisioningToken(t, f, ProvisioningEnroll)
-	caller := ProvisioningGroupCaller(enroll.Credential)
-	_, err = f.d.pool.Exec(t.Context(), `CREATE FUNCTION control.reject_test_enrollment() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test enrollment failure'; END $$; CREATE TRIGGER reject_test_enrollment BEFORE INSERT ON control.publisher_group_enrollments FOR EACH ROW EXECUTE FUNCTION control.reject_test_enrollment()`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = f.d.IssuePublisherGroupEnrollmentForCaller(t.Context(), f.r.TeamID, f.r.ProjectKey, group.ID, caller, 2, time.Minute, f.now); err == nil {
+	if _, err = f.d.IssueEnvironmentPublisherEnrollment(t.Context(), request); err == nil {
 		t.Fatal("expected insertion failure")
 	}
 	var used int
@@ -360,10 +364,12 @@ func TestIntegrationPublisherGroupProvisioningEnrollmentBudget(t *testing.T) {
 	var wg sync.WaitGroup
 	start := make(chan struct{})
 	results := make(chan error, workers)
-	for range workers {
+	for i := range workers {
 		wg.Go(func() {
 			<-start
-			_, err := f.d.IssuePublisherGroupEnrollmentForCaller(t.Context(), f.r.TeamID, f.r.ProjectKey, group.ID, caller, 1, time.Minute, f.now)
+			r := request
+			r.IdempotencyKey, r.MaxMembers = fmt.Sprintf("concurrent/%d", i), 1
+			_, err := f.d.IssueEnvironmentPublisherEnrollment(t.Context(), r)
 			results <- err
 		})
 	}
@@ -387,31 +393,27 @@ func TestIntegrationPublisherGroupProvisioningEnrollmentBudget(t *testing.T) {
 }
 
 func TestIntegrationPublisherGroupProvisioningMutationRetainsAuthority(t *testing.T) {
-	f, current := groupProvisioningFixture(t)
-	create := provisioningToken(t, f, ProvisioningCreate)
-	group, err := f.d.CreateBoundPublisherGroup(t.Context(), provisionedGroupRequest(f, current, create.Credential))
-	if err != nil {
-		t.Fatal(err)
-	}
-	update := provisioningToken(t, f, ProvisioningUpdate)
+	f := newProvisioningEnvironmentFixture(t)
+	environment := f.create(t)
+	manager, _ := f.authority(t, ProvisioningUpdate)
 	blocker, err := f.d.pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rollbackTestTransaction(t, blocker)
-	if _, err = blocker.Exec(t.Context(), `SELECT id FROM control.services WHERE id=$1 FOR UPDATE`, group.Services[0].ServiceID); err != nil {
+	if _, err = blocker.Exec(t.Context(), `SELECT id FROM control.services WHERE id=$1 FOR UPDATE`, environment.Services[0].ServiceID); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	workers := newIntegrationWorkers(t, cancel)
 	defer workers.stop()
 	mutated := make(chan error, 1)
-	request := GroupBindingMutationRequest{TeamID: f.r.TeamID, ProjectKey: f.r.ProjectKey, Group: group.ID, Caller: ProvisioningGroupCaller(update.Credential), ExpectedRevision: group.Revision, Bindings: PublisherGroupBindings{"boundapi": {Target: "192.0.2.42:3001"}}, Now: f.now}
-	workers.Go(func() { _, e := f.d.UpdateBoundPublisherGroup(ctx, request); mutated <- e })
-	mutationPID := waitForPostgresBlock(t, ctx, f.d, int32(blocker.Conn().PgConn().PID()), mutated)
+	request := ApplyEnvironmentRequest{Manager: manager, TeamID: f.r.TeamID, ProjectKey: f.r.ProjectKey, EnvironmentApplication: EnvironmentApplication{EnvironmentID: environment.ID, ExpectedRevision: environment.MutationRevision, DefinitionRevision: environment.AppliedDefinitionRevision, Targets: EnvironmentTargets{"api": {Address: "192.0.2.42:3001"}}}, Now: f.now}
+	workers.Go(func() { _, e := f.d.ApplyEnvironment(ctx, request); mutated <- e })
+	pid := waitForPostgresBlock(t, ctx, f.d, int32(blocker.Conn().PgConn().PID()), mutated)
 	revoked := make(chan error, 1)
 	workers.Go(func() { revoked <- f.d.RevokeProvisioningGrant(ctx, f.r.TeamID, f.grant.ID, f.r.ActorID, f.now) })
-	waitForPostgresBlock(t, ctx, f.d, mutationPID, revoked)
+	waitForPostgresBlock(t, ctx, f.d, pid, revoked)
 	if err = blocker.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -422,7 +424,7 @@ func TestIntegrationPublisherGroupProvisioningMutationRetainsAuthority(t *testin
 		t.Fatal(err)
 	}
 	request.ExpectedRevision++
-	if _, err = f.d.UpdateBoundPublisherGroup(ctx, request); !errors.Is(err, ErrMachineDenied) {
-		t.Fatal("revoked no-op update retained authority", err)
+	if _, err = f.d.ApplyEnvironment(ctx, request); err == nil {
+		t.Fatal("revoked no-op update retained authority")
 	}
 }

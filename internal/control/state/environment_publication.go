@@ -33,15 +33,15 @@ func environmentPublication(row controlstatedb.ControlEnvironment) EnvironmentPu
 	return EnvironmentPublication{EnvironmentID: row.ID, MutationRevision: row.MutationRevision, ConfigurationHash: row.ConfigurationHash}
 }
 
-// neither direction alone may classify a group as legacy. readers also reject
-// an inconsistent association within a transaction before deferred FKs run.
+// every remote assignment group has one environment owner. readers reject an
+// incomplete association within a transaction before deferred FKs run.
 func publisherGroupEnvironment(ctx context.Context, q *controlstatedb.Queries, group string) (controlstatedb.ControlEnvironment, bool, error) {
 	ownership, err := q.PublisherGroupEnvironmentOwnership(ctx, group)
 	if err != nil {
 		return controlstatedb.ControlEnvironment{}, false, err
 	}
 	if !ownership.ForwardEnvironmentID.Valid && !ownership.ReverseEnvironmentID.Valid {
-		return controlstatedb.ControlEnvironment{}, false, nil
+		return controlstatedb.ControlEnvironment{}, false, ErrEnvironmentInvalid
 	}
 	if !ownership.ForwardEnvironmentID.Valid || !ownership.ReverseEnvironmentID.Valid || ownership.ForwardEnvironmentID.String != ownership.ReverseEnvironmentID.String {
 		return controlstatedb.ControlEnvironment{}, true, ErrEnvironmentInvalid
@@ -69,10 +69,7 @@ func validateEnvironmentPublication(ctx context.Context, q *controlstatedb.Queri
 		return err
 	}
 	if !mapped {
-		if requested != nil {
-			return ErrEnvironmentStale
-		}
-		return nil
+		return ErrEnvironmentStale
 	}
 	if row.RetiredAt.Valid || requested == nil || !requested.valid() || *requested != environmentPublication(row) {
 		return ErrEnvironmentStale
@@ -119,36 +116,27 @@ func closeEnvironmentServiceRuns(ctx context.Context, tx pgx.Tx, q *controlstate
 	return nil
 }
 
-func (d *Database) publisherGroupConfiguration(ctx context.Context, tx pgx.Tx, m PublisherGroupMember) (ProjectConfiguration, int64, string, *EnvironmentPublication, error) {
+func (d *Database) environmentPublisherConfiguration(ctx context.Context, tx pgx.Tx, m environmentPublisherMember) (map[string]EnvironmentServicePublication, EnvironmentPublication, error) {
 	q := controlstatedb.New(tx)
-	project, err := q.LockAppliedProject(ctx, controlstatedb.LockAppliedProjectParams{TeamID: m.TeamID, ProjectKey: m.ProjectKey})
+	_, err := q.LockAppliedProject(ctx, controlstatedb.LockAppliedProjectParams{TeamID: m.TeamID, ProjectKey: m.ProjectKey})
 	if err != nil {
-		return ProjectConfiguration{}, 0, "", nil, err
+		return nil, EnvironmentPublication{}, err
 	}
-	environment, mapped, err := publisherGroupEnvironment(ctx, q, m.GroupID)
+	environment, mapped, err := publisherGroupEnvironment(ctx, q, m.groupID)
 	if err != nil {
-		return ProjectConfiguration{}, 0, "", nil, err
+		return nil, EnvironmentPublication{}, err
 	}
-	if mapped {
-		row, e := q.LockEnvironment(ctx, controlstatedb.LockEnvironmentParams{TeamID: m.TeamID, ProjectKey: m.ProjectKey, ID: environment.ID})
-		if e != nil {
-			return ProjectConfiguration{}, 0, "", nil, e
-		}
-		if row.RetiredAt.Valid || row.GroupID != m.GroupID {
-			return ProjectConfiguration{}, 0, "", nil, ErrPublisherGroup
-		}
-		_, _, c, e := d.environmentProjection(ctx, tx, row)
-		publication := environmentPublication(row)
-		return c, row.MutationRevision, row.ConfigurationHash, &publication, e
+	if !mapped || environment.ID != m.EnvironmentID || environment.TeamID != m.TeamID || environment.ProjectKey != m.ProjectKey {
+		return nil, EnvironmentPublication{}, ErrEnvironmentInvalid
 	}
-	c, err := d.openAppliedProject(project)
+	row, err := q.LockEnvironment(ctx, controlstatedb.LockEnvironmentParams{TeamID: m.TeamID, ProjectKey: m.ProjectKey, ID: environment.ID})
 	if err != nil {
-		return ProjectConfiguration{}, 0, "", nil, err
+		return nil, EnvironmentPublication{}, err
 	}
-	groups, err := q.ListProjectPublisherGroups(ctx, controlstatedb.ListProjectPublisherGroupsParams{TeamID: m.TeamID, ProjectKey: m.ProjectKey})
-	if err != nil {
-		return ProjectConfiguration{}, 0, "", nil, err
+	if row.RetiredAt.Valid || row.GroupID != m.groupID {
+		return nil, EnvironmentPublication{}, ErrEnvironmentPublisher
 	}
-	c, err = d.expandedPublisherConfiguration(ctx, tx, c, groups)
-	return c, project.Revision, project.ConfigurationHash, nil, err
+	_, _, services, err := d.environmentProjection(ctx, tx, row)
+	publication := environmentPublication(row)
+	return services, publication, err
 }

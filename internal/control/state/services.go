@@ -84,22 +84,29 @@ func checkedServiceRecord(row controlstatedb.ControlService) (ServiceRecord, err
 }
 
 func serviceManager(ctx context.Context, tx pgx.Tx, teamID, actorID string) error {
+	now := time.Now()
 	if _, signed := serviceActor(ctx); signed {
-		return serviceActorManager(ctx, tx, teamID, actorID, time.Now())
+		return serviceActorManager(ctx, tx, teamID, actorID, now)
 	}
+	return controlSessionServiceManagerAt(ctx, tx, teamID, actorID, now)
+}
+
+// callers rechecking authority after a lock wait supply current time, never the
+// original request timestamp or postgres transaction-start time.
+func controlSessionServiceManagerAt(ctx context.Context, tx pgx.Tx, teamID, actorID string, now time.Time) error {
 	var current bool
 	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.teams team
 		JOIN control.team_memberships member ON member.team_id = team.id
 		JOIN control.identities person ON person.id = member.identity_id
 		WHERE team.id = $1 AND person.id = $2 AND team.deleted_at IS NULL AND person.disabled_at IS NULL
-		AND control.active_membership(member.id,CURRENT_TIMESTAMP) AND member.role IN ('owner','admin'))`, teamID, actorID).Scan(&current)
+		AND control.active_membership(member.id,$3) AND member.role IN ('owner','admin'))`, teamID, actorID, now).Scan(&current)
 	if err != nil {
 		return err
 	}
 	if !current {
 		return ErrServiceAccess
 	}
-	if err := requireTeamSession(ctx, controlstatedb.New(tx), teamID, actorID, time.Now()); err != nil {
+	if err := requireTeamSession(ctx, controlstatedb.New(tx), teamID, actorID, now); err != nil {
 		if errors.Is(err, ErrAuthorityAccess) {
 			return errors.Join(ErrServiceAccess, err)
 		}

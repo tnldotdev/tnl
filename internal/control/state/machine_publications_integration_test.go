@@ -35,7 +35,7 @@ func publicationMachine(t *testing.T, d *Database, team, actor, kind string, now
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := machineFixture{d: d, now: now, r: ApplyProjectConfigurationRequest{TeamID: team, ActorID: actor}, machine: m, key: key}
+	f := machineFixture{d: d, now: now, r: environmentPublisherTestProject{TeamID: team, ActorID: actor}, machine: m, key: key}
 	if kind == "oidc" {
 		f.issuer = githubtest.NewKeySet(t, trust.JWKSURL)
 	}
@@ -386,16 +386,18 @@ func TestIntegrationMachinePublicationAllocationIsolatedAndPolicy(t *testing.T) 
 func TestIntegrationMachinePublicationRemoteBoundaryAndLocalMetadata(t *testing.T) {
 	d, now, base, _ := newPublishRunPrerequisites(t)
 	f := publicationMachine(t, d, base.TeamID, base.ActingIdentityID, "signing_key", now)
-	r := ApplyProjectConfigurationRequest{TeamID: base.TeamID, ActorID: base.ActingIdentityID, ProjectKey: "equipment", SourceFingerprint: shaFingerprint(), Now: now, Configuration: ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"remote": {DomainID: "domain_session"}}, Services: map[string]ProjectServiceConfiguration{"remoteapp": {PublisherGroup: "remote", Target: "http://127.0.0.1:3000"}}}}
-	applied, err := d.ApplyProjectConfiguration(t.Context(), r)
+	r := environmentPublisherTestProject{TeamID: base.TeamID, ActorID: base.ActingIdentityID, ProjectKey: "equipment", SourceFingerprint: shaFingerprint(), Now: now}
+	domain := retainedFixtureDomain(t, d, r)
+	definition := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"remoteapp": {Protocol: "http"}})
+	applied, err := d.CreateEnvironment(t.Context(), CreateEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, SourceFingerprint: r.SourceFingerprint, Name: "remote", DefinitionRevision: definition.Revision, Targets: EnvironmentTargets{"remoteapp": {Address: "127.0.0.1:3000"}}, DomainID: domain, IdempotencyKey: "remote-boundary", Now: now})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(applied.Groups) != 1 {
-		t.Fatal("missing remote group")
+	var group, ns string
+	if err := d.pool.QueryRow(t.Context(), `SELECT group_id,namespace FROM control.environments environment JOIN control.project_publisher_groups assignment ON assignment.id=environment.group_id WHERE environment.id=$1`, applied.ID).Scan(&group, &ns); err != nil {
+		t.Fatal(err)
 	}
-	ns := applied.Groups[0].Namespace
-	if _, err = d.CreateMachinePublicationPermission(t.Context(), MachinePublicationPermission{MachineID: f.machine.ID, TeamID: base.TeamID, Namespace: ns, DomainID: "domain_session", ExpiresAt: now.Add(time.Hour)}, base.ActingIdentityID, now); !errors.Is(err, ErrMachineDenied) {
+	if _, err = d.CreateMachinePublicationPermission(t.Context(), MachinePublicationPermission{MachineID: f.machine.ID, TeamID: base.TeamID, Namespace: ns, DomainID: domain, ExpiresAt: now.Add(time.Hour)}, base.ActingIdentityID, now); !errors.Is(err, ErrMachineDenied) {
 		t.Fatal("remote namespace approved for allocation", err)
 	}
 	if _, err = d.pool.Exec(t.Context(), `INSERT INTO control.local_project_services(team_id,project_key,source_fingerprint,service,worktree_key,public_url_id,created_by_identity_id) VALUES($1,'equipment',$2,'localapp','worktree',$3,$4)`, base.TeamID, r.SourceFingerprint, base.PublicURLID, base.ActingIdentityID); err != nil {
@@ -411,7 +413,7 @@ func TestIntegrationMachinePublicationRemoteBoundaryAndLocalMetadata(t *testing.
 	}
 	// moving the same record into a remote publisher group must fence already
 	// issued tokens as well as future exchanges, not just manager approval.
-	if _, err = d.pool.Exec(t.Context(), `INSERT INTO control.applied_project_services(team_id,project_key,service,group_id,public_url_id,desired_revision) VALUES($1,'equipment','remapped',$2,$3,1)`, base.TeamID, applied.Groups[0].ID, base.PublicURLID); err != nil {
+	if _, err = d.pool.Exec(t.Context(), `INSERT INTO control.applied_project_services(team_id,project_key,service,group_id,public_url_id,desired_revision) VALUES($1,'equipment','remapped',$2,$3,1)`, base.TeamID, group, base.PublicURLID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = d.AuthenticatePublisherAccess(t.Context(), session.AccessToken, "", now); !errors.Is(err, ErrPublisherIdentity) {

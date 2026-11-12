@@ -41,13 +41,16 @@ func TestCollectionSelectionRequiresExplicitScopeAndPrecondition(t *testing.T) {
 }
 
 func TestCollectionCreationDigestPinsMembershipAndSelectionMode(t *testing.T) {
-	bindings := PublisherGroupBindings{"api": {Target: "internal:3000"}}
-	original := environmentCreationDigest("member", 0, bindings, "coll_AAAAAAAAAAAAAAAAAAAAAA", 1)
+	bindings := environmentBindings{"api": {Target: "internal:3000", protocol: "http"}}
+	endpoint := environmentEndpointSettings{}
+	original := environmentCreationDigest("member", 0, bindings, "coll_AAAAAAAAAAAAAAAAAAAAAA", 1, endpoint)
 	for _, changed := range [][]byte{
-		environmentCreationDigest("member", 1, bindings, "coll_AAAAAAAAAAAAAAAAAAAAAA", 1),
-		environmentCreationDigest("member", 0, bindings, "coll_BBBBBBBBBBBBBBBBBBBBBB", 1),
-		environmentCreationDigest("member", 0, bindings, "", 1),
-		environmentCreationDigest("member", 0, bindings, "coll_AAAAAAAAAAAAAAAAAAAAAA", 2),
+		environmentCreationDigest("member", 1, bindings, "coll_AAAAAAAAAAAAAAAAAAAAAA", 1, endpoint),
+		environmentCreationDigest("member", 0, bindings, "coll_BBBBBBBBBBBBBBBBBBBBBB", 1, endpoint),
+		environmentCreationDigest("member", 0, bindings, "", 1, endpoint),
+		environmentCreationDigest("member", 0, bindings, "coll_AAAAAAAAAAAAAAAAAAAAAA", 2, endpoint),
+		environmentCreationDigest("member", 0, bindings, "coll_AAAAAAAAAAAAAAAAAAAAAA", 1, environmentEndpointSettings{Public: true}),
+		environmentCreationDigest("member", 0, bindings, "coll_AAAAAAAAAAAAAAAAAAAAAA", 1, environmentEndpointSettings{DomainID: "another-domain"}),
 	} {
 		if bytes.Equal(original, changed) {
 			t.Fatal("creation digest did not pin membership, definition selection and collection precondition")

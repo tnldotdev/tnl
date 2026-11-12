@@ -17,7 +17,7 @@ func TestIntegrationAppliedProjectLocalConnectorVisitorBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	member := addAuthorityMember(t, d, now, base.ActingIdentityID, base.TeamID, "connector-reader", TeamRoleMember)
-	local := RealizeLocalProjectServiceRequest{TeamID: base.TeamID, ProjectKey: "orders-project", SourceFingerprint: strings.Repeat("a", 64), Service: "orders", WorktreeKey: "checkout-a", ActorID: base.ActingIdentityID, Configuration: ProjectServiceConfiguration{Name: "database", Target: "http://secret-target.internal:3000", Access: &ProjectServiceAccess{Team: true}}, Now: now}
+	local := RealizeLocalProjectServiceRequest{TeamID: base.TeamID, ProjectKey: "orders-project", SourceFingerprint: strings.Repeat("a", 64), Service: "orders", WorktreeKey: "checkout-a", ActorID: base.ActingIdentityID, Configuration: LocalServiceDeclaration{Name: "database", Target: "http://secret-target.internal:3000", Access: &ProjectServiceAccess{Team: true}}, Now: now}
 	manual, err := d.CreateServiceAt(ctx, base.TeamID, base.ActingIdentityID, "orders", "manual-orders", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
 	if err != nil {
 		t.Fatal(err)
@@ -46,8 +46,8 @@ func TestIntegrationAppliedProjectLocalConnectorVisitorBinding(t *testing.T) {
 	if _, err = d.RealizeLocalProjectService(ctx, local); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("ordinary visitor unexpectedly has management access", err)
 	}
-	if _, err = d.GetProjectConfiguration(ctx, request.TeamID, request.ProjectKey, member.IdentityID); !errors.Is(err, ErrServiceAccess) {
-		t.Fatal("ordinary visitor read project configuration", err)
+	if _, err = d.GetService(ctx, first.ServiceID, member.IdentityID); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("ordinary visitor read service management facts", err)
 	}
 	// a read must not allocate resources, revisions, grants, or publisher runs.
 	snapshot := func() string {

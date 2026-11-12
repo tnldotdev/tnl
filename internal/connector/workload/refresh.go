@@ -4,13 +4,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	"github.com/tnldotdev/tnl/internal/config"
 )
 
 // refreshSource selects only independently readable native sources. static
 // environment tokens and request callbacks cannot mint a later identity proof.
-func RefreshSource(directory string, hints workloadmanifest.Acquisition, getenv func(string) string) *workloadmanifest.Acquisition {
+func RefreshSource(directory string, hints Acquisition, getenv func(string) string) *Acquisition {
 	source := hints
 	if source.Method == "vercel-oidc" {
 		source.Method, source.TokenFile = "token-file", getenv("VERCEL_OIDC_TOKEN_FILE")
@@ -24,7 +23,7 @@ func RefreshSource(directory string, hints workloadmanifest.Acquisition, getenv 
 	return &source
 }
 
-func ValidateRefreshSource(source workloadmanifest.Acquisition) error {
+func ValidateRefreshSource(source Acquisition) error {
 	if source.TokenEnv != "" {
 		return ErrAssertionSource
 	}

@@ -276,7 +276,7 @@ func decodeResponse[T any](payload []byte) (T, error) {
 
 func unavailableError(ctx context.Context, err error) error {
 	if cause := context.Cause(ctx); cause != nil {
-		return cause
+		return errors.Join(cause, err)
 	}
 	return fmt.Errorf("%w: %w", ErrUnavailable, err)
 }

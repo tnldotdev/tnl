@@ -56,7 +56,7 @@ func (r ServiceCertificates) Maintain(ctx context.Context) error {
 		material, err := r.advance(ctx, installed.Certificate.Leaf == nil)
 		if err != nil {
 			if ctx.Err() != nil {
-				return context.Cause(ctx)
+				return errors.Join(context.Cause(ctx), err)
 			}
 			if errors.Is(err, errManagedIssuanceFailed) && !terminalRetried {
 				terminalRetried = true

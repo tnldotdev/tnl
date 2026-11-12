@@ -285,7 +285,7 @@ func writeSystemJobs(ctx context.Context, registry *supervisor.Registry, output 
 			return err
 		}
 		jobs[i].GroupMember = &member
-		jobs[i].Name = member.GroupName + "-" + jobs[i].GroupInstance
+		jobs[i].Name = jobs[i].GroupInstance
 	}
 	return renderSystemJobs(output, command, jobs, selected)
 }
@@ -306,8 +306,8 @@ func renderSystemJobs(output io.Writer, command string, jobs []supervisor.Job, s
 			desired = "running"
 		}
 		fields := []clioutput.Field{{Label: "name", Value: displayJobName(job)}, {Label: "job ID", Value: job.ID}, {Label: "server", Value: job.Server}, {Label: "protocol", Value: string(job.Protocol)}, {Label: "desired", Value: desired}, {Label: "state", Value: string(job.Status.State)}}
-		if job.Kind == "group" && job.GroupMember != nil {
-			fields = append(fields, clioutput.Field{Label: "group", Value: job.GroupMember.GroupName}, clioutput.Field{Label: "project key", Value: job.GroupMember.ProjectKey}, clioutput.Field{Label: "observed revision", Value: strconv.FormatInt(job.Status.ObservedRevision, 10)})
+		if job.Kind == supervisor.KindGroup && job.GroupMember != nil {
+			fields = append(fields, clioutput.Field{Label: "environment ID", Value: job.GroupMember.EnvironmentId}, clioutput.Field{Label: "project key", Value: job.GroupMember.ProjectKey}, clioutput.Field{Label: "observed revision", Value: strconv.FormatInt(job.Status.ObservedRevision, 10)})
 		} else if job.Kind == "private" || job.Kind == "connector" {
 			fields = append(fields, clioutput.Field{Label: "service ID", Value: job.ServiceID})
 		} else {

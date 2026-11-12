@@ -25,29 +25,23 @@ func TestIntegrationPublisherRuntimeLifecycle(t *testing.T) {
 			var preflight func()
 			var rename func()
 			if kind == "group" {
-				r := appliedProjectRequest(t, d, now)
-				r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"remote": {}}, Services: map[string]ProjectServiceConfiguration{"api": {PublisherGroup: "remote", Target: "api.internal:3000"}, "db": {PublisherGroup: "remote", Target: "db.internal:5432", Protocol: "postgres"}}}
-				applied, err := d.ApplyProjectConfiguration(ctx, r)
-				if err != nil {
-					t.Fatal(err)
-				}
-				e, err := d.IssuePublisherGroupEnrollment(ctx, r.TeamID, r.ProjectKey, "remote", r.ActorID, 2, time.Hour, now)
-				if err != nil {
-					t.Fatal(err)
-				}
-				replica := enrollAppliedGroup(t, d, r, e, now)
-				id, key, scope, team, private = replica.member.PublisherIdentityID, replica.member.KeyID, replica.member.GroupID, r.TeamID, replica.private
+				r := retainedEnvironmentProject(t, d, now)
+				applied, _ := retainedServiceEnvironment(t, d, r, "remote", map[string]EnvironmentServicePublication{"api": {Protocol: "http", Target: "api.internal:3000"}, "db": {Protocol: "postgres", Target: "db.internal:5432"}})
+				e := retainedPublisherEnrollment(t, d, r, applied, 2)
+				replica := retainedPublisherReplica(t, d, e, now)
+				id, key, scope, team, private = replica.member.PublisherIdentityID, replica.member.KeyID, replica.member.EnvironmentID, r.TeamID, replica.private
 				preflight = func() {
-					if _, err := d.RedeemPublisherGroupEnrollment(ctx, e.Key, private.Public().(ed25519.PublicKey), now); err != nil {
+					if _, err := d.RedeemEnvironmentPublisherEnrollment(ctx, e.Key, private.Public().(ed25519.PublicKey), now); err != nil {
 						t.Fatal(err)
 					}
 					for _, action := range []string{"verify", "lease"} {
-						audience := "https://control.example/v1/publisher-groups/" + action
+						audience := "https://control.example/v1/environment-publishers/" + action
 						proof, _ := publisherproof.Sign(id, key, scope, audience, private, now)
+						var err error
 						if action == "verify" {
-							_, err = d.VerifyPublisherGroupIdentity(ctx, id, scope, proof, audience, now)
+							_, err = d.VerifyEnvironmentPublisher(ctx, id, scope, proof, audience, now)
 						} else {
-							_, err = d.AcquirePublisherGroupLease(ctx, id, scope, proof, audience, now)
+							_, err = d.AcquireEnvironmentPublisherLease(ctx, id, scope, proof, audience, now)
 						}
 						if err != nil {
 							t.Fatal(err)
@@ -55,7 +49,7 @@ func TestIntegrationPublisherRuntimeLifecycle(t *testing.T) {
 					}
 				}
 				rename = func() {
-					if _, err := d.RenamePublisherGroup(ctx, team, r.ProjectKey, "remote", "live", r.ActorID, applied.Revision, now); err != nil {
+					if _, err := d.ApplyEnvironment(ctx, ApplyEnvironmentRequest{TeamID: team, ProjectKey: r.ProjectKey, ActorID: r.ActorID, EnvironmentApplication: EnvironmentApplication{EnvironmentID: applied.ID, ExpectedRevision: applied.MutationRevision, DefinitionRevision: applied.AppliedDefinitionRevision}, Now: now}); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -114,10 +108,10 @@ func TestIntegrationPublisherRuntimeLifecycle(t *testing.T) {
 				t.Fatal("start", r, err)
 			}
 			if kind == "group" {
-				if r.GroupLease == nil {
+				if r.EnvironmentLease == nil {
 					t.Fatal("no runtime group lease")
 				}
-				a, err := d.GetPublisherGroupAssignments(ctx, r.GroupLease.AccessToken, now)
+				a, err := d.GetEnvironmentPublisherAssignments(ctx, r.EnvironmentLease.AccessToken, now)
 				if err != nil || len(a.Services) != 2 {
 					t.Fatal("runtime lease lost assignments", err)
 				}

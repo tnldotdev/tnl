@@ -11,7 +11,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -27,16 +26,16 @@ type GroupFile struct {
 	Version    int                            `json:"version"`
 	ControlURL string                         `json:"control_url"`
 	Instance   string                         `json:"instance"`
-	Member     controlv1.PublisherGroupMember `json:"member"`
+	Member     controlv1.EnvironmentPublisher `json:"publisher"`
 	PrivateKey string                         `json:"private_key"`
 }
 
-func (GroupFile) String() string   { return "publisher group identity" }
-func (GroupFile) GoString() string { return "publisher group identity" }
+func (GroupFile) String() string   { return "environment publisher identity" }
+func (GroupFile) GoString() string { return "environment publisher identity" }
 
-func NewGroup(server, instance string, member controlv1.PublisherGroupMember, private ed25519.PrivateKey) (GroupFile, error) {
+func NewGroup(server, instance string, member controlv1.EnvironmentPublisher, private ed25519.PrivateKey) (GroupFile, error) {
 	f := GroupFile{Version: 1, ControlURL: server, Instance: instance, Member: member, PrivateKey: base64.RawURLEncoding.EncodeToString(private)}
-	if _, err := f.Validate(server, member.ProjectKey, member.GroupName, instance); err != nil {
+	if _, err := f.Validate(server, member.ProjectKey, member.EnvironmentId, instance); err != nil {
 		return GroupFile{}, err
 	}
 	return f, nil
@@ -44,14 +43,13 @@ func NewGroup(server, instance string, member controlv1.PublisherGroupMember, pr
 
 // Validate checks the explicit deployment scope before any signing or state
 // import. control verifies that the key actually belongs to the recorded member.
-func (f GroupFile) Validate(server, project, group, instance string) (ed25519.PrivateKey, error) {
+func (f GroupFile) Validate(server, project, environment, instance string) (ed25519.PrivateKey, error) {
 	canonical, err := naming.CanonicalControlURL(f.ControlURL)
 	m := f.Member
 	if err != nil || canonical != f.ControlURL || f.Version != 1 || f.ControlURL != server ||
-		m.ProjectKey != project || f.Instance != instance ||
-		!naming.ValidServiceName(m.GroupName) || m.GroupName == "local" ||
-		!naming.ValidProjectKey(m.ProjectKey) || !naming.ValidServiceName(group) || group == "local" || !naming.ValidServiceName(instance) ||
-		m.TeamId == "" || len(m.TeamId) > 256 || !opaqueid.Valid(m.GroupId, "pgrp_") ||
+		m.ProjectKey != project || m.EnvironmentId != environment || f.Instance != instance ||
+		!naming.ValidProjectKey(m.ProjectKey) || !naming.ValidServiceName(instance) ||
+		!opaqueid.Valid(m.TeamId, opaqueid.TeamPrefix) || !opaqueid.Valid(m.EnvironmentId, opaqueid.EnvironmentPrefix) ||
 		!opaqueid.Valid(m.PublisherIdentityId, opaqueid.PublisherIdentityPrefix) || !opaqueid.Valid(m.KeyId, opaqueid.PublisherIdentityKeyPrefix) {
 		return nil, ErrInvalid
 	}
@@ -75,7 +73,7 @@ func ParseGroup(data []byte) (GroupFile, error) {
 	if json.Unmarshal(data, &fields) != nil {
 		return GroupFile{}, ErrInvalid
 	}
-	member := fields["member"]
+	member := fields["publisher"]
 	for _, value := range fields {
 		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 			return GroupFile{}, ErrInvalid
@@ -89,7 +87,7 @@ func ParseGroup(data []byte) (GroupFile, error) {
 			return GroupFile{}, ErrInvalid
 		}
 	}
-	if _, err := f.Validate(f.ControlURL, f.Member.ProjectKey, f.Member.GroupName, f.Instance); err != nil {
+	if _, err := f.Validate(f.ControlURL, f.Member.ProjectKey, f.Member.EnvironmentId, f.Instance); err != nil {
 		return GroupFile{}, ErrInvalid
 	}
 	return f, nil
@@ -135,7 +133,7 @@ func ReadGroup(path string) (GroupFile, error) {
 // WriteGroup publishes a synced mode-0600 file without replacing any existing
 // path. an interrupted provision can export the same protected key on retry.
 func WriteGroup(path string, value GroupFile) error {
-	if _, err := value.Validate(value.ControlURL, value.Member.ProjectKey, value.Member.GroupName, value.Instance); err != nil || path == "" {
+	if _, err := value.Validate(value.ControlURL, value.Member.ProjectKey, value.Member.EnvironmentId, value.Instance); err != nil || path == "" {
 		return ErrInvalid
 	}
 	parent := filepath.Dir(path)
@@ -186,8 +184,8 @@ func WriteGroup(path string, value GroupFile) error {
 	return nil
 }
 
-func GroupSelection(project, group, instance string) string {
-	return "project-publisher:group:" + project + ":" + group + ":" + instance
+func GroupSelection(project, environment, instance string) string {
+	return "project-publisher:environment:" + project + ":" + environment + ":" + instance
 }
 
 // ImportGroup requires the caller's group signing-identity lock. it refuses to
@@ -198,14 +196,14 @@ func ImportGroup(ctx context.Context, profile *clientstate.Store, value GroupFil
 	if err != nil {
 		return nil, err
 	}
-	if err := profile.ImportPublisherGroupIdentity(ctx, value.Member, private, GroupSelection(project, value.Member.GroupId, instance)); err != nil {
+	if err := profile.ImportEnvironmentPublisherIdentity(ctx, value.Member, private, GroupSelection(project, value.Member.EnvironmentId, instance)); err != nil {
 		return nil, err
 	}
 	return private, nil
 }
 
 type GroupVerifier interface {
-	Verify(context.Context, controlv1.PublisherGroupMember, ed25519.PrivateKey) (controlv1.PublisherGroupVerification, error)
+	Verify(context.Context, controlv1.EnvironmentPublisher, ed25519.PrivateKey) (controlv1.EnvironmentPublisher, error)
 }
 
 // VerifyGroup proves possession to control and checks its current member scope.
@@ -215,8 +213,8 @@ func VerifyGroup(ctx context.Context, client GroupVerifier, value GroupFile, ser
 	return err
 }
 
-// ResolveGroup accepts selectors only from control's current, authenticated
-// history. the exported friendly name is descriptive, never an authority check.
+// resolve verifies the exact immutable environment and replica with control.
+// names are resolved before this boundary; they never select a signing key.
 func ResolveGroup(ctx context.Context, client GroupVerifier, value GroupFile, server, project, group, instance string) (GroupFile, error) {
 	private, err := value.Validate(server, project, group, instance)
 	if err != nil {
@@ -226,14 +224,13 @@ func ResolveGroup(ctx context.Context, client GroupVerifier, value GroupFile, se
 	if err != nil {
 		return GroupFile{}, err
 	}
-	if !SameGroupIdentity(verified.Member, value.Member) || !slices.Contains(verified.GroupNames, group) || !slices.Contains(verified.GroupNames, verified.Member.GroupName) {
+	if !SameGroupIdentity(verified, value.Member) {
 		return GroupFile{}, ErrInvalid
 	}
-	value.Member = verified.Member
+	value.Member = verified
 	return value, nil
 }
 
-func SameGroupIdentity(a, b controlv1.PublisherGroupMember) bool {
-	a.GroupName = b.GroupName
+func SameGroupIdentity(a, b controlv1.EnvironmentPublisher) bool {
 	return a == b
 }

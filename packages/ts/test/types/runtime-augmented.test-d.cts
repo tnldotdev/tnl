@@ -1,25 +1,27 @@
 import type * as SDK from "@tnldotdev/tnl";
+import type * as Selected from "../../src/internal/connector/selected_client.js";
 import type * as Vitest from "vitest";
 declare const test: typeof Vitest.test;
 declare const expectTypeOf: typeof Vitest.expectTypeOf;
+declare const create: typeof Selected.clientFromSelection;
+declare const owner: Selected.ServiceSelection<Selected.ResolvedService>;
 
-declare const tnlModule: typeof SDK;
+const client = create(
+  Object.freeze({
+    api: Object.freeze({ protocol: "http" }),
+    db: Object.freeze({ protocol: "postgres" }),
+  }),
+  owner,
+);
 
-test("CommonJS preserves the augmented service registry and driver settings", () => {
-  const inventory = tnlModule.tnl.connect("api");
-  expectTypeOf(inventory.fetch("/stock")).toEqualTypeOf<Promise<Response>>();
-  // @ts-expect-error CommonJS HTTP options have no SQL connection properties.
-  void inventory.ssl;
-
-  const database = tnlModule.tnl.connect("db");
-  expectTypeOf(database.host).toEqualTypeOf<"127.0.0.1">();
-  database.ssl.servername satisfies string;
-  database satisfies PromiseLike<SDK.TnlConnectionRegistry["postgres"]>;
-  ({ ...database, user: "app", database: "app" }) satisfies import("pg").PoolConfig;
-  // @ts-expect-error CommonJS uses the same exact generated service registry.
-  tnlModule.tnl.connect("missing");
-  // @ts-expect-error CommonJS SQL settings have no HTTP fetch method.
-  void database.fetch;
-  // @ts-expect-error CommonJS settings are read-only too.
-  database.port = 5432;
+test("CommonJS selected clients use the same runtime-bound names and protocol settings", async () => {
+  const api = await client.connect("api");
+  expectTypeOf(api.fetch("/stock")).toEqualTypeOf<Promise<Response>>();
+  const db = await client.connect("db");
+  expectTypeOf(db).toEqualTypeOf<SDK.TnlConnectionRegistry["postgres"]>();
+  ({ ...db, user: "app", database: "app" }) satisfies import("pg").PoolConfig;
+  // @ts-expect-error the build facts do not declare this service.
+  client.connect("missing");
+  // @ts-expect-error SQL settings have no HTTP operation.
+  void db.fetch;
 });

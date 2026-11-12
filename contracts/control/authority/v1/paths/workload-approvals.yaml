@@ -1,0 +1,33 @@
+paths:
+  /v1/teams/{team_id}/workload-approvals/{intent_key}:
+    parameters:
+      - { $ref: '../openapi.yaml#/components/parameters/TeamID' }
+      - name: intent_key
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,128}$' }
+    get:
+      operationId: getWorkloadApproval
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Exact original approval and current revocation state, visible only to a current team manager.
+          content:
+            application/json:
+              schema: { $ref: '../openapi.yaml#/components/schemas/WorkloadApproval' }
+        default: { $ref: '../openapi.yaml#/components/responses/Problem' }
+    put:
+      operationId: approveWorkload
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '../openapi.yaml#/components/schemas/WorkloadApprovalRequest' }
+      responses:
+        '200':
+          description: Atomically saved machine and visitor permission, or recovery of the same IDs. Exact trust may reuse a registered machine; names never select authority. No provisioning rights are granted.
+          content:
+            application/json:
+              schema: { $ref: '../openapi.yaml#/components/schemas/WorkloadApproval' }
+        default: { $ref: '../openapi.yaml#/components/responses/Problem' }

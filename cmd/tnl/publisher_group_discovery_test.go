@@ -12,6 +12,7 @@ import (
 
 func TestPublisherGroupDiscoveryForegroundUsesNativeTLS(t *testing.T) {
 	fixture := groupdiscovery.New(t)
+	fixture.HoldHeartbeat.Store(true)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	var result error

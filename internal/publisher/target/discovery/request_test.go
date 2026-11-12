@@ -3,7 +3,6 @@ package discovery_test
 import (
 	"bytes"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -79,25 +78,27 @@ func TestCloudSelectorBoundaryParity(t *testing.T) {
 }
 
 func TestCloudSelectorNormalizedJSONAndHash(t *testing.T) {
-	const expected = `{"publisher_groups":{"production":{}},"services":{"db":{"target_discovery":{"type":"rds","region":"us-east-1","instance":"orders","endpoint":"writer"},"publisher_group":"production","name":"db","protocol":"postgres","target":""}},"oauth":false,"webhooks":{}}`
+	// cloud target normalization owns this representation; reusable service
+	// definitions deliberately contain neither the selector nor environment scope.
+	const expected = `{"type":"rds","region":"us-east-1","instance":"orders","endpoint":"writer"}`
 	digest := sha256.Sum256([]byte(expected))
 	for _, endpoint := range []*string{nil, new("writer")} {
 		descriptor := &controlstate.ProjectTargetDiscovery{Type: "rds", Region: "us-east-1", Instance: new("orders"), Endpoint: endpoint}
-		input := controlstate.ProjectConfiguration{PublisherGroups: map[string]controlstate.ProjectPublisherGroup{"production": {}}, Services: map[string]controlstate.ProjectServiceConfiguration{"db": {PublisherGroup: "production", Protocol: "postgres", TargetDiscovery: descriptor}}}
-		before, _ := json.Marshal(input)
-		normalized, hash, err := controlstate.NormalizeProjectConfiguration(input)
+		before, _ := json.Marshal(descriptor)
+		normalized, err := descriptor.Normalize("postgres")
 		if err != nil {
 			t.Fatal(err)
 		}
 		encoded, err := json.Marshal(normalized)
-		if err != nil || string(encoded) != expected || hash != hex.EncodeToString(digest[:]) {
-			t.Fatalf("normal form changed: %s, %s, %v", encoded, hash, err)
+		hash := sha256.Sum256(encoded)
+		if err != nil || string(encoded) != expected || hash != digest {
+			t.Fatalf("normal form changed: %s, %x, %v", encoded, hash, err)
 		}
-		after, _ := json.Marshal(input)
+		after, _ := json.Marshal(descriptor)
 		if !bytes.Equal(before, after) {
 			t.Fatal("normalization mutated its input")
 		}
-		*normalized.Services["db"].TargetDiscovery.Instance = "other"
+		*normalized.Instance = "other"
 		if *descriptor.Instance != "orders" {
 			t.Fatal("normalized descriptor aliases its input")
 		}

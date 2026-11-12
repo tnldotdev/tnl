@@ -15,7 +15,6 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	"golang.org/x/sys/unix"
 )
 
@@ -85,7 +84,7 @@ func boundedAssertion(raw string) (string, error) {
 
 // acquire uses nonsecret build hints. control independently selects saved trust.
 // Vercel functions should supply @vercel/oidc's request-scoped helper as callback.
-func Acquire(ctx context.Context, hints workloadmanifest.Acquisition, callback func(context.Context) (string, error), getenv func(string) string) (string, error) {
+func Acquire(ctx context.Context, hints Acquisition, callback func(context.Context) (string, error), getenv func(string) string) (string, error) {
 	source := AssertionSource{Callback: callback}
 	switch hints.Method {
 	case "github-actions":

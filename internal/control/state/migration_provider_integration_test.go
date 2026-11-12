@@ -20,16 +20,13 @@ func testMigrationRejectsProviderBaseline(t *testing.T, previous string, provide
 	t.Helper()
 	d, url, now := newControlStateIntegrationDatabaseWithURL(t, "provider_baseline_"+excluded)
 	ctx := t.Context()
-	r := appliedProjectRequest(t, d, now)
-	r.Configuration = workloadConfiguration()
-	if _, err := d.ApplyProjectConfiguration(ctx, r); err != nil {
-		t.Fatal(err)
-	}
-	exchange, _ := workloadExchange(t, r, now)
-	session, err := d.ExchangeWorkload(ctx, exchange, now)
+	f := newRetainedVisitorFixture(t, d, now, retainedGitHubTrust(), 3600, false)
+	exchange, _ := retainedVisitorPreparation(t, f, now)
+	prepared, err := d.PrepareEnvironmentVisitor(ctx, exchange, now)
 	if err != nil {
 		t.Fatal(err)
 	}
+	session := prepared.Session
 	// probe the real constraint without applying a provider-specific policy or
 	// leaving changes to the saved session. all added providers are non-github.
 	assertProvider := func(t *testing.T, provider string, rejected bool) {

@@ -3,12 +3,38 @@ schemas:
     type: object
     additionalProperties: false
     required: [provider, issuer, jwks_url, audience, claims]
+    description: Manager-approved OIDC provider policy. Provider modes retain their signed execution identity; generic oidc requires an exact sub. GitHub pins repository and owner IDs, repository, workflow_ref and ref, with an explicit event allowlist. Kubernetes pins sub and service_account_uid. Google pins the immutable numeric sub. GitLab pins job project and namespace IDs and paths, ref_path and pipeline_source. Vercel and Fly pin their stable project or application and owner IDs.
+    if:
+      properties:
+        provider: { const: github }
+    then: { required: [events] }
+    else:
+      not: { required: [events] }
     properties:
-      provider: { type: string, enum: [oidc] }
+      provider:
+        type: string
+        enum: [github, vercel, fly, google, kubernetes, gitlab, oidc]
+        x-enum-varnames:
+          [
+            MachineTrustGitHub,
+            MachineTrustVercel,
+            MachineTrustFly,
+            MachineTrustGoogle,
+            MachineTrustKubernetes,
+            MachineTrustGitLab,
+            MachineTrustOIDC,
+          ]
       issuer: { type: string, maxLength: 2048 }
       jwks_url: { type: string, maxLength: 2048 }
       audience: { type: string, maxLength: 1024 }
       claims: { type: object, maxProperties: 32, additionalProperties: { type: string } }
+      events:
+        type: array
+        minItems: 1
+        maxItems: 10
+        uniqueItems: true
+        items: { type: string }
+        description: Required only for GitHub. Exact allowed workflow events; all other provider modes reject this field.
   RegisterMachineRequest:
     type: object
     additionalProperties: false
@@ -55,7 +81,8 @@ schemas:
     required:
       [
         project_key,
-        templates,
+        scope,
+        services,
         operations,
         max_enrollment_members,
         max_enrollment_seconds,
@@ -64,8 +91,9 @@ schemas:
       ]
     properties:
       project_key: { type: string }
-      templates:
-        { type: array, minItems: 1, maxItems: 32, uniqueItems: true, items: { type: string } }
+      scope: { $ref: "../openapi.yaml#/components/schemas/EnvironmentPermissionScope" }
+      services:
+        { type: array, minItems: 1, maxItems: 128, uniqueItems: true, items: { type: string } }
       operations:
         {
           type: array,
@@ -84,15 +112,41 @@ schemas:
     required: [id]
     properties:
       id: { type: string }
-  MachineWorkloadPermissionRequest:
+  EnvironmentPermissionScope:
     type: object
     additionalProperties: false
-    required: [project_key, workload, templates, expires_at]
+    description: Select exact environment IDs or one saved collection. A collection scope requires an explicit choice about future members. When false, the initial members are captured once; current membership is still required on every use. Services are a separate fixed allowlist and never grow with a definition.
+    dependentRequired:
+      collection_id: [include_future_environments]
+      include_future_environments: [collection_id]
+    if: { required: [environment_ids] }
+    then:
+      not:
+        anyOf:
+          - required: [collection_id]
+          - required: [include_future_environments]
+    else: { required: [collection_id, include_future_environments] }
+    properties:
+      environment_ids:
+        { type: array, minItems: 1, maxItems: 1024, uniqueItems: true, items: { type: string } }
+      collection_id: { type: string }
+      include_future_environments: { type: boolean }
+  EnvironmentVisitorPermissionRequest:
+    type: object
+    additionalProperties: false
+    required: [project_key, scope, services, max_duration_seconds, expires_at]
     properties:
       project_key: { type: string }
-      workload: { type: string, minLength: 1, maxLength: 32 }
-      templates:
-        { type: array, minItems: 1, maxItems: 32, uniqueItems: true, items: { type: string } }
+      scope: { $ref: "../openapi.yaml#/components/schemas/EnvironmentPermissionScope" }
+      services:
+        { type: array, minItems: 1, maxItems: 128, uniqueItems: true, items: { type: string } }
+      max_duration_seconds:
+        {
+          type: integer,
+          minimum: 0,
+          maximum: 31557600,
+          description: Zero omits the hard session deadline; otherwise the deadline is fixed at initial admission.,
+        }
       expires_at: { type: string, format: date-time }
   ProvisioningExchange:
     type: object
@@ -124,9 +178,8 @@ schemas:
         operation,
         team_id,
         project_key,
-        templates,
-        project_revision,
-        source_fingerprint,
+        scope,
+        services,
       ]
     properties:
       access_token:
@@ -145,44 +198,5 @@ schemas:
       operation: { $ref: "../openapi.yaml#/components/schemas/ProvisioningOperation" }
       team_id: { type: string }
       project_key: { type: string }
-      templates: { type: array, minItems: 1, maxItems: 32, items: { type: string } }
-      project_revision:
-        {
-          type: integer,
-          format: int64,
-          minimum: 0,
-          description: "Current applied project revision, not permission to overwrite project configuration.",
-        }
-      source_fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
-  PublisherGroupWorkloadResolution:
-    type: object
-    additionalProperties: false
-    required: [connection, publisher_group]
-    properties:
-      connection:
-        { $ref: "../../../public/v1/openapi.yaml#/components/schemas/PublisherGroupConnection" }
-      publisher_group:
-        {
-          type: string,
-          description: "Authoritative configuration definition key; the concrete group's template name, or its declared group name. Not its mutable display name.",
-        }
-  ResolvePublisherGroupWorkload:
-    type: object
-    additionalProperties: false
-    required: [workload, assertion]
-    properties:
-      workload: { type: string, minLength: 1, maxLength: 32 }
-      assertion: { type: string, minLength: 1, maxLength: 32768 }
-      machine_id:
-        {
-          type: string,
-          description: Required for a registered signing-key proof. Its separate workload permission must currently approve this template and workload.,
-        }
-  MachineWorkloadExchange:
-    type: object
-    additionalProperties: false
-    required: [machine_id, group_id, exchange]
-    properties:
-      machine_id: { type: string }
-      group_id: { type: string }
-      exchange: { $ref: "../openapi.yaml#/components/schemas/WorkloadExchange" }
+      scope: { $ref: "../openapi.yaml#/components/schemas/EnvironmentPermissionScope" }
+      services: { type: array, minItems: 1, maxItems: 128, items: { type: string } }

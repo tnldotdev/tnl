@@ -139,12 +139,14 @@ class NativeRuntime:
             "renew",
             "unregister",
             "status",
-            "ad-hoc/register",
+            "publications",
+            "identity-source-challenges",
+            "capability",
         }:
             raise InvalidResponse()
         data = None if payload is None else json.dumps(payload).encode()
         get = operation in {"health", "status"}
-        if get and data is not None or data is not None and len(data) > 64 << 10:
+        if (get or operation == "capability") and data is not None or data is not None and len(data) > 64 << 10:
             raise InvalidResponse()
         headers = {
             "Host": endpoint.url.removeprefix("http://"),
@@ -162,7 +164,7 @@ class NativeRuntime:
                 ) as client,
             ):
                 async with client.stream(
-                    "GET" if get else "POST",
+                    "GET" if get else "DELETE" if operation == "capability" else "POST",
                     endpoint.url + "/v1/" + operation,
                     headers=headers,
                     content=data,
@@ -179,7 +181,7 @@ class NativeRuntime:
                     ):
                         raise RegistrationLost()
                     if response.status_code == 204:
-                        if body or operation in {"prepare", "status", "ad-hoc/register"}:
+                        if body or operation in {"prepare", "status", "publications", "identity-source-challenges"}:
                             raise InvalidResponse()
                         return None
                     if (
@@ -189,7 +191,7 @@ class NativeRuntime:
                         raise InvalidResponse()
                     value: object = json.loads(body)
                     if response.status_code == 200:
-                        if operation not in {"prepare", "status", "ad-hoc/register"}:
+                        if operation not in {"prepare", "status", "publications", "identity-source-challenges"}:
                             raise InvalidResponse()
                         return value
                     if (

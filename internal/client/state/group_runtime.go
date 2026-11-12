@@ -6,12 +6,12 @@ import (
 	"strings"
 )
 
-// SetPublisherGroupEnrollmentSecret refreshes only a pending group task's
+// SetEnvironmentPublisherEnrollmentSecret refreshes only a pending replica's
 // bootstrap secret. its protected signing key is never deleted or replaced,
 // including when a previous redemption response was lost.
-func (s *Store) SetPublisherGroupEnrollmentSecret(ctx context.Context, id, scope string, secret []byte) error {
-	if !validOpaqueValue(id, 256) || !validOpaqueValue(scope, 1024) || !strings.HasPrefix(scope, "project-publisher:group:") || len(secret) == 0 || len(secret) > 256 {
-		return errors.New("clientstate: invalid publisher group enrollment")
+func (s *Store) SetEnvironmentPublisherEnrollmentSecret(ctx context.Context, id, scope string, secret []byte) error {
+	if !validOpaqueValue(id, 256) || !validOpaqueValue(scope, 1024) || !strings.HasPrefix(scope, "project-publisher:environment:") || len(secret) == 0 || len(secret) > 256 {
+		return errors.New("clientstate: invalid environment publisher enrollment")
 	}
 	sealed, err := s.secrets.Seal(ctx, pendingSecretContext(id), secret)
 	if err != nil {

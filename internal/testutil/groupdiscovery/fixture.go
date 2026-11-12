@@ -57,10 +57,11 @@ type Fixture struct {
 	TargetHandshakes atomic.Int32
 	Stops            atomic.Int32
 	Closes           atomic.Int32
+	LeaseRequests    atomic.Int32
 	Block            atomic.Bool
 	HoldHeartbeat    atomic.Bool
 	mu               sync.Mutex
-	assignment       controlv1.PublisherGroupAssignments
+	assignment       controlv1.EnvironmentPublisherAssignments
 	service          controlv1.Service
 	setup            controlv1.ServiceRunSetup
 	prepare          controlv1.ServiceRunPreparation
@@ -68,6 +69,8 @@ type Fixture struct {
 	port             string
 	started, stopped sync.Once
 	proofs           map[string]bool
+	leaseNumber      int
+	currentLease     string
 }
 
 func New(t *testing.T) *Fixture {
@@ -83,11 +86,11 @@ func New(t *testing.T) *Fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	member := controlv1.PublisherGroupMember{TeamId: id(opaqueid.TeamPrefix), PublisherIdentityId: id(opaqueid.PublisherIdentityPrefix), KeyId: id(opaqueid.PublisherIdentityKeyPrefix), GroupId: id("pgrp_"), GroupName: "cloud", ProjectKey: strings.Repeat("a", 56)}
+	member := controlv1.EnvironmentPublisher{TeamId: id(opaqueid.TeamPrefix), PublisherIdentityId: id(opaqueid.PublisherIdentityPrefix), KeyId: id(opaqueid.PublisherIdentityKeyPrefix), EnvironmentId: id(opaqueid.EnvironmentPrefix), ProjectKey: strings.Repeat("a", 56)}
 	serviceID, runID, grantID := id(opaqueid.ServicePrefix), id(opaqueid.ServiceRunPrefix), id(opaqueid.PublisherGrantPrefix)
 	f := &Fixture{Key: key, Heartbeat: make(chan controlv1.ServiceRunHeartbeat, 16), TargetHandshake: make(chan struct{}, 1), DiscoveryStarted: make(chan struct{}), DiscoveryStopped: make(chan struct{}), proofs: map[string]bool{}}
 	protocol := controlv1.ServiceProtocol("kubernetes")
-	f.assignment = controlv1.PublisherGroupAssignments{Member: member, Revision: 1, ConfigurationHash: strings.Repeat("a", 64), CertificateStatePlans: []controlv1.CertificatePlan{}, Services: []controlv1.PublisherGroupServiceAssignment{{Service: "cluster", ServiceId: serviceID, ServiceKind: "service", GrantId: grantID, TrustRevision: 1, Configuration: controlv1.ProjectServiceConfiguration{Protocol: &protocol, PublisherGroup: &member.GroupName, TargetDiscovery: &controlv1.ProjectTargetDiscovery{Type: controlv1.Eks, Region: "us-east-1", Cluster: new("production")}}}}}
+	f.assignment = controlv1.EnvironmentPublisherAssignments{Publisher: member, Environment: controlv1.EnvironmentPublication{EnvironmentId: member.EnvironmentId, MutationRevision: 1, ConfigurationHash: strings.Repeat("a", 64)}, CertificateStatePlans: []controlv1.CertificatePlan{}, Services: []controlv1.EnvironmentPublisherAssignment{{Service: "cluster", ServiceId: serviceID, GrantId: grantID, TrustRevision: 1, Configuration: controlv1.EnvironmentServicePublication{Protocol: protocol, TargetDiscovery: &controlv1.ProjectTargetDiscovery{Type: controlv1.Eks, Region: "us-east-1", Cluster: new("production")}}}}}
 	f.service = controlv1.Service{Id: serviceID, TeamId: member.TeamId, Name: "cluster", Protocol: protocol, Enabled: true, TrustRevision: 1, PublisherPool: true, CreatedAt: time.Now(), Endpoint: &controlv1.ServiceEndpoint{Hostname: "managed.example.test", Port: 25443}}
 	f.prepare = controlv1.ServiceRunPreparation{ServiceId: serviceID, ServiceRunId: runID, TeamId: member.TeamId, PublisherIdentityId: member.PublisherIdentityId, PublisherGrantId: grantID, PublisherKeyId: member.KeyId, RunNumber: 1, Hostname: f.service.Endpoint.Hostname, ServicePort: 25443, DomainId: id(opaqueid.DomainPrefix), ExpiresAt: time.Now().Add(time.Minute), CertificatePlan: &controlv1.CertificatePlan{CacheKey: "group-fixture", Scope: f.service.Endpoint.Hostname, Identifiers: []string{f.service.Endpoint.Hostname}, ChallengeMethod: controlv1.Dns01}}
 	f.setup = controlv1.ServiceRunSetup{ServiceId: serviceID, ServiceRunId: runID, RunNumber: 1, RunToken: "fixture-run"}
@@ -98,7 +101,7 @@ func New(t *testing.T) *Fixture {
 	t.Cleanup(f.Server.Close)
 	serverCA := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: f.Server.Certificate().Raw})
 	f.Job = supervisor.Job{Kind: supervisor.KindGroup, Name: "cloud-default", Server: f.Server.URL, ServerCAPEM: serverCA, PublisherIdentityID: member.PublisherIdentityId, GroupMember: &member, GroupInstance: "default"}
-	f.Job.ID = supervisor.JobKey(f.Job.Server, "group", member.GroupId+":default")
+	f.Job.ID = supervisor.JobKey(f.Job.Server, "env", member.EnvironmentId+":default")
 	database, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
 	if err != nil {
 		t.Fatal(err)
@@ -112,22 +115,28 @@ func New(t *testing.T) *Fixture {
 	return f
 }
 
-func (f *Fixture) Assignment() controlv1.PublisherGroupServiceAssignment {
+func (f *Fixture) Assignment() controlv1.EnvironmentPublisherAssignment {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	data, _ := json.Marshal(f.assignment.Services[0])
-	var result controlv1.PublisherGroupServiceAssignment
+	var result controlv1.EnvironmentPublisherAssignment
 	_ = json.Unmarshal(data, &result)
 	return result
 }
 
-func (f *Fixture) SetAssignment(assignment controlv1.PublisherGroupServiceAssignment) {
+func (f *Fixture) SetAssignment(assignment controlv1.EnvironmentPublisherAssignment) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.assignment.Services[0] = assignment
-	f.assignment.Revision++
-	sum := sha256.Sum256([]byte(fmt.Sprint(f.assignment.Revision)))
-	f.assignment.ConfigurationHash = hex.EncodeToString(sum[:])
+	f.assignment.Environment.MutationRevision++
+	sum := sha256.Sum256([]byte(fmt.Sprint(f.assignment.Environment.MutationRevision)))
+	f.assignment.Environment.ConfigurationHash = hex.EncodeToString(sum[:])
+}
+
+func (f *Fixture) Publication() controlv1.EnvironmentPublication {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.assignment.Environment
 }
 
 func (f *Fixture) ChangeService(change func(*controlv1.Service)) {
@@ -155,7 +164,7 @@ func write(w http.ResponseWriter, value any) {
 
 func (f *Fixture) verify(t *testing.T, proof, scope, audience string) bool {
 	t.Helper()
-	m := f.assignment.Member
+	m := f.assignment.Publisher
 	assertion, err := publisherproof.Verify(proof, m.PublisherIdentityId, m.KeyId, scope, audience, f.Key.Public().(ed25519.PublicKey), time.Now())
 	if err != nil || f.proofs[assertion.ID] {
 		t.Error("publisher proof or replay boundary failed")
@@ -163,6 +172,14 @@ func (f *Fixture) verify(t *testing.T, proof, scope, audience string) bool {
 	}
 	f.proofs[assertion.ID] = true
 	return true
+}
+
+// issuing any replica lease replaces the previous one, as control does. a
+// worker cannot acquire its own lease without invalidating the runtime owner.
+func (f *Fixture) issueLease() controlv1.EnvironmentPublisherLease {
+	f.leaseNumber++
+	f.currentLease = fmt.Sprintf("fixture-replica-lease-%d", f.leaseNumber)
+	return controlv1.EnvironmentPublisherLease{AccessToken: f.currentLease, ExpiresAt: time.Now().Add(time.Minute)}
 }
 
 func (f *Fixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
@@ -173,7 +190,7 @@ func (f *Fixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(400)
 		return
 	}
-	m := f.assignment.Member
+	m := f.assignment.Publisher
 	switch r.URL.Path {
 	case "/v1/publisher-runtime":
 		var request controlv1.PublisherRuntimeRequest
@@ -182,7 +199,7 @@ func (f *Fixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(400)
 			return
 		}
-		scope := publisherproof.RuntimeScope(m.GroupId, string(request.Action), request.ProcessRunId, request.ExpectedEpoch, "")
+		scope := publisherproof.RuntimeScope(m.EnvironmentId, string(request.Action), request.ProcessRunId, request.ExpectedEpoch, "")
 		if !f.verify(t, request.Assertion, scope, f.Server.URL+r.URL.Path) {
 			w.WriteHeader(401)
 			return
@@ -193,31 +210,34 @@ func (f *Fixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 		}
 		if request.Action == controlv1.RuntimeStop {
 			f.Stops.Add(1)
+			write(w, controlv1.PublisherRuntimeResponse{Epoch: 1})
+			return
 		}
-		until := time.Now().Add(time.Minute)
-		write(w, controlv1.PublisherRuntimeResponse{Epoch: 1, LeaseExpiresAt: &until, GroupLease: &controlv1.PublisherGroupLease{AccessToken: "fixture-group", ExpiresAt: until}})
-	case "/v1/publisher-groups/lease", "/v1/publisher-groups/verify":
-		var request controlv1.PublisherGroupLeaseRequest
+		lease := f.issueLease()
+		write(w, controlv1.PublisherRuntimeResponse{Epoch: 1, LeaseExpiresAt: &lease.ExpiresAt, EnvironmentLease: &lease})
+	case "/v1/environment-publishers/lease", "/v1/environment-publishers/verify":
+		var request controlv1.EnvironmentPublisherProof
 		_ = json.NewDecoder(r.Body).Decode(&request)
-		if !f.verify(t, request.Assertion, m.GroupId, f.Server.URL+r.URL.Path) {
+		if request.EnvironmentId != m.EnvironmentId || request.PublisherIdentityId != m.PublisherIdentityId || !f.verify(t, request.Assertion, m.EnvironmentId, f.Server.URL+r.URL.Path) {
 			w.WriteHeader(401)
 			return
 		}
-		if r.URL.Path == "/v1/publisher-groups/verify" {
-			write(w, controlv1.PublisherGroupVerification{Member: m, GroupNames: []string{m.GroupName}})
+		if r.URL.Path == "/v1/environment-publishers/verify" {
+			write(w, m)
 		} else {
-			write(w, controlv1.PublisherGroupLease{AccessToken: "fixture-group", ExpiresAt: time.Now().Add(time.Minute)})
+			f.LeaseRequests.Add(1)
+			write(w, f.issueLease())
 		}
-	case "/v1/publisher-groups/assignments":
-		if r.Header.Get("Authorization") != "Bearer fixture-group" {
-			t.Error("assignment lacked group lease")
+	case "/v1/environment-publishers/assignments":
+		if f.currentLease == "" || r.Header.Get("Authorization") != "Bearer "+f.currentLease {
 			w.WriteHeader(401)
 			return
 		}
 		write(w, f.assignment)
-	case "/v1/publisher-groups/ack":
-		if r.Header.Get("Authorization") != "Bearer fixture-group" {
-			t.Error("ack lacked group lease")
+	case "/v1/environment-publishers/ack":
+		if f.currentLease == "" || r.Header.Get("Authorization") != "Bearer "+f.currentLease {
+			w.WriteHeader(401)
+			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 	case "/v1/publisher-token":
@@ -238,7 +258,7 @@ func (f *Fixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 	case "/v1/services/" + f.service.Id + "/runs":
 		var declaration controlv1.ServiceRunDeclaration
 		_ = json.NewDecoder(r.Body).Decode(&declaration)
-		if declaration.Protocol != f.service.Protocol || declaration.TrustRevision != f.service.TrustRevision || declaration.TargetTls != nil {
+		if declaration.Protocol != f.service.Protocol || declaration.TrustRevision != f.service.TrustRevision || declaration.TargetTls != nil || declaration.Environment == nil || *declaration.Environment != f.assignment.Environment {
 			t.Error("discovered trust leaked into control declaration")
 		}
 		preparation := f.prepare

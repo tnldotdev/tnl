@@ -20,16 +20,15 @@ func TestStandaloneGroupsIsolateBlockedStoppedAndHealthyWorkers(t *testing.T) {
 	defer r.Close()
 	a, _, ka := kindFixture(t, KindGroup)
 	b, _, kb := kindFixture(t, KindGroup)
-	a.ID = JobKey(a.Server, "group", a.GroupMember.GroupId+":"+a.GroupInstance)
-	b.ID = JobKey(b.Server, "group", b.GroupMember.GroupId+":"+b.GroupInstance)
-	b.GroupMember.TeamId = "other-team"
+	a.ID = JobKey(a.Server, "env", a.GroupMember.EnvironmentId+":"+a.GroupInstance)
+	b.ID = JobKey(b.Server, "env", b.GroupMember.EnvironmentId+":"+b.GroupInstance)
 	b.Name = a.Name
 	if err := r.ReplaceGroups(t.Context(), []GroupInstall{{a, ka}, {b, kb}}); err != nil {
 		t.Fatal(err)
 	}
 	duplicate := a
 	duplicate.GroupInstance = "different-instance"
-	duplicate.ID = JobKey(a.Server, "group", a.GroupMember.GroupId+":"+duplicate.GroupInstance)
+	duplicate.ID = JobKey(a.Server, "env", a.GroupMember.EnvironmentId+":"+duplicate.GroupInstance)
 	if err := r.InstallGroup(t.Context(), duplicate, *a.GroupMember, ka); !errors.Is(err, ErrJobExists) {
 		t.Fatal("same publisher accepted under another instance", err)
 	}

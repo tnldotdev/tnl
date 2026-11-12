@@ -1,9 +1,18 @@
 name: tnl connect
-description: Prepare connector connections for one saved tnl workload across job steps
+description: Prepare exact tnl environment services across job steps
 author: tnldotdev
 inputs:
-  workload:
-    description: Required workload key from the project's tnl configuration
+  environment:
+    description: JSON environment reference with server, project_key, and environment_id
+    required: true
+  permission-id:
+    description: Exact saved environment visitor permission ID
+    required: true
+  machine-id:
+    description: Exact approved GitHub machine identity ID
+    required: true
+  audience:
+    description: Exact GitHub OIDC audience approved for that identity
     required: true
   version:
     description: Exact npm release version to install; otherwise use the installed project package
@@ -16,10 +25,10 @@ inputs:
     description: Explicit native tnl executable, relative to working-directory or absolute
     required: false
   services:
-    description: Newline-separated service keys narrowing the selected workload
-    required: false
+    description: JSON object mapping exact selected service names to protocols
+    required: true
   timeout:
-    description: Startup timeout in seconds (1-300); does not change the workload deadline
+    description: Startup timeout in seconds (1-300); does not change authority deadlines
     required: false
     default: "90"
 runs:

@@ -23,14 +23,14 @@ func TestGitLabWorkloadDefaultsAndConstraints(t *testing.T) {
 			t.Fatal("invalid GitLab configuration accepted")
 		}
 	}
-	c := TNL{Services: Services{"db": {PublisherGroup: new("production")}}, Workloads: map[string]Workload{"deploy": {GitLab: &g, Services: []string{"db"}}}}
-	if err := ValidateWorkloads(c); err != nil {
+	c := Environment{Workloads: map[string]Workload{"deploy": {GitLab: &g, Services: []string{"db"}}}}
+	if err := ValidateWorkloads(Services{"db": {}}, c.Workloads); err != nil {
 		t.Fatal(err)
 	}
 	p := c.Workloads["deploy"]
 	p.Google = &WorkloadGoogle{ServiceAccount: "112010400000000710080"}
 	c.Workloads["deploy"] = p
-	if ValidateWorkloads(c) == nil {
+	if ValidateWorkloads(Services{"db": {}}, c.Workloads) == nil {
 		t.Fatal("multiple providers accepted")
 	}
 }

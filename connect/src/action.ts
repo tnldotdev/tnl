@@ -5,12 +5,14 @@ import { z } from "zod";
 import {
   checkCapabilities,
   cleanupSchema,
-  contextSchema,
   inside,
   readySchema,
   type Cleanup,
 } from "./contract.js";
-import { serviceNameSchema } from "../../packages/ts/src/internal/values.js";
+import { environmentSelectionSchema } from "../../packages/ts/src/internal/connector/contract.js";
+import { identitySourceSelectionSchema } from "../../packages/ts/src/internal/identity/validation.js";
+import { nativeAcquisitionSchema } from "../../packages/ts/src/internal/identity/source.js";
+import { isDeepStrictEqual } from "node:util";
 import { connectorJSON } from "./native.js";
 import { selectBinary } from "./resolve.js";
 import { ActionError, checkCancelled, ownedError, safeActionMessage } from "./errors.js";
@@ -89,7 +91,6 @@ export async function post(): Promise<void> {
 
 export async function main(options: {
   signal: AbortSignal;
-  getIDToken?: (audience: string) => Promise<string>;
 }): Promise<void> {
   try {
     await setup(options);
@@ -100,19 +101,21 @@ export async function main(options: {
 
 async function setup(options: Parameters<typeof main>[0]): Promise<void> {
   checkCancelled(options.signal);
-  const workload = core.getInput("workload");
-  if (!serviceNameSchema.safeParse(workload).success)
-    throw new ActionError("TNL_ACTION_WORKLOAD_INVALID");
+  let selection: z.infer<typeof environmentSelectionSchema>;
+  let source: z.infer<typeof identitySourceSelectionSchema>;
+  let acquisition: z.infer<typeof nativeAcquisitionSchema>;
+  const audience = core.getInput("audience");
+  try {
+    const environment: unknown = JSON.parse(core.getInput("environment"));
+    const services: unknown = JSON.parse(core.getInput("services"));
+    selection = environmentSelectionSchema.parse({ environment, services, permission_id: core.getInput("permission-id") });
+    source = identitySourceSelectionSchema.parse({ kind: "oidc", machine_id: core.getInput("machine-id") });
+    acquisition = nativeAcquisitionSchema.parse({ method: "github-actions", audience });
+  } catch (cause) { throw new ActionError("TNL_ACTION_CONTEXT_INVALID", { cause }); }
   const timeout = Number(core.getInput("timeout") || "90");
   if (!Number.isInteger(timeout) || timeout < 1 || timeout > 300)
     throw new ActionError("TNL_ACTION_TIMEOUT_INVALID");
-  const services = core.getMultilineInput("services");
-  if (
-    services.length > 32 ||
-    services.some((key) => !serviceNameSchema.safeParse(key).success) ||
-    new Set(services).size !== services.length
-  )
-    throw new ActionError("TNL_ACTION_SERVICES_INVALID");
+  const services = Object.keys(selection.services);
   let directory: string;
   try {
     directory = await realpath(
@@ -174,62 +177,6 @@ async function setup(options: Parameters<typeof main>[0]): Promise<void> {
     await save();
     const commandOptions = { cwd: directory, timeout: 30_000, signal: options.signal };
     checkCapabilities(await connectorJSON(binary, ["capabilities"], commandOptions));
-    const scopeArgs = [
-      "--directory",
-      directory,
-      "--workload",
-      workload,
-      ...services.flatMap((key) => ["--service", key]),
-    ];
-    const parsed = contextSchema.safeParse(
-      await connectorJSON(binary, ["context", ...scopeArgs], commandOptions),
-    );
-    if (!parsed.success)
-      throw new ActionError("TNL_ACTION_CONTEXT_INVALID", { cause: parsed.error });
-    const context = parsed.data;
-    try {
-      if ((await realpath(context.directory)) !== context.directory)
-        throw new ActionError("TNL_ACTION_CONTEXT_INVALID");
-    } catch (cause) {
-      throw ownedError(cause, "TNL_ACTION_CONTEXT_INVALID");
-    }
-    if (
-      context.workload !== workload ||
-      (!inside(context.directory, directory) && context.directory !== directory) ||
-      services.some((key) => !context.services.includes(key))
-    )
-      throw new ActionError("TNL_ACTION_CONTEXT_INVALID");
-    if (services.length && context.services.length !== services.length)
-      throw new ActionError("TNL_ACTION_CONTEXT_INVALID");
-    checkCancelled(options.signal);
-    // context grants nothing. control verifies the GitHub signature, audience,
-    // saved policy, current claims, and one-use JTI during native exchange.
-    let assertion: string;
-    try {
-      const lifetime = AbortSignal.any([options.signal, AbortSignal.timeout(timeout * 1000)]);
-      assertion = await new Promise<string>((resolve, reject) => {
-        const aborted = () =>
-          reject(
-            new ActionError(
-              options.signal.aborted ? "TNL_ACTION_CANCELLED" : "TNL_ACTION_OIDC_FAILED",
-            ),
-          );
-        lifetime.addEventListener("abort", aborted, { once: true });
-        void Promise.resolve()
-          .then(() => {
-            lifetime.throwIfAborted();
-            return (options.getIDToken ?? core.getIDToken)(context.audience);
-          })
-          .then((token) => {
-            if (lifetime.aborted) aborted();
-            else resolve(token);
-          }, reject)
-          .finally(() => lifetime.removeEventListener("abort", aborted));
-      });
-    } catch (cause) {
-      checkCancelled(options.signal);
-      throw new ActionError("TNL_ACTION_OIDC_FAILED", { cause });
-    }
     checkCancelled(options.signal);
     // the action transfers its job-owned runtime source explicitly. ordinary
     // SDK request bearers are not background sources, and child env stays filtered.
@@ -237,17 +184,19 @@ async function setup(options: Parameters<typeof main>[0]): Promise<void> {
     const requestToken = process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
     const githubActionsRefresh =
       requestURL && requestToken
-        ? { audience: context.audience, request_url: requestURL, request_token: requestToken }
+        ? { audience, request_url: requestURL, request_token: requestToken }
         : undefined;
+    if (process.env.GITHUB_ACTIONS !== "true" || githubActionsRefresh === undefined) throw new ActionError("TNL_ACTION_OIDC_FAILED");
     owned.start_attempted = true;
     await save();
-    const started = await connectorJSON(binary, ["start", ...scopeArgs, "--runner-temp", session], {
+    const started = await connectorJSON(binary, ["environment-start", "--runner-temp", session], {
       ...commandOptions,
       timeout: timeout * 1000,
       input: JSON.stringify({
         schema: 1,
-        context,
-        assertion,
+        selection,
+        source,
+        acquisition,
         github_actions_refresh: githubActionsRefresh,
       }),
       onResponse: async (value) => {
@@ -265,8 +214,11 @@ async function setup(options: Parameters<typeof main>[0]): Promise<void> {
       !ready.success ||
       ready.data.executable !== binary ||
       owned.handle !== ready.data.connection_handle ||
-      Object.keys(ready.data.project_runtime.services).length !== context.services.length ||
-      context.services.some((key) => !Object.hasOwn(ready.data.project_runtime.services, key)) ||
+      !isDeepStrictEqual(ready.data.environment.environment, selection.environment) ||
+      Object.keys(ready.data.environment.services).length !== services.length ||
+      services.some((key) => ready.data.environment.services[key]?.protocol !== selection.services[key]) ||
+      Object.keys(ready.data.project_runtime.services).length !== services.length ||
+      services.some((key) => ready.data.project_runtime.services[key]?.protocol !== selection.services[key]) ||
       (ready.data.kubeconfig !== undefined && !inside(session, ready.data.kubeconfig))
     )
       throw new ActionError("TNL_ACTION_READY_INVALID", {

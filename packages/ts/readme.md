@@ -67,10 +67,11 @@ By default, visitors need a current sign-in, share link, or token.
 
 ## connect to a service
 
-Declare your service in project configuration and start its publisher, then sign
-in with an identity that can visit it. The [AWS publisher guide](https://tnl.dev/docs/aws-publishers)
-shows one way to run a publisher beside your database. For a PostgreSQL service
-named `database`:
+For local development, sign in and use `await tnl.connect("database")`. Local
+connections use the project selected from the current directory.
+
+For a deployed app, generate service facts and select one saved environment
+with an explicit visitor identity. For a PostgreSQL service named `database`:
 
 ```console
 npm install pg
@@ -78,22 +79,45 @@ npm install -D @types/pg
 npx tnl generate
 ```
 
-Include `.tnl/generated/project.d.ts` in your TypeScript configuration for typed
-service names and connection settings. Then use the settings with your driver:
+Import the generated facts as runtime data. They supply exact service names and
+protocols, not authorization, endpoints, or credentials:
 
 ```ts
 import { Client } from "pg";
-import { tnl } from "@tnldotdev/tnl";
+import { readFile } from "node:fs/promises";
+import { tnl, type IdentitySource } from "@tnldotdev/tnl";
+import { services } from "./.tnl/generated/project.js";
 
-const client = new Client({
-  ...(await tnl.connect("database")),
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
+// use the reference and visitor permission approved on your tnl server.
+const environment = Object.freeze({
+  server: "https://control.example",
+  project_key: "catalog",
+  environment_id: "env_1234567890123456789012",
 });
-await client.connect();
-console.log(await client.query("select 1"));
-await client.end();
+const identity: IdentitySource = {
+  kind: "oidc",
+  permission_id: "mwp_1234567890123456789012",
+  async assertion(_challenge, signal) {
+    return (await readFile("/var/run/secrets/tnl/token", { encoding: "utf8", signal })).trim();
+  },
+};
+const connections = tnl.client({ services, environment, identity });
+try {
+  const database = new Client({
+    ...(await connections.connect("database")),
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
+  });
+  await database.connect();
+  try {
+    console.log(await database.query("select 1"));
+  } finally {
+    await database.end();
+  }
+} finally {
+  await connections.close();
+}
 ```
 
 The returned PostgreSQL address points to tnl on your machine:
@@ -106,6 +130,12 @@ app --> local tnl --> relay --> publisher --> database
 tnl supplies the connection address and TLS settings; you supply the database
 account. Keep `pg`'s default `enableChannelBinding: false`. Await fresh settings
 when creating a replacement client or pool.
+
+Each client captures its environment and identity independently. Closing one
+does not change another client or local `tnl.connect`. OIDC assertions must match
+the saved visitor permission. A `registered-key` source instead signs the
+native challenge's `scope` and `audience` with its registered identity key; the
+native session key remains inside tnl. Neither source is a publisher credential.
 
 Connections run in Node or Bun. Deployed apps need this package as a runtime
 dependency, including its platform-specific native package. To use prepared

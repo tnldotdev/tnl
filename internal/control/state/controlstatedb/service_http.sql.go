@@ -341,35 +341,22 @@ func (q *Queries) RotateServiceHTTPBrowserSession(ctx context.Context, arg Rotat
 }
 
 const serviceHTTPAppliedConfiguration = `-- name: ServiceHTTPAppliedConfiguration :one
-SELECT project.team_id,project.project_key,project.configuration_ciphertext,project.storage_key_id,service.service,service.group_id,COALESCE(publisher_group.environment_id,environment.id,'')::text AS environment_id FROM control.applied_project_services service
-JOIN control.applied_projects project ON project.team_id=service.team_id AND project.project_key=service.project_key
+SELECT service.service,service.group_id,COALESCE(publisher_group.environment_id,environment.id,'')::text AS environment_id FROM control.applied_project_services service
 LEFT JOIN control.project_publisher_groups publisher_group ON publisher_group.id=service.group_id
 LEFT JOIN control.environments environment ON environment.group_id=publisher_group.id
 WHERE service.service_id=$1
 `
 
 type ServiceHTTPAppliedConfigurationRow struct {
-	TeamID                  string
-	ProjectKey              string
-	ConfigurationCiphertext []byte
-	StorageKeyID            string
-	Service                 string
-	GroupID                 pgtype.Text
-	EnvironmentID           string
+	Service       string
+	GroupID       pgtype.Text
+	EnvironmentID string
 }
 
 func (q *Queries) ServiceHTTPAppliedConfiguration(ctx context.Context, serviceID pgtype.Text) (ServiceHTTPAppliedConfigurationRow, error) {
 	row := q.db.QueryRow(ctx, serviceHTTPAppliedConfiguration, serviceID)
 	var i ServiceHTTPAppliedConfigurationRow
-	err := row.Scan(
-		&i.TeamID,
-		&i.ProjectKey,
-		&i.ConfigurationCiphertext,
-		&i.StorageKeyID,
-		&i.Service,
-		&i.GroupID,
-		&i.EnvironmentID,
-	)
+	err := row.Scan(&i.Service, &i.GroupID, &i.EnvironmentID)
 	return i, err
 }
 

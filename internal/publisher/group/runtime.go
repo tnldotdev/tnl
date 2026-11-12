@@ -3,6 +3,7 @@ package group
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net"
@@ -18,28 +19,27 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-var ErrAssignment = errors.New("publisher group assignment does not match the enrolled project, group or revision")
+var ErrAssignment = errors.New("publisher assignment does not match the enrolled environment or revision")
 
 type Control interface {
 	publisherruntime.Control
 	ServerURL() string
-	Assignments(context.Context, string) (controlv1.PublisherGroupAssignments, error)
-	Acknowledge(context.Context, string, controlv1.PublisherGroupAcknowledgement) error
+	Assignments(context.Context, string) (controlv1.EnvironmentPublisherAssignments, error)
+	Acknowledge(context.Context, string, controlv1.EnvironmentPublisherAcknowledgement) error
 }
 
 type Runtime struct {
-	Control       Control
-	Member        controlv1.PublisherGroupMember
-	Private       ed25519.PrivateKey
-	Publish       func(context.Context, controlv1.PublisherGroupServiceAssignment, func(bool)) error
-	Observe       func(int64, bool) error
-	MemberChanged func(controlv1.PublisherGroupMember) error
-	PollInterval  time.Duration
-	Deployment    *controlv1.PublisherDeploymentReport
+	Control      Control
+	Publisher    controlv1.EnvironmentPublisher
+	Private      ed25519.PrivateKey
+	Publish      func(context.Context, controlv1.EnvironmentPublication, controlv1.EnvironmentPublisherAssignment, func(bool)) error
+	Observe      func(int64, bool) error
+	PollInterval time.Duration
+	Deployment   *controlv1.PublisherDeploymentReport
 }
 
-func (Runtime) String() string   { return "publisher group runtime" }
-func (Runtime) GoString() string { return "publisher group runtime" }
+func (Runtime) String() string   { return "environment publisher runtime" }
+func (Runtime) GoString() string { return "environment publisher runtime" }
 
 type running struct {
 	definition string
@@ -50,10 +50,15 @@ type running struct {
 	err        error
 }
 
-// Serve fences replaced workers before starting their replacements. losing the
-// group lease stops all assignments; a polling failure never extends that lease.
-func (r Runtime) Serve(ctx context.Context) error {
-	if r.Control == nil || r.Publish == nil || len(r.Private) != ed25519.PrivateKeySize || r.Member.GroupId == "" {
+// serve fences replaced workers before starting their replacements. losing the
+// environment lease stops assignments; a polling failure never extends that lease.
+func (r Runtime) Serve(ctx context.Context) (retErr error) {
+	defer func() {
+		if cause := context.Cause(ctx); cause != nil && !failure.Only(cause, context.Canceled) {
+			retErr = errors.Join(retErr, cause)
+		}
+	}()
+	if r.Control == nil || r.Publish == nil || len(r.Private) != ed25519.PrivateKeySize || r.Publisher.EnvironmentId == "" {
 		return ErrAssignment
 	}
 	if r.PollInterval == 0 {
@@ -63,7 +68,7 @@ func (r Runtime) Serve(ctx context.Context) error {
 		return ErrAssignment
 	}
 	workers := map[string]*running{}
-	owner, err := publisherruntime.New(r.Control, r.Control.ServerURL(), r.Member.PublisherIdentityId, r.Member.KeyId, r.Member.GroupId, r.Private, r.Deployment)
+	owner, err := publisherruntime.New(r.Control, r.Control.ServerURL(), r.Publisher.PublisherIdentityId, r.Publisher.KeyId, r.Publisher.EnvironmentId, r.Private, r.Deployment)
 	if err != nil {
 		return err
 	}
@@ -71,21 +76,26 @@ func (r Runtime) Serve(ctx context.Context) error {
 		finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		finish, end := observability.PublisherOperation(observability.Independent(finish), "group_shutdown")
-		end(owner.Stop(finish))
+		err := owner.Stop(finish)
+		end(err)
+		retErr = errors.Join(retErr, err)
 	}()
 	var mu sync.Mutex
-	stop := func() {
+	stop := func() error {
 		for _, w := range workers {
 			w.lease.Stop()
 			w.cancel()
 		}
+		var result error
 		for _, w := range workers {
 			<-w.done
+			result = errors.Join(result, w.err)
 		}
 		clear(workers)
+		return result
 	}
-	defer stop()
-	var lease controlv1.PublisherGroupLease
+	defer func() { retErr = errors.Join(retErr, stop()) }()
+	var lease controlv1.EnvironmentPublisherLease
 	var revision int64
 	var configurationHash string
 	var observed bool
@@ -108,9 +118,15 @@ func (r Runtime) Serve(ctx context.Context) error {
 			leaseCtx, finish := observability.PublisherOperation(ctx, "group_lease")
 			response, err := owner.Renew(leaseCtx)
 			finish(err)
-			var next controlv1.PublisherGroupLease
-			if response.GroupLease != nil {
-				next = *response.GroupLease
+			if err != nil && ctx.Err() != nil {
+				if failure.Only(err, ctx.Err()) {
+					return nil
+				}
+				return err
+			}
+			var next controlv1.EnvironmentPublisherLease
+			if response.EnvironmentLease != nil {
+				next = *response.EnvironmentLease
 			}
 			if err != nil && !temporary(err) && ctx.Err() == nil {
 				return err
@@ -120,25 +136,37 @@ func (r Runtime) Serve(ctx context.Context) error {
 			}
 			if err == nil && next.AccessToken != "" && next.ExpiresAt.After(time.Now()) {
 				lease = next
-				ctx = owner.ObservabilityContext(ctx, r.Member.TeamId, r.Member.GroupId)
+				ctx = owner.ObservabilityContext(ctx, r.Publisher.TeamId, r.Publisher.EnvironmentId)
 				observability.PublisherLease(ctx, lease.ExpiresAt)
 				for _, w := range workers {
 					w.lease.Reset(time.Until(lease.ExpiresAt))
 				}
 			} else if !lease.ExpiresAt.After(time.Now()) {
-				stop()
+				if err := stop(); err != nil {
+					return err
+				}
 				if err := observe(revision, false); err != nil {
 					return err
 				}
 			}
 		}
 		if lease.ExpiresAt.After(time.Now()) {
-			poll, finishPoll := observability.PublisherOperation(ctx, "group_assignments")
+			pollCtx, cancelPoll := context.WithDeadline(ctx, minTime(lease.ExpiresAt, time.Now().Add(10*time.Second)))
+			poll, finishPoll := observability.PublisherOperation(pollCtx, "group_assignments")
 			assignment, err := r.Control.Assignments(poll, lease.AccessToken)
 			finishPoll(err)
-			if errors.Is(err, clientcontrol.ErrUnauthenticated) {
-				stop()
-				lease = controlv1.PublisherGroupLease{}
+			cancelPoll()
+			if err != nil && ctx.Err() != nil {
+				if failure.Only(err, ctx.Err()) {
+					return nil
+				}
+				return err
+			}
+			if failure.Only(err, clientcontrol.ErrUnauthenticated) {
+				if err := stop(); err != nil {
+					return err
+				}
+				lease = controlv1.EnvironmentPublisherLease{}
 				if err := observe(revision, false); err != nil {
 					return err
 				}
@@ -146,29 +174,33 @@ func (r Runtime) Serve(ctx context.Context) error {
 				return err
 			}
 			if err == nil {
-				currentMember := assignment.Member
-				currentMember.GroupName = r.Member.GroupName
-				if currentMember != r.Member || assignment.Revision < revision || assignment.Revision < 1 || len(assignment.ConfigurationHash) != 64 || assignment.Revision == revision && assignment.ConfigurationHash != configurationHash {
+				if ctx.Err() != nil {
+					return nil
+				}
+				if !lease.ExpiresAt.After(time.Now()) {
+					if err := stop(); err != nil {
+						return err
+					}
+					if err := observe(revision, false); err != nil {
+						return err
+					}
+					continue
+				}
+				publication := assignment.Environment
+				hash, hashErr := hex.DecodeString(publication.ConfigurationHash)
+				if assignment.Publisher != r.Publisher || publication.EnvironmentId != r.Publisher.EnvironmentId || publication.MutationRevision < revision || publication.MutationRevision < 1 || len(hash) != 32 || hashErr != nil || hex.EncodeToString(hash) != publication.ConfigurationHash || publication.MutationRevision == revision && publication.ConfigurationHash != configurationHash || len(assignment.Services) > 128 {
 					return ErrAssignment
 				}
-				if r.Member.GroupName != assignment.Member.GroupName || revision == 0 {
-					if r.MemberChanged != nil {
-						if err := r.MemberChanged(assignment.Member); err != nil {
-							return err
-						}
-					}
-				}
-				r.Member.GroupName = assignment.Member.GroupName
 				definitions := map[string]string{}
+				ids := map[string]bool{}
 				for _, service := range assignment.Services {
-					if service.Service == "" || service.ServiceId == "" || service.GrantId == "" || service.Configuration.PublisherGroup == nil || *service.Configuration.PublisherGroup != r.Member.GroupName || definitions[service.Service] != "" {
+					if service.Service == "" || service.ServiceId == "" || service.GrantId == "" || !service.Configuration.Protocol.Valid() || service.TrustRevision < 1 || definitions[service.Service] != "" || ids[service.ServiceId] {
 						return ErrAssignment
 					}
-					// the selector is descriptive; changing it must not restart an
-					// unchanged publication or replace its certificate and connections.
-					definition := service
-					definition.Configuration.PublisherGroup = nil
-					data, err := json.Marshal(definition)
+					ids[service.ServiceId] = true
+					// an unchanged running service keeps its connections. a newly
+					// started worker receives the exact current envelope explicitly.
+					data, err := json.Marshal(service)
 					if err != nil {
 						return err
 					}
@@ -178,8 +210,15 @@ func (r Runtime) Serve(ctx context.Context) error {
 					if definitions[name] != w.definition {
 						w.lease.Stop()
 						w.cancel()
+					}
+				}
+				for name, w := range workers {
+					if definitions[name] != w.definition {
 						<-w.done
 						delete(workers, name)
+						if w.err != nil && !retryablePublication(w.err) {
+							return w.err
+						}
 						continue
 					}
 					select {
@@ -197,14 +236,14 @@ func (r Runtime) Serve(ctx context.Context) error {
 					if workers[service.Service] != nil {
 						continue
 					}
-					workerCtx, cancel := context.WithCancel(observability.Independent(observability.NarrowIdentity(poll, observability.Identity{ServiceID: service.ServiceId})))
+					workerCtx, cancel := context.WithCancel(observability.Independent(observability.NarrowIdentity(ctx, observability.Identity{ServiceID: service.ServiceId})))
 					w := &running{definition: definitions[service.Service], cancel: cancel, done: make(chan struct{})}
 					w.lease = time.AfterFunc(time.Until(lease.ExpiresAt), cancel)
 					workers[service.Service] = w
 					go func() {
 						defer close(w.done)
-						w.err = r.Publish(workerCtx, service, func(healthy bool) { mu.Lock(); w.healthy = healthy; mu.Unlock() })
-						if workerCtx.Err() != nil {
+						w.err = r.Publish(workerCtx, publication, service, func(healthy bool) { mu.Lock(); w.healthy = healthy; mu.Unlock() })
+						if workerCtx.Err() != nil && failure.Only(w.err, workerCtx.Err()) {
 							w.err = nil
 						}
 						mu.Lock()
@@ -212,17 +251,28 @@ func (r Runtime) Serve(ctx context.Context) error {
 						mu.Unlock()
 					}()
 				}
-				revision = assignment.Revision
-				configurationHash = assignment.ConfigurationHash
+				revision = publication.MutationRevision
+				configurationHash = publication.ConfigurationHash
 				healthy := true
 				mu.Lock()
 				for _, w := range workers {
 					healthy = healthy && w.healthy
 				}
 				mu.Unlock()
-				ack, finishAck := observability.PublisherOperation(ctx, "group_acknowledge")
-				err = r.Control.Acknowledge(ack, lease.AccessToken, controlv1.PublisherGroupAcknowledgement{Revision: revision, ConfigurationHash: assignment.ConfigurationHash, Healthy: healthy})
+				ackCtx, cancelAck := context.WithDeadline(ctx, minTime(lease.ExpiresAt, time.Now().Add(10*time.Second)))
+				ack, finishAck := observability.PublisherOperation(ackCtx, "group_acknowledge")
+				err = r.Control.Acknowledge(ack, lease.AccessToken, controlv1.EnvironmentPublisherAcknowledgement{Environment: publication, Healthy: healthy})
 				finishAck(err)
+				cancelAck()
+				if err != nil && ctx.Err() != nil {
+					if failure.Only(err, ctx.Err()) {
+						return nil
+					}
+					return err
+				}
+				if err != nil && !temporary(err) && !failure.Only(err, clientcontrol.ErrStatusConflict) && !failure.Only(err, clientcontrol.ErrUnauthenticated) {
+					return err
+				}
 				if err == nil {
 					if err := observe(revision, healthy); err != nil {
 						return err
@@ -240,10 +290,20 @@ func (r Runtime) Serve(ctx context.Context) error {
 	return nil
 }
 
+func minTime(first, second time.Time) time.Time {
+	if first.Before(second) {
+		return first
+	}
+	return second
+}
+
 func retryablePublication(err error) bool {
+	if !joinedPublicationCauses(err, retryablePublication) {
+		return false
+	}
 	var discovery *publisherdiscovery.Error
 	if errors.As(err, &discovery) {
-		return temporary(err)
+		return temporary(discovery)
 	}
 	// an apply or namespace rename can revoke a service grant just after a
 	// successful poll. refresh assignments rather than killing the group task;
@@ -256,6 +316,9 @@ func retryablePublication(err error) bool {
 }
 
 func temporary(err error) bool {
+	if !joinedPublicationCauses(err, temporary) {
+		return false
+	}
 	var discovery *publisherdiscovery.Error
 	if errors.As(err, &discovery) {
 		switch discovery.Kind {
@@ -270,4 +333,21 @@ func temporary(err error) bool {
 	}
 	reason, _ := failure.ReasonOf(err)
 	return reason == failure.ServerUnavailable || reason == failure.ServerRateLimited
+}
+
+// each joined branch is an independent failure. a retryable operation must not
+// hide cleanup failures beside it, even beneath a diagnostic or fmt wrapper.
+func joinedPublicationCauses(err error, retryable func(error) bool) bool {
+	for err != nil {
+		if joined, ok := err.(interface{ Unwrap() []error }); ok {
+			for _, cause := range joined.Unwrap() {
+				if cause != nil && !failure.Only(cause, context.Canceled) && !retryable(cause) {
+					return false
+				}
+			}
+			return true
+		}
+		err = errors.Unwrap(err)
+	}
+	return true
 }

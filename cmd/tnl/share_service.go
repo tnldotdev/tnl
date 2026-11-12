@@ -40,6 +40,7 @@ type serviceShareInviteCommand struct {
 type serviceShareSelection struct {
 	scopedTeamFlags `embed:""`
 	Name            string `arg:"" name:"name" help:"Configured service key or exact service ID (svc_)."`
+	Environment     string `name:"environment" help:"Select this saved environment instead of this worktree's local service."`
 }
 
 type serviceShareDeadline struct {
@@ -115,8 +116,8 @@ func (f serviceShareDeadline) deadline(now time.Time, maximum time.Duration) (ti
 }
 
 // only configuration keys and immutable IDs select service access. saved names,
-// public URL hostnames, and publisher group names are not fallback selectors.
-func serviceShareKey(project projectConfiguration, name string) (string, error) {
+// public URL hostnames, and environment names are not fallback service selectors.
+func serviceShareKey(project projectConfiguration, name, environment string) (string, error) {
 	if opaqueid.Valid(name, opaqueid.ServicePrefix) {
 		return "", nil
 	}
@@ -124,20 +125,33 @@ func serviceShareKey(project projectConfiguration, name string) (string, error) 
 	if !found || name == "" {
 		return "", serviceShareInput("select a configured service key or exact service ID")
 	}
-	if config.PublisherGroupName(definition) == "local" && config.IsPublicService(definition) {
+	if environment == "" && !project.HasLocalService(name) {
+		return "", serviceShareInput("select --environment for a remote service key, or use an exact service ID")
+	}
+	if environment == "" && config.IsPublicService(definition) {
 		return "", serviceShareInput("this key selects a public URL; use tnl share invite, link, or token with its public URL")
 	}
 	return name, nil
 }
 
 func (project projectConfiguration) applyServiceShare(f *serviceShareSelection) error {
-	key, err := serviceShareKey(project, f.Name)
+	key, err := serviceShareKey(project, f.Name, f.Environment)
 	if err != nil {
 		return err
 	}
 	effective, err := project.EffectiveService(key)
 	if err != nil {
 		return err
+	}
+	if f.Environment != "" {
+		declared := project.Config
+		if project.Declared != nil {
+			declared = *project.Declared
+		}
+		effective.Server, effective.Team = declared.Server, declared.Team
+		if environment, found := declared.Environments[f.Environment]; found && environment.Server != nil {
+			effective.Server = environment.Server
+		}
 	}
 	f.ServerURL, _, err = resolve.Server(f.ServerURL, effective.Server, f.AccessToken)
 	if err == nil {
@@ -146,13 +160,13 @@ func (project projectConfiguration) applyServiceShare(f *serviceShareSelection) 
 	return err
 }
 
-func selectServiceShare(ctx context.Context, s *clientteam.Session, project projectConfiguration, name string) (controlv1.Service, error) {
-	key, err := serviceShareKey(project, name)
+func selectServiceShare(ctx context.Context, s *clientteam.Session, project projectConfiguration, name, environment string) (controlv1.Service, error) {
+	key, err := serviceShareKey(project, name, environment)
 	if err != nil {
 		return controlv1.Service{}, err
 	}
 	team := ""
-	if key != "" || s.SelectedTeam() != "" || s.ProjectTeam() != "" {
+	if key != "" || environment != "" || s.SelectedTeam() != "" || s.ProjectTeam() != "" {
 		membership, err := s.CurrentMembership(ctx)
 		if err != nil {
 			return controlv1.Service{}, err
@@ -161,21 +175,41 @@ func selectServiceShare(ctx context.Context, s *clientteam.Session, project proj
 	}
 	id := name
 	var expectedSource *controlv1.LocalServiceSource
-	if key != "" {
-		expectedSource = &controlv1.LocalServiceSource{Service: key}
-		if config.PublisherGroupName(project.Config.Services[key]) == "local" {
-			source := project.LocalPublicationIdentity()
-			expectedSource.ProjectKey, expectedSource.SourceFingerprint = source.Key, source.Fingerprint
-			expectedSource.WorktreeKey = project.LocalWorktreeKey()
-		} else {
-			source, err := project.SourceIdentity(ctx)
-			if err != nil {
-				return controlv1.Service{}, failure.Wrap("identify service access project", failure.ProjectConfigInvalid, err)
-			}
-			expectedSource.ProjectKey, expectedSource.SourceFingerprint = source.Key, source.Fingerprint
+	var expectedProtocol *controlv1.ServiceProtocol
+	if environment != "" {
+		source, err := project.SourceIdentity(ctx)
+		if err != nil {
+			return controlv1.Service{}, failure.Wrap("identify environment service access", failure.ProjectConfigInvalid, err)
 		}
+		inventory, err := s.Authenticated().Control.ListEnvironments(ctx, team, source.Key)
+		if err != nil {
+			return controlv1.Service{}, err
+		}
+		selected, err := resolve.SelectEnvironments(inventory, team, source.Key, environment)
+		if err != nil {
+			return controlv1.Service{}, err
+		}
+		matches := 0
+		for _, service := range selected[0].Services {
+			if key != "" && service.Service == key || key == "" && string(service.ServiceId) == name {
+				id = string(service.ServiceId)
+				expectedProtocol = &service.Protocol
+				matches++
+			}
+		}
+		if matches == 0 {
+			return controlv1.Service{}, clientcontrol.ErrNotFound
+		}
+		if matches != 1 {
+			return controlv1.Service{}, serviceShareResponse()
+		}
+	} else if key != "" {
+		expectedSource = &controlv1.LocalServiceSource{Service: key}
+		source := project.LocalPublicationIdentity()
+		expectedSource.ProjectKey, expectedSource.SourceFingerprint = source.Key, source.Fingerprint
+		expectedSource.WorktreeKey = project.LocalWorktreeKey()
 		// management inventory carries authoritative source bindings without
-		// requiring a visitor grant for either local or applied services.
+		// requiring a visitor grant for a local service.
 		services, err := s.Authenticated().Control.ListServices(ctx, team)
 		if err != nil {
 			return controlv1.Service{}, err
@@ -208,21 +242,21 @@ func selectServiceShare(ctx context.Context, s *clientteam.Session, project proj
 	if err != nil {
 		return service, err
 	}
-	if service.Id != id || team != "" && service.TeamId != team || expectedSource != nil && (service.Source == nil || *service.Source != *expectedSource) {
+	if service.Id != id || team != "" && service.TeamId != team || expectedSource != nil && (service.Source == nil || *service.Source != *expectedSource) || expectedProtocol != nil && service.Protocol != *expectedProtocol {
 		return controlv1.Service{}, serviceShareResponse()
 	}
 	return service, nil
 }
 
 func openServiceShare(ctx context.Context, f serviceShareSelection, project projectConfiguration, command string, d io.Writer) (*clientteam.Session, controlv1.Service, error) {
-	if _, err := serviceShareKey(project, f.Name); err != nil {
+	if _, err := serviceShareKey(project, f.Name, f.Environment); err != nil {
 		return nil, controlv1.Service{}, err
 	}
 	s, err := openTeamSession(ctx, f.selection(), command, d)
 	if err != nil {
 		return nil, controlv1.Service{}, err
 	}
-	service, err := selectServiceShare(ctx, s, project, f.Name)
+	service, err := selectServiceShare(ctx, s, project, f.Name, f.Environment)
 	if err != nil {
 		s.Close()
 		return nil, service, err

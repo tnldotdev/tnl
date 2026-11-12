@@ -17,6 +17,8 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/client/filelock"
 	serviceconfig "github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"go.yaml.in/yaml/v3"
 	"golang.org/x/sys/unix"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -34,10 +36,12 @@ const ownerExtension = "tnl.dev/owner"
 // Owner is the immutable boundary of one connection. display names cannot prove
 // ownership, including when two installations happen to use the same hostname.
 type Owner struct {
-	ControlURL string `json:"control_url"`
-	TeamID     string `json:"team_id"`
-	SourceID   string `json:"source_id"`
-	ServiceID  string `json:"service_id"`
+	ControlURL    string `json:"control_url"`
+	TeamID        string `json:"team_id,omitempty"`
+	SourceID      string `json:"source_id,omitempty"`
+	ProjectKey    string `json:"project_key,omitempty"`
+	EnvironmentID string `json:"environment_id,omitempty"`
+	ServiceID     string `json:"service_id"`
 }
 
 type Plan struct {
@@ -114,11 +118,18 @@ func (o Options) validate() error {
 	control, controlErr := url.Parse(o.Owner.ControlURL)
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" && u.Path != "/" ||
 		controlErr != nil || control.Scheme != "https" || control.Host == "" || control.User != nil || control.RawQuery != "" || control.Fragment != "" ||
-		o.Owner.TeamID == "" || o.Owner.SourceID == "" || o.Owner.ServiceID == "" || !label.MatchString(o.ProjectLabel) || !label.MatchString(o.Service) ||
+		!o.Owner.validScope() || o.Owner.ServiceID == "" || !label.MatchString(o.ProjectLabel) || !label.MatchString(o.Service) ||
 		o.Namespace != "" && !namespace.MatchString(o.Namespace) || !serviceconfig.ValidTLSIdentity(o.TLSServerName) || !filepath.IsAbs(o.Helper) || !filepath.IsAbs(o.Profile) {
 		return ErrConfig
 	}
 	return nil
+}
+
+func (o Owner) validScope() bool {
+	if o.EnvironmentID != "" || o.ProjectKey != "" {
+		return naming.ValidProjectKey(o.ProjectKey) && opaqueid.Valid(o.EnvironmentID, opaqueid.EnvironmentPrefix) && o.TeamID == "" && o.SourceID == ""
+	}
+	return o.TeamID != "" && o.SourceID != ""
 }
 
 // Prepare uses a locked read-modify-write and edits only owned named entries.

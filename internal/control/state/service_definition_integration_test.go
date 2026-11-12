@@ -8,7 +8,7 @@ import (
 
 func TestIntegrationServiceDefinitionContentIdempotency(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "definition_idempotency")
-	project := appliedProjectRequest(t, d, now)
+	project := retainedEnvironmentProject(t, d, now)
 	request := CreateServiceDefinitionRequest{
 		TeamID: project.TeamID, ProjectKey: project.ProjectKey, SourceFingerprint: project.SourceFingerprint,
 		ActorID: project.ActorID, Now: now,

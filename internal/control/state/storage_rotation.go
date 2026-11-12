@@ -81,8 +81,8 @@ func (d *Database) countPreviousStorageSecrets(ctx context.Context) (int64, erro
 			(SELECT count(*) FROM control.connector_peer_pairs WHERE session_key_storage_key_id = $1) +
 			(SELECT count(*) FROM control.connector_peer_pending_bindings WHERE storage_key_id = $1) +
 			(SELECT count(*) FROM control.workload_sessions WHERE storage_key_id=$1) +
-			(SELECT count(*) FROM control.applied_projects WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.publisher_group_bindings WHERE storage_key_id=$1) +
+			(SELECT count(*) FROM control.environment_provisioning_enrollments WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.service_http_browser_logins WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.service_http_browser_sessions WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.browser_login_attempts WHERE verifier_storage_key_id=$1) +
@@ -165,6 +165,18 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 			remaining--
 		}
 		return nil
+	}
+	if err := rotate(`SELECT ctid::text,enrollment_id,key_ciphertext FROM control.environment_provisioning_enrollments WHERE storage_key_id=$1 FOR UPDATE SKIP LOCKED LIMIT $2`,
+		func(rows pgx.Rows) (string, string, []byte, error) {
+			var row, id string
+			var ciphertext []byte
+			err := rows.Scan(&row, &id, &ciphertext)
+			return row, provisioningEnrollmentContext(id), ciphertext, err
+		}, func(row, key string, ciphertext []byte) error {
+			_, err := tx.Exec(ctx, `UPDATE control.environment_provisioning_enrollments SET key_ciphertext=$1,storage_key_id=$2 WHERE ctid=$3::tid AND storage_key_id=$4`, ciphertext, key, row, previousKeyID)
+			return err
+		}); err != nil {
+		return 0, err
 	}
 	if err := rotate(`SELECT ctid::text,id,seed_ciphertext FROM control.visitor_token_keys WHERE storage_key_id=$1 FOR UPDATE SKIP LOCKED LIMIT $2`,
 		func(rows pgx.Rows) (string, string, []byte, error) {
@@ -342,14 +354,11 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 		{`SELECT ctid::text, encode(handoff_digest,'hex'), refresh_ciphertext FROM control.service_http_browser_sessions
 		  WHERE storage_key_id=$1 ORDER BY handoff_digest FOR UPDATE SKIP LOCKED LIMIT $2`,
 			"refresh_ciphertext", "storage_key_id", "control.service_http_browser_sessions", func(id string) string { return "browser-access:" + id }},
-		{`SELECT ctid::text, team_id || '/' || project_key, configuration_ciphertext FROM control.applied_projects
-		  WHERE storage_key_id=$1 ORDER BY team_id,project_key FOR UPDATE SKIP LOCKED LIMIT $2`,
-			"configuration_ciphertext", "storage_key_id", "control.applied_projects", func(id string) string { return "applied-project/" + id }},
 		// environment targets share this envelope, including retired environments.
 		// do not filter these rows through active groups or environment status.
 		{`SELECT ctid::text, group_id, bindings_ciphertext FROM control.publisher_group_bindings
 		  WHERE storage_key_id=$1 ORDER BY group_id FOR UPDATE SKIP LOCKED LIMIT $2`,
-			"bindings_ciphertext", "storage_key_id", "control.publisher_group_bindings", publisherGroupBindingsContext},
+			"bindings_ciphertext", "storage_key_id", "control.publisher_group_bindings", environmentTargetsContext},
 		{`SELECT ctid::text, team_id || '/' || project_key || '/' || idempotency_key, response_ciphertext FROM control.publisher_namespace_renames
 		  WHERE storage_key_id=$1 ORDER BY team_id,project_key,idempotency_key LIMIT $2 FOR UPDATE SKIP LOCKED`,
 			"response_ciphertext", "storage_key_id", "control.publisher_namespace_renames", func(id string) string { return "publisher-namespace-rename/" + id }},

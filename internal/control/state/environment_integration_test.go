@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -18,16 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
 
-func mustEnvironmentJSON(t *testing.T, value any) []byte {
-	t.Helper()
-	data, err := json.Marshal(value)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return data
-}
-
-func environmentDefinition(t *testing.T, d *Database, r ApplyProjectConfigurationRequest, services map[string]ServiceDefinitionService) ServiceDefinitionRevision {
+func environmentDefinition(t *testing.T, d *Database, r environmentPublisherTestProject, services map[string]ServiceDefinitionService) ServiceDefinitionRevision {
 	t.Helper()
 	definition, err := d.CreateServiceDefinition(t.Context(), CreateServiceDefinitionRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, ActorID: r.ActorID, Definition: ServiceDefinition{Services: services}, Now: r.Now})
 	if err != nil {
@@ -36,7 +26,7 @@ func environmentDefinition(t *testing.T, d *Database, r ApplyProjectConfiguratio
 	return definition
 }
 
-func createTestEnvironment(t *testing.T, d *Database, r ApplyProjectConfigurationRequest, name string, revision int64, targets EnvironmentTargets) (Environment, CreateEnvironmentRequest) {
+func createTestEnvironment(t *testing.T, d *Database, r environmentPublisherTestProject, name string, revision int64, targets EnvironmentTargets) (Environment, CreateEnvironmentRequest) {
 	t.Helper()
 	request := CreateEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, ActorID: r.ActorID, Name: name, DefinitionRevision: revision, Targets: targets, IdempotencyKey: "create/" + name, Now: r.Now}
 	environment, err := d.CreateEnvironment(t.Context(), request)
@@ -46,22 +36,14 @@ func createTestEnvironment(t *testing.T, d *Database, r ApplyProjectConfiguratio
 	return environment, request
 }
 
-func enrollTestEnvironment(t *testing.T, d *Database, r ApplyProjectConfigurationRequest, e Environment) enrolledGroupReplica {
+func enrollTestEnvironment(t *testing.T, d *Database, r environmentPublisherTestProject, e Environment) environmentPublisherReplica {
 	t.Helper()
-	var group string
-	if err := d.pool.QueryRow(t.Context(), `SELECT group_id FROM control.environments WHERE id=$1 AND team_id=$2 AND project_key=$3`, e.ID, r.TeamID, r.ProjectKey).Scan(&group); err != nil {
-		t.Fatal(err)
-	}
-	enrollment, err := d.IssuePublisherGroupEnrollment(t.Context(), r.TeamID, r.ProjectKey, group, r.ActorID, 1, time.Hour, r.Now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return enrollAppliedGroup(t, d, r, enrollment, r.Now)
+	return enrollEnvironmentPublisher(t, d, r, e)
 }
 
 func TestIntegrationEnvironmentPinnedDefinitionsIsolationAndRollback(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "environment_isolation")
-	r := appliedProjectRequest(t, d, now)
+	r := retainedEnvironmentProject(t, d, now)
 	d1 := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"api": {Protocol: "http"}})
 	staging, creation := createTestEnvironment(t, d, r, "customer_staging", d1.Revision, EnvironmentTargets{"api": {Address: "stage.internal:3000"}})
 	production, _ := createTestEnvironment(t, d, r, "production", d1.Revision, EnvironmentTargets{"api": {Address: "production.internal:3000"}})
@@ -74,11 +56,11 @@ func TestIntegrationEnvironmentPinnedDefinitionsIsolationAndRollback(t *testing.
 	}
 	stageMember := enrollTestEnvironment(t, d, r, staging)
 	prodMember := enrollTestEnvironment(t, d, r, production)
-	for _, member := range []enrolledGroupReplica{stageMember, prodMember} {
+	for _, member := range []environmentPublisherReplica{stageMember, prodMember} {
 		if len(member.assignments.Services) != 1 {
 			t.Fatal("explicit enrollment did not assign an exact service")
 		}
-		if err := d.AcknowledgePublisherGroupConfiguration(t.Context(), member.lease.AccessToken, member.assignments.Revision, member.assignments.ConfigurationHash, true, now); err != nil {
+		if err := d.AcknowledgeEnvironmentPublisher(t.Context(), member.lease.AccessToken, member.assignments.Environment, true, now); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -90,21 +72,7 @@ func TestIntegrationEnvironmentPinnedDefinitionsIsolationAndRollback(t *testing.
 	if err != nil || len(before.Members) != 1 || !before.Members[0].Healthy {
 		t.Fatal("production was not healthy before apply", before, err)
 	}
-	// an unrelated project document is deliberately incompatible. environment
-	// readers must never consume it, even for a logical name that happens to match.
-	global := ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"api": {Protocol: "http", Target: "http://latest.internal:9999"}}}
-	normalized, _, err := NormalizeProjectConfiguration(global)
-	if err != nil {
-		t.Fatal(err)
-	}
-	data := mustEnvironmentJSON(t, normalized)
-	sealed, err := d.storageKey.Seal(appliedProjectContext(r.TeamID, r.ProjectKey), data)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := d.pool.Exec(t.Context(), `UPDATE control.applied_projects SET revision=9,configuration_ciphertext=$3 WHERE team_id=$1 AND project_key=$2`, r.TeamID, r.ProjectKey, sealed); err != nil {
-		t.Fatal(err)
-	}
+	// a newer incompatible definition must never replace an environment's pin.
 	d2 := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"api": {Protocol: "postgres"}})
 	if d2.Revision != d1.Revision+1 || d2.ConfigurationHash == d1.ConfigurationHash {
 		t.Fatal("definition revision/hash was not immutable")
@@ -122,7 +90,7 @@ func TestIntegrationEnvironmentPinnedDefinitionsIsolationAndRollback(t *testing.
 	if _, err := d.CreateServiceDefinition(t.Context(), CreateServiceDefinitionRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: strings.Repeat("b", 64), ActorID: r.ActorID, Definition: d2.Definition, Now: now}); !errors.Is(err, ErrProjectSourceConflict) {
 		t.Fatal("definition publisher replaced project source provenance", err)
 	}
-	unchanged, err := d.GetPublisherGroupAssignments(t.Context(), prodMember.lease.AccessToken, now)
+	unchanged, err := d.GetEnvironmentPublisherAssignments(t.Context(), prodMember.lease.AccessToken, now)
 	if err != nil || !reflect.DeepEqual(unchanged, prodMember.assignments) {
 		t.Fatal("definition publication changed production", unchanged, err)
 	}
@@ -138,15 +106,15 @@ func TestIntegrationEnvironmentPinnedDefinitionsIsolationAndRollback(t *testing.
 	if updated.MutationRevision != staging.MutationRevision+1 || updated.AppliedDefinitionRevision != d2.Revision || updated.Services[0].Protocol != "postgres" || updated.Services[0].ServiceID != staging.Services[0].ServiceID || updated.Services[0].Hostname != staging.Services[0].Hostname || updated.Services[0].Port != staging.Services[0].Port {
 		t.Fatal("scoped apply replaced service identity or endpoint", updated)
 	}
-	stageAssignments, err := d.GetPublisherGroupAssignments(t.Context(), stageMember.lease.AccessToken, now)
-	if err != nil || stageAssignments.Revision != updated.MutationRevision || stageAssignments.ConfigurationHash != updated.ConfigurationHash || len(stageAssignments.Services) != 1 || stageAssignments.Services[0].Configuration.Target != "replacement.internal:5432" || stageAssignments.Services[0].Configuration.Protocol != "postgres" || stageAssignments.Services[0].GrantID != stageMember.assignments.Services[0].GrantID {
+	stageAssignments, err := d.GetEnvironmentPublisherAssignments(t.Context(), stageMember.lease.AccessToken, now)
+	if err != nil || stageAssignments.Environment != environmentPublicationForTest(updated) || len(stageAssignments.Services) != 1 || stageAssignments.Services[0].Configuration.Target != "replacement.internal:5432" || stageAssignments.Services[0].Configuration.Protocol != "postgres" || stageAssignments.Services[0].GrantID != stageMember.assignments.Services[0].GrantID {
 		t.Fatal("publisher assignments did not use the new pinned application", stageAssignments, err)
 	}
-	prodAssignments, err := d.GetPublisherGroupAssignments(t.Context(), prodMember.lease.AccessToken, now)
+	prodAssignments, err := d.GetEnvironmentPublisherAssignments(t.Context(), prodMember.lease.AccessToken, now)
 	if err != nil || !reflect.DeepEqual(prodAssignments, prodMember.assignments) {
 		t.Fatal("staging apply changed production assignments or authority", prodAssignments, err)
 	}
-	if err := d.AcknowledgePublisherGroupConfiguration(t.Context(), stageMember.lease.AccessToken, stageMember.assignments.Revision, stageMember.assignments.ConfigurationHash, true, now); !errors.Is(err, ErrProjectConfigurationStale) {
+	if err := d.AcknowledgeEnvironmentPublisher(t.Context(), stageMember.lease.AccessToken, stageMember.assignments.Environment, true, now); !errors.Is(err, ErrEnvironmentStale) {
 		t.Fatal("publisher acknowledged an older environment application", err)
 	}
 	prodAfter, err := d.GetEnvironment(t.Context(), r.TeamID, r.ProjectKey, production.ID, r.ActorID)
@@ -161,12 +129,16 @@ func TestIntegrationEnvironmentPinnedDefinitionsIsolationAndRollback(t *testing.
 	if err != nil || len(grants) != 1 || grants[0].ID != grant.ID || grants[0].RevokedAt != nil {
 		t.Fatal("staging apply changed production visitor authority", grants, err)
 	}
-	lookup, err := d.GetProjectService(t.Context(), GetProjectServiceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, EnvironmentID: production.ID, Service: "api", IdentityID: r.ActorID, Now: now})
-	if err != nil || lookup.ID != production.Services[0].ServiceID {
-		t.Fatal("lookup did not resolve the exact environment identity", lookup, err)
+	available, _, err := d.ListAvailableServices(t.Context(), r.ActorID, "", now)
+	if err != nil || len(available) != 1 || available[0].ID != production.Services[0].ServiceID {
+		t.Fatal("visitor inventory did not use the granted saved environment identity", available, err)
 	}
-	if _, err := d.GetProjectService(t.Context(), GetProjectServiceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, PublisherGroup: prodMember.member.GroupID, Service: "api", IdentityID: r.ActorID, Now: now}); !errors.Is(err, ErrServiceAccess) {
-		t.Fatal("legacy group selector selected an environment", err)
+	var internalAssignment string
+	if err := d.pool.QueryRow(t.Context(), `SELECT group_id FROM control.environments WHERE id=$1`, production.ID).Scan(&internalAssignment); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.GetEnvironment(t.Context(), r.TeamID, r.ProjectKey, internalAssignment, r.ActorID); !errors.Is(err, ErrEnvironmentInvalid) {
+		t.Fatal("internal assignment ID selected an environment", err)
 	}
 	apply.ExpectedRevision = updated.MutationRevision
 	apply.DefinitionRevision, apply.Targets = d1.Revision, creation.Targets
@@ -178,30 +150,21 @@ func TestIntegrationEnvironmentPinnedDefinitionsIsolationAndRollback(t *testing.
 	if err != nil || replay.ID != staging.ID || replay.MutationRevision != rolledBack.MutationRevision {
 		t.Fatal("creation replay normalized against latest definition", replay, err)
 	}
-	if _, err := d.ApplyProjectConfiguration(t.Context(), r); !errors.Is(err, ErrProjectManaged) {
-		t.Fatal("legacy global apply could sweep mapped environments", err)
-	}
-	if _, err := d.RenamePublisherGroup(t.Context(), r.TeamID, r.ProjectKey, prodMember.member.GroupName, "renamed", r.ActorID, 9, now); !errors.Is(err, ErrProjectManaged) {
-		t.Fatal("legacy group rename bypassed the environment revision fence", err)
-	}
-	if _, err := d.RenamePublisherNamespace(t.Context(), RenamePublisherNamespaceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, Group: prodMember.member.GroupName, NamespaceLabel: "renamed", ActorID: r.ActorID, ExpectedRevision: 9, IdempotencyKey: "bypass", Now: now}); !errors.Is(err, ErrProjectManaged) {
-		t.Fatal("legacy namespace rename bypassed the environment revision fence", err)
-	}
-	if _, err := d.UpdatePublisherGroupBindings(t.Context(), r.TeamID, r.ProjectKey, prodMember.member.GroupID, r.ActorID, 9, PublisherGroupBindings{"api": {Target: "bypass.internal:3000"}}, false, now); !errors.Is(err, ErrProjectManaged) {
-		t.Fatal("legacy binding update bypassed the environment revision fence", err)
+	if _, err := d.ApplyEnvironment(t.Context(), ApplyEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, EnvironmentApplication: EnvironmentApplication{EnvironmentID: production.ID, ExpectedRevision: 9, DefinitionRevision: d1.Revision, Targets: EnvironmentTargets{"api": {Address: "bypass.internal:3000"}}}, Now: now}); !errors.Is(err, ErrEnvironmentStale) {
+		t.Fatal("target replacement bypassed the environment revision fence", err)
 	}
 	if _, err := d.ConfigureService(t.Context(), production.Services[0].ServiceID, r.ActorID, ServiceMetadata{Protocol: "tcp"}, now); !errors.Is(err, ErrProjectManaged) {
 		t.Fatal("direct resource mutation bypassed the environment owner", err)
 	}
 	protected, err := d.GetEnvironment(t.Context(), r.TeamID, r.ProjectKey, production.ID, r.ActorID)
 	if err != nil || !protected.Members[0].Healthy || protected.ConfigurationHash != before.ConfigurationHash || protected.MutationRevision != before.MutationRevision || !reflect.DeepEqual(protected.Services, before.Services) {
-		t.Fatal("denied legacy mutations disturbed production", protected, err)
+		t.Fatal("denied mutations disturbed production", protected, err)
 	}
 }
 
 func TestIntegrationEnvironmentBatchPreflightAndResourceRollback(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "environment_batch")
-	r := appliedProjectRequest(t, d, now)
+	r := retainedEnvironmentProject(t, d, now)
 	d1 := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"api": {Protocol: "http"}})
 	one, _ := createTestEnvironment(t, d, r, "one", d1.Revision, EnvironmentTargets{"api": {Address: "one.internal:3000"}})
 	two, _ := createTestEnvironment(t, d, r, "two", d1.Revision, EnvironmentTargets{"api": {Address: "two.internal:3000"}})
@@ -284,16 +247,16 @@ func TestIntegrationEnvironmentBatchPreflightAndResourceRollback(t *testing.T) {
 
 func TestIntegrationEnvironmentTargetUpdateClosesOnlyOwnedRuns(t *testing.T) {
 	d, now, _, _ := newPublishRunPrerequisites(t)
-	r := appliedProjectRequest(t, d, now)
+	r := retainedEnvironmentProject(t, d, now)
 	d1 := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"api": {Protocol: "http"}})
 	staging, _ := createTestEnvironment(t, d, r, "staging", d1.Revision, EnvironmentTargets{"api": {Address: "staging.internal:3000"}})
 	production, _ := createTestEnvironment(t, d, r, "production", d1.Revision, EnvironmentTargets{"api": {Address: "production.internal:3000"}})
 	stageMember, prodMember := enrollTestEnvironment(t, d, r, staging), enrollTestEnvironment(t, d, r, production)
-	start := func(member enrolledGroupReplica) ServiceRunState {
+	start := func(member environmentPublisherReplica) ServiceRunState {
 		t.Helper()
 		assignment := member.assignments.Services[0]
-		access := groupAssignmentAccess(t, d, member, assignment, now)
-		prepared, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "environment-run/"+assignment.GrantID, now, ServiceMetadata{Protocol: "http", PublisherPool: true, TrustRevision: assignment.TrustRevision}, assignment.Environment)
+		access := environmentAssignmentAccess(t, d, member, assignment, now)
+		prepared, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "environment-run/"+assignment.GrantID, now, ServiceMetadata{Protocol: "http", PublisherPool: true, TrustRevision: assignment.TrustRevision}, &member.assignments.Environment)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -330,11 +293,11 @@ func TestIntegrationEnvironmentTargetUpdateClosesOnlyOwnedRuns(t *testing.T) {
 
 func TestIntegrationEnvironmentPinnedReadersAndLocalOwnership(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "environment_readers")
-	r := appliedProjectRequest(t, d, now)
+	r := retainedEnvironmentProject(t, d, now)
 	d1 := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"cluster": {Protocol: "kubernetes"}})
 	production, _ := createTestEnvironment(t, d, r, "production", d1.Revision, EnvironmentTargets{"cluster": {Discovery: &ProjectTargetDiscovery{Type: "eks", Region: "us-east-1", Cluster: new("production")}}})
 	staging, _ := createTestEnvironment(t, d, r, "staging", d1.Revision, EnvironmentTargets{"cluster": {Discovery: &ProjectTargetDiscovery{Type: "eks", Region: "us-west-2", Cluster: new("staging")}}})
-	localRequest := RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Service: "only-running-app", WorktreeKey: "checkout-a", WorktreeLabel: "checkout-a", ActorID: r.ActorID, Configuration: ProjectServiceConfiguration{Protocol: "http", Target: "localhost:3000"}, Now: now}
+	localRequest := RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Service: "only-running-app", WorktreeKey: "checkout-a", WorktreeLabel: "checkout-a", ActorID: r.ActorID, Configuration: LocalServiceDeclaration{Protocol: "http", Target: "localhost:3000"}, Now: now}
 	local, err := d.RealizeLocalProjectService(t.Context(), localRequest)
 	if err != nil {
 		t.Fatal("definition-only provenance fenced an app-owned registration", err)
@@ -344,10 +307,12 @@ func TestIntegrationEnvironmentPinnedReadersAndLocalOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.pool.Exec(t.Context(), `UPDATE control.project_publisher_groups SET public=true WHERE environment_id=$1`, staging.ID); err != nil {
+	public := true
+	staging, err = d.ApplyEnvironment(t.Context(), ApplyEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, EnvironmentApplication: EnvironmentApplication{EnvironmentID: staging.ID, ExpectedRevision: staging.MutationRevision, DefinitionRevision: d1.Revision, Public: &public}, Now: now})
+	if err != nil {
 		t.Fatal(err)
 	}
-	apply := ApplyEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, EnvironmentApplication: EnvironmentApplication{EnvironmentID: staging.ID, ExpectedRevision: 1, DefinitionRevision: d1.Revision, Targets: EnvironmentTargets{"cluster": {Discovery: &ProjectTargetDiscovery{Type: "eks", Region: "eu-west-1", Cluster: new("replacement")}}}}, Now: now}
+	apply := ApplyEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, EnvironmentApplication: EnvironmentApplication{EnvironmentID: staging.ID, ExpectedRevision: staging.MutationRevision, DefinitionRevision: d1.Revision, Targets: EnvironmentTargets{"cluster": {Discovery: &ProjectTargetDiscovery{Type: "eks", Region: "eu-west-1", Cluster: new("replacement")}}}}, Now: now}
 	updated, err := d.ApplyEnvironment(t.Context(), apply)
 	if err != nil || !updated.Services[0].Public || updated.Services[0].Hostname != staging.Services[0].Hostname || updated.Services[0].Port != staging.Services[0].Port {
 		t.Fatal("definition apply reset current reachability or endpoint", updated, err)
@@ -382,22 +347,22 @@ func TestIntegrationEnvironmentPinnedReadersAndLocalOwnership(t *testing.T) {
 
 func TestIntegrationEnvironmentRevocationSurvivesRollback(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "environment_revocation")
-	r := appliedProjectRequest(t, d, now)
+	r := retainedEnvironmentProject(t, d, now)
 	d1 := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"api": {Protocol: "http"}})
 	environment, creation := createTestEnvironment(t, d, r, "production", d1.Revision, EnvironmentTargets{"api": {Address: "original.internal:3000"}})
 	member := enrollTestEnvironment(t, d, r, environment)
 	assignment := member.assignments.Services[0]
-	access := groupAssignmentAccess(t, d, member, assignment, now)
+	access := environmentAssignmentAccess(t, d, member, assignment, now)
 	unused, err := publisherproof.Sign(member.member.PublisherIdentityID, member.member.KeyID, assignment.GrantID, publisherTestAudience, member.private, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := d.RevokePublisherGroupMember(t.Context(), r.TeamID, r.ProjectKey, member.member.GroupID, member.member.PublisherIdentityID, r.ActorID, now); err != nil {
+	if err := d.RevokeEnvironmentPublisher(t.Context(), environmentPublisherSelection(t, d, r, environment), member.member.PublisherIdentityID, now); err != nil {
 		t.Fatal(err)
 	}
 	grantOnly := enrollTestEnvironment(t, d, r, environment)
 	grantOnlyAssignment := grantOnly.assignments.Services[0]
-	grantOnlyAccess := groupAssignmentAccess(t, d, grantOnly, grantOnlyAssignment, now)
+	grantOnlyAccess := environmentAssignmentAccess(t, d, grantOnly, grantOnlyAssignment, now)
 	grantOnlyUnused, err := publisherproof.Sign(grantOnly.member.PublisherIdentityID, grantOnly.member.KeyID, grantOnlyAssignment.GrantID, publisherTestAudience, grantOnly.private, now)
 	if err != nil {
 		t.Fatal(err)
@@ -453,29 +418,28 @@ func TestIntegrationEnvironmentRevocationSurvivesRollback(t *testing.T) {
 	if err := d.pool.QueryRow(t.Context(), `SELECT count(*),count(*) FILTER(WHERE revoked_at IS NULL) FROM control.publisher_grants WHERE publisher_identity_id=$1`, grantOnly.member.PublisherIdentityID).Scan(&count, &active); err != nil || count != 1 || active != 0 {
 		t.Fatal("definition apply repaired an exact grant for a live member", count, active, err)
 	}
-	if _, err := d.GetProjectService(t.Context(), GetProjectServiceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, EnvironmentID: environment.ID, Service: "api", IdentityID: r.ActorID, Now: now}); !errors.Is(err, ErrServiceAccess) {
-		t.Fatal("rollback repaired revoked visitor authority", err)
+	available, _, err := d.ListAvailableServices(t.Context(), r.ActorID, "", now)
+	if err != nil || len(available) != 0 {
+		t.Fatal("rollback repaired revoked visitor authority", available, err)
 	}
 }
 
 func TestIntegrationEnvironmentCurrentEnrollmentParentAndReplayAuthorization(t *testing.T) {
 	d, now, _, _ := newPublishRunPrerequisites(t)
-	r := appliedProjectRequest(t, d, now)
+	r := retainedEnvironmentProject(t, d, now)
 	// this fixture starts with a personal team. use an organization so a second
 	// manager can lose authority independently from the owner doing rollback.
 	if _, err := d.pool.Exec(t.Context(), `UPDATE control.teams SET kind='organization' WHERE id=$1`, r.TeamID); err != nil {
 		t.Fatal(err)
 	}
-	manager := addAuthorityMember(t, d, now, r.ActorID, r.TeamID, "environment-manager", TeamRoleAdmin)
+	issuer, manager := retainedEnvironmentManager(t, d, r, "environment-manager")
 	d1 := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"api": {Protocol: "http"}})
 	environment, creation := createTestEnvironment(t, d, r, "production", d1.Revision, EnvironmentTargets{"api": {Address: "original.internal:3000"}})
-	issuer := r
-	issuer.ActorID = manager.IdentityID
 	member := enrollTestEnvironment(t, d, issuer, environment)
 	assignment := member.assignments.Services[0]
-	access := groupAssignmentAccess(t, d, member, assignment, now)
+	access := environmentAssignmentAccess(t, d, member, assignment, now)
 	metadata := ServiceMetadata{Protocol: "http", PublisherPool: true, TrustRevision: assignment.TrustRevision}
-	prepared, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "issuer-independent", now, metadata, assignment.Environment)
+	prepared, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "issuer-independent", now, metadata, &member.assignments.Environment)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -504,18 +468,18 @@ func TestIntegrationEnvironmentCurrentEnrollmentParentAndReplayAuthorization(t *
 	if _, err := d.pool.Exec(t.Context(), `UPDATE control.identities SET disabled_at=$2 WHERE id=$1`, manager.IdentityID, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.pool.Exec(t.Context(), `UPDATE control.publisher_group_enrollments SET expires_at=$2,revoked_at=$3 WHERE group_id=$1`, member.member.GroupID, now.Add(-time.Second), now); err != nil {
+	if _, err := d.pool.Exec(t.Context(), `UPDATE control.publisher_group_enrollments SET expires_at=$2,revoked_at=$3 WHERE group_id=(SELECT group_id FROM control.environments WHERE id=$1)`, environment.ID, now.Add(-time.Second), now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.HeartbeatServiceRun(t.Context(), run.ServiceID, run.RunID, run.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64}); err != nil {
 		t.Error("installed renewal depended on bootstrap identity or key lifetime", err)
 	}
-	groupAudience := "https://control.example/v1/publisher-groups/lease"
-	groupAssertion, err := publisherproof.Sign(member.member.PublisherIdentityID, member.member.KeyID, member.member.GroupID, groupAudience, member.private, now)
+	groupAudience := "https://control.example/v1/environment-publishers/lease"
+	groupAssertion, err := publisherproof.Sign(member.member.PublisherIdentityID, member.member.KeyID, member.member.EnvironmentID, groupAudience, member.private, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, err := d.AcquirePublisherGroupLease(t.Context(), member.member.PublisherIdentityID, member.member.GroupID, groupAssertion, groupAudience, now)
+	lease, err := d.AcquireEnvironmentPublisherLease(t.Context(), member.member.PublisherIdentityID, member.member.EnvironmentID, groupAssertion, groupAudience, now)
 	if err != nil {
 		t.Error("installed publisher could not renew its group lease independently", err)
 	} else {
@@ -541,12 +505,12 @@ func TestIntegrationEnvironmentCurrentEnrollmentParentAndReplayAuthorization(t *
 			t.Error("installed publisher proof depended on bootstrap issuer", err)
 		}
 	}
-	assignments, err := d.GetPublisherGroupAssignments(t.Context(), member.lease.AccessToken, now)
+	assignments, err := d.GetEnvironmentPublisherAssignments(t.Context(), member.lease.AccessToken, now)
 	if err != nil || len(assignments.Services) != 1 {
 		t.Error("installed assignment depended on bootstrap issuer", assignments, err)
 	} else {
 		current := assignments.Services[0]
-		prepared, err := d.PrepareServiceRun(t.Context(), current.ServiceID, access.PublisherIdentity, "issuer-independent-after-rollback", now, metadata, current.Environment)
+		prepared, err := d.PrepareServiceRun(t.Context(), current.ServiceID, access.PublisherIdentity, "issuer-independent-after-rollback", now, metadata, &assignments.Environment)
 		if err != nil {
 			t.Fatal("installed publisher could not prepare its current application", err)
 		}
@@ -570,7 +534,7 @@ func TestIntegrationEnvironmentCurrentEnrollmentParentAndReplayAuthorization(t *
 
 func TestIntegrationEnvironmentRetirementAndStorageRotation(t *testing.T) {
 	d, url, now := newControlStateIntegrationDatabaseWithURL(t, "environment_rotation")
-	r := appliedProjectRequest(t, d, now)
+	r := retainedEnvironmentProject(t, d, now)
 	d1 := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"api": {Protocol: "http"}})
 	digest := sha256.Sum256([]byte("tnl-target-tls/v1\x00equipment.internal\x00"))
 	trust := &ProjectTargetTLS{Hostname: "equipment.internal", Digest: hex.EncodeToString(digest[:])}

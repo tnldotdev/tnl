@@ -276,48 +276,116 @@ func (d *Database) ServiceBrowserSession(ctx context.Context, auth ServiceHTTPRu
 // so they cannot exhaust the authority's pool. service and expiry remain fixed.
 func (d *Database) RefreshServiceBrowserSession(ctx context.Context, service, secret string, now time.Time,
 	refresh func(context.Context, string) (BrowserTokenRotation, error)) (BrowserAccessSession, error) {
-	result, err := retryVisitorPreparation(ctx, now, func(at time.Time) (BrowserAccessSession, error) {
-		return d.refreshServiceBrowserSession(ctx, service, secret, at, refresh)
+	return retryServiceBrowserRefresh(ctx, newAuthorizationClock(now), func(ctx context.Context, clock authorizationClock) (BrowserAccessSession, error) {
+		return d.refreshServiceBrowserSession(ctx, service, secret, clock, refresh)
 	})
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr != nil && pgErr.Code == "55P03" {
-		err = errors.Join(ErrVisitorPolicy, err)
-	}
-	return result, err
 }
 
-func (d *Database) refreshServiceBrowserSession(ctx context.Context, service, secret string, now time.Time,
+// only a clean rollback after the initial NOWAIT conflict leaves this exact
+// error at the root. joined cleanup failures and later SQL errors never retry an
+// external rotation, even if they also contain a lock-conflict cause.
+type serviceBrowserRefreshBusy struct{ cause *pgconn.PgError }
+
+func (busy *serviceBrowserRefreshBusy) Error() string { return busy.cause.Error() }
+func (busy *serviceBrowserRefreshBusy) Unwrap() error { return busy.cause }
+
+func retryServiceBrowserRefresh(ctx context.Context, clock authorizationClock,
+	work func(context.Context, authorizationClock) (BrowserAccessSession, error)) (BrowserAccessSession, error) {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	delay := 5 * time.Millisecond
+	var previous error
+	for {
+		if cause := context.Cause(ctx); cause != nil {
+			return BrowserAccessSession{}, serviceBrowserRefreshFailure(errors.Join(previous, cause))
+		}
+		result, err := work(ctx, clock)
+		if cause := context.Cause(ctx); cause != nil {
+			err = errors.Join(err, cause)
+		}
+		if _, busy := err.(*serviceBrowserRefreshBusy); !busy {
+			if err != nil {
+				return BrowserAccessSession{}, serviceBrowserRefreshFailure(err)
+			}
+			return result, nil
+		}
+		previous = err
+		// the transaction and its pool connection have already been released.
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return BrowserAccessSession{}, serviceBrowserRefreshFailure(errors.Join(err, context.Cause(ctx)))
+		case <-timer.C:
+		}
+		if delay < 50*time.Millisecond {
+			delay += 5 * time.Millisecond
+		}
+	}
+}
+
+func serviceBrowserRefreshFailure(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr != nil && pgErr.Code == "55P03" {
+		return errors.Join(ErrVisitorPolicy, err)
+	}
+	return err
+}
+
+func (d *Database) refreshServiceBrowserSession(ctx context.Context, service, secret string, clock authorizationClock,
 	refresh func(context.Context, string) (BrowserTokenRotation, error)) (result BrowserAccessSession, retErr error) {
 	digest, err := browserDigest(secret)
 	if err != nil || d.storageKey == nil {
 		return result, ErrPreviewAccess
 	}
-	tx, err := d.pool.Begin(ctx)
+	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return result, err
 	}
 	defer rollback(ctx, tx, "refresh service browser session", &retErr)()
 	q := controlstatedb.New(tx)
-	row, err := q.LockServiceHTTPBrowserSession(ctx, controlstatedb.LockServiceHTTPBrowserSessionParams{ServiceID: service, CookieDigest: digest, ExpiresAt: timestamptz(now)})
+	row, err := q.LockServiceHTTPBrowserSession(ctx, controlstatedb.LockServiceHTTPBrowserSessionParams{ServiceID: service, CookieDigest: digest, ExpiresAt: timestamptz(clock.current())})
+	if err != nil {
+		if busy, ok := err.(*pgconn.PgError); ok && busy != nil && busy.Code == "55P03" {
+			return result, &serviceBrowserRefreshBusy{cause: busy}
+		}
+		return result, publisherLookupError(err, ErrPreviewAccess)
+	}
+	// the locking statement can see a newly updated browser row but a parent
+	// from its earlier snapshot. after acquiring the row, read that join again
+	// under read committed so a completed rotation cannot trigger a second one.
+	row, err = q.LockServiceHTTPBrowserSession(ctx, controlstatedb.LockServiceHTTPBrowserSessionParams{ServiceID: service, CookieDigest: digest, ExpiresAt: timestamptz(clock.current())})
 	if err != nil {
 		return result, publisherLookupError(err, ErrPreviewAccess)
 	}
-	if row.ParentRevokedAt.Valid || !row.RefreshExpiresAt.Time.After(now) {
+	now := clock.current()
+	if row.ParentRevokedAt.Valid || !row.RefreshExpiresAt.Time.After(now) || !row.ExpiresAt.Time.After(now) {
 		return result, ErrPreviewAccess
 	}
 	result = BrowserAccessSession{IdentityID: row.IdentityID, AccessExpiresAt: row.AccessExpiresAt.Time,
 		ExpiresAt: minTime(row.ExpiresAt.Time, row.RefreshExpiresAt.Time)}
+	var rotatedAccess credentials.AccessToken
 	if !result.AccessExpiresAt.After(now.Add(30 * time.Second)) {
 		secret, _, err := d.storageKey.Open(row.StorageKeyID, browserContext(row.HandoffDigest), row.RefreshCiphertext)
 		if err != nil {
 			return result, err
 		}
+		if cause := context.Cause(ctx); cause != nil {
+			return result, cause
+		}
+		if !result.ExpiresAt.After(clock.current()) {
+			return result, ErrPreviewAccess
+		}
 		rotated, err := refresh(ctx, string(secret))
 		if err != nil {
 			return result, err
 		}
-		principal, err := d.authenticateAccessToken(ctx, q, credentials.AccessToken(rotated.AccessToken), now)
-		if err != nil || principal.SessionID != row.ControlSessionID || principal.IdentityID != row.IdentityID || rotated.IdentityID != row.IdentityID || rotated.RefreshToken == "" || !rotated.AccessExpiresAt.After(now) {
+		rotatedAccess = credentials.AccessToken(rotated.AccessToken)
+		principal, err := d.authenticateAccessToken(ctx, q, rotatedAccess, clock.current())
+		if err != nil {
+			return result, errors.Join(ErrPreviewAccess, err)
+		}
+		if principal.SessionID != row.ControlSessionID || principal.IdentityID != row.IdentityID || rotated.IdentityID != row.IdentityID || rotated.RefreshToken == "" || !rotated.AccessExpiresAt.After(clock.current()) {
 			return result, ErrPreviewAccess
 		}
 		sealed, err := d.storageKey.Seal(browserContext(row.HandoffDigest), []byte(rotated.RefreshToken))
@@ -328,6 +396,31 @@ func (d *Database) refreshServiceBrowserSession(ctx context.Context, service, se
 			return result, err
 		}
 		result.AccessExpiresAt = rotated.AccessExpiresAt
+	}
+	// authority rotation is finished before taking the parent-session lock. this
+	// final fence serializes with revocation and spends waits/callback time without
+	// extending the original browser lifetime or changing its saved run selection.
+	if _, err = q.LockVisitorIdentity(ctx, row.IdentityID); err != nil {
+		return result, publisherLookupError(err, ErrPreviewAccess)
+	}
+	parent, err := q.GetVisitorParentSession(ctx, row.ControlSessionID)
+	if err != nil {
+		return result, publisherLookupError(err, ErrPreviewAccess)
+	}
+	now = clock.current()
+	if parent.IdentityID != row.IdentityID || parent.RevokedAt.Valid || !parent.AccessExpiresAt.Time.After(now) || !parent.RefreshExpiresAt.Time.After(now) || !result.ExpiresAt.After(now) {
+		return result, ErrPreviewAccess
+	}
+	if rotatedAccess != "" {
+		id, hash, err := credentials.ParseAccessToken(rotatedAccess)
+		if err != nil || parent.AccessTokenID != id.String() || !credentials.SecretHashMatches(parent.AccessTokenDigest, hash) {
+			return result, ErrPreviewAccess
+		}
+	}
+	result.AccessExpiresAt = minTime(result.AccessExpiresAt, parent.AccessExpiresAt.Time)
+	result.ExpiresAt = minTime(result.ExpiresAt, parent.RefreshExpiresAt.Time)
+	if cause := context.Cause(ctx); cause != nil {
+		return result, cause
 	}
 	return result, tx.Commit(ctx)
 }

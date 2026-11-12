@@ -5,8 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 )
 
 func TestKubernetesProjectedTokenSymlinkRotation(t *testing.T) {
@@ -25,7 +23,7 @@ func TestKubernetesProjectedTokenSymlinkRotation(t *testing.T) {
 	if err := os.Symlink("..data/token", filepath.Join(directory, "token")); err != nil {
 		t.Fatal(err)
 	}
-	hints := workloadmanifest.Acquisition{Method: "token-file", TokenFile: filepath.Join(directory, "token"), Audience: "https://control.example"}
+	hints := Acquisition{Method: "token-file", TokenFile: filepath.Join(directory, "token"), Audience: "https://control.example"}
 	environment := func(string) string { t.Fatal("projected source read an environment fallback"); return "" }
 	source := RefreshSource(directory, hints, environment)
 	if source == nil || source.TokenFile != hints.TokenFile {

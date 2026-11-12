@@ -2,26 +2,21 @@ package workloadmanifest
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 	"time"
 
-	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
 )
 
 func TestManifestOptionalHardDuration(t *testing.T) {
-	c := config.TNL{Server: new("https://control.example"), Team: new("team"), Services: config.Services{"api": {}}, Workloads: map[string]config.Workload{"app": {GitHub: &config.WorkloadGitHub{Workflow: ".github/workflows/test.yml"}, Services: []string{"api"}}}}
-	source := clientproject.SourceIdentity{Key: "project", Fingerprint: strings.Repeat("a", 64), Label: "app"}
+	_, manifest, _ := selectionFixture(t)
 	for _, duration := range []*config.Duration{nil, new(config.Duration(24 * time.Hour))} {
-		policy := c.Workloads["app"]
-		policy.MaxDuration = duration
-		c.Workloads["app"] = policy
-		data, err := Generate(c, source)
+		policy := config.Workload{MaxDuration: duration}
+		manifest.Workloads = map[string]Workload{"app": {Provider: "github", Services: []string{"api"}, MaxDurationSeconds: int(policy.DurationLimit().Seconds()), Acquisition: Acquisition{Method: "github-actions", Audience: manifest.Server}}}
+		data, err := json.Marshal(manifest)
 		if err != nil {
 			t.Fatal(err)
 		}
-		var manifest Manifest
 		if err := json.Unmarshal(data, &manifest); err != nil {
 			t.Fatal(err)
 		}

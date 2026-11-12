@@ -11,127 +11,107 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/security/machineproof"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
-	"github.com/tnldotdev/tnl/internal/security/workloadproof"
 )
 
 func TestIntegrationMachineWorkloadProofBindsExactGroup(t *testing.T) {
 	f := newMachineFixture(t, "signing_key")
 	ctx := t.Context()
-	current, err := f.d.GetProjectConfiguration(ctx, f.r.TeamID, f.r.ProjectKey, f.r.ActorID)
+	second, err := f.d.CreateEnvironment(ctx, CreateEnvironmentRequest{TeamID: f.r.TeamID, ProjectKey: f.r.ProjectKey, ActorID: f.r.ActorID, SourceFingerprint: f.r.SourceFingerprint, Name: "two", CollectionID: f.collection.ID, ExpectedCollectionRevision: f.collection.MutationRevision, Targets: EnvironmentTargets{"api": {Address: "api-b.internal:3000"}, "db": {Address: "db-b.internal:5432"}}, IdempotencyKey: "machine-two", Now: f.now})
 	if err != nil {
 		t.Fatal(err)
 	}
-	current, err = f.d.CreatePublisherGroup(ctx, f.r.TeamID, f.r.ProjectKey, "two", "production", f.r.ActorID, current.Revision, false, f.now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var groupB, serviceA, serviceB string
-	for _, group := range current.Groups {
-		if group.Name == "two" {
-			groupB = group.ID
-		}
-	}
-	for _, service := range current.Services {
+	var serviceA, serviceB string
+	for _, service := range f.environment.Services {
 		if service.Service == "api" {
-			if service.PublisherGroup == "one" {
-				serviceA = service.ServiceID
-			}
-			if service.PublisherGroup == "two" {
-				serviceB = service.ServiceID
-			}
+			serviceA = service.ServiceID
 		}
 	}
-	if groupB == "" || serviceA == "" || serviceB == "" || serviceA == serviceB {
-		t.Fatal("missing independently realized same-template groups")
+	for _, service := range second.Services {
+		if service.Service == "api" {
+			serviceB = service.ServiceID
+		}
 	}
-	// both groups are approved by the same permission: rejection below must
-	// come from proof scope, not a missing template or nonexistent resource.
-	if _, err = f.d.CreateMachineWorkloadPermission(ctx, MachineWorkloadPermission{MachineID: f.machine.ID, TeamID: f.r.TeamID, ProjectKey: f.r.ProjectKey, Workload: "test", Templates: []string{"production"}, ExpiresAt: f.now.Add(time.Hour)}, f.r.ActorID, f.now); err != nil {
+	if serviceA == "" || serviceB == "" || serviceA == serviceB {
+		t.Fatal("same definition shared environment service IDs")
+	}
+	// both saved environments are explicitly approved. rejection must come from
+	// proof scope, not a missing resource or an unapproved environment.
+	permission, err := f.d.CreateEnvironmentVisitorPermission(ctx, EnvironmentVisitorPermission{MachineID: f.machine.ID, TeamID: f.r.TeamID, ProjectKey: f.r.ProjectKey, Scope: EnvironmentPermissionScope{EnvironmentIDs: []string{f.environment.ID, second.ID}}, Services: []string{"api", "db"}, MaxDurationSeconds: 3600, ExpiresAt: f.now.Add(time.Hour)}, f.r.ActorID, f.now)
+	if err != nil {
 		t.Fatal(err)
-	}
-	sign := func(group, operation, public, nonce string, services []string, audience string) MachineProof {
-		t.Helper()
-		scope := machineproof.Workload(group, "test", operation, public, nonce, services)
-		raw, e := publisherproof.Sign(f.machine.ID, "first", scope, audience, f.key, f.now)
-		if e != nil {
-			t.Fatal(e)
-		}
-		if _, e = publisherproof.Verify(raw, f.machine.ID, "first", scope, audience, f.key.Public().(ed25519.PublicKey), f.now); e != nil {
-			t.Fatal("fixture machine signature was invalid", e)
-		}
-		return MachineProof{Assertion: raw}
-	}
-	resolveAudience := machineTestServer + "/v1/publisher-groups/" + groupB + "/resolve"
-	for _, test := range []struct{ group, operation string }{{f.group, "resolve"}, {groupB, "exchange"}} {
-		proof := MachineWorkloadProof{MachineID: f.machine.ID, GroupID: groupB, Audience: resolveAudience, Proof: sign(test.group, test.operation, "", "", nil, resolveAudience)}
-		if _, err = f.d.ResolvePublisherGroupWorkload(ctx, groupB, "test", machineTestServer, oidc.WorkloadExecution{}, &proof, f.now); !errors.Is(err, ErrMachineDenied) {
-			t.Fatal("resolution accepted another group or operation's valid proof", err)
-		}
-	}
-	proofB := MachineWorkloadProof{MachineID: f.machine.ID, GroupID: groupB, Audience: resolveAudience, Proof: sign(groupB, "resolve", "", "", nil, resolveAudience)}
-	resolved, err := f.d.ResolvePublisherGroupWorkload(ctx, groupB, "test", machineTestServer, oidc.WorkloadExecution{}, &proofB, f.now)
-	if err != nil || resolved.Connection.GroupId != groupB {
-		t.Fatal("otherwise approved group could not resolve", err)
 	}
 	public, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
 	encoded := base64.RawURLEncoding.EncodeToString(public)
-	audience := machineTestServer + "/v1/machine-workload-sessions/exchange"
-	exchange := func(signedGroup, bodyGroup, nonce string, services []string) (ExchangeWorkloadRequest, MachineWorkloadProof) {
+	const audience = machineTestServer + "/v1/environment-visitor-sessions/prepare"
+	request := func(signed, body, operation, nonce string, services map[string]string) PrepareEnvironmentVisitorRequest {
 		t.Helper()
-		machine := MachineWorkloadProof{MachineID: f.machine.ID, GroupID: bodyGroup, Audience: audience, Proof: sign(signedGroup, "exchange", encoded, nonce, services, audience)}
-		digest := sha256.Sum256([]byte(machine.Proof.Assertion))
-		r := ExchangeWorkloadRequest{TeamID: f.r.TeamID, ProjectKey: f.r.ProjectKey, SourceFingerprint: f.r.SourceFingerprint, Workload: "test", Nonce: nonce, PublicKey: public, Services: services}
-		message := workloadproof.Exchange(r.TeamID, r.ProjectKey, r.Workload, r.SourceFingerprint, nonce, digest, services)
+		scope := machineproof.EnvironmentVisitor(permission.ID, signed, operation, encoded, nonce, services)
+		raw, err := publisherproof.Sign(f.machine.ID, "first", scope, audience, f.key, f.now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := publisherproof.Verify(raw, f.machine.ID, "first", scope, audience, f.key.Public().(ed25519.PublicKey), f.now); err != nil {
+			t.Fatal("invalid fixture machine signature", err)
+		}
+		r := PrepareEnvironmentVisitorRequest{ProjectKey: f.r.ProjectKey, EnvironmentID: body, PermissionID: permission.ID, Audience: audience, Nonce: nonce, PublicKey: public, Services: services, Proof: MachineProof{Assertion: raw}}
+		digest := sha256.Sum256([]byte(raw))
+		message := machineproof.EnvironmentVisitorPossession(r.ProjectKey, permission.ID, body, "prepare", encoded, nonce, services, digest)
 		r.Signature = ed25519.Sign(key, message)
 		if !ed25519.Verify(public, message, r.Signature) {
-			t.Fatal("fixture ephemeral signature was invalid")
+			t.Fatal("invalid fixture ephemeral signature")
 		}
-		return r, machine
+		return r
+	}
+	for _, wrong := range []struct{ environment, operation string }{{f.environment.ID, "prepare"}, {second.ID, "attach"}} {
+		if _, err := f.d.PrepareEnvironmentVisitor(ctx, request(wrong.environment, second.ID, wrong.operation, rand.Text(), map[string]string{"api": "http"}), f.now); !errors.Is(err, ErrMachineDenied) {
+			t.Fatal("another environment/operation proof accepted", err)
+		}
 	}
 	nonceA := rand.Text()
-	r, machine := exchange(f.group, f.group, nonceA, []string{f.group + "/api"})
-	session, err := f.d.ExchangeMachineWorkload(ctx, r, machine, f.now)
-	if err != nil || !reflect.DeepEqual(session.ServiceIDs, []string{serviceA}) {
-		t.Fatal("initial exact-group session", err)
+	first, err := f.d.PrepareEnvironmentVisitor(ctx, request(f.environment.ID, f.environment.ID, "prepare", nonceA, map[string]string{"api": "http"}), f.now)
+	if err != nil || !reflect.DeepEqual(first.Session.ServiceIDs, []string{serviceA}) {
+		t.Fatal("initial exact environment session", err)
 	}
 	facts := func() []byte {
 		t.Helper()
-		var value []byte
-		if e := f.d.pool.QueryRow(ctx, `SELECT jsonb_build_object('sessions',(SELECT jsonb_agg(to_jsonb(s) ORDER BY s.id) FROM control.workload_sessions s),'rights',(SELECT jsonb_agg(to_jsonb(r) ORDER BY r.workload_session_id,r.service_id) FROM control.workload_session_services r),'machines',(SELECT jsonb_agg(to_jsonb(m) ORDER BY m.session_id) FROM control.workload_session_machines m),'proofs',(SELECT jsonb_agg(to_jsonb(p) ORDER BY p.machine_id,p.proof_digest) FROM control.machine_proof_uses p))::text`).Scan(&value); e != nil {
-			t.Fatal(e)
+		var data []byte
+		if err := f.d.pool.QueryRow(ctx, `SELECT jsonb_build_object('sessions',(SELECT jsonb_agg(to_jsonb(s) ORDER BY s.id) FROM control.workload_sessions s),'rights',(SELECT jsonb_agg(to_jsonb(r) ORDER BY r.workload_session_id,r.service_id) FROM control.workload_session_services r),'machines',(SELECT jsonb_agg(to_jsonb(m) ORDER BY m.session_id) FROM control.workload_session_machines m),'proofs',(SELECT jsonb_agg(to_jsonb(p) ORDER BY p.machine_id,p.proof_digest) FROM control.machine_proof_uses p))::text`).Scan(&data); err != nil {
+			t.Fatal(err)
 		}
-		return value
+		return data
 	}
 	before := facts()
 	nonceB := rand.Text()
-	for _, test := range []struct{ bodyGroup, nonce string }{{groupB, nonceB}, {groupB, nonceA}, {f.group, rand.Text()}} {
-		// both signatures cover the exact B service, ephemeral key and nonce.
-		// only the asserted group differs from the body/selected service group.
-		r, machine = exchange(f.group, test.bodyGroup, test.nonce, []string{groupB + "/api"})
-		if _, err = f.d.ExchangeMachineWorkload(ctx, r, machine, f.now); !errors.Is(err, ErrMachineDenied) {
-			t.Fatal("exchange accepted proof A for group/service B", err)
+	for _, test := range []struct{ body, nonce string }{{second.ID, nonceB}, {second.ID, nonceA}} {
+		if _, err := f.d.PrepareEnvironmentVisitor(ctx, request(f.environment.ID, test.body, "prepare", test.nonce, map[string]string{"api": "http"}), f.now); !errors.Is(err, ErrMachineDenied) {
+			t.Fatal("proof A authorized environment B", err)
 		}
 		if !bytes.Equal(before, facts()) {
-			t.Fatal("denied exchange created a session, widened rights or consumed a proof")
+			t.Fatal("denied exchange created state or consumed proof")
 		}
 	}
-	services, err := f.d.ListWorkloadServices(ctx, session.Credential, f.now)
+	// an otherwise valid environment proof must also bind protocol and permission.
+	bad := request(f.environment.ID, f.environment.ID, "prepare", rand.Text(), map[string]string{"api": "postgres"})
+	if _, err := f.d.PrepareEnvironmentVisitor(ctx, bad, f.now); !errors.Is(err, ErrMachineDenied) {
+		t.Fatal("protocol mismatch accepted", err)
+	}
+	if !bytes.Equal(before, facts()) {
+		t.Fatal("denied protocol changed state")
+	}
+	services, err := f.d.ListWorkloadServices(ctx, first.Session.Credential, f.now)
 	if err != nil || len(services) != 1 || services[0].ID != serviceA {
 		t.Fatal("original session widened", err)
 	}
-	if _, err = f.d.CheckWorkloadService(ctx, session.Credential, serviceB, f.now); !errors.Is(err, ErrServiceAccess) {
-		t.Fatal("original credential reached group B", err)
+	if _, err := f.d.CheckWorkloadService(ctx, first.Session.Credential, serviceB, f.now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("credential A reached B", err)
 	}
-	// the rejected new nonce remains usable with the correctly scoped proof.
-	r, machine = exchange(groupB, groupB, nonceB, []string{groupB + "/api"})
-	second, err := f.d.ExchangeMachineWorkload(ctx, r, machine, f.now)
-	if err != nil || second.ID == session.ID || !reflect.DeepEqual(second.ServiceIDs, []string{serviceB}) {
-		t.Fatal("correct B proof did not create a separate exact session", err)
+	last, err := f.d.PrepareEnvironmentVisitor(ctx, request(second.ID, second.ID, "prepare", nonceB, map[string]string{"api": "http"}), f.now)
+	if err != nil || last.Session.ID == first.Session.ID || !reflect.DeepEqual(last.Session.ServiceIDs, []string{serviceB}) {
+		t.Fatal("correct B proof failed or reused A", err)
 	}
 }

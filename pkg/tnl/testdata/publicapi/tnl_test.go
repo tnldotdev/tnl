@@ -15,10 +15,13 @@ func publish(ctx context.Context, handler http.Handler, options tnl.Options) (*t
 	if err != nil {
 		return nil, err
 	}
-	return tnl.Open(ctx, handler, tnl.Options{
-		PublisherIdentity: identity,
-		StateDir:          options.StateDir,
-		StateProtection:   options.StateProtection,
-		HTTPClient:        options.HTTPClient,
-	})
+	return tnl.Open(ctx, handler, tnl.Options{PublisherIdentity: identity, Namespace: options.Namespace, StateDir: options.StateDir, Directory: options.Directory, Binary: options.Binary})
+}
+
+func registeredSource(ctx context.Context, handler http.Handler, server, namespace string, source tnl.RegisteredKeySource) (*tnl.Tunnel, error) {
+	identity, err := tnl.PreparePublisherIdentity(ctx, tnl.Options{ServerURL: server, RegisteredKeySource: &source})
+	if err != nil {
+		return nil, err
+	}
+	return tnl.Open(ctx, handler, tnl.Options{PublisherIdentity: identity, Namespace: namespace})
 }

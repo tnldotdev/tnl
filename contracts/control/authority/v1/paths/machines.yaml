@@ -70,9 +70,9 @@ paths:
       responses:
         "204": { description: Grant and dependent provisioning sessions revoked. }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/teams/{team_id}/machine-identities/{machine_id}/workload-permissions:
+  /v1/teams/{team_id}/machine-identities/{machine_id}/environment-visitor-permissions:
     post:
-      operationId: createMachineWorkloadPermission
+      operationId: createEnvironmentVisitorPermission
       security: [{ bearerAuth: [] }]
       parameters:
         - { $ref: "../openapi.yaml#/components/parameters/TeamID" }
@@ -81,23 +81,24 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: "../openapi.yaml#/components/schemas/MachineWorkloadPermissionRequest" }
+            schema:
+              { $ref: "../openapi.yaml#/components/schemas/EnvironmentVisitorPermissionRequest" }
       responses:
         "201":
-          description: Separate visitor workload permission; grants no provisioning authority.
+          description: Separate environment visitor permission; grants no provisioning authority.
           content:
             application/json:
               schema: { $ref: "../openapi.yaml#/components/schemas/MachinePermissionResult" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/teams/{team_id}/machine-workload-permissions/{permission_id}:
+  /v1/teams/{team_id}/environment-visitor-permissions/{permission_id}:
     delete:
-      operationId: revokeMachineWorkloadPermission
+      operationId: revokeEnvironmentVisitorPermission
       security: [{ bearerAuth: [] }]
       parameters:
         - { $ref: "../openapi.yaml#/components/parameters/TeamID" }
         - { name: permission_id, in: path, required: true, schema: { type: string } }
       responses:
-        "204": { description: Visitor workload permission revoked. }
+        "204": { description: Environment visitor permission revoked. }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/provisioning-sessions/exchange:
     post:
@@ -114,57 +115,4 @@ paths:
           content:
             application/json:
               schema: { $ref: "../openapi.yaml#/components/schemas/ProvisioningSession" }
-        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/publisher-groups/{group_id}/resolve:
-    post:
-      operationId: resolvePublisherGroupWorkload
-      security: []
-      parameters:
-        - { name: group_id, in: path, required: true, schema: { type: string } }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "../openapi.yaml#/components/schemas/ResolvePublisherGroupWorkload" }
-      responses:
-        "200":
-          description: Nonsecret descriptor containing only workload-permitted services, not publisher targets.
-          content:
-            application/json:
-              schema:
-                { $ref: "../openapi.yaml#/components/schemas/PublisherGroupWorkloadResolution" }
-        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/machine-workload-sessions/exchange:
-    post:
-      operationId: exchangeMachineWorkload
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "../openapi.yaml#/components/schemas/MachineWorkloadExchange" }
-      responses:
-        "200":
-          description: Existing workload session with fixed deadlines and immutable concrete service IDs.
-          content:
-            application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/WorkloadSession" }
-        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/machine-workload-sessions/{session_id}/assertions:
-    post:
-      operationId: attachMachineWorkloadAssertion
-      security: [{ workloadAuth: [] }]
-      parameters:
-        - { name: session_id, in: path, required: true, schema: { type: string } }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "../openapi.yaml#/components/schemas/WorkloadAssertion" }
-      responses:
-        "200":
-          description: Fresh same-machine proof attached to the existing visitor session. Requires the existing ephemeral-key signature; cannot widen its services or hard deadline. For registered keys sign machineproof.Workload(group_id, workload, "attach", ephemeral_public_key, session_id, nil) as grant_id, with this endpoint's exact URL as audience.
-          content:
-            application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/WorkloadSession" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }

@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -32,25 +31,18 @@ func TestIntegrationCLIGroupDetachedHistoricalIdentity(t *testing.T) {
 	team, control := session.Identity().PersonalTeamId, session.Authenticated().Control
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "detached replica") }))
 	defer target.Close()
-	applied, err := control.ApplyProjectConfiguration(t.Context(), "detached", controlv1.ApplyProjectConfigurationRequest{TeamId: team, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{PublisherGroups: map[string]controlv1.ProjectPublisherGroup{"production": {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {PublisherGroup: new("production"), Target: target.URL, Access: &controlv1.ProjectServiceAccess{Team: true}}}}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	applied := workflowPublisherEnvironment(t, control, team, "detached", controlv1.EnvironmentTarget{Address: &target.URL, Http: &controlv1.EnvironmentServiceHTTP{Access: &controlv1.ProjectPublicAccess{Mode: new(controlv1.Restricted)}}})
 	identity := filepath.Join(t.TempDir(), "old.json")
-	cliCall(t, t.Context(), []string{"--no-config", "publisher", "provision", "--server", f.url, "--team", team, "--group", "production", "--project-key", "detached", "--instance", "replica-1", "--output-file", identity, "--state-dir", person})
-	renamed, err := control.RenamePublisherGroup(t.Context(), "detached", "production", controlv1.RenamePublisherGroupRequest{TeamId: team, Name: "live", ExpectedRevision: applied.Revision})
-	if err != nil {
-		t.Fatal(err)
-	}
+	cliCall(t, t.Context(), []string{"--no-config", "publisher", "provision", "--server", f.url, "--team", team, "--environment", applied.Id, "--services", "api", "--project-key", "detached", "--instance", "replica-1", "--output-file", identity, "--state-dir", person})
 	binary := workflowExecutable(t)
 	task := f.state(t, "detached-task")
 	caFile := filepath.Join(t.TempDir(), "root.pem")
 	if err := os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: f.issuer.Raw}), 0600); err != nil {
 		t.Fatal(err)
 	}
-	for _, selector := range []string{"live", "production"} {
+	for _, selector := range []string{applied.Id, applied.Id} {
 		t.Logf("detached selector=%s", selector)
-		command := exec.CommandContext(t.Context(), binary, "--no-config", "--no-telemetry", "publisher", "serve", "--detach", "--group", selector, "--instance", "replica-1", "--identity-file", identity, "--state-dir", task)
+		command := exec.CommandContext(t.Context(), binary, "--no-config", "--no-telemetry", "publisher", "serve", "--detach", "--environment", selector, "--instance", "replica-1", "--identity-file", identity, "--state-dir", task)
 		command.Env = append(os.Environ(), "SSL_CERT_FILE="+caFile, "GODEBUG=x509usefallbackroots=0")
 		if output, err := command.CombinedOutput(); err != nil {
 			t.Fatalf("detached OLD identity with %s selector: %v %s", selector, err, output)
@@ -75,10 +67,10 @@ func TestIntegrationCLIGroupDetachedHistoricalIdentity(t *testing.T) {
 			if err != nil || state != "ready" {
 				return false
 			}
-			status, err := control.GetProjectConfiguration(t.Context(), team, "detached")
-			return err == nil && len(status.Members) == 1 && status.Members[0].Healthy && status.Members[0].GroupName == "live" && status.Members[0].ObservedRevision == renamed.Revision
+			status, err := control.ListEnvironmentPublishers(t.Context(), team, "detached", applied.Id)
+			return err == nil && len(status) == 1 && status[0].Healthy && status[0].EnvironmentId == applied.Id && status[0].ObservedRevision == applied.MutationRevision
 		})
-		service, err := control.GetService(t.Context(), *applied.Services[0].ServiceId)
+		service, err := control.GetService(t.Context(), applied.Services[0].ServiceId)
 		if err != nil {
 			t.Fatal(err)
 		}

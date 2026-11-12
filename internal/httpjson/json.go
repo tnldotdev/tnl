@@ -4,6 +4,7 @@
 package httpjson
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -14,6 +15,8 @@ import (
 var (
 	ErrTooLarge        = errors.New("JSON body exceeds limit")
 	ErrTrailingContent = errors.New("JSON contains trailing content")
+	ErrNull            = errors.New("JSON contains null")
+	ErrRequiredField   = errors.New("JSON object is missing a required field")
 )
 
 // ReadAll reads up to limit bytes and returns ErrTooLarge when more data exists.
@@ -44,6 +47,38 @@ func Decode(decoder *json.Decoder, destination any) error {
 		return ErrTrailingContent
 	}
 	return nil
+}
+
+// DecodeNonNullObject reads a request without losing omitted-vs-null fields in Go
+// pointers or scalar zero values. required names come from the serving contract;
+// unknown fields and trailing values retain Decode's normal rejection.
+func DecodeNonNullObject(payload []byte, destination any, required ...string) error {
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	for {
+		value, err := decoder.Token()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if value == nil {
+			return ErrNull
+		}
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		return err
+	}
+	if fields == nil {
+		return ErrRequiredField
+	}
+	for _, name := range required {
+		if _, found := fields[name]; !found {
+			return ErrRequiredField
+		}
+	}
+	return Decode(json.NewDecoder(bytes.NewReader(payload)), destination)
 }
 
 // Write sends an application/json response. if encoding fails after writing has

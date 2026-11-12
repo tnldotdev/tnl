@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/auth"
@@ -16,6 +18,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	"github.com/tnldotdev/tnl/internal/failure"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -28,15 +31,15 @@ const (
 )
 
 type statusCommand struct {
-	PublisherGroup string               `name:"publisher-group" help:"Show one concrete group's services and publishers; requires --scope=server."`
-	Output         statusOutputMode     `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
-	Scope          string               `name:"scope" enum:"local,server,both" default:"both" help:"Read local snapshots, fresh server state, or both (default)."`
-	ServerURL      string               `name:"server" env:"TNL_SERVER" help:"Control URL to read; independent of --scope."`
-	AccessToken    string               `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Access token for server status; defaults to saved session."`
-	StateDir       string               `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
-	All            bool                 `name:"all" help:"Show tunnels from every local project."`
-	Project        string               `kong:"-"`
-	Configuration  projectConfiguration `kong:"-"`
+	Environment   string               `name:"environment" help:"Show one saved environment's services and publishers; requires --scope=server."`
+	Output        statusOutputMode     `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
+	Scope         string               `name:"scope" enum:"local,server,both" default:"both" help:"Read local snapshots, fresh server state, or both (default)."`
+	ServerURL     string               `name:"server" env:"TNL_SERVER" help:"Control URL to read; independent of --scope."`
+	AccessToken   string               `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Access token for server status; defaults to saved session."`
+	StateDir      string               `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
+	All           bool                 `name:"all" help:"Show tunnels from every local project."`
+	Project       string               `kong:"-"`
+	Configuration projectConfiguration `kong:"-"`
 }
 
 type statusLocal struct {
@@ -57,13 +60,23 @@ type statusServerURL struct {
 }
 
 type statusServer struct {
-	Applied       *controlv1.AppliedProjectConfiguration `json:"applied,omitempty"`
-	AppliedReason string                                 `json:"applied_reason,omitempty"`
-	Available     bool                                   `json:"available"`
-	CheckedAt     time.Time                              `json:"checked_at"`
-	ControlURL    string                                 `json:"control_url,omitempty"`
-	Reason        string                                 `json:"reason,omitempty"`
-	URLs          []statusServerURL                      `json:"public_urls"`
+	Environments      []statusEnvironment `json:"environments,omitempty"`
+	EnvironmentReason string              `json:"environment_reason,omitempty"`
+	Available         bool                `json:"available"`
+	CheckedAt         time.Time           `json:"checked_at"`
+	ControlURL        string              `json:"control_url,omitempty"`
+	Reason            string              `json:"reason,omitempty"`
+	URLs              []statusServerURL   `json:"public_urls"`
+}
+
+// status contains saved identity and progress, never manager target approvals.
+type statusEnvironment struct {
+	ID                 string                                 `json:"environment_id"`
+	Name               string                                 `json:"name"`
+	DefinitionRevision int64                                  `json:"applied_definition_revision"`
+	MutationRevision   int64                                  `json:"mutation_revision"`
+	Services           []controlv1.EnvironmentService         `json:"services"`
+	Publishers         []controlv1.EnvironmentPublisherStatus `json:"publishers"`
 }
 
 type projectStatus struct {
@@ -82,8 +95,8 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 	if flags.Scope == "" {
 		flags.Scope = "both"
 	}
-	if flags.PublisherGroup != "" && (flags.Scope != "server" || flags.All) {
-		return publisherCLIError("--publisher-group requires --scope=server in one project")
+	if flags.Environment != "" && (flags.Scope != "server" || flags.All) {
+		return publisherCLIError("--environment requires --scope=server in one project")
 	}
 	root, err := clientStateRoot(flags.StateDir)
 	if err != nil {
@@ -186,15 +199,24 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 		projects = append(projects, entry)
 	}
 	if flags.Scope != "local" {
-		server, selectErr := clientserver.Select(ctx, state, flags.ServerURL)
+		configuredServer := flags.Configuration.Config.Server
+		if flags.Environment != "" {
+			declared := flags.Configuration.Config
+			if flags.Configuration.Declared != nil {
+				declared = *flags.Configuration.Declared
+			}
+			configuredServer = declared.Server
+			if environment, found := declared.Environments[flags.Environment]; found && environment.Server != nil {
+				configuredServer = environment.Server
+			}
+		}
+		selectedServer, _, selectErr := resolve.Server(flags.ServerURL, configuredServer, flags.AccessToken)
 		if selectErr != nil {
 			return selectErr
 		}
-		if flags.ServerURL == "" && flags.Configuration.Config.Server != nil && !flags.All {
-			server, selectErr = clientstate.CanonicalServer(*flags.Configuration.Config.Server)
-			if selectErr != nil {
-				return selectErr
-			}
+		server, selectErr := clientserver.Select(ctx, state, selectedServer)
+		if selectErr != nil {
+			return selectErr
 		}
 		for index := range projects {
 			var localTunnels clientstate.TunnelSnapshot
@@ -207,7 +229,7 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 				}
 			}
 			selected := server
-			if flags.ServerURL == "" && (flags.All || flags.Configuration.Config.Server == nil) && len(localTunnels.Tunnels) != 0 {
+			if selectedServer == "" && (flags.All || configuredServer == nil) && len(localTunnels.Tunnels) != 0 {
 				selected = localTunnels.Tunnels[0].Server
 				mixed := false
 				for _, tunnel := range localTunnels.Tunnels {
@@ -227,16 +249,10 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 				configuration, _, _ = runtimeProject(ctx, runtimeOptions{Directory: projects[index].Project, StateDir: root})
 			}
 			if configuration.Found() {
-				readAppliedStatus(ctx, state, selected, flags.AccessToken, configuration, projects[index].Server)
+				readEnvironmentStatus(ctx, state, selected, flags.AccessToken, configuration, flags.Environment, projects[index].Server)
 			}
-			if flags.PublisherGroup != "" {
-				applied := projects[index].Server.Applied
-				if applied == nil {
-					return publisherCLIError("publisher group status is unavailable; check the project, team, and server sign-in")
-				}
-				if err := selectAppliedPublisherGroup(applied, flags.PublisherGroup); err != nil {
-					return err
-				}
+			if flags.Environment != "" && len(projects[index].Server.Environments) == 0 {
+				return publisherCLIError("environment status is unavailable; check the project, team, environment, and server sign-in")
 			}
 		}
 	}
@@ -283,76 +299,110 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 				blocks = append(blocks, clioutput.Section("server "+item.Lifecycle, clioutput.Fields(clioutput.Field{Label: "hostname", Value: item.Hostname}, clioutput.Field{Label: "public URL ID", Value: item.PublicURLID}, clioutput.Field{Label: "open publish run", Value: item.OpenRunID}, clioutput.Field{Label: "next publish run", Value: strconv.FormatInt(item.NextRun, 10)}, clioutput.Field{Label: "publish run state", Value: item.RunState}, clioutput.Field{Label: "server updated at", Value: item.UpdatedAt.Format(time.RFC3339Nano)})))
 			}
 		}
-		if project.Server != nil && project.Server.Applied != nil {
-			blocks = append(blocks, appliedProjectBlocks(*project.Server.Applied)...)
-		} else if project.Server != nil && project.Server.AppliedReason != "" {
-			blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "applied configuration", Value: project.Server.AppliedReason}))
+		if project.Server != nil {
+			for _, environment := range project.Server.Environments {
+				blocks = append(blocks, environmentStatusBlocks(environment)...)
+			}
+			if project.Server.EnvironmentReason != "" {
+				blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "environments", Value: project.Server.EnvironmentReason}))
+			}
 		}
 	}
 	return writeHumanFrame(output, "tnl status", countState(len(projects), "project", "projects"), "", blocks...)
 }
 
-func selectAppliedPublisherGroup(applied *controlv1.AppliedProjectConfiguration, selector string) error {
-	if applied.Groups == nil {
-		return publisherCLIError("concrete publisher group not found in this project")
-	}
-	for _, group := range *applied.Groups {
-		if group.Id != selector && !slices.Contains(group.GroupNames, selector) {
-			continue
-		}
-		applied.Groups = &[]controlv1.AppliedPublisherGroup{group}
-		applied.Services = slices.DeleteFunc(applied.Services, func(service controlv1.AppliedProjectService) bool { return service.PublisherGroup != group.Name })
-		applied.Members = slices.DeleteFunc(applied.Members, func(member controlv1.PublisherGroupMemberStatus) bool { return member.GroupId != group.Id })
-		return nil
-	}
-	return publisherCLIError("concrete publisher group not found in this project")
-}
-
-func readAppliedStatus(ctx context.Context, state *clientstate.Database, server, token string, project projectConfiguration, result *statusServer) {
+func readEnvironmentStatus(ctx context.Context, state *clientstate.Database, server, token string, project projectConfiguration, selector string, result *statusServer) {
 	source, err := project.SourceIdentity(ctx)
 	if err != nil {
-		result.AppliedReason = "portable Git configuration source unavailable"
+		result.EnvironmentReason = "portable Git configuration source unavailable"
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	auth, err := auth.Authenticate(ctx, auth.Config{ServerEndpoint: server, State: state, AccessToken: token})
 	if err != nil {
-		result.AppliedReason = "control API or signed-in session unavailable"
+		result.EnvironmentReason = "control API or signed-in session unavailable"
 		return
 	}
 	identity, err := auth.Authority.IdentityContext(ctx)
 	if err != nil {
-		result.AppliedReason = "identity inventory unavailable"
+		result.EnvironmentReason = "identity inventory unavailable"
 		return
 	}
 	profile, err := state.Server(ctx, server)
 	if err != nil {
-		result.AppliedReason = "client state unavailable"
+		result.EnvironmentReason = "client state unavailable"
 		return
 	}
-	team, err := resolve.TeamForServer(server, project.Config.Server, project.Config.Team)
+	declared := project.Config
+	if project.Declared != nil {
+		declared = *project.Declared
+	}
+	configuredServer := project.Config.Server
+	if selector != "" {
+		configuredServer = declared.Server
+		if environment, found := declared.Environments[selector]; found && environment.Server != nil { configuredServer = environment.Server }
+	}
+	team, err := resolve.TeamForServer(server, configuredServer, declared.Team)
 	if err != nil {
-		result.AppliedReason = "project team selection unavailable"
+		result.EnvironmentReason = "project team selection unavailable"
 		return
 	}
 	session := clientteam.NewSession(nil, profile, auth, identity, clientteam.Options{ProjectTeam: team})
 	current, err := session.Current(ctx)
 	if err != nil {
-		result.AppliedReason = "select a project team"
+		result.EnvironmentReason = "select a project team"
 		return
 	}
-	applied, err := auth.Control.GetProjectConfiguration(ctx, current.Team().Id, source.Key)
+	environments, err := auth.Control.ListEnvironments(ctx, current.Team().Id, source.Key)
 	if err != nil {
-		result.AppliedReason = "not applied or unavailable; run tnl apply"
+		result.EnvironmentReason = "saved environments unavailable; apply a declared environment with tnl apply --environment NAME"
 		return
 	}
-	if applied.SourceFingerprint != source.Fingerprint || applied.ProjectKey != source.Key || applied.TeamId != current.Team().Id {
-		result.AppliedReason = "server returned another project source"
+	selected, err := resolve.SelectEnvironments(environments, current.Team().Id, source.Key, selector)
+	if err != nil {
+		result.EnvironmentReason = err.Error()
 		return
 	}
-	result.Applied = &applied
+	for _, environment := range selected {
+		publishers, err := auth.Control.ListEnvironmentPublishers(ctx, current.Team().Id, source.Key, environment.Id)
+		if err != nil {
+			result.EnvironmentReason = "publisher inventory unavailable"
+			return
+		}
+		summary, err := summarizeEnvironmentStatus(environment, publishers)
+		if err != nil {
+			result.EnvironmentReason = "server returned another environment's publishers"
+			return
+		}
+		result.Environments = append(result.Environments, summary)
+	}
 	result.Available, result.Reason = true, ""
+}
+
+func summarizeEnvironmentStatus(environment controlv1.Environment, publishers []controlv1.EnvironmentPublisherStatus) (statusEnvironment, error) {
+	for _, publisher := range publishers {
+		if publisher.TeamId != environment.TeamId || publisher.ProjectKey != environment.ProjectKey || publisher.EnvironmentId != environment.Id {
+			return statusEnvironment{}, failure.Wrap("read environment publishers", failure.ServerResponseInvalid, errors.New("control returned another environment's publishers"))
+		}
+	}
+	services := slices.Clone(environment.Services)
+	slices.SortFunc(services, func(a, b controlv1.EnvironmentService) int { return strings.Compare(a.Service, b.Service) })
+	publishers = slices.Clone(publishers)
+	slices.SortFunc(publishers, func(a, b controlv1.EnvironmentPublisherStatus) int {
+		return strings.Compare(a.PublisherIdentityId, b.PublisherIdentityId)
+	})
+	return statusEnvironment{ID: environment.Id, Name: environment.Name, DefinitionRevision: environment.AppliedDefinitionRevision, MutationRevision: environment.MutationRevision, Services: services, Publishers: publishers}, nil
+}
+
+func environmentStatusBlocks(environment statusEnvironment) []clioutput.Block {
+	blocks := appliedEnvironmentBlocks(controlv1.Environment{Id: environment.ID, Name: environment.Name, AppliedDefinitionRevision: environment.DefinitionRevision, MutationRevision: environment.MutationRevision, Services: environment.Services})
+	for _, publisher := range environment.Publishers {
+		fields := []clioutput.Field{{Label: "publisher ID", Value: publisher.PublisherIdentityId}, {Label: "observed revision", Value: strconv.FormatInt(publisher.ObservedRevision, 10)}, {Label: "healthy", Value: strconv.FormatBool(publisher.Healthy)}}
+		fields = append(fields, publisherRuntimeFields(publisher.Runtime)...)
+		blocks = append(blocks, clioutput.Section("publisher", clioutput.Fields(fields...)))
+	}
+	return blocks
 }
 
 func readStatusServer(ctx context.Context, state *clientstate.Database, server, token, project string, tunnels clientstate.TunnelSnapshot) *statusServer {

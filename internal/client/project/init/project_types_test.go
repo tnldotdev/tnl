@@ -18,14 +18,14 @@ func TestProjectTypeIncludesEditJSONCSyntaxWithoutRewritingOtherFields(t *testin
 		want                []string
 		manual              bool
 	}{
-		{"compact", `{"compilerOptions":{"strict":true},"include":["src"]}`, "include", []string{"src", ".tnl/generated/project.d.ts"}, false},
-		{"trailing_comments", "{\r\n  \"compilerOptions\" /* name */: /* value */ {\"strict\":true},\r\n  \"include\": [\r\n    \"src\" /* source */ , // prior entry\r\n    /* keep final comment */\r\n  ],\r\n  \"exclude\": [\"dist\"],\r\n}", "include", []string{"src", ".tnl/generated/project.d.ts"}, false},
-		{"before_closing", "{\n  \"include\": [\n    \"src\" // prior entry\n  ]\n}\n", "include", []string{"src", ".tnl/generated/project.d.ts"}, false},
-		{"empty_commented", `{"include":[/* source list */]}`, "include", []string{".tnl/generated/project.d.ts"}, false},
-		{"default_glob", `{"compilerOptions":{"strict":true}}`, "include", []string{"**/*", ".tnl/generated/project.d.ts"}, false},
-		{"files_only", `{"files":["src/main.ts"]}`, "files", []string{"src/main.ts", ".tnl/generated/project.d.ts"}, false},
+		{"compact", `{"compilerOptions":{"strict":true},"include":["src"]}`, "include", []string{"src", ".tnl/generated/project.ts"}, false},
+		{"trailing_comments", "{\r\n  \"compilerOptions\" /* name */: /* value */ {\"strict\":true},\r\n  \"include\": [\r\n    \"src\" /* source */ , // prior entry\r\n    /* keep final comment */\r\n  ],\r\n  \"exclude\": [\"dist\"],\r\n}", "include", []string{"src", ".tnl/generated/project.ts"}, false},
+		{"before_closing", "{\n  \"include\": [\n    \"src\" // prior entry\n  ]\n}\n", "include", []string{"src", ".tnl/generated/project.ts"}, false},
+		{"empty_commented", `{"include":[/* source list */]}`, "include", []string{".tnl/generated/project.ts"}, false},
+		{"default_glob", `{"compilerOptions":{"strict":true}}`, "include", []string{"**/*", ".tnl/generated/project.ts"}, false},
+		{"files_only", `{"files":["src/main.ts"]}`, "files", []string{"src/main.ts", ".tnl/generated/project.ts"}, false},
 		{"inherited", `{"extends":"./base.json","compilerOptions":{"strict":true}}`, "", nil, true},
-		{"explicit_inherited", `{"extends":"./base.json","include":["src"]}`, "include", []string{"src", ".tnl/generated/project.d.ts"}, false},
+		{"explicit_inherited", `{"extends":"./base.json","include":["src"]}`, "include", []string{"src", ".tnl/generated/project.ts"}, false},
 		{"null_include", `{"include":null}`, "", nil, true},
 		{"duplicate", `{"include":["src"],"include":["other"]}`, "", nil, true},
 	} {

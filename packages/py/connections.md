@@ -108,8 +108,42 @@ tnl generate
 uv add --editable ./.tnl/generated/python
 ```
 
-Replace `import tnl` with `from tnl_project import tnl`, keeping the connection
-class imports used above. YAML and JSON configurations generate
-exact service names and protocol types. TypeScript configurations return a union;
-narrow it with `isinstance`, as above. Commit `.tnl/generated/python/` and the
-dependency changes, and regenerate after changing services.
+Keep the normal `import tnl` and import the generated immutable `services` snapshot
+separately. With `database` declared as `postgres`, the normal client's literal
+service name infers `PostgresConnection`:
+
+```python
+from typing import assert_type
+
+import tnl
+from tnl_project import services
+
+
+async def use_database(
+    environment: tnl.EnvironmentReference,
+    identity: tnl.IdentitySource,
+) -> None:
+    async with tnl.client(
+        services=services, environment=environment, identity=identity
+    ) as client:
+        database = await client.connect("database")
+        assert_type(database, tnl.PostgresConnection)
+        # use the ordinary driver settings and close the driver before leaving
+```
+
+This is an interface sketch from the current source, not a qualified setup recipe.
+Supply the exact server-qualified environment reference and separately approved
+runtime identity; their concrete construction still needs the final SDK/authority
+workflow. Neither the reference nor generated types grant access.
+
+YAML, JSON, and evaluated TypeScript configurations all produce one immutable
+service snapshot with exact names and protocol types. This typed client does not
+need an `isinstance` check or a caller-supplied protocol. Generated private
+overloads preserve the types; applications import no generated SDK object,
+connection class, or factory.
+
+Commit the shared `.tnl/generated/python/` outputs and dependency changes, and
+regenerate after changing the shared service shape. Keep customer environment
+references in runtime application data and private identity inputs in secret
+storage, not in the generated snapshot. Publisher targets and credentials are not
+generated client authority.

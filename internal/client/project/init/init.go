@@ -29,7 +29,7 @@ type Result struct {
 	ConfigurationCreated bool
 	InstalledPackages    []string
 	UpdatedPaths         []string
-	DeclarationsPath     string
+	ProjectPath          string
 	PythonPackagePath    string
 	Actions              []string
 	Changed              bool
@@ -39,7 +39,7 @@ func (plan Plan) Apply(ctx context.Context, options Options) (Result, error) {
 	result := Result{
 		Root:              plan.Root,
 		ConfigurationPath: plan.ConfigurationPath,
-		DeclarationsPath:  filepath.Join(plan.Root, meta.GeneratedDirectoryName, meta.DeclarationsName),
+		ProjectPath:       filepath.Join(plan.Root, meta.GeneratedDirectoryName, meta.ProjectName),
 		Actions:           slices.Clone(plan.Actions),
 	}
 	if len(plan.MissingPackages) != 0 && !plan.InstallBlocked {

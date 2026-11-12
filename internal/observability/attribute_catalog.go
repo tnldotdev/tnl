@@ -32,7 +32,7 @@ func VocabularyAttributes() []AttributeDefinition {
 	for _, k := range []attributeKey{CloudProvider, CloudRegion, CloudAvailabilityZone} {
 		add(k, PolicyResource, "known operator-declared cloud fact; no metadata discovery")
 	}
-	for _, k := range []attributeKey{TeamID, DeploymentID, ReplicaKey, PublisherGroupID, PublisherIdentityID, ServiceID, PublicURLID} {
+	for _, k := range []attributeKey{TeamID, EnvironmentID, DeploymentID, ReplicaKey, PublisherGroupID, PublisherIdentityID, ServiceID, PublicURLID} {
 		add(k, PolicyScoped, "authenticated stable identity; instrument allowlist required; service_id and public_url_id are mutually exclusive")
 	}
 	add(ServiceKindKey, PolicyScoped, "service or public URL; service wire value normalizes to service", Service.String(), PublicURL.String())

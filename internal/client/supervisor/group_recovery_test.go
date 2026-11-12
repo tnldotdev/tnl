@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,13 +20,13 @@ func TestInstalledGroupRecoveryChecksControlPlansAgainstEntireOlderSnapshot(t *t
 	job, _, key := kindFixture(t, KindGroup)
 	planA := controlv1.CertificatePlan{CacheKey: "old.example", Scope: "old.example", Identifiers: []string{"old.example"}, ChallengeMethod: controlv1.Dns01}
 	planB := controlv1.CertificatePlan{CacheKey: "current.example", Scope: "current.example", Identifiers: []string{"current.example"}, ChallengeMethod: controlv1.Dns01}
-	assignments := controlv1.PublisherGroupAssignments{Member: *job.GroupMember, CertificateStatePlans: []controlv1.CertificatePlan{planA, planB}}
+	assignments := controlv1.EnvironmentPublisherAssignments{Publisher: *job.GroupMember, Environment: controlv1.EnvironmentPublication{EnvironmentId: job.GroupMember.EnvironmentId, MutationRevision: 1, ConfigurationHash: strings.Repeat("a", 64)}, Services: []controlv1.EnvironmentPublisherAssignment{}, CertificateStatePlans: []controlv1.CertificatePlan{planA, planB}}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/v1/publisher-groups/lease":
-			_ = json.NewEncoder(w).Encode(controlv1.PublisherGroupLease{AccessToken: "fixture", ExpiresAt: time.Now().Add(time.Minute)})
-		case "/v1/publisher-groups/assignments":
+		case "/v1/environment-publishers/lease":
+			_ = json.NewEncoder(w).Encode(controlv1.EnvironmentPublisherLease{AccessToken: "fixture", ExpiresAt: time.Now().Add(time.Minute)})
+		case "/v1/environment-publishers/assignments":
 			_ = json.NewEncoder(w).Encode(assignments)
 		default:
 			t.Error("unexpected recovery request", r.URL.Path)

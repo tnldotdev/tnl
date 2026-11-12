@@ -23,9 +23,6 @@ func (b *connectorConnectionBackend) Close(ctx context.Context) error {
 		}
 	}
 	clients := []*workload.Client{b.workload}
-	if b.replacement != nil {
-		clients = append(clients, b.replacement.client)
-	}
 	b.mu.Unlock()
 	// revocation and path cleanup share the caller's budget and start together.
 	// failed releases cannot consume the time reserved for session revocation.
@@ -53,13 +50,13 @@ func (b *connectorConnectionBackend) Close(ctx context.Context) error {
 	}
 	cleanup.Go(func() {
 		b.operations.Wait()
-		// an exchange may have committed just as shutdown canceled its request.
-		b.mu.Lock()
-		pending := b.replacement
-		b.mu.Unlock()
-		if pending != nil {
-			add(pending.recoverForCleanup(ctx))
-			revoke(pending.client)
+		if b.scope.Environment != nil && b.workload != nil && b.environmentPreparationUncertain && b.assertion != "" {
+			selection := b.scope.Environment
+			_, err := b.workload.Prepare(ctx, selection.Environment, selection.PermissionID, b.assertion, selection.Services)
+			add(err)
+			if err == nil {
+				revoke(b.workload)
+			}
 		}
 		b.workers.Wait()
 		b.mu.Lock()
@@ -77,9 +74,8 @@ func (b *connectorConnectionBackend) Close(ctx context.Context) error {
 	})
 	done := make(chan struct{})
 	go func() { cleanup.Wait(); close(done) }()
-	select {
-	case <-done:
-	case <-ctx.Done():
+	<-done
+	if ctx.Err() != nil {
 		resultsMu.Lock()
 		result = errors.Join(result, ctx.Err())
 		resultsMu.Unlock()

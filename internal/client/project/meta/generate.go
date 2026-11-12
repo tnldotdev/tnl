@@ -6,13 +6,15 @@ import (
 	"path/filepath"
 
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
-	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	"github.com/tnldotdev/tnl/internal/failure"
 )
 
 // Generate writes portable artifacts, or compares them without writing when
 // check is true. the caller evaluates the project with a zero installation salt.
 func Generate(ctx context.Context, project clientproject.Project, directory string, check bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if !project.Found() {
 		return failure.Wrap("generate project", failure.ProjectConfigMissing, errors.New("project configuration is required"))
 	}
@@ -26,24 +28,14 @@ func Generate(ctx context.Context, project clientproject.Project, directory stri
 	if !filepath.IsAbs(directory) {
 		directory = filepath.Join(project.Root, directory)
 	}
-	declarations, err := Declarations(project.Config, project.Selection.Path, directory)
+	facts, err := snapshotServices(project.Config)
 	if err != nil {
-		return failure.Wrap("declare project types", failure.ProjectConfigInvalid, err)
+		return failure.Wrap("snapshot project services", failure.ProjectConfigInvalid, err)
 	}
-	files, err := PythonFacade(project.Config, project.Selection.Path)
-	if err != nil {
-		return failure.Wrap("declare Python project types", failure.ProjectConfigInvalid, err)
-	}
-	files["project.d.ts"] = declarations
-	if len(project.Config.Workloads) > 0 {
-		source, err := project.SourceIdentity(ctx)
-		if err != nil {
-			return failure.Wrap("identify workload project", failure.ProjectConfigInvalid, err)
-		}
-		files[workloadmanifest.Filename], err = workloadmanifest.Generate(project.Config, source)
-		if err != nil {
-			return failure.Wrap("render workload metadata", failure.ProjectConfigInvalid, err)
-		}
+	files := pythonServices(facts)
+	files[ProjectName] = typescriptServices(facts)
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if err := writeArtifacts(directory, files, check); err != nil {
 		reason := failure.ProjectArtifactsWriteFailed

@@ -4,9 +4,13 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"net"
 	"net/http"
@@ -15,6 +19,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -22,6 +27,8 @@ import (
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	connectorworkload "github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/security/machineproof"
+	"github.com/tnldotdev/tnl/internal/security/workloadproof"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
@@ -47,7 +54,12 @@ func TestIntegrationConnectionConnectorOwnerActionBackgroundRefresh(t *testing.T
 	}
 }
 
-func rejectMismatchedActionRefresh(t *testing.T, binary string, env, args []string, input []byte) {
+func rejectMismatchedActionRefresh(t *testing.T, binary string, env, args []string, input []byte, root string, proofs func() []string) {
+	t.Helper()
+	rejectActionStartup(t, binary, env, args, input, root, proofs, failure.ConnectionRequestInvalid)
+}
+
+func rejectActionStartup(t *testing.T, binary string, env, args []string, input []byte, root string, proofs func() []string, reason failure.Reason) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
@@ -55,14 +67,92 @@ func rejectMismatchedActionRefresh(t *testing.T, binary string, env, args []stri
 	command.Env, command.Stdin = env, bytes.NewReader(input)
 	var output, diagnostics bytes.Buffer
 	command.Stdout, command.Stderr = &output, &diagnostics
-	if err := command.Run(); err == nil {
-		t.Fatal("Action refresh accepted another audience or a non-GitHub workload policy")
+	err := command.Run()
+	assertActionSourcePrivate(t, root, proofs(), []byte(strings.Join(command.Args, "\x00")), output.Bytes(), diagnostics.Bytes())
+	var exit *exec.ExitError
+	if ctx.Err() != nil || !errors.As(err, &exit) {
+		t.Fatal("Action startup did not reject normally within its original budget")
+	}
+	if len(bytes.TrimSpace(output.Bytes())) != 0 {
+		t.Fatal("rejected Action startup published an owner status")
 	}
 	var problem struct {
 		Reason failure.Reason `json:"reason"`
 	}
-	if json.Unmarshal(diagnostics.Bytes(), &problem) != nil || problem.Reason != failure.ConnectionRequestInvalid {
-		t.Fatal("mismatched Action refresh was not rejected at the private startup boundary")
+	if json.Unmarshal(diagnostics.Bytes(), &problem) != nil || problem.Reason == "" || reason != "" && problem.Reason != reason {
+		t.Fatal("Action startup rejection did not retain its structured failure reason")
+	}
+}
+
+type actionProviderDenial struct {
+	status           int
+	request          authorityv1.EnvironmentVisitorPrepareRequest
+	providerMismatch bool
+}
+
+func assertActionProviderDenial(t *testing.T, denial actionProviderDenial, start connectorruntime.EnvironmentStart, assertion string) {
+	t.Helper()
+	request := denial.request
+	if denial.status != http.StatusForbidden || !denial.providerMismatch || request.Assertion != assertion || request.PermissionId != start.Selection.PermissionID || !workloadproof.ValidNonce(request.Nonce) || len(request.Services) != len(start.Selection.Services) {
+		t.Fatal("canonical Prepare did not reject the exact valid source proof with HTTP 403 provider-policy denial")
+	}
+	services := make(map[string]string, len(request.Services))
+	for name, protocol := range request.Services {
+		services[name] = string(protocol)
+		if services[name] != start.Selection.Services[name] {
+			t.Fatal("provider-policy denial used another service selection")
+		}
+	}
+	public, err := base64.RawURLEncoding.Strict().DecodeString(request.PublicKey)
+	signature, signatureErr := base64.RawURLEncoding.Strict().DecodeString(request.Signature)
+	if err != nil || signatureErr != nil || len(public) != ed25519.PublicKeySize || !ed25519.Verify(public, machineproof.EnvironmentVisitorPossession(start.Selection.Environment.ProjectKey, start.Selection.PermissionID, start.Selection.Environment.EnvironmentId, "prepare", request.PublicKey, request.Nonce, services, sha256.Sum256([]byte(assertion))), signature) {
+		t.Fatal("provider-policy denial did not traverse a valid native key possession request")
+	}
+}
+
+func assertRejectedActionHasNoOwner(t *testing.T, root string, port int) {
+	t.Helper()
+	handles, err := filepath.Glob(filepath.Join(root, "tnl-connections-*", "handle.json"))
+	if err != nil || len(handles) != 0 {
+		t.Fatal("rejected Action startup retained a native owner capability", err)
+	}
+	listener, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if err != nil {
+		t.Fatal("rejected Action startup left its selected service listener bound", err)
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertActionSourcePrivate(t *testing.T, root string, proofs []string, observations ...[]byte) {
+	t.Helper()
+	private := [][]byte{[]byte("action-private-runtime-bearer"), []byte("/action-provider-token")}
+	for _, proof := range proofs {
+		private = append(private, []byte(proof))
+	}
+	check := func(data []byte) {
+		t.Helper()
+		for _, secret := range private {
+			if bytes.Contains(data, secret) {
+				t.Fatal("job-runtime refresh credentials escaped private startup")
+			}
+		}
+	}
+	for _, observation := range observations {
+		check(observation)
+	}
+	if err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || !entry.Type().IsRegular() {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err == nil {
+			check(data)
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -76,7 +166,7 @@ type actionRefreshFixture struct {
 	refreshed, providerCanceled             <-chan struct{}
 	release                                 chan struct{}
 	call                                    func([]byte, ...string) []byte
-	inspect                                 func() (map[string]int, authorityv1.WorkloadSession, int)
+	inspect                                 func() (map[string]int, fixtureVisitorSession, int)
 	privateProofs                           func() []string
 }
 
@@ -93,7 +183,7 @@ func qualifyActionBackgroundRefresh(t *testing.T, f actionRefreshFixture) {
 		}
 		decodeErr := json.Unmarshal(data, &stopped)
 		calls, _, _ := f.inspect()
-		t.Logf("expired-owner cleanup: record=%t decoded=%t schema=%d clean=%t revoke_calls=%d", readErr == nil, decodeErr == nil, stopped.Schema, stopped.Clean, calls["DELETE /v1/workload-sessions/{session}"])
+		t.Logf("expired-owner cleanup: record=%t decoded=%t schema=%d clean=%t revoke_calls=%d", readErr == nil, decodeErr == nil, stopped.Schema, stopped.Clean, calls["DELETE /v1/environment-visitor-sessions/{session}"])
 	})
 	_, original, _ := f.inspect()
 	first := f.prepared.Connection
@@ -101,7 +191,7 @@ func qualifyActionBackgroundRefresh(t *testing.T, f actionRefreshFixture) {
 		t.Fatal("startup did not retain the initial finite proof boundary")
 	}
 	initialHandle, err := connectorruntime.ReadHandle(f.state.ConnectionHandle)
-	if err != nil || !initialHandle.ExpiresAt.Equal(f.state.ExpiresAt) || !initialHandle.ExpiresAt.Equal(connectorworkload.SessionDeadline(original)) {
+	if err != nil || !initialHandle.ExpiresAt.Equal(f.state.ExpiresAt) || !initialHandle.ExpiresAt.Equal(connectorworkload.SessionDeadline(original.EnvironmentVisitorSession)) {
 		t.Fatal("startup handle did not retain the accepted proof and optional hard deadline", err)
 	}
 	argv, err := exec.CommandContext(t.Context(), "ps", "-p", strconv.Itoa(f.state.PID), "-o", "command=").Output()
@@ -178,12 +268,12 @@ func qualifyActionBackgroundRefresh(t *testing.T, f actionRefreshFixture) {
 		if err != nil || expectedHandle != afterHandle || !afterHandle.ExpiresAt.Equal(state.ExpiresAt) {
 			t.Fatal("refresh replaced or failed to publish the exact local capability", err)
 		}
-		if current.Id != original.Id || current.Credential != original.Credential || current.Binding != original.Binding || !reflect.DeepEqual(current.Github, original.Github) || !reflect.DeepEqual(current.ServiceIds, original.ServiceIds) || !reflect.DeepEqual(current.Subject, original.Subject) || !reflect.DeepEqual(current.ExpiresAt, original.ExpiresAt) || !current.IdentityExpiresAt.After(original.IdentityExpiresAt) || keys != 1 || calls["POST /v1/workload-sessions/exchange"] != 2 || calls["POST /v1/workload-sessions/identity"] != 1 || calls["POST /v1/workload-sessions/{session}/assertions"] != 1 || f.providerCalls.Load() != 1 {
+		if current.Id != original.Id || current.Credential != original.Credential || current.execution.IdentityDigest() != original.execution.IdentityDigest() || !reflect.DeepEqual(current.execution.GitHub, original.execution.GitHub) || !reflect.DeepEqual(current.public, original.public) || current.nonce != original.nonce || current.permission != original.permission || current.machine != original.machine || current.environment != original.environment || !reflect.DeepEqual(current.services, original.services) || !reflect.DeepEqual(current.ServiceIds, original.ServiceIds) || !reflect.DeepEqual(current.Subject, original.Subject) || !reflect.DeepEqual(current.ExpiresAt, original.ExpiresAt) || !current.IdentityExpiresAt.After(original.IdentityExpiresAt) || keys != 1 || calls["POST /v1/projects/connector-fixture/environments/{environment}/visitors/prepare"] != 2 || calls["POST /v1/environment-visitor-sessions/{session}/assertions"] != 1 || f.providerCalls.Load() != 2 {
 			t.Fatal("refresh replaced identity, broadened rights or repeated exchange instead of attaching one fresh proof")
 		}
 		// the owner handle follows accepted proof, bounded by the optional hard
 		// deadline. prepared connections also retain their shorter permission lease.
-		accepted := connectorworkload.SessionDeadline(current)
+		accepted := connectorworkload.SessionDeadline(current.EnvironmentVisitorSession)
 		if !state.ExpiresAt.After(f.state.ExpiresAt) || !state.ExpiresAt.Equal(accepted) {
 			t.Fatalf("local expiry did not advance to accepted authority: before=%s after=%s accepted=%s", f.state.ExpiresAt.Format(time.RFC3339Nano), state.ExpiresAt.Format(time.RFC3339Nano), accepted.Format(time.RFC3339Nano))
 		}
@@ -201,7 +291,7 @@ func qualifyActionBackgroundRefresh(t *testing.T, f actionRefreshFixture) {
 			t.Fatal("failed refresh did not close the quiet stream at accepted proof expiry")
 		}
 		calls, current, keys := f.inspect()
-		if !current.IdentityExpiresAt.Equal(original.IdentityExpiresAt) || current.LeaseExpiresAt.After(f.expiry) || !reflect.DeepEqual(current.ExpiresAt, original.ExpiresAt) || current.Id != original.Id || !reflect.DeepEqual(current.Github, original.Github) || keys != 1 || calls["POST /v1/workload-sessions/exchange"] != 2 {
+		if !current.IdentityExpiresAt.Equal(original.IdentityExpiresAt) || current.LeaseExpiresAt.After(f.expiry) || !reflect.DeepEqual(current.ExpiresAt, original.ExpiresAt) || current.Id != original.Id || current.execution.IdentityDigest() != original.execution.IdentityDigest() || !reflect.DeepEqual(current.execution.GitHub, original.execution.GitHub) || !reflect.DeepEqual(current.public, original.public) || current.nonce != original.nonce || current.permission != original.permission || current.machine != original.machine || current.environment != original.environment || !reflect.DeepEqual(current.services, original.services) || keys != 1 || calls["POST /v1/projects/connector-fixture/environments/{environment}/visitors/prepare"] != 2 {
 			t.Fatal("failed refresh extended accepted authority or replaced the original job")
 		}
 		if f.mode == "action-static" {
@@ -211,7 +301,7 @@ func qualifyActionBackgroundRefresh(t *testing.T, f actionRefreshFixture) {
 		} else if f.providerCalls.Load() == 0 {
 			t.Fatal("explicit Action refresh source was never attempted")
 		}
-		attachments := calls["POST /v1/workload-sessions/{session}/assertions"]
+		attachments := calls["POST /v1/environment-visitor-sessions/{session}/assertions"]
 		if (f.mode == "action-replacement-job") != (attachments > 0) {
 			t.Fatal("replacement job was not checked, or unavailable proof reached attachment")
 		}

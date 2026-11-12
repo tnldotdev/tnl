@@ -7,11 +7,14 @@ import inspect
 import os
 from collections.abc import Awaitable, Callable, Hashable
 from dataclasses import dataclass
-from typing import Protocol, cast
+from typing import Protocol, cast, overload
 
 from . import _connections
 from ._connections import Connection, ConnectionHandle
+from ._environment import EnvironmentReference, _NativeSelection
+from ._identity import IdentitySource
 from ._protocol import TnlError
+from ._service_facts import _BoundServices
 
 _MAX_BINDINGS = 64
 
@@ -290,13 +293,54 @@ def connection_client[C: Connection, T](
     return _Factory(acquire, create=create, close=close, finalize=failed.close)
 
 
+@overload
 def client[T](
     service: str,
     *,
     create: Callable[[Connection], T | Awaitable[T]],
     close: Callable[[T], None | Awaitable[None]],
     directory: str | os.PathLike[str] | None = None,
-) -> ClientFactory[T]:
+) -> ClientFactory[T]: ...
+
+
+@overload
+def client[T](
+    *,
+    services: _BoundServices[_connections._SelectionContext, T],
+    environment: EnvironmentReference,
+    identity: IdentitySource,
+) -> T: ...
+
+
+def client[T](
+    service: str | None = None,
+    *,
+    create: Callable[[Connection], T | Awaitable[T]] | None = None,
+    close: Callable[[T], None | Awaitable[None]] | None = None,
+    directory: str | os.PathLike[str] | None = None,
+    services: _BoundServices[_connections._SelectionContext, T] | None = None,
+    environment: EnvironmentReference | None = None,
+    identity: IdentitySource | None = None,
+) -> ClientFactory[T] | T:
+    if services is not None:
+        if (
+            service is not None
+            or create is not None
+            or close is not None
+            or directory is not None
+            or environment is None
+            or identity is None
+        ):
+            raise TnlError("sdk.configuration_invalid", "supply services, environment and identity")
+        return services._new(_NativeSelection(services, environment, identity))
+    if (
+        service is None
+        or create is None
+        or close is None
+        or environment is not None
+        or identity is not None
+    ):
+        raise TnlError("sdk.configuration_invalid", "supply a local service and client callbacks")
     _connections.connect(service, directory=directory)
     return connection_client(
         lambda: _connections.connect(service, directory=directory), create=create, close=close

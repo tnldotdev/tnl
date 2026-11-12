@@ -42,6 +42,19 @@ func Provisioning(grant, operation string) string {
 	return scope("provisioning", grant, operation)
 }
 
+// environment visitor proofs bind the exact permission and build-time protocol
+// expectations. the registered identity key and native session key are separate.
+func EnvironmentVisitor(permission, environment, operation, publicKey, nonce string, services map[string]string) string {
+	b, _ := json.Marshal(services)
+	return scope("environment_visitor", permission, environment, operation, publicKey, nonce, string(b))
+}
+
+func EnvironmentVisitorPossession(project, permission, environment, operation, publicKey, nonce string, services map[string]string, assertion [32]byte) []byte {
+	b, _ := json.Marshal([]any{"tnl-environment-visitor/v1", project, permission, environment, operation, publicKey, nonce, services, base64.RawURLEncoding.EncodeToString(assertion[:])})
+	d := sha256.Sum256(b)
+	return d[:]
+}
+
 // use publisherproof.Sign(machineID, keyID, Provisioning(grant, operation),
 // controlURL+"/v1/provisioning-sessions/exchange", privateKey, now). publisherproof
 // writes the scope into grant_id and signs exact iss=sub=machineID, aud, jti,

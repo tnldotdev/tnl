@@ -8,7 +8,7 @@ import (
 )
 
 func TestWorkloadProviderDeclarationsAndLegacyRejection(t *testing.T) {
-	services := Services{"inventory": {PublisherGroup: new("production"), Target: &ServiceTarget{Type: "address", Address: new(Target("localhost:3000"))}}, "models": {PublisherGroup: new("production"), Protocol: new("postgres"), Target: &ServiceTarget{Type: "address", Address: new(Target("localhost:5432"))}}}
+	services := Services{"inventory": {Target: &ServiceTarget{Type: "address", Address: new(Target("localhost:3000"))}}, "models": {Protocol: new("postgres"), Target: &ServiceTarget{Type: "address", Address: new(Target("localhost:5432"))}}}
 	for _, p := range []Workload{
 		{GitHub: &WorkloadGitHub{Workflow: ".github/workflows/test.yml"}, Services: []string{"inventory"}},
 		{Vercel: &WorkloadVercel{Project: "store", Environment: "production"}, Services: []string{"inventory", "models"}},
@@ -16,14 +16,17 @@ func TestWorkloadProviderDeclarationsAndLegacyRejection(t *testing.T) {
 		{OIDC: &WorkloadOIDC{Issuer: "https://issuer.example", Claims: map[string]string{"sub": "store"}}, Services: []string{"models"}, Token: &WorkloadToken{File: new("/run/token")}},
 	} {
 		t.Run(p.Provider(), func(t *testing.T) {
-			configuration := TNL{PublisherGroups: map[string]PublisherGroup{"production": {}}, Services: services, Workloads: map[string]Workload{"storefront": p}}
-			if err := ValidateTNL(configuration); err != nil {
+			configuration := Environment{Targets: map[string]EnvironmentTarget{"inventory": {Address: new(Target("localhost:3000"))}, "models": {Address: new(Target("localhost:5432"))}}, Workloads: map[string]Workload{"storefront": p}}
+			validate := func(c Environment) error {
+				return ValidateTNL(TNL{Services: services, Environments: map[string]Environment{"staging": c}})
+			}
+			if err := validate(configuration); err != nil {
 				t.Fatal("valid provider rejected", err)
 			}
 			bad := p
 			bad.GitHub, bad.Vercel, bad.Fly, bad.OIDC = nil, nil, nil, nil
 			configuration.Workloads["storefront"] = bad
-			if err := ValidateTNL(configuration); err == nil {
+			if err := validate(configuration); err == nil {
 				t.Fatal("unknown provider accepted")
 			}
 			bad = p
@@ -33,17 +36,17 @@ func TestWorkloadProviderDeclarationsAndLegacyRejection(t *testing.T) {
 				bad.Fly = &WorkloadFly{}
 			}
 			configuration.Workloads["storefront"] = bad
-			if err := ValidateTNL(configuration); err == nil {
+			if err := validate(configuration); err == nil {
 				t.Fatal("mixed provider policy accepted")
 			}
 			bad = p
 			bad.Services = []string{"missing"}
 			configuration.Workloads["storefront"] = bad
-			if err := ValidateTNL(configuration); err == nil {
+			if err := validate(configuration); err == nil {
 				t.Fatal("unknown service accepted")
 			}
 			configuration.Workloads["storefront"] = p
-			document := Document{Version: new(1), TNL: &configuration}
+			document := Document{Version: new(1), TNL: &TNL{Services: services, Environments: map[string]Environment{"staging": configuration}}}
 			b, err := json.Marshal(document)
 			if err != nil {
 				t.Fatal(err)
@@ -110,7 +113,7 @@ func TestWorkloadSelectorsAndTokenSources(t *testing.T) {
 			p := base
 			p.GitHub = new(*base.GitHub)
 			test.change(&p)
-			err := ValidateWorkloads(TNL{Services: Services{"db": {PublisherGroup: new("production")}}, Workloads: map[string]Workload{"worker": p}})
+			err := ValidateWorkloads(Services{"db": {}}, map[string]Workload{"worker": p})
 			if (err == nil) != test.valid {
 				t.Fatal("unexpected declaration validation", err)
 			}

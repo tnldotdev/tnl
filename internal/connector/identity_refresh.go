@@ -26,18 +26,14 @@ func (b *connectorConnectionBackend) lockWorkloadSession(ctx context.Context) (f
 	}
 }
 
-func (b *connectorConnectionBackend) publishWorkloadAssertion(client *workload.Client, assertion string, session authorityv1.WorkloadSession) error {
+func (b *connectorConnectionBackend) publishWorkloadAssertion(client *workload.Client, assertion string, session authorityv1.EnvironmentVisitorSession) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.closed || b.workload != client {
 		return connectorruntime.ErrExpired
 	}
 	b.deadline = workload.SessionDeadline(session)
-	if session.AssertionExpiresAt != nil {
-		b.rememberAssertion(assertion, *session.AssertionExpiresAt, session)
-	} else {
-		b.verification = nil
-	}
+	b.rememberAssertion(assertion, session.IdentityExpiresAt, session)
 	b.publishLocked()
 	return nil
 }

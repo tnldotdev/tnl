@@ -18,7 +18,6 @@ type connectInventoryReader interface {
 type ServiceReader interface {
 	connectInventoryReader
 	GetLocalProjectService(context.Context, string, string, controlv1.GetLocalProjectServiceParams) (controlv1.LocalProjectService, error)
-	GetProjectService(context.Context, string, string, controlv1.GetProjectServiceParams) (controlv1.Service, error)
 }
 
 // Select resolves the visitor's exact local/applied binding before inventory.
@@ -28,19 +27,11 @@ func Select(ctx context.Context, control ServiceReader, project clientproject.Pr
 		return controlv1.Service{}, err
 	}
 	if publisherGroup != "" {
-		if key == "" {
-			return controlv1.Service{}, publisherCLIError("--publisher-group requires a configured service in this applied project")
-		}
-		source, err := project.SourceIdentity(ctx)
-		if err != nil {
-			return controlv1.Service{}, err
-		}
-		return control.GetProjectService(ctx, source.Key, key, controlv1.GetProjectServiceParams{TeamId: team, SourceFingerprint: source.Fingerprint, PublisherGroup: &publisherGroup})
+		return controlv1.Service{}, publisherCLIError("select an exact environment with an explicit visitor identity")
 	}
 	localID := ""
 	if key != "" {
-		definition := project.Config.Services[key]
-		if config.PublisherGroupName(definition) == "local" {
+		{
 			source := project.LocalPublicationIdentity()
 			params := controlv1.GetLocalProjectServiceParams{TeamId: team, SourceFingerprint: source.Fingerprint, WorktreeKey: project.LocalWorktreeKey()}
 			bound, err := control.GetLocalProjectService(ctx, source.Key, key, params)
@@ -54,12 +45,6 @@ func Select(ctx context.Context, control ServiceReader, project clientproject.Pr
 				return controlv1.Service{}, failure.Wrap("find local service", failure.ServerResponseInvalid, errors.New("control returned another local project service"))
 			}
 			localID = bound.ServiceId
-		} else {
-			source, err := project.SourceIdentity(ctx)
-			if err != nil {
-				return controlv1.Service{}, failure.Wrap("identify applied project service", failure.ProjectConfigInvalid, err)
-			}
-			return control.GetProjectService(ctx, source.Key, key, controlv1.GetProjectServiceParams{TeamId: team, SourceFingerprint: source.Fingerprint})
 		}
 	}
 	services, err := control.ListAvailableServices(ctx)
@@ -133,5 +118,5 @@ func serviceIDSelection(services []controlv1.Service, id, team string) (controlv
 
 // named publishers' public_url blocks are service HTTP policy, not public URLs.
 func isConnectPublicURL(service config.Service) bool {
-	return config.PublisherGroupName(service) == "local" && config.IsPublicService(service)
+	return config.IsPublicService(service)
 }

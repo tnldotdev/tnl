@@ -24,7 +24,7 @@ func TestIntegrationAppliedProjectPersonalSharedLocalRealization(t *testing.T) {
 	r.DomainID = domain.ID
 	r.CanonicalHostname = "web.custom.example.test"
 	u := createTestPublicURL(t, d, r, now)
-	local := RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: "personal", SourceFingerprint: strings.Repeat("a", 64), Service: "web", WorktreeKey: "checkout", ActorID: r.ActingIdentityID, PublicURLID: u.ID, Configuration: ProjectServiceConfiguration{Target: "app", PublicURL: &ProjectServicePublicURL{}, Access: &ProjectServiceAccess{Team: true}}, Now: now}
+	local := RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: "personal", SourceFingerprint: strings.Repeat("a", 64), Service: "web", WorktreeKey: "checkout", ActorID: r.ActingIdentityID, PublicURLID: u.ID, Configuration: LocalServiceDeclaration{Target: "app", PublicURL: &ProjectServicePublicURL{}, Access: &ProjectServiceAccess{Team: true}}, Now: now}
 	for range 2 {
 		realized, err := d.RealizeLocalProjectService(t.Context(), local)
 		if err != nil || realized.ServiceID != u.ID {
@@ -70,7 +70,7 @@ func TestIntegrationAppliedProjectLocalProjectionAndMemberBinding(t *testing.T) 
 		t.Fatal(err)
 	}
 	member := addAuthorityMember(t, d, now, r.ActingIdentityID, r.TeamID, "projection-reader", TeamRoleMember)
-	local := RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: "local", SourceFingerprint: strings.Repeat("a", 64), Service: "web", WorktreeKey: "checkout-a", ActorID: r.ActingIdentityID, Configuration: ProjectServiceConfiguration{Target: "app", PublicURL: &ProjectServicePublicURL{}, Access: &ProjectServiceAccess{Team: true}}, Now: now}
+	local := RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: "local", SourceFingerprint: strings.Repeat("a", 64), Service: "web", WorktreeKey: "checkout-a", ActorID: r.ActingIdentityID, Configuration: LocalServiceDeclaration{Target: "app", PublicURL: &ProjectServicePublicURL{}, Access: &ProjectServiceAccess{Team: true}}, Now: now}
 	for _, worktree := range []string{"checkout-a", "checkout-b"} {
 		r.IdempotencyKey = worktree
 		r.RequestDigest = sha256.Sum256([]byte(worktree))
@@ -91,8 +91,8 @@ func TestIntegrationAppliedProjectLocalProjectionAndMemberBinding(t *testing.T) 
 	if err != nil || len(projection.Services) != 2 || projection.Services[0].PublicURLID == projection.Services[1].PublicURLID {
 		t.Fatal("ordinary member lost authorized realized worktree URLs", projection, err)
 	}
-	if _, err = d.GetProjectConfiguration(t.Context(), r.TeamID, local.ProjectKey, member.IdentityID); !errors.Is(err, ErrServiceAccess) {
-		t.Fatal("local visitor read full configuration", err)
+	if _, _, err = d.ListServices(t.Context(), r.TeamID, member.IdentityID, ""); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("local visitor read service management inventory", err)
 	}
 	// even a same-team manager cannot bind a different member's saved URL.
 	other := addAuthorityMember(t, d, now, r.ActingIdentityID, r.TeamID, "another-owner", TeamRoleAdmin)

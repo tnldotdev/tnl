@@ -103,16 +103,13 @@ func TestPortableDeclarationsNeverUseRuntimeValues(t *testing.T) {
 	protocol := "postgres"
 	configuration := config.TNL{Services: config.Services{"database": {Protocol: &protocol}}}
 	for _, root := range []string{"/checkout/one", "/another/checkout"} {
-		data, err := Declarations(configuration, root+"/tnl.config.ts", root+"/.tnl/generated")
+		facts, err := snapshotServices(configuration)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(string(data), `typeof import("../../tnl.config.js").default`) || strings.Contains(string(data), root) || strings.Contains(string(data), "postgres") {
-			t.Fatalf("snapshot declarations: %s", data)
+		data := typescriptServices(facts)
+		if strings.Contains(string(data), "typeof import") || strings.Contains(string(data), root) || !strings.Contains(string(data), "postgres") {
+			t.Fatalf("snapshot facts: %s", data)
 		}
-	}
-	data, err := Declarations(configuration, "/project/tnl.yml", "/project/.tnl/generated")
-	if err != nil || !strings.Contains(string(data), `"database"`) || !strings.Contains(string(data), `"postgres"`) {
-		t.Fatalf("static declarations: %s %v", data, err)
 	}
 }

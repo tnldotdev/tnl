@@ -14,6 +14,7 @@ import (
 
 	"github.com/alecthomas/kong"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
@@ -41,18 +42,18 @@ func TestGroupIdentityInputConsumesInjectedSecretWithoutFallback(t *testing.T) {
 		{name: "ambiguous sources", secret: string(encoded), path: path},
 	} {
 		t.Run(input.name, func(t *testing.T) {
-			t.Setenv("TNL_GROUP_IDENTITY", input.secret)
+			t.Setenv("TNL_ENVIRONMENT_PUBLISHER_IDENTITY", input.secret)
 			loaded, supplied, err := publisherGroupIdentityInput(input.path)
 			if !supplied || (err == nil) != input.valid || input.valid && loaded != value {
 				t.Fatal("identity input did not fail closed or changed the credential", err)
 			}
-			if _, exists := os.LookupEnv("TNL_GROUP_IDENTITY"); exists {
+			if _, exists := os.LookupEnv("TNL_ENVIRONMENT_PUBLISHER_IDENTITY"); exists {
 				t.Fatal("injected key remains available to child processes")
 			}
 		})
 	}
-	t.Setenv("TNL_GROUP_IDENTITY", "")
-	if err := os.Unsetenv("TNL_GROUP_IDENTITY"); err != nil {
+	t.Setenv("TNL_ENVIRONMENT_PUBLISHER_IDENTITY", "")
+	if err := os.Unsetenv("TNL_ENVIRONMENT_PUBLISHER_IDENTITY"); err != nil {
 		t.Fatal(err)
 	}
 	loaded, supplied, err := publisherGroupIdentityInput(path)
@@ -80,7 +81,7 @@ func testPublisherGroupIdentity(t *testing.T) credentialfile.GroupFile {
 		}
 		return value
 	}
-	value, err := credentialfile.NewGroup("https://control.example", "replica-1", controlv1.PublisherGroupMember{TeamId: "team", ProjectKey: "shop", GroupName: "production", GroupId: id("pgrp_"), PublisherIdentityId: id(opaqueid.PublisherIdentityPrefix), KeyId: id(opaqueid.PublisherIdentityKeyPrefix)}, private)
+	value, err := credentialfile.NewGroup("https://control.example", "replica-1", controlv1.EnvironmentPublisher{TeamId: id(opaqueid.TeamPrefix), ProjectKey: "shop", EnvironmentId: id(opaqueid.EnvironmentPrefix), PublisherIdentityId: id(opaqueid.PublisherIdentityPrefix), KeyId: id(opaqueid.PublisherIdentityKeyPrefix)}, private)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,16 +114,16 @@ func TestGroupIdentityCLIRejectsInvalidInputBeforeStateOrEnrollment(t *testing.T
 		{name: "another instance", args: []string{"--identity-file", path, "--instance", "another"}},
 	} {
 		t.Run(input.name, func(t *testing.T) {
-			t.Setenv("TNL_GROUP_IDENTITY", "")
-			if err := os.Unsetenv("TNL_GROUP_IDENTITY"); err != nil {
+			t.Setenv("TNL_ENVIRONMENT_PUBLISHER_IDENTITY", "")
+			if err := os.Unsetenv("TNL_ENVIRONMENT_PUBLISHER_IDENTITY"); err != nil {
 				t.Fatal(err)
 			}
-			t.Setenv("TNL_GROUP_ENROLL_KEY", "")
+			t.Setenv("TNL_ENVIRONMENT_ENROLL_KEY", "")
 			if input.secret != nil {
-				t.Setenv("TNL_GROUP_IDENTITY", *input.secret)
+				t.Setenv("TNL_ENVIRONMENT_PUBLISHER_IDENTITY", *input.secret)
 			}
 			state := filepath.Join(t.TempDir(), "state")
-			args := append([]string{"--no-config", "--no-telemetry", "publisher", "serve", "--group", "production", "--instance", "replica-1", "--state-dir", state}, input.args...)
+			args := append([]string{"--no-config", "--no-telemetry", "publisher", "serve", "--environment", value.Member.EnvironmentId, "--instance", "replica-1", "--state-dir", state}, input.args...)
 			var output, diagnostics bytes.Buffer
 			if err := run(t.Context(), args, &output, &diagnostics); err == nil {
 				t.Fatal("invalid identity selected enrollment or saved person state")
@@ -132,7 +133,7 @@ func TestGroupIdentityCLIRejectsInvalidInputBeforeStateOrEnrollment(t *testing.T
 			if _, err := os.Lstat(state); !os.IsNotExist(err) {
 				t.Fatalf("invalid identity opened local state: %v", err)
 			}
-			if _, exists := os.LookupEnv("TNL_GROUP_IDENTITY"); exists {
+			if _, exists := os.LookupEnv("TNL_ENVIRONMENT_PUBLISHER_IDENTITY"); exists {
 				t.Fatal("injected key remains available to child processes")
 			}
 			for _, secret := range []string{value.PrivateKey, "must-not-appear-in-errors", "must-not-be-redeemed"} {
@@ -143,10 +144,10 @@ func TestGroupIdentityCLIRejectsInvalidInputBeforeStateOrEnrollment(t *testing.T
 		})
 	}
 	t.Run("enrollment environment with identity", func(t *testing.T) {
-		t.Setenv("TNL_GROUP_ENROLL_KEY", "must-not-be-redeemed")
-		t.Setenv("TNL_GROUP_IDENTITY", string(encoded))
+		t.Setenv("TNL_ENVIRONMENT_ENROLL_KEY", "must-not-be-redeemed")
+		t.Setenv("TNL_ENVIRONMENT_PUBLISHER_IDENTITY", string(encoded))
 		state := filepath.Join(t.TempDir(), "state")
-		if err := run(t.Context(), []string{"--no-config", "publisher", "serve", "--group", "production", "--instance", "replica-1", "--state-dir", state}, io.Discard, io.Discard); err == nil {
+		if err := run(t.Context(), []string{"--no-config", "publisher", "serve", "--environment", value.Member.EnvironmentId, "--instance", "replica-1", "--state-dir", state}, io.Discard, io.Discard); err == nil {
 			t.Fatal("identity accepted enrollment from environment")
 		}
 		if _, err := os.Lstat(state); !os.IsNotExist(err) {
@@ -156,8 +157,8 @@ func TestGroupIdentityCLIRejectsInvalidInputBeforeStateOrEnrollment(t *testing.T
 }
 
 func TestGroupIdentityBindsControlBeforeProjectDefaults(t *testing.T) {
-	t.Setenv("TNL_GROUP_IDENTITY", "")
-	if err := os.Unsetenv("TNL_GROUP_IDENTITY"); err != nil {
+	t.Setenv("TNL_ENVIRONMENT_PUBLISHER_IDENTITY", "")
+	if err := os.Unsetenv("TNL_ENVIRONMENT_PUBLISHER_IDENTITY"); err != nil {
 		t.Fatal(err)
 	}
 	value := testPublisherGroupIdentity(t)
@@ -169,7 +170,7 @@ func TestGroupIdentityBindsControlBeforeProjectDefaults(t *testing.T) {
 	project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{Server: &projectServer, Team: &team}}}
 	for _, selected := range []string{"", value.ControlURL + "/"} {
 		var flags cli
-		flags.Publisher.Serve = publisherServeCommand{IdentityFile: []string{path}, Group: "production", Instance: "replica-1", ProjectKey: "shop", scopedTeamFlags: scopedTeamFlags{remoteFlags: remoteFlags{ServerURL: selected}}}
+		flags.Publisher.Serve = publisherServeCommand{IdentityFile: []string{path}, Environment: value.Member.EnvironmentId, Instance: "replica-1", ProjectKey: "shop", scopedTeamFlags: scopedTeamFlags{remoteFlags: remoteFlags{ServerURL: selected}}}
 		if err := preparePublisherGroupIdentity(&flags.Publisher.Serve); err != nil {
 			t.Fatal(err)
 		}
@@ -183,11 +184,11 @@ func TestGroupIdentityBindsControlBeforeProjectDefaults(t *testing.T) {
 }
 
 func TestGroupIdentityDefaultInstanceStillRequiresAnExactMatch(t *testing.T) {
-	t.Setenv("TNL_GROUP_IDENTITY", "")
-	if err := os.Unsetenv("TNL_GROUP_IDENTITY"); err != nil {
+	t.Setenv("TNL_ENVIRONMENT_PUBLISHER_IDENTITY", "")
+	if err := os.Unsetenv("TNL_ENVIRONMENT_PUBLISHER_IDENTITY"); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("TNL_GROUP_ENROLL_KEY", "")
+	t.Setenv("TNL_ENVIRONMENT_ENROLL_KEY", "")
 	value := testPublisherGroupIdentity(t)
 	for _, instance := range []string{"replica-1", "default"} {
 		value.Instance = instance
@@ -201,7 +202,7 @@ func TestGroupIdentityDefaultInstanceStillRequiresAnExactMatch(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			args := []string{"publisher", "serve", "--group", "production", "--identity-file", path}
+			args := []string{"publisher", "serve", "--environment", value.Member.EnvironmentId, "--identity-file", path}
 			if explicit {
 				args = append(args, "--instance", "default")
 			}
@@ -217,12 +218,12 @@ func TestGroupIdentityDefaultInstanceStillRequiresAnExactMatch(t *testing.T) {
 
 func TestGroupIdentityProvisionRejectsMixedAndIncompleteScopes(t *testing.T) {
 	for _, flags := range []publisherProvisionCommand{
-		{Group: "production", Instance: "replica-1", Namespace: true},
-		{Group: "production", Instance: "replica-1", URL: "url_selected"},
-		{Group: "production", Instance: "replica-1", ServiceID: "svc_selected"},
-		{Group: "production", Instance: "replica-1", Domain: "example.test"},
-		{Group: "production"},
-		{Group: "local", Instance: "replica-1"},
+		{Environment: "production", Instance: "replica-1", Namespace: true},
+		{Environment: "production", Instance: "replica-1", URL: "url_selected"},
+		{Environment: "production", Instance: "replica-1", ServiceID: "svc_selected"},
+		{Environment: "production", Instance: "replica-1", Domain: "example.test"},
+		{Environment: "production"},
+		{Environment: "local", Instance: "replica-1"},
 		{ProjectKey: "shop", Namespace: true},
 		{Instance: "replica-1", Namespace: true},
 	} {
@@ -236,8 +237,8 @@ func TestGroupIdentityProvisionRejectsMixedAndIncompleteScopes(t *testing.T) {
 
 func TestGroupIdentityInstallPreflightBeforeProjectOrIdentityState(t *testing.T) {
 	state, service := filepath.Join(t.TempDir(), "state"), filepath.Join(t.TempDir(), "supervisor")
-	t.Setenv("TNL_GROUP_IDENTITY", "not-valid-json")
-	err := run(t.Context(), []string{"publisher", "serve", "--group", "production", "--install", "--state-dir", state, "--system-state-dir", service}, io.Discard, io.Discard)
+	t.Setenv("TNL_ENVIRONMENT_PUBLISHER_IDENTITY", "not-valid-json")
+	err := run(t.Context(), []string{"publisher", "serve", "--environment", testPublisherGroupIdentity(t).Member.EnvironmentId, "--install", "--state-dir", state, "--system-state-dir", service}, io.Discard, io.Discard)
 	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ServiceNotInstalled {
 		t.Fatalf("install did not preflight before identity processing: %v", err)
 	}
@@ -250,8 +251,8 @@ func TestGroupIdentityInstallPreflightBeforeProjectOrIdentityState(t *testing.T)
 
 func TestGroupIdentityFlagsAppearInGeneratedHelp(t *testing.T) {
 	for command, wanted := range map[string][]string{
-		"provision": {"--group", "--project-key", "--instance", "--output-file"},
-		"serve":     {"--identity-file", "TNL_GROUP_IDENTITY", "--instance", "--enroll-key"},
+		"provision": {"--environment", "--services", "--project-key", "--instance", "--output-file"},
+		"serve":     {"--identity-file", "TNL_ENVIRONMENT_PUBLISHER_IDENTITY", "--instance", "--enroll-key"},
 	} {
 		t.Run(command, func(t *testing.T) {
 			var flags cli
@@ -264,7 +265,7 @@ func TestGroupIdentityFlagsAppearInGeneratedHelp(t *testing.T) {
 			if command == "provision" {
 				args = append(args, "--output-file", filepath.Join(t.TempDir(), "identity.json"))
 			} else {
-				args = append(args, "--group", "production")
+				args = append(args, "--environment", testPublisherGroupIdentity(t).Member.EnvironmentId)
 			}
 			if _, err := parser.Parse(args); err != nil {
 				t.Fatal(err)
@@ -275,5 +276,57 @@ func TestGroupIdentityFlagsAppearInGeneratedHelp(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestEnvironmentPublisherServeRequiresExplicitBootstrapWithoutPersonFallback(t *testing.T) {
+	t.Setenv("TNL_ENVIRONMENT_PUBLISHER_IDENTITY", "")
+	if err := os.Unsetenv("TNL_ENVIRONMENT_PUBLISHER_IDENTITY"); err != nil {
+		t.Fatal(err)
+	}
+	value := testPublisherGroupIdentity(t)
+	state := filepath.Join(t.TempDir(), "state")
+	err := runPublisherServe(t.Context(), publisherServeCommand{
+		Environment: value.Member.EnvironmentId, ProjectKey: value.Member.ProjectKey, Instance: value.Instance,
+		scopedTeamFlags: scopedTeamFlags{remoteFlags: remoteFlags{ServerURL: value.ControlURL, StateDir: state}},
+	}, projectConfiguration{}, io.Discard, io.Discard)
+	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.InvalidTunnelFlags {
+		t.Fatal("new replica attempted implicit human-session enrollment", err)
+	}
+	database, err := clientstate.Open(t.Context(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	profile, err := database.Server(t.Context(), value.ControlURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selection := credentialfile.GroupSelection(value.Member.ProjectKey, value.Member.EnvironmentId, value.Instance)
+	if _, found, err := profile.PendingPublisherEnrollmentForSelection(t.Context(), "project", selection); err != nil || found {
+		t.Fatal("missing bootstrap created a pending signing identity", err)
+	}
+	if _, found, err := profile.ControlSession(t.Context()); err != nil || found {
+		t.Fatal("publisher serve opened a person session", err)
+	}
+}
+
+func TestEnvironmentPublisherIdentityRejectsAnotherEnvironmentBeforeState(t *testing.T) {
+	t.Setenv("TNL_ENVIRONMENT_PUBLISHER_IDENTITY", "")
+	if err := os.Unsetenv("TNL_ENVIRONMENT_PUBLISHER_IDENTITY"); err != nil {
+		t.Fatal(err)
+	}
+	value := testPublisherGroupIdentity(t)
+	path := filepath.Join(t.TempDir(), "identity.json")
+	if err := credentialfile.WriteGroup(path, value); err != nil {
+		t.Fatal(err)
+	}
+	other := testPublisherGroupIdentity(t)
+	flags := publisherServeCommand{Environment: other.Member.EnvironmentId, ProjectKey: value.Member.ProjectKey, Instance: value.Instance, IdentityFile: []string{path}}
+	if err := preparePublisherGroupIdentity(&flags); !errors.Is(err, credentialfile.ErrInvalid) {
+		t.Fatal("friendly names or another environment selected this signing key", err)
+	}
+	if flags.identity != nil {
+		t.Fatal("foreign environment retained portable signing authority")
 	}
 }

@@ -1,0 +1,79 @@
+schemas:
+  IdentitySourceSelection:
+    type: object
+    additionalProperties: false
+    required: [kind, machine_id]
+    description: Explicit identity source, not an installed publisher selector. Registered-key callers also select the immutable source key ID. This contains no source assertion or private key.
+    if: { properties: { kind: { const: registered_key } } }
+    then: { required: [key_id] }
+    else: { not: { required: [key_id] } }
+    properties:
+      kind: { type: string, enum: [oidc, registered_key] }
+      machine_id: { type: string, pattern: '^mci_[A-Za-z0-9]{22}$' }
+      key_id: { type: string, minLength: 1, maxLength: 128, x-go-type-skip-optional-pointer: true }
+  IdentitySourcePublicationSelection:
+    type: object
+    additionalProperties: false
+    oneOf:
+      - required: [resource]
+        not: { required: [namespace] }
+      - required: [namespace]
+        not: { required: [resource] }
+    properties:
+      resource: { type: string, pattern: '^url_[A-Za-z0-9]{22}$', x-go-type-skip-optional-pointer: true }
+      namespace: { type: string, minLength: 1, maxLength: 253, x-go-type-skip-optional-pointer: true }
+  IdentitySourceVisitorSelection:
+    type: object
+    additionalProperties: false
+    required: [environment, permission_id, services]
+    properties:
+      environment: { $ref: '../../../public/v1/openapi.yaml#/components/schemas/EnvironmentReference' }
+      permission_id: { type: string, pattern: '^mwp_[A-Za-z0-9]{22}$' }
+      services:
+        type: object
+        minProperties: 1
+        maxProperties: 32
+        additionalProperties: { $ref: '../../../public/v1/openapi.yaml#/components/schemas/ServiceProtocol' }
+  IdentitySourceChallenge:
+    type: object
+    additionalProperties: false
+    required: [schema, id, source, server, operation, scope, audience, binding_digest, expires_at, native_public_key]
+    description: Private native-to-source challenge shared by publication and visitor transports. The source checks its prepared server, source and exact selection, recomputes the machineproof scope and exact authority audience, then uses publisherproof.Sign(machine_id, key_id, scope, audience, source_key, now). The separate native key never leaves its owner. The native owner binds challenge delivery to its immutable local request and revision and rejects replaced, expired or cross-owner replies. No assertion or source key is persisted in this challenge.
+    oneOf:
+      - required: [publication]
+        not: { required: [selection] }
+        properties: { operation: { enum: [publication_exchange, publication_refresh] } }
+      - required: [selection]
+        not: { required: [publication] }
+        properties: { operation: { enum: [visitor_prepare, visitor_attach] } }
+    if: { properties: { operation: { enum: [publication_exchange, visitor_prepare] } } }
+    then:
+      required: [nonce]
+      not: { required: [session_id] }
+    else:
+      required: [session_id]
+      not: { required: [nonce] }
+    properties:
+      schema: { type: integer, enum: [1] }
+      id: { type: string, pattern: '^[a-f0-9]{32}$' }
+      source: { $ref: '../openapi.yaml#/components/schemas/IdentitySourceSelection' }
+      server: { type: string, maxLength: 4096 }
+      operation: { type: string, enum: [publication_exchange, publication_refresh, visitor_prepare, visitor_attach] }
+      scope: { type: string, pattern: '^machine/v1/[a-f0-9]{64}$' }
+      audience: { type: string, maxLength: 4096 }
+      binding_digest: { type: string, pattern: '^[a-f0-9]{64}$' }
+      expires_at: { type: string, format: date-time, description: "Fixed delivery deadline, at most 60 seconds and no later than the owner's last confirmed applicable authority fence. Signing and reply delivery cannot extend it." }
+      native_public_key: { type: string, pattern: '^[A-Za-z0-9_-]{43}$' }
+      nonce: { type: string, pattern: '^[A-Za-z0-9_-]{16,128}$', x-go-type-skip-optional-pointer: true }
+      session_id: { type: string, maxLength: 128, x-go-type-skip-optional-pointer: true }
+      publication: { $ref: '../openapi.yaml#/components/schemas/IdentitySourcePublicationSelection' }
+      selection: { $ref: '../openapi.yaml#/components/schemas/IdentitySourceVisitorSelection' }
+  IdentitySourceReply:
+    type: object
+    additionalProperties: false
+    required: [schema, challenge_id, assertion]
+    description: Transient reply to the exact native-issued challenge. Native consumes its challenge once before the authority request. Neither this reply nor its assertion may enter durable state, metadata, observations or logs.
+    properties:
+      schema: { type: integer, enum: [1] }
+      challenge_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+      assertion: { type: string, minLength: 1, maxLength: 32768 }

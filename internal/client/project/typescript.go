@@ -260,6 +260,7 @@ var typeScriptKeyMappings = map[string]string{
 	"source_ips":           "sourceIPs",
 	"server_name":          "serverName",
 	"ca_file":              "caFile",
+	"ca_pem":               "caPEM",
 	"max_bytes":            "maxBytes",
 	"rate_per":             "ratePer",
 	"upload_bytes":         "uploadBytes",

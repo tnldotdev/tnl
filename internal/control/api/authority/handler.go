@@ -39,7 +39,7 @@ type Store interface {
 	companyAccessStore
 	serviceAccessStore
 	visitorAuthorityStore
-	WorkloadStore
+	EnvironmentVisitorStore
 	PublisherIdentityStore
 	AuthorizeTeamSession(context.Context, controlstate.ControlPrincipal, string, time.Time) error
 	EnsureServiceIdentity(context.Context, string, controlstate.OIDCIdentity, time.Time) (controlstate.IdentityContext, error)

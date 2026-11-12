@@ -6,7 +6,6 @@ import (
 	"net/netip"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 )
 
@@ -32,7 +31,7 @@ func (d *Database) serviceHTTPSourceAllowed(ctx context.Context, q *controlstate
 	return ErrServiceAccess
 }
 
-func (d *Database) serviceHTTPSettings(ctx context.Context, q *controlstatedb.Queries, service string) (*config.HTTPService, error) {
+func (d *Database) serviceHTTPSettings(ctx context.Context, q *controlstatedb.Queries, service string) (*EnvironmentServiceHTTP, error) {
 	row, err := q.ServiceHTTPAppliedConfiguration(ctx, text(service))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -40,25 +39,12 @@ func (d *Database) serviceHTTPSettings(ctx context.Context, q *controlstatedb.Qu
 	if err != nil {
 		return nil, err
 	}
-	if row.EnvironmentID != "" {
-		s, err := d.environmentServiceConfiguration(ctx, q, row.EnvironmentID, row.GroupID.String, appliedServiceName(row.Service))
-		if err != nil {
-			return nil, err
-		}
-		// this definition version carries protocol only. current visitor policy
-		// is separate authority, never inherited from the live project document.
-		return s.HTTP, nil
-	}
-	c, err := d.openAppliedProject(controlstatedb.ControlAppliedProject{TeamID: row.TeamID, ProjectKey: row.ProjectKey, ConfigurationCiphertext: row.ConfigurationCiphertext, StorageKeyID: row.StorageKeyID})
-	if err != nil {
-		return nil, err
-	}
-	s, ok := c.Services[appliedServiceName(row.Service)]
-	if !ok {
+	if row.EnvironmentID == "" || !row.GroupID.Valid {
 		return nil, ErrServiceAccess
 	}
-	if err := config.ValidateGroupHTTP(s.HTTP); err != nil {
-		return nil, errors.Join(ErrServiceAccess, err)
+	s, err := d.environmentServiceConfiguration(ctx, q, row.EnvironmentID, row.GroupID.String, appliedServiceName(row.Service))
+	if err != nil {
+		return nil, err
 	}
 	return s.HTTP, nil
 }

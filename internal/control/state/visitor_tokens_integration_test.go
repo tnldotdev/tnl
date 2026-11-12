@@ -292,19 +292,16 @@ func TestIntegrationVisitorTokenNativeAndExplicitCredentialsNeedOneScopedGrantMo
 
 func TestIntegrationVisitorTokenWorkloadKeepsSelectedServicesKeyAndFixedDeadline(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "visitor_token_workload")
-	request := appliedProjectRequest(t, d, now)
-	request.Configuration = workloadConfiguration()
-	applied, err := d.ApplyProjectConfiguration(t.Context(), request)
+	f := newRetainedVisitorFixture(t, d, now, retainedGitHubTrust(), 3600, false)
+	applied := f.environment
+	exchange, key := retainedVisitorPreparation(t, f, now)
+	exchange.Services = map[string]string{"api": "http"}
+	signRetainedVisitorPreparation(&exchange, key)
+	prepared, err := d.PrepareEnvironmentVisitor(t.Context(), exchange, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	exchange, key := workloadExchange(t, request, now)
-	exchange.Services = []string{"api"}
-	signWorkloadRequest(&exchange, key)
-	session, err := d.ExchangeWorkload(t.Context(), exchange, now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	session := prepared.Session
 	var allowed, excluded string
 	for _, service := range applied.Services {
 		if service.Service == "api" {
@@ -351,7 +348,7 @@ func TestIntegrationVisitorTokenWorkloadKeepsSelectedServicesKeyAndFixedDeadline
 	if _, err := d.IssueVisitorToken(t.Context(), testVisitorIssuer, scope, source, session.LeaseExpiresAt); err == nil {
 		t.Fatal("expired workload lease minted permission")
 	}
-	if err := d.RevokeWorkloadSession(t.Context(), session.ID, session.Credential, now); err != nil {
+	if err := d.RevokeEnvironmentVisitorSession(t.Context(), session.ID, session.Credential, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.IssueVisitorToken(t.Context(), testVisitorIssuer, scope, source, now); err == nil {

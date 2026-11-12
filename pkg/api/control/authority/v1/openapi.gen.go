@@ -235,6 +235,78 @@ func (e IdentityConnectionSecretState) Valid() bool {
 	}
 }
 
+// Defines values for IdentitySourceChallengeOperation.
+const (
+	PublicationExchange IdentitySourceChallengeOperation = "publication_exchange"
+	PublicationRefresh  IdentitySourceChallengeOperation = "publication_refresh"
+	VisitorAttach       IdentitySourceChallengeOperation = "visitor_attach"
+	VisitorPrepare      IdentitySourceChallengeOperation = "visitor_prepare"
+)
+
+// Valid indicates whether the value is a known member of the IdentitySourceChallengeOperation enum.
+func (e IdentitySourceChallengeOperation) Valid() bool {
+	switch e {
+	case PublicationExchange:
+		return true
+	case PublicationRefresh:
+		return true
+	case VisitorAttach:
+		return true
+	case VisitorPrepare:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for IdentitySourceChallengeSchema.
+const (
+	IdentitySourceChallengeSchemaN1 IdentitySourceChallengeSchema = 1
+)
+
+// Valid indicates whether the value is a known member of the IdentitySourceChallengeSchema enum.
+func (e IdentitySourceChallengeSchema) Valid() bool {
+	switch e {
+	case IdentitySourceChallengeSchemaN1:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for IdentitySourceReplySchema.
+const (
+	IdentitySourceReplySchemaN1 IdentitySourceReplySchema = 1
+)
+
+// Valid indicates whether the value is a known member of the IdentitySourceReplySchema enum.
+func (e IdentitySourceReplySchema) Valid() bool {
+	switch e {
+	case IdentitySourceReplySchemaN1:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for IdentitySourceSelectionKind.
+const (
+	IdentitySourceSelectionKindOidc          IdentitySourceSelectionKind = "oidc"
+	IdentitySourceSelectionKindRegisteredKey IdentitySourceSelectionKind = "registered_key"
+)
+
+// Valid indicates whether the value is a known member of the IdentitySourceSelectionKind enum.
+func (e IdentitySourceSelectionKind) Valid() bool {
+	switch e {
+	case IdentitySourceSelectionKindOidc:
+		return true
+	case IdentitySourceSelectionKindRegisteredKey:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for InvitationState.
 const (
 	InvitationStateAccepted InvitationState = "accepted"
@@ -294,13 +366,31 @@ func (e MachinePublicationSessionTokenType) Valid() bool {
 
 // Defines values for MachineTrustProvider.
 const (
-	MachineTrustProviderOidc MachineTrustProvider = "oidc"
+	MachineTrustFly        MachineTrustProvider = "fly"
+	MachineTrustGitHub     MachineTrustProvider = "github"
+	MachineTrustGitLab     MachineTrustProvider = "gitlab"
+	MachineTrustGoogle     MachineTrustProvider = "google"
+	MachineTrustKubernetes MachineTrustProvider = "kubernetes"
+	MachineTrustOIDC       MachineTrustProvider = "oidc"
+	MachineTrustVercel     MachineTrustProvider = "vercel"
 )
 
 // Valid indicates whether the value is a known member of the MachineTrustProvider enum.
 func (e MachineTrustProvider) Valid() bool {
 	switch e {
-	case MachineTrustProviderOidc:
+	case MachineTrustFly:
+		return true
+	case MachineTrustGitHub:
+		return true
+	case MachineTrustGitLab:
+		return true
+	case MachineTrustGoogle:
+		return true
+	case MachineTrustKubernetes:
+		return true
+	case MachineTrustOIDC:
+		return true
+	case MachineTrustVercel:
 		return true
 	default:
 		return false
@@ -795,6 +885,89 @@ type EmailDeliveryRequest struct {
 // EmailDeliveryRequestType defines model for EmailDeliveryRequest.Type.
 type EmailDeliveryRequestType string
 
+// EnvironmentPermissionScope Select exact environment IDs or one saved collection. A collection scope requires an explicit choice about future members. When false, the initial members are captured once; current membership is still required on every use. Services are a separate fixed allowlist and never grow with a definition.
+type EnvironmentPermissionScope struct {
+	CollectionId              *string   `json:"collection_id,omitempty"`
+	EnvironmentIds            *[]string `json:"environment_ids,omitempty"`
+	IncludeFutureEnvironments *bool     `json:"include_future_environments,omitempty"`
+}
+
+// EnvironmentVisitorAssertion defines model for EnvironmentVisitorAssertion.
+type EnvironmentVisitorAssertion struct {
+	Assertion string `json:"assertion"`
+	Signature string `json:"signature"`
+}
+
+// EnvironmentVisitorPermissionRequest defines model for EnvironmentVisitorPermissionRequest.
+type EnvironmentVisitorPermissionRequest struct {
+	ExpiresAt time.Time `json:"expires_at"`
+
+	// MaxDurationSeconds Zero omits the hard session deadline; otherwise the deadline is fixed at initial admission.
+	MaxDurationSeconds int    `json:"max_duration_seconds"`
+	ProjectKey         string `json:"project_key"`
+
+	// Scope Select exact environment IDs or one saved collection. A collection scope requires an explicit choice about future members. When false, the initial members are captured once; current membership is still required on every use. Services are a separate fixed allowlist and never grow with a definition.
+	Scope    EnvironmentPermissionScope `json:"scope"`
+	Services []string                   `json:"services"`
+}
+
+// EnvironmentVisitorPreparation defines model for EnvironmentVisitorPreparation.
+type EnvironmentVisitorPreparation struct {
+	AppliedDefinitionRevision int64 `json:"applied_definition_revision"`
+
+	// Environment Nonsecret selection of one immutable environment on one control server. Possession of this reference grants no access.
+	Environment      externalRef0.EnvironmentReference    `json:"environment"`
+	MutationRevision int64                                `json:"mutation_revision"`
+	Services         map[string]EnvironmentVisitorService `json:"services"`
+
+	// Session Native-owned visitor session. The exact service IDs and ephemeral key are immutable. Every permission lease is capped by verified identity expiry, permission expiry and the optional original hard deadline. Renewal or same-identity attachment never revives an expired or revoked session.
+	Session EnvironmentVisitorSession `json:"session"`
+}
+
+// EnvironmentVisitorPrepareRequest The saved visitor permission selects the registered identity and trust policy. The assertion is either its current OIDC token or a one-use registered-key JWT bound to this exact environment, permission, ephemeral key, nonce and service/protocol map. A separate ephemeral-key signature binds every field and the assertion digest. Neither the environment reference nor the expected protocol map grants access.
+type EnvironmentVisitorPrepareRequest struct {
+	Assertion    string                                  `json:"assertion"`
+	Nonce        string                                  `json:"nonce"`
+	PermissionId string                                  `json:"permission_id"`
+	PublicKey    string                                  `json:"public_key"`
+	Services     map[string]externalRef0.ServiceProtocol `json:"services"`
+	Signature    string                                  `json:"signature"`
+}
+
+// EnvironmentVisitorRenewal defines model for EnvironmentVisitorRenewal.
+type EnvironmentVisitorRenewal struct {
+	Sequence int64 `json:"sequence"`
+
+	// Signature Unpadded base64url Ed25519 signature over SHA-256 of compact JSON ["tnl-workload-renew/v1", session_id, sequence]. Retrying the current sequence does not extend the lease again.
+	Signature string `json:"signature"`
+}
+
+// EnvironmentVisitorService Exact saved service and approved visitor endpoint. No publisher target, target trust, workload policy, template, or assignment-group identifier is exposed.
+type EnvironmentVisitorService struct {
+	// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
+	Endpoint externalRef0.ServiceEndpoint `json:"endpoint"`
+
+	// KubernetesAuth Approved nonsecret native client authentication hint. Contains no publisher target address, CA, or credentials.
+	KubernetesAuth *externalRef0.KubernetesAuth `json:"kubernetes_auth,omitempty"`
+	Protocol       externalRef0.ServiceProtocol `json:"protocol"`
+	ServiceId      externalRef0.ServiceID       `json:"service_id"`
+}
+
+// EnvironmentVisitorSession Native-owned visitor session. The exact service IDs and ephemeral key are immutable. Every permission lease is capped by verified identity expiry, permission expiry and the optional original hard deadline. Renewal or same-identity attachment never revives an expired or revoked session.
+type EnvironmentVisitorSession struct {
+	Credential        string                   `json:"credential"`
+	ExpiresAt         *time.Time               `json:"expires_at,omitempty"`
+	Id                string                   `json:"id"`
+	IdentityExpiresAt time.Time                `json:"identity_expires_at"`
+	LeaseExpiresAt    time.Time                `json:"lease_expires_at"`
+	RenewAfter        time.Time                `json:"renew_after"`
+	RenewalSequence   int64                    `json:"renewal_sequence"`
+	ServiceIds        []externalRef0.ServiceID `json:"service_ids"`
+
+	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
+	Subject externalRef0.VisitorSubject `json:"subject"`
+}
+
 // Identity defines model for Identity.
 type Identity struct {
 	Administrator   bool                 `json:"administrator"`
@@ -866,6 +1039,86 @@ type IdentityContext struct {
 // IdentityID defines model for IdentityID.
 type IdentityID = ResourceID
 
+// IdentitySourceChallenge Private native-to-source challenge shared by publication and visitor transports. The source checks its prepared server, source and exact selection, recomputes the machineproof scope and exact authority audience, then uses publisherproof.Sign(machine_id, key_id, scope, audience, source_key, now). The separate native key never leaves its owner. The native owner binds challenge delivery to its immutable local request and revision and rejects replaced, expired or cross-owner replies. No assertion or source key is persisted in this challenge.
+type IdentitySourceChallenge struct {
+	Audience      string `json:"audience"`
+	BindingDigest string `json:"binding_digest"`
+
+	// ExpiresAt Fixed delivery deadline, at most 60 seconds and no later than the owner's last confirmed applicable authority fence. Signing and reply delivery cannot extend it.
+	ExpiresAt       time.Time                           `json:"expires_at"`
+	Id              string                              `json:"id"`
+	NativePublicKey string                              `json:"native_public_key"`
+	Nonce           string                              `json:"nonce,omitempty"`
+	Operation       IdentitySourceChallengeOperation    `json:"operation"`
+	Publication     *IdentitySourcePublicationSelection `json:"publication,omitempty"`
+	Schema          IdentitySourceChallengeSchema       `json:"schema"`
+	Scope           string                              `json:"scope"`
+	Selection       *IdentitySourceVisitorSelection     `json:"selection,omitempty"`
+	Server          string                              `json:"server"`
+	SessionId       string                              `json:"session_id,omitempty"`
+
+	// Source Explicit identity source, not an installed publisher selector. Registered-key callers also select the immutable source key ID. This contains no source assertion or private key.
+	Source IdentitySourceSelection `json:"source"`
+	union  json.RawMessage
+}
+
+// IdentitySourceChallengeOperation defines model for IdentitySourceChallenge.Operation.
+type IdentitySourceChallengeOperation string
+
+// IdentitySourceChallengeSchema defines model for IdentitySourceChallenge.Schema.
+type IdentitySourceChallengeSchema int
+
+// IdentitySourceChallenge0 defines model for IdentitySourceChallenge.0.
+type IdentitySourceChallenge0 struct {
+	Operation interface{} `json:"operation,omitempty"`
+}
+
+// IdentitySourceChallenge1 defines model for IdentitySourceChallenge.1.
+type IdentitySourceChallenge1 struct {
+	Operation interface{} `json:"operation,omitempty"`
+}
+
+// IdentitySourcePublicationSelection defines model for IdentitySourcePublicationSelection.
+type IdentitySourcePublicationSelection struct {
+	Namespace string `json:"namespace,omitempty"`
+	Resource  string `json:"resource,omitempty"`
+	union     json.RawMessage
+}
+
+// IdentitySourcePublicationSelection0 defines model for IdentitySourcePublicationSelection.0.
+type IdentitySourcePublicationSelection0 = interface{}
+
+// IdentitySourcePublicationSelection1 defines model for IdentitySourcePublicationSelection.1.
+type IdentitySourcePublicationSelection1 = interface{}
+
+// IdentitySourceReply Transient reply to the exact native-issued challenge. Native consumes its challenge once before the authority request. Neither this reply nor its assertion may enter durable state, metadata, observations or logs.
+type IdentitySourceReply struct {
+	Assertion   string                    `json:"assertion"`
+	ChallengeId string                    `json:"challenge_id"`
+	Schema      IdentitySourceReplySchema `json:"schema"`
+}
+
+// IdentitySourceReplySchema defines model for IdentitySourceReply.Schema.
+type IdentitySourceReplySchema int
+
+// IdentitySourceSelection Explicit identity source, not an installed publisher selector. Registered-key callers also select the immutable source key ID. This contains no source assertion or private key.
+type IdentitySourceSelection struct {
+	KeyId     string                      `json:"key_id,omitempty"`
+	Kind      IdentitySourceSelectionKind `json:"kind"`
+	MachineId string                      `json:"machine_id"`
+}
+
+// IdentitySourceSelectionKind defines model for IdentitySourceSelection.Kind.
+type IdentitySourceSelectionKind string
+
+// IdentitySourceVisitorSelection defines model for IdentitySourceVisitorSelection.
+type IdentitySourceVisitorSelection struct {
+	// Environment Nonsecret selection of one immutable environment on one control server. Possession of this reference grants no access.
+	Environment  externalRef0.EnvironmentReference       `json:"environment"`
+	PermissionId string                                  `json:"permission_id"`
+	Services     map[string]externalRef0.ServiceProtocol `json:"services"`
+}
+
 // Invitation defines model for Invitation.
 type Invitation struct {
 	CreatedAt                  time.Time            `json:"created_at"`
@@ -913,7 +1166,9 @@ type MachineIdentity struct {
 	ProofKind MachineIdentityProofKind `json:"proof_kind"`
 	Revision  int64                    `json:"revision"`
 	TeamId    string                   `json:"team_id"`
-	Trust     *MachineTrust            `json:"trust,omitempty"`
+
+	// Trust Manager-approved OIDC provider policy. Provider modes retain their signed execution identity; generic oidc requires an exact sub. GitHub pins repository and owner IDs, repository, workflow_ref and ref, with an explicit event allowlist. Kubernetes pins sub and service_account_uid. Google pins the immutable numeric sub. GitLab pins job project and namespace IDs and paths, ref_path and pipeline_source. Vercel and Fly pin their stable project or application and owner IDs.
+	Trust *MachineTrust `json:"trust,omitempty"`
 }
 
 // MachineIdentityProofKind defines model for MachineIdentity.ProofKind.
@@ -1007,10 +1262,13 @@ type MachinePublicationSession struct {
 // MachinePublicationSessionTokenType defines model for MachinePublicationSession.TokenType.
 type MachinePublicationSessionTokenType string
 
-// MachineTrust defines model for MachineTrust.
+// MachineTrust Manager-approved OIDC provider policy. Provider modes retain their signed execution identity; generic oidc requires an exact sub. GitHub pins repository and owner IDs, repository, workflow_ref and ref, with an explicit event allowlist. Kubernetes pins sub and service_account_uid. Google pins the immutable numeric sub. GitLab pins job project and namespace IDs and paths, ref_path and pipeline_source. Vercel and Fly pin their stable project or application and owner IDs.
 type MachineTrust struct {
-	Audience string               `json:"audience"`
-	Claims   map[string]string    `json:"claims"`
+	Audience string            `json:"audience"`
+	Claims   map[string]string `json:"claims"`
+
+	// Events Required only for GitHub. Exact allowed workflow events; all other provider modes reject this field.
+	Events   *[]string            `json:"events,omitempty"`
 	Issuer   string               `json:"issuer"`
 	JwksUrl  string               `json:"jwks_url"`
 	Provider MachineTrustProvider `json:"provider"`
@@ -1018,21 +1276,6 @@ type MachineTrust struct {
 
 // MachineTrustProvider defines model for MachineTrust.Provider.
 type MachineTrustProvider string
-
-// MachineWorkloadExchange defines model for MachineWorkloadExchange.
-type MachineWorkloadExchange struct {
-	Exchange  WorkloadExchange `json:"exchange"`
-	GroupId   string           `json:"group_id"`
-	MachineId string           `json:"machine_id"`
-}
-
-// MachineWorkloadPermissionRequest defines model for MachineWorkloadPermissionRequest.
-type MachineWorkloadPermissionRequest struct {
-	ExpiresAt  time.Time `json:"expires_at"`
-	ProjectKey string    `json:"project_key"`
-	Templates  []string  `json:"templates"`
-	Workload   string    `json:"workload"`
-}
 
 // Membership defines model for Membership.
 type Membership struct {
@@ -1099,7 +1342,10 @@ type ProvisioningGrantRequest struct {
 	MaxEnrollmentSeconds int                     `json:"max_enrollment_seconds"`
 	Operations           []ProvisioningOperation `json:"operations"`
 	ProjectKey           string                  `json:"project_key"`
-	Templates            []string                `json:"templates"`
+
+	// Scope Select exact environment IDs or one saved collection. A collection scope requires an explicit choice about future members. When false, the initial members are captured once; current membership is still required on every use. Services are a separate fixed allowlist and never grow with a definition.
+	Scope    EnvironmentPermissionScope `json:"scope"`
+	Services []string                   `json:"services"`
 }
 
 // ProvisioningOperation defines model for ProvisioningOperation.
@@ -1116,12 +1362,11 @@ type ProvisioningSession struct {
 	Operation  ProvisioningOperation `json:"operation"`
 	ProjectKey string                `json:"project_key"`
 
-	// ProjectRevision Current applied project revision, not permission to overwrite project configuration.
-	ProjectRevision   int64                        `json:"project_revision"`
-	SourceFingerprint string                       `json:"source_fingerprint"`
-	TeamId            string                       `json:"team_id"`
-	Templates         []string                     `json:"templates"`
-	TokenType         ProvisioningSessionTokenType `json:"token_type"`
+	// Scope Select exact environment IDs or one saved collection. A collection scope requires an explicit choice about future members. When false, the initial members are captured once; current membership is still required on every use. Services are a separate fixed allowlist and never grow with a definition.
+	Scope     EnvironmentPermissionScope   `json:"scope"`
+	Services  []string                     `json:"services"`
+	TeamId    string                       `json:"team_id"`
+	TokenType ProvisioningSessionTokenType `json:"token_type"`
 }
 
 // ProvisioningSessionTokenType defines model for ProvisioningSession.TokenType.
@@ -1148,14 +1393,6 @@ type PublisherEnrollmentResult struct {
 
 // PublisherEnrollmentResultKind defines model for PublisherEnrollmentResult.Kind.
 type PublisherEnrollmentResultKind string
-
-// PublisherGroupWorkloadResolution defines model for PublisherGroupWorkloadResolution.
-type PublisherGroupWorkloadResolution struct {
-	Connection externalRef0.PublisherGroupConnection `json:"connection"`
-
-	// PublisherGroup Authoritative configuration definition key; the concrete group's template name, or its declared group name. Not its mutable display name.
-	PublisherGroup string `json:"publisher_group"`
-}
 
 // PublisherTokenRequest defines model for PublisherTokenRequest.
 type PublisherTokenRequest struct {
@@ -1203,21 +1440,14 @@ type RegisterMachineRequest struct {
 	ProofKind RegisterMachineRequestProofKind `json:"proof_kind"`
 
 	// PublicKey Unpadded base64url Ed25519 public key.
-	PublicKey *string       `json:"public_key,omitempty"`
-	Trust     *MachineTrust `json:"trust,omitempty"`
+	PublicKey *string `json:"public_key,omitempty"`
+
+	// Trust Manager-approved OIDC provider policy. Provider modes retain their signed execution identity; generic oidc requires an exact sub. GitHub pins repository and owner IDs, repository, workflow_ref and ref, with an explicit event allowlist. Kubernetes pins sub and service_account_uid. Google pins the immutable numeric sub. GitLab pins job project and namespace IDs and paths, ref_path and pipeline_source. Vercel and Fly pin their stable project or application and owner IDs.
+	Trust *MachineTrust `json:"trust,omitempty"`
 }
 
 // RegisterMachineRequestProofKind defines model for RegisterMachineRequest.ProofKind.
 type RegisterMachineRequestProofKind string
-
-// ResolvePublisherGroupWorkload defines model for ResolvePublisherGroupWorkload.
-type ResolvePublisherGroupWorkload struct {
-	Assertion string `json:"assertion"`
-
-	// MachineId Required for a registered signing-key proof. Its separate workload permission must currently approve this template and workload.
-	MachineId *string `json:"machine_id,omitempty"`
-	Workload  string  `json:"workload"`
-}
 
 // ResourceID defines model for ResourceID.
 type ResourceID = string
@@ -1323,99 +1553,34 @@ type VerifiedOIDCTeamContext struct {
 	TeamId               string `json:"team_id"`
 }
 
-// WorkloadAssertion defines model for WorkloadAssertion.
-type WorkloadAssertion struct {
-	Assertion string `json:"assertion"`
+// WorkloadApproval Nonsecret approval receipt. Reads require current manager authority and include current revocation state. A receipt is not a credential. Revoked or expired permissions require a new explicit intent; old intents never create replacement permissions.
+type WorkloadApproval struct {
+	CreatedAt           time.Time       `json:"created_at"`
+	IntentKey           string          `json:"intent_key"`
+	Machine             MachineIdentity `json:"machine"`
+	MachineRevokedAt    *time.Time      `json:"machine_revoked_at,omitempty"`
+	PermissionRevokedAt *time.Time      `json:"permission_revoked_at,omitempty"`
 
-	// Signature Unpadded base64url Ed25519 signature over SHA-256 of compact JSON ["tnl-workload-attach/v1", session_id, assertion_sha256_base64url].
-	Signature string `json:"signature"`
+	// Request Explicit manager approval, separate from environment apply. An intent key is immutable. Reusing it with another request conflicts; an identical retry returns the original IDs even after expiry or revocation, without granting access again.
+	Request   WorkloadApprovalRequest        `json:"request"`
+	Selection IdentitySourceVisitorSelection `json:"selection"`
 }
 
-// WorkloadExchange defines model for WorkloadExchange.
-type WorkloadExchange struct {
-	Assertion  string `json:"assertion"`
-	Nonce      string `json:"nonce"`
-	ProjectKey string `json:"project_key"`
+// WorkloadApprovalRequest Explicit manager approval, separate from environment apply. An intent key is immutable. Reusing it with another request conflicts; an identical retry returns the original IDs even after expiry or revocation, without granting access again.
+type WorkloadApprovalRequest struct {
+	EnvironmentId    string    `json:"environment_id"`
+	ExpectedRevision int64     `json:"expected_revision"`
+	ExpiresAt        time.Time `json:"expires_at"`
 
-	// PublicKey Unpadded base64url Ed25519 public key
-	PublicKey string `json:"public_key"`
+	// IntentHash Digest of the evaluated workload declaration and selected service protocols. Recovery compares intent without resolving mutable provider names again. This digest grants no authority.
+	IntentHash         string   `json:"intent_hash"`
+	MaxDurationSeconds int      `json:"max_duration_seconds"`
+	ProjectKey         string   `json:"project_key"`
+	Services           []string `json:"services"`
 
-	// Services Approved service keys. A template service requires the immutable concrete group ID followed by / and the service key. The signature covers these exact selectors. A session cannot contain duplicate logical service keys or widen its captured service IDs.
-	Services *[]string `json:"services,omitempty"`
-
-	// Signature Unpadded base64url signature of the workload exchange digest
-	Signature         string `json:"signature"`
-	SourceFingerprint string `json:"source_fingerprint"`
-
-	// TeamId Exact team ID or unique team-name selector. The response contains the canonical team ID.
-	TeamId   string `json:"team_id"`
-	Workload string `json:"workload"`
-}
-
-// WorkloadGitHubExecution Immutable GitHub execution metadata verified from the signed provider assertion. Present only for the github provider and unchanged during renewal.
-type WorkloadGitHubExecution struct {
-	CheckRunId        string `json:"check_run_id"`
-	RepositoryId      string `json:"repository_id"`
-	RepositoryOwnerId string `json:"repository_owner_id"`
-	RunAttempt        string `json:"run_attempt"`
-	RunId             string `json:"run_id"`
-}
-
-// WorkloadIdentity defines model for WorkloadIdentity.
-type WorkloadIdentity struct {
-	// AssertionExpiresAt Expiry verified by authority for the exact supplied assertion.
-	AssertionExpiresAt time.Time `json:"assertion_expires_at"`
-	Binding            string    `json:"binding"`
-	Services           []string  `json:"services"`
-}
-
-// WorkloadIdentityRequest defines model for WorkloadIdentityRequest.
-type WorkloadIdentityRequest struct {
-	Assertion         string `json:"assertion"`
-	ProjectKey        string `json:"project_key"`
-	SourceFingerprint string `json:"source_fingerprint"`
-	TeamId            string `json:"team_id"`
-	Workload          string `json:"workload"`
-}
-
-// WorkloadRenewal defines model for WorkloadRenewal.
-type WorkloadRenewal struct {
-	Sequence int64 `json:"sequence"`
-
-	// Signature Unpadded base64url Ed25519 signature over SHA-256 of compact JSON ["tnl-workload-renew/v1", session_id, sequence]. Retrying the current sequence does not extend the lease again.
-	Signature string `json:"signature"`
-}
-
-// WorkloadSession defines model for WorkloadSession.
-type WorkloadSession = WorkloadSessionFields
-
-// WorkloadSessionFields defines model for WorkloadSessionFields.
-type WorkloadSessionFields struct {
-	// AssertionExpiresAt Verified expiry of the supplied assertion on exchange or attachment. Omitted on renewal; never extends the session window.
-	AssertionExpiresAt *time.Time `json:"assertion_expires_at,omitempty"`
-	Binding            string     `json:"binding"`
-	Credential         string     `json:"credential"`
-
-	// ExpiresAt Absolute hard session deadline when maxDuration was configured. Omitted otherwise. Refresh and renewal cannot extend or remove an existing deadline.
-	ExpiresAt *time.Time `json:"expires_at,omitempty"`
-
-	// Github Immutable GitHub execution metadata verified from the signed provider assertion. Present only for the github provider and unchanged during renewal.
-	Github *WorkloadGitHubExecution `json:"github,omitempty"`
-	Id     string                   `json:"id"`
-
-	// IdentityExpiresAt Latest verified platform-proof expiry for this identity. Every permission lease is capped here; a signed same-identity assertion may advance this deadline while the session is live.
-	IdentityExpiresAt time.Time                     `json:"identity_expires_at"`
-	LeaseExpiresAt    time.Time                     `json:"lease_expires_at"`
-	ProjectKey        string                        `json:"project_key"`
-	Provider          externalRef0.WorkloadProvider `json:"provider"`
-	RenewAfter        time.Time                     `json:"renew_after"`
-	RenewalSequence   int64                         `json:"renewal_sequence"`
-	ServiceIds        []string                      `json:"service_ids"`
-
-	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
-	Subject  externalRef0.VisitorSubject `json:"subject"`
-	TeamId   string                      `json:"team_id"`
-	Workload string                      `json:"workload"`
+	// Trust Manager-approved OIDC provider policy. Provider modes retain their signed execution identity; generic oidc requires an exact sub. GitHub pins repository and owner IDs, repository, workflow_ref and ref, with an explicit event allowlist. Kubernetes pins sub and service_account_uid. Google pins the immutable numeric sub. GitLab pins job project and namespace IDs and paths, ref_path and pipeline_source. Vercel and Fly pin their stable project or application and owner IDs.
+	Trust    MachineTrust `json:"trust"`
+	Workload string       `json:"workload"`
 }
 
 // CompanyActorToken defines model for CompanyActorToken.
@@ -1699,6 +1864,12 @@ type RefreshControlSessionJSONRequestBody = RefreshControlSessionRequest
 // RecoverCompanyOwnerJSONRequestBody defines body for RecoverCompanyOwner for application/json ContentType.
 type RecoverCompanyOwnerJSONRequestBody RecoverCompanyOwnerJSONBody
 
+// AttachEnvironmentVisitorAssertionJSONRequestBody defines body for AttachEnvironmentVisitorAssertion for application/json ContentType.
+type AttachEnvironmentVisitorAssertionJSONRequestBody = EnvironmentVisitorAssertion
+
+// RenewEnvironmentVisitorSessionJSONRequestBody defines body for RenewEnvironmentVisitorSession for application/json ContentType.
+type RenewEnvironmentVisitorSessionJSONRequestBody = EnvironmentVisitorRenewal
+
 // AcceptInvitationJSONRequestBody defines body for AcceptInvitation for application/json ContentType.
 type AcceptInvitationJSONRequestBody = AcceptInvitationRequest
 
@@ -1711,20 +1882,14 @@ type CleanupMachinePublicationJSONRequestBody = MachinePublicationCleanup
 // RefreshMachinePublicationJSONRequestBody defines body for RefreshMachinePublication for application/json ContentType.
 type RefreshMachinePublicationJSONRequestBody = MachinePublicationRefresh
 
-// ExchangeMachineWorkloadJSONRequestBody defines body for ExchangeMachineWorkload for application/json ContentType.
-type ExchangeMachineWorkloadJSONRequestBody = MachineWorkloadExchange
-
-// AttachMachineWorkloadAssertionJSONRequestBody defines body for AttachMachineWorkloadAssertion for application/json ContentType.
-type AttachMachineWorkloadAssertionJSONRequestBody = WorkloadAssertion
+// PrepareEnvironmentVisitorJSONRequestBody defines body for PrepareEnvironmentVisitor for application/json ContentType.
+type PrepareEnvironmentVisitorJSONRequestBody = EnvironmentVisitorPrepareRequest
 
 // ExchangeProvisioningJSONRequestBody defines body for ExchangeProvisioning for application/json ContentType.
 type ExchangeProvisioningJSONRequestBody = ProvisioningExchange
 
 // RedeemPublisherEnrollmentJSONRequestBody defines body for RedeemPublisherEnrollment for application/json ContentType.
 type RedeemPublisherEnrollmentJSONRequestBody = RedeemPublisherEnrollmentRequest
-
-// ResolvePublisherGroupWorkloadJSONRequestBody defines body for ResolvePublisherGroupWorkload for application/json ContentType.
-type ResolvePublisherGroupWorkloadJSONRequestBody = ResolvePublisherGroupWorkload
 
 // RotatePublisherKeyJSONRequestBody defines body for RotatePublisherKey for application/json ContentType.
 type RotatePublisherKeyJSONRequestBody = RotatePublisherKeyRequest
@@ -1792,6 +1957,9 @@ type CreateTeamInvitationJSONRequestBody = CreateInvitationRequest
 // RegisterMachineIdentityJSONRequestBody defines body for RegisterMachineIdentity for application/json ContentType.
 type RegisterMachineIdentityJSONRequestBody = RegisterMachineRequest
 
+// CreateEnvironmentVisitorPermissionJSONRequestBody defines body for CreateEnvironmentVisitorPermission for application/json ContentType.
+type CreateEnvironmentVisitorPermissionJSONRequestBody = EnvironmentVisitorPermissionRequest
+
 // RotateMachineIdentityKeyJSONRequestBody defines body for RotateMachineIdentityKey for application/json ContentType.
 type RotateMachineIdentityKeyJSONRequestBody = MachineKey
 
@@ -1801,23 +1969,373 @@ type CreateProvisioningGrantJSONRequestBody = ProvisioningGrantRequest
 // CreateMachinePublicationPermissionJSONRequestBody defines body for CreateMachinePublicationPermission for application/json ContentType.
 type CreateMachinePublicationPermissionJSONRequestBody = MachinePublicationPermissionRequest
 
-// CreateMachineWorkloadPermissionJSONRequestBody defines body for CreateMachineWorkloadPermission for application/json ContentType.
-type CreateMachineWorkloadPermissionJSONRequestBody = MachineWorkloadPermissionRequest
-
 // SetMembershipRoleJSONRequestBody defines body for SetMembershipRole for application/json ContentType.
 type SetMembershipRoleJSONRequestBody = SetMembershipRoleRequest
 
-// ExchangeWorkloadJSONRequestBody defines body for ExchangeWorkload for application/json ContentType.
-type ExchangeWorkloadJSONRequestBody = WorkloadExchange
+// ApproveWorkloadJSONRequestBody defines body for ApproveWorkload for application/json ContentType.
+type ApproveWorkloadJSONRequestBody = WorkloadApprovalRequest
 
-// IdentifyWorkloadJSONRequestBody defines body for IdentifyWorkload for application/json ContentType.
-type IdentifyWorkloadJSONRequestBody = WorkloadIdentityRequest
+// AsIdentitySourceChallenge0 returns the union data inside the IdentitySourceChallenge as a IdentitySourceChallenge0
+func (t IdentitySourceChallenge) AsIdentitySourceChallenge0() (IdentitySourceChallenge0, error) {
+	var body IdentitySourceChallenge0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
 
-// AttachWorkloadAssertionJSONRequestBody defines body for AttachWorkloadAssertion for application/json ContentType.
-type AttachWorkloadAssertionJSONRequestBody = WorkloadAssertion
+// FromIdentitySourceChallenge0 overwrites any union data inside the IdentitySourceChallenge as the provided IdentitySourceChallenge0
+func (t *IdentitySourceChallenge) FromIdentitySourceChallenge0(v IdentitySourceChallenge0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
 
-// RenewWorkloadSessionJSONRequestBody defines body for RenewWorkloadSession for application/json ContentType.
-type RenewWorkloadSessionJSONRequestBody = WorkloadRenewal
+// MergeIdentitySourceChallenge0 performs a merge with any union data inside the IdentitySourceChallenge, using the provided IdentitySourceChallenge0
+func (t *IdentitySourceChallenge) MergeIdentitySourceChallenge0(v IdentitySourceChallenge0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsIdentitySourceChallenge1 returns the union data inside the IdentitySourceChallenge as a IdentitySourceChallenge1
+func (t IdentitySourceChallenge) AsIdentitySourceChallenge1() (IdentitySourceChallenge1, error) {
+	var body IdentitySourceChallenge1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromIdentitySourceChallenge1 overwrites any union data inside the IdentitySourceChallenge as the provided IdentitySourceChallenge1
+func (t *IdentitySourceChallenge) FromIdentitySourceChallenge1(v IdentitySourceChallenge1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeIdentitySourceChallenge1 performs a merge with any union data inside the IdentitySourceChallenge, using the provided IdentitySourceChallenge1
+func (t *IdentitySourceChallenge) MergeIdentitySourceChallenge1(v IdentitySourceChallenge1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t IdentitySourceChallenge) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	if err != nil {
+		return nil, err
+	}
+	object := make(map[string]json.RawMessage)
+	if t.union != nil {
+		err = json.Unmarshal(b, &object)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	object["audience"], err = json.Marshal(t.Audience)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'audience': %w", err)
+	}
+
+	object["binding_digest"], err = json.Marshal(t.BindingDigest)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'binding_digest': %w", err)
+	}
+
+	object["expires_at"], err = json.Marshal(t.ExpiresAt)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'expires_at': %w", err)
+	}
+
+	object["id"], err = json.Marshal(t.Id)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'id': %w", err)
+	}
+
+	object["native_public_key"], err = json.Marshal(t.NativePublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'native_public_key': %w", err)
+	}
+
+	object["nonce"], err = json.Marshal(t.Nonce)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'nonce': %w", err)
+	}
+
+	object["operation"], err = json.Marshal(t.Operation)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'operation': %w", err)
+	}
+
+	if t.Publication != nil {
+		object["publication"], err = json.Marshal(t.Publication)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'publication': %w", err)
+		}
+	}
+
+	object["schema"], err = json.Marshal(t.Schema)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'schema': %w", err)
+	}
+
+	object["scope"], err = json.Marshal(t.Scope)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'scope': %w", err)
+	}
+
+	if t.Selection != nil {
+		object["selection"], err = json.Marshal(t.Selection)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'selection': %w", err)
+		}
+	}
+
+	object["server"], err = json.Marshal(t.Server)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'server': %w", err)
+	}
+
+	object["session_id"], err = json.Marshal(t.SessionId)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'session_id': %w", err)
+	}
+
+	object["source"], err = json.Marshal(t.Source)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'source': %w", err)
+	}
+
+	b, err = json.Marshal(object)
+	return b, err
+}
+
+func (t *IdentitySourceChallenge) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	if err != nil {
+		return err
+	}
+	object := make(map[string]json.RawMessage)
+	err = json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["audience"]; found {
+		err = json.Unmarshal(raw, &t.Audience)
+		if err != nil {
+			return fmt.Errorf("error reading 'audience': %w", err)
+		}
+	}
+
+	if raw, found := object["binding_digest"]; found {
+		err = json.Unmarshal(raw, &t.BindingDigest)
+		if err != nil {
+			return fmt.Errorf("error reading 'binding_digest': %w", err)
+		}
+	}
+
+	if raw, found := object["expires_at"]; found {
+		err = json.Unmarshal(raw, &t.ExpiresAt)
+		if err != nil {
+			return fmt.Errorf("error reading 'expires_at': %w", err)
+		}
+	}
+
+	if raw, found := object["id"]; found {
+		err = json.Unmarshal(raw, &t.Id)
+		if err != nil {
+			return fmt.Errorf("error reading 'id': %w", err)
+		}
+	}
+
+	if raw, found := object["native_public_key"]; found {
+		err = json.Unmarshal(raw, &t.NativePublicKey)
+		if err != nil {
+			return fmt.Errorf("error reading 'native_public_key': %w", err)
+		}
+	}
+
+	if raw, found := object["nonce"]; found {
+		err = json.Unmarshal(raw, &t.Nonce)
+		if err != nil {
+			return fmt.Errorf("error reading 'nonce': %w", err)
+		}
+	}
+
+	if raw, found := object["operation"]; found {
+		err = json.Unmarshal(raw, &t.Operation)
+		if err != nil {
+			return fmt.Errorf("error reading 'operation': %w", err)
+		}
+	}
+
+	if raw, found := object["publication"]; found {
+		err = json.Unmarshal(raw, &t.Publication)
+		if err != nil {
+			return fmt.Errorf("error reading 'publication': %w", err)
+		}
+	}
+
+	if raw, found := object["schema"]; found {
+		err = json.Unmarshal(raw, &t.Schema)
+		if err != nil {
+			return fmt.Errorf("error reading 'schema': %w", err)
+		}
+	}
+
+	if raw, found := object["scope"]; found {
+		err = json.Unmarshal(raw, &t.Scope)
+		if err != nil {
+			return fmt.Errorf("error reading 'scope': %w", err)
+		}
+	}
+
+	if raw, found := object["selection"]; found {
+		err = json.Unmarshal(raw, &t.Selection)
+		if err != nil {
+			return fmt.Errorf("error reading 'selection': %w", err)
+		}
+	}
+
+	if raw, found := object["server"]; found {
+		err = json.Unmarshal(raw, &t.Server)
+		if err != nil {
+			return fmt.Errorf("error reading 'server': %w", err)
+		}
+	}
+
+	if raw, found := object["session_id"]; found {
+		err = json.Unmarshal(raw, &t.SessionId)
+		if err != nil {
+			return fmt.Errorf("error reading 'session_id': %w", err)
+		}
+	}
+
+	if raw, found := object["source"]; found {
+		err = json.Unmarshal(raw, &t.Source)
+		if err != nil {
+			return fmt.Errorf("error reading 'source': %w", err)
+		}
+	}
+
+	return err
+}
+
+// AsIdentitySourcePublicationSelection0 returns the union data inside the IdentitySourcePublicationSelection as a IdentitySourcePublicationSelection0
+func (t IdentitySourcePublicationSelection) AsIdentitySourcePublicationSelection0() (IdentitySourcePublicationSelection0, error) {
+	var body IdentitySourcePublicationSelection0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromIdentitySourcePublicationSelection0 overwrites any union data inside the IdentitySourcePublicationSelection as the provided IdentitySourcePublicationSelection0
+func (t *IdentitySourcePublicationSelection) FromIdentitySourcePublicationSelection0(v IdentitySourcePublicationSelection0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeIdentitySourcePublicationSelection0 performs a merge with any union data inside the IdentitySourcePublicationSelection, using the provided IdentitySourcePublicationSelection0
+func (t *IdentitySourcePublicationSelection) MergeIdentitySourcePublicationSelection0(v IdentitySourcePublicationSelection0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsIdentitySourcePublicationSelection1 returns the union data inside the IdentitySourcePublicationSelection as a IdentitySourcePublicationSelection1
+func (t IdentitySourcePublicationSelection) AsIdentitySourcePublicationSelection1() (IdentitySourcePublicationSelection1, error) {
+	var body IdentitySourcePublicationSelection1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromIdentitySourcePublicationSelection1 overwrites any union data inside the IdentitySourcePublicationSelection as the provided IdentitySourcePublicationSelection1
+func (t *IdentitySourcePublicationSelection) FromIdentitySourcePublicationSelection1(v IdentitySourcePublicationSelection1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeIdentitySourcePublicationSelection1 performs a merge with any union data inside the IdentitySourcePublicationSelection, using the provided IdentitySourcePublicationSelection1
+func (t *IdentitySourcePublicationSelection) MergeIdentitySourcePublicationSelection1(v IdentitySourcePublicationSelection1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t IdentitySourcePublicationSelection) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	if err != nil {
+		return nil, err
+	}
+	object := make(map[string]json.RawMessage)
+	if t.union != nil {
+		err = json.Unmarshal(b, &object)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	object["namespace"], err = json.Marshal(t.Namespace)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'namespace': %w", err)
+	}
+
+	object["resource"], err = json.Marshal(t.Resource)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'resource': %w", err)
+	}
+
+	b, err = json.Marshal(object)
+	return b, err
+}
+
+func (t *IdentitySourcePublicationSelection) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	if err != nil {
+		return err
+	}
+	object := make(map[string]json.RawMessage)
+	err = json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["namespace"]; found {
+		err = json.Unmarshal(raw, &t.Namespace)
+		if err != nil {
+			return fmt.Errorf("error reading 'namespace': %w", err)
+		}
+	}
+
+	if raw, found := object["resource"]; found {
+		err = json.Unmarshal(raw, &t.Resource)
+		if err != nil {
+			return fmt.Errorf("error reading 'resource': %w", err)
+		}
+	}
+
+	return err
+}
 
 // AsMachinePublicationExchange0 returns the union data inside the MachinePublicationExchange as a MachinePublicationExchange0
 func (t MachinePublicationExchange) AsMachinePublicationExchange0() (MachinePublicationExchange0, error) {
@@ -2334,6 +2852,25 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/company-access/recovery (the `RecoverCompanyOwner` operationId).
 	RecoverCompanyOwner(ctx context.Context, body RecoverCompanyOwnerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// RevokeEnvironmentVisitorSession performs a DELETE /v1/environment-visitor-sessions/{session_id} (the `RevokeEnvironmentVisitorSession` operationId) request.
+	RevokeEnvironmentVisitorSession(ctx context.Context, sessionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AttachEnvironmentVisitorAssertionWithBody performs a POST /v1/environment-visitor-sessions/{session_id}/assertions (the `AttachEnvironmentVisitorAssertion` operationId) request,
+	// with any type of body and a specified content type.
+	AttachEnvironmentVisitorAssertionWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AttachEnvironmentVisitorAssertion performs a POST /v1/environment-visitor-sessions/{session_id}/assertions (the `AttachEnvironmentVisitorAssertion` operationId) request.
+	// Takes a body of the `application/json` content type.
+	AttachEnvironmentVisitorAssertion(ctx context.Context, sessionId string, body AttachEnvironmentVisitorAssertionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RenewEnvironmentVisitorSessionWithBody performs a POST /v1/environment-visitor-sessions/{session_id}/renew (the `RenewEnvironmentVisitorSession` operationId) request,
+	// with any type of body and a specified content type.
+	RenewEnvironmentVisitorSessionWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RenewEnvironmentVisitorSession performs a POST /v1/environment-visitor-sessions/{session_id}/renew (the `RenewEnvironmentVisitorSession` operationId) request.
+	// Takes a body of the `application/json` content type.
+	RenewEnvironmentVisitorSession(ctx context.Context, sessionId string, body RenewEnvironmentVisitorSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetIdentityContext Read the authenticated identity and memberships
 	//
 	// Corresponds with GET /v1/identity (the `GetIdentityContext` operationId).
@@ -2377,21 +2914,17 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	RefreshMachinePublication(ctx context.Context, sessionId string, body RefreshMachinePublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ExchangeMachineWorkloadWithBody performs a POST /v1/machine-workload-sessions/exchange (the `ExchangeMachineWorkload` operationId) request,
+	// PrepareEnvironmentVisitorWithBody performs a POST /v1/projects/{project_key}/environments/{environment_id}/visitors/prepare (the `PrepareEnvironmentVisitor` operationId) request,
 	// with any type of body and a specified content type.
-	ExchangeMachineWorkloadWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	//
+	// Authorize exact environment services from current saved visitor permission, verify every expected protocol against the pinned definition and saved service, then create or resume the native-owned session. Exact replay repeats current identity, permission, membership, expiry and service checks. A changed selection with the same nonce conflicts. No project configuration or assignment-group selector is consulted.
+	PrepareEnvironmentVisitorWithBody(ctx context.Context, projectKey string, environmentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ExchangeMachineWorkload performs a POST /v1/machine-workload-sessions/exchange (the `ExchangeMachineWorkload` operationId) request.
+	// PrepareEnvironmentVisitor performs a POST /v1/projects/{project_key}/environments/{environment_id}/visitors/prepare (the `PrepareEnvironmentVisitor` operationId) request.
 	// Takes a body of the `application/json` content type.
-	ExchangeMachineWorkload(ctx context.Context, body ExchangeMachineWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AttachMachineWorkloadAssertionWithBody performs a POST /v1/machine-workload-sessions/{session_id}/assertions (the `AttachMachineWorkloadAssertion` operationId) request,
-	// with any type of body and a specified content type.
-	AttachMachineWorkloadAssertionWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AttachMachineWorkloadAssertion performs a POST /v1/machine-workload-sessions/{session_id}/assertions (the `AttachMachineWorkloadAssertion` operationId) request.
-	// Takes a body of the `application/json` content type.
-	AttachMachineWorkloadAssertion(ctx context.Context, sessionId string, body AttachMachineWorkloadAssertionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	//
+	// Authorize exact environment services from current saved visitor permission, verify every expected protocol against the pinned definition and saved service, then create or resume the native-owned session. Exact replay repeats current identity, permission, membership, expiry and service checks. A changed selection with the same nonce conflicts. No project configuration or assignment-group selector is consulted.
+	PrepareEnvironmentVisitor(ctx context.Context, projectKey string, environmentId string, body PrepareEnvironmentVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ExchangeProvisioningWithBody performs a POST /v1/provisioning-sessions/exchange (the `ExchangeProvisioning` operationId) request,
 	// with any type of body and a specified content type.
@@ -2408,14 +2941,6 @@ type ClientInterface interface {
 	// RedeemPublisherEnrollment performs a POST /v1/publisher-enrollments/redeem (the `RedeemPublisherEnrollment` operationId) request.
 	// Takes a body of the `application/json` content type.
 	RedeemPublisherEnrollment(ctx context.Context, body RedeemPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ResolvePublisherGroupWorkloadWithBody performs a POST /v1/publisher-groups/{group_id}/resolve (the `ResolvePublisherGroupWorkload` operationId) request,
-	// with any type of body and a specified content type.
-	ResolvePublisherGroupWorkloadWithBody(ctx context.Context, groupId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ResolvePublisherGroupWorkload performs a POST /v1/publisher-groups/{group_id}/resolve (the `ResolvePublisherGroupWorkload` operationId) request.
-	// Takes a body of the `application/json` content type.
-	ResolvePublisherGroupWorkload(ctx context.Context, groupId string, body ResolvePublisherGroupWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RotatePublisherKeyWithBody performs a POST /v1/publisher-keys/rotate (the `RotatePublisherKey` operationId) request,
 	// with any type of body and a specified content type.
@@ -2694,6 +3219,9 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/teams/{team_id}/domains/{domain_id}/default (the `SetTeamDefaultDomain` operationId).
 	SetTeamDefaultDomain(ctx context.Context, teamId TeamID, domainId DomainID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// RevokeEnvironmentVisitorPermission performs a DELETE /v1/teams/{team_id}/environment-visitor-permissions/{permission_id} (the `RevokeEnvironmentVisitorPermission` operationId) request.
+	RevokeEnvironmentVisitorPermission(ctx context.Context, teamId TeamID, permissionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetTeamFeedbackPolicy performs a GET /v1/teams/{team_id}/feedback-policy (the `GetTeamFeedbackPolicy` operationId) request.
 	GetTeamFeedbackPolicy(ctx context.Context, teamId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -2740,6 +3268,14 @@ type ClientInterface interface {
 	// RevokeMachineIdentity performs a DELETE /v1/teams/{team_id}/machine-identities/{machine_id} (the `RevokeMachineIdentity` operationId) request.
 	RevokeMachineIdentity(ctx context.Context, teamId TeamID, machineId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// CreateEnvironmentVisitorPermissionWithBody performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/environment-visitor-permissions (the `CreateEnvironmentVisitorPermission` operationId) request,
+	// with any type of body and a specified content type.
+	CreateEnvironmentVisitorPermissionWithBody(ctx context.Context, teamId TeamID, machineId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateEnvironmentVisitorPermission performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/environment-visitor-permissions (the `CreateEnvironmentVisitorPermission` operationId) request.
+	// Takes a body of the `application/json` content type.
+	CreateEnvironmentVisitorPermission(ctx context.Context, teamId TeamID, machineId string, body CreateEnvironmentVisitorPermissionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// RotateMachineIdentityKeyWithBody performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/keys (the `RotateMachineIdentityKey` operationId) request,
 	// with any type of body and a specified content type.
 	RotateMachineIdentityKeyWithBody(ctx context.Context, teamId TeamID, machineId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2764,19 +3300,8 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	CreateMachinePublicationPermission(ctx context.Context, teamId TeamID, machineId string, body CreateMachinePublicationPermissionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateMachineWorkloadPermissionWithBody performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/workload-permissions (the `CreateMachineWorkloadPermission` operationId) request,
-	// with any type of body and a specified content type.
-	CreateMachineWorkloadPermissionWithBody(ctx context.Context, teamId TeamID, machineId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateMachineWorkloadPermission performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/workload-permissions (the `CreateMachineWorkloadPermission` operationId) request.
-	// Takes a body of the `application/json` content type.
-	CreateMachineWorkloadPermission(ctx context.Context, teamId TeamID, machineId string, body CreateMachineWorkloadPermissionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// RevokeMachinePublicationPermission performs a DELETE /v1/teams/{team_id}/machine-publication-permissions/{permission_id} (the `RevokeMachinePublicationPermission` operationId) request.
 	RevokeMachinePublicationPermission(ctx context.Context, teamId TeamID, permissionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RevokeMachineWorkloadPermission performs a DELETE /v1/teams/{team_id}/machine-workload-permissions/{permission_id} (the `RevokeMachineWorkloadPermission` operationId) request.
-	RevokeMachineWorkloadPermission(ctx context.Context, teamId TeamID, permissionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListTeamMemberships List team memberships
 	//
@@ -2805,40 +3330,16 @@ type ClientInterface interface {
 	// RevokeProvisioningGrant performs a DELETE /v1/teams/{team_id}/provisioning-grants/{grant_id} (the `RevokeProvisioningGrant` operationId) request.
 	RevokeProvisioningGrant(ctx context.Context, teamId TeamID, grantId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ExchangeWorkloadWithBody performs a POST /v1/workload-sessions/exchange (the `ExchangeWorkload` operationId) request,
+	// GetWorkloadApproval performs a GET /v1/teams/{team_id}/workload-approvals/{intent_key} (the `GetWorkloadApproval` operationId) request.
+	GetWorkloadApproval(ctx context.Context, teamId TeamID, intentKey string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ApproveWorkloadWithBody performs a PUT /v1/teams/{team_id}/workload-approvals/{intent_key} (the `ApproveWorkload` operationId) request,
 	// with any type of body and a specified content type.
-	ExchangeWorkloadWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ApproveWorkloadWithBody(ctx context.Context, teamId TeamID, intentKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ExchangeWorkload performs a POST /v1/workload-sessions/exchange (the `ExchangeWorkload` operationId) request.
+	// ApproveWorkload performs a PUT /v1/teams/{team_id}/workload-approvals/{intent_key} (the `ApproveWorkload` operationId) request.
 	// Takes a body of the `application/json` content type.
-	ExchangeWorkload(ctx context.Context, body ExchangeWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// IdentifyWorkloadWithBody performs a POST /v1/workload-sessions/identity (the `IdentifyWorkload` operationId) request,
-	// with any type of body and a specified content type.
-	IdentifyWorkloadWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// IdentifyWorkload performs a POST /v1/workload-sessions/identity (the `IdentifyWorkload` operationId) request.
-	// Takes a body of the `application/json` content type.
-	IdentifyWorkload(ctx context.Context, body IdentifyWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RevokeWorkloadSession performs a DELETE /v1/workload-sessions/{session_id} (the `RevokeWorkloadSession` operationId) request.
-	RevokeWorkloadSession(ctx context.Context, sessionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AttachWorkloadAssertionWithBody performs a POST /v1/workload-sessions/{session_id}/assertions (the `AttachWorkloadAssertion` operationId) request,
-	// with any type of body and a specified content type.
-	AttachWorkloadAssertionWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AttachWorkloadAssertion performs a POST /v1/workload-sessions/{session_id}/assertions (the `AttachWorkloadAssertion` operationId) request.
-	// Takes a body of the `application/json` content type.
-	AttachWorkloadAssertion(ctx context.Context, sessionId string, body AttachWorkloadAssertionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RenewWorkloadSessionWithBody performs a POST /v1/workload-sessions/{session_id}/renew (the `RenewWorkloadSession` operationId) request,
-	// with any type of body and a specified content type.
-	RenewWorkloadSessionWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RenewWorkloadSession performs a POST /v1/workload-sessions/{session_id}/renew (the `RenewWorkloadSession` operationId) request.
-	// Takes a body of the `application/json` content type.
-	RenewWorkloadSession(ctx context.Context, sessionId string, body RenewWorkloadSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ApproveWorkload(ctx context.Context, teamId TeamID, intentKey string, body ApproveWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 // IssueControlBrowserHandoffWithBody performs a POST /v1/auth/browser-handoff (the `IssueControlBrowserHandoff` operationId) request,
@@ -3202,6 +3703,75 @@ func (c *Client) RecoverCompanyOwner(ctx context.Context, body RecoverCompanyOwn
 	return c.Client.Do(req)
 }
 
+// RevokeEnvironmentVisitorSession performs a DELETE /v1/environment-visitor-sessions/{session_id} (the `RevokeEnvironmentVisitorSession` operationId) request.
+func (c *Client) RevokeEnvironmentVisitorSession(ctx context.Context, sessionId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeEnvironmentVisitorSessionRequest(c.Server, sessionId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AttachEnvironmentVisitorAssertionWithBody performs a POST /v1/environment-visitor-sessions/{session_id}/assertions (the `AttachEnvironmentVisitorAssertion` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) AttachEnvironmentVisitorAssertionWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAttachEnvironmentVisitorAssertionRequestWithBody(c.Server, sessionId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AttachEnvironmentVisitorAssertion performs a POST /v1/environment-visitor-sessions/{session_id}/assertions (the `AttachEnvironmentVisitorAssertion` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) AttachEnvironmentVisitorAssertion(ctx context.Context, sessionId string, body AttachEnvironmentVisitorAssertionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAttachEnvironmentVisitorAssertionRequest(c.Server, sessionId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RenewEnvironmentVisitorSessionWithBody performs a POST /v1/environment-visitor-sessions/{session_id}/renew (the `RenewEnvironmentVisitorSession` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) RenewEnvironmentVisitorSessionWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenewEnvironmentVisitorSessionRequestWithBody(c.Server, sessionId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RenewEnvironmentVisitorSession performs a POST /v1/environment-visitor-sessions/{session_id}/renew (the `RenewEnvironmentVisitorSession` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) RenewEnvironmentVisitorSession(ctx context.Context, sessionId string, body RenewEnvironmentVisitorSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenewEnvironmentVisitorSessionRequest(c.Server, sessionId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetIdentityContext Read the authenticated identity and memberships
 //
 // Corresponds with GET /v1/identity (the `GetIdentityContext` operationId).
@@ -3335,10 +3905,12 @@ func (c *Client) RefreshMachinePublication(ctx context.Context, sessionId string
 	return c.Client.Do(req)
 }
 
-// ExchangeMachineWorkloadWithBody performs a POST /v1/machine-workload-sessions/exchange (the `ExchangeMachineWorkload` operationId) request,
+// PrepareEnvironmentVisitorWithBody performs a POST /v1/projects/{project_key}/environments/{environment_id}/visitors/prepare (the `PrepareEnvironmentVisitor` operationId) request,
 // with any type of body and a specified content type.
-func (c *Client) ExchangeMachineWorkloadWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewExchangeMachineWorkloadRequestWithBody(c.Server, contentType, body)
+//
+// Authorize exact environment services from current saved visitor permission, verify every expected protocol against the pinned definition and saved service, then create or resume the native-owned session. Exact replay repeats current identity, permission, membership, expiry and service checks. A changed selection with the same nonce conflicts. No project configuration or assignment-group selector is consulted.
+func (c *Client) PrepareEnvironmentVisitorWithBody(ctx context.Context, projectKey string, environmentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPrepareEnvironmentVisitorRequestWithBody(c.Server, projectKey, environmentId, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3349,38 +3921,12 @@ func (c *Client) ExchangeMachineWorkloadWithBody(ctx context.Context, contentTyp
 	return c.Client.Do(req)
 }
 
-// ExchangeMachineWorkload performs a POST /v1/machine-workload-sessions/exchange (the `ExchangeMachineWorkload` operationId) request.
+// PrepareEnvironmentVisitor performs a POST /v1/projects/{project_key}/environments/{environment_id}/visitors/prepare (the `PrepareEnvironmentVisitor` operationId) request.
 // Takes a body of the `application/json` content type.
-func (c *Client) ExchangeMachineWorkload(ctx context.Context, body ExchangeMachineWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewExchangeMachineWorkloadRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AttachMachineWorkloadAssertionWithBody performs a POST /v1/machine-workload-sessions/{session_id}/assertions (the `AttachMachineWorkloadAssertion` operationId) request,
-// with any type of body and a specified content type.
-func (c *Client) AttachMachineWorkloadAssertionWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAttachMachineWorkloadAssertionRequestWithBody(c.Server, sessionId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AttachMachineWorkloadAssertion performs a POST /v1/machine-workload-sessions/{session_id}/assertions (the `AttachMachineWorkloadAssertion` operationId) request.
-// Takes a body of the `application/json` content type.
-func (c *Client) AttachMachineWorkloadAssertion(ctx context.Context, sessionId string, body AttachMachineWorkloadAssertionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAttachMachineWorkloadAssertionRequest(c.Server, sessionId, body)
+//
+// Authorize exact environment services from current saved visitor permission, verify every expected protocol against the pinned definition and saved service, then create or resume the native-owned session. Exact replay repeats current identity, permission, membership, expiry and service checks. A changed selection with the same nonce conflicts. No project configuration or assignment-group selector is consulted.
+func (c *Client) PrepareEnvironmentVisitor(ctx context.Context, projectKey string, environmentId string, body PrepareEnvironmentVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPrepareEnvironmentVisitorRequest(c.Server, projectKey, environmentId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3437,34 +3983,6 @@ func (c *Client) RedeemPublisherEnrollmentWithBody(ctx context.Context, contentT
 // Takes a body of the `application/json` content type.
 func (c *Client) RedeemPublisherEnrollment(ctx context.Context, body RedeemPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRedeemPublisherEnrollmentRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ResolvePublisherGroupWorkloadWithBody performs a POST /v1/publisher-groups/{group_id}/resolve (the `ResolvePublisherGroupWorkload` operationId) request,
-// with any type of body and a specified content type.
-func (c *Client) ResolvePublisherGroupWorkloadWithBody(ctx context.Context, groupId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewResolvePublisherGroupWorkloadRequestWithBody(c.Server, groupId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ResolvePublisherGroupWorkload performs a POST /v1/publisher-groups/{group_id}/resolve (the `ResolvePublisherGroupWorkload` operationId) request.
-// Takes a body of the `application/json` content type.
-func (c *Client) ResolvePublisherGroupWorkload(ctx context.Context, groupId string, body ResolvePublisherGroupWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewResolvePublisherGroupWorkloadRequest(c.Server, groupId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4282,6 +4800,19 @@ func (c *Client) SetTeamDefaultDomain(ctx context.Context, teamId TeamID, domain
 	return c.Client.Do(req)
 }
 
+// RevokeEnvironmentVisitorPermission performs a DELETE /v1/teams/{team_id}/environment-visitor-permissions/{permission_id} (the `RevokeEnvironmentVisitorPermission` operationId) request.
+func (c *Client) RevokeEnvironmentVisitorPermission(ctx context.Context, teamId TeamID, permissionId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeEnvironmentVisitorPermissionRequest(c.Server, teamId, permissionId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetTeamFeedbackPolicy performs a GET /v1/teams/{team_id}/feedback-policy (the `GetTeamFeedbackPolicy` operationId) request.
 func (c *Client) GetTeamFeedbackPolicy(ctx context.Context, teamId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetTeamFeedbackPolicyRequest(c.Server, teamId)
@@ -4428,6 +4959,34 @@ func (c *Client) RevokeMachineIdentity(ctx context.Context, teamId TeamID, machi
 	return c.Client.Do(req)
 }
 
+// CreateEnvironmentVisitorPermissionWithBody performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/environment-visitor-permissions (the `CreateEnvironmentVisitorPermission` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) CreateEnvironmentVisitorPermissionWithBody(ctx context.Context, teamId TeamID, machineId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateEnvironmentVisitorPermissionRequestWithBody(c.Server, teamId, machineId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateEnvironmentVisitorPermission performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/environment-visitor-permissions (the `CreateEnvironmentVisitorPermission` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) CreateEnvironmentVisitorPermission(ctx context.Context, teamId TeamID, machineId string, body CreateEnvironmentVisitorPermissionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateEnvironmentVisitorPermissionRequest(c.Server, teamId, machineId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // RotateMachineIdentityKeyWithBody performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/keys (the `RotateMachineIdentityKey` operationId) request,
 // with any type of body and a specified content type.
 func (c *Client) RotateMachineIdentityKeyWithBody(ctx context.Context, teamId TeamID, machineId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -4512,50 +5071,9 @@ func (c *Client) CreateMachinePublicationPermission(ctx context.Context, teamId 
 	return c.Client.Do(req)
 }
 
-// CreateMachineWorkloadPermissionWithBody performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/workload-permissions (the `CreateMachineWorkloadPermission` operationId) request,
-// with any type of body and a specified content type.
-func (c *Client) CreateMachineWorkloadPermissionWithBody(ctx context.Context, teamId TeamID, machineId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateMachineWorkloadPermissionRequestWithBody(c.Server, teamId, machineId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateMachineWorkloadPermission performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/workload-permissions (the `CreateMachineWorkloadPermission` operationId) request.
-// Takes a body of the `application/json` content type.
-func (c *Client) CreateMachineWorkloadPermission(ctx context.Context, teamId TeamID, machineId string, body CreateMachineWorkloadPermissionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateMachineWorkloadPermissionRequest(c.Server, teamId, machineId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // RevokeMachinePublicationPermission performs a DELETE /v1/teams/{team_id}/machine-publication-permissions/{permission_id} (the `RevokeMachinePublicationPermission` operationId) request.
 func (c *Client) RevokeMachinePublicationPermission(ctx context.Context, teamId TeamID, permissionId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeMachinePublicationPermissionRequest(c.Server, teamId, permissionId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RevokeMachineWorkloadPermission performs a DELETE /v1/teams/{team_id}/machine-workload-permissions/{permission_id} (the `RevokeMachineWorkloadPermission` operationId) request.
-func (c *Client) RevokeMachineWorkloadPermission(ctx context.Context, teamId TeamID, permissionId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRevokeMachineWorkloadPermissionRequest(c.Server, teamId, permissionId)
 	if err != nil {
 		return nil, err
 	}
@@ -4643,10 +5161,23 @@ func (c *Client) RevokeProvisioningGrant(ctx context.Context, teamId TeamID, gra
 	return c.Client.Do(req)
 }
 
-// ExchangeWorkloadWithBody performs a POST /v1/workload-sessions/exchange (the `ExchangeWorkload` operationId) request,
+// GetWorkloadApproval performs a GET /v1/teams/{team_id}/workload-approvals/{intent_key} (the `GetWorkloadApproval` operationId) request.
+func (c *Client) GetWorkloadApproval(ctx context.Context, teamId TeamID, intentKey string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetWorkloadApprovalRequest(c.Server, teamId, intentKey)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ApproveWorkloadWithBody performs a PUT /v1/teams/{team_id}/workload-approvals/{intent_key} (the `ApproveWorkload` operationId) request,
 // with any type of body and a specified content type.
-func (c *Client) ExchangeWorkloadWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewExchangeWorkloadRequestWithBody(c.Server, contentType, body)
+func (c *Client) ApproveWorkloadWithBody(ctx context.Context, teamId TeamID, intentKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApproveWorkloadRequestWithBody(c.Server, teamId, intentKey, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4657,107 +5188,10 @@ func (c *Client) ExchangeWorkloadWithBody(ctx context.Context, contentType strin
 	return c.Client.Do(req)
 }
 
-// ExchangeWorkload performs a POST /v1/workload-sessions/exchange (the `ExchangeWorkload` operationId) request.
+// ApproveWorkload performs a PUT /v1/teams/{team_id}/workload-approvals/{intent_key} (the `ApproveWorkload` operationId) request.
 // Takes a body of the `application/json` content type.
-func (c *Client) ExchangeWorkload(ctx context.Context, body ExchangeWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewExchangeWorkloadRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// IdentifyWorkloadWithBody performs a POST /v1/workload-sessions/identity (the `IdentifyWorkload` operationId) request,
-// with any type of body and a specified content type.
-func (c *Client) IdentifyWorkloadWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewIdentifyWorkloadRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// IdentifyWorkload performs a POST /v1/workload-sessions/identity (the `IdentifyWorkload` operationId) request.
-// Takes a body of the `application/json` content type.
-func (c *Client) IdentifyWorkload(ctx context.Context, body IdentifyWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewIdentifyWorkloadRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RevokeWorkloadSession performs a DELETE /v1/workload-sessions/{session_id} (the `RevokeWorkloadSession` operationId) request.
-func (c *Client) RevokeWorkloadSession(ctx context.Context, sessionId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRevokeWorkloadSessionRequest(c.Server, sessionId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AttachWorkloadAssertionWithBody performs a POST /v1/workload-sessions/{session_id}/assertions (the `AttachWorkloadAssertion` operationId) request,
-// with any type of body and a specified content type.
-func (c *Client) AttachWorkloadAssertionWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAttachWorkloadAssertionRequestWithBody(c.Server, sessionId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AttachWorkloadAssertion performs a POST /v1/workload-sessions/{session_id}/assertions (the `AttachWorkloadAssertion` operationId) request.
-// Takes a body of the `application/json` content type.
-func (c *Client) AttachWorkloadAssertion(ctx context.Context, sessionId string, body AttachWorkloadAssertionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAttachWorkloadAssertionRequest(c.Server, sessionId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RenewWorkloadSessionWithBody performs a POST /v1/workload-sessions/{session_id}/renew (the `RenewWorkloadSession` operationId) request,
-// with any type of body and a specified content type.
-func (c *Client) RenewWorkloadSessionWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRenewWorkloadSessionRequestWithBody(c.Server, sessionId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RenewWorkloadSession performs a POST /v1/workload-sessions/{session_id}/renew (the `RenewWorkloadSession` operationId) request.
-// Takes a body of the `application/json` content type.
-func (c *Client) RenewWorkloadSession(ctx context.Context, sessionId string, body RenewWorkloadSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRenewWorkloadSessionRequest(c.Server, sessionId, body)
+func (c *Client) ApproveWorkload(ctx context.Context, teamId TeamID, intentKey string, body ApproveWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApproveWorkloadRequest(c.Server, teamId, intentKey, body)
 	if err != nil {
 		return nil, err
 	}
@@ -5326,6 +5760,134 @@ func NewRecoverCompanyOwnerRequestWithBody(server string, contentType string, bo
 	return req, nil
 }
 
+// NewRevokeEnvironmentVisitorSessionRequest constructs an http.Request for the RevokeEnvironmentVisitorSession method
+func NewRevokeEnvironmentVisitorSessionRequest(server string, sessionId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "session_id", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/environment-visitor-sessions/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewAttachEnvironmentVisitorAssertionRequest calls the generic AttachEnvironmentVisitorAssertion builder with application/json body
+func NewAttachEnvironmentVisitorAssertionRequest(server string, sessionId string, body AttachEnvironmentVisitorAssertionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAttachEnvironmentVisitorAssertionRequestWithBody(server, sessionId, "application/json", bodyReader)
+}
+
+// NewAttachEnvironmentVisitorAssertionRequestWithBody constructs an http.Request for the AttachEnvironmentVisitorAssertion method, with any body, and a specified content type
+func NewAttachEnvironmentVisitorAssertionRequestWithBody(server string, sessionId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "session_id", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/environment-visitor-sessions/%s/assertions", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRenewEnvironmentVisitorSessionRequest calls the generic RenewEnvironmentVisitorSession builder with application/json body
+func NewRenewEnvironmentVisitorSessionRequest(server string, sessionId string, body RenewEnvironmentVisitorSessionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRenewEnvironmentVisitorSessionRequestWithBody(server, sessionId, "application/json", bodyReader)
+}
+
+// NewRenewEnvironmentVisitorSessionRequestWithBody constructs an http.Request for the RenewEnvironmentVisitorSession method, with any body, and a specified content type
+func NewRenewEnvironmentVisitorSessionRequestWithBody(server string, sessionId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "session_id", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/environment-visitor-sessions/%s/renew", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetIdentityContextRequest constructs an http.Request for the GetIdentityContext method
 func NewGetIdentityContextRequest(server string) (*http.Request, error) {
 	var err error
@@ -5527,64 +6089,31 @@ func NewRefreshMachinePublicationRequestWithBody(server string, sessionId string
 	return req, nil
 }
 
-// NewExchangeMachineWorkloadRequest calls the generic ExchangeMachineWorkload builder with application/json body
-func NewExchangeMachineWorkloadRequest(server string, body ExchangeMachineWorkloadJSONRequestBody) (*http.Request, error) {
+// NewPrepareEnvironmentVisitorRequest calls the generic PrepareEnvironmentVisitor builder with application/json body
+func NewPrepareEnvironmentVisitorRequest(server string, projectKey string, environmentId string, body PrepareEnvironmentVisitorJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewExchangeMachineWorkloadRequestWithBody(server, "application/json", bodyReader)
+	return NewPrepareEnvironmentVisitorRequestWithBody(server, projectKey, environmentId, "application/json", bodyReader)
 }
 
-// NewExchangeMachineWorkloadRequestWithBody constructs an http.Request for the ExchangeMachineWorkload method, with any body, and a specified content type
-func NewExchangeMachineWorkloadRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/machine-workload-sessions/exchange")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewAttachMachineWorkloadAssertionRequest calls the generic AttachMachineWorkloadAssertion builder with application/json body
-func NewAttachMachineWorkloadAssertionRequest(server string, sessionId string, body AttachMachineWorkloadAssertionJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewAttachMachineWorkloadAssertionRequestWithBody(server, sessionId, "application/json", bodyReader)
-}
-
-// NewAttachMachineWorkloadAssertionRequestWithBody constructs an http.Request for the AttachMachineWorkloadAssertion method, with any body, and a specified content type
-func NewAttachMachineWorkloadAssertionRequestWithBody(server string, sessionId string, contentType string, body io.Reader) (*http.Request, error) {
+// NewPrepareEnvironmentVisitorRequestWithBody constructs an http.Request for the PrepareEnvironmentVisitor method, with any body, and a specified content type
+func NewPrepareEnvironmentVisitorRequestWithBody(server string, projectKey string, environmentId string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "session_id", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "environment_id", environmentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
 	if err != nil {
 		return nil, err
 	}
@@ -5594,7 +6123,7 @@ func NewAttachMachineWorkloadAssertionRequestWithBody(server string, sessionId s
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/machine-workload-sessions/%s/assertions", pathParam0)
+	operationPath := fmt.Sprintf("/v1/projects/%s/environments/%s/visitors/prepare", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -5675,53 +6204,6 @@ func NewRedeemPublisherEnrollmentRequestWithBody(server string, contentType stri
 	}
 
 	operationPath := fmt.Sprintf("/v1/publisher-enrollments/redeem")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewResolvePublisherGroupWorkloadRequest calls the generic ResolvePublisherGroupWorkload builder with application/json body
-func NewResolvePublisherGroupWorkloadRequest(server string, groupId string, body ResolvePublisherGroupWorkloadJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewResolvePublisherGroupWorkloadRequestWithBody(server, groupId, "application/json", bodyReader)
-}
-
-// NewResolvePublisherGroupWorkloadRequestWithBody constructs an http.Request for the ResolvePublisherGroupWorkload method, with any body, and a specified content type
-func NewResolvePublisherGroupWorkloadRequestWithBody(server string, groupId string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "group_id", groupId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/publisher-groups/%s/resolve", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -7580,6 +8062,47 @@ func NewSetTeamDefaultDomainRequest(server string, teamId TeamID, domainId Domai
 	return req, nil
 }
 
+// NewRevokeEnvironmentVisitorPermissionRequest constructs an http.Request for the RevokeEnvironmentVisitorPermission method
+func NewRevokeEnvironmentVisitorPermissionRequest(server string, teamId TeamID, permissionId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "team_id", teamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "permission_id", permissionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/teams/%s/environment-visitor-permissions/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetTeamFeedbackPolicyRequest constructs an http.Request for the GetTeamFeedbackPolicy method
 func NewGetTeamFeedbackPolicyRequest(server string, teamId string) (*http.Request, error) {
 	var err error
@@ -7884,6 +8407,60 @@ func NewRevokeMachineIdentityRequest(server string, teamId TeamID, machineId str
 	return req, nil
 }
 
+// NewCreateEnvironmentVisitorPermissionRequest calls the generic CreateEnvironmentVisitorPermission builder with application/json body
+func NewCreateEnvironmentVisitorPermissionRequest(server string, teamId TeamID, machineId string, body CreateEnvironmentVisitorPermissionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateEnvironmentVisitorPermissionRequestWithBody(server, teamId, machineId, "application/json", bodyReader)
+}
+
+// NewCreateEnvironmentVisitorPermissionRequestWithBody constructs an http.Request for the CreateEnvironmentVisitorPermission method, with any body, and a specified content type
+func NewCreateEnvironmentVisitorPermissionRequestWithBody(server string, teamId TeamID, machineId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "team_id", teamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "machine_id", machineId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/teams/%s/machine-identities/%s/environment-visitor-permissions", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewRotateMachineIdentityKeyRequest calls the generic RotateMachineIdentityKey builder with application/json body
 func NewRotateMachineIdentityKeyRequest(server string, teamId TeamID, machineId string, body RotateMachineIdentityKeyJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -8046,60 +8623,6 @@ func NewCreateMachinePublicationPermissionRequestWithBody(server string, teamId 
 	return req, nil
 }
 
-// NewCreateMachineWorkloadPermissionRequest calls the generic CreateMachineWorkloadPermission builder with application/json body
-func NewCreateMachineWorkloadPermissionRequest(server string, teamId TeamID, machineId string, body CreateMachineWorkloadPermissionJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreateMachineWorkloadPermissionRequestWithBody(server, teamId, machineId, "application/json", bodyReader)
-}
-
-// NewCreateMachineWorkloadPermissionRequestWithBody constructs an http.Request for the CreateMachineWorkloadPermission method, with any body, and a specified content type
-func NewCreateMachineWorkloadPermissionRequestWithBody(server string, teamId TeamID, machineId string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "team_id", teamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "machine_id", machineId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/teams/%s/machine-identities/%s/workload-permissions", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewRevokeMachinePublicationPermissionRequest constructs an http.Request for the RevokeMachinePublicationPermission method
 func NewRevokeMachinePublicationPermissionRequest(server string, teamId TeamID, permissionId string) (*http.Request, error) {
 	var err error
@@ -8124,47 +8647,6 @@ func NewRevokeMachinePublicationPermissionRequest(server string, teamId TeamID, 
 	}
 
 	operationPath := fmt.Sprintf("/v1/teams/%s/machine-publication-permissions/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewRevokeMachineWorkloadPermissionRequest constructs an http.Request for the RevokeMachineWorkloadPermission method
-func NewRevokeMachineWorkloadPermissionRequest(server string, teamId TeamID, permissionId string) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "team_id", teamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "permission_id", permissionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/teams/%s/machine-workload-permissions/%s", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -8352,93 +8834,20 @@ func NewRevokeProvisioningGrantRequest(server string, teamId TeamID, grantId str
 	return req, nil
 }
 
-// NewExchangeWorkloadRequest calls the generic ExchangeWorkload builder with application/json body
-func NewExchangeWorkloadRequest(server string, body ExchangeWorkloadJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewExchangeWorkloadRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewExchangeWorkloadRequestWithBody constructs an http.Request for the ExchangeWorkload method, with any body, and a specified content type
-func NewExchangeWorkloadRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/workload-sessions/exchange")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewIdentifyWorkloadRequest calls the generic IdentifyWorkload builder with application/json body
-func NewIdentifyWorkloadRequest(server string, body IdentifyWorkloadJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewIdentifyWorkloadRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewIdentifyWorkloadRequestWithBody constructs an http.Request for the IdentifyWorkload method, with any body, and a specified content type
-func NewIdentifyWorkloadRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/workload-sessions/identity")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewRevokeWorkloadSessionRequest constructs an http.Request for the RevokeWorkloadSession method
-func NewRevokeWorkloadSessionRequest(server string, sessionId string) (*http.Request, error) {
+// NewGetWorkloadApprovalRequest constructs an http.Request for the GetWorkloadApproval method
+func NewGetWorkloadApprovalRequest(server string, teamId TeamID, intentKey string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "session_id", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "team_id", teamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "intent_key", intentKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
 	if err != nil {
 		return nil, err
 	}
@@ -8448,7 +8857,7 @@ func NewRevokeWorkloadSessionRequest(server string, sessionId string) (*http.Req
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/workload-sessions/%s", pathParam0)
+	operationPath := fmt.Sprintf("/v1/teams/%s/workload-approvals/%s", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -8458,7 +8867,7 @@ func NewRevokeWorkloadSessionRequest(server string, sessionId string) (*http.Req
 		return nil, err
 	}
 
-	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -8466,24 +8875,31 @@ func NewRevokeWorkloadSessionRequest(server string, sessionId string) (*http.Req
 	return req, nil
 }
 
-// NewAttachWorkloadAssertionRequest calls the generic AttachWorkloadAssertion builder with application/json body
-func NewAttachWorkloadAssertionRequest(server string, sessionId string, body AttachWorkloadAssertionJSONRequestBody) (*http.Request, error) {
+// NewApproveWorkloadRequest calls the generic ApproveWorkload builder with application/json body
+func NewApproveWorkloadRequest(server string, teamId TeamID, intentKey string, body ApproveWorkloadJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewAttachWorkloadAssertionRequestWithBody(server, sessionId, "application/json", bodyReader)
+	return NewApproveWorkloadRequestWithBody(server, teamId, intentKey, "application/json", bodyReader)
 }
 
-// NewAttachWorkloadAssertionRequestWithBody constructs an http.Request for the AttachWorkloadAssertion method, with any body, and a specified content type
-func NewAttachWorkloadAssertionRequestWithBody(server string, sessionId string, contentType string, body io.Reader) (*http.Request, error) {
+// NewApproveWorkloadRequestWithBody constructs an http.Request for the ApproveWorkload method, with any body, and a specified content type
+func NewApproveWorkloadRequestWithBody(server string, teamId TeamID, intentKey string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "session_id", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "team_id", teamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "intent_key", intentKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
 	if err != nil {
 		return nil, err
 	}
@@ -8493,7 +8909,7 @@ func NewAttachWorkloadAssertionRequestWithBody(server string, sessionId string, 
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/workload-sessions/%s/assertions", pathParam0)
+	operationPath := fmt.Sprintf("/v1/teams/%s/workload-approvals/%s", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -8503,54 +8919,7 @@ func NewAttachWorkloadAssertionRequestWithBody(server string, sessionId string, 
 		return nil, err
 	}
 
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewRenewWorkloadSessionRequest calls the generic RenewWorkloadSession builder with application/json body
-func NewRenewWorkloadSessionRequest(server string, sessionId string, body RenewWorkloadSessionJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewRenewWorkloadSessionRequestWithBody(server, sessionId, "application/json", bodyReader)
-}
-
-// NewRenewWorkloadSessionRequestWithBody constructs an http.Request for the RenewWorkloadSession method, with any body, and a specified content type
-func NewRenewWorkloadSessionRequestWithBody(server string, sessionId string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "session_id", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/workload-sessions/%s/renew", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
@@ -8749,6 +9118,31 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/company-access/recovery (the `RecoverCompanyOwner` operationId).
 	RecoverCompanyOwnerWithResponse(ctx context.Context, body RecoverCompanyOwnerJSONRequestBody, reqEditors ...RequestEditorFn) (*RecoverCompanyOwnerResponse, error)
 
+	// RevokeEnvironmentVisitorSessionWithResponse performs a DELETE /v1/environment-visitor-sessions/{session_id} (the `RevokeEnvironmentVisitorSession` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RevokeEnvironmentVisitorSessionWithResponse(ctx context.Context, sessionId string, reqEditors ...RequestEditorFn) (*RevokeEnvironmentVisitorSessionResponse, error)
+
+	// AttachEnvironmentVisitorAssertionWithBodyWithResponse performs a POST /v1/environment-visitor-sessions/{session_id}/assertions (the `AttachEnvironmentVisitorAssertion` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	AttachEnvironmentVisitorAssertionWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AttachEnvironmentVisitorAssertionResponse, error)
+
+	// AttachEnvironmentVisitorAssertionWithResponse performs a POST /v1/environment-visitor-sessions/{session_id}/assertions (the `AttachEnvironmentVisitorAssertion` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	AttachEnvironmentVisitorAssertionWithResponse(ctx context.Context, sessionId string, body AttachEnvironmentVisitorAssertionJSONRequestBody, reqEditors ...RequestEditorFn) (*AttachEnvironmentVisitorAssertionResponse, error)
+
+	// RenewEnvironmentVisitorSessionWithBodyWithResponse performs a POST /v1/environment-visitor-sessions/{session_id}/renew (the `RenewEnvironmentVisitorSession` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RenewEnvironmentVisitorSessionWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewEnvironmentVisitorSessionResponse, error)
+
+	// RenewEnvironmentVisitorSessionWithResponse performs a POST /v1/environment-visitor-sessions/{session_id}/renew (the `RenewEnvironmentVisitorSession` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	RenewEnvironmentVisitorSessionWithResponse(ctx context.Context, sessionId string, body RenewEnvironmentVisitorSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewEnvironmentVisitorSessionResponse, error)
+
 	// GetIdentityContextWithResponse Read the authenticated identity and memberships
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -8800,25 +9194,19 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	RefreshMachinePublicationWithResponse(ctx context.Context, sessionId string, body RefreshMachinePublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*RefreshMachinePublicationResponse, error)
 
-	// ExchangeMachineWorkloadWithBodyWithResponse performs a POST /v1/machine-workload-sessions/exchange (the `ExchangeMachineWorkload` operationId) request,
+	// PrepareEnvironmentVisitorWithBodyWithResponse performs a POST /v1/projects/{project_key}/environments/{environment_id}/visitors/prepare (the `PrepareEnvironmentVisitor` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Returns a wrapper object for the known response body format(s).
-	ExchangeMachineWorkloadWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeMachineWorkloadResponse, error)
-
-	// ExchangeMachineWorkloadWithResponse performs a POST /v1/machine-workload-sessions/exchange (the `ExchangeMachineWorkload` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	ExchangeMachineWorkloadWithResponse(ctx context.Context, body ExchangeMachineWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeMachineWorkloadResponse, error)
-
-	// AttachMachineWorkloadAssertionWithBodyWithResponse performs a POST /v1/machine-workload-sessions/{session_id}/assertions (the `AttachMachineWorkloadAssertion` operationId) request,
-	// with any type of body and a specified content type.
+	// Authorize exact environment services from current saved visitor permission, verify every expected protocol against the pinned definition and saved service, then create or resume the native-owned session. Exact replay repeats current identity, permission, membership, expiry and service checks. A changed selection with the same nonce conflicts. No project configuration or assignment-group selector is consulted.
 	//
 	// Returns a wrapper object for the known response body format(s).
-	AttachMachineWorkloadAssertionWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AttachMachineWorkloadAssertionResponse, error)
+	PrepareEnvironmentVisitorWithBodyWithResponse(ctx context.Context, projectKey string, environmentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PrepareEnvironmentVisitorResponse, error)
 
-	// AttachMachineWorkloadAssertionWithResponse performs a POST /v1/machine-workload-sessions/{session_id}/assertions (the `AttachMachineWorkloadAssertion` operationId) request.
+	// PrepareEnvironmentVisitorWithResponse performs a POST /v1/projects/{project_key}/environments/{environment_id}/visitors/prepare (the `PrepareEnvironmentVisitor` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	AttachMachineWorkloadAssertionWithResponse(ctx context.Context, sessionId string, body AttachMachineWorkloadAssertionJSONRequestBody, reqEditors ...RequestEditorFn) (*AttachMachineWorkloadAssertionResponse, error)
+	//
+	// Authorize exact environment services from current saved visitor permission, verify every expected protocol against the pinned definition and saved service, then create or resume the native-owned session. Exact replay repeats current identity, permission, membership, expiry and service checks. A changed selection with the same nonce conflicts. No project configuration or assignment-group selector is consulted.
+	PrepareEnvironmentVisitorWithResponse(ctx context.Context, projectKey string, environmentId string, body PrepareEnvironmentVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*PrepareEnvironmentVisitorResponse, error)
 
 	// ExchangeProvisioningWithBodyWithResponse performs a POST /v1/provisioning-sessions/exchange (the `ExchangeProvisioning` operationId) request,
 	// with any type of body and a specified content type.
@@ -8839,16 +9227,6 @@ type ClientWithResponsesInterface interface {
 	// RedeemPublisherEnrollmentWithResponse performs a POST /v1/publisher-enrollments/redeem (the `RedeemPublisherEnrollment` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	RedeemPublisherEnrollmentWithResponse(ctx context.Context, body RedeemPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemPublisherEnrollmentResponse, error)
-
-	// ResolvePublisherGroupWorkloadWithBodyWithResponse performs a POST /v1/publisher-groups/{group_id}/resolve (the `ResolvePublisherGroupWorkload` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	ResolvePublisherGroupWorkloadWithBodyWithResponse(ctx context.Context, groupId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResolvePublisherGroupWorkloadResponse, error)
-
-	// ResolvePublisherGroupWorkloadWithResponse performs a POST /v1/publisher-groups/{group_id}/resolve (the `ResolvePublisherGroupWorkload` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	ResolvePublisherGroupWorkloadWithResponse(ctx context.Context, groupId string, body ResolvePublisherGroupWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*ResolvePublisherGroupWorkloadResponse, error)
 
 	// RotatePublisherKeyWithBodyWithResponse performs a POST /v1/publisher-keys/rotate (the `RotatePublisherKey` operationId) request,
 	// with any type of body and a specified content type.
@@ -9179,6 +9557,11 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/teams/{team_id}/domains/{domain_id}/default (the `SetTeamDefaultDomain` operationId).
 	SetTeamDefaultDomainWithResponse(ctx context.Context, teamId TeamID, domainId DomainID, reqEditors ...RequestEditorFn) (*SetTeamDefaultDomainResponse, error)
 
+	// RevokeEnvironmentVisitorPermissionWithResponse performs a DELETE /v1/teams/{team_id}/environment-visitor-permissions/{permission_id} (the `RevokeEnvironmentVisitorPermission` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RevokeEnvironmentVisitorPermissionWithResponse(ctx context.Context, teamId TeamID, permissionId string, reqEditors ...RequestEditorFn) (*RevokeEnvironmentVisitorPermissionResponse, error)
+
 	// GetTeamFeedbackPolicyWithResponse performs a GET /v1/teams/{team_id}/feedback-policy (the `GetTeamFeedbackPolicy` operationId) request.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -9237,6 +9620,16 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	RevokeMachineIdentityWithResponse(ctx context.Context, teamId TeamID, machineId string, reqEditors ...RequestEditorFn) (*RevokeMachineIdentityResponse, error)
 
+	// CreateEnvironmentVisitorPermissionWithBodyWithResponse performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/environment-visitor-permissions (the `CreateEnvironmentVisitorPermission` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CreateEnvironmentVisitorPermissionWithBodyWithResponse(ctx context.Context, teamId TeamID, machineId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateEnvironmentVisitorPermissionResponse, error)
+
+	// CreateEnvironmentVisitorPermissionWithResponse performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/environment-visitor-permissions (the `CreateEnvironmentVisitorPermission` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	CreateEnvironmentVisitorPermissionWithResponse(ctx context.Context, teamId TeamID, machineId string, body CreateEnvironmentVisitorPermissionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateEnvironmentVisitorPermissionResponse, error)
+
 	// RotateMachineIdentityKeyWithBodyWithResponse performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/keys (the `RotateMachineIdentityKey` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -9267,25 +9660,10 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	CreateMachinePublicationPermissionWithResponse(ctx context.Context, teamId TeamID, machineId string, body CreateMachinePublicationPermissionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateMachinePublicationPermissionResponse, error)
 
-	// CreateMachineWorkloadPermissionWithBodyWithResponse performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/workload-permissions (the `CreateMachineWorkloadPermission` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	CreateMachineWorkloadPermissionWithBodyWithResponse(ctx context.Context, teamId TeamID, machineId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateMachineWorkloadPermissionResponse, error)
-
-	// CreateMachineWorkloadPermissionWithResponse performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/workload-permissions (the `CreateMachineWorkloadPermission` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	CreateMachineWorkloadPermissionWithResponse(ctx context.Context, teamId TeamID, machineId string, body CreateMachineWorkloadPermissionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateMachineWorkloadPermissionResponse, error)
-
 	// RevokeMachinePublicationPermissionWithResponse performs a DELETE /v1/teams/{team_id}/machine-publication-permissions/{permission_id} (the `RevokeMachinePublicationPermission` operationId) request.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	RevokeMachinePublicationPermissionWithResponse(ctx context.Context, teamId TeamID, permissionId string, reqEditors ...RequestEditorFn) (*RevokeMachinePublicationPermissionResponse, error)
-
-	// RevokeMachineWorkloadPermissionWithResponse performs a DELETE /v1/teams/{team_id}/machine-workload-permissions/{permission_id} (the `RevokeMachineWorkloadPermission` operationId) request.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	RevokeMachineWorkloadPermissionWithResponse(ctx context.Context, teamId TeamID, permissionId string, reqEditors ...RequestEditorFn) (*RevokeMachineWorkloadPermissionResponse, error)
 
 	// ListTeamMembershipsWithResponse List team memberships
 	//
@@ -9320,50 +9698,20 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	RevokeProvisioningGrantWithResponse(ctx context.Context, teamId TeamID, grantId string, reqEditors ...RequestEditorFn) (*RevokeProvisioningGrantResponse, error)
 
-	// ExchangeWorkloadWithBodyWithResponse performs a POST /v1/workload-sessions/exchange (the `ExchangeWorkload` operationId) request,
+	// GetWorkloadApprovalWithResponse performs a GET /v1/teams/{team_id}/workload-approvals/{intent_key} (the `GetWorkloadApproval` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	GetWorkloadApprovalWithResponse(ctx context.Context, teamId TeamID, intentKey string, reqEditors ...RequestEditorFn) (*GetWorkloadApprovalResponse, error)
+
+	// ApproveWorkloadWithBodyWithResponse performs a PUT /v1/teams/{team_id}/workload-approvals/{intent_key} (the `ApproveWorkload` operationId) request,
 	// with any type of body and a specified content type.
 	//
 	// Returns a wrapper object for the known response body format(s).
-	ExchangeWorkloadWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeWorkloadResponse, error)
+	ApproveWorkloadWithBodyWithResponse(ctx context.Context, teamId TeamID, intentKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApproveWorkloadResponse, error)
 
-	// ExchangeWorkloadWithResponse performs a POST /v1/workload-sessions/exchange (the `ExchangeWorkload` operationId) request.
+	// ApproveWorkloadWithResponse performs a PUT /v1/teams/{team_id}/workload-approvals/{intent_key} (the `ApproveWorkload` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	ExchangeWorkloadWithResponse(ctx context.Context, body ExchangeWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeWorkloadResponse, error)
-
-	// IdentifyWorkloadWithBodyWithResponse performs a POST /v1/workload-sessions/identity (the `IdentifyWorkload` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	IdentifyWorkloadWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IdentifyWorkloadResponse, error)
-
-	// IdentifyWorkloadWithResponse performs a POST /v1/workload-sessions/identity (the `IdentifyWorkload` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	IdentifyWorkloadWithResponse(ctx context.Context, body IdentifyWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*IdentifyWorkloadResponse, error)
-
-	// RevokeWorkloadSessionWithResponse performs a DELETE /v1/workload-sessions/{session_id} (the `RevokeWorkloadSession` operationId) request.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	RevokeWorkloadSessionWithResponse(ctx context.Context, sessionId string, reqEditors ...RequestEditorFn) (*RevokeWorkloadSessionResponse, error)
-
-	// AttachWorkloadAssertionWithBodyWithResponse performs a POST /v1/workload-sessions/{session_id}/assertions (the `AttachWorkloadAssertion` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	AttachWorkloadAssertionWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AttachWorkloadAssertionResponse, error)
-
-	// AttachWorkloadAssertionWithResponse performs a POST /v1/workload-sessions/{session_id}/assertions (the `AttachWorkloadAssertion` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	AttachWorkloadAssertionWithResponse(ctx context.Context, sessionId string, body AttachWorkloadAssertionJSONRequestBody, reqEditors ...RequestEditorFn) (*AttachWorkloadAssertionResponse, error)
-
-	// RenewWorkloadSessionWithBodyWithResponse performs a POST /v1/workload-sessions/{session_id}/renew (the `RenewWorkloadSession` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	RenewWorkloadSessionWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewWorkloadSessionResponse, error)
-
-	// RenewWorkloadSessionWithResponse performs a POST /v1/workload-sessions/{session_id}/renew (the `RenewWorkloadSession` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	RenewWorkloadSessionWithResponse(ctx context.Context, sessionId string, body RenewWorkloadSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewWorkloadSessionResponse, error)
+	ApproveWorkloadWithResponse(ctx context.Context, teamId TeamID, intentKey string, body ApproveWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*ApproveWorkloadResponse, error)
 }
 
 type IssueControlBrowserHandoffResponse struct {
@@ -9959,6 +10307,143 @@ func (r RecoverCompanyOwnerResponse) ContentType() string {
 	return ""
 }
 
+type RevokeEnvironmentVisitorSessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokeEnvironmentVisitorSessionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokeEnvironmentVisitorSessionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeEnvironmentVisitorSessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeEnvironmentVisitorSessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokeEnvironmentVisitorSessionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AttachEnvironmentVisitorAssertionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *EnvironmentVisitorSession
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AttachEnvironmentVisitorAssertionResponse) GetJSON200() *EnvironmentVisitorSession {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AttachEnvironmentVisitorAssertionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r AttachEnvironmentVisitorAssertionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AttachEnvironmentVisitorAssertionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AttachEnvironmentVisitorAssertionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AttachEnvironmentVisitorAssertionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RenewEnvironmentVisitorSessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *EnvironmentVisitorSession
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RenewEnvironmentVisitorSessionResponse) GetJSON200() *EnvironmentVisitorSession {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RenewEnvironmentVisitorSessionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RenewEnvironmentVisitorSessionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RenewEnvironmentVisitorSessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RenewEnvironmentVisitorSessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RenewEnvironmentVisitorSessionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // GetIdentityContextResponseDefaultHeaders the declared response headers of an HTTP default response for GetIdentityContext
 type GetIdentityContextResponseDefaultHeaders struct {
 	WWWAuthenticate string
@@ -10199,32 +10684,32 @@ func (r RefreshMachinePublicationResponse) ContentType() string {
 	return ""
 }
 
-type ExchangeMachineWorkloadResponse struct {
+type PrepareEnvironmentVisitorResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *WorkloadSession
+	JSON200 *EnvironmentVisitorPreparation
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ExchangeMachineWorkloadResponse) GetJSON200() *WorkloadSession {
+func (r PrepareEnvironmentVisitorResponse) GetJSON200() *EnvironmentVisitorPreparation {
 	return r.JSON200
 }
 
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ExchangeMachineWorkloadResponse) GetApplicationproblemJSONDefault() *Problem {
+func (r PrepareEnvironmentVisitorResponse) GetApplicationproblemJSONDefault() *Problem {
 	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
-func (r ExchangeMachineWorkloadResponse) GetBody() []byte {
+func (r PrepareEnvironmentVisitorResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r ExchangeMachineWorkloadResponse) Status() string {
+func (r PrepareEnvironmentVisitorResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -10232,7 +10717,7 @@ func (r ExchangeMachineWorkloadResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r ExchangeMachineWorkloadResponse) StatusCode() int {
+func (r PrepareEnvironmentVisitorResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -10240,55 +10725,7 @@ func (r ExchangeMachineWorkloadResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ExchangeMachineWorkloadResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type AttachMachineWorkloadAssertionResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *WorkloadSession
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r AttachMachineWorkloadAssertionResponse) GetJSON200() *WorkloadSession {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r AttachMachineWorkloadAssertionResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r AttachMachineWorkloadAssertionResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AttachMachineWorkloadAssertionResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AttachMachineWorkloadAssertionResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AttachMachineWorkloadAssertionResponse) ContentType() string {
+func (r PrepareEnvironmentVisitorResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -10385,54 +10822,6 @@ func (r RedeemPublisherEnrollmentResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RedeemPublisherEnrollmentResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ResolvePublisherGroupWorkloadResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PublisherGroupWorkloadResolution
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ResolvePublisherGroupWorkloadResponse) GetJSON200() *PublisherGroupWorkloadResolution {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ResolvePublisherGroupWorkloadResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r ResolvePublisherGroupWorkloadResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ResolvePublisherGroupWorkloadResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ResolvePublisherGroupWorkloadResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ResolvePublisherGroupWorkloadResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -12015,6 +12404,47 @@ func (r SetTeamDefaultDomainResponse) ContentType() string {
 	return ""
 }
 
+type RevokeEnvironmentVisitorPermissionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokeEnvironmentVisitorPermissionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokeEnvironmentVisitorPermissionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeEnvironmentVisitorPermissionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeEnvironmentVisitorPermissionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokeEnvironmentVisitorPermissionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetTeamFeedbackPolicyResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -12337,6 +12767,54 @@ func (r RevokeMachineIdentityResponse) ContentType() string {
 	return ""
 }
 
+type CreateEnvironmentVisitorPermissionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *MachinePermissionResult
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateEnvironmentVisitorPermissionResponse) GetJSON201() *MachinePermissionResult {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateEnvironmentVisitorPermissionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateEnvironmentVisitorPermissionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateEnvironmentVisitorPermissionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateEnvironmentVisitorPermissionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateEnvironmentVisitorPermissionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type RotateMachineIdentityKeyResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -12474,54 +12952,6 @@ func (r CreateMachinePublicationPermissionResponse) ContentType() string {
 	return ""
 }
 
-type CreateMachineWorkloadPermissionResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *MachinePermissionResult
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreateMachineWorkloadPermissionResponse) GetJSON201() *MachinePermissionResult {
-	return r.JSON201
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r CreateMachineWorkloadPermissionResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r CreateMachineWorkloadPermissionResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CreateMachineWorkloadPermissionResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreateMachineWorkloadPermissionResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CreateMachineWorkloadPermissionResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type RevokeMachinePublicationPermissionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -12557,47 +12987,6 @@ func (r RevokeMachinePublicationPermissionResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RevokeMachinePublicationPermissionResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type RevokeMachineWorkloadPermissionResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r RevokeMachineWorkloadPermissionResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r RevokeMachineWorkloadPermissionResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r RevokeMachineWorkloadPermissionResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RevokeMachineWorkloadPermissionResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RevokeMachineWorkloadPermissionResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -12782,32 +13171,32 @@ func (r RevokeProvisioningGrantResponse) ContentType() string {
 	return ""
 }
 
-type ExchangeWorkloadResponse struct {
+type GetWorkloadApprovalResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *WorkloadSession
+	JSON200 *WorkloadApproval
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ExchangeWorkloadResponse) GetJSON200() *WorkloadSession {
+func (r GetWorkloadApprovalResponse) GetJSON200() *WorkloadApproval {
 	return r.JSON200
 }
 
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ExchangeWorkloadResponse) GetApplicationproblemJSONDefault() *Problem {
+func (r GetWorkloadApprovalResponse) GetApplicationproblemJSONDefault() *Problem {
 	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
-func (r ExchangeWorkloadResponse) GetBody() []byte {
+func (r GetWorkloadApprovalResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r ExchangeWorkloadResponse) Status() string {
+func (r GetWorkloadApprovalResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -12815,7 +13204,7 @@ func (r ExchangeWorkloadResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r ExchangeWorkloadResponse) StatusCode() int {
+func (r GetWorkloadApprovalResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -12823,39 +13212,39 @@ func (r ExchangeWorkloadResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ExchangeWorkloadResponse) ContentType() string {
+func (r GetWorkloadApprovalResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
 	return ""
 }
 
-type IdentifyWorkloadResponse struct {
+type ApproveWorkloadResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *WorkloadIdentity
+	JSON200 *WorkloadApproval
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r IdentifyWorkloadResponse) GetJSON200() *WorkloadIdentity {
+func (r ApproveWorkloadResponse) GetJSON200() *WorkloadApproval {
 	return r.JSON200
 }
 
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r IdentifyWorkloadResponse) GetApplicationproblemJSONDefault() *Problem {
+func (r ApproveWorkloadResponse) GetApplicationproblemJSONDefault() *Problem {
 	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
-func (r IdentifyWorkloadResponse) GetBody() []byte {
+func (r ApproveWorkloadResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r IdentifyWorkloadResponse) Status() string {
+func (r ApproveWorkloadResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -12863,7 +13252,7 @@ func (r IdentifyWorkloadResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r IdentifyWorkloadResponse) StatusCode() int {
+func (r ApproveWorkloadResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -12871,144 +13260,7 @@ func (r IdentifyWorkloadResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r IdentifyWorkloadResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type RevokeWorkloadSessionResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r RevokeWorkloadSessionResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r RevokeWorkloadSessionResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r RevokeWorkloadSessionResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RevokeWorkloadSessionResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RevokeWorkloadSessionResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type AttachWorkloadAssertionResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *WorkloadSession
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r AttachWorkloadAssertionResponse) GetJSON200() *WorkloadSession {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r AttachWorkloadAssertionResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r AttachWorkloadAssertionResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AttachWorkloadAssertionResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AttachWorkloadAssertionResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AttachWorkloadAssertionResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type RenewWorkloadSessionResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *WorkloadSession
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r RenewWorkloadSessionResponse) GetJSON200() *WorkloadSession {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r RenewWorkloadSessionResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r RenewWorkloadSessionResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r RenewWorkloadSessionResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RenewWorkloadSessionResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RenewWorkloadSessionResponse) ContentType() string {
+func (r ApproveWorkloadResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -13298,6 +13550,61 @@ func (c *ClientWithResponses) RecoverCompanyOwnerWithResponse(ctx context.Contex
 	return ParseRecoverCompanyOwnerResponse(rsp)
 }
 
+// RevokeEnvironmentVisitorSessionWithResponse performs a DELETE /v1/environment-visitor-sessions/{session_id} (the `RevokeEnvironmentVisitorSession` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RevokeEnvironmentVisitorSessionWithResponse(ctx context.Context, sessionId string, reqEditors ...RequestEditorFn) (*RevokeEnvironmentVisitorSessionResponse, error) {
+	rsp, err := c.RevokeEnvironmentVisitorSession(ctx, sessionId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeEnvironmentVisitorSessionResponse(rsp)
+}
+
+// AttachEnvironmentVisitorAssertionWithBodyWithResponse performs a POST /v1/environment-visitor-sessions/{session_id}/assertions (the `AttachEnvironmentVisitorAssertion` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) AttachEnvironmentVisitorAssertionWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AttachEnvironmentVisitorAssertionResponse, error) {
+	rsp, err := c.AttachEnvironmentVisitorAssertionWithBody(ctx, sessionId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAttachEnvironmentVisitorAssertionResponse(rsp)
+}
+
+// AttachEnvironmentVisitorAssertionWithResponse performs a POST /v1/environment-visitor-sessions/{session_id}/assertions (the `AttachEnvironmentVisitorAssertion` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) AttachEnvironmentVisitorAssertionWithResponse(ctx context.Context, sessionId string, body AttachEnvironmentVisitorAssertionJSONRequestBody, reqEditors ...RequestEditorFn) (*AttachEnvironmentVisitorAssertionResponse, error) {
+	rsp, err := c.AttachEnvironmentVisitorAssertion(ctx, sessionId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAttachEnvironmentVisitorAssertionResponse(rsp)
+}
+
+// RenewEnvironmentVisitorSessionWithBodyWithResponse performs a POST /v1/environment-visitor-sessions/{session_id}/renew (the `RenewEnvironmentVisitorSession` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RenewEnvironmentVisitorSessionWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewEnvironmentVisitorSessionResponse, error) {
+	rsp, err := c.RenewEnvironmentVisitorSessionWithBody(ctx, sessionId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRenewEnvironmentVisitorSessionResponse(rsp)
+}
+
+// RenewEnvironmentVisitorSessionWithResponse performs a POST /v1/environment-visitor-sessions/{session_id}/renew (the `RenewEnvironmentVisitorSession` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RenewEnvironmentVisitorSessionWithResponse(ctx context.Context, sessionId string, body RenewEnvironmentVisitorSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewEnvironmentVisitorSessionResponse, error) {
+	rsp, err := c.RenewEnvironmentVisitorSession(ctx, sessionId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRenewEnvironmentVisitorSessionResponse(rsp)
+}
+
 // GetIdentityContextWithResponse Read the authenticated identity and memberships
 //
 // Returns a wrapper object for the known response body format(s).
@@ -13403,48 +13710,30 @@ func (c *ClientWithResponses) RefreshMachinePublicationWithResponse(ctx context.
 	return ParseRefreshMachinePublicationResponse(rsp)
 }
 
-// ExchangeMachineWorkloadWithBodyWithResponse performs a POST /v1/machine-workload-sessions/exchange (the `ExchangeMachineWorkload` operationId) request,
+// PrepareEnvironmentVisitorWithBodyWithResponse performs a POST /v1/projects/{project_key}/environments/{environment_id}/visitors/prepare (the `PrepareEnvironmentVisitor` operationId) request,
 // with any type of body and a specified content type.
 //
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) ExchangeMachineWorkloadWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeMachineWorkloadResponse, error) {
-	rsp, err := c.ExchangeMachineWorkloadWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseExchangeMachineWorkloadResponse(rsp)
-}
-
-// ExchangeMachineWorkloadWithResponse performs a POST /v1/machine-workload-sessions/exchange (the `ExchangeMachineWorkload` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) ExchangeMachineWorkloadWithResponse(ctx context.Context, body ExchangeMachineWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeMachineWorkloadResponse, error) {
-	rsp, err := c.ExchangeMachineWorkload(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseExchangeMachineWorkloadResponse(rsp)
-}
-
-// AttachMachineWorkloadAssertionWithBodyWithResponse performs a POST /v1/machine-workload-sessions/{session_id}/assertions (the `AttachMachineWorkloadAssertion` operationId) request,
-// with any type of body and a specified content type.
+// Authorize exact environment services from current saved visitor permission, verify every expected protocol against the pinned definition and saved service, then create or resume the native-owned session. Exact replay repeats current identity, permission, membership, expiry and service checks. A changed selection with the same nonce conflicts. No project configuration or assignment-group selector is consulted.
 //
 // Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) AttachMachineWorkloadAssertionWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AttachMachineWorkloadAssertionResponse, error) {
-	rsp, err := c.AttachMachineWorkloadAssertionWithBody(ctx, sessionId, contentType, body, reqEditors...)
+func (c *ClientWithResponses) PrepareEnvironmentVisitorWithBodyWithResponse(ctx context.Context, projectKey string, environmentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PrepareEnvironmentVisitorResponse, error) {
+	rsp, err := c.PrepareEnvironmentVisitorWithBody(ctx, projectKey, environmentId, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseAttachMachineWorkloadAssertionResponse(rsp)
+	return ParsePrepareEnvironmentVisitorResponse(rsp)
 }
 
-// AttachMachineWorkloadAssertionWithResponse performs a POST /v1/machine-workload-sessions/{session_id}/assertions (the `AttachMachineWorkloadAssertion` operationId) request.
+// PrepareEnvironmentVisitorWithResponse performs a POST /v1/projects/{project_key}/environments/{environment_id}/visitors/prepare (the `PrepareEnvironmentVisitor` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) AttachMachineWorkloadAssertionWithResponse(ctx context.Context, sessionId string, body AttachMachineWorkloadAssertionJSONRequestBody, reqEditors ...RequestEditorFn) (*AttachMachineWorkloadAssertionResponse, error) {
-	rsp, err := c.AttachMachineWorkloadAssertion(ctx, sessionId, body, reqEditors...)
+//
+// Authorize exact environment services from current saved visitor permission, verify every expected protocol against the pinned definition and saved service, then create or resume the native-owned session. Exact replay repeats current identity, permission, membership, expiry and service checks. A changed selection with the same nonce conflicts. No project configuration or assignment-group selector is consulted.
+func (c *ClientWithResponses) PrepareEnvironmentVisitorWithResponse(ctx context.Context, projectKey string, environmentId string, body PrepareEnvironmentVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*PrepareEnvironmentVisitorResponse, error) {
+	rsp, err := c.PrepareEnvironmentVisitor(ctx, projectKey, environmentId, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseAttachMachineWorkloadAssertionResponse(rsp)
+	return ParsePrepareEnvironmentVisitorResponse(rsp)
 }
 
 // ExchangeProvisioningWithBodyWithResponse performs a POST /v1/provisioning-sessions/exchange (the `ExchangeProvisioning` operationId) request,
@@ -13489,28 +13778,6 @@ func (c *ClientWithResponses) RedeemPublisherEnrollmentWithResponse(ctx context.
 		return nil, err
 	}
 	return ParseRedeemPublisherEnrollmentResponse(rsp)
-}
-
-// ResolvePublisherGroupWorkloadWithBodyWithResponse performs a POST /v1/publisher-groups/{group_id}/resolve (the `ResolvePublisherGroupWorkload` operationId) request,
-// with any type of body and a specified content type.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) ResolvePublisherGroupWorkloadWithBodyWithResponse(ctx context.Context, groupId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResolvePublisherGroupWorkloadResponse, error) {
-	rsp, err := c.ResolvePublisherGroupWorkloadWithBody(ctx, groupId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseResolvePublisherGroupWorkloadResponse(rsp)
-}
-
-// ResolvePublisherGroupWorkloadWithResponse performs a POST /v1/publisher-groups/{group_id}/resolve (the `ResolvePublisherGroupWorkload` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) ResolvePublisherGroupWorkloadWithResponse(ctx context.Context, groupId string, body ResolvePublisherGroupWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*ResolvePublisherGroupWorkloadResponse, error) {
-	rsp, err := c.ResolvePublisherGroupWorkload(ctx, groupId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseResolvePublisherGroupWorkloadResponse(rsp)
 }
 
 // RotatePublisherKeyWithBodyWithResponse performs a POST /v1/publisher-keys/rotate (the `RotatePublisherKey` operationId) request,
@@ -14160,6 +14427,17 @@ func (c *ClientWithResponses) SetTeamDefaultDomainWithResponse(ctx context.Conte
 	return ParseSetTeamDefaultDomainResponse(rsp)
 }
 
+// RevokeEnvironmentVisitorPermissionWithResponse performs a DELETE /v1/teams/{team_id}/environment-visitor-permissions/{permission_id} (the `RevokeEnvironmentVisitorPermission` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RevokeEnvironmentVisitorPermissionWithResponse(ctx context.Context, teamId TeamID, permissionId string, reqEditors ...RequestEditorFn) (*RevokeEnvironmentVisitorPermissionResponse, error) {
+	rsp, err := c.RevokeEnvironmentVisitorPermission(ctx, teamId, permissionId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeEnvironmentVisitorPermissionResponse(rsp)
+}
+
 // GetTeamFeedbackPolicyWithResponse performs a GET /v1/teams/{team_id}/feedback-policy (the `GetTeamFeedbackPolicy` operationId) request.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -14278,6 +14556,28 @@ func (c *ClientWithResponses) RevokeMachineIdentityWithResponse(ctx context.Cont
 	return ParseRevokeMachineIdentityResponse(rsp)
 }
 
+// CreateEnvironmentVisitorPermissionWithBodyWithResponse performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/environment-visitor-permissions (the `CreateEnvironmentVisitorPermission` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreateEnvironmentVisitorPermissionWithBodyWithResponse(ctx context.Context, teamId TeamID, machineId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateEnvironmentVisitorPermissionResponse, error) {
+	rsp, err := c.CreateEnvironmentVisitorPermissionWithBody(ctx, teamId, machineId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateEnvironmentVisitorPermissionResponse(rsp)
+}
+
+// CreateEnvironmentVisitorPermissionWithResponse performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/environment-visitor-permissions (the `CreateEnvironmentVisitorPermission` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreateEnvironmentVisitorPermissionWithResponse(ctx context.Context, teamId TeamID, machineId string, body CreateEnvironmentVisitorPermissionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateEnvironmentVisitorPermissionResponse, error) {
+	rsp, err := c.CreateEnvironmentVisitorPermission(ctx, teamId, machineId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateEnvironmentVisitorPermissionResponse(rsp)
+}
+
 // RotateMachineIdentityKeyWithBodyWithResponse performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/keys (the `RotateMachineIdentityKey` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -14344,28 +14644,6 @@ func (c *ClientWithResponses) CreateMachinePublicationPermissionWithResponse(ctx
 	return ParseCreateMachinePublicationPermissionResponse(rsp)
 }
 
-// CreateMachineWorkloadPermissionWithBodyWithResponse performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/workload-permissions (the `CreateMachineWorkloadPermission` operationId) request,
-// with any type of body and a specified content type.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) CreateMachineWorkloadPermissionWithBodyWithResponse(ctx context.Context, teamId TeamID, machineId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateMachineWorkloadPermissionResponse, error) {
-	rsp, err := c.CreateMachineWorkloadPermissionWithBody(ctx, teamId, machineId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateMachineWorkloadPermissionResponse(rsp)
-}
-
-// CreateMachineWorkloadPermissionWithResponse performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/workload-permissions (the `CreateMachineWorkloadPermission` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) CreateMachineWorkloadPermissionWithResponse(ctx context.Context, teamId TeamID, machineId string, body CreateMachineWorkloadPermissionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateMachineWorkloadPermissionResponse, error) {
-	rsp, err := c.CreateMachineWorkloadPermission(ctx, teamId, machineId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateMachineWorkloadPermissionResponse(rsp)
-}
-
 // RevokeMachinePublicationPermissionWithResponse performs a DELETE /v1/teams/{team_id}/machine-publication-permissions/{permission_id} (the `RevokeMachinePublicationPermission` operationId) request.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -14375,17 +14653,6 @@ func (c *ClientWithResponses) RevokeMachinePublicationPermissionWithResponse(ctx
 		return nil, err
 	}
 	return ParseRevokeMachinePublicationPermissionResponse(rsp)
-}
-
-// RevokeMachineWorkloadPermissionWithResponse performs a DELETE /v1/teams/{team_id}/machine-workload-permissions/{permission_id} (the `RevokeMachineWorkloadPermission` operationId) request.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) RevokeMachineWorkloadPermissionWithResponse(ctx context.Context, teamId TeamID, permissionId string, reqEditors ...RequestEditorFn) (*RevokeMachineWorkloadPermissionResponse, error) {
-	rsp, err := c.RevokeMachineWorkloadPermission(ctx, teamId, permissionId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRevokeMachineWorkloadPermissionResponse(rsp)
 }
 
 // ListTeamMembershipsWithResponse List team memberships
@@ -14451,103 +14718,37 @@ func (c *ClientWithResponses) RevokeProvisioningGrantWithResponse(ctx context.Co
 	return ParseRevokeProvisioningGrantResponse(rsp)
 }
 
-// ExchangeWorkloadWithBodyWithResponse performs a POST /v1/workload-sessions/exchange (the `ExchangeWorkload` operationId) request,
+// GetWorkloadApprovalWithResponse performs a GET /v1/teams/{team_id}/workload-approvals/{intent_key} (the `GetWorkloadApproval` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) GetWorkloadApprovalWithResponse(ctx context.Context, teamId TeamID, intentKey string, reqEditors ...RequestEditorFn) (*GetWorkloadApprovalResponse, error) {
+	rsp, err := c.GetWorkloadApproval(ctx, teamId, intentKey, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetWorkloadApprovalResponse(rsp)
+}
+
+// ApproveWorkloadWithBodyWithResponse performs a PUT /v1/teams/{team_id}/workload-approvals/{intent_key} (the `ApproveWorkload` operationId) request,
 // with any type of body and a specified content type.
 //
 // Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) ExchangeWorkloadWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeWorkloadResponse, error) {
-	rsp, err := c.ExchangeWorkloadWithBody(ctx, contentType, body, reqEditors...)
+func (c *ClientWithResponses) ApproveWorkloadWithBodyWithResponse(ctx context.Context, teamId TeamID, intentKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApproveWorkloadResponse, error) {
+	rsp, err := c.ApproveWorkloadWithBody(ctx, teamId, intentKey, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseExchangeWorkloadResponse(rsp)
+	return ParseApproveWorkloadResponse(rsp)
 }
 
-// ExchangeWorkloadWithResponse performs a POST /v1/workload-sessions/exchange (the `ExchangeWorkload` operationId) request.
+// ApproveWorkloadWithResponse performs a PUT /v1/teams/{team_id}/workload-approvals/{intent_key} (the `ApproveWorkload` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) ExchangeWorkloadWithResponse(ctx context.Context, body ExchangeWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeWorkloadResponse, error) {
-	rsp, err := c.ExchangeWorkload(ctx, body, reqEditors...)
+func (c *ClientWithResponses) ApproveWorkloadWithResponse(ctx context.Context, teamId TeamID, intentKey string, body ApproveWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*ApproveWorkloadResponse, error) {
+	rsp, err := c.ApproveWorkload(ctx, teamId, intentKey, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseExchangeWorkloadResponse(rsp)
-}
-
-// IdentifyWorkloadWithBodyWithResponse performs a POST /v1/workload-sessions/identity (the `IdentifyWorkload` operationId) request,
-// with any type of body and a specified content type.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) IdentifyWorkloadWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IdentifyWorkloadResponse, error) {
-	rsp, err := c.IdentifyWorkloadWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseIdentifyWorkloadResponse(rsp)
-}
-
-// IdentifyWorkloadWithResponse performs a POST /v1/workload-sessions/identity (the `IdentifyWorkload` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) IdentifyWorkloadWithResponse(ctx context.Context, body IdentifyWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*IdentifyWorkloadResponse, error) {
-	rsp, err := c.IdentifyWorkload(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseIdentifyWorkloadResponse(rsp)
-}
-
-// RevokeWorkloadSessionWithResponse performs a DELETE /v1/workload-sessions/{session_id} (the `RevokeWorkloadSession` operationId) request.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) RevokeWorkloadSessionWithResponse(ctx context.Context, sessionId string, reqEditors ...RequestEditorFn) (*RevokeWorkloadSessionResponse, error) {
-	rsp, err := c.RevokeWorkloadSession(ctx, sessionId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRevokeWorkloadSessionResponse(rsp)
-}
-
-// AttachWorkloadAssertionWithBodyWithResponse performs a POST /v1/workload-sessions/{session_id}/assertions (the `AttachWorkloadAssertion` operationId) request,
-// with any type of body and a specified content type.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) AttachWorkloadAssertionWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AttachWorkloadAssertionResponse, error) {
-	rsp, err := c.AttachWorkloadAssertionWithBody(ctx, sessionId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAttachWorkloadAssertionResponse(rsp)
-}
-
-// AttachWorkloadAssertionWithResponse performs a POST /v1/workload-sessions/{session_id}/assertions (the `AttachWorkloadAssertion` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) AttachWorkloadAssertionWithResponse(ctx context.Context, sessionId string, body AttachWorkloadAssertionJSONRequestBody, reqEditors ...RequestEditorFn) (*AttachWorkloadAssertionResponse, error) {
-	rsp, err := c.AttachWorkloadAssertion(ctx, sessionId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAttachWorkloadAssertionResponse(rsp)
-}
-
-// RenewWorkloadSessionWithBodyWithResponse performs a POST /v1/workload-sessions/{session_id}/renew (the `RenewWorkloadSession` operationId) request,
-// with any type of body and a specified content type.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) RenewWorkloadSessionWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewWorkloadSessionResponse, error) {
-	rsp, err := c.RenewWorkloadSessionWithBody(ctx, sessionId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRenewWorkloadSessionResponse(rsp)
-}
-
-// RenewWorkloadSessionWithResponse performs a POST /v1/workload-sessions/{session_id}/renew (the `RenewWorkloadSession` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) RenewWorkloadSessionWithResponse(ctx context.Context, sessionId string, body RenewWorkloadSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewWorkloadSessionResponse, error) {
-	rsp, err := c.RenewWorkloadSession(ctx, sessionId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRenewWorkloadSessionResponse(rsp)
+	return ParseApproveWorkloadResponse(rsp)
 }
 
 // ParseIssueControlBrowserHandoffResponse parses an HTTP response from a IssueControlBrowserHandoffWithResponse call
@@ -14967,6 +15168,101 @@ func ParseRecoverCompanyOwnerResponse(rsp *http.Response) (*RecoverCompanyOwnerR
 	return response, nil
 }
 
+// ParseRevokeEnvironmentVisitorSessionResponse parses an HTTP response from a RevokeEnvironmentVisitorSessionWithResponse call
+func ParseRevokeEnvironmentVisitorSessionResponse(rsp *http.Response) (*RevokeEnvironmentVisitorSessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeEnvironmentVisitorSessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAttachEnvironmentVisitorAssertionResponse parses an HTTP response from a AttachEnvironmentVisitorAssertionWithResponse call
+func ParseAttachEnvironmentVisitorAssertionResponse(rsp *http.Response) (*AttachEnvironmentVisitorAssertionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AttachEnvironmentVisitorAssertionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest EnvironmentVisitorSession
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRenewEnvironmentVisitorSessionResponse parses an HTTP response from a RenewEnvironmentVisitorSessionWithResponse call
+func ParseRenewEnvironmentVisitorSessionResponse(rsp *http.Response) (*RenewEnvironmentVisitorSessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RenewEnvironmentVisitorSessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest EnvironmentVisitorSession
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetIdentityContextResponse parses an HTTP response from a GetIdentityContextWithResponse call
 func ParseGetIdentityContextResponse(rsp *http.Response) (*GetIdentityContextResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -15141,55 +15437,22 @@ func ParseRefreshMachinePublicationResponse(rsp *http.Response) (*RefreshMachine
 	return response, nil
 }
 
-// ParseExchangeMachineWorkloadResponse parses an HTTP response from a ExchangeMachineWorkloadWithResponse call
-func ParseExchangeMachineWorkloadResponse(rsp *http.Response) (*ExchangeMachineWorkloadResponse, error) {
+// ParsePrepareEnvironmentVisitorResponse parses an HTTP response from a PrepareEnvironmentVisitorWithResponse call
+func ParsePrepareEnvironmentVisitorResponse(rsp *http.Response) (*PrepareEnvironmentVisitorResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &ExchangeMachineWorkloadResponse{
+	response := &PrepareEnvironmentVisitorResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest WorkloadSession
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseAttachMachineWorkloadAssertionResponse parses an HTTP response from a AttachMachineWorkloadAssertionWithResponse call
-func ParseAttachMachineWorkloadAssertionResponse(rsp *http.Response) (*AttachMachineWorkloadAssertionResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AttachMachineWorkloadAssertionResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest WorkloadSession
+		var dest EnvironmentVisitorPreparation
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -15256,39 +15519,6 @@ func ParseRedeemPublisherEnrollmentResponse(rsp *http.Response) (*RedeemPublishe
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest PublisherEnrollmentResult
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseResolvePublisherGroupWorkloadResponse parses an HTTP response from a ResolvePublisherGroupWorkloadWithResponse call
-func ParseResolvePublisherGroupWorkloadResponse(rsp *http.Response) (*ResolvePublisherGroupWorkloadResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ResolvePublisherGroupWorkloadResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PublisherGroupWorkloadResolution
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -16408,6 +16638,35 @@ func ParseSetTeamDefaultDomainResponse(rsp *http.Response) (*SetTeamDefaultDomai
 	return response, nil
 }
 
+// ParseRevokeEnvironmentVisitorPermissionResponse parses an HTTP response from a RevokeEnvironmentVisitorPermissionWithResponse call
+func ParseRevokeEnvironmentVisitorPermissionResponse(rsp *http.Response) (*RevokeEnvironmentVisitorPermissionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeEnvironmentVisitorPermissionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetTeamFeedbackPolicyResponse parses an HTTP response from a GetTeamFeedbackPolicyWithResponse call
 func ParseGetTeamFeedbackPolicyResponse(rsp *http.Response) (*GetTeamFeedbackPolicyResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -16631,6 +16890,39 @@ func ParseRevokeMachineIdentityResponse(rsp *http.Response) (*RevokeMachineIdent
 	return response, nil
 }
 
+// ParseCreateEnvironmentVisitorPermissionResponse parses an HTTP response from a CreateEnvironmentVisitorPermissionWithResponse call
+func ParseCreateEnvironmentVisitorPermissionResponse(rsp *http.Response) (*CreateEnvironmentVisitorPermissionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateEnvironmentVisitorPermissionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest MachinePermissionResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseRotateMachineIdentityKeyResponse parses an HTTP response from a RotateMachineIdentityKeyWithResponse call
 func ParseRotateMachineIdentityKeyResponse(rsp *http.Response) (*RotateMachineIdentityKeyResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -16726,39 +17018,6 @@ func ParseCreateMachinePublicationPermissionResponse(rsp *http.Response) (*Creat
 	return response, nil
 }
 
-// ParseCreateMachineWorkloadPermissionResponse parses an HTTP response from a CreateMachineWorkloadPermissionWithResponse call
-func ParseCreateMachineWorkloadPermissionResponse(rsp *http.Response) (*CreateMachineWorkloadPermissionResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreateMachineWorkloadPermissionResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest MachinePermissionResult
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseRevokeMachinePublicationPermissionResponse parses an HTTP response from a RevokeMachinePublicationPermissionWithResponse call
 func ParseRevokeMachinePublicationPermissionResponse(rsp *http.Response) (*RevokeMachinePublicationPermissionResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -16768,35 +17027,6 @@ func ParseRevokeMachinePublicationPermissionResponse(rsp *http.Response) (*Revok
 	}
 
 	response := &RevokeMachinePublicationPermissionResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseRevokeMachineWorkloadPermissionResponse parses an HTTP response from a RevokeMachineWorkloadPermissionWithResponse call
-func ParseRevokeMachineWorkloadPermissionResponse(rsp *http.Response) (*RevokeMachineWorkloadPermissionResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RevokeMachineWorkloadPermissionResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -16941,22 +17171,22 @@ func ParseRevokeProvisioningGrantResponse(rsp *http.Response) (*RevokeProvisioni
 	return response, nil
 }
 
-// ParseExchangeWorkloadResponse parses an HTTP response from a ExchangeWorkloadWithResponse call
-func ParseExchangeWorkloadResponse(rsp *http.Response) (*ExchangeWorkloadResponse, error) {
+// ParseGetWorkloadApprovalResponse parses an HTTP response from a GetWorkloadApprovalWithResponse call
+func ParseGetWorkloadApprovalResponse(rsp *http.Response) (*GetWorkloadApprovalResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &ExchangeWorkloadResponse{
+	response := &GetWorkloadApprovalResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest WorkloadSession
+		var dest WorkloadApproval
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -16974,117 +17204,22 @@ func ParseExchangeWorkloadResponse(rsp *http.Response) (*ExchangeWorkloadRespons
 	return response, nil
 }
 
-// ParseIdentifyWorkloadResponse parses an HTTP response from a IdentifyWorkloadWithResponse call
-func ParseIdentifyWorkloadResponse(rsp *http.Response) (*IdentifyWorkloadResponse, error) {
+// ParseApproveWorkloadResponse parses an HTTP response from a ApproveWorkloadWithResponse call
+func ParseApproveWorkloadResponse(rsp *http.Response) (*ApproveWorkloadResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &IdentifyWorkloadResponse{
+	response := &ApproveWorkloadResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest WorkloadIdentity
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseRevokeWorkloadSessionResponse parses an HTTP response from a RevokeWorkloadSessionWithResponse call
-func ParseRevokeWorkloadSessionResponse(rsp *http.Response) (*RevokeWorkloadSessionResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RevokeWorkloadSessionResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseAttachWorkloadAssertionResponse parses an HTTP response from a AttachWorkloadAssertionWithResponse call
-func ParseAttachWorkloadAssertionResponse(rsp *http.Response) (*AttachWorkloadAssertionResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AttachWorkloadAssertionResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest WorkloadSession
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseRenewWorkloadSessionResponse parses an HTTP response from a RenewWorkloadSessionWithResponse call
-func ParseRenewWorkloadSessionResponse(rsp *http.Response) (*RenewWorkloadSessionResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RenewWorkloadSessionResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest WorkloadSession
+		var dest WorkloadApproval
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -17143,6 +17278,15 @@ type ServerInterface interface {
 	// RecoverCompanyOwner Explicit audited recovery grants a personal-account exception to a nonremoved owner
 	// (POST /v1/company-access/recovery)
 	RecoverCompanyOwner(w http.ResponseWriter, r *http.Request)
+
+	// (DELETE /v1/environment-visitor-sessions/{session_id})
+	RevokeEnvironmentVisitorSession(w http.ResponseWriter, r *http.Request, sessionId string)
+
+	// (POST /v1/environment-visitor-sessions/{session_id}/assertions)
+	AttachEnvironmentVisitorAssertion(w http.ResponseWriter, r *http.Request, sessionId string)
+
+	// (POST /v1/environment-visitor-sessions/{session_id}/renew)
+	RenewEnvironmentVisitorSession(w http.ResponseWriter, r *http.Request, sessionId string)
 	// GetIdentityContext Read the authenticated identity and memberships
 	// (GET /v1/identity)
 	GetIdentityContext(w http.ResponseWriter, r *http.Request)
@@ -17159,20 +17303,14 @@ type ServerInterface interface {
 	// (POST /v1/machine-publication-sessions/{session_id}/refresh)
 	RefreshMachinePublication(w http.ResponseWriter, r *http.Request, sessionId string)
 
-	// (POST /v1/machine-workload-sessions/exchange)
-	ExchangeMachineWorkload(w http.ResponseWriter, r *http.Request)
-
-	// (POST /v1/machine-workload-sessions/{session_id}/assertions)
-	AttachMachineWorkloadAssertion(w http.ResponseWriter, r *http.Request, sessionId string)
+	// (POST /v1/projects/{project_key}/environments/{environment_id}/visitors/prepare)
+	PrepareEnvironmentVisitor(w http.ResponseWriter, r *http.Request, projectKey string, environmentId string)
 
 	// (POST /v1/provisioning-sessions/exchange)
 	ExchangeProvisioning(w http.ResponseWriter, r *http.Request)
 
 	// (POST /v1/publisher-enrollments/redeem)
 	RedeemPublisherEnrollment(w http.ResponseWriter, r *http.Request)
-
-	// (POST /v1/publisher-groups/{group_id}/resolve)
-	ResolvePublisherGroupWorkload(w http.ResponseWriter, r *http.Request, groupId string)
 
 	// (POST /v1/publisher-keys/rotate)
 	RotatePublisherKey(w http.ResponseWriter, r *http.Request)
@@ -17276,6 +17414,9 @@ type ServerInterface interface {
 	// (POST /v1/teams/{team_id}/domains/{domain_id}/default)
 	SetTeamDefaultDomain(w http.ResponseWriter, r *http.Request, teamId TeamID, domainId DomainID)
 
+	// (DELETE /v1/teams/{team_id}/environment-visitor-permissions/{permission_id})
+	RevokeEnvironmentVisitorPermission(w http.ResponseWriter, r *http.Request, teamId TeamID, permissionId string)
+
 	// (GET /v1/teams/{team_id}/feedback-policy)
 	GetTeamFeedbackPolicy(w http.ResponseWriter, r *http.Request, teamId string)
 
@@ -17297,6 +17438,9 @@ type ServerInterface interface {
 	// (DELETE /v1/teams/{team_id}/machine-identities/{machine_id})
 	RevokeMachineIdentity(w http.ResponseWriter, r *http.Request, teamId TeamID, machineId string)
 
+	// (POST /v1/teams/{team_id}/machine-identities/{machine_id}/environment-visitor-permissions)
+	CreateEnvironmentVisitorPermission(w http.ResponseWriter, r *http.Request, teamId TeamID, machineId string)
+
 	// (POST /v1/teams/{team_id}/machine-identities/{machine_id}/keys)
 	RotateMachineIdentityKey(w http.ResponseWriter, r *http.Request, teamId TeamID, machineId string)
 
@@ -17306,14 +17450,8 @@ type ServerInterface interface {
 	// (POST /v1/teams/{team_id}/machine-identities/{machine_id}/publication-permissions)
 	CreateMachinePublicationPermission(w http.ResponseWriter, r *http.Request, teamId TeamID, machineId string)
 
-	// (POST /v1/teams/{team_id}/machine-identities/{machine_id}/workload-permissions)
-	CreateMachineWorkloadPermission(w http.ResponseWriter, r *http.Request, teamId TeamID, machineId string)
-
 	// (DELETE /v1/teams/{team_id}/machine-publication-permissions/{permission_id})
 	RevokeMachinePublicationPermission(w http.ResponseWriter, r *http.Request, teamId TeamID, permissionId string)
-
-	// (DELETE /v1/teams/{team_id}/machine-workload-permissions/{permission_id})
-	RevokeMachineWorkloadPermission(w http.ResponseWriter, r *http.Request, teamId TeamID, permissionId string)
 	// ListTeamMemberships List team memberships
 	// (GET /v1/teams/{team_id}/memberships)
 	ListTeamMemberships(w http.ResponseWriter, r *http.Request, teamId TeamID)
@@ -17327,20 +17465,11 @@ type ServerInterface interface {
 	// (DELETE /v1/teams/{team_id}/provisioning-grants/{grant_id})
 	RevokeProvisioningGrant(w http.ResponseWriter, r *http.Request, teamId TeamID, grantId string)
 
-	// (POST /v1/workload-sessions/exchange)
-	ExchangeWorkload(w http.ResponseWriter, r *http.Request)
+	// (GET /v1/teams/{team_id}/workload-approvals/{intent_key})
+	GetWorkloadApproval(w http.ResponseWriter, r *http.Request, teamId TeamID, intentKey string)
 
-	// (POST /v1/workload-sessions/identity)
-	IdentifyWorkload(w http.ResponseWriter, r *http.Request)
-
-	// (DELETE /v1/workload-sessions/{session_id})
-	RevokeWorkloadSession(w http.ResponseWriter, r *http.Request, sessionId string)
-
-	// (POST /v1/workload-sessions/{session_id}/assertions)
-	AttachWorkloadAssertion(w http.ResponseWriter, r *http.Request, sessionId string)
-
-	// (POST /v1/workload-sessions/{session_id}/renew)
-	RenewWorkloadSession(w http.ResponseWriter, r *http.Request, sessionId string)
+	// (PUT /v1/teams/{team_id}/workload-approvals/{intent_key})
+	ApproveWorkload(w http.ResponseWriter, r *http.Request, teamId TeamID, intentKey string)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -17610,6 +17739,84 @@ func (siw *ServerInterfaceWrapper) RecoverCompanyOwner(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
+// RevokeEnvironmentVisitorSession operation middleware
+func (siw *ServerInterfaceWrapper) RevokeEnvironmentVisitorSession(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "session_id" -------------
+	var sessionId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "session_id", r.PathValue("session_id"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "session_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokeEnvironmentVisitorSession(w, r, sessionId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AttachEnvironmentVisitorAssertion operation middleware
+func (siw *ServerInterfaceWrapper) AttachEnvironmentVisitorAssertion(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "session_id" -------------
+	var sessionId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "session_id", r.PathValue("session_id"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "session_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AttachEnvironmentVisitorAssertion(w, r, sessionId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RenewEnvironmentVisitorSession operation middleware
+func (siw *ServerInterfaceWrapper) RenewEnvironmentVisitorSession(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "session_id" -------------
+	var sessionId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "session_id", r.PathValue("session_id"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "session_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RenewEnvironmentVisitorSession(w, r, sessionId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetIdentityContext operation middleware
 func (siw *ServerInterfaceWrapper) GetIdentityContext(w http.ResponseWriter, r *http.Request) {
 
@@ -17704,37 +17911,32 @@ func (siw *ServerInterfaceWrapper) RefreshMachinePublication(w http.ResponseWrit
 	handler.ServeHTTP(w, r)
 }
 
-// ExchangeMachineWorkload operation middleware
-func (siw *ServerInterfaceWrapper) ExchangeMachineWorkload(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ExchangeMachineWorkload(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// AttachMachineWorkloadAssertion operation middleware
-func (siw *ServerInterfaceWrapper) AttachMachineWorkloadAssertion(w http.ResponseWriter, r *http.Request) {
+// PrepareEnvironmentVisitor operation middleware
+func (siw *ServerInterfaceWrapper) PrepareEnvironmentVisitor(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	_ = err
 
-	// ------------- Path parameter "session_id" -------------
-	var sessionId string
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
 
-	err = runtime.BindStyledParameterWithOptions("simple", "session_id", r.PathValue("session_id"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "session_id", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment_id" -------------
+	var environmentId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment_id", r.PathValue("environment_id"), &environmentId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment_id", Err: err})
 		return
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.AttachMachineWorkloadAssertion(w, r, sessionId)
+		siw.Handler.PrepareEnvironmentVisitor(w, r, projectKey, environmentId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -17763,32 +17965,6 @@ func (siw *ServerInterfaceWrapper) RedeemPublisherEnrollment(w http.ResponseWrit
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RedeemPublisherEnrollment(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// ResolvePublisherGroupWorkload operation middleware
-func (siw *ServerInterfaceWrapper) ResolvePublisherGroupWorkload(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "group_id" -------------
-	var groupId string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "group_id", r.PathValue("group_id"), &groupId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "group_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ResolvePublisherGroupWorkload(w, r, groupId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -19420,6 +19596,41 @@ func (siw *ServerInterfaceWrapper) SetTeamDefaultDomain(w http.ResponseWriter, r
 	handler.ServeHTTP(w, r)
 }
 
+// RevokeEnvironmentVisitorPermission operation middleware
+func (siw *ServerInterfaceWrapper) RevokeEnvironmentVisitorPermission(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "team_id" -------------
+	var teamId TeamID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "team_id", r.PathValue("team_id"), &teamId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "permission_id" -------------
+	var permissionId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "permission_id", r.PathValue("permission_id"), &permissionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "permission_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokeEnvironmentVisitorPermission(w, r, teamId, permissionId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetTeamFeedbackPolicy operation middleware
 func (siw *ServerInterfaceWrapper) GetTeamFeedbackPolicy(w http.ResponseWriter, r *http.Request) {
 
@@ -19648,6 +19859,41 @@ func (siw *ServerInterfaceWrapper) RevokeMachineIdentity(w http.ResponseWriter, 
 	handler.ServeHTTP(w, r)
 }
 
+// CreateEnvironmentVisitorPermission operation middleware
+func (siw *ServerInterfaceWrapper) CreateEnvironmentVisitorPermission(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "team_id" -------------
+	var teamId TeamID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "team_id", r.PathValue("team_id"), &teamId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "machine_id" -------------
+	var machineId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "machine_id", r.PathValue("machine_id"), &machineId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "machine_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateEnvironmentVisitorPermission(w, r, teamId, machineId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // RotateMachineIdentityKey operation middleware
 func (siw *ServerInterfaceWrapper) RotateMachineIdentityKey(w http.ResponseWriter, r *http.Request) {
 
@@ -19753,41 +19999,6 @@ func (siw *ServerInterfaceWrapper) CreateMachinePublicationPermission(w http.Res
 	handler.ServeHTTP(w, r)
 }
 
-// CreateMachineWorkloadPermission operation middleware
-func (siw *ServerInterfaceWrapper) CreateMachineWorkloadPermission(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "team_id" -------------
-	var teamId TeamID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "team_id", r.PathValue("team_id"), &teamId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "machine_id" -------------
-	var machineId string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "machine_id", r.PathValue("machine_id"), &machineId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "machine_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateMachineWorkloadPermission(w, r, teamId, machineId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // RevokeMachinePublicationPermission operation middleware
 func (siw *ServerInterfaceWrapper) RevokeMachinePublicationPermission(w http.ResponseWriter, r *http.Request) {
 
@@ -19814,41 +20025,6 @@ func (siw *ServerInterfaceWrapper) RevokeMachinePublicationPermission(w http.Res
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RevokeMachinePublicationPermission(w, r, teamId, permissionId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// RevokeMachineWorkloadPermission operation middleware
-func (siw *ServerInterfaceWrapper) RevokeMachineWorkloadPermission(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "team_id" -------------
-	var teamId TeamID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "team_id", r.PathValue("team_id"), &teamId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "permission_id" -------------
-	var permissionId string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "permission_id", r.PathValue("permission_id"), &permissionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "permission_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RevokeMachineWorkloadPermission(w, r, teamId, permissionId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -19989,51 +20165,32 @@ func (siw *ServerInterfaceWrapper) RevokeProvisioningGrant(w http.ResponseWriter
 	handler.ServeHTTP(w, r)
 }
 
-// ExchangeWorkload operation middleware
-func (siw *ServerInterfaceWrapper) ExchangeWorkload(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ExchangeWorkload(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// IdentifyWorkload operation middleware
-func (siw *ServerInterfaceWrapper) IdentifyWorkload(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.IdentifyWorkload(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// RevokeWorkloadSession operation middleware
-func (siw *ServerInterfaceWrapper) RevokeWorkloadSession(w http.ResponseWriter, r *http.Request) {
+// GetWorkloadApproval operation middleware
+func (siw *ServerInterfaceWrapper) GetWorkloadApproval(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	_ = err
 
-	// ------------- Path parameter "session_id" -------------
-	var sessionId string
+	// ------------- Path parameter "team_id" -------------
+	var teamId TeamID
 
-	err = runtime.BindStyledParameterWithOptions("simple", "session_id", r.PathValue("session_id"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	err = runtime.BindStyledParameterWithOptions("simple", "team_id", r.PathValue("team_id"), &teamId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "session_id", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "intent_key" -------------
+	var intentKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "intent_key", r.PathValue("intent_key"), &intentKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "intent_key", Err: err})
 		return
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RevokeWorkloadSession(w, r, sessionId)
+		siw.Handler.GetWorkloadApproval(w, r, teamId, intentKey)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -20043,49 +20200,32 @@ func (siw *ServerInterfaceWrapper) RevokeWorkloadSession(w http.ResponseWriter, 
 	handler.ServeHTTP(w, r)
 }
 
-// AttachWorkloadAssertion operation middleware
-func (siw *ServerInterfaceWrapper) AttachWorkloadAssertion(w http.ResponseWriter, r *http.Request) {
+// ApproveWorkload operation middleware
+func (siw *ServerInterfaceWrapper) ApproveWorkload(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	_ = err
 
-	// ------------- Path parameter "session_id" -------------
-	var sessionId string
+	// ------------- Path parameter "team_id" -------------
+	var teamId TeamID
 
-	err = runtime.BindStyledParameterWithOptions("simple", "session_id", r.PathValue("session_id"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	err = runtime.BindStyledParameterWithOptions("simple", "team_id", r.PathValue("team_id"), &teamId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "session_id", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "intent_key" -------------
+	var intentKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "intent_key", r.PathValue("intent_key"), &intentKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "intent_key", Err: err})
 		return
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.AttachWorkloadAssertion(w, r, sessionId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// RenewWorkloadSession operation middleware
-func (siw *ServerInterfaceWrapper) RenewWorkloadSession(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "session_id" -------------
-	var sessionId string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "session_id", r.PathValue("session_id"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "session_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RenewWorkloadSession(w, r, sessionId)
+		siw.Handler.ApproveWorkload(w, r, teamId, intentKey)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -20215,6 +20355,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/teams/{team_id}/workload-approvals/{intent_key}", wrapper.GetWorkloadApproval)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/teams/{team_id}/workload-approvals/{intent_key}", wrapper.ApproveWorkload)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/teams/{team_id}/machine-identities/{machine_id}/publication-permissions", wrapper.CreateMachinePublicationPermission)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/teams/{team_id}/machine-publication-permissions/{permission_id}", wrapper.RevokeMachinePublicationPermission)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/machine-publication-sessions/exchange", wrapper.ExchangeMachinePublication)
@@ -20225,12 +20367,13 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/teams/{team_id}/machine-identities/{machine_id}/keys", wrapper.RotateMachineIdentityKey)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/teams/{team_id}/machine-identities/{machine_id}/provisioning-grants", wrapper.CreateProvisioningGrant)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/teams/{team_id}/provisioning-grants/{grant_id}", wrapper.RevokeProvisioningGrant)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/teams/{team_id}/machine-identities/{machine_id}/workload-permissions", wrapper.CreateMachineWorkloadPermission)
-	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/teams/{team_id}/machine-workload-permissions/{permission_id}", wrapper.RevokeMachineWorkloadPermission)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/teams/{team_id}/machine-identities/{machine_id}/environment-visitor-permissions", wrapper.CreateEnvironmentVisitorPermission)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/teams/{team_id}/environment-visitor-permissions/{permission_id}", wrapper.RevokeEnvironmentVisitorPermission)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/provisioning-sessions/exchange", wrapper.ExchangeProvisioning)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher-groups/{group_id}/resolve", wrapper.ResolvePublisherGroupWorkload)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/machine-workload-sessions/exchange", wrapper.ExchangeMachineWorkload)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/machine-workload-sessions/{session_id}/assertions", wrapper.AttachMachineWorkloadAssertion)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/environments/{environment_id}/visitors/prepare", wrapper.PrepareEnvironmentVisitor)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/environment-visitor-sessions/{session_id}/renew", wrapper.RenewEnvironmentVisitorSession)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/environment-visitor-sessions/{session_id}/assertions", wrapper.AttachEnvironmentVisitorAssertion)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/environment-visitor-sessions/{session_id}", wrapper.RevokeEnvironmentVisitorSession)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/service/teams/{team_id}/services", wrapper.ListWebsiteServices)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/service/services/{service_id}", wrapper.GetWebsiteService)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/service/services/{service_id}/grants", wrapper.ListWebsiteServiceGrants)
@@ -20243,11 +20386,6 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/service/services/{service_id}/http-grants", wrapper.ListWebsiteServiceHTTPGrants)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/services/{service_id}/http-grants", wrapper.CreateWebsiteServiceVisitorCredential)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/service/services/{service_id}/http-grants/{grant_id}", wrapper.RevokeWebsiteServiceHTTPGrant)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/workload-sessions/identity", wrapper.IdentifyWorkload)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/workload-sessions/{session_id}/assertions", wrapper.AttachWorkloadAssertion)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/workload-sessions/exchange", wrapper.ExchangeWorkload)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/workload-sessions/{session_id}/renew", wrapper.RenewWorkloadSession)
-	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/workload-sessions/{session_id}", wrapper.RevokeWorkloadSession)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/service/teams/{team_id}/identity-connections", wrapper.ReadCompanyConnections)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/teams/{team_id}/identity-connections", wrapper.BeginIdentityConnectionSetup)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/service/teams/{team_id}/identity-connections/{identity_connection_id}", wrapper.DisconnectIdentityConnection)

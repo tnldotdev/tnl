@@ -29,7 +29,7 @@ func groupFixture(t *testing.T) GroupFile {
 	if err != nil {
 		t.Fatal(err)
 	}
-	value, err := NewGroup("https://control.example", "replica-1", controlv1.PublisherGroupMember{TeamId: id(opaqueid.TeamPrefix), ProjectKey: "shop", GroupName: "production", GroupId: id("pgrp_"), PublisherIdentityId: id(opaqueid.PublisherIdentityPrefix), KeyId: id(opaqueid.PublisherIdentityKeyPrefix)}, key)
+	value, err := NewGroup("https://control.example", "replica-1", controlv1.EnvironmentPublisher{TeamId: id(opaqueid.TeamPrefix), ProjectKey: "shop", EnvironmentId: id(opaqueid.EnvironmentPrefix), PublisherIdentityId: id(opaqueid.PublisherIdentityPrefix), KeyId: id(opaqueid.PublisherIdentityKeyPrefix)}, key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestGroupIdentityUsesAppliedProjectKeyBounds(t *testing.T) {
 	value := groupFixture(t)
 	for _, key := range []string{"project-" + strings.Repeat("a", 48), strings.Repeat("a", 63)} {
 		value.Member.ProjectKey = key
-		if _, err := value.Validate(value.ControlURL, key, value.Member.GroupName, value.Instance); err != nil {
+		if _, err := value.Validate(value.ControlURL, key, value.Member.EnvironmentId, value.Instance); err != nil {
 			t.Fatalf("valid applied project key rejected: %v", err)
 		}
 		encoded, err := json.Marshal(value)
@@ -52,7 +52,7 @@ func TestGroupIdentityUsesAppliedProjectKeyBounds(t *testing.T) {
 		}
 	}
 	value.Member.ProjectKey = strings.Repeat("a", 64)
-	if _, err := value.Validate(value.ControlURL, value.Member.ProjectKey, value.Member.GroupName, value.Instance); !errors.Is(err, ErrInvalid) {
+	if _, err := value.Validate(value.ControlURL, value.Member.ProjectKey, value.Member.EnvironmentId, value.Instance); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("oversized project key accepted: %v", err)
 	}
 }
@@ -122,8 +122,9 @@ func TestGroupIdentityRejectsAmbiguousJSONAndDifferentDeploymentScope(t *testing
 		"", "null", valid + valid, strings.Repeat(" ", 8193),
 		strings.Replace(valid, `"version":1`, `"version":1,"version":1`, 1),
 		strings.Replace(valid, `"version":1`, `"version":1,"session":"must-not-be-accepted"`, 1),
-		strings.Replace(valid, `"member":{`, `"member":{"extra":true,`, 1),
-		strings.Replace(valid, `"member":{`, `"member":{"team_id":null,`, 1),
+		strings.Replace(valid, `"publisher":{`, `"publisher":{"extra":true,`, 1),
+		strings.Replace(valid, `"publisher":{`, `"publisher":{"team_id":null,`, 1),
+		strings.Replace(valid, `"publisher":{`, `"member":{`, 1),
 		strings.Replace(valid, `"version":1`, `"version":null`, 1),
 		strings.Replace(valid, value.PrivateKey, base64.RawURLEncoding.EncodeToString(make([]byte, ed25519.PrivateKeySize)), 1),
 	} {
@@ -132,9 +133,10 @@ func TestGroupIdentityRejectsAmbiguousJSONAndDifferentDeploymentScope(t *testing
 		}
 	}
 	for _, scope := range [][4]string{
-		{"https://other.example", "shop", "production", "replica-1"},
-		{value.ControlURL, "other", "production", "replica-1"},
-		{value.ControlURL, "shop", "production", "replica-2"},
+		{"https://other.example", "shop", value.Member.EnvironmentId, "replica-1"},
+		{value.ControlURL, "other", value.Member.EnvironmentId, "replica-1"},
+		{value.ControlURL, "shop", value.Member.EnvironmentId, "replica-2"},
+		{value.ControlURL, "shop", "production", "replica-1"},
 	} {
 		if _, err := value.Validate(scope[0], scope[1], scope[2], scope[3]); !errors.Is(err, ErrInvalid) {
 			t.Fatal("identity accepted for another deployment scope", err)

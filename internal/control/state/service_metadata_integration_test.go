@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
-	"maps"
 	"strings"
 	"testing"
 	"time"
@@ -14,33 +13,25 @@ import (
 func TestIntegrationServiceMetadataCorruptionRollsBackCallers(t *testing.T) {
 	d, now, _, leases := newPublishRunPrerequisites(t)
 	ctx := t.Context()
-	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{
-		"orders": {PublisherGroup: "production", Protocol: "tcp", Target: "orders.internal:5432"},
-		"local":  {Protocol: "tcp", Target: "local.internal:5432"},
-	}}
-	applied, err := d.ApplyProjectConfiguration(ctx, r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	localRequest := RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Service: "local", WorktreeKey: "checkout", ActorID: r.ActorID, Configuration: applied.Configuration.Services["local"], Now: now}
+	r := retainedEnvironmentProject(t, d, now)
+	applied, _ := retainedServiceEnvironment(t, d, r, "production", map[string]EnvironmentServicePublication{"orders": {Protocol: "tcp", Target: "orders.internal:5432"}})
+	localRequest := RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Service: "local", WorktreeKey: "checkout", ActorID: r.ActorID, Configuration: LocalServiceDeclaration{Protocol: "tcp", Target: "local.internal:5432"}, Now: now}
 	local, err := d.RealizeLocalProjectService(ctx, localRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
 	localLookup := GetLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Service: "local", WorktreeKey: "checkout", ActorID: r.ActorID, Now: now}
-	enrollment, err := d.IssuePublisherGroupEnrollment(ctx, r.TeamID, r.ProjectKey, "production", r.ActorID, 1, time.Hour, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	replica := enrollAppliedGroup(t, d, r, enrollment, now)
+	replica := enrollTestEnvironment(t, d, r, applied)
 	assignment := replica.assignments.Services[0]
-	access := groupAssignmentAccess(t, d, replica, assignment, now)
+	access := environmentAssignmentAccess(t, d, replica, assignment, now)
 	service, err := d.GetService(ctx, assignment.ServiceID, r.ActorID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	run := readyAppliedServiceRun(t, d, access, replica.private, service, leases, now)
+	if _, err := d.CreateServiceGrant(ctx, service.ID, r.ActorID, "metadata-owner", "identity", r.ActorID, nil, now); err != nil {
+		t.Fatal(err)
+	}
+	run := readyAppliedServiceRun(t, d, access, replica.private, service, leases, now, &replica.assignments.Environment)
 	public, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -49,14 +40,7 @@ func TestIntegrationServiceMetadataCorruptionRollsBackCallers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	projectLookup := GetProjectServiceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Service: "orders", IdentityID: r.ActorID, Now: now}
-	next := r
-	next.ExpectedRevision, next.Now = applied.Revision, now.Add(time.Second)
-	next.Configuration = applied.Configuration
-	next.Configuration.Services = maps.Clone(applied.Configuration.Services)
-	orders := next.Configuration.Services["orders"]
-	orders.Target = "replacement.internal:5432"
-	next.Configuration.Services["orders"] = orders
+	next := ApplyEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, EnvironmentApplication: EnvironmentApplication{EnvironmentID: applied.ID, ExpectedRevision: applied.MutationRevision, DefinitionRevision: applied.AppliedDefinitionRevision, Targets: EnvironmentTargets{"orders": {Address: "replacement.internal:5432"}}}, Now: now.Add(time.Second)}
 
 	// failed reconciliation must roll back earlier run/grant changes, desired
 	// configuration and audit, as well as the corrupt saved row.
@@ -65,6 +49,8 @@ func TestIntegrationServiceMetadataCorruptionRollsBackCallers(t *testing.T) {
 		var data string
 		if err := d.pool.QueryRow(ctx, `SELECT jsonb_build_array(
 		    (SELECT jsonb_agg(to_jsonb(p) ORDER BY team_id,project_key) FROM control.applied_projects p),
+		    (SELECT jsonb_agg(to_jsonb(e) ORDER BY id) FROM control.environments e),
+		    (SELECT jsonb_agg(to_jsonb(b) ORDER BY group_id) FROM control.publisher_group_bindings b),
 		    (SELECT jsonb_agg(to_jsonb(g) ORDER BY id) FROM control.project_publisher_groups g),
 		    (SELECT jsonb_agg(to_jsonb(s) ORDER BY team_id,project_key,service) FROM control.applied_project_services s),
 		    (SELECT jsonb_agg(to_jsonb(l) ORDER BY team_id,project_key,service,worktree_key) FROM control.local_project_services l),
@@ -129,7 +115,7 @@ func TestIntegrationServiceMetadataCorruptionRollsBackCallers(t *testing.T) {
 						check("local reconciliation", err)
 					}
 				} else {
-					got, err := d.GetProjectService(ctx, projectLookup)
+					got, err := d.GetService(ctx, service.ID, r.ActorID)
 					check("applied visitor lookup", err)
 					if tc.valid && (got.ID != scope.id || (got.TLS != nil) != tc.tls) {
 						t.Fatal("applied visitor lookup changed valid metadata")
@@ -140,9 +126,9 @@ func TestIntegrationServiceMetadataCorruptionRollsBackCallers(t *testing.T) {
 						t.Fatal("visitor selection changed the saved run or trust")
 					}
 				}
-				if !tc.valid {
-					_, err := d.ApplyProjectConfiguration(ctx, next)
-					check("applied reconciliation", err)
+				if !tc.valid && scope.name == "applied" {
+					_, err := d.ApplyEnvironment(ctx, next)
+					check("environment reconciliation", err)
 				}
 				if snapshot(t) != before {
 					t.Fatal("metadata read or failed reconciliation committed transaction mutations")

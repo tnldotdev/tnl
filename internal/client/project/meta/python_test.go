@@ -1,198 +1,131 @@
 package meta
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/tnldotdev/tnl/internal/config"
 )
 
-func TestPythonFacadePortableSourceShapeAndStrictMypy(t *testing.T) {
+func TestPythonServiceFactsRuntimeAndStrictMypy(t *testing.T) {
 	repository, err := filepath.Abs("../../../..")
 	if err != nil {
 		t.Fatal(err)
 	}
 	python := filepath.Join(repository, "packages/py/.venv/bin/python")
 	if _, err := os.Stat(python); err != nil {
-		t.Skip("run uv sync --frozen --project packages/py for generated facade type checks")
+		t.Skip("run uv sync --frozen --project packages/py for generated type checks")
 	}
-	for _, scenario := range []string{"static", "single", "empty", "factory"} {
-		t.Run(scenario, func(t *testing.T) {
-			root, err := filepath.EvalSymlinks(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
-			postgres, tcp, mysql, kubernetes := "postgres", "tcp", "mysql", "kubernetes"
-			configuration := config.TNL{Services: config.Services{"database": {Protocol: &postgres}, "web": {}, "stream": {Protocol: &tcp}, "mysql": {Protocol: &mysql}, "cluster": {Protocol: &kubernetes}}}
-			path := "tnl.yml"
-			usage := `from typing import Literal, assert_type
-import tnl as native
-from tnl_project import tnl
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := pythonServices(serviceFacts{"api": "http", "database": "postgres", "mysql": "mysql", "raw": "tcp", "cluster": "kubernetes"})
+	if err := writeArtifacts(root, files, false); err != nil {
+		t.Fatal(err)
+	}
+	usage := `from typing import assert_type, TYPE_CHECKING
+from datetime import UTC, datetime, timedelta
+import tnl
+from tnl import HTTPConnection, PostgresConnection, MySQLConnection, TCPConnection, KubernetesConnection
+from tnl_project import services
 
-handle = tnl.connect("database")
-assert_type(handle, native.PostgresConnectionHandle)
-assert_type(handle.protocol, Literal["postgres"])
-assert_type(handle.server_hostname, str)
-assert_type(handle.snapshot().protocol, Literal["postgres"])
-assert_type(tnl.connect("web").url, str)
-assert_type(tnl.connect("web").snapshot().url, str)
-assert_type(tnl.connect("stream").snapshot().protocol, Literal["tcp"])
-tnl.connect("stream").snapshot().ssl  # type: ignore[attr-defined]
-tnl.connect("stream").ssl  # type: ignore[misc]
-assert_type(tnl.connect("mysql").snapshot().protocol, Literal["mysql"])
-assert_type(tnl.connect("cluster").context, str)
-assert_type(tnl.connect("cluster").snapshot().protocol, Literal["kubernetes"])
-tnl.connect("missing")  # type: ignore[call-overload]
-handle.url  # type: ignore[attr-defined]
-handle.snapshot().url  # type: ignore[attr-defined]
+assert services["database"]["protocol"] == "postgres"
+assert services["api"]["protocol"] == "http"
+assert list(services) == ["api", "cluster", "database", "mysql", "raw"]
 
-async def use() -> None:
-    result = await handle
-    assert_type(result, native.PostgresConnection)
-    assert_type(result.protocol, Literal["postgres"])
-    await result  # type: ignore[misc]
+async def assertion() -> tnl.OIDCAssertion:
+    return tnl.OIDCAssertion("test.assertion", datetime.now(UTC) + timedelta(minutes=1))
+
+if TYPE_CHECKING:
+    async def check() -> None:
+        async with tnl.client(services=services,
+            environment=tnl.EnvironmentReference("https://control.example", "project", "env_" + "a" * 22),
+            identity=tnl.IdentitySource("oidc", "mci_" + "a" * 22, assertion, permission_id="mwp_" + "a" * 22)) as client:
+            assert_type(await client.connect("api"), HTTPConnection)
+            assert_type(await client.connect("database"), PostgresConnection)
+            assert_type(await client.connect("mysql"), MySQLConnection)
+            assert_type(await client.connect("raw"), TCPConnection)
+            assert_type(await client.connect("cluster"), KubernetesConnection)
+            await client.connect("missing")  # type: ignore[call-overload]
+            (await client.connect("database")).url  # type: ignore[attr-defined]
 `
-			if scenario == "single" {
-				configuration.Services = config.Services{"database": {Protocol: &postgres}}
-				usage = `from typing import assert_type
-import tnl as native
-from tnl_project import tnl
-assert_type(tnl.connect("database").snapshot(), native.PostgresConnection)
-tnl.connect("missing")  # type: ignore[arg-type]
-`
-			}
-			if scenario == "empty" {
-				configuration.Services = config.Services{}
-				usage = "from tnl_project import tnl\ntnl.connect(\"missing\")  # type: ignore[arg-type]\n"
-			}
-			if scenario == "factory" {
-				path = "tnl.config.ts"
-				usage = `from typing import assert_type
-import tnl as native
-from tnl_project import tnl
-assert_type(tnl.connect("only-in-another-worktree").snapshot(), native.Connection)
-`
-			}
-			if scenario == "static" || scenario == "single" {
-				usage += `
-class DatabaseClient:
-    def query(self) -> int:
-        return 42
-
-def create_database(connection: native.PostgresConnection) -> DatabaseClient:
-    assert_type(connection.port, int)
-    return DatabaseClient()
-
-async def create_async_database(connection: native.PostgresConnection) -> DatabaseClient:
-    return create_database(connection)
-
-async def close_database(client: DatabaseClient) -> None:
-    assert_type(client.query(), int)
-
-get_database = tnl.client("database", create=create_database, close=close_database)
-assert_type(get_database, native.ClientFactory[DatabaseClient])
-get_async_database = tnl.client("database", create=create_async_database, close=close_database)
-assert_type(get_async_database, native.ClientFactory[DatabaseClient])
-
-async def use_clients() -> None:
-    assert_type(await get_database(), DatabaseClient)
-    assert_type(await get_async_database(), DatabaseClient)
-    await get_database.aclose()
-`
-			}
-			files, err := PythonFacade(configuration, path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := writeArtifacts(root, files, true); !os.IsNotExist(err) {
-				t.Fatal("read-only check accepted absent output", err)
-			}
-			if _, err := os.Stat(filepath.Join(root, "python")); !os.IsNotExist(err) {
-				t.Fatal("check created output")
-			}
-			if err := writeArtifacts(root, files, false); err != nil {
-				t.Fatal(err)
-			}
-			if err := writeArtifacts(root, files, true); err != nil {
-				t.Fatal(err)
-			}
-			if scenario == "factory" {
-				other, err := PythonFacade(config.TNL{}, path)
-				if err != nil || !reflect.DeepEqual(files, other) {
-					t.Fatal("factory typing depended on one evaluated checkout", err)
-				}
-			}
-			if err := os.WriteFile(filepath.Join(root, "usage.py"), []byte(usage), 0600); err != nil {
-				t.Fatal(err)
-			}
-			command := exec.CommandContext(t.Context(), python, "-m", "mypy", "--strict", "--no-incremental", "--config-file", filepath.Join(repository, "packages/py/pyproject.toml"), filepath.Join(root, "usage.py"), filepath.Join(root, "python/tnl_project"))
-			command.Dir = repository
-			command.Env = append(os.Environ(), "MYPYPATH="+filepath.Join(root, "python")+string(os.PathListSeparator)+filepath.Join(repository, "packages/py/src"))
-			if output, err := command.CombinedOutput(); err != nil {
-				t.Fatalf("generated facade typecheck: %v\n%s\n%s", err, output, files["python/tnl_project/__init__.py"])
-			}
-		})
+	if err := os.WriteFile(filepath.Join(root, "usage.py"), []byte(usage), 0600); err != nil {
+		t.Fatal(err)
+	}
+	paths := filepath.Join(root, "python") + string(os.PathListSeparator) + filepath.Join(repository, "packages/py/src")
+	for _, arguments := range [][]string{
+		{"-m", "mypy", "--strict", "--no-incremental", "--config-file", filepath.Join(repository, "packages/py/pyproject.toml"), filepath.Join(root, "usage.py"), filepath.Join(root, "python/tnl_project")},
+		{filepath.Join(root, "usage.py")},
+		{"-m", "ruff", "format", "--check", "--diff", filepath.Join(root, "python/tnl_project/__init__.py")},
+	} {
+		command := exec.CommandContext(t.Context(), python, arguments...)
+		command.Dir = repository
+		command.Env = append(os.Environ(), "MYPYPATH="+paths, "PYTHONPATH="+paths)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("generated Python facts check failed: %v\n%s", err, output)
+		}
+	}
+	if strings.Contains(string(files["python/tnl_project/__init__.py"]), "tnl =") {
+		t.Fatal("generated a second SDK object")
 	}
 }
 
-func TestPythonFacadeRejectsSymlinks(t *testing.T) {
+func TestPythonServiceFactsRejectSymlinks(t *testing.T) {
 	for _, scenario := range []string{"ancestor", "module", "file"} {
 		t.Run(scenario, func(t *testing.T) {
 			root, _ := filepath.EvalSymlinks(t.TempDir())
 			outside := t.TempDir()
-			files, err := PythonFacade(config.TNL{}, "tnl.yml")
-			if err != nil {
-				t.Fatal(err)
-			}
+			files := pythonServices(serviceFacts{})
 			if scenario == "ancestor" {
-				err = os.Symlink(outside, filepath.Join(root, "python"))
+				if err := os.Symlink(outside, filepath.Join(root, "python")); err != nil {
+					t.Fatal(err)
+				}
 			} else {
 				if err := os.Mkdir(filepath.Join(root, "python"), 0755); err != nil {
 					t.Fatal(err)
 				}
 				if scenario == "module" {
-					err = os.Symlink(outside, filepath.Join(root, "python/tnl_project"))
+					if err := os.Symlink(outside, filepath.Join(root, "python/tnl_project")); err != nil {
+						t.Fatal(err)
+					}
 				} else {
 					if err := os.Mkdir(filepath.Join(root, "python/tnl_project"), 0755); err != nil {
 						t.Fatal(err)
 					}
-					err = os.Symlink(filepath.Join(outside, "untouched"), filepath.Join(root, "python/tnl_project/__init__.py"))
+					if err := os.Symlink(filepath.Join(outside, "untouched"), filepath.Join(root, "python/tnl_project/__init__.py")); err != nil {
+						t.Fatal(err)
+					}
 				}
 			}
-			if err != nil {
-				t.Fatal(err)
-			}
 			if err := writeArtifacts(root, files, false); err == nil {
-				t.Fatal("unsafe output was accepted")
+				t.Fatal("unsafe output accepted")
 			}
 			if entries, err := os.ReadDir(outside); err != nil || len(entries) != 0 {
-				t.Fatal("wrote outside output directory", err)
+				t.Fatal("wrote outside output directory")
 			}
 		})
 	}
 }
 
-func TestPythonFacadeContainsNamesAndProtocolsOnly(t *testing.T) {
-	protocol := "postgres"
-	address := config.Target("secret-target:5432")
-	configuration := config.TNL{Services: config.Services{"database": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &address}}}}
-	files, err := PythonFacade(configuration, "/private/checkout/tnl.yml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, data := range files {
-		for _, forbidden := range []string{"secret-target", "/private/checkout", "5432", "credential"} {
-			if bytes.Contains(data, []byte(forbidden)) {
-				t.Fatal("portable facade contains local values")
+func TestPythonServiceFactsTypingEdgeCases(t *testing.T) {
+	repository, err := filepath.Abs("../../../..")
+	if err != nil { t.Fatal(err) }
+	python := filepath.Join(repository, "packages/py/.venv/bin/python")
+	if _, err := os.Stat(python); err != nil { t.Skip("run the locked Python SDK sync for generated type checks") }
+	for name, facts := range map[string]serviceFacts{"empty": {}, "single": {"db":"postgres"}, "long name": {strings.Repeat("a",63):"postgres"}} {
+		t.Run(name,func(t *testing.T){
+			root, err := filepath.EvalSymlinks(t.TempDir()); if err != nil {t.Fatal(err)}
+			if err := writeArtifacts(root,pythonServices(facts),false); err != nil {t.Fatal(err)}
+			paths := filepath.Join(root,"python") + string(os.PathListSeparator) + filepath.Join(repository,"packages/py/src")
+			for _, args := range [][]string{
+				{"-m","mypy","--strict","--no-incremental","--config-file",filepath.Join(repository,"packages/py/pyproject.toml"),filepath.Join(root,"python/tnl_project")},
+				{"-m","ruff","format","--check","--diff",filepath.Join(root,"python/tnl_project/__init__.py")},
+			} {
+				command:=exec.CommandContext(t.Context(),python,args...);command.Dir=repository;command.Env=append(os.Environ(),"MYPYPATH="+paths,"PYTHONPATH="+paths)
+				if output,err:=command.CombinedOutput();err!=nil{t.Fatalf("generated edge case failed: %v\n%s",err,output)}
 			}
-		}
-	}
-	if !strings.Contains(string(files["python/tnl_project/__init__.py"]), `Literal["database"]`) {
-		t.Fatal("static service literal missing")
+		})
 	}
 }

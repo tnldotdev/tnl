@@ -1,5 +1,5 @@
-// package workloadclient is the connector visitor authentication adapter for a
-// provider workload. the caller owns its in-memory lifetime and renewal loop.
+// package workload owns the environment visitor adapter and its retained leased
+// visitor transport. the caller owns its in-memory lifetime and renewal loop.
 package workload
 
 import (
@@ -11,13 +11,15 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io"
+	"maps"
 	"math"
 	"net/http"
 	"reflect"
-	"regexp"
 	"slices"
 	"sync"
 	"time"
@@ -27,32 +29,37 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/security/machineproof"
 	"github.com/tnldotdev/tnl/internal/security/workloadproof"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-var ErrNoSession = errors.New("workload exchange has not succeeded")
-var ErrSessionExpired = errors.New("workload session expired")
-var githubExecutionID = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
-var bindingID = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var ErrNoSession = errors.New("environment visitor preparation has not succeeded")
+var ErrSessionExpired = errors.New("environment visitor session expired")
 
 type Client struct {
 	mu         sync.RWMutex
 	operations sync.Mutex
 	key        ed25519.PrivateKey
+	server     string
 	authority  *clientauthority.Client
 	control    *clientcontrol.Client
-	session    authorityv1.WorkloadSession
+	session    authorityv1.EnvironmentVisitorSession
+	selection  authorityv1.EnvironmentVisitorPreparation
+	reference  controlv1.EnvironmentReference
+	admitted   map[string]authorityv1.EnvironmentVisitorService
+	permission string
+	expected   map[string]string
 	nonce      string
 }
 
-func (*Client) String() string   { return "workload visitor client" }
-func (*Client) GoString() string { return "workload visitor client" }
+func (*Client) String() string   { return "environment visitor client" }
+func (*Client) GoString() string { return "environment visitor client" }
 
-// New creates one ephemeral execution key. retain this adapter across exchange
-// retries: a replacement key cannot take over an already-started execution.
+// new creates one ephemeral session key. retain this adapter across preparation
+// retries: a replacement key cannot take over an already-started session.
 func New(server string, httpClient *http.Client) (*Client, error) {
 	_, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -79,19 +86,39 @@ func NewWithKey(server string, httpClient *http.Client, key ed25519.PrivateKey) 
 	if _, err = rand.Read(nonce); err != nil {
 		return nil, err
 	}
-	return &Client{key: slices.Clone(key), authority: authority, control: control, nonce: base64.RawURLEncoding.EncodeToString(nonce)}, nil
+	return &Client{key: slices.Clone(key), server: server, authority: authority, control: control, nonce: base64.RawURLEncoding.EncodeToString(nonce)}, nil
 }
 
-func (c *Client) Exchange(ctx context.Context, team, project, source, workload, assertion string, services []string) (authorityv1.WorkloadSession, error) {
+func (c *Client) Prepare(ctx context.Context, environment controlv1.EnvironmentReference, permission, assertion string, services map[string]string) (authorityv1.EnvironmentVisitorPreparation, error) {
 	c.operations.Lock()
 	defer c.operations.Unlock()
-	digest := sha256.Sum256([]byte(assertion))
-	body := authorityv1.WorkloadExchange{TeamId: team, ProjectKey: project, SourceFingerprint: source, Workload: workload, Nonce: c.nonce, Assertion: assertion, PublicKey: base64.RawURLEncoding.EncodeToString(c.key.Public().(ed25519.PublicKey)), Signature: base64.RawURLEncoding.EncodeToString(ed25519.Sign(c.key, workloadproof.Exchange(team, project, workload, source, c.nonce, digest, services)))}
-	if services != nil {
-		selected := slices.Clone(services)
-		body.Services = &selected
+	services = maps.Clone(services)
+	if environment.Server != c.server || !naming.ValidProjectKey(environment.ProjectKey) || !opaqueid.Valid(environment.EnvironmentId, opaqueid.EnvironmentPrefix) || !opaqueid.Valid(permission, "mwp_") || len(services) < 1 || len(services) > 32 {
+		return authorityv1.EnvironmentVisitorPreparation{}, invalidSession()
 	}
-	r, err := c.authority.ExchangeWorkload(ctx, body)
+	digest := sha256.Sum256([]byte(assertion))
+	public := base64.RawURLEncoding.EncodeToString(c.PublicKey())
+	protocols := make(map[string]controlv1.ServiceProtocol, len(services))
+	for name, protocol := range services {
+		if !naming.ValidServiceName(name) || !controlv1.ServiceProtocol(protocol).Valid() {
+			return authorityv1.EnvironmentVisitorPreparation{}, invalidSession()
+		}
+		protocols[name] = controlv1.ServiceProtocol(protocol)
+	}
+	// pin the complete intent before the first network attempt, including a
+	// response that might be lost. a narrowed current view never rewrites it.
+	c.mu.Lock()
+	if c.expected != nil {
+		if c.reference != environment || c.permission != permission || !maps.Equal(c.expected, services) {
+			c.mu.Unlock()
+			return authorityv1.EnvironmentVisitorPreparation{}, invalidSession()
+		}
+	} else {
+		c.reference, c.permission, c.expected = environment, permission, maps.Clone(services)
+	}
+	c.mu.Unlock()
+	body := authorityv1.EnvironmentVisitorPrepareRequest{PermissionId: permission, Nonce: c.nonce, Assertion: assertion, PublicKey: public, Services: protocols, Signature: base64.RawURLEncoding.EncodeToString(ed25519.Sign(c.key, machineproof.EnvironmentVisitorPossession(environment.ProjectKey, permission, environment.EnvironmentId, "prepare", public, c.nonce, services, digest)))}
+	r, err := c.authority.PrepareEnvironmentVisitor(ctx, environment.ProjectKey, environment.EnvironmentId, body)
 	if err != nil {
 		var problem *clientauthority.ProblemError
 		if errors.As(err, &problem) && problem.Status == http.StatusGone {
@@ -99,49 +126,41 @@ func (c *Client) Exchange(ctx context.Context, team, project, source, workload, 
 		}
 		return r, err
 	}
-	if err = validateSession(r); err != nil {
-		return authorityv1.WorkloadSession{}, err
+	if err = validatePreparation(environment, services, r); err != nil {
+		return authorityv1.EnvironmentVisitorPreparation{}, err
 	}
-	if opaqueid.Valid(team, opaqueid.TeamPrefix) && r.TeamId != team || r.ProjectKey != project || r.Workload != workload {
-		return authorityv1.WorkloadSession{}, invalidSession()
+	if err := context.Cause(ctx); err != nil {
+		return authorityv1.EnvironmentVisitorPreparation{}, err
 	}
 	if current, err := c.Session(); err == nil {
-		if err := validateSessionUpdate(current, r); err != nil {
-			return authorityv1.WorkloadSession{}, err
+		if err := validateSessionUpdate(current, r.Session); err != nil {
+			return authorityv1.EnvironmentVisitorPreparation{}, err
+		}
+		for name, service := range r.Services {
+			original, known := c.admitted[name]
+			if !known || service.ServiceId != original.ServiceId || service.Protocol != original.Protocol {
+				return authorityv1.EnvironmentVisitorPreparation{}, invalidSession()
+			}
 		}
 	}
 	c.mu.Lock()
-	c.session = cloneSession(r)
+	c.session = cloneSession(r.Session)
+	c.selection = clonePreparation(r)
+	if c.admitted == nil {
+		c.admitted = clonePreparation(r).Services
+	}
 	c.mu.Unlock()
 	return r, nil
 }
 
-func validateSession(r authorityv1.WorkloadSession) error {
+func validateSession(r authorityv1.EnvironmentVisitorSession) error {
 	if !r.IdentityExpiresAt.After(time.Now()) || r.IdentityExpiresAt.After(time.Now().Add(12*time.Hour+time.Minute)) || r.LeaseExpiresAt.After(r.IdentityExpiresAt) {
 		return invalidSession()
 	}
 	if r.RenewalSequence < 0 {
 		return invalidSession()
 	}
-	// supplied proof expiry is verification metadata. exchange retries may
-	// verify a newer proof without attaching it to the saved session's authority.
-	if r.AssertionExpiresAt != nil && (!r.AssertionExpiresAt.After(time.Now()) || r.AssertionExpiresAt.After(time.Now().Add(12*time.Hour+time.Minute))) {
-		return invalidSession()
-	}
-	if r.Provider == controlv1.WorkloadGitHub {
-		g := r.Github
-		if g == nil {
-			return invalidSession()
-		}
-		for _, id := range []string{g.RepositoryId, g.RepositoryOwnerId, g.RunId, g.RunAttempt, g.CheckRunId} {
-			if !githubExecutionID.MatchString(id) {
-				return invalidSession()
-			}
-		}
-	} else if r.Github != nil {
-		return invalidSession()
-	}
-	if !bindingID.MatchString(r.Binding) || !naming.ValidServiceName(r.Workload) || !slices.Contains([]string{"github", "vercel", "fly", "oidc", "google", "kubernetes", "gitlab"}, string(r.Provider)) || r.LeaseExpiresAt.After(time.Now().Add(91*time.Second)) {
+	if r.LeaseExpiresAt.After(time.Now().Add(91 * time.Second)) {
 		return invalidSession()
 	}
 	if r.ExpiresAt != nil && (!r.ExpiresAt.After(time.Now()) || r.LeaseExpiresAt.After(*r.ExpiresAt)) {
@@ -161,18 +180,96 @@ func validateSession(r authorityv1.WorkloadSession) error {
 	return nil
 }
 func invalidSession() error {
-	return failure.Wrap("read workload session", failure.ServerResponseInvalid, errors.New("invalid workload session response"))
+	return failure.Wrap("read environment visitor session", failure.ServerResponseInvalid, errors.New("invalid environment visitor response"))
 }
-func (c *Client) Session() (authorityv1.WorkloadSession, error) {
+
+func validatePreparation(environment controlv1.EnvironmentReference, expected map[string]string, r authorityv1.EnvironmentVisitorPreparation) error {
+	if r.Environment != environment || r.AppliedDefinitionRevision < 1 || r.MutationRevision < 1 || len(expected) < 1 || len(expected) > 32 || len(r.Services) > len(expected) || len(r.Session.ServiceIds) != len(r.Services) {
+		return invalidSession()
+	}
+	if err := validateSession(r.Session); err != nil {
+		return err
+	}
+	seen := map[string]bool{}
+	for name, s := range r.Services {
+		protocol, ok := expected[name]
+		host, hostErr := naming.CanonicalizeHostname(s.Endpoint.Hostname)
+		if !ok || !naming.ValidServiceName(name) || string(s.Protocol) != protocol || !opaqueid.Valid(s.ServiceId, opaqueid.ServicePrefix) || !slices.Contains(r.Session.ServiceIds, s.ServiceId) || seen[s.ServiceId] || hostErr != nil || host != s.Endpoint.Hostname || s.Endpoint.Port < 1 || s.Endpoint.Port > 65535 || (protocol != "kubernetes" && s.KubernetesAuth != nil) {
+			return invalidSession()
+		}
+		seen[s.ServiceId] = true
+	}
+	return nil
+}
+
+func clonePreparation(r authorityv1.EnvironmentVisitorPreparation) authorityv1.EnvironmentVisitorPreparation {
+	r.Session = cloneSession(r.Session)
+	r.Services = maps.Clone(r.Services)
+	for name, service := range r.Services {
+		if service.KubernetesAuth != nil {
+			service.KubernetesAuth = new(*service.KubernetesAuth)
+		}
+		r.Services[name] = service
+	}
+	return r
+}
+
+// preparation is a detached snapshot of the exact admission, never a name lookup.
+func (c *Client) Preparation() (authorityv1.EnvironmentVisitorPreparation, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if c.session.Id == "" {
-		return authorityv1.WorkloadSession{}, ErrNoSession
+		return authorityv1.EnvironmentVisitorPreparation{}, ErrNoSession
+	}
+	r := clonePreparation(c.selection)
+	r.Session = cloneSession(c.session)
+	return r, nil
+}
+
+// proofScope is the defining registered-key JWT grant_id and exact audience.
+// the caller signs with its source key; the ephemeral key never leaves native.
+func (c *Client) ProofScope(environment controlv1.EnvironmentReference, permission, operation string, services map[string]string) (string, string) {
+	nonce := c.nonce
+	if operation == "attach" {
+		c.mu.RLock()
+		nonce = c.session.Id
+		c.mu.RUnlock()
+	}
+	public := base64.RawURLEncoding.EncodeToString(c.PublicKey())
+	audience := c.server + "/v1/projects/" + environment.ProjectKey + "/environments/" + environment.EnvironmentId + "/visitors/prepare"
+	if operation == "attach" {
+		audience = c.server + "/v1/environment-visitor-sessions/" + nonce + "/assertions"
+	}
+	return machineproof.EnvironmentVisitor(permission, environment.EnvironmentId, operation, public, nonce, services), audience
+}
+
+func (c *Client) Binding() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	b, _ := json.Marshal([]any{c.reference, c.permission, c.expected, c.session.Id})
+	digest := sha256.Sum256(b)
+	return fmt.Sprintf("%x", digest)
+}
+func (c *Client) Session() (authorityv1.EnvironmentVisitorSession, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.session.Id == "" {
+		return authorityv1.EnvironmentVisitorSession{}, ErrNoSession
 	}
 	r := c.session
 	return cloneSession(r), nil
 }
-func (c *Client) Renew(ctx context.Context) (authorityv1.WorkloadSession, error) {
+
+// callers hold mu. keep the current response view coherent without changing
+// the original complete intent or the immutable IDs already admitted.
+func (c *Client) acceptSessionLocked(next authorityv1.EnvironmentVisitorSession) {
+	c.session = cloneSession(next)
+	c.selection.Session = cloneSession(next)
+	for name, service := range c.selection.Services {
+		if !slices.Contains(next.ServiceIds, service.ServiceId) { delete(c.selection.Services, name) }
+	}
+}
+func (c *Client) Renew(ctx context.Context) (authorityv1.EnvironmentVisitorSession, error) {
 	c.operations.Lock()
 	defer c.operations.Unlock()
 	r, err := c.Session()
@@ -180,59 +277,30 @@ func (c *Client) Renew(ctx context.Context) (authorityv1.WorkloadSession, error)
 		return r, err
 	}
 	if r.RenewalSequence == math.MaxInt64 {
-		return authorityv1.WorkloadSession{}, invalidSession()
+		return authorityv1.EnvironmentVisitorSession{}, invalidSession()
 	}
 	sequence := r.RenewalSequence + 1
-	body := authorityv1.WorkloadRenewal{Sequence: sequence, Signature: base64.RawURLEncoding.EncodeToString(ed25519.Sign(c.key, workloadproof.Renew(r.Id, sequence)))}
-	next, err := c.authority.RenewWorkloadSession(ctx, r.Id, r.Credential, body)
+	body := authorityv1.EnvironmentVisitorRenewal{Sequence: sequence, Signature: base64.RawURLEncoding.EncodeToString(ed25519.Sign(c.key, workloadproof.Renew(r.Id, sequence)))}
+	next, err := c.authority.RenewEnvironmentVisitorSession(ctx, r.Id, r.Credential, body)
 	if err != nil {
 		return next, err
 	}
 	if err = validateSessionUpdate(r, next); err != nil {
-		return authorityv1.WorkloadSession{}, err
+		return authorityv1.EnvironmentVisitorSession{}, err
 	}
 	if next.RenewalSequence != sequence {
-		return authorityv1.WorkloadSession{}, invalidSession()
+		return authorityv1.EnvironmentVisitorSession{}, invalidSession()
 	}
 	if err := context.Cause(ctx); err != nil {
-		return authorityv1.WorkloadSession{}, err
+		return authorityv1.EnvironmentVisitorSession{}, err
 	}
 	c.mu.Lock()
-	c.session = cloneSession(next)
+	c.acceptSessionLocked(next)
 	c.mu.Unlock()
 	return next, nil
 }
 
-func (c *Client) Identify(ctx context.Context, team, project, source, workload, assertion string) (string, error) {
-	r, err := c.IdentifyPolicy(ctx, team, project, source, workload, assertion)
-	if err != nil {
-		return "", err
-	}
-	if len(r.Binding) != 64 {
-		return "", invalidSession()
-	}
-	return r.Binding, nil
-}
-
-func (c *Client) IdentifyPolicy(ctx context.Context, team, project, source, workload, assertion string) (authorityv1.WorkloadIdentity, error) {
-	r, err := c.authority.IdentifyWorkload(ctx, authorityv1.WorkloadIdentityRequest{TeamId: team, ProjectKey: project, SourceFingerprint: source, Workload: workload, Assertion: assertion})
-	if err != nil {
-		return r, err
-	}
-	if !bindingID.MatchString(r.Binding) || len(r.Services) == 0 || len(r.Services) > 32 || !r.AssertionExpiresAt.After(time.Now()) || r.AssertionExpiresAt.After(time.Now().Add(12*time.Hour+time.Minute)) {
-		return authorityv1.WorkloadIdentity{}, invalidSession()
-	}
-	seen := map[string]bool{}
-	for _, name := range r.Services {
-		if !naming.ValidServiceName(name) || seen[name] {
-			return authorityv1.WorkloadIdentity{}, invalidSession()
-		}
-		seen[name] = true
-	}
-	return r, nil
-}
-
-func (c *Client) Attach(ctx context.Context, assertion string) (authorityv1.WorkloadSession, error) {
+func (c *Client) Attach(ctx context.Context, assertion string) (authorityv1.EnvironmentVisitorSession, error) {
 	c.operations.Lock()
 	defer c.operations.Unlock()
 	r, err := c.Session()
@@ -240,7 +308,11 @@ func (c *Client) Attach(ctx context.Context, assertion string) (authorityv1.Work
 		return r, err
 	}
 	digest := sha256.Sum256([]byte(assertion))
-	next, err := c.authority.AttachWorkloadAssertion(ctx, r.Id, r.Credential, authorityv1.WorkloadAssertion{Assertion: assertion, Signature: base64.RawURLEncoding.EncodeToString(ed25519.Sign(c.key, workloadproof.Attach(r.Id, digest)))})
+	c.mu.RLock()
+	environment, permission, services := c.selection.Environment, c.permission, c.expected
+	c.mu.RUnlock()
+	public := base64.RawURLEncoding.EncodeToString(c.PublicKey())
+	next, err := c.authority.AttachEnvironmentVisitorAssertion(ctx, r.Id, r.Credential, authorityv1.EnvironmentVisitorAssertion{Assertion: assertion, Signature: base64.RawURLEncoding.EncodeToString(ed25519.Sign(c.key, machineproof.EnvironmentVisitorPossession(environment.ProjectKey, permission, environment.EnvironmentId, "attach", public, r.Id, services, digest)))})
 	if err != nil {
 		var problem *clientauthority.ProblemError
 		if errors.As(err, &problem) && problem.Status == http.StatusGone {
@@ -249,32 +321,31 @@ func (c *Client) Attach(ctx context.Context, assertion string) (authorityv1.Work
 		return next, err
 	}
 	if err = validateSessionUpdate(r, next); err != nil {
-		return authorityv1.WorkloadSession{}, err
+		return authorityv1.EnvironmentVisitorSession{}, err
 	}
 	if err := context.Cause(ctx); err != nil {
-		return authorityv1.WorkloadSession{}, err
+		return authorityv1.EnvironmentVisitorSession{}, err
 	}
 	c.mu.Lock()
-	c.session = cloneSession(next)
+	c.acceptSessionLocked(next)
 	c.mu.Unlock()
 	return next, nil
 }
 
-// renewals and assertion attachments may shorten the execution and narrow its
-// services, but cannot change its binding or extend its original expiry.
-func validateSessionUpdate(current, next authorityv1.WorkloadSession) error {
+// current authority can narrow monotonically to a subset of original IDs.
+// this response view does not rewrite the original intent or admitted ID pin;
+// replacing IDs or restoring a previously narrowed view is never accepted.
+func validateSessionUpdate(current, next authorityv1.EnvironmentVisitorSession) error {
 	if err := validateSession(next); err != nil {
 		return err
 	}
 	if current.ExpiresAt != nil && (next.ExpiresAt == nil || next.ExpiresAt.After(*current.ExpiresAt)) {
 		return invalidSession()
 	}
-	if next.IdentityExpiresAt.Before(current.IdentityExpiresAt) || next.RenewalSequence < current.RenewalSequence || next.Binding != current.Binding || next.Id != current.Id || next.Credential != current.Credential ||
-		next.TeamId != current.TeamId || next.ProjectKey != current.ProjectKey ||
-		next.Workload != current.Workload || next.Provider != current.Provider || !reflect.DeepEqual(next.Github, current.Github) {
+	if next.IdentityExpiresAt.Before(current.IdentityExpiresAt) || next.RenewalSequence < current.RenewalSequence || next.Id != current.Id || next.Credential != current.Credential || !reflect.DeepEqual(next.Subject, current.Subject) {
 		return invalidSession()
 	}
-	// an attachment or exchange retry may observe one renewal whose reply was
+	// an attachment or preparation retry may observe one renewal whose reply was
 	// lost. serialized operations can never have more than one outstanding step.
 	if next.RenewalSequence > current.RenewalSequence && (current.RenewalSequence == math.MaxInt64 || next.RenewalSequence != current.RenewalSequence+1) {
 		return invalidSession()
@@ -292,7 +363,7 @@ func (c *Client) Revoke(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return c.authority.RevokeWorkloadSession(ctx, r.Id, r.Credential)
+	return c.authority.RevokeEnvironmentVisitorSession(ctx, r.Id, r.Credential)
 }
 func (c *Client) ListServices(ctx context.Context) (controlv1.WorkloadServices, error) {
 	r, err := c.Session()
@@ -307,8 +378,12 @@ func (c *Client) ListServices(ctx context.Context) (controlv1.WorkloadServices, 
 		return controlv1.WorkloadServices{}, invalidSession()
 	}
 	ids, names := map[string]bool{}, map[string]bool{}
+	c.mu.RLock()
+	admitted := maps.Clone(c.admitted)
+	c.mu.RUnlock()
 	for _, service := range inventory.Services {
-		if !slices.Contains(r.ServiceIds, service.Id) || ids[service.Id] || names[service.Service] || !naming.ValidServiceName(service.Service) {
+		approved, found := admitted[service.Service]
+		if !found || approved.ServiceId != service.Id || approved.Protocol != service.Protocol || !slices.Contains(r.ServiceIds, service.Id) || ids[service.Id] || names[service.Service] || !naming.ValidServiceName(service.Service) {
 			return controlv1.WorkloadServices{}, invalidSession()
 		}
 		ids[service.Id], names[service.Service] = true, true
@@ -379,15 +454,9 @@ func (s workloadSigner) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts)
 func (workloadSigner) String() string   { return "workload TLS signer" }
 func (workloadSigner) GoString() string { return "workload TLS signer" }
 
-func cloneSession(r authorityv1.WorkloadSession) authorityv1.WorkloadSession {
+func cloneSession(r authorityv1.EnvironmentVisitorSession) authorityv1.EnvironmentVisitorSession {
 	if r.ExpiresAt != nil {
 		r.ExpiresAt = new(*r.ExpiresAt)
-	}
-	if r.AssertionExpiresAt != nil {
-		r.AssertionExpiresAt = new(*r.AssertionExpiresAt)
-	}
-	if r.Github != nil {
-		r.Github = new(*r.Github)
 	}
 	r.ServiceIds = slices.Clone(r.ServiceIds)
 	if r.Subject.WorkloadSessionId != nil {
@@ -404,7 +473,7 @@ func cloneSession(r authorityv1.WorkloadSession) authorityv1.WorkloadSession {
 
 // sessionDeadline is the current finite proof horizon, bounded by an optional
 // absolute limit. permission leases remain independently bounded and renewed.
-func SessionDeadline(r authorityv1.WorkloadSession) time.Time {
+func SessionDeadline(r authorityv1.EnvironmentVisitorSession) time.Time {
 	until := r.IdentityExpiresAt
 	if r.ExpiresAt != nil && r.ExpiresAt.Before(until) {
 		until = *r.ExpiresAt

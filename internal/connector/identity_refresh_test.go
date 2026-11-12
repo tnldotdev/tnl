@@ -19,18 +19,18 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/project/meta"
-	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	"github.com/tnldotdev/tnl/internal/connector/workload"
-	"github.com/tnldotdev/tnl/internal/security/workloadproof"
+	"github.com/tnldotdev/tnl/internal/security/machineproof"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type identityRefreshFixture struct {
 	backend                *connectorConnectionBackend
-	initial                authorityv1.WorkloadSession
-	exchanges, attachments atomic.Int32
+	initial                authorityv1.EnvironmentVisitorSession
+	environment controlv1.EnvironmentReference
+	preparations, attachments atomic.Int32
 	attached               chan struct{}
 }
 
@@ -39,17 +39,20 @@ func newIdentityRefreshFixture(t *testing.T) *identityRefreshFixture {
 	f := &identityRefreshFixture{attached: make(chan struct{}, 16)}
 	now := time.Now()
 	id := "wls_" + strings.Repeat("s", 22)
-	current := authorityv1.WorkloadSession{Id: id, Credential: "wlc_" + strings.Repeat("x", 43), TeamId: "tm_" + strings.Repeat("t", 22), ProjectKey: "project", Workload: "job", Provider: controlv1.WorkloadOIDC, Binding: strings.Repeat("a", 64), Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, ServiceIds: []string{}, ExpiresAt: new(now.Add(time.Minute)), IdentityExpiresAt: now.Add(2 * time.Second), LeaseExpiresAt: now.Add(2 * time.Second), RenewAfter: now.Add(30 * time.Second)}
+	current := authorityv1.EnvironmentVisitorSession{Id: id, Credential: "wlc_" + strings.Repeat("x", 43), Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, ServiceIds: []string{}, ExpiresAt: new(now.Add(time.Minute)), IdentityExpiresAt: now.Add(2 * time.Second), LeaseExpiresAt: now.Add(2 * time.Second), RenewAfter: now.Add(time.Second)}
+	const permission = "mwp_0123456789ABCDEFGHIJKL"
+	protocols := map[string]string{"db": "postgres"}
+	var server *httptest.Server
 	var mu sync.Mutex
 	var public ed25519.PublicKey
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case strings.HasSuffix(r.URL.Path, "/exchange"):
-			f.exchanges.Add(1)
-			var body authorityv1.WorkloadExchange
+		case strings.HasSuffix(r.URL.Path, "/prepare"):
+			f.preparations.Add(1)
+			var body authorityv1.EnvironmentVisitorPrepareRequest
 			if json.NewDecoder(r.Body).Decode(&body) != nil {
 				w.WriteHeader(400)
 				return
@@ -61,19 +64,22 @@ func newIdentityRefreshFixture(t *testing.T) *identityRefreshFixture {
 				return
 			}
 			public = key
+			reference := controlv1.EnvironmentReference{Server: server.URL, ProjectKey: "project", EnvironmentId: "env_0123456789ABCDEFGHIJKL"}
+			_ = json.NewEncoder(w).Encode(authorityv1.EnvironmentVisitorPreparation{Environment: reference, AppliedDefinitionRevision: 1, MutationRevision: 1, Session: current, Services: map[string]authorityv1.EnvironmentVisitorService{}})
+			return
 		case r.Method == http.MethodDelete:
 			w.WriteHeader(http.StatusNoContent)
 			return
 		case strings.HasSuffix(r.URL.Path, "/assertions"):
 			f.attachments.Add(1)
-			var body authorityv1.WorkloadAssertion
+			var body authorityv1.EnvironmentVisitorAssertion
 			if json.NewDecoder(r.Body).Decode(&body) != nil {
 				w.WriteHeader(400)
 				return
 			}
 			signature, err := base64.RawURLEncoding.DecodeString(body.Signature)
 			digest := sha256.Sum256([]byte(body.Assertion))
-			if err != nil || !ed25519.Verify(public, workloadproof.Attach(id, digest), signature) || r.Header.Get("Authorization") != "Bearer "+current.Credential {
+			if err != nil || !ed25519.Verify(public, machineproof.EnvironmentVisitorPossession("project", permission, "env_0123456789ABCDEFGHIJKL", "attach", base64.RawURLEncoding.EncodeToString(public), id, protocols, digest), signature) || r.Header.Get("Authorization") != "Bearer "+current.Credential {
 				t.Error("refresh lost original key possession")
 				w.WriteHeader(403)
 				return
@@ -85,7 +91,6 @@ func newIdentityRefreshFixture(t *testing.T) *identityRefreshFixture {
 			}
 			current.IdentityExpiresAt = now.Add(time.Minute)
 			current.LeaseExpiresAt = current.IdentityExpiresAt
-			current.AssertionExpiresAt = new(current.IdentityExpiresAt)
 			defer func() { f.attached <- struct{}{} }()
 		default:
 			t.Error("refresh started unrelated work")
@@ -99,7 +104,9 @@ func newIdentityRefreshFixture(t *testing.T) *identityRefreshFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.initial, err = client.Exchange(t.Context(), current.TeamId, current.ProjectKey, strings.Repeat("a", 64), current.Workload, "initial.private.jwt", nil)
+	prepared, err := client.Prepare(t.Context(), controlv1.EnvironmentReference{Server: server.URL, ProjectKey: "project", EnvironmentId: "env_0123456789ABCDEFGHIJKL"}, permission, "initial.private.jwt", protocols)
+	f.initial = prepared.Session
+	f.environment = prepared.Environment
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +138,7 @@ func TestConnectionBackgroundRefreshRereadsRotatingFile(t *testing.T) {
 	}
 	read := make(chan struct{}, 16)
 	f.start(func(ctx context.Context) (string, error) {
-		value, err := workload.Acquire(ctx, workloadmanifest.Acquisition{Method: "token-file", TokenFile: file}, nil, os.Getenv)
+		value, err := workload.Acquire(ctx, workload.Acquisition{Method: "token-file", TokenFile: file}, nil, os.Getenv)
 		read <- struct{}{}
 		return value, err
 	})
@@ -162,7 +169,7 @@ func TestConnectionBackgroundRefreshRereadsRotatingFile(t *testing.T) {
 	}
 	unlock()
 	current, err := f.backend.workload.Session()
-	if err != nil || !current.IdentityExpiresAt.After(f.initial.IdentityExpiresAt) || current.Id != f.initial.Id || current.Credential != f.initial.Credential || current.Subject.WorkloadSessionId == nil || *current.Subject.WorkloadSessionId != f.initial.Id || !current.ExpiresAt.Equal(*f.initial.ExpiresAt) || f.exchanges.Load() != 1 || f.attachments.Load() != 1 {
+	if err != nil || !current.IdentityExpiresAt.After(f.initial.IdentityExpiresAt) || current.Id != f.initial.Id || current.Credential != f.initial.Credential || current.Subject.WorkloadSessionId == nil || *current.Subject.WorkloadSessionId != f.initial.Id || !current.ExpiresAt.Equal(*f.initial.ExpiresAt) || f.preparations.Load() != 1 || f.attachments.Load() != 1 {
 		t.Fatal("background refresh replaced or broadened its original session", err)
 	}
 }
@@ -189,7 +196,7 @@ func TestConnectionBackgroundRefreshFailureNeverReplacesIdentity(t *testing.T) {
 				t.Fatal("failed refresh outlived its confirmed deadline")
 			}
 			after, _ := f.backend.workload.Session()
-			if !reflect.DeepEqual(after, f.initial) || f.exchanges.Load() != 1 {
+			if !reflect.DeepEqual(after, f.initial) || f.preparations.Load() != 1 {
 				t.Fatal("refresh failure minted replacement authority")
 			}
 			if source != "wrong identity" && f.attachments.Load() != 0 {
@@ -223,7 +230,7 @@ func TestConnectionBackgroundRefreshCancellationJoinsAcquisition(t *testing.T) {
 	default:
 		t.Fatal("close returned before acquisition joined")
 	}
-	if f.attachments.Load() != 0 || f.exchanges.Load() != 1 {
+	if f.attachments.Load() != 0 || f.preparations.Load() != 1 {
 		t.Fatal("late canceled acquisition changed authority")
 	}
 }

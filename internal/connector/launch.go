@@ -9,15 +9,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
-	"github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 )
@@ -26,42 +23,11 @@ func StartOwner(ctx context.Context, options OwnerStartOptions, input io.Reader,
 	if options.ParentPID < 0 {
 		return connectorruntime.ErrInvalid
 	}
-	project, scope, err := connectionProject(ctx, options.ContextOptions)
+	_, scope, err := connectionProject(ctx, options.ContextOptions)
 	if err != nil {
 		return err
 	}
 	request := connectorruntime.StartRequest{Schema: 1, Context: scope}
-	if options.Workload != "" {
-		if connectorruntime.ReadJSON(input, &request) != nil || request.Schema != 1 || !reflect.DeepEqual(request.Context, scope) {
-			return connectorruntime.ErrInvalid
-		}
-		if err := validateGitHubActionsRefresh(options, project, request); err != nil {
-			return err
-		}
-		if request.Assertion == "" {
-			var hints workloadmanifest.Acquisition
-			if options.Manifest != "" {
-				m, e := workloadmanifest.Read(options.Manifest)
-				if e != nil {
-					return e
-				}
-				hints = m.Workloads[options.Workload].Acquisition
-			} else {
-				hints, err = workloadmanifest.AcquisitionFor(project.Config.Workloads[options.Workload], scope.Audience)
-				if err != nil {
-					return connectorruntime.ErrInvalid
-				}
-			}
-			if hints.TokenFile != "" && !filepath.IsAbs(hints.TokenFile) {
-				hints.TokenFile = filepath.Join(scope.Directory, hints.TokenFile)
-			}
-			request.Assertion, err = workload.Acquire(ctx, hints, nil, os.Getenv)
-			if err != nil {
-				return failure.Wrap("acquire workload assertion", failure.WorkloadAssertionUnavailable, err)
-			}
-			request.Refresh = workload.RefreshSource(scope.Directory, hints, os.Getenv)
-		}
-	}
 	return launchOwner(ctx, options, request, func(status connectorruntime.Status) error { return json.NewEncoder(output).Encode(status) })
 }
 
@@ -69,6 +35,10 @@ func StartOwner(ctx context.Context, options OwnerStartOptions, input io.Reader,
 // handoff succeeds, this operation retains the child and joins bounded cleanup.
 func launchOwner(ctx context.Context, options OwnerStartOptions, request connectorruntime.StartRequest, readyOwner func(connectorruntime.Status) error) error {
 	scope := request.Context
+	return launchPreparedOwner(ctx, options, scope, request, readyOwner)
+}
+
+func launchPreparedOwner(ctx context.Context, options OwnerStartOptions, scope connectorruntime.Context, request any, readyOwner func(connectorruntime.Status) error) error {
 	parent := options.RunnerTemp
 	if parent == "" {
 		parent = os.TempDir()
@@ -77,6 +47,7 @@ func launchOwner(ctx context.Context, options OwnerStartOptions, request connect
 	if err != nil {
 		return err
 	}
+	if scope.Environment != nil { scope = environmentContext(*scope.Environment, directory) }
 	if options.beforeStart != nil {
 		if err := options.beforeStart(directory); err != nil {
 			_ = os.RemoveAll(directory)
@@ -98,12 +69,7 @@ func launchOwner(ctx context.Context, options OwnerStartOptions, request connect
 		return err
 	}
 	args := []string{"--no-telemetry", "runtime", "connections", "serve", "--directory", scope.Directory, "--owner-directory", directory}
-	if options.Workload != "" {
-		args = append(args, "--workload", options.Workload)
-	}
-	if options.Manifest != "" {
-		args = append(args, "--workload-manifest", options.Manifest)
-	}
+	if scope.Environment != nil { args = []string{"--no-telemetry", "runtime", "connections", "environment-serve", "--owner-directory", directory} }
 	if options.TeamID != "" {
 		args = append(args, "--team-id", options.TeamID)
 	}
@@ -127,13 +93,12 @@ func launchOwner(ctx context.Context, options OwnerStartOptions, request connect
 			args = append(args, flag[0], flag[1])
 		}
 	}
-	for _, service := range scope.Services {
-		args = append(args, "--service", service)
-	}
+	if scope.Environment == nil { for _, service := range scope.Services { args = append(args, "--service", service) } }
 	data, err := json.Marshal(request)
 	if err != nil {
 		return err
 	}
+	if scope.Environment != nil { data = append(data, '\n') }
 	child := exec.Command(executable, args...)
 	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	child.Stdin = bytes.NewReader(data)

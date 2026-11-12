@@ -17,7 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-func testDirectManagedAdmission(t *testing.T, d *Database, r ApplyProjectConfigurationRequest, applied AppliedProjectConfiguration, run ServiceRunState, now time.Time) {
+func testDirectManagedAdmission(t *testing.T, d *Database, r environmentPublisherTestProject, applied Environment, run ServiceRunState, now time.Time) {
 	t.Helper()
 	ctx := t.Context()
 	id := func(prefix string) string {
@@ -48,12 +48,7 @@ func testDirectManagedAdmission(t *testing.T, d *Database, r ApplyProjectConfigu
 	}
 	setPublic := func(public bool) {
 		t.Helper()
-		r.DNSAutomation = true
-		group := r.Configuration.PublisherGroups["production"]
-		group.Public = public
-		r.Configuration.PublisherGroups["production"] = group
-		r.ExpectedRevision = applied.Revision
-		applied, err = d.ApplyProjectConfiguration(ctx, r)
+		applied, err = d.ApplyEnvironment(ctx, ApplyEnvironmentRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, EnvironmentApplication: EnvironmentApplication{EnvironmentID: applied.ID, ExpectedRevision: applied.MutationRevision, DefinitionRevision: applied.AppliedDefinitionRevision, Public: &public}, DNSAutomation: true, Now: now})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -97,6 +92,9 @@ func testDirectManagedAdmission(t *testing.T, d *Database, r ApplyProjectConfigu
 		t.Fatal("promoted before visitor authentication", err)
 	}
 	deviceKey, _, _ := ed25519.GenerateKey(rand.Reader)
+	if _, err := d.CreateServiceGrant(ctx, run.ServiceID, r.ActorID, "certificate-direct-visitor", "identity", r.ActorID, nil, now); err != nil {
+		t.Fatal(err)
+	}
 	device, err := d.EnrollVisitorDevice(ctx, r.ActorID, deviceKey, now)
 	if err != nil {
 		t.Fatal(err)

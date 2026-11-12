@@ -27,6 +27,22 @@ const client = {
 };
 renameProperties(client, keys);
 
+// JSON Schema excludes named properties from additionalProperties; TypeScript
+// index signatures include them. broaden only the generated index signature so
+// local targets can retain app settings without loosening the file schema.
+const properties = parseValue(client.properties, schemaObject, "client schema properties");
+const environments = parseValue(properties.environments, schemaObject, "environment map schema");
+const environmentProperties = parseValue(
+  environments.properties,
+  schemaObject,
+  "named environment schemas",
+);
+environments.additionalProperties = {
+  anyOf: [environments.additionalProperties, environmentProperties.local],
+};
+properties.environments = environments;
+client.properties = properties;
+
 const generated = await compile(client, "TnlConfig", {
   bannerComment: "",
   format: false,

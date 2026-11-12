@@ -155,6 +155,66 @@ func (q *Queries) ListAppliedProjectServices(ctx context.Context, arg ListApplie
 	return items, nil
 }
 
+const listEnvironmentPublisherStatus = `-- name: ListEnvironmentPublisherStatus :many
+SELECT environment.id AS environment_id, m.publisher_identity_id, m.key_id,
+    m.observed_revision, environment.mutation_revision AS current_revision, m.acknowledged_at,
+    (m.healthy AND control.active_publisher(i.id,$1) AND m.lease_expires_at>$1 AND m.observed_revision=environment.mutation_revision)::boolean AS healthy,
+    m.lease_expires_at
+FROM control.project_publisher_groups g
+JOIN control.publisher_group_members m ON m.group_id=g.id
+JOIN control.publisher_identities i ON i.id=m.publisher_identity_id
+JOIN control.environments environment ON environment.group_id=g.id AND environment.id=g.environment_id AND environment.retired_at IS NULL
+WHERE g.team_id=$2 AND g.project_key=$3
+    AND g.deleted_at IS NULL AND i.revoked_at IS NULL
+ORDER BY g.name,m.publisher_identity_id
+`
+
+type ListEnvironmentPublisherStatusParams struct {
+	Now        pgtype.Timestamptz
+	TeamID     string
+	ProjectKey string
+}
+
+type ListEnvironmentPublisherStatusRow struct {
+	EnvironmentID       string
+	PublisherIdentityID string
+	KeyID               string
+	ObservedRevision    int64
+	CurrentRevision     int64
+	AcknowledgedAt      pgtype.Timestamptz
+	Healthy             bool
+	LeaseExpiresAt      pgtype.Timestamptz
+}
+
+func (q *Queries) ListEnvironmentPublisherStatus(ctx context.Context, arg ListEnvironmentPublisherStatusParams) ([]ListEnvironmentPublisherStatusRow, error) {
+	rows, err := q.db.Query(ctx, listEnvironmentPublisherStatus, arg.Now, arg.TeamID, arg.ProjectKey)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListEnvironmentPublisherStatusRow
+	for rows.Next() {
+		var i ListEnvironmentPublisherStatusRow
+		if err := rows.Scan(
+			&i.EnvironmentID,
+			&i.PublisherIdentityID,
+			&i.KeyID,
+			&i.ObservedRevision,
+			&i.CurrentRevision,
+			&i.AcknowledgedAt,
+			&i.Healthy,
+			&i.LeaseExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProjectPublisherGroups = `-- name: ListProjectPublisherGroups :many
 SELECT ingress_pool_id, template_name, ownership, id, team_id, project_key, name, description, domain_id, namespace, public, deleted_at, environment_id FROM control.project_publisher_groups WHERE team_id=$1 AND project_key=$2 AND deleted_at IS NULL ORDER BY name
 `
@@ -198,71 +258,8 @@ func (q *Queries) ListProjectPublisherGroups(ctx context.Context, arg ListProjec
 	return items, nil
 }
 
-const listPublisherGroupMemberStatus = `-- name: ListPublisherGroupMemberStatus :many
-SELECT g.id AS group_id, g.name AS group_name, m.publisher_identity_id, m.key_id,
-    m.observed_revision, CASE WHEN g.environment_id IS NOT NULL OR environment.id IS NOT NULL THEN COALESCE(environment.mutation_revision,0) ELSE p.revision END::bigint AS current_revision, m.acknowledged_at,
-    (m.healthy AND control.active_publisher(i.id,$1) AND m.lease_expires_at>$1 AND m.observed_revision=CASE WHEN g.environment_id IS NOT NULL OR environment.id IS NOT NULL THEN COALESCE(environment.mutation_revision,0) ELSE p.revision END)::boolean AS healthy,
-    m.lease_expires_at
-FROM control.project_publisher_groups g
-JOIN control.publisher_group_members m ON m.group_id=g.id
-JOIN control.publisher_identities i ON i.id=m.publisher_identity_id
-JOIN control.applied_projects p ON p.team_id=g.team_id AND p.project_key=g.project_key
-LEFT JOIN control.environments environment ON environment.group_id=g.id
-WHERE g.team_id=$2 AND g.project_key=$3
-    AND g.deleted_at IS NULL AND i.revoked_at IS NULL
-ORDER BY g.name,m.publisher_identity_id
-`
-
-type ListPublisherGroupMemberStatusParams struct {
-	Now        pgtype.Timestamptz
-	TeamID     string
-	ProjectKey string
-}
-
-type ListPublisherGroupMemberStatusRow struct {
-	GroupID             string
-	GroupName           string
-	PublisherIdentityID string
-	KeyID               string
-	ObservedRevision    int64
-	CurrentRevision     int64
-	AcknowledgedAt      pgtype.Timestamptz
-	Healthy             bool
-	LeaseExpiresAt      pgtype.Timestamptz
-}
-
-func (q *Queries) ListPublisherGroupMemberStatus(ctx context.Context, arg ListPublisherGroupMemberStatusParams) ([]ListPublisherGroupMemberStatusRow, error) {
-	rows, err := q.db.Query(ctx, listPublisherGroupMemberStatus, arg.Now, arg.TeamID, arg.ProjectKey)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListPublisherGroupMemberStatusRow
-	for rows.Next() {
-		var i ListPublisherGroupMemberStatusRow
-		if err := rows.Scan(
-			&i.GroupID,
-			&i.GroupName,
-			&i.PublisherIdentityID,
-			&i.KeyID,
-			&i.ObservedRevision,
-			&i.CurrentRevision,
-			&i.AcknowledgedAt,
-			&i.Healthy,
-			&i.LeaseExpiresAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const lockAppliedProject = `-- name: LockAppliedProject :one
-SELECT team_id, project_key, source_fingerprint, project_label, revision, configuration_hash, configuration_ciphertext, storage_key_id, created_by_identity_id, updated_at FROM control.applied_projects WHERE team_id=$1 AND project_key=$2 FOR UPDATE
+SELECT team_id, project_key, source_fingerprint, project_label, created_by_identity_id, updated_at FROM control.applied_projects WHERE team_id=$1 AND project_key=$2 FOR UPDATE
 `
 
 type LockAppliedProjectParams struct {
@@ -278,10 +275,6 @@ func (q *Queries) LockAppliedProject(ctx context.Context, arg LockAppliedProject
 		&i.ProjectKey,
 		&i.SourceFingerprint,
 		&i.ProjectLabel,
-		&i.Revision,
-		&i.ConfigurationHash,
-		&i.ConfigurationCiphertext,
-		&i.StorageKeyID,
 		&i.CreatedByIdentityID,
 		&i.UpdatedAt,
 	)

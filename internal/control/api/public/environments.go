@@ -10,8 +10,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/config"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -19,10 +21,13 @@ import (
 // EnvironmentStore owns pinned definitions, exact environment mutations and
 // their publication projections. current authorization is not definition history.
 type EnvironmentStore interface {
+	AuthenticateEnvironmentPublisherManager(context.Context, credentials.AccessToken) (controlstate.EnvironmentPublisherManager, error)
 	CreateServiceDefinition(context.Context, controlstate.CreateServiceDefinitionRequest) (controlstate.ServiceDefinitionRevision, error)
 	CreateEnvironment(context.Context, controlstate.CreateEnvironmentRequest) (controlstate.Environment, error)
 	GetEnvironment(context.Context, string, string, string, string) (controlstate.Environment, error)
 	ListEnvironments(context.Context, string, string, string) ([]controlstate.Environment, error)
+	InspectEnvironment(context.Context, string, string, string, controlstate.EnvironmentPublisherManager) (controlstate.Environment, error)
+	InspectEnvironments(context.Context, string, string, controlstate.EnvironmentPublisherManager) ([]controlstate.Environment, error)
 	ApplyEnvironment(context.Context, controlstate.ApplyEnvironmentRequest) (controlstate.Environment, error)
 	ApplyEnvironments(context.Context, controlstate.ApplyEnvironmentsRequest) ([]controlstate.Environment, error)
 	RetireEnvironment(context.Context, controlstate.RetireEnvironmentRequest) error
@@ -52,7 +57,9 @@ func environmentProblem(ctx context.Context, w http.ResponseWriter, operation st
 	case errors.Is(err, controlstate.ErrEnvironmentNotFound), errors.Is(err, pgx.ErrNoRows):
 		writeProblem(w, http.StatusNotFound, controlv1.NotFound, "environment or service definition not found in this project")
 	case errors.Is(err, controlstate.ErrServiceAccess), errors.Is(err, controlstate.ErrPublicURLAccess), errors.Is(err, controlstate.ErrMachineDenied):
-		writeProblem(w, http.StatusForbidden, controlv1.Forbidden, "environment management requires current team manager access")
+		writeProblem(w, http.StatusForbidden, controlv1.Forbidden, "environment operation requires current team manager access or an exact machine provisioning grant")
+	case errors.Is(err, controlstate.ErrControlAuthentication):
+		writeBearerProblem(w)
 	case errors.Is(err, controlstate.ErrProjectSourceConflict):
 		writeProblem(w, http.StatusConflict, controlv1.Conflict, "project belongs to another source; select a different project")
 	case errors.Is(err, controlstate.ErrServiceConflict), errors.Is(err, controlstate.ErrPublicURLConflict):
@@ -69,7 +76,7 @@ func environmentProblem(ctx context.Context, w http.ResponseWriter, operation st
 }
 
 func environmentJSONProblem(w http.ResponseWriter, err error, message string) {
-	if errors.Is(err, errEnvironmentJSONNull) {
+	if errors.Is(err, httpjson.ErrNull) {
 		message = "explicit null is not allowed; omit optional fields or use tls: {} for verified system-CA trust"
 	}
 	writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, message)
@@ -126,7 +133,7 @@ func (h *handler) CreateEnvironment(w http.ResponseWriter, r *http.Request, proj
 		environmentJSONProblem(w, err, "invalid environment creation request")
 		return
 	}
-	actor, ok := h.projectManager(w, r, body.TeamId)
+	manager, ok := environmentManagementSession(w, r, store)
 	if !ok {
 		return
 	}
@@ -135,7 +142,7 @@ func (h *handler) CreateEnvironment(w http.ResponseWriter, r *http.Request, proj
 		environmentProblem(r.Context(), w, "validate environment creation", err)
 		return
 	}
-	request.ProjectKey, request.ActorID = project, actor
+	request.ProjectKey, request.Manager = project, manager
 	request.DNSAutomation, request.Now = h.config.DNSAutomation, time.Now()
 	result, err := store.CreateEnvironment(r.Context(), request)
 	if err != nil {
@@ -150,11 +157,11 @@ func (h *handler) GetEnvironment(w http.ResponseWriter, r *http.Request, project
 	if !ok {
 		return
 	}
-	actor, ok := h.projectManager(w, r, params.TeamId)
+	manager, ok := environmentManagementSession(w, r, store)
 	if !ok {
 		return
 	}
-	result, err := store.GetEnvironment(r.Context(), params.TeamId, project, id, actor)
+	result, err := store.InspectEnvironment(r.Context(), params.TeamId, project, id, manager)
 	if err != nil {
 		environmentProblem(r.Context(), w, "get environment", err)
 		return
@@ -171,11 +178,11 @@ func (h *handler) ListEnvironments(w http.ResponseWriter, r *http.Request, proje
 	if !ok {
 		return
 	}
-	actor, ok := h.projectManager(w, r, params.TeamId)
+	manager, ok := environmentManagementSession(w, r, store)
 	if !ok {
 		return
 	}
-	result, err := store.ListEnvironments(r.Context(), params.TeamId, project, actor)
+	result, err := store.InspectEnvironments(r.Context(), params.TeamId, project, manager)
 	if err != nil {
 		environmentProblem(r.Context(), w, "list environments", err)
 		return
@@ -199,17 +206,17 @@ func (h *handler) ApplyEnvironment(w http.ResponseWriter, r *http.Request, proje
 		environmentJSONProblem(w, err, "invalid environment apply request")
 		return
 	}
-	actor, ok := h.projectManager(w, r, body.TeamId)
+	manager, ok := environmentManagementSession(w, r, store)
 	if !ok {
 		return
 	}
-	application, err := environmentApplicationFromAPI(r.Context(), controlv1.EnvironmentApplication{EnvironmentId: id, DefinitionRevision: body.DefinitionRevision, ExpectedRevision: body.ExpectedRevision, Targets: body.Targets})
+	application, err := environmentApplicationFromAPI(r.Context(), controlv1.EnvironmentApplication{EnvironmentId: id, DefinitionRevision: body.DefinitionRevision, ExpectedRevision: body.ExpectedRevision, Targets: body.Targets, Public: body.Public})
 	if err != nil {
 		environmentProblem(r.Context(), w, "validate environment targets", err)
 		return
 	}
 	result, err := store.ApplyEnvironment(r.Context(), controlstate.ApplyEnvironmentRequest{
-		TeamID: body.TeamId, ProjectKey: project, ActorID: actor, EnvironmentApplication: application,
+		TeamID: body.TeamId, ProjectKey: project, Manager: manager, EnvironmentApplication: application,
 		DNSAutomation: h.config.DNSAutomation, Now: time.Now(),
 	})
 	if err != nil {
@@ -229,7 +236,7 @@ func (h *handler) ApplyEnvironments(w http.ResponseWriter, r *http.Request, proj
 		environmentJSONProblem(w, err, "invalid environment rollout request")
 		return
 	}
-	actor, ok := h.projectManager(w, r, body.TeamId)
+	manager, ok := environmentManagementSession(w, r, store)
 	if !ok {
 		return
 	}
@@ -247,7 +254,7 @@ func (h *handler) ApplyEnvironments(w http.ResponseWriter, r *http.Request, proj
 		items = append(items, application)
 	}
 	result, err := store.ApplyEnvironments(r.Context(), controlstate.ApplyEnvironmentsRequest{
-		TeamID: body.TeamId, ProjectKey: project, ActorID: actor, Items: items,
+		TeamID: body.TeamId, ProjectKey: project, Manager: manager, Items: items,
 		DNSAutomation: h.config.DNSAutomation, Now: time.Now(),
 	})
 	if err != nil {
@@ -266,12 +273,12 @@ func (h *handler) RetireEnvironment(w http.ResponseWriter, r *http.Request, proj
 	if !ok {
 		return
 	}
-	actor, ok := h.projectManager(w, r, params.TeamId)
+	manager, ok := environmentManagementSession(w, r, store)
 	if !ok {
 		return
 	}
 	if err := store.RetireEnvironment(r.Context(), controlstate.RetireEnvironmentRequest{
-		TeamID: params.TeamId, ProjectKey: project, ActorID: actor, EnvironmentID: id, ExpectedRevision: params.ExpectedRevision, Now: time.Now(),
+		TeamID: params.TeamId, ProjectKey: project, Manager: manager, EnvironmentID: id, ExpectedRevision: params.ExpectedRevision, Now: time.Now(),
 	}); err != nil {
 		environmentProblem(r.Context(), w, "retire environment", err)
 		return
@@ -279,11 +286,29 @@ func (h *handler) RetireEnvironment(w http.ResponseWriter, r *http.Request, proj
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func environmentManagementSession(w http.ResponseWriter, r *http.Request, store EnvironmentStore) (controlstate.EnvironmentPublisherManager, bool) {
+	token, ok := requestBearerToken(r)
+	if !ok {
+		writeBearerProblem(w)
+		return controlstate.EnvironmentPublisherManager{}, false
+	}
+	manager, err := store.AuthenticateEnvironmentPublisherManager(r.Context(), credentials.AccessToken(token))
+	if err != nil {
+		environmentProblem(r.Context(), w, "authenticate environment management", err)
+		return controlstate.EnvironmentPublisherManager{}, false
+	}
+	return manager, true
+}
+
 func environmentCreationFromAPI(ctx context.Context, input controlv1.CreateEnvironmentRequest) (controlstate.CreateEnvironmentRequest, error) {
 	if input.IdempotencyKey == "" || input.Targets == nil || (input.CollectionId == nil) != (input.ExpectedCollectionRevision == nil) || input.DefinitionRevision != nil && *input.DefinitionRevision < 1 || input.CollectionId == nil && input.DefinitionRevision == nil {
 		return controlstate.CreateEnvironmentRequest{}, controlstate.ErrEnvironmentInvalid
 	}
 	result := controlstate.CreateEnvironmentRequest{TeamID: input.TeamId, SourceFingerprint: input.SourceFingerprint, ProjectLabel: optionalFeedbackString(input.ProjectLabel), Name: input.Name, IdempotencyKey: input.IdempotencyKey}
+	result.DomainID = optionalFeedbackString(input.DomainId)
+	if input.Public != nil {
+		result.Public = *input.Public
+	}
 	if input.CollectionId != nil {
 		if !opaqueid.Valid(*input.CollectionId, opaqueid.CollectionPrefix) || *input.ExpectedCollectionRevision < 1 {
 			return result, controlstate.ErrEnvironmentInvalid
@@ -300,7 +325,7 @@ func environmentCreationFromAPI(ctx context.Context, input controlv1.CreateEnvir
 }
 
 func environmentApplicationFromAPI(ctx context.Context, input controlv1.EnvironmentApplication) (controlstate.EnvironmentApplication, error) {
-	result := controlstate.EnvironmentApplication{EnvironmentID: input.EnvironmentId, DefinitionRevision: input.DefinitionRevision, ExpectedRevision: input.ExpectedRevision}
+	result := controlstate.EnvironmentApplication{EnvironmentID: input.EnvironmentId, DefinitionRevision: input.DefinitionRevision, ExpectedRevision: input.ExpectedRevision, Public: input.Public}
 	if input.Targets != nil {
 		var err error
 		result.Targets, err = environmentTargetsFromAPI(ctx, *input.Targets)
@@ -318,6 +343,13 @@ func environmentTargetsFromAPI(ctx context.Context, input controlv1.EnvironmentT
 	result := make(controlstate.EnvironmentTargets, len(input))
 	for name, target := range input {
 		value := controlstate.EnvironmentTarget{Address: optionalFeedbackString(target.Address)}
+		if target.Http != nil {
+			settings, err := environmentHTTPFromAPI(*target.Http)
+			if err != nil {
+				return nil, err
+			}
+			value.HTTP = settings
+		}
 		if target.Discovery != nil {
 			if target.Address != nil || target.Tls != nil {
 				return nil, controlstate.ErrEnvironmentInvalid
@@ -379,6 +411,7 @@ func environmentTargetTrust(ctx context.Context, address string, input controlv1
 func (h *handler) environmentResponse(input controlstate.Environment) controlv1.Environment {
 	result := controlv1.Environment{
 		Id: input.ID, TeamId: input.TeamID, ProjectKey: input.ProjectKey, Name: input.Name,
+		DomainId: input.DomainID, Public: input.Public,
 		AppliedDefinitionRevision: input.AppliedDefinitionRevision, MutationRevision: input.MutationRevision, ConfigurationHash: input.ConfigurationHash,
 		Ref:     controlv1.EnvironmentReference{Server: h.config.ControlURL, ProjectKey: input.ProjectKey, EnvironmentId: input.ID},
 		Targets: make(controlv1.EnvironmentTargets, len(input.Targets)), Services: make([]controlv1.EnvironmentService, 0, len(input.Services)),
@@ -394,6 +427,7 @@ func (h *handler) environmentResponse(input controlstate.Environment) controlv1.
 	}
 	for name, target := range input.Targets {
 		value := controlv1.EnvironmentTarget{}
+		value.Http = environmentHTTPResponse(target.HTTP)
 		if target.Address != "" {
 			value.Address = new(target.Address)
 		}

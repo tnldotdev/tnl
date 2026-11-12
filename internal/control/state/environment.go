@@ -47,6 +47,7 @@ type EnvironmentTarget struct {
 	Address   string                  `json:"address"`
 	TLS       *ProjectTargetTLS       `json:"tls,omitempty"`
 	Discovery *ProjectTargetDiscovery `json:"discovery,omitempty"`
+	HTTP      *EnvironmentServiceHTTP `json:"http,omitempty"`
 }
 
 type EnvironmentTargets map[string]EnvironmentTarget
@@ -66,6 +67,8 @@ type Environment struct {
 	TeamID     string `json:"team_id"`
 	ProjectKey string `json:"project_key"`
 	Name       string `json:"name"`
+	DomainID   string `json:"domain_id"`
+	Public     bool   `json:"public"`
 	// state-only until the collection API shape is reviewed.
 	CollectionID              string                       `json:"-"`
 	AppliedDefinitionRevision int64                        `json:"applied_definition_revision"`
@@ -74,13 +77,16 @@ type Environment struct {
 	Retired                   bool                         `json:"retired"`
 	Targets                   EnvironmentTargets           `json:"targets"`
 	Services                  []EnvironmentService         `json:"services"`
-	Members                   []PublisherGroupMemberStatus `json:"-"`
+	Members                   []EnvironmentPublisherStatus `json:"-"`
 }
 
 type CreateEnvironmentRequest struct {
+	Manager                                                      EnvironmentPublisherManager
 	TeamID, ProjectKey, SourceFingerprint, ProjectLabel, ActorID string
 	Name, IdempotencyKey                                         string
 	CollectionID                                                 string
+	DomainID                                                     string
+	Public                                                       bool
 	// required with CollectionID for new creation; identical retries retain their
 	// original selection even after the collection's default or revision changes.
 	ExpectedCollectionRevision int64
@@ -97,9 +103,11 @@ type EnvironmentApplication struct {
 	DefinitionRevision int64
 	// nil retains existing approvals; a non-nil map replaces the complete set.
 	Targets EnvironmentTargets
+	Public  *bool
 }
 
 type ApplyEnvironmentRequest struct {
+	Manager                     EnvironmentPublisherManager
 	TeamID, ProjectKey, ActorID string
 	EnvironmentApplication
 	DNSAutomation bool
@@ -107,6 +115,7 @@ type ApplyEnvironmentRequest struct {
 }
 
 type ApplyEnvironmentsRequest struct {
+	Manager                     EnvironmentPublisherManager
 	TeamID, ProjectKey, ActorID string
 	Items                       []EnvironmentApplication
 	DNSAutomation               bool
@@ -114,6 +123,7 @@ type ApplyEnvironmentsRequest struct {
 }
 
 type RetireEnvironmentRequest struct {
+	Manager                                    EnvironmentPublisherManager
 	TeamID, ProjectKey, ActorID, EnvironmentID string
 	ExpectedRevision                           int64
 	Now                                        time.Time
@@ -142,14 +152,22 @@ func environmentBindingProtocols(definition ServiceDefinition) map[string]string
 	return protocols
 }
 
-func normalizeEnvironmentTargets(targets EnvironmentTargets, definition ServiceDefinition) (PublisherGroupBindings, error) {
-	input := PublisherGroupBindings{}
-	for name, t := range targets {
-		input[name] = PublisherGroupTargetBinding{Target: t.Address, TargetTLS: t.TLS, TargetDiscovery: t.Discovery}
+func normalizeEnvironmentTargets(targets EnvironmentTargets, definition ServiceDefinition) (environmentBindings, error) {
+	bindings := environmentBindings{}
+	data, err := json.Marshal(targets)
+	if err != nil || len(data) > 512<<10 || len(targets) != len(definition.Services) {
+		return nil, ErrEnvironmentInvalid
 	}
-	bindings, err := normalizePublisherGroupBindings(input, environmentBindingProtocols(definition))
-	if err != nil {
-		return nil, err
+	for name, t := range targets {
+		shape, found := definition.Services[name]
+		if !found {
+			return nil, ErrEnvironmentInvalid
+		}
+		service, err := normalizeEnvironmentService(EnvironmentServicePublication{Protocol: shape.Protocol, Target: t.Address, TargetTLS: t.TLS, TargetDiscovery: t.Discovery, HTTP: t.HTTP})
+		if err != nil {
+			return nil, err
+		}
+		bindings[name] = environmentTargetBinding{Target: service.Target, TargetTLS: service.TargetTLS, TargetDiscovery: service.TargetDiscovery, HTTP: service.HTTP, protocol: service.Protocol}
 	}
 	if err = validateEnvironmentBindings(bindings, definition); err != nil {
 		return nil, err
@@ -157,45 +175,50 @@ func normalizeEnvironmentTargets(targets EnvironmentTargets, definition ServiceD
 	return bindings, nil
 }
 
-func validateEnvironmentBindings(bindings PublisherGroupBindings, definition ServiceDefinition) error {
+func validateEnvironmentBindings(bindings environmentBindings, definition ServiceDefinition) error {
 	if len(bindings) != len(definition.Services) {
-		return ErrProjectConfigurationInvalid
+		return ErrEnvironmentInvalid
 	}
 	for name, s := range definition.Services {
 		b, found := bindings[name]
 		if !found {
-			return ErrProjectConfigurationInvalid
+			return ErrEnvironmentInvalid
 		}
-		if _, err := bindPublisherGroupService(ProjectServiceConfiguration{Protocol: s.Protocol, PublisherGroup: "environment", Name: name}, b); err != nil {
+		if _, err := bindEnvironmentService(s.Protocol, b); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func environmentTargets(bindings PublisherGroupBindings) EnvironmentTargets {
+func environmentTargets(bindings environmentBindings) EnvironmentTargets {
 	result := EnvironmentTargets{}
 	for name, b := range bindings {
-		result[name] = EnvironmentTarget{Address: b.Target, TLS: b.TargetTLS, Discovery: b.TargetDiscovery}
+		result[name] = EnvironmentTarget{Address: b.Target, TLS: b.TargetTLS, Discovery: b.TargetDiscovery, HTTP: b.HTTP}
 	}
 	return result
 }
 
-func environmentConfigurationHash(definition ServiceDefinition, bindings PublisherGroupBindings) string {
-	data, _ := json.Marshal([]any{definition, environmentTargets(bindings)})
+type environmentEndpointSettings struct {
+	DomainID string `json:"domain_id"`
+	Public   bool   `json:"public"`
+}
+
+func environmentConfigurationHash(definition ServiceDefinition, bindings environmentBindings, endpoint environmentEndpointSettings) string {
+	data, _ := json.Marshal([]any{definition, environmentTargets(bindings), endpoint})
 	hash := sha256.Sum256(data)
 	return hex.EncodeToString(hash[:])
 }
 
-func environmentCreationDigest(name string, revision int64, bindings PublisherGroupBindings, collection string, expectedCollectionRevision int64) []byte {
-	data, _ := json.Marshal([]any{name, revision, environmentTargets(bindings), collection, expectedCollectionRevision})
+func environmentCreationDigest(name string, revision int64, bindings environmentBindings, collection string, expectedCollectionRevision int64, endpoint environmentEndpointSettings) []byte {
+	data, _ := json.Marshal([]any{name, revision, environmentTargets(bindings), collection, expectedCollectionRevision, endpoint})
 	digest := sha256.Sum256(data)
 	return digest[:]
 }
 
 func (d *Database) CreateEnvironment(ctx context.Context, r CreateEnvironmentRequest) (result Environment, retErr error) {
 	defer func() { retErr = environmentOperationError(retErr) }()
-	if !naming.ValidProjectKey(r.ProjectKey) || !fingerprintPattern.MatchString(r.SourceFingerprint) || !validEnvironmentName(r.Name) || !validEnvironmentKey(r.IdempotencyKey) || r.DefinitionRevision < 0 {
+	if !naming.ValidProjectKey(r.ProjectKey) || !fingerprintPattern.MatchString(r.SourceFingerprint) || !validEnvironmentName(r.Name) || !validEnvironmentKey(r.IdempotencyKey) || r.DefinitionRevision < 0 || r.DomainID != "" && !opaqueid.Valid(r.DomainID, opaqueid.DomainPrefix) {
 		return result, ErrProjectConfigurationInvalid
 	}
 	if r.CollectionID == "" {
@@ -210,9 +233,11 @@ func (d *Database) CreateEnvironment(ctx context.Context, r CreateEnvironmentReq
 		return result, err
 	}
 	defer rollback(ctx, tx, "create environment", &retErr)()
-	if err = authorizeEnvironmentManager(ctx, tx, r.TeamID, r.ActorID); err != nil {
+	manager, err := environmentManagement(ctx, tx, r.TeamID, r.ActorID, r.Manager)
+	if err != nil {
 		return result, err
 	}
+	r.ActorID = manager.identityID
 	project, err := d.ensureDefinitionProject(ctx, tx, r.TeamID, r.ProjectKey, r.SourceFingerprint, r.ProjectLabel, r.ActorID, r.Now)
 	if err != nil {
 		return result, err
@@ -238,11 +263,17 @@ func (d *Database) CreateEnvironment(ctx context.Context, r CreateEnvironmentReq
 			return result, e
 		}
 		bindings, e := normalizeEnvironmentTargets(r.Targets, definition.Definition)
-		if e != nil || row.CollectionID.String != r.CollectionID || !bytes.Equal(environmentCreationDigest(r.Name, r.DefinitionRevision, bindings, r.CollectionID, r.ExpectedCollectionRevision), row.CreationDigest) {
+		if e != nil || row.CollectionID.String != r.CollectionID || !bytes.Equal(environmentCreationDigest(r.Name, r.DefinitionRevision, bindings, r.CollectionID, r.ExpectedCollectionRevision, environmentEndpointSettings{DomainID: r.DomainID, Public: r.Public}), row.CreationDigest) {
 			return result, ErrServiceConflict
 		}
 		if row.RetiredAt.Valid {
 			return result, ErrEnvironmentRetired
+		}
+		if err = manager.authorize(ctx, tx, ProvisioningScope{Operation: ProvisioningCreate, TeamID: r.TeamID, ProjectKey: r.ProjectKey, CollectionID: r.CollectionID, Services: definitionServiceNames(definition.Definition)}, false); err != nil {
+			return Environment{}, err
+		}
+		if err = d.authorizeEnvironmentCreationRetry(ctx, tx, manager, row); err != nil {
+			return Environment{}, err
 		}
 		if err = recordEnvironmentCreationKey(ctx, tx, r, row.ID); err != nil {
 			return result, err
@@ -251,7 +282,7 @@ func (d *Database) CreateEnvironment(ctx context.Context, r CreateEnvironmentReq
 		if err != nil {
 			return result, err
 		}
-		if err = serviceManager(ctx, tx, r.TeamID, r.ActorID); err != nil {
+		if err = manager.finish(ctx, tx, r.TeamID); err != nil {
 			return Environment{}, err
 		}
 		return result, tx.Commit(ctx)
@@ -279,6 +310,9 @@ func (d *Database) CreateEnvironment(ctx context.Context, r CreateEnvironmentReq
 	if err != nil {
 		return result, err
 	}
+	if err = manager.authorize(ctx, tx, ProvisioningScope{Operation: ProvisioningCreate, TeamID: r.TeamID, ProjectKey: r.ProjectKey, CollectionID: r.CollectionID, Services: definitionServiceNames(definition.Definition)}, false); err != nil {
+		return Environment{}, err
+	}
 	var count int
 	if err = tx.QueryRow(ctx, `SELECT count(*) FROM control.environments WHERE team_id=$1 AND project_key=$2 AND retired_at IS NULL`, r.TeamID, r.ProjectKey).Scan(&count); err != nil {
 		return result, err
@@ -300,19 +334,21 @@ func (d *Database) CreateEnvironment(ctx context.Context, r CreateEnvironmentReq
 	if err != nil {
 		return result, err
 	}
-	var domain string
-	if err = tx.QueryRow(ctx, `SELECT default_domain_id FROM control.teams WHERE id=$1`, r.TeamID).Scan(&domain); err != nil {
+	domain := r.DomainID
+	if domain == "" {
+		if err = tx.QueryRow(ctx, `SELECT default_domain_id FROM control.teams WHERE id=$1`, r.TeamID).Scan(&domain); err != nil {
+			return result, err
+		}
+	}
+	apply := serviceResourceMutation{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, DNSAutomation: r.DNSAutomation, Now: r.Now}
+	if err = setServiceAuditIssuer(ctx, tx, manager.issuer()); err != nil {
 		return result, err
 	}
-	apply := ApplyProjectConfigurationRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, ProjectLabel: project.ProjectLabel, DNSAutomation: r.DNSAutomation, Now: r.Now}
-	if err = setServiceAuditIssuer(ctx, tx, publisherIssuer{IdentityID: r.ActorID}); err != nil {
+	if err = d.ensureEnvironmentNamespace(ctx, tx, apply, group, groupName, environmentNamespace{DomainID: domain, Public: r.Public}); err != nil {
 		return result, err
 	}
-	if err = d.ensureGroupNamespace(ctx, tx, apply, group, groupName, ProjectPublisherGroup{DomainID: domain}); err != nil {
-		return result, err
-	}
-	hash := environmentConfigurationHash(definition.Definition, bindings)
-	_, err = tx.Exec(ctx, `INSERT INTO control.environments(id,team_id,project_key,name,group_id,applied_definition_revision,mutation_revision,configuration_hash,initial_definition_revision,creation_digest,created_by_identity_id,created_at,updated_at,collection_id) VALUES($1,$2,$3,$4,$5,$6,1,$7,$6,$8,$9,$10,$10,NULLIF($11,''))`, id, r.TeamID, r.ProjectKey, r.Name, group, revision, hash, environmentCreationDigest(r.Name, r.DefinitionRevision, bindings, r.CollectionID, r.ExpectedCollectionRevision), r.ActorID, r.Now, r.CollectionID)
+	hash := environmentConfigurationHash(definition.Definition, bindings, environmentEndpointSettings{DomainID: domain, Public: r.Public})
+	_, err = tx.Exec(ctx, `INSERT INTO control.environments(id,team_id,project_key,name,group_id,applied_definition_revision,mutation_revision,configuration_hash,initial_definition_revision,creation_digest,created_by_identity_id,created_at,updated_at,collection_id,created_by_machine_id,provisioning_grant_id) VALUES($1,$2,$3,$4,$5,$6,1,$7,$6,$8,NULLIF($9,''),$10,$10,NULLIF($11,''),NULLIF($12,''),NULLIF($13,''))`, id, r.TeamID, r.ProjectKey, r.Name, group, revision, hash, environmentCreationDigest(r.Name, r.DefinitionRevision, bindings, r.CollectionID, r.ExpectedCollectionRevision, environmentEndpointSettings{DomainID: r.DomainID, Public: r.Public}), r.ActorID, r.Now, r.CollectionID, manager.machineID, manager.provisioningGrantID)
 	if err != nil {
 		return result, err
 	}
@@ -323,7 +359,7 @@ func (d *Database) CreateEnvironment(ctx context.Context, r CreateEnvironmentReq
 	if err != nil {
 		return result, err
 	}
-	if err = d.materializeEnvironment(ctx, tx, row, definition.Definition, nil, bindings, apply); err != nil {
+	if err = d.materializeEnvironment(ctx, tx, row, definition.Definition, nil, bindings, apply, manager.issuer()); err != nil {
 		return result, err
 	}
 	if err = recordEnvironmentCreationKey(ctx, tx, r, id); err != nil {
@@ -333,7 +369,7 @@ func (d *Database) CreateEnvironment(ctx context.Context, r CreateEnvironmentReq
 	if err != nil {
 		return result, err
 	}
-	if err = serviceManager(ctx, tx, r.TeamID, r.ActorID); err != nil {
+	if err = manager.finish(ctx, tx, r.TeamID); err != nil {
 		return Environment{}, err
 	}
 	return result, tx.Commit(ctx)
@@ -353,73 +389,73 @@ func recordEnvironmentCreationKey(ctx context.Context, tx pgx.Tx, r CreateEnviro
 
 // one pinned definition and one approved binding set are the only source of
 // publication facts. a missing environment or binding row is never a fallback.
-func (d *Database) environmentProjection(ctx context.Context, tx pgx.Tx, row controlstatedb.ControlEnvironment) (ServiceDefinition, PublisherGroupBindings, ProjectConfiguration, error) {
+func (d *Database) environmentProjection(ctx context.Context, tx pgx.Tx, row controlstatedb.ControlEnvironment) (ServiceDefinition, environmentBindings, map[string]EnvironmentServicePublication, error) {
 	return d.environmentProjectionQueries(ctx, controlstatedb.New(tx), row)
 }
 
-func (d *Database) environmentProjectionQueries(ctx context.Context, q *controlstatedb.Queries, row controlstatedb.ControlEnvironment) (ServiceDefinition, PublisherGroupBindings, ProjectConfiguration, error) {
+func (d *Database) environmentProjectionQueries(ctx context.Context, q *controlstatedb.Queries, row controlstatedb.ControlEnvironment) (ServiceDefinition, environmentBindings, map[string]EnvironmentServicePublication, error) {
 	stored, err := q.ReadServiceDefinition(ctx, controlstatedb.ReadServiceDefinitionParams{TeamID: row.TeamID, ProjectKey: row.ProjectKey, Revision: row.AppliedDefinitionRevision})
 	if err != nil {
-		return ServiceDefinition{}, nil, ProjectConfiguration{}, err
+		return ServiceDefinition{}, nil, nil, err
 	}
 	definition, err := decodeServiceDefinition(stored.Definition, stored.ConfigurationHash)
 	if err != nil {
-		return ServiceDefinition{}, nil, ProjectConfiguration{}, err
+		return ServiceDefinition{}, nil, nil, err
 	}
 	settings, err := q.GetPublisherGroupBindings(ctx, row.GroupID)
 	if err != nil {
-		return ServiceDefinition{}, nil, ProjectConfiguration{}, err
+		return ServiceDefinition{}, nil, nil, err
 	}
-	bindings, err := d.openPublisherGroupBindings(settings)
+	bindings, err := d.openEnvironmentTargets(settings)
 	if err != nil {
-		return ServiceDefinition{}, nil, ProjectConfiguration{}, err
+		return ServiceDefinition{}, nil, nil, err
 	}
 	if err = validateEnvironmentBindings(bindings, definition); err != nil {
-		return ServiceDefinition{}, nil, ProjectConfiguration{}, err
-	}
-	if row.ConfigurationHash != environmentConfigurationHash(definition, bindings) {
-		return ServiceDefinition{}, nil, ProjectConfiguration{}, ErrProjectConfigurationStale
+		return ServiceDefinition{}, nil, nil, err
 	}
 	group, err := q.GetEnvironmentPublisherGroup(ctx, row.GroupID)
 	if err != nil {
-		return ServiceDefinition{}, nil, ProjectConfiguration{}, err
+		return ServiceDefinition{}, nil, nil, err
 	}
-	if group.EnvironmentID.String != row.ID || group.TeamID != row.TeamID || group.ProjectKey != row.ProjectKey {
-		return ServiceDefinition{}, nil, ProjectConfiguration{}, ErrProjectConfigurationInvalid
+	if group.EnvironmentID.String != row.ID || group.TeamID != row.TeamID || group.ProjectKey != row.ProjectKey || !group.DomainID.Valid {
+		return ServiceDefinition{}, nil, nil, ErrEnvironmentInvalid
 	}
-	name := group.Name
-	c := ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{}, PublisherGroups: map[string]ProjectPublisherGroup{name: {Description: group.Description, DomainID: group.DomainID.String, Public: group.Public}}}
+	if row.ConfigurationHash != environmentConfigurationHash(definition, bindings, environmentEndpointSettings{DomainID: group.DomainID.String, Public: group.Public}) {
+		return ServiceDefinition{}, nil, nil, ErrEnvironmentStale
+	}
+	services := make(map[string]EnvironmentServicePublication, len(definition.Services))
 	for logical, s := range definition.Services {
-		service, e := bindPublisherGroupService(ProjectServiceConfiguration{Protocol: s.Protocol, Name: logical, PublisherGroup: name}, bindings[logical])
+		binding := bindings[logical]
+		service, e := normalizeEnvironmentService(EnvironmentServicePublication{Protocol: s.Protocol, Target: binding.Target, TargetTLS: binding.TargetTLS, TargetDiscovery: binding.TargetDiscovery, HTTP: binding.HTTP})
 		if e != nil {
-			return ServiceDefinition{}, nil, ProjectConfiguration{}, e
+			return ServiceDefinition{}, nil, nil, e
 		}
-		c.Services[publisherGroupServiceKey(row.GroupID, logical)] = service
+		services[logical] = service
 	}
-	return definition, bindings, c, nil
+	return definition, bindings, services, nil
 }
 
-func (d *Database) environmentServiceConfiguration(ctx context.Context, q *controlstatedb.Queries, environmentID, group, logical string) (ProjectServiceConfiguration, error) {
+func (d *Database) environmentServiceConfiguration(ctx context.Context, q *controlstatedb.Queries, environmentID, group, logical string) (EnvironmentServicePublication, error) {
 	row, mapped, err := publisherGroupEnvironment(ctx, q, group)
 	if err != nil {
-		return ProjectServiceConfiguration{}, err
+		return EnvironmentServicePublication{}, err
 	}
 	if !mapped || row.ID != environmentID || row.RetiredAt.Valid {
-		return ProjectServiceConfiguration{}, ErrServiceAccess
+		return EnvironmentServicePublication{}, ErrServiceAccess
 	}
 	_, _, c, err := d.environmentProjectionQueries(ctx, q, row)
 	if err != nil {
-		return ProjectServiceConfiguration{}, err
+		return EnvironmentServicePublication{}, err
 	}
-	s, ok := c.Services[publisherGroupServiceKey(group, logical)]
+	s, ok := c[logical]
 	if !ok {
-		return ProjectServiceConfiguration{}, ErrServiceAccess
+		return EnvironmentServicePublication{}, ErrServiceAccess
 	}
 	return s, nil
 }
 
 func (d *Database) ApplyEnvironment(ctx context.Context, r ApplyEnvironmentRequest) (Environment, error) {
-	result, err := d.ApplyEnvironments(ctx, ApplyEnvironmentsRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, Items: []EnvironmentApplication{r.EnvironmentApplication}, DNSAutomation: r.DNSAutomation, Now: r.Now})
+	result, err := d.ApplyEnvironments(ctx, ApplyEnvironmentsRequest{Manager: r.Manager, TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, Items: []EnvironmentApplication{r.EnvironmentApplication}, DNSAutomation: r.DNSAutomation, Now: r.Now})
 	if err != nil {
 		return Environment{}, err
 	}
@@ -443,9 +479,11 @@ func (d *Database) ApplyEnvironments(ctx context.Context, r ApplyEnvironmentsReq
 		return nil, err
 	}
 	defer rollback(ctx, tx, "apply environments", &retErr)()
-	if err = authorizeEnvironmentManager(ctx, tx, r.TeamID, r.ActorID); err != nil {
+	manager, err := environmentManagement(ctx, tx, r.TeamID, r.ActorID, r.Manager)
+	if err != nil {
 		return nil, err
 	}
+	r.ActorID = manager.identityID
 	q := controlstatedb.New(tx)
 	project, err := q.LockAppliedProject(ctx, controlstatedb.LockAppliedProjectParams{TeamID: r.TeamID, ProjectKey: r.ProjectKey})
 	if err != nil {
@@ -454,7 +492,8 @@ func (d *Database) ApplyEnvironments(ctx context.Context, r ApplyEnvironmentsReq
 	type approvedApplication struct {
 		row        controlstatedb.ControlEnvironment
 		definition ServiceDefinition
-		old, next  PublisherGroupBindings
+		old, next  environmentBindings
+		endpoint   environmentEndpointSettings
 	}
 	approved := make([]approvedApplication, 0, len(items))
 	// preflight every expected revision, definition and approval before touching
@@ -470,8 +509,11 @@ func (d *Database) ApplyEnvironments(ctx context.Context, r ApplyEnvironmentsReq
 		if row.MutationRevision != item.ExpectedRevision {
 			return nil, ErrProjectConfigurationStale
 		}
-		_, old, _, e := d.environmentProjection(ctx, tx, row)
+		previousDefinition, old, _, e := d.environmentProjection(ctx, tx, row)
 		if e != nil {
+			return nil, e
+		}
+		if e = manager.authorize(ctx, tx, ProvisioningScope{Operation: ProvisioningUpdate, TeamID: r.TeamID, ProjectKey: r.ProjectKey, EnvironmentID: row.ID, Services: definitionServiceNames(previousDefinition)}, false); e != nil {
 			return nil, e
 		}
 		definition, e := loadServiceDefinition(ctx, tx, r.TeamID, r.ProjectKey, item.DefinitionRevision)
@@ -481,7 +523,10 @@ func (d *Database) ApplyEnvironments(ctx context.Context, r ApplyEnvironmentsReq
 		if definition.SourceFingerprint != project.SourceFingerprint {
 			return nil, ErrProjectSourceConflict
 		}
-		next := PublisherGroupBindings{}
+		if e = manager.authorize(ctx, tx, ProvisioningScope{Operation: ProvisioningUpdate, TeamID: r.TeamID, ProjectKey: r.ProjectKey, EnvironmentID: row.ID, Services: definitionServiceNames(definition.Definition)}, false); e != nil {
+			return nil, e
+		}
+		next := environmentBindings{}
 		if item.Targets != nil {
 			next, e = normalizeEnvironmentTargets(item.Targets, definition.Definition)
 		} else {
@@ -495,7 +540,15 @@ func (d *Database) ApplyEnvironments(ctx context.Context, r ApplyEnvironmentsReq
 		if e != nil {
 			return nil, e
 		}
-		approved = append(approved, approvedApplication{row: row, definition: definition.Definition, old: old, next: next})
+		group, e := q.GetEnvironmentPublisherGroup(ctx, row.GroupID)
+		if e != nil {
+			return nil, e
+		}
+		endpoint := environmentEndpointSettings{DomainID: group.DomainID.String, Public: group.Public}
+		if item.Public != nil {
+			endpoint.Public = *item.Public
+		}
+		approved = append(approved, approvedApplication{row: row, definition: definition.Definition, old: old, next: next, endpoint: endpoint})
 	}
 	ids := make([]string, 0, len(approved))
 	for _, a := range approved {
@@ -507,16 +560,19 @@ func (d *Database) ApplyEnvironments(ctx context.Context, r ApplyEnvironmentsReq
 	if _, err = tx.Exec(ctx, `SELECT service.id FROM control.services service JOIN control.applied_project_services binding ON binding.service_id=service.id WHERE binding.group_id=ANY($1::text[]) ORDER BY service.id FOR UPDATE OF service`, ids); err != nil {
 		return nil, err
 	}
-	if err = setServiceAuditIssuer(ctx, tx, publisherIssuer{IdentityID: r.ActorID}); err != nil {
+	if err = setServiceAuditIssuer(ctx, tx, manager.issuer()); err != nil {
 		return nil, err
 	}
 	byID := map[string]Environment{}
 	for i, a := range approved {
 		a.row.MutationRevision++
 		a.row.AppliedDefinitionRevision = items[i].DefinitionRevision
-		a.row.ConfigurationHash = environmentConfigurationHash(a.definition, a.next)
-		apply := ApplyProjectConfigurationRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, DNSAutomation: r.DNSAutomation, Now: r.Now}
-		if err = d.materializeEnvironment(ctx, tx, a.row, a.definition, a.old, a.next, apply); err != nil {
+		a.row.ConfigurationHash = environmentConfigurationHash(a.definition, a.next, a.endpoint)
+		if _, err = tx.Exec(ctx, `UPDATE control.project_publisher_groups SET public=$2 WHERE id=$1`, a.row.GroupID, a.endpoint.Public); err != nil {
+			return nil, err
+		}
+		apply := serviceResourceMutation{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, DNSAutomation: r.DNSAutomation, Now: r.Now}
+		if err = d.materializeEnvironment(ctx, tx, a.row, a.definition, a.old, a.next, apply, manager.issuer()); err != nil {
 			return nil, err
 		}
 		if _, err = tx.Exec(ctx, `UPDATE control.environments SET applied_definition_revision=$2,mutation_revision=$3,configuration_hash=$4,updated_at=$5 WHERE id=$1`, a.row.ID, a.row.AppliedDefinitionRevision, a.row.MutationRevision, a.row.ConfigurationHash, r.Now); err != nil {
@@ -528,7 +584,7 @@ func (d *Database) ApplyEnvironments(ctx context.Context, r ApplyEnvironmentsReq
 		}
 		byID[a.row.ID] = v
 	}
-	if err = serviceManager(ctx, tx, r.TeamID, r.ActorID); err != nil {
+	if err = manager.finish(ctx, tx, r.TeamID); err != nil {
 		return nil, err
 	}
 	result = make([]Environment, 0, len(items))
@@ -541,7 +597,7 @@ func (d *Database) ApplyEnvironments(ctx context.Context, r ApplyEnvironmentsReq
 // environment materialization owns only this remote group's resources. it reuses
 // resource/namespace/pool/endpoint mechanics without entering project apply or
 // any visitor, workload, provisioning or publisher grant reconciliation.
-func (d *Database) materializeEnvironment(ctx context.Context, tx pgx.Tx, row controlstatedb.ControlEnvironment, definition ServiceDefinition, old, next PublisherGroupBindings, r ApplyProjectConfigurationRequest) error {
+func (d *Database) materializeEnvironment(ctx context.Context, tx pgx.Tx, row controlstatedb.ControlEnvironment, definition ServiceDefinition, old, next environmentBindings, r serviceResourceMutation, issuer publisherIssuer) error {
 	if err := lockAppliedPublicationReservations(ctx, tx); err != nil {
 		return err
 	}
@@ -575,19 +631,15 @@ func (d *Database) materializeEnvironment(ctx context.Context, tx pgx.Tx, row co
 	if err = ensurePublisherGroupIngressPool(ctx, tx, row.GroupID, len(definition.Services)-len(saved), retained, poolIDs); err != nil {
 		return err
 	}
-	var groupName string
-	if err = tx.QueryRow(ctx, `SELECT name FROM control.project_publisher_groups WHERE id=$1`, row.GroupID).Scan(&groupName); err != nil {
-		return err
-	}
 	for _, name := range sortedProjectKeys(definition.Services) {
-		service, e := bindPublisherGroupService(ProjectServiceConfiguration{Protocol: definition.Services[name].Protocol, Name: name, PublisherGroup: groupName}, next[name])
+		service, e := bindEnvironmentService(definition.Services[name].Protocol, next[name])
 		if e != nil {
 			return e
 		}
 		entry, exists := saved[name]
 		if !exists {
 			key := publisherGroupServiceKey(row.GroupID, name)
-			id, e := d.createAppliedServiceResource(ctx, tx, q, r, key, row.GroupID, service, publisherIssuer{IdentityID: r.ActorID})
+			id, e := d.createEnvironmentServiceResource(ctx, tx, q, row, name, service, issuer, r.Now)
 			if e != nil {
 				return e
 			}
@@ -599,7 +651,7 @@ func (d *Database) materializeEnvironment(ctx context.Context, tx pgx.Tx, row co
 				if err = closeEnvironmentServiceRuns(ctx, tx, q, entry.ServiceID.String, r.Now); err != nil {
 					return err
 				}
-				if err = d.updateAppliedService(ctx, tx, q, entry.ServiceID.String, row.GroupID, service, r.Now); err != nil {
+				if err = d.updateEnvironmentServiceResource(ctx, tx, q, entry.ServiceID.String, name, row.GroupID, service, r.Now); err != nil {
 					return err
 				}
 			}
@@ -611,11 +663,11 @@ func (d *Database) materializeEnvironment(ctx context.Context, tx pgx.Tx, row co
 		if err = d.ensureServiceEndpoint(ctx, tx, entry.ServiceID.String, row.GroupID, r.DNSAutomation, r.Now); err != nil {
 			return err
 		}
-		if err = RecordServiceAudit(ctx, tx, serviceaudit.Event{TeamID: row.TeamID, ServiceID: entry.ServiceID.String, ServiceKind: "service", EventType: "apply", ActorIdentityID: r.ActorID, ConfigurationRevision: row.MutationRevision, OccurredAt: r.Now}, fmt.Sprintf("%s/%d", row.ID, row.MutationRevision)); err != nil {
+		if err = RecordServiceAudit(ctx, tx, serviceaudit.Event{TeamID: row.TeamID, ServiceID: entry.ServiceID.String, ServiceKind: "service", EventType: "apply", ActorIdentityID: issuer.IdentityID, ActorMachineID: issuer.MachineID, ActorProvisioningGrantID: issuer.ProvisioningGrantID, ConfigurationRevision: row.MutationRevision, OccurredAt: r.Now}, fmt.Sprintf("%s/%d", row.ID, row.MutationRevision)); err != nil {
 			return err
 		}
 	}
-	if err = d.savePublisherGroupBindings(ctx, tx, row.GroupID, next); err != nil {
+	if err = d.saveEnvironmentTargets(ctx, tx, row.GroupID, next); err != nil {
 		return err
 	}
 	_, err = tx.Exec(ctx, `UPDATE control.publisher_group_members SET healthy=false,acknowledged_at=NULL WHERE group_id=$1`, row.GroupID)
@@ -627,7 +679,12 @@ func (d *Database) environmentStatus(ctx context.Context, tx pgx.Tx, row control
 	if err != nil {
 		return Environment{}, err
 	}
-	result := Environment{ID: row.ID, TeamID: row.TeamID, ProjectKey: row.ProjectKey, Name: row.Name, CollectionID: row.CollectionID.String, AppliedDefinitionRevision: row.AppliedDefinitionRevision, MutationRevision: row.MutationRevision, ConfigurationHash: row.ConfigurationHash, Retired: row.RetiredAt.Valid, Targets: environmentTargets(bindings), Services: []EnvironmentService{}, Members: []PublisherGroupMemberStatus{}}
+	result := Environment{ID: row.ID, TeamID: row.TeamID, ProjectKey: row.ProjectKey, Name: row.Name, CollectionID: row.CollectionID.String, AppliedDefinitionRevision: row.AppliedDefinitionRevision, MutationRevision: row.MutationRevision, ConfigurationHash: row.ConfigurationHash, Retired: row.RetiredAt.Valid, Targets: environmentTargets(bindings), Services: []EnvironmentService{}, Members: []EnvironmentPublisherStatus{}}
+	group, err := controlstatedb.New(tx).GetEnvironmentPublisherGroup(ctx, row.GroupID)
+	if err != nil {
+		return result, err
+	}
+	result.DomainID, result.Public = group.DomainID.String, group.Public
 	rows, err := tx.Query(ctx, `SELECT binding.service,service.id,service.protocol,service.certificate_hostname,service.service_port,service.public,service.trust_revision FROM control.applied_project_services binding JOIN control.services service ON service.id=binding.service_id WHERE binding.group_id=$1 ORDER BY binding.service`, row.GroupID)
 	if err != nil {
 		return result, err
@@ -651,12 +708,12 @@ func (d *Database) environmentStatus(ctx context.Context, tx pgx.Tx, row control
 	if err != nil {
 		return result, err
 	}
-	members, err := listPublisherGroupMemberStatus(ctx, tx, row.TeamID, row.ProjectKey)
+	members, err := listEnvironmentPublisherStatus(ctx, tx, row.TeamID, row.ProjectKey)
 	if err != nil {
 		return result, err
 	}
 	for _, m := range members {
-		if m.GroupID == row.GroupID {
+		if m.EnvironmentID == row.ID {
 			result.Members = append(result.Members, m)
 		}
 	}
@@ -664,6 +721,14 @@ func (d *Database) environmentStatus(ctx context.Context, tx pgx.Tx, row control
 }
 
 func (d *Database) GetEnvironment(ctx context.Context, team, project, id, actor string) (result Environment, retErr error) {
+	return d.inspectEnvironment(ctx, team, project, id, actor, EnvironmentPublisherManager{})
+}
+
+func (d *Database) InspectEnvironment(ctx context.Context, team, project, id string, manager EnvironmentPublisherManager) (Environment, error) {
+	return d.inspectEnvironment(ctx, team, project, id, "", manager)
+}
+
+func (d *Database) inspectEnvironment(ctx context.Context, team, project, id, actor string, manager EnvironmentPublisherManager) (result Environment, retErr error) {
 	defer func() { retErr = environmentOperationError(retErr) }()
 	if !naming.ValidProjectKey(project) || !opaqueid.Valid(id, opaqueid.EnvironmentPrefix) {
 		return result, ErrProjectConfigurationInvalid
@@ -673,7 +738,8 @@ func (d *Database) GetEnvironment(ctx context.Context, team, project, id, actor 
 		return result, err
 	}
 	defer rollback(ctx, tx, "get environment", &retErr)()
-	if err = authorizeEnvironmentManager(ctx, tx, team, actor); err != nil {
+	manager, err = environmentManagement(ctx, tx, team, actor, manager)
+	if err != nil {
 		return result, err
 	}
 	row, err := controlstatedb.New(tx).GetEnvironment(ctx, controlstatedb.GetEnvironmentParams{TeamID: team, ProjectKey: project, ID: id})
@@ -684,13 +750,24 @@ func (d *Database) GetEnvironment(ctx context.Context, team, project, id, actor 
 	if err != nil {
 		return result, err
 	}
-	if err = serviceManager(ctx, tx, team, actor); err != nil {
+	if err = d.authorizeEnvironmentProjection(ctx, tx, manager, row, ProvisioningRead); err != nil {
+		return Environment{}, err
+	}
+	if err = manager.finish(ctx, tx, team); err != nil {
 		return Environment{}, err
 	}
 	return result, tx.Commit(ctx)
 }
 
 func (d *Database) ListEnvironments(ctx context.Context, team, project, actor string) (result []Environment, retErr error) {
+	return d.inspectEnvironments(ctx, team, project, actor, EnvironmentPublisherManager{})
+}
+
+func (d *Database) InspectEnvironments(ctx context.Context, team, project string, manager EnvironmentPublisherManager) ([]Environment, error) {
+	return d.inspectEnvironments(ctx, team, project, "", manager)
+}
+
+func (d *Database) inspectEnvironments(ctx context.Context, team, project, actor string, manager EnvironmentPublisherManager) (result []Environment, retErr error) {
 	defer func() { retErr = environmentOperationError(retErr) }()
 	if !naming.ValidProjectKey(project) {
 		return nil, ErrProjectConfigurationInvalid
@@ -700,7 +777,8 @@ func (d *Database) ListEnvironments(ctx context.Context, team, project, actor st
 		return nil, err
 	}
 	defer rollback(ctx, tx, "list environments", &retErr)()
-	if err = authorizeEnvironmentManager(ctx, tx, team, actor); err != nil {
+	manager, err = environmentManagement(ctx, tx, team, actor, manager)
+	if err != nil {
 		return nil, err
 	}
 	rows, err := controlstatedb.New(tx).ListEnvironments(ctx, controlstatedb.ListEnvironmentsParams{TeamID: team, ProjectKey: project})
@@ -709,13 +787,22 @@ func (d *Database) ListEnvironments(ctx context.Context, team, project, actor st
 	}
 	result = []Environment{}
 	for _, row := range rows {
+		if row.RetiredAt.Valid && manager.provisioningCredential != "" {
+			continue
+		}
+		if err = d.authorizeEnvironmentProjection(ctx, tx, manager, row, ProvisioningRead); err != nil {
+			if errors.Is(err, ErrMachineDenied) {
+				continue
+			}
+			return nil, err
+		}
 		v, e := d.environmentStatus(ctx, tx, row)
 		if e != nil {
 			return nil, e
 		}
 		result = append(result, v)
 	}
-	if err = serviceManager(ctx, tx, team, actor); err != nil {
+	if err = manager.finish(ctx, tx, team); err != nil {
 		return nil, err
 	}
 	return result, tx.Commit(ctx)
@@ -731,7 +818,8 @@ func (d *Database) RetireEnvironment(ctx context.Context, r RetireEnvironmentReq
 		return err
 	}
 	defer rollback(ctx, tx, "retire environment", &retErr)()
-	if err = authorizeEnvironmentManager(ctx, tx, r.TeamID, r.ActorID); err != nil {
+	manager, err := environmentManagement(ctx, tx, r.TeamID, r.ActorID, r.Manager)
+	if err != nil {
 		return err
 	}
 	q := controlstatedb.New(tx)
@@ -748,13 +836,16 @@ func (d *Database) RetireEnvironment(ctx context.Context, r RetireEnvironmentReq
 	if row.MutationRevision != r.ExpectedRevision {
 		return ErrProjectConfigurationStale
 	}
+	if err = d.authorizeEnvironmentProjection(ctx, tx, manager, row, ProvisioningRetire); err != nil {
+		return err
+	}
 	if _, err = tx.Exec(ctx, `SELECT service.id FROM control.services service JOIN control.applied_project_services binding ON binding.service_id=service.id WHERE binding.group_id=$1 ORDER BY service.id FOR UPDATE OF service`, row.GroupID); err != nil {
 		return err
 	}
 	if err = lockAppliedPublicationReservations(ctx, tx); err != nil {
 		return err
 	}
-	if err = setServiceAuditIssuer(ctx, tx, publisherIssuer{IdentityID: r.ActorID}); err != nil {
+	if err = setServiceAuditIssuer(ctx, tx, manager.issuer()); err != nil {
 		return err
 	}
 	services, err := q.ListAppliedProjectServices(ctx, controlstatedb.ListAppliedProjectServicesParams{TeamID: r.TeamID, ProjectKey: r.ProjectKey})
@@ -774,7 +865,7 @@ func (d *Database) RetireEnvironment(ctx context.Context, r RetireEnvironmentReq
 	if _, err = tx.Exec(ctx, `UPDATE control.environments SET retired_at=$2,updated_at=$2,mutation_revision=mutation_revision+1 WHERE id=$1`, row.ID, r.Now); err != nil {
 		return err
 	}
-	if err = serviceManager(ctx, tx, r.TeamID, r.ActorID); err != nil {
+	if err = manager.finish(ctx, tx, r.TeamID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

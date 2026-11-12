@@ -116,7 +116,7 @@ func TestGenerateOfflineAcrossWorktreesAndReadOnlyCheck(t *testing.T) {
 			t.Fatal("check changed tracked/generated files")
 		}
 		files := map[string][]byte{}
-		for _, name := range []string{"project.d.ts", "python/pyproject.toml", "python/tnl_project/__init__.py", "python/tnl_project/py.typed"} {
+		for _, name := range []string{"project.ts", "python/pyproject.toml", "python/tnl_project/__init__.py", "python/tnl_project/py.typed"} {
 			data, err := os.ReadFile(filepath.Join(directory, meta.GeneratedDirectoryName, name))
 			if err != nil {
 				t.Fatal(err)

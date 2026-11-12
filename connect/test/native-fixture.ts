@@ -25,11 +25,11 @@ const config = (
   worktree?: boolean;
   unsafeKubeconfig?: boolean;
   looseHandle?: boolean;
-  contextDirectory?: string;
   starterCrash?: "after-response" | "before-response";
   ownerLifetime?: number;
   failStopOnce?: boolean;
   readyAfterSignal?: boolean;
+  providerDelay?: boolean;
 };
 const flag = (name: string) => args[args.indexOf(name) + 1] ?? "";
 const trace = async (value: object) => appendFile("trace.ndjson", `${JSON.stringify(value)}\n`);
@@ -59,8 +59,14 @@ const runtime = {
     },
   },
 };
+const selection = {
+  environment: { server: "https://control.example", project_key: "project-fixture", environment_id: `env_${"e".repeat(22)}` },
+  permission_id: `mwp_${"p".repeat(22)}`,
+  services: { database: "postgres" },
+};
 await trace({
   op,
+  directory: process.cwd(),
   argvHasAssertion: args.some((arg) => arg.includes("fixture-jwt")),
   tracking: process.env.RUNNER_TRACKING_ID,
   oidcBearer: process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN !== undefined,
@@ -99,32 +105,16 @@ if (op === "oidc") {
   }
   emit({
     schema: config.capabilities === "old" ? 0 : 1,
-    capabilities: ["context", "start", "status", "stop"],
-    workload_private: true,
-    opaque_private_preflight: true,
-    team_names: "saved_policy",
+    capabilities: ["environment-start", "status", "stop"],
+    environment_visitors: true,
   });
-} else if (op === "context") {
-  emit({
-    schema: 1,
-    directory: config.contextDirectory ?? process.cwd(),
-    config_digest: "a".repeat(64),
-    server: "https://control.example",
-    audience: "https://control.example",
-    team_id: "tm_fixture",
-    project_key: "project-fixture",
-    source_id: "source",
-    worktree_key: "worktree",
-    project_label: "fixture",
-    workload: flag("--workload"),
-    services: ["database"],
-  });
-} else if (op === "start") {
+} else if (op === "environment-start") {
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
   const request = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
-    assertion: string;
-    context: { audience: string };
+    selection: typeof selection;
+    source: { kind: string; machine_id: string };
+    acquisition: { method: string; audience: string };
     github_actions_refresh?: {
       audience: string;
       request_url: string;
@@ -132,17 +122,36 @@ if (op === "oidc") {
     };
   };
   await trace({
-    proofOnStdin: request.assertion === "fixture-jwt-never-log",
-    audience: request.context.audience,
+    explicitSourceOnStdin: request.source.kind === "oidc" && request.source.machine_id === `mci_${"m".repeat(22)}` && request.selection.permission_id === selection.permission_id && request.acquisition.method === "github-actions",
+    audience: request.acquisition.audience,
     actionRefreshOnStdin:
-      request.github_actions_refresh?.audience === request.context.audience &&
+      request.github_actions_refresh?.audience === request.acquisition.audience &&
       request.github_actions_refresh.request_url ===
         "https://runtime.example.test/token?keep=yes&audience=wrong" &&
       request.github_actions_refresh.request_token === "fixture-bearer",
     argvHasRuntimeCredential: args.some((arg) => arg.includes("fixture-bearer")),
   });
+  await trace({ providerSourceRead: true });
+  if (config.providerDelay) {
+    process.once("SIGTERM", () => { void trace({ providerCanceled: true }).then(() => process.exit(1)); });
+    await new Promise(() => {});
+  }
+  const source = request.github_actions_refresh;
+  if (source?.request_url.startsWith("http://127.0.0.1:")) {
+    // the synthetic native executable uses a loopback test issuer. production
+    // native separately enforces HTTPS, no redirects, bounds and execution trust.
+    const url = new URL(source.request_url);
+    url.searchParams.set("audience", request.acquisition.audience);
+    const response = await fetch(url, { headers: { authorization: `Bearer ${source.request_token}` }, redirect: "error" });
+    if (!response.ok) {
+      process.stderr.write(await response.text());
+      process.exit(1);
+    }
+    const value: unknown = await response.json();
+    if (value === null || typeof value !== "object" || !("value" in value) || typeof value.value !== "string") throw new Error("invalid test provider reply");
+  }
   if (config.noisy) {
-    process.stderr.write(request.assertion);
+    process.stderr.write(request.github_actions_refresh?.request_token ?? "private-runtime-bearer");
     process.exitCode = 1;
   } else if (config.fail) {
     await trace({ partialCleanup: true });
@@ -245,6 +254,7 @@ if (op === "oidc") {
     project_runtime: config.secretRuntime
       ? { ...runtime, private_key: "fixture-private-material" }
       : runtime,
+    environment: { environment: selection.environment, applied_definition_revision: 1, mutation_revision: 1, services: { database: { service_id: `svc_${"s".repeat(22)}`, protocol: "postgres", endpoint: { hostname: "database.test.example", port: 5432, public: false } } } },
     ...(config.kube || config.unsafeKubeconfig ? { kubeconfig } : {}),
   };
   emit(ready);

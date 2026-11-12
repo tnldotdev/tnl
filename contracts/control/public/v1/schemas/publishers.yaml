@@ -57,14 +57,14 @@ schemas:
     description: >-
       A deployment report accepted through the signed runtime lifecycle.
       Publisher and team are the surrounding runtime's authenticated identity;
-      group_id is derived by control from current publisher membership.
+      environment_id is derived by control from current publisher membership.
       Timestamps are control receipt times. This is evidence of a publisher
       report, not cloud deployment state, image attestation or target health.
-      The group/deployment/replica tuple is reserved for this publisher identity.
-    required: [report, group_id, evidence, first_observed_at, observed_at]
+      The environment/deployment/replica tuple is reserved for this publisher identity.
+    required: [report, environment_id, evidence, first_observed_at, observed_at]
     properties:
       report: { $ref: "../openapi.yaml#/components/schemas/PublisherDeploymentReport" }
-      group_id: { type: string }
+      environment_id: { type: string }
       evidence: { type: string, enum: [publisher_reported] }
       first_observed_at: { type: string, format: date-time }
       observed_at: { type: string, format: date-time }
@@ -74,7 +74,7 @@ schemas:
     properties:
       epoch: { type: integer, format: int64, minimum: 0 }
       lease_expires_at: { type: string, format: date-time }
-      group_lease: { $ref: "../openapi.yaml#/components/schemas/PublisherGroupLease" }
+      environment_lease: { $ref: "../openapi.yaml#/components/schemas/EnvironmentPublisherLease" }
   PublisherRuntimeStatus:
     type: object
     additionalProperties: false

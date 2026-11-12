@@ -20,15 +20,18 @@ tnl:
     domain: routes.example.test
     access: {ip: [192.0.2.0/24]}
     ephemeral: true
-  services:
-    web:
-      name: website
-      public_url:
-        access: anonymous
-      target: {type: address, address: 4000}
-      http:
-        open: true
-        readiness: {path: /status}
+  services: {web: {}}
+  environments:
+    local:
+      targets:
+        web:
+          name: website
+          public_url:
+            access: anonymous
+          address: 4000
+          http:
+            open: true
+            readiness: {path: /status}
 `
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
@@ -38,6 +41,7 @@ tnl:
 		t.Fatal(err)
 	}
 	project := Project{Config: *document.TNL}
+	project.Config.Services = config.LocalServices(project.Config)
 	effective, err := project.EffectiveService("web")
 	if err != nil {
 		t.Fatal(err)
@@ -186,23 +190,18 @@ func TestResolvedServiceSelectsOnlyApplicableProjectDefaults(t *testing.T) {
 	}
 }
 
-func TestPublisherGroupIsExplicitAndDefaultsToLocal(t *testing.T) {
-	group, protocol := "cloud", "postgres"
-	target := config.Target("db.internal:5432")
+func TestLocalTargetsDoNotAcquireAnotherEnvironmentsDestinations(t *testing.T) {
+	protocol := "postgres"
 	project := Project{Config: config.TNL{
-		PublisherGroups: map[string]config.PublisherGroup{"cloud": {}},
 		Services: config.Services{
 			"default": {},
-			"db":      {PublisherGroup: &group, Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target}},
+			"db":      {Protocol: &protocol},
 		},
+		Environments: map[string]config.Environment{"local": {Targets: map[string]config.EnvironmentTarget{"db": {Address: new(config.Target("127.0.0.1:5432"))}}}, "staging": {Targets: map[string]config.EnvironmentTarget{"default": {Address: new(config.Target("http://staging.internal:3000"))}, "db": {Address: new(config.Target("db.staging.internal:5432"))}}}},
 	}}
-	for _, test := range []struct {
-		name     string
-		expected string
-	}{{"default", "local"}, {"db", "cloud"}} {
-		if actual := config.PublisherGroupName(project.Config.Services[test.name]); actual != test.expected {
-			t.Fatalf("service %q group=%s", test.name, actual)
-		}
+	local := config.LocalServices(project.Config)
+	if local["default"].Target != nil || string(*local["db"].Target.Address) != "127.0.0.1:5432" || project.Config.Services["db"].Target != nil {
+		t.Fatal("local projection acquired remote authority or changed the logical definition")
 	}
 }
 

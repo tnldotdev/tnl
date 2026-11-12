@@ -26,7 +26,7 @@ import (
 func TestAuthorityFailuresPreserveRequestContext(t *testing.T) {
 	cause := errors.New("private-provider-material")
 	store := &authorityContextFailureStore{err: cause}
-	h := &handler{store: store, oidc: &oidc.Server{}}
+	h := &handler{store: store, oidc: &oidc.Server{}, workloads: &oidc.WorkloadVerifier{}}
 	for _, test := range []struct {
 		name, body, title string
 		handle            func(http.ResponseWriter, *http.Request)
@@ -75,10 +75,10 @@ func TestAuthorityFailuresPreserveRequestContext(t *testing.T) {
 			status: http.StatusServiceUnavailable, code: authorityv1.Unavailable, reason: failure.ServerAPIInternal,
 		},
 		{
-			name: "workload renewal handler", title: "internal server error",
+			name: "environment visitor renewal handler", title: "internal server error",
 			body: `{"sequence":1,"signature":"` + base64.RawURLEncoding.EncodeToString(make([]byte, ed25519.SignatureSize)) + `"}`,
 			handle: func(w http.ResponseWriter, r *http.Request) {
-				h.RenewWorkloadSession(w, r, "workload-session")
+				h.RenewEnvironmentVisitorSession(w, r, "visitor-session")
 			},
 			status: http.StatusInternalServerError, code: authorityv1.Internal, reason: failure.ServerAPIInternal,
 		},
@@ -163,6 +163,6 @@ func (s *authorityContextFailureStore) RedeemPublisherEnrollment(context.Context
 	return controlstate.PublisherIdentity{}, s.err
 }
 
-func (s *authorityContextFailureStore) RenewWorkloadSession(context.Context, string, string, controlstate.WorkloadRenewal, time.Time) (controlstate.WorkloadSession, error) {
+func (s *authorityContextFailureStore) RenewEnvironmentVisitorSession(context.Context, string, string, controlstate.WorkloadRenewal, time.Time) (controlstate.WorkloadSession, error) {
 	return controlstate.WorkloadSession{}, s.err
 }

@@ -11,13 +11,11 @@ import (
 
 func TestIntegrationCollectionRequiresCurrentManagerForReadsMutationsAndReplays(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "collection_manager")
-	r := appliedProjectRequest(t, d, now)
+	r := retainedEnvironmentProject(t, d, now)
 	if _, err := d.pool.Exec(t.Context(), `UPDATE control.teams SET kind='organization' WHERE id=$1`, r.TeamID); err != nil {
 		t.Fatal(err)
 	}
-	manager := addAuthorityMember(t, d, now, r.ActorID, r.TeamID, "collection-manager", TeamRoleAdmin)
-	issuer := r
-	issuer.ActorID = manager.IdentityID
+	issuer, manager := retainedEnvironmentManager(t, d, r, "collection-manager")
 	d1 := environmentDefinition(t, d, r, map[string]ServiceDefinitionService{"api": {Protocol: "http"}})
 	c, creation := createTestCollection(t, d, issuer, "managed", d1.Revision)
 	environmentRequest := collectionEnvironmentRequest(issuer, c, "installed", "installed.internal:3000")
@@ -26,7 +24,7 @@ func TestIntegrationCollectionRequiresCurrentManagerForReadsMutationsAndReplays(
 		t.Fatal(err)
 	}
 	member := enrollTestEnvironment(t, d, issuer, environment)
-	access := groupAssignmentAccess(t, d, member, member.assignments.Services[0], now)
+	access := environmentAssignmentAccess(t, d, member, member.assignments.Services[0], now)
 	for _, loss := range []string{"demoted", "disabled", "removed"} {
 		switch loss {
 		case "demoted":
@@ -78,7 +76,7 @@ func TestIntegrationCollectionRequiresCurrentManagerForReadsMutationsAndReplays(
 			if _, err := d.AuthenticatePublisherAccess(t.Context(), access.Token, "", now); err != nil {
 				t.Error("installed team publisher depended on the enrolling human", err)
 			}
-			if _, err := d.GetPublisherGroupAssignments(t.Context(), member.lease.AccessToken, now); err != nil {
+			if _, err := d.GetEnvironmentPublisherAssignments(t.Context(), member.lease.AccessToken, now); err != nil {
 				t.Error("installed assignments depended on the enrolling human", err)
 			}
 		})
@@ -94,7 +92,7 @@ func TestIntegrationCollectionMutationsRecheckAuthorityAfterLockWait(t *testing.
 		for _, boundary := range []string{"team", "project"} {
 			t.Run(operation+"/"+boundary, func(t *testing.T) {
 				d, now := newControlStateIntegrationDatabase(t, "collection_authority_wait")
-				r := appliedProjectRequest(t, d, now)
+				r := retainedEnvironmentProject(t, d, now)
 				if _, err := d.pool.Exec(t.Context(), `UPDATE control.teams SET kind='organization' WHERE id=$1`, r.TeamID); err != nil {
 					t.Fatal(err)
 				}

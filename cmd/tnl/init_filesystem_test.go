@@ -43,7 +43,7 @@ func TestInitStaticProjectNeedsNoPackageManifestOrOrigin(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, name := range []string{"tnl.yml", ".tnl/generated/project.d.ts"} {
+	for _, name := range []string{"tnl.yml", ".tnl/generated/project.ts"} {
 		if _, err := os.Stat(filepath.Join(root, name)); err != nil {
 			t.Fatal(err)
 		}
@@ -72,7 +72,7 @@ func TestInitWiresTypeIncludeForExistingProjectConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(path)
-	if err != nil || !bytes.Contains(got, []byte("app/**/*.tsx")) || !bytes.Contains(got, []byte(".tnl/generated/project.d.ts")) || !strings.Contains(output.String(), `.tnl/generated/project.d.ts`) || !strings.Contains(output.String(), "ignore") {
+	if err != nil || !bytes.Contains(got, []byte("app/**/*.tsx")) || !bytes.Contains(got, []byte(".tnl/generated/project.ts")) || !strings.Contains(output.String(), `.tnl/generated/project.ts`) || !strings.Contains(output.String(), "ignore") {
 		t.Fatalf("tsconfig = %s, output = %s, err = %v", got, output.String(), err)
 	}
 }

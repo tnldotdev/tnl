@@ -19,6 +19,9 @@ from ._connections import (
     TCPConnectionHandle,
     connect,
 )
+from ._environment import EnvironmentReference
+from ._identity import IdentitySource, NativeAcquisition, OIDCAssertion
+from ._identity_models import IdentitySourceChallenge, IdentitySourceReply, IdentitySourceSelection
 from ._handler import handler
 from ._protocol import (
     InvalidResponse,
@@ -26,7 +29,7 @@ from ._protocol import (
     RegistrationLost,
     TnlError,
 )
-from ._workload import configure_workload
+from ._service_facts import ServiceFacts
 
 __all__ = [
     "AccessPolicy",
@@ -53,10 +56,17 @@ __all__ = [
     "TnlError",
     "Tunnel",
     "Server",
+    "ServiceFacts",
+    "EnvironmentReference",
+    "IdentitySourceChallenge",
+    "IdentitySourceReply",
+    "IdentitySourceSelection",
+    "NativeAcquisition",
+    "OIDCAssertion",
+    "IdentitySource",
     "handler",
     "connect",
     "client",
-    "configure_workload",
     "open",
     "prepare",
     "run",

@@ -18,7 +18,7 @@ tasks:
   application-publications:
     desc: Check application publication acceptance, real native visitor TLS, and joined temporary-resource cleanup with local signed fixtures
     cmds:
-      - go test -race -v ./internal/publisher/local -run='^TestApplicationPublication(RealNativeTrafficAndCleanup|WorkerCleanupRetry.*|WorkerFailureBeforeTransportCleansAllocation)$' -count=1 -timeout=2m
+      - go test -race -v ./internal/publisher/local -run='^Test(ApplicationPublication(RealNativeTrafficAndCleanup|WorkerCleanupRetry.*|WorkerFailureBeforeTransportCleansAllocation)|GoSDKNative(PublicationTrafficAndCleanup|CancellationBeforeReadyCleansExactAllocation)|RegisteredApplication.*)$' -count=1 -timeout=2m
 
   default:
     desc: Run PostgreSQL-backed integration boundaries
@@ -31,8 +31,9 @@ tasks:
     desc: Check APIs, database bindings, certificates, DNS, and relay claims with disposable PostgreSQL
     vars:
       RUN: '{{default "^TestIntegration" .RUN}}'
+      PACKAGES: '{{default "./internal/control/api/authority ./internal/control/api/public ./internal/control/state/controlstatedb ./internal/control/certificates ./internal/control/dns ./internal/relay ./internal/publisher/group" .PACKAGES}}'
     cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/api/authority ./internal/control/api/public ./internal/control/state/controlstatedb ./internal/control/certificates ./internal/control/dns ./internal/relay ./internal/publisher/group -run='{{.RUN}}' -count=1 -timeout=8m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres -- go test -race -v {{.PACKAGES}} -run='{{.RUN}}' -count=1 -timeout=8m -args -tnl-test-tier=integration
 
   state:shard:
     desc: Check control state with disposable PostgreSQL (optional SHARD=1/4)

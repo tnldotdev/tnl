@@ -12,10 +12,6 @@ import (
 )
 
 func TestSchemaInventoryAndCloudSelectorBounds(t *testing.T) {
-	groups := schemaForType(reflect.TypeOf(map[string]config.PublisherGroup{}))
-	if template, ok := groups.AdditionalProperties.Properties.Get("template"); !ok || template.Type != "boolean" || template.Default != false {
-		t.Fatal("publisher template metadata", template)
-	}
 	ports, ok := tnldSchema().Properties.Get("service_port_ranges")
 	if !ok || ports.MinItems == nil || *ports.MinItems != 1 || ports.MaxItems == nil || *ports.MaxItems != tcpport.MaxInventoryDeclarations || !reflect.DeepEqual(ports.Default, []string{"20000-20015"}) {
 		t.Fatal("inventory metadata", ports)
@@ -38,281 +34,192 @@ func TestSchemaInventoryAndCloudSelectorBounds(t *testing.T) {
 	}
 }
 
-func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
-	reflector := &jsonschema.Reflector{
-		Anonymous: true, ExpandedStruct: true, RequiredFromJSONSchemaTags: true,
-		Mapper: schemaForType,
-	}
+func TestSchemaSeparatesLogicalServicesFromEnvironmentAuthority(t *testing.T) {
+	reflector := &jsonschema.Reflector{Anonymous: true, ExpandedStruct: true, RequiredFromJSONSchemaTags: true, Mapper: schemaForType}
 	schema := reflector.Reflect(config.Document{})
 	tnl := schema.Definitions["TNL"]
-	if tnl == nil {
-		t.Fatal("TNL definition is missing")
-	}
-	for _, property := range []string{"server", "team", "services"} {
-		if _, found := tnl.Properties.Get(property); !found {
-			t.Fatalf("TNL property %q is missing", property)
+	for _, key := range []string{"server", "team", "services", "environments", "collections"} {
+		if _, found := tnl.Properties.Get(key); !found {
+			t.Fatalf("missing root %s", key)
 		}
 	}
-	services := schemaForType(reflect.TypeOf(config.Services{}))
-	if services.MaxProperties == nil || *services.MaxProperties != 32 || services.PropertyNames == nil ||
-		services.PropertyNames.Pattern == "" || services.AdditionalProperties == nil {
-		t.Fatalf("services schema = %#v", services)
-	}
-	serviceSchema := services.AdditionalProperties.OneOf[0]
-	if _, found := serviceSchema.Properties.Get("directory"); found {
-		t.Fatal("removed service directory is still exposed")
-	}
-	http, _ := serviceSchema.Properties.Get("http")
-	if paths, found := http.Properties.Get("paths"); !found || paths.AdditionalProperties == nil || len(paths.AdditionalProperties.OneOf) != 2 {
-		t.Fatalf("service path mount schema = %#v", paths)
-	}
-	for _, property := range []string{"server", "team"} {
-		if _, found := serviceSchema.Properties.Get(property); found {
-			t.Fatalf("service %s property must be project-wide", property)
+	for _, key := range []string{"workloads", "publisher_groups", "publish", "readiness"} {
+		if _, found := tnl.Properties.Get(key); found {
+			t.Fatalf("retired root %s", key)
 		}
 	}
-	tunnel := schemaForType(reflect.TypeOf(config.Tunnel{}))
-	if _, found := tunnel.Properties.Get("ephemeral"); !found {
-		t.Fatal("tunnel ephemeral property is missing")
+	services := servicesSchema()
+	if *services.MaxProperties != 32 || services.PropertyNames == nil || services.PropertyNames.Pattern == "" {
+		t.Fatal("service name bounds missing")
 	}
-	if limits, found := tunnel.Properties.Get("limits"); !found || limits.Properties == nil {
-		t.Fatalf("tunnel limits schema = %#v", limits)
-	} else if http, found := limits.Properties.Get("http"); !found || http.Properties == nil {
-		t.Fatal("HTTP limits are missing")
-	} else if concurrency, found := http.Properties.Get("concurrency"); !found || concurrency.Minimum != "1" || concurrency.Maximum != "9007199254740991" {
-		t.Fatalf("tunnel concurrency schema = %#v", concurrency)
+	service := services.AdditionalProperties
+	protocol, _ := service.Properties.Get("protocol")
+	if !reflect.DeepEqual(protocol.Enum, []any{"http", "tcp", "mysql", "postgres", "kubernetes"}) {
+		t.Fatal("service protocols changed")
 	}
-	if _, found := tunnel.Properties.Get("allow_providers"); found {
-		t.Fatal("tunnel-wide provider grants must not be generated")
+	for _, key := range []string{"target", "target_binding", "publisher_group", "public_url", "name", "access", "inspection", "http", "tls"} {
+		if value, found := service.Properties.Get(key); !found || value != jsonschema.FalseSchema {
+			t.Fatalf("definition permits %s", key)
+		}
 	}
-	webhook := schemaForType(reflect.TypeOf(config.Webhook{}))
-	if provider, found := webhook.Properties.Get("provider"); !found || len(provider.Enum) != 23 || provider.Enum[0] != "amazon-sns" {
-		t.Fatalf("webhook provider schema = %#v", provider)
+	for _, key := range []string{"server", "team", "directory", "readiness", "paths", "publish"} {
+		if _, found := service.Properties.Get(key); found {
+			t.Fatalf("service contains %s", key)
+		}
 	}
-	if ips, found := webhook.Properties.Get("source_ips"); !found || ips.MinItems == nil || *ips.MinItems != 1 {
-		t.Fatalf("webhook source override schema = %#v", ips)
-	}
-	if access, found := tunnel.Properties.Get("access"); !found || len(access.OneOf) != 2 {
-		t.Fatalf("tunnel visitor access schema = %#v", access)
+	collection := schema.Definitions["Collection"]
+	if collection == nil || collection.Properties != nil && collection.Properties.Len() != 0 || collection.AdditionalProperties != jsonschema.FalseSchema {
+		t.Fatal("collection contains a second schema or template")
 	}
 	keys := map[string]string{}
 	collectTypeScriptKeys(reflect.TypeOf(config.TNL{}), keys)
-	if keys["allow_ip"] != "" || keys["source_ips"] != "sourceIPs" || keys["startup_timeout"] != "" || keys["request_limit"] != "" || keys["strip_prefix"] != "stripPrefix" || keys["require_post_quantum"] != "requirePostQuantum" || keys["target_binding"] != "targetBinding" {
-		t.Fatalf("TypeScript key mappings = %#v", keys)
+	for key, want := range map[string]string{"source_ips": "sourceIPs", "strip_prefix": "stripPrefix", "require_post_quantum": "requirePostQuantum", "ca_pem": "caPEM"} {
+		if keys[key] != want {
+			t.Fatalf("key %s=%s, want %s", key, keys[key], want)
+		}
 	}
-	duration := schemaForType(reflect.TypeOf(config.Duration(0)))
-	if duration.Pattern != config.DurationPattern {
-		t.Fatalf("duration pattern = %q", duration.Pattern)
+	for _, key := range []string{"target_binding", "publisher_group", "publisher_groups", "request_limit", "allow_ip", "startup_timeout"} {
+		if keys[key] != "" {
+			t.Fatalf("retired key mapping %s", key)
+		}
 	}
 }
 
-func TestServiceSchemaKeepsServicesSeparateFromPublicURLs(t *testing.T) {
-	variants := servicesSchema().AdditionalProperties.OneOf
-	if len(variants) != 11 {
-		t.Fatalf("service variants: %d", len(variants))
+func TestEnvironmentTargetsAndLocalHTTPHaveSeparateBoundaries(t *testing.T) {
+	environments := schemaForType(reflect.TypeOf(map[string]config.Environment{}))
+	if environments.AdditionalProperties == nil || len(environments.AdditionalProperties.AnyOf) != 0 {
+		t.Fatal("file schema permits local-only settings in remote environments")
 	}
-	for index, private := range variants[1:6] {
-		if slices.Contains(private.Required, "private") || index > 0 && !slices.Contains(private.Required, "target") {
-			t.Fatalf("private fields: %v", private.Required)
+	for _, local := range []bool{false, true} {
+		environment := environmentSchema(local)
+		if _, found := environment.Properties.Get("server"); !found {
+			t.Fatal("per-environment server missing")
 		}
-		if tunnel, found := private.Properties.Get("public_url"); !found || tunnel != jsonschema.FalseSchema {
-			t.Fatal("service permits public URL tunnel")
-		}
-		if name, found := private.Properties.Get("name"); !found || name.Pattern == "" {
-			t.Fatal("explicit private name must be validated")
-		}
-	}
-	if _, found := variants[0].Properties.Get("private"); found {
-		t.Fatal("obsolete private block is generated")
-	}
-}
-
-func TestSchemaHasDisjointTargetsAndNoRetiredPublicFields(t *testing.T) {
-	reflector := &jsonschema.Reflector{Anonymous: true, ExpandedStruct: true, RequiredFromJSONSchemaTags: true, Mapper: schemaForType}
-	schema := reflector.Reflect(config.Document{})
-	for _, key := range []string{"publish", "readiness"} {
-		if _, found := schema.Definitions["TNL"].Properties.Get(key); found {
-			t.Fatalf("retired root %s is generated", key)
-		}
-	}
-	service := servicesSchema().AdditionalProperties.OneOf[0]
-	for _, key := range []string{"publish", "readiness", "paths", "directory"} {
-		if _, found := service.Properties.Get(key); found {
-			t.Fatalf("retired service %s is generated", key)
-		}
-	}
-	target, _ := service.Properties.Get("target")
-	if len(target.OneOf) != 4 {
-		t.Fatal("target variants are not disjoint")
-	}
-	for _, variant := range target.OneOf {
-		kind, _ := variant.Properties.Get("type")
-		if kind.Const == "compose" && (slices.Contains(variant.Required, "project") || slices.Contains(variant.Required, "file") || !slices.Contains(variant.Required, "service") || !slices.Contains(variant.Required, "port")) {
-			t.Fatalf("Compose target required fields = %v", variant.Required)
-		}
-		if kind.Const == "app" {
-			for _, field := range []string{"address", "project", "file", "service", "port", "container"} {
-				if value, found := variant.Properties.Get(field); !found || value != jsonschema.FalseSchema {
-					t.Fatalf("app target permits %s", field)
+		for _, target := range environmentTargetSchema(local).OneOf {
+			address, _ := target.Properties.Get("address")
+			discovery, _ := target.Properties.Get("discovery")
+			if address != jsonschema.FalseSchema && discovery != jsonschema.FalseSchema {
+				t.Fatal("mixed destination authority")
+			}
+			if !local && !slices.Contains(target.Required, "address") && !slices.Contains(target.Required, "discovery") {
+				t.Fatal("remote target may omit its destination")
+			}
+			for _, key := range []string{"name", "access", "inspection", "public_url"} {
+				value, _ := target.Properties.Get(key)
+				if local == (value == jsonschema.FalseSchema) {
+					t.Fatalf("local-only field %s boundary", key)
 				}
 			}
 		}
-		if kind.Const == "compose" || kind.Const == "docker" {
-			port, found := variant.Properties.Get("port")
-			if !found || port.Minimum != "1" || port.Maximum != "65535" {
-				t.Fatal("private port bounds missing")
+	}
+	local := environmentTargetSchema(true).OneOf[0]
+	http, _ := local.Properties.Get("http")
+	paths, _ := http.Properties.Get("paths")
+	if paths == nil || len(paths.AdditionalProperties.OneOf) != 2 || *paths.MaxProperties != 32 {
+		t.Fatal("path mount forms or bounds missing")
+	}
+	for _, key := range []string{"readiness", "open"} {
+		if _, found := http.Properties.Get(key); !found {
+			t.Fatalf("local HTTP lost %s", key)
+		}
+	}
+}
+
+func TestDiscoverySchemaRetainsProtocolAndExactVariantChecks(t *testing.T) {
+	for _, protocol := range []string{"http", "tcp", "mysql", "postgres", "kubernetes"} {
+		for _, target := range targetSchema(protocol).OneOf {
+			kind, _ := target.Properties.Get("type")
+			if protocol != "http" && kind.Const == "app" || kind.Const == "eks" && protocol != "kubernetes" || kind.Const == "rds" && protocol != "postgres" && protocol != "mysql" {
+				t.Fatal("discovery protocol boundary changed")
+			}
+			if kind.Const == "compose" && (slices.Contains(target.Required, "project") || slices.Contains(target.Required, "file") || !slices.Contains(target.Required, "service") || !slices.Contains(target.Required, "port")) {
+				t.Fatal("Compose defaults or required fields changed")
+			}
+			if kind.Const == "docker" || kind.Const == "compose" {
+				port, _ := target.Properties.Get("port")
+				if port.Minimum != "1" || port.Maximum != "65535" {
+					t.Fatal("discovery port bounds missing")
+				}
+			}
+			for _, field := range []string{"address", "project", "file", "service", "port", "container", "tls", "region", "cluster", "instance", "endpoint"} {
+				if _, found := target.Properties.Get(field); !found {
+					t.Fatalf("target needs explicit allowed/forbidden %s", field)
+				}
+			}
+			tls, _ := target.Properties.Get("tls")
+			if kind.Const == "eks" || kind.Const == "rds" {
+				if tls != jsonschema.FalseSchema {
+					t.Fatal("provider discovery must supply trust")
+				}
+				continue
+			}
+			if tls.AdditionalProperties != jsonschema.FalseSchema {
+				t.Fatal("TLS fields are not exact")
+			}
+			if _, found := tls.Properties.Get("mode"); found {
+				t.Fatal("TLS negotiation must follow protocol")
 			}
 		}
 	}
-	if _, found := tunnelSchema().Properties.Get("open"); found {
-		t.Fatal("browser opening is still a tunnel field")
+}
+
+func TestPublicURLPolicyAndInspectionSchemaBounds(t *testing.T) {
+	tunnel := tunnelSchema()
+	if _, found := tunnel.Properties.Get("ephemeral"); !found {
+		t.Fatal("ephemeral missing")
 	}
-	limits, _ := tunnelSchema().Properties.Get("limits")
+	for _, field := range []string{"open", "allow_providers"} {
+		if _, found := tunnel.Properties.Get(field); found {
+			t.Fatalf("retired tunnel %s", field)
+		}
+	}
+	access, _ := tunnel.Properties.Get("access")
+	if len(access.OneOf) != 2 {
+		t.Fatal("access shorthand/object forms missing")
+	}
+	limits, _ := tunnel.Properties.Get("limits")
 	for _, key := range []string{"http", "tcp", "traffic"} {
 		if _, found := limits.Properties.Get(key); !found {
 			t.Fatalf("missing %s limits", key)
 		}
 	}
+	http, _ := limits.Properties.Get("http")
+	concurrency, _ := http.Properties.Get("concurrency")
+	if concurrency.Minimum != "1" || concurrency.Maximum != "9007199254740991" {
+		t.Fatal("safe integer bounds missing")
+	}
 	traffic, _ := limits.Properties.Get("traffic")
 	for _, key := range []string{"connections", "rate", "rate_per", "burst", "upload_bytes", "download_bytes", "total_connections", "total_upload_bytes", "total_download_bytes"} {
 		if _, found := traffic.Properties.Get(key); !found {
-			t.Fatalf("traffic field %s is missing", key)
+			t.Fatalf("traffic field %s missing", key)
 		}
 	}
 	for _, key := range []string{"total_bytes", "burst_bytes"} {
 		if _, found := traffic.Properties.Get(key); found {
-			t.Fatalf("combined traffic field %s is exposed", key)
+			t.Fatalf("combined traffic field %s", key)
 		}
+	}
+	if schemaForType(reflect.TypeOf(config.Duration(0))).Pattern != config.DurationPattern {
+		t.Fatal("duration syntax drift")
 	}
 	pattern := regexp.MustCompile(schemaForType(reflect.TypeOf(config.ByteSize(0))).Pattern)
 	for _, size := range []string{"1MiB", "1024KiB", "1024MiB", "1048576KiB", "1GiB"} {
 		if !pattern.MatchString(size) {
-			t.Fatalf("schema rejected %s", size)
+			t.Fatalf("rejected %s", size)
 		}
 	}
 	for _, size := range []string{"1023KiB", "1048577KiB", "1025MiB", "2GiB", "1MB", "+1MiB", "1.5MiB"} {
 		if pattern.MatchString(size) {
-			t.Fatalf("schema accepted %s", size)
+			t.Fatalf("accepted %s", size)
 		}
 	}
-}
-
-func TestProtocolDiscriminatedServiceAndPublisherSchemas(t *testing.T) {
-	variants := servicesSchema().AdditionalProperties.OneOf
-	if len(variants) != 11 {
-		t.Fatal("services must distinguish public and private HTTP, TCP, MySQL, PostgreSQL, Kubernetes, and five group-bound protocol variants")
+	webhook := webhookSchema()
+	provider, _ := webhook.Properties.Get("provider")
+	if len(provider.Enum) != 23 || provider.Enum[0] != "amazon-sns" {
+		t.Fatal("provider catalog drift")
 	}
-	for i, service := range variants[:6] {
-		group, found := service.Properties.Get("publisher_group")
-		if !found || group.Type != "string" || group.Default != "local" {
-			t.Fatal("publisher must default to the built-in local group")
-		}
-		protocol, _ := service.Properties.Get("protocol")
-		target, _ := service.Properties.Get("target")
-		http, _ := service.Properties.Get("http")
-		if i < 2 {
-			if !reflect.DeepEqual(protocol.Enum, []any{"http"}) || slices.Contains(service.Required, "protocol") || len(target.OneOf) != 4 || http == jsonschema.FalseSchema {
-				t.Fatal("HTTP service lost inference or HTTP settings")
-			}
-			if slices.Contains(service.Required, "public_url") != (i == 0) {
-				t.Fatal("public HTTPS must require the explicit public URL block")
-			}
-		} else {
-			wantProtocol := []string{"http", "http", "tcp", "mysql", "postgres", "kubernetes"}[i]
-			wantTargets := []int{4, 4, 3, 5, 5, 4}[i]
-			if !reflect.DeepEqual(protocol.Enum, []any{wantProtocol}) || !slices.Contains(service.Required, "protocol") || !slices.Contains(service.Required, "target") || len(target.OneOf) != wantTargets || http != jsonschema.FalseSchema {
-				t.Fatal("non-HTTP service does not require its protocol and non-app target or forbids HTTP settings")
-			}
-		}
-		for _, variant := range target.OneOf {
-			kind, _ := variant.Properties.Get("type")
-			if i > 1 && kind.Const == "app" {
-				t.Fatal("non-HTTP service accepts an app target")
-			}
-			tls, _ := variant.Properties.Get("tls")
-			if kind.Const == "eks" || kind.Const == "rds" {
-				if tls != jsonschema.FalseSchema {
-					t.Fatal("cloud target must discover its own trust")
-				}
-				if kind.Const == "eks" && i != 5 || kind.Const == "rds" && i != 3 && i != 4 {
-					t.Fatal("cloud target has an incompatible protocol")
-				}
-				continue
-			}
-			if tls == jsonschema.FalseSchema || tls.AdditionalProperties != jsonschema.FalseSchema {
-				t.Fatal("target TLS must be available for every supported target and protocol")
-			}
-			if _, found := tls.Properties.Get("mode"); found {
-				t.Fatal("protocol must select negotiation without a second mode")
-			}
-			for _, field := range []string{"address", "project", "file", "service", "port", "container", "tls"} {
-				value, found := variant.Properties.Get(field)
-				if !found {
-					t.Fatalf("%s target needs an explicit allowed or forbidden %s field", kind.Const, field)
-				}
-				if field == "container" && kind.Const != "docker" && value != jsonschema.FalseSchema {
-					t.Fatal("non-Docker target permits container")
-				}
-				if field == "address" && kind.Const != "address" && value != jsonschema.FalseSchema {
-					t.Fatal("non-address target permits address")
-				}
-			}
-		}
-		trust, _ := service.Properties.Get("tls")
-		if trust != jsonschema.FalseSchema {
-			t.Fatal("service-level TLS must be rejected for every protocol")
-		}
-	}
-}
-
-func TestGroupBoundServiceSchemasKeepTargetAuthoritySeparate(t *testing.T) {
-	variants := servicesSchema().AdditionalProperties.OneOf
-	if len(variants) != 11 {
-		t.Fatal("missing fixed or group-bound service variants")
-	}
-	for _, service := range variants[:6] {
-		binding, found := service.Properties.Get("target_binding")
-		if !found || !reflect.DeepEqual(binding.Enum, []any{"fixed"}) {
-			t.Fatal("fixed target variant accepts a group binding")
-		}
-	}
-	for i, protocol := range []string{"http", "tcp", "mysql", "postgres", "kubernetes"} {
-		service := variants[i+6]
-		binding, found := service.Properties.Get("target_binding")
-		if !found || binding.Const != "group" || !slices.Contains(service.Required, "target_binding") {
-			t.Fatal("group-bound variant lost its explicit discriminator")
-		}
-		group, found := service.Properties.Get("publisher_group")
-		if !found || group.Default != nil || group.Not == nil || group.Not.Const != "local" || !slices.Contains(service.Required, "publisher_group") {
-			t.Fatal("group-bound variant permits the local publisher or a default group")
-		}
-		for _, field := range []string{"target", "public_url", "tls"} {
-			value, found := service.Properties.Get(field)
-			if !found || value != jsonschema.FalseSchema || slices.Contains(service.Required, field) {
-				t.Fatalf("group-bound %s accepts fixed %s", protocol, field)
-			}
-		}
-		selected, _ := service.Properties.Get("protocol")
-		if !reflect.DeepEqual(selected.Enum, []any{protocol}) || slices.Contains(service.Required, "protocol") != (protocol != "http") {
-			t.Fatal("group-bound protocol inference changed")
-		}
-		http, _ := service.Properties.Get("http")
-		if protocol != "http" {
-			if http != jsonschema.FalseSchema {
-				t.Fatal("group-bound non-HTTP service permits HTTP settings")
-			}
-			continue
-		}
-		for _, field := range []string{"readiness", "paths", "open"} {
-			value, found := http.Properties.Get(field)
-			if !found || value != jsonschema.FalseSchema {
-				t.Fatalf("group-bound HTTP permits unsupported %s", field)
-			}
-		}
-		for _, field := range []string{"access", "limits"} {
-			if _, found := http.Properties.Get(field); !found {
-				t.Fatalf("group-bound HTTP lost %s", field)
-			}
-		}
+	ips, _ := webhook.Properties.Get("source_ips")
+	if ips.MinItems == nil || *ips.MinItems != 1 {
+		t.Fatal("empty source override permitted")
 	}
 }

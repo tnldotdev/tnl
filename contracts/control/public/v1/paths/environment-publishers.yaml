@@ -1,0 +1,137 @@
+paths:
+  /v1/projects/{project_key}/environments/{environment_id}/publisher-enrollments:
+    post:
+      operationId: createEnvironmentPublisherEnrollment
+      security: [{ bearerAuth: [] }]
+      description: Issue bounded enrollment for this exact environment under a current manager session or an exact machine provisioning session with the enroll operation. Machine issuance requires Idempotency-Key; retries return the original still-current enrollment without spending its cumulative member budget again. Enrollment is separate from visitor access and from authorizing new service grants on an already enrolled publisher.
+      parameters:
+        - { name: project_key, in: path, required: true, schema: { type: string } }
+        - { name: environment_id, in: path, required: true, schema: { type: string } }
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: Required for machine provisioning sessions; human managers may omit it. Keep the same key for retries of one exact enrollment intent. Machine retries return the original still-current enrollment without spending its cumulative member budget again; changing intent with a used key conflicts.
+          schema: { $ref: "../openapi.yaml#/components/schemas/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              {
+                $ref: "../openapi.yaml#/components/schemas/CreateEnvironmentPublisherEnrollmentRequest",
+              }
+      responses:
+        "201":
+          description: Bounded enrollment, never traffic readiness
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/EnvironmentPublisherEnrollment" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/projects/{project_key}/environments/{environment_id}/publishers:
+    get:
+      operationId: listEnvironmentPublishers
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: project_key, in: path, required: true, schema: { type: string } }
+        - { name: environment_id, in: path, required: true, schema: { type: string } }
+        - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
+      responses:
+        "200":
+          description: Exact environment publisher observations without keys or enrollment secrets
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "../openapi.yaml#/components/schemas/EnvironmentPublisherStatus" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/projects/{project_key}/environments/{environment_id}/publishers/{publisher_identity_id}:
+    delete:
+      operationId: revokeEnvironmentPublisher
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: project_key, in: path, required: true, schema: { type: string } }
+        - { name: environment_id, in: path, required: true, schema: { type: string } }
+        - { name: publisher_identity_id, in: path, required: true, schema: { type: string } }
+        - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
+      responses:
+        "204": { description: Exact publisher revoked and its runs closed }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/environment-publishers/enroll:
+    post:
+      operationId: redeemEnvironmentPublisherEnrollment
+      security: []
+      description: Install this replica's own Ed25519 public key. Exact-key replay is idempotent and does not consume another member. The enrolled identity is independent of its historical enrollment issuer.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              {
+                $ref: "../openapi.yaml#/components/schemas/RedeemEnvironmentPublisherEnrollmentRequest",
+              }
+      responses:
+        "200":
+          description: Enrolled publisher bound to one immutable environment
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/EnvironmentPublisher" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/environment-publishers/verify:
+    post:
+      operationId: verifyEnvironmentPublisher
+      security: []
+      description: Verify current installed identity without replacing its running lease. Sign a one-use assertion for this exact endpoint with the environment ID as its scope.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/EnvironmentPublisherProof" }
+      responses:
+        "200":
+          description: Verified publisher identity without targets or a lease
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/EnvironmentPublisher" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/environment-publishers/lease:
+    post:
+      operationId: acquireEnvironmentPublisherLease
+      security: []
+      description: Exchange a one-use exact-environment assertion for a fixed-expiry publisher lease. Current installed identity and service authority are checked independently of the historical enrollment issuer.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/EnvironmentPublisherProof" }
+      responses:
+        "200":
+          description: Short-lived replica lease
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/EnvironmentPublisherLease" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/environment-publishers/assignments:
+    get:
+      operationId: getEnvironmentPublisherAssignments
+      security: [{ publisherAuth: [] }]
+      responses:
+        "200":
+          description: Pinned current application and exact authorized service publications for this replica
+          content:
+            application/json:
+              schema:
+                { $ref: "../openapi.yaml#/components/schemas/EnvironmentPublisherAssignments" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/environment-publishers/ack:
+    post:
+      operationId: acknowledgeEnvironmentPublisher
+      security: [{ publisherAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              { $ref: "../openapi.yaml#/components/schemas/EnvironmentPublisherAcknowledgement" }
+      responses:
+        "204": { description: Exact current application acknowledged }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

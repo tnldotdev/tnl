@@ -8,6 +8,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
+	"github.com/tnldotdev/tnl/internal/config"
 )
 
 func TestInitPlansNextProjectWithoutRewritingExistingFrameworkConfig(t *testing.T) {
@@ -20,7 +23,7 @@ func TestInitPlansNextProjectWithoutRewritingExistingFrameworkConfig(t *testing.
 	if plan.PackageManager != "pnpm" || plan.Framework != "next" || !slices.Equal(plan.MissingPackages, []string{"@tnldotdev/tnl"}) || len(plan.NewFrameworkConfig) != 0 || !slices.Equal(plan.Actions, []string{frameworkConfigAction("next", path)}) {
 		t.Fatalf("plan = %#v", plan)
 	}
-	for _, fragment := range []string{"app:", `target: { type: "app" }`, "defineConfig"} {
+	for _, fragment := range []string{`app: { protocol: "http" }`, "environments:", "local:", "targets:", `app: { publicURL: {} }`, "defineConfig"} {
 		if !strings.Contains(string(plan.NewConfiguration), fragment) {
 			t.Fatalf("planned configuration missing %q: %s", fragment, plan.NewConfiguration)
 		}
@@ -30,6 +33,41 @@ func TestInitPlansNextProjectWithoutRewritingExistingFrameworkConfig(t *testing.
 	}
 	if _, err := os.Stat(filepath.Join(root, "tnl.config.ts")); !os.IsNotExist(err) {
 		t.Fatalf("planning wrote configuration: %v", err)
+	}
+}
+
+func TestInitConfigurationResolvesSharedShapeAndLocalRegistration(t *testing.T) {
+	root := t.TempDir()
+	module := filepath.Join(root, "node_modules", "@tnldotdev", "tnl")
+	if err := os.MkdirAll(module, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for path, source := range map[string][]byte{
+		filepath.Join(module, "package.json"): []byte(`{"name":"@tnldotdev/tnl","type":"module","exports":{"./config":"./config.ts"}}`),
+		filepath.Join(module, "config.ts"):    []byte("export function defineConfig<const T>(value: T): T { return value; }\n"),
+		filepath.Join(root, "tnl.config.ts"):  initConfigSource("app"),
+	} {
+		if err := os.WriteFile(path, source, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	project, err := clientproject.Resolve(t.Context(), clientproject.Selection{Path: filepath.Join(root, "tnl.config.ts")}, root, [32]byte{})
+	if err != nil {
+		t.Fatal("init produced a configuration rejected by project resolution", err)
+	}
+	if project.Declared == nil || len(project.Declared.Services) != 1 || len(project.Declared.Environments) != 1 || !project.HasLocalService("app") {
+		t.Fatal("init did not declare one shared service and one worktree-local target")
+	}
+	shape := project.Declared.Services["app"]
+	if config.Protocol(shape) != "http" || shape.Target != nil || shape.Tunnel != nil {
+		t.Fatal("local target or preview policy entered the shared service shape")
+	}
+	local := project.Config.Services["app"]
+	if config.TargetType(local) != "app" || local.Tunnel == nil {
+		t.Fatal("init lost the app-owned listener or its local public URL")
+	}
+	if service, err := project.AppService(root, ""); err != nil || service != "app" {
+		t.Fatal("init no longer selects its ordinary app registration", service, err)
 	}
 }
 

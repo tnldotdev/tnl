@@ -12,30 +12,43 @@ import (
 )
 
 type connectionsCommand struct {
-	Capabilities   connectionsCapabilities       `cmd:""`
-	Context        connectionsContextOptions     `cmd:""`
-	Start          connectionsStartOptions       `cmd:""`
-	Identity       connectionsContextOptions     `cmd:"" hidden:""`
-	Attach         connectionsHandleOptions      `cmd:"" hidden:""`
-	Recover        connectionsHandleOptions      `cmd:"" hidden:""`
-	Serve          connectionsServeOptions       `cmd:"" hidden:""`
-	Status         connectionsHandleOptions      `cmd:""`
-	Read           connectionsReadOptions        `cmd:"" help:"Read one prepared connection from its existing owner without starting or authenticating."`
-	Prepare        connectionsReadOptions        `cmd:"" hidden:""`
-	SDKPrepare     connectionsSDKOptions         `cmd:"" hidden:""`
-	SDKWorkload    connectionsSDKWorkloadOptions `cmd:"" hidden:""`
-	SDKStop        connectionsSDKStopOptions     `cmd:"" hidden:""`
-	SDKClose       connectionsSDKCloseOptions    `cmd:"" hidden:""`
-	Stop           connectionsHandleOptions      `cmd:""`
-	KubeCredential connectionsKubeOptions        `cmd:"" hidden:""`
+	Capabilities     connectionsCapabilities       `cmd:""`
+	Context          connectionsContextOptions     `cmd:""`
+	Start            connectionsStartOptions       `cmd:""`
+	EnvironmentServe connectionsEnvironmentOptions `cmd:"" hidden:""`
+	EnvironmentStart connectionsEnvironmentStartOptions `cmd:"" help:"Prepare exact environment services from private startup input."`
+	Attach           connectionsHandleOptions      `cmd:"" hidden:""`
+	Recover          connectionsHandleOptions      `cmd:"" hidden:""`
+	Serve            connectionsServeOptions       `cmd:"" hidden:""`
+	Status           connectionsHandleOptions      `cmd:""`
+	Read             connectionsReadOptions        `cmd:"" help:"Read one prepared connection from its existing owner without starting or authenticating."`
+	Prepare          connectionsReadOptions        `cmd:"" hidden:""`
+	SDKPrepare       connectionsSDKOptions         `cmd:"" hidden:""`
+	SDKStop          connectionsSDKStopOptions     `cmd:"" hidden:""`
+	SDKClose         connectionsSDKCloseOptions    `cmd:"" hidden:""`
+	Stop             connectionsHandleOptions      `cmd:""`
+	KubeCredential   connectionsKubeOptions        `cmd:"" hidden:""`
 }
 type connectionsCapabilities struct {
 	Output string `name:"output" enum:"json" default:"json"`
 }
+type connectionsEnvironmentOptions struct {
+	connectionsEnvironmentStartOptions `embed:""`
+	ParentPID int `name:"parent-pid"`
+	OwnerDirectory string `name:"owner-directory" type:"path"`
+}
+type connectionsEnvironmentStartOptions struct {
+	RunnerTemp string `name:"runner-temp" env:"RUNNER_TEMP" type:"path"`
+	KubeTokenFile string `name:"kube-token-file" type:"path"`
+	KubeUserConfig string `name:"kube-user-config" type:"path"`
+	KubeUser string `name:"kube-user"`
+	Namespace string `name:"namespace"`
+}
+func (o connectionsEnvironmentStartOptions) options() connector.OwnerStartOptions {
+	return connector.OwnerStartOptions{RunnerTemp: o.RunnerTemp, KubeTokenFile: o.KubeTokenFile, KubeUserConfig: o.KubeUserConfig, KubeUser: o.KubeUser, Namespace: o.Namespace}
+}
 type connectionsContextOptions struct {
 	Directory string   `name:"directory" required:"" type:"path"`
-	Workload  string   `name:"workload"`
-	Manifest  string   `name:"workload-manifest" type:"path"`
 	Service   []string `name:"service"`
 	TeamID    string   `name:"team-id"`
 	StateDir  string   `name:"state-dir" env:"TNL_STATE_DIR" type:"path"`
@@ -76,10 +89,6 @@ type connectionsSDKOptions struct {
 	RequestedAt             string `name:"requested-at"`
 	RetainStartFailure      bool   `name:"retain-start-failure"`
 }
-type connectionsSDKWorkloadOptions struct {
-	Directory string `name:"directory" required:"" type:"path"`
-	Service   string `name:"service" required:""`
-}
 type connectionsSDKStopOptions struct {
 	Registry  string `name:"registry" required:"" type:"path"`
 	ParentPID int    `name:"parent-pid" required:""`
@@ -93,7 +102,7 @@ type connectionsSDKCloseOptions struct {
 }
 
 func (o connectionsContextOptions) options() connector.ContextOptions {
-	return connector.ContextOptions{Directory: o.Directory, Workload: o.Workload, Manifest: o.Manifest, Service: o.Service, TeamID: o.TeamID, StateDir: o.StateDir}
+	return connector.ContextOptions{Directory: o.Directory, Service: o.Service, TeamID: o.TeamID, StateDir: o.StateDir}
 }
 func (o connectionsStartOptions) options() connector.OwnerStartOptions {
 	return connector.OwnerStartOptions{ContextOptions: o.connectionsContextOptions.options(), RunnerTemp: o.RunnerTemp, ParentPID: o.ParentPID, SDKRegistry: o.SDKRegistry, RequestHandle: o.RequestHandle, KubeTokenFile: o.KubeTokenFile, KubeUserConfig: o.KubeUserConfig, KubeUser: o.KubeUser, Namespace: o.Namespace}
@@ -113,18 +122,18 @@ func runConnections(ctx context.Context, command string, flags connectionsComman
 	}
 	stopped := func(err error) error { return write(map[string]any{"schema": 1, "state": "stopped"}, err) }
 	switch command {
-	case "runtime connections identity":
-		identity, err := connector.Identify(ctx, flags.Identity.options(), os.Stdin)
-		if err != nil {
-			return err
-		}
-		return write(map[string]any{"schema": 1, "binding": identity.Binding, "assertion_expires_at": identity.AssertionExpiresAt}, nil)
+	case "runtime connections environment-serve":
+		options := flags.EnvironmentServe.connectionsEnvironmentStartOptions.options()
+		options.ParentPID = flags.EnvironmentServe.ParentPID
+		return connector.ServeEnvironment(ctx, connector.OwnerServeOptions{OwnerStartOptions: options, OwnerDirectory: flags.EnvironmentServe.OwnerDirectory}, os.Stdin, output)
+	case "runtime connections environment-start":
+		return connector.StartEnvironmentOwner(ctx, flags.EnvironmentStart.options(), os.Stdin, output)
 	case "runtime connections attach":
 		return write(connector.Attach(ctx, flags.Attach.Handle, os.Stdin))
 	case "runtime connections recover":
 		return stopped(connectorruntime.OwnerStopped(flags.Recover.Handle))
 	case "runtime connections capabilities":
-		return write(map[string]any{"schema": 1, "capabilities": []string{"context", "identity", "start", "attach", "status", "stop", "recover", "connect", "prepare", "read", "kube-credential"}, "workload_private": true, "workload_manifest": true, "opaque_private_preflight": true, "team_names": "saved_policy"}, nil)
+		return write(connectorruntime.Capabilities{Schema: 1, Operations: []string{"context", "start", "attach", "status", "stop", "recover", "connect", "prepare", "read", "kube-credential", "environment-serve", "environment-start"}, EnvironmentVisitors: true}, nil)
 	case "runtime connections context":
 		return write(connector.ResolveContext(ctx, flags.Context.options()))
 	case "runtime connections start":
@@ -137,8 +146,6 @@ func runConnections(ctx context.Context, command string, flags connectionsComman
 		return write(connector.Prepare(ctx, flags.Prepare.Handle, flags.Prepare.Service))
 	case "runtime connections sdk-prepare":
 		return write(connector.PrepareSDK(ctx, connector.SDKOptions{OwnerStartOptions: flags.SDKPrepare.connectionsStartOptions.options(), Registry: flags.SDKPrepare.Registry, Service: flags.SDKPrepare.SelectedService, RecoverHandle: flags.SDKPrepare.RecoverHandle, RequestedAt: flags.SDKPrepare.RequestedAt, RetainStartFailure: flags.SDKPrepare.RetainStartFailure}, os.Stdin))
-	case "runtime connections sdk-workload":
-		return write(connector.SelectSDKWorkload(flags.SDKWorkload.Directory, flags.SDKWorkload.Service, os.Stdin))
 	case "runtime connections sdk-stop":
 		return stopped(connector.StopSDK(ctx, flags.SDKStop.Registry, flags.SDKStop.ParentPID))
 	case "runtime connections sdk-close":

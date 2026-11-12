@@ -15,16 +15,13 @@ import (
 func TestIntegrationWorkloadRenewalMigration(t *testing.T) {
 	d, url, now := newControlStateIntegrationDatabaseWithURL(t, "workload_renewal_migration")
 	ctx := t.Context()
-	r := appliedProjectRequest(t, d, now)
-	r.Configuration = workloadConfiguration()
-	if _, err := d.ApplyProjectConfiguration(ctx, r); err != nil {
-		t.Fatal(err)
-	}
-	exchange, key := workloadExchange(t, r, now)
-	session, err := d.ExchangeWorkload(ctx, exchange, now)
+	f := newRetainedVisitorFixture(t, d, now, retainedGitHubTrust(), 3600, false)
+	exchange, key := retainedVisitorPreparation(t, f, now)
+	prepared, err := d.PrepareEnvironmentVisitor(ctx, exchange, now)
 	if err != nil {
 		t.Fatal(err)
 	}
+	session := prepared.Session
 	row := func() string {
 		t.Helper()
 		var value string
@@ -43,11 +40,12 @@ func TestIntegrationWorkloadRenewalMigration(t *testing.T) {
 	if row() != before {
 		t.Fatal("migration changed existing session authority")
 	}
-	recovered, err := d.ExchangeWorkload(ctx, exchange, now)
+	recovery, err := d.PrepareEnvironmentVisitor(ctx, exchange, now)
+	recovered := recovery.Session
 	if err != nil || recovered.RenewalSequence != 0 || recovered.ID != session.ID || recovered.Credential != session.Credential || !recovered.LeaseExpiresAt.Equal(session.LeaseExpiresAt) {
 		t.Fatal("migration lost committed session or initial counter", err)
 	}
-	if next, err := d.RenewWorkloadSession(ctx, session.ID, session.Credential, signWorkloadRenewal(recovered, key), now.Add(31*time.Second)); err != nil || next.RenewalSequence != 1 {
+	if next, err := d.RenewEnvironmentVisitorSession(ctx, session.ID, session.Credential, signWorkloadRenewal(recovered, key), now.Add(31*time.Second)); err != nil || next.RenewalSequence != 1 {
 		t.Fatal("baseline session could not renew with its original key", err)
 	}
 	if err := Migrate(ctx, url); err != nil {

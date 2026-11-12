@@ -26,7 +26,6 @@ type connectCommand struct {
 
 type connectStartCommand struct {
 	scopedTeamFlags `embed:""`
-	PublisherGroup  string           `name:"publisher-group" help:"Select the exact concrete group within this applied project."`
 	Name            string           `arg:"" name:"name" help:"Configured service name or exact service ID."`
 	Listen          string           `name:"listen" help:"Loopback IP and port; defaults to 127.0.0.1 and the allocated service port."`
 	Protocol        string           `name:"protocol" help:"Require an exact match: http, tcp, mysql, postgres, or kubernetes."`
@@ -76,7 +75,7 @@ func connectorOperations() connector.Operations {
 func (flags connectStartCommand) options() connector.StartOptions {
 	remote := flags.selection()
 	return connector.StartOptions{SessionOptions: connector.SessionOptions{ServerURL: remote.ServerURL, StateDir: remote.StateDir, AccessToken: remote.AccessToken, ProjectTeam: remote.ProjectTeam, SelectedTeam: remote.SelectedTeam}, Team: flags.Team, Project: flags.project.Project,
-		Name: flags.Name, PublisherGroup: flags.PublisherGroup, Listen: flags.Listen, Protocol: flags.Protocol, Kubeconfig: flags.Kubeconfig, Namespace: flags.Namespace, KubeUserConfig: flags.KubeUserConfig, KubeUser: flags.KubeUser, KubeTokenFile: flags.KubeTokenFile,
+		Name: flags.Name, Listen: flags.Listen, Protocol: flags.Protocol, Kubeconfig: flags.Kubeconfig, Namespace: flags.Namespace, KubeUserConfig: flags.KubeUserConfig, KubeUser: flags.KubeUser, KubeTokenFile: flags.KubeTokenFile,
 		Foreground: flags.Foreground, Detach: flags.Detach, Install: flags.Install, System: flags.System, SystemStateDir: flags.SystemStateDir, DetachedChild: flags.DetachedChild, Stdio: flags.Stdio, Output: string(flags.Output), DetachLaunch: flags.detach,
 		Ready: func(destination io.Writer, profile connector.Profile, listen string) error {
 			return writeNativeConnection(destination, profile, flags.Output, listen)

@@ -249,7 +249,7 @@ func (c *Capabilities) Issue(request CapabilityRequest) (Endpoint, error) {
 			return existing.endpoint(), nil
 		}
 	}
-	if len(c.grants) >= 256 {
+	if len(c.grants) >= clientstate.ApplicationPublicationCapacity {
 		return Endpoint{}, ErrForbidden
 	}
 	c.grants[sha256.Sum256([]byte(secret))] = grant

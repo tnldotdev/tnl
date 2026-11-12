@@ -16,6 +16,7 @@ import (
 )
 
 type Configuration struct {
+	Authority        func(context.Context, func(context.Context) error) error
 	RunPrivate       func(context.Context, func(uint64, bool) error) error
 	CheckPrivate     func(context.Context, Service) Observation
 	Publisher        publisher.Config
@@ -283,6 +284,9 @@ func (w *Workers) Run(ctx context.Context, service Service, observe func(uint64,
 	run := w.RunPublisher
 	if run == nil {
 		run = publisher.Run
+	}
+	if configuration.Authority != nil {
+		return configuration.Authority(ctx, func(ctx context.Context) error { return run(ctx, cfg) })
 	}
 	return run(ctx, cfg)
 }

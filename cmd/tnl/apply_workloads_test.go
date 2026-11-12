@@ -5,20 +5,16 @@ import (
 
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
-	"github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
 )
 
-func TestApplyWorkloadCloudSelectors(t *testing.T) {
-	group := "production"
-	repository := "example/repository"
-	protocol := "kubernetes"
-	project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{PublisherGroups: map[string]config.PublisherGroup{group: {}}, Services: config.Services{"cluster": {PublisherGroup: &group, Protocol: &protocol, Target: &config.ServiceTarget{Type: "eks", Region: new("us-east-1"), Cluster: new("production")}}}, Workloads: map[string]config.Workload{"test": {GitHub: &config.WorkloadGitHub{Repository: &repository, Workflow: ".github/workflows/test.yml", Branch: new("main")}, Services: []string{"cluster"}}}}}}
-	declaration, err := resolve.Declaration(t.Context(), project.Project, team.Context{}, nil)
+func TestApplyEnvironmentCloudSelectorsStayPublisherOwned(t *testing.T) {
+	project := clientproject.Project{Config: config.TNL{Services: config.Services{"cluster": {Protocol: new("kubernetes")}}, Environments: map[string]config.Environment{"staging": {Targets: map[string]config.EnvironmentTarget{"cluster": {Discovery: &config.ServiceTarget{Type: "eks", Region: new("us-east-1"), Cluster: new("staging")}}}}}}}
+	targets, err := resolve.EnvironmentTargets(t.Context(), project, "staging")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if declaration.Services["cluster"].Target != "" || declaration.Services["cluster"].TargetTls != nil || declaration.Services["cluster"].TargetDiscovery == nil {
+	if targets["cluster"].Address != nil || targets["cluster"].Tls != nil || targets["cluster"].Discovery == nil {
 		t.Fatal("apply attempted local cloud discovery")
 	}
 }

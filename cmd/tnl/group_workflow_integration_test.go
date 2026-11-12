@@ -677,7 +677,7 @@ func newCLIWorkflow(t *testing.T) *cliWorkflow {
 				(*hook)()
 			}
 		}
-		if r.Method == http.MethodPost && (r.URL.Path == "/v1/publisher-groups/enroll" || strings.Contains(r.URL.Path, "/enrollments")) {
+		if r.Method == http.MethodPost && (r.URL.Path == "/v1/environment-publishers/enroll" || strings.HasSuffix(r.URL.Path, "/publisher-enrollments")) {
 			f.groupEnrollmentRequests.Add(1)
 		}
 		capture := &workflowProblemWriter{ResponseWriter: w}

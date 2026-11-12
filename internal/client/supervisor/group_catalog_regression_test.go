@@ -14,13 +14,13 @@ func TestStandaloneGroupsListChurnPreservesRetiredAuthority(t *testing.T) {
 	}
 	defer r.Close()
 	first, _, firstKey := kindFixture(t, KindGroup)
-	first.ID = JobKey(first.Server, "group", first.GroupMember.GroupId+":"+first.GroupInstance)
+	first.ID = JobKey(first.Server, "env", first.GroupMember.EnvironmentId+":"+first.GroupInstance)
 	if err := r.ReplaceGroups(t.Context(), []GroupInstall{{first, firstKey}}); err != nil {
 		t.Fatal(err)
 	}
 	for range 256 {
 		job, _, key := kindFixture(t, KindGroup)
-		job.ID = JobKey(job.Server, "group", job.GroupMember.GroupId+":"+job.GroupInstance)
+		job.ID = JobKey(job.Server, "env", job.GroupMember.EnvironmentId+":"+job.GroupInstance)
 		if err := r.ReplaceGroups(t.Context(), []GroupInstall{{job, key}}); err != nil {
 			t.Fatal("one-entry startup list exhausted by historical references", err)
 		}

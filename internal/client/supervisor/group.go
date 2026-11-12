@@ -10,6 +10,7 @@ import (
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/naming"
 	publishergroup "github.com/tnldotdev/tnl/internal/publisher/group"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
@@ -37,7 +38,7 @@ func GroupClient(job Job) (*publishergroup.Client, error) {
 // GroupPublisher is the common foreground/installed assignment callback. its
 // resolver belongs to the surrounding group loop and outlives all its workers.
 type GroupPublisher struct {
-	Member    controlv1.PublisherGroupMember
+	Member    controlv1.EnvironmentPublisher
 	Private   ed25519.PrivateKey
 	State     *clientstate.Store
 	Control   publisheridentity.NativeControl
@@ -50,8 +51,8 @@ type GroupInstall struct {
 	Private ed25519.PrivateKey
 }
 
-func (GroupInstall) String() string   { return "publisher group installation" }
-func (GroupInstall) GoString() string { return "publisher group installation" }
+func (GroupInstall) String() string   { return "environment publisher installation" }
+func (GroupInstall) GoString() string { return "environment publisher installation" }
 
 // ReplaceGroups installs the fixed startup list as one desired-state snapshot.
 // it is available only to an identity-only standalone registry. an omitted job
@@ -68,7 +69,7 @@ func (r *Registry) ReplaceGroups(ctx context.Context, inputs []GroupInstall) err
 			return ErrScope
 		}
 		owner := JobKey(job.Server, "publisher", job.PublisherIdentityID)
-		replica := JobKey(job.Server, "group", job.GroupMember.GroupId+":"+job.GroupInstance)
+		replica := JobKey(job.Server, "env", job.GroupMember.EnvironmentId+":"+job.GroupInstance)
 		if seen[owner] || replicas[replica] || job.ID != replica {
 			return ErrJobExists
 		}
@@ -109,15 +110,18 @@ func (r *Registry) ReplaceGroups(ctx context.Context, inputs []GroupInstall) err
 	})
 }
 
-func (GroupPublisher) String() string   { return "publisher group publications" }
-func (GroupPublisher) GoString() string { return "publisher group publications" }
+func (GroupPublisher) String() string   { return "environment publisher publications" }
+func (GroupPublisher) GoString() string { return "environment publisher publications" }
 
-func (p GroupPublisher) Publish(ctx context.Context, assignment controlv1.PublisherGroupServiceAssignment, health func(bool)) error {
-	if assignment.ServiceKind != "service" || assignment.Configuration.Protocol == nil || assignment.TrustRevision < 1 || assignment.Configuration.PublisherGroup == nil || *assignment.Configuration.PublisherGroup == "" || *assignment.Configuration.PublisherGroup == "local" {
+func (p GroupPublisher) Publish(ctx context.Context, publication controlv1.EnvironmentPublication, assignment controlv1.EnvironmentPublisherAssignment, health func(bool)) error {
+	if !naming.ValidProjectKey(p.Member.ProjectKey) || !naming.ValidServiceName(assignment.Service) || !assignment.Configuration.Protocol.Valid() || assignment.TrustRevision < 1 || publication.EnvironmentId != p.Member.EnvironmentId {
 		return publishergroup.ErrAssignment
 	}
+	// the runtime owns the replica lease and supplies this authenticated envelope.
+	// narrow it to the exact service grant without acquiring a competing lease or
+	// replacing the publication fence with a newer assignment snapshot.
 	identity := authorityv1.PublisherEnrollmentResult{ClientId: p.Member.PublisherIdentityId, KeyId: p.Member.KeyId, TeamId: p.Member.TeamId, GrantId: assignment.GrantId, Kind: authorityv1.Service, ServiceId: &assignment.ServiceId}
-	native, err := publisheridentity.NewNative(p.Control, p.Authority, identity, p.Private, assignment.Environment)
+	native, err := publisheridentity.NewNative(p.Control, p.Authority, identity, p.Private, &publication)
 	if err != nil {
 		return err
 	}
@@ -125,7 +129,7 @@ func (p GroupPublisher) Publish(ctx context.Context, assignment controlv1.Publis
 	if err != nil {
 		return err
 	}
-	if service.Id != assignment.ServiceId || service.TrustRevision != assignment.TrustRevision || service.Protocol != *assignment.Configuration.Protocol {
+	if service.Id != assignment.ServiceId || service.TrustRevision != assignment.TrustRevision || service.Protocol != assignment.Configuration.Protocol {
 		return publishergroup.ErrAssignment
 	}
 	run := publisherservice.RunConfig{Control: native, State: p.State, Access: native.Access, Identity: identity, ServiceID: service.Id, Metadata: publisheridentity.ServiceMetadata(service), ObserveReadiness: func(status publisherservice.RunStatus) {
@@ -165,7 +169,7 @@ func (p GroupPublisher) Publish(ctx context.Context, assignment controlv1.Publis
 
 // InstallGroup captures the task's own signing identity. no person session or
 // project checkout is required by the supervisor after installation.
-func (r *Registry) InstallGroup(ctx context.Context, job Job, member controlv1.PublisherGroupMember, private ed25519.PrivateKey) error {
+func (r *Registry) InstallGroup(ctx context.Context, job Job, member controlv1.EnvironmentPublisher, private ed25519.PrivateKey) error {
 	if !r.groups || job.Kind != KindGroup || job.GroupMember == nil || *job.GroupMember != member || len(private) != ed25519.PrivateKeySize || !bytes.Equal(ed25519.NewKeyFromSeed(private.Seed()), private) {
 		return ErrScope
 	}
@@ -175,7 +179,7 @@ func (r *Registry) InstallGroup(ctx context.Context, job Job, member controlv1.P
 	return r.update(ctx, func(jobs *[]Job) error {
 		for i, existing := range *jobs {
 			if existing.ID != job.ID {
-				if existing.Server == job.Server && (existing.PublisherIdentityID == job.PublisherIdentityID || existing.GroupMember != nil && existing.GroupMember.GroupId == member.GroupId && existing.GroupInstance == job.GroupInstance) {
+				if existing.Server == job.Server && (existing.PublisherIdentityID == job.PublisherIdentityID || existing.GroupMember != nil && existing.GroupMember.EnvironmentId == member.EnvironmentId && existing.GroupInstance == job.GroupInstance) {
 					return ErrJobExists
 				}
 				continue
@@ -214,7 +218,7 @@ func (r *Registry) groupProfile(ctx context.Context, job Job) (*clientstate.Stor
 	return profile, err
 }
 
-func (r *Registry) retainGroup(ctx context.Context, job Job, member controlv1.PublisherGroupMember, private ed25519.PrivateKey) error {
+func (r *Registry) retainGroup(ctx context.Context, job Job, member controlv1.EnvironmentPublisher, private ed25519.PrivateKey) error {
 	profile, err := r.groupProfile(ctx, job)
 	if err != nil {
 		return err
@@ -229,8 +233,8 @@ func (r *Registry) retainGroup(ctx context.Context, job Job, member controlv1.Pu
 	return nil
 }
 
-func (r *Registry) GroupIdentity(ctx context.Context, job Job) (controlv1.PublisherGroupMember, ed25519.PrivateKey, *clientstate.Store, error) {
-	var member controlv1.PublisherGroupMember
+func (r *Registry) GroupIdentity(ctx context.Context, job Job) (controlv1.EnvironmentPublisher, ed25519.PrivateKey, *clientstate.Store, error) {
+	var member controlv1.EnvironmentPublisher
 	if job.Kind != KindGroup || job.GroupMember == nil {
 		return member, nil, nil, ErrScope
 	}
@@ -238,14 +242,14 @@ func (r *Registry) GroupIdentity(ctx context.Context, job Job) (controlv1.Publis
 	if err != nil {
 		return member, nil, nil, err
 	}
-	saved, found, err := credentialfile.SavedGroup(profile, job.Server, job.GroupMember.ProjectKey, job.GroupMember.GroupId, job.GroupInstance)
+	saved, found, err := credentialfile.SavedGroup(profile, job.Server, job.GroupMember.ProjectKey, job.GroupMember.EnvironmentId, job.GroupInstance)
 	if err != nil {
 		return member, nil, nil, err
 	}
 	if !found || !credentialfile.SameGroupIdentity(saved.Member, *job.GroupMember) {
 		return member, nil, nil, ErrScope
 	}
-	private, err := saved.Validate(job.Server, job.GroupMember.ProjectKey, job.GroupMember.GroupName, job.GroupInstance)
+	private, err := saved.Validate(job.Server, job.GroupMember.ProjectKey, job.GroupMember.EnvironmentId, job.GroupInstance)
 	if err != nil {
 		return member, nil, nil, errors.Join(ErrScope, err)
 	}

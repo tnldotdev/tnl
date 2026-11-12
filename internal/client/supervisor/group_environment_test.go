@@ -48,7 +48,7 @@ func (c *groupEnvironmentControl) PrepareServiceRun(_ context.Context, serviceID
 	return controlv1.ServiceRunPreparation{}, errGroupEnvironmentPrepared
 }
 
-func groupEnvironmentFixture(t *testing.T, cloud bool) (GroupPublisher, controlv1.PublisherGroupServiceAssignment, *groupEnvironmentControl, *atomic.Int32) {
+func groupEnvironmentFixture(t *testing.T, cloud bool) (GroupPublisher, controlv1.EnvironmentPublication, controlv1.EnvironmentPublisherAssignment, *groupEnvironmentControl, *atomic.Int32) {
 	t.Helper()
 	job, _, private := kindFixture(t, KindGroup)
 	newID := func(prefix string) string {
@@ -59,13 +59,13 @@ func groupEnvironmentFixture(t *testing.T, cloud bool) (GroupPublisher, controlv
 		}
 		return id
 	}
-	assignment := controlv1.PublisherGroupServiceAssignment{
-		Service: "database", ServiceId: newID(opaqueid.ServicePrefix), ServiceKind: "service", GrantId: newID(opaqueid.PublisherGrantPrefix), TrustRevision: 3,
-		Configuration: controlv1.ProjectServiceConfiguration{Protocol: new(controlv1.ServiceProtocol("tcp")), PublisherGroup: new("cluster")},
-		Environment:   &controlv1.EnvironmentPublication{EnvironmentId: newID(opaqueid.EnvironmentPrefix), MutationRevision: 7, ConfigurationHash: strings.Repeat("a1", 32)},
+	publication := controlv1.EnvironmentPublication{EnvironmentId: job.GroupMember.EnvironmentId, MutationRevision: 7, ConfigurationHash: strings.Repeat("a1", 32)}
+	assignment := controlv1.EnvironmentPublisherAssignment{
+		Service: "database", ServiceId: newID(opaqueid.ServicePrefix), GrantId: newID(opaqueid.PublisherGrantPrefix), TrustRevision: 3,
+		Configuration: controlv1.EnvironmentServicePublication{Protocol: controlv1.ServiceProtocol("tcp")},
 	}
 	control := &groupEnvironmentControl{service: controlv1.Service{
-		Id: assignment.ServiceId, TeamId: job.GroupMember.TeamId, Enabled: true, Protocol: *assignment.Configuration.Protocol, TrustRevision: assignment.TrustRevision,
+		Id: assignment.ServiceId, TeamId: job.GroupMember.TeamId, Enabled: true, Protocol: assignment.Configuration.Protocol, TrustRevision: assignment.TrustRevision,
 		Endpoint: &controlv1.ServiceEndpoint{Hostname: "database.services.example", Port: 443},
 	}}
 	identity := authorityv1.PublisherEnrollmentResult{ClientId: job.GroupMember.PublisherIdentityId, KeyId: job.GroupMember.KeyId, TeamId: job.GroupMember.TeamId, GrantId: assignment.GrantId, Kind: authorityv1.Service, ServiceId: &assignment.ServiceId}
@@ -83,11 +83,11 @@ func groupEnvironmentFixture(t *testing.T, cloud bool) (GroupPublisher, controlv
 		}
 		t.Cleanup(func() { _ = listener.Close() })
 		assignment.Configuration.Target = listener.Addr().String()
-		return publisher, assignment, control, calls
+		return publisher, publication, assignment, control, calls
 	}
-	assignment.Configuration.Protocol = new(controlv1.ServiceProtocol("postgres"))
+	assignment.Configuration.Protocol = controlv1.ServiceProtocol("postgres")
 	assignment.Configuration.TargetDiscovery = &controlv1.ProjectTargetDiscovery{Type: controlv1.Rds, Region: "us-east-1", Instance: new("database")}
-	control.service.Protocol = *assignment.Configuration.Protocol
+	control.service.Protocol = assignment.Configuration.Protocol
 	ca, err := rdsroots.Bundle("us-east-1")
 	if err != nil {
 		t.Fatal(err)
@@ -109,19 +109,19 @@ func groupEnvironmentFixture(t *testing.T, cloud bool) (GroupPublisher, controlv
 	}
 	t.Cleanup(resolver.Close)
 	publisher.Discovery = resolver
-	return publisher, assignment, control, calls
+	return publisher, publication, assignment, control, calls
 }
 
 func TestGroupPublisherEnvironmentPreparationKeepsAssignmentSnapshot(t *testing.T) {
 	for _, target := range []string{"static", "cloud"} {
 		t.Run(target, func(t *testing.T) {
-			publisher, assignment, control, discoveryCalls := groupEnvironmentFixture(t, target == "cloud")
-			want := *assignment.Environment
+			publisher, publication, assignment, control, discoveryCalls := groupEnvironmentFixture(t, target == "cloud")
+			want := publication
 			replacement := controlv1.EnvironmentPublication{EnvironmentId: "env_" + strings.Repeat("z", 22), MutationRevision: want.MutationRevision + 1, ConfigurationHash: strings.Repeat("b2", 32)}
 			// metadata reads happen after construction and again during preparation.
 			// changing the caller's pointer must not change the worker's fence.
-			control.onRead = func() { *assignment.Environment = replacement }
-			err := publisher.Publish(t.Context(), assignment, nil)
+			control.onRead = func() { publication = replacement }
+			err := publisher.Publish(t.Context(), publication, assignment, nil)
 			if !errors.Is(err, errGroupEnvironmentPrepared) {
 				t.Fatalf("publication did not reach control preparation: %v", err)
 			}
@@ -129,10 +129,10 @@ func TestGroupPublisherEnvironmentPreparationKeepsAssignmentSnapshot(t *testing.
 				t.Fatalf("metadata reads = %d, preparations = %d", control.reads, len(control.declarations))
 			}
 			got := control.declarations[0].Environment
-			if got == nil || *got != want || got == assignment.Environment {
+			if got == nil || *got != want || got == &publication {
 				t.Fatalf("prepared environment = %+v, want independent assignment snapshot %+v", got, want)
 			}
-			if *assignment.Environment != replacement {
+			if publication != replacement {
 				t.Fatal("metadata lookup did not exercise caller snapshot replacement")
 			}
 			if target == "cloud" && discoveryCalls.Load() != 1 {
@@ -142,16 +142,15 @@ func TestGroupPublisherEnvironmentPreparationKeepsAssignmentSnapshot(t *testing.
 	}
 }
 
-func TestGroupPublisherEnvironmentPreparationKeepsLegacyNil(t *testing.T) {
+func TestGroupPublisherEnvironmentPreparationRejectsMissingEnvelope(t *testing.T) {
 	for _, target := range []string{"static", "cloud"} {
 		t.Run(target, func(t *testing.T) {
-			publisher, assignment, control, _ := groupEnvironmentFixture(t, target == "cloud")
-			assignment.Environment = nil
-			if err := publisher.Publish(t.Context(), assignment, nil); !errors.Is(err, errGroupEnvironmentPrepared) {
-				t.Fatalf("legacy publication did not reach control preparation: %v", err)
+			publisher, _, assignment, control, calls := groupEnvironmentFixture(t, target == "cloud")
+			if err := publisher.Publish(t.Context(), controlv1.EnvironmentPublication{}, assignment, nil); err == nil {
+				t.Fatalf("publication without environment envelope was accepted")
 			}
-			if len(control.declarations) != 1 || control.declarations[0].Environment != nil {
-				t.Fatalf("legacy publication acquired an environment fence: %+v", control.declarations)
+			if len(control.declarations) != 0 || control.reads != 0 || calls.Load() != 0 {
+				t.Fatalf("missing envelope reached metadata/discovery/preparation")
 			}
 		})
 	}
@@ -172,15 +171,56 @@ func TestGroupPublisherEnvironmentPreparationRejectsMalformedFence(t *testing.T)
 				{"nonhex-hash", func(value *controlv1.EnvironmentPublication) { value.ConfigurationHash = strings.Repeat("z", 64) }},
 			} {
 				t.Run(malformed.name, func(t *testing.T) {
-					publisher, assignment, control, discoveryCalls := groupEnvironmentFixture(t, target == "cloud")
-					malformed.change(assignment.Environment)
-					if err := publisher.Publish(t.Context(), assignment, nil); !errors.Is(err, publisheridentity.ErrScope) {
+					publisher, publication, assignment, control, discoveryCalls := groupEnvironmentFixture(t, target == "cloud")
+					malformed.change(&publication)
+					if err := publisher.Publish(t.Context(), publication, assignment, nil); err == nil {
 						t.Fatalf("malformed environment fence was not rejected: %v", err)
 					}
 					if control.reads != 0 || len(control.declarations) != 0 || discoveryCalls.Load() != 0 {
 						t.Fatalf("malformed fence reached metadata/discovery/preparation: %d/%d/%d", control.reads, discoveryCalls.Load(), len(control.declarations))
 					}
 				})
+			}
+		})
+	}
+}
+
+func TestGroupPublisherEnvironmentPreparationRejectsMalformedAssignment(t *testing.T) {
+	for _, malformed := range []struct {
+		name   string
+		change func(*GroupPublisher, *controlv1.EnvironmentPublisherAssignment)
+	}{
+		{"empty-service-name", func(_ *GroupPublisher, a *controlv1.EnvironmentPublisherAssignment) { a.Service = "" }},
+		{"invalid-service-name", func(_ *GroupPublisher, a *controlv1.EnvironmentPublisherAssignment) { a.Service = "Bad.Name" }},
+		{"invalid-service-id", func(_ *GroupPublisher, a *controlv1.EnvironmentPublisherAssignment) {
+			a.ServiceId = "url_not-a-service"
+		}},
+		{"invalid-grant-id", func(_ *GroupPublisher, a *controlv1.EnvironmentPublisherAssignment) { a.GrantId = "invalid-grant" }},
+		{"missing-protocol", func(_ *GroupPublisher, a *controlv1.EnvironmentPublisherAssignment) { a.Configuration.Protocol = "" }},
+		{"invalid-protocol", func(_ *GroupPublisher, a *controlv1.EnvironmentPublisherAssignment) {
+			a.Configuration.Protocol = "redis"
+		}},
+		{"missing-trust-revision", func(_ *GroupPublisher, a *controlv1.EnvironmentPublisherAssignment) { a.TrustRevision = 0 }},
+		{"foreign-environment", func(p *GroupPublisher, _ *controlv1.EnvironmentPublisherAssignment) {
+			p.Member.EnvironmentId = "env_foreign"
+		}},
+		{"invalid-project", func(p *GroupPublisher, _ *controlv1.EnvironmentPublisherAssignment) {
+			p.Member.ProjectKey = "Bad.Project"
+		}},
+		{"invalid-publisher", func(p *GroupPublisher, _ *controlv1.EnvironmentPublisherAssignment) {
+			p.Member.PublisherIdentityId = "invalid-publisher"
+		}},
+		{"invalid-key", func(p *GroupPublisher, _ *controlv1.EnvironmentPublisherAssignment) { p.Member.KeyId = "invalid-key" }},
+		{"missing-team", func(p *GroupPublisher, _ *controlv1.EnvironmentPublisherAssignment) { p.Member.TeamId = "" }},
+	} {
+		t.Run(malformed.name, func(t *testing.T) {
+			publisher, publication, assignment, control, discoveryCalls := groupEnvironmentFixture(t, false)
+			malformed.change(&publisher, &assignment)
+			if err := publisher.Publish(t.Context(), publication, assignment, nil); err == nil {
+				t.Fatal("malformed assignment was accepted")
+			}
+			if control.reads != 0 || len(control.declarations) != 0 || discoveryCalls.Load() != 0 {
+				t.Fatal("malformed assignment reached metadata, discovery or preparation")
 			}
 		})
 	}

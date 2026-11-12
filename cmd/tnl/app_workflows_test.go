@@ -26,7 +26,8 @@ import (
 
 func TestAppWorkflowWaitSelectsLocalServices(t *testing.T) {
 	project, state, manager, endpoint := observationFixture(t, true)
-	project.Config.Services = config.Services{"web": {}, "remote": {PublisherGroup: new("production")}}
+	project.Config.Services = config.Services{"web": {}, "remote": {}}
+	project.Config.Environments = map[string]config.Environment{"local": {Targets: map[string]config.EnvironmentTarget{"web": {}}}, "production": {Targets: map[string]config.EnvironmentTarget{"web": {Address: new(config.Target("http://web.internal:3000"))}, "remote": {Address: new(config.Target("http://remote.internal:3000"))}}}}
 	if err := manager.Configure(configuredRuntimeServices(project)); err != nil {
 		t.Fatal(err)
 	}

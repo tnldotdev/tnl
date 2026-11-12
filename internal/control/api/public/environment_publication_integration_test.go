@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -24,12 +25,12 @@ func TestIntegrationEnvironmentHTTPPublicationFence(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = inspect.Close(context.Background()) })
-	var group string
-	if err := inspect.QueryRow(t.Context(), `SELECT group_id FROM control.environments WHERE id=$1 AND team_id=$2 AND project_key=$3`, environment.Id, f.team, f.project).Scan(&group); err != nil {
+	manager, err := f.database.AuthenticateEnvironmentPublisherManager(t.Context(), f.session.AccessToken)
+	if err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	enrollment, err := f.database.IssuePublisherGroupEnrollment(t.Context(), f.team, f.project, group, f.session.Identity.Identity.ID, 1, time.Hour, now)
+	enrollment, err := f.database.IssueEnvironmentPublisherEnrollment(t.Context(), controlstate.IssueEnvironmentPublisherEnrollmentRequest{EnvironmentPublisherSelection: controlstate.EnvironmentPublisherSelection{TeamID: f.team, ProjectKey: f.project, EnvironmentID: environment.Id, Manager: manager}, ExpectedRevision: environment.MutationRevision, ExpectedConfigurationHash: environment.ConfigurationHash, Services: []string{"api"}, MaxMembers: 1, Lifetime: time.Hour, Now: now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,16 +38,16 @@ func TestIntegrationEnvironmentHTTPPublicationFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	member, err := f.database.RedeemPublisherGroupEnrollment(t.Context(), enrollment.Key, public, now)
+	member, err := f.database.RedeemEnvironmentPublisherEnrollment(t.Context(), enrollment.Key, public, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	const audience = "https://control.example.test/v1/publisher-groups/lease"
-	assertion, err := publisherproof.Sign(member.PublisherIdentityID, member.KeyID, group, audience, private, now)
+	const audience = "https://control.example.test/v1/environment-publishers/lease"
+	assertion, err := publisherproof.Sign(member.PublisherIdentityID, member.KeyID, environment.Id, audience, private, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, err := f.database.AcquirePublisherGroupLease(t.Context(), member.PublisherIdentityID, group, assertion, audience, now)
+	lease, err := f.database.AcquireEnvironmentPublisherLease(t.Context(), member.PublisherIdentityID, environment.Id, assertion, audience, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,22 +57,24 @@ func TestIntegrationEnvironmentHTTPPublicationFence(t *testing.T) {
 			return nil
 		}
 	}
-	poll := func() controlv1.PublisherGroupServiceAssignment {
+	var application controlv1.EnvironmentPublication
+	poll := func() controlv1.EnvironmentPublisherAssignment {
 		t.Helper()
-		response, err := f.client.GetPublisherGroupAssignmentsWithResponse(t.Context(), bearer(lease.AccessToken))
+		response, err := f.client.GetEnvironmentPublisherAssignmentsWithResponse(t.Context(), bearer(lease.AccessToken))
 		if err != nil || response == nil || response.JSON200 == nil {
 			t.Fatal("read environment publisher assignments", response, err)
 		}
+		application = response.JSON200.Environment
+		if application.EnvironmentId != environment.Id || application.MutationRevision < 1 || application.ConfigurationHash == "" || response.JSON200.Publisher.EnvironmentId != environment.Id || response.JSON200.Publisher.PublisherIdentityId != member.PublisherIdentityID {
+			t.Fatal("wire envelope omitted or changed the exact publisher and environment application")
+		}
 		for _, assignment := range response.JSON200.Services {
 			if assignment.Service == "api" {
-				if assignment.Environment == nil || assignment.Environment.EnvironmentId != environment.Id || assignment.Environment.MutationRevision != response.JSON200.Revision || assignment.Environment.ConfigurationHash != response.JSON200.ConfigurationHash {
-					t.Fatal("wire assignment omitted or changed the exact environment application")
-				}
 				return assignment
 			}
 		}
 		t.Fatal("publisher assignment omitted the HTTP service")
-		return controlv1.PublisherGroupServiceAssignment{}
+		return controlv1.EnvironmentPublisherAssignment{}
 	}
 	assigned := poll()
 	const publisherAudience = "https://control.example.test/v1/publishers/assertions"
@@ -90,7 +93,8 @@ func TestIntegrationEnvironmentHTTPPublicationFence(t *testing.T) {
 		t.Fatal("preparation without an application failed without an HTTP response", err)
 	}
 	assertEnvironmentHTTPProblem(t, missing.StatusCode(), missing.Body, http.StatusConflict, controlv1.Conflict)
-	declaration.Environment = assigned.Environment
+	originalApplication := application
+	declaration.Environment = &originalApplication
 	prepared, err := f.client.PrepareServiceRunWithResponse(t.Context(), assigned.ServiceId, &controlv1.PrepareServiceRunParams{IdempotencyKey: "pinned-application"}, declaration, bearer(access.Token))
 	if err != nil || prepared == nil || prepared.JSON201 == nil {
 		t.Fatal("prepare exact assigned application", prepared, err)
@@ -119,16 +123,20 @@ func TestIntegrationEnvironmentHTTPPublicationFence(t *testing.T) {
 	if current.TrustRevision != assigned.TrustRevision {
 		t.Fatal("target-only apply relied on a protocol/TLS revision change")
 	}
-	declaration.Environment = current.Environment
+	currentApplication := application
+	if current.ServiceId != assigned.ServiceId || current.GrantId != assigned.GrantId {
+		t.Fatal("target replacement changed the saved service or publisher grant")
+	}
+	declaration.Environment = &currentApplication
 	fresh, err := f.client.PrepareServiceRunWithResponse(t.Context(), current.ServiceId, &controlv1.PrepareServiceRunParams{IdempotencyKey: "current-application"}, declaration, bearer(access.Token))
 	if err != nil || fresh == nil || fresh.JSON201 == nil {
 		t.Fatal("current application could not prepare after replacement", fresh, err)
 	}
 	rolled, err := f.client.ApplyEnvironmentWithResponse(t.Context(), f.project, environment.Id, controlv1.ApplyEnvironmentRequest{TeamId: f.team, ExpectedRevision: applied.JSON200.MutationRevision, DefinitionRevision: definition.Revision, Targets: &original})
-	if err != nil || rolled == nil || rolled.JSON200 == nil || rolled.JSON200.ConfigurationHash != environment.ConfigurationHash || rolled.JSON200.MutationRevision <= current.Environment.MutationRevision {
+	if err != nil || rolled == nil || rolled.JSON200 == nil || rolled.JSON200.ConfigurationHash != environment.ConfigurationHash || rolled.JSON200.MutationRevision <= currentApplication.MutationRevision {
 		t.Fatal("rollback did not restore configuration with a new application revision", rolled, err)
 	}
-	declaration.Environment = assigned.Environment
+	declaration.Environment = &originalApplication
 	stale, err = f.client.PrepareServiceRunWithResponse(t.Context(), assigned.ServiceId, &controlv1.PrepareServiceRunParams{IdempotencyKey: "old-revision-after-rollback"}, declaration, bearer(access.Token))
 	if err != nil || stale == nil {
 		t.Fatal("old rollback revision failed without an HTTP response", err)

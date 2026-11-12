@@ -9,10 +9,10 @@ import (
 )
 
 func TestIntegrationEnvironmentLockOrderRemovalAndTargetUpdate(t *testing.T) {
-	for _, removal := range []string{"environment", "legacy-project"} {
+	for _, removal := range []string{"environment", "environment-retirement"} {
 		t.Run(removal, func(t *testing.T) {
 			d, now, _, _ := newPublishRunPrerequisites(t)
-			first := appliedProjectRequest(t, d, now)
+			first := retainedEnvironmentProject(t, d, now)
 			teamRequest := authorityTeamRequest(first.ActorID)
 			teamRequest.DisplayName, teamRequest.IdempotencyKey = "second-team", "second-team"
 			team, err := d.CreateTeam(t.Context(), teamRequest, now)
@@ -24,14 +24,14 @@ func TestIntegrationEnvironmentLockOrderRemovalAndTargetUpdate(t *testing.T) {
 			definition := environmentDefinition(t, d, second, map[string]ServiceDefinitionService{"api": {Protocol: "http"}})
 			updated, _ := createTestEnvironment(t, d, second, "updated", definition.Revision, EnvironmentTargets{"api": {Address: "original.internal:3000"}})
 			updater := enrollTestEnvironment(t, d, second, updated)
-			start := func(member enrolledGroupReplica, name string) ServiceRunState {
+			start := func(member environmentPublisherReplica, name string) ServiceRunState {
 				t.Helper()
 				for _, assignment := range member.assignments.Services {
 					if assignment.Service != name {
 						continue
 					}
-					access := groupAssignmentAccess(t, d, member, assignment, now)
-					prepared, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "lock-order/"+assignment.GrantID, now, ServiceMetadata{Protocol: "http", PublisherPool: true, TrustRevision: assignment.TrustRevision}, assignment.Environment)
+					access := environmentAssignmentAccess(t, d, member, assignment, now)
+					prepared, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "lock-order/"+assignment.GrantID, now, ServiceMetadata{Protocol: "http", PublisherPool: true, TrustRevision: assignment.TrustRevision}, &member.assignments.Environment)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -47,33 +47,18 @@ func TestIntegrationEnvironmentLockOrderRemovalAndTargetUpdate(t *testing.T) {
 			updateRun := start(updater, "api")
 			var remove func(context.Context) error
 			var removedRun ServiceRunState
+			original := environmentDefinition(t, d, first, map[string]ServiceDefinitionService{"keep": {Protocol: "http"}, "remove": {Protocol: "http"}})
+			environment, _ := createTestEnvironment(t, d, first, "removed", original.Revision, EnvironmentTargets{"keep": {Address: "kept.internal:3000"}, "remove": {Address: "removed.internal:3000"}})
+			removedRun = start(enrollTestEnvironment(t, d, first, environment), "remove")
 			if removal == "environment" {
-				original := environmentDefinition(t, d, first, map[string]ServiceDefinitionService{"keep": {Protocol: "http"}, "remove": {Protocol: "http"}})
-				environment, _ := createTestEnvironment(t, d, first, "removed", original.Revision, EnvironmentTargets{"keep": {Address: "kept.internal:3000"}, "remove": {Address: "removed.internal:3000"}})
-				removedRun = start(enrollTestEnvironment(t, d, first, environment), "remove")
 				next := environmentDefinition(t, d, first, map[string]ServiceDefinitionService{"keep": {Protocol: "http"}})
 				remove = func(ctx context.Context) error {
 					_, err := d.ApplyEnvironment(ctx, ApplyEnvironmentRequest{TeamID: first.TeamID, ProjectKey: first.ProjectKey, ActorID: first.ActorID, EnvironmentApplication: EnvironmentApplication{EnvironmentID: environment.ID, ExpectedRevision: environment.MutationRevision, DefinitionRevision: next.Revision}, Now: now})
 					return err
 				}
 			} else {
-				first.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{
-					"keep": {PublisherGroup: "production", Protocol: "http", Target: "kept.internal:3000"}, "remove": {PublisherGroup: "production", Protocol: "http", Target: "removed.internal:3000"},
-				}}
-				applied, err := d.ApplyProjectConfiguration(t.Context(), first)
-				if err != nil {
-					t.Fatal(err)
-				}
-				enrollment, err := d.IssuePublisherGroupEnrollment(t.Context(), first.TeamID, first.ProjectKey, "production", first.ActorID, 1, time.Hour, now)
-				if err != nil {
-					t.Fatal(err)
-				}
-				removedRun = start(enrollAppliedGroup(t, d, first, enrollment, now), "remove")
-				first.ExpectedRevision = applied.Revision
-				delete(first.Configuration.Services, "remove")
 				remove = func(ctx context.Context) error {
-					_, err := d.ApplyProjectConfiguration(ctx, first)
-					return err
+					return d.RetireEnvironment(ctx, RetireEnvironmentRequest{TeamID: first.TeamID, ProjectKey: first.ProjectKey, ActorID: first.ActorID, EnvironmentID: environment.ID, ExpectedRevision: environment.MutationRevision, Now: now})
 				}
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)

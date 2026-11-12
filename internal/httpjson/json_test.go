@@ -81,6 +81,40 @@ func TestDecodeRejectsTrailingContentBeyondRequestLimit(t *testing.T) {
 	}
 }
 
+func TestDecodeNonNullObject(t *testing.T) {
+	for _, test := range []struct {
+		body  string
+		valid bool
+		null  bool
+	}{
+		{`{"value":0}`, true, false},
+		{`{"value":1,"optional":{}}`, true, false},
+		{`{"value":1,"optional":{"items":[]}}`, true, false},
+		{`{}`, false, false},
+		{`null`, false, true},
+		{`{"value":null}`, false, true},
+		{`{"value":1,"optional":{"items":[null]}}`, false, true},
+		{`{"value":1,"unknown":true}`, false, false},
+		{`{"value":1} {}`, false, false},
+		{`[]`, false, false},
+		{`1`, false, false},
+		{``, false, false},
+	} {
+		t.Run(test.body, func(t *testing.T) {
+			var value struct {
+				Value    int `json:"value"`
+				Optional *struct {
+					Items []string `json:"items"`
+				} `json:"optional,omitempty"`
+			}
+			err := DecodeNonNullObject([]byte(test.body), &value, "value")
+			if (err == nil) != test.valid || errors.Is(err, ErrNull) != test.null {
+				t.Fatal("object presence/null validation", err)
+			}
+		})
+	}
+}
+
 func TestWrite(t *testing.T) {
 	response := httptest.NewRecorder()
 	Write(response, http.StatusCreated, map[string]int{"value": 1})

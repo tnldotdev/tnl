@@ -49,16 +49,16 @@ func TestValidKubernetesName(t *testing.T) {
 }
 
 func TestKubernetesWorkloadBlockAndNames(t *testing.T) {
-	c := TNL{Services: Services{"db": {PublisherGroup: new("production")}}, Workloads: map[string]Workload{"app": {Kubernetes: &WorkloadKubernetes{ServiceAccount: "orders.worker"}, Services: []string{"db"}}}}
+	c := Environment{Workloads: map[string]Workload{"app": {Kubernetes: &WorkloadKubernetes{ServiceAccount: "orders.worker"}, Services: []string{"db"}}}}
 	for _, name := range []string{"orders.worker", strings.Repeat("a", 64), strings.Repeat("a", 253)} {
 		c.Workloads["app"].Kubernetes.ServiceAccount = name
-		if err := ValidateWorkloads(c); err != nil {
+		if err := ValidateWorkloads(Services{"db": {}}, c.Workloads); err != nil {
 			t.Fatalf("valid Kubernetes service account %q rejected: %v", name, err)
 		}
 	}
 	for _, namespace := range []string{"production.apps", strings.Repeat("a", 64)} {
 		c.Workloads["app"].Kubernetes.Namespace = namespace
-		if ValidateWorkloads(c) == nil {
+		if ValidateWorkloads(Services{"db": {}}, c.Workloads) == nil {
 			t.Fatalf("invalid Kubernetes namespace %q accepted", namespace)
 		}
 	}
@@ -66,7 +66,7 @@ func TestKubernetesWorkloadBlockAndNames(t *testing.T) {
 	p := c.Workloads["app"]
 	p.Google = &WorkloadGoogle{ServiceAccount: "112010400000000710080"}
 	c.Workloads["app"] = p
-	if ValidateWorkloads(c) == nil {
+	if ValidateWorkloads(Services{"db": {}}, c.Workloads) == nil {
 		t.Fatal("mixed provider blocks accepted")
 	}
 }

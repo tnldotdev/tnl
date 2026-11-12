@@ -37,7 +37,7 @@ func projectTypeIncludesAt(root, path string, visited map[string]bool) (projectT
 	if visited[path] {
 		return result, nil
 	}
-	relative, err := filepath.Rel(filepath.Dir(path), filepath.Join(root, meta.GeneratedDirectoryName, meta.DeclarationsName))
+	relative, err := filepath.Rel(filepath.Dir(path), filepath.Join(root, meta.GeneratedDirectoryName, meta.ProjectName))
 	if err != nil {
 		return result, err
 	}
@@ -124,7 +124,7 @@ func projectTypeIncludesAt(root, path string, visited map[string]bool) (projectT
 	}
 	checked, err := hujson.Parse(replacement)
 	if err != nil {
-		return result, fmt.Errorf("wire project declarations: %w", err)
+		return result, fmt.Errorf("wire project module: %w", err)
 	}
 	checked = checked.Clone()
 	checked.Standardize()
@@ -133,7 +133,7 @@ func projectTypeIncludesAt(root, path string, visited map[string]bool) (projectT
 		return result, err
 	}
 	if !slices.Contains(updated.Include, relative) && !slices.Contains(updated.Files, relative) {
-		return result, fmt.Errorf("project declarations were not included")
+		return result, fmt.Errorf("project module was not included")
 	}
 	if err := replaceRecognizedInitFile(path, data, replacement); err != nil {
 		return result, err

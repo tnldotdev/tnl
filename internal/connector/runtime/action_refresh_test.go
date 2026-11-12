@@ -8,10 +8,10 @@ import (
 
 func TestConnectionActionRefreshSourceIsPrivate(t *testing.T) {
 	source := GitHubActionsRefresh{Audience: "https://control.example.test", RequestURL: "https://runtime.example.test/private-token-endpoint", RequestToken: "private-runtime-bearer"}
-	request := StartRequest{Schema: 1, Assertion: "private-initial-proof", GitHubActionsRefresh: &source}
+	request := EnvironmentStart{Schema: 1, GitHubActionsRefresh: &source}
 	for _, value := range []any{source, &source, request, &request} {
 		rendered := fmt.Sprintf("%v %+v %#v", value, value, value)
-		for _, secret := range []string{source.RequestURL, source.RequestToken, request.Assertion} {
+		for _, secret := range []string{source.RequestURL, source.RequestToken} {
 			if strings.Contains(rendered, secret) {
 				t.Fatal("private Action source leaked through diagnostics")
 			}

@@ -18,7 +18,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/tcptarget"
 )
 
-const LeaseDuration = 20 * time.Second
+const LeaseDuration = clientstate.ApplicationPublicationLeaseDuration
 const CleanupGrace = 10 * time.Second
 
 type Run func(context.Context, Service, func(uint64, bool) error) error
@@ -561,12 +561,12 @@ func (m *Manager) AddService(service Service) error {
 	}
 	// keep only a bounded tail of inactive invocation observations. configured
 	// services and live registrations are never evicted by SDK churn.
-	if len(m.snapshot.Services) >= 256 {
+	if len(m.snapshot.Services) >= clientstate.ApplicationPublicationCapacity {
 		m.snapshot.Services = slices.DeleteFunc(m.snapshot.Services, func(previous Service) bool {
 			return opaqueid.Valid(previous.Name, opaqueid.InvocationPrefix) && m.registrations[previous.Name] == nil
 		})
 	}
-	if len(m.snapshot.Services) >= 256 {
+	if len(m.snapshot.Services) >= clientstate.ApplicationPublicationCapacity {
 		return errors.New("local publisher service capacity reached")
 	}
 	m.snapshot.Services = append(m.snapshot.Services, service)
@@ -578,6 +578,9 @@ func (m *Manager) AddService(service Service) error {
 func (m *Manager) ServiceForRegistration(id string) (Service, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if id == "" {
+		return Service{}, false
+	}
 	for _, service := range m.snapshot.Services {
 		if service.RegistrationID == id {
 			return service, true
@@ -601,6 +604,23 @@ func (m *Manager) UnregisterTarget(id, owner, target string) error {
 		m.mu.Unlock()
 		return ErrRegistrationStale
 	}
+	m.mu.Unlock()
+	return m.unregister(id, owner)
+}
+
+// StopRegistration is for the native process owner after validating its durable
+// obligation. HTTP handlers must still authenticate the SDK's owner secret.
+func (m *Manager) StopRegistration(name, id, target string) error {
+	m.op.Lock()
+	defer m.op.Unlock()
+	m.mu.Lock()
+	service := m.serviceLocked(name)
+	reg := m.registrations[name]
+	if service == nil || reg == nil || service.RegistrationID != id || service.Target != target {
+		m.mu.Unlock()
+		return ErrRegistrationStale
+	}
+	owner := reg.owner
 	m.mu.Unlock()
 	return m.unregister(id, owner)
 }
@@ -743,7 +763,14 @@ func (m *Manager) close() {
 	type entry struct{ id, owner string }
 	var entries []entry
 	for name, reg := range m.registrations {
-		entries = append(entries, entry{m.serviceLocked(name).RegistrationID, reg.owner})
+		service := m.serviceLocked(name)
+		entries = append(entries, entry{service.RegistrationID, reg.owner})
+		// stop all admissions before joining any one publication, so sibling
+		// drains share the shutdown window instead of consuming it in sequence.
+		service.invalidateRegistration()
+		if reg.cancel != nil {
+			reg.cancel()
+		}
 	}
 	m.mu.Unlock()
 	for _, entry := range entries {

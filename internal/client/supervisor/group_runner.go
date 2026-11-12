@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"encoding/hex"
 	"errors"
 	"time"
 
@@ -40,14 +41,11 @@ func (r GroupRunner) Serve(ctx context.Context, job Job, profile *clientstate.St
 	}
 	if r.scope != nil {
 		s := r.scope
-		if s.identity != (GroupScope{job.Server, job.GroupMember.TeamId, job.GroupMember.GroupId, job.PublisherIdentityID}) || s.project != job.GroupMember.ProjectKey || s.instance != job.GroupInstance || s.keyID != job.GroupMember.KeyId || len(private) != ed25519.PrivateKeySize || !bytes.Equal(s.public, private.Public().(ed25519.PublicKey)) {
+		if s.identity != (GroupScope{job.Server, job.GroupMember.TeamId, job.GroupMember.EnvironmentId, job.PublisherIdentityID}) || s.project != job.GroupMember.ProjectKey || s.instance != job.GroupInstance || s.keyID != job.GroupMember.KeyId || len(private) != ed25519.PrivateKeySize || !bytes.Equal(s.public, private.Public().(ed25519.PublicKey)) {
 			return ErrScope
 		}
 	}
-	identity := observability.Identity{TeamID: job.GroupMember.TeamId, PublisherGroupID: job.GroupMember.GroupId, PublisherIdentityID: job.GroupMember.PublisherIdentityId}
-	if r.Deployment != nil {
-		identity.DeploymentID, identity.ReplicaKey = r.Deployment.DeploymentId, r.Deployment.ReplicaKey
-	}
+	identity := observability.Identity{TeamID: job.GroupMember.TeamId, EnvironmentID: job.GroupMember.EnvironmentId, PublisherIdentityID: job.GroupMember.PublisherIdentityId}
 	ctx = observability.ReplaceIdentity(ctx, identity)
 	setup, finishStartup := observability.PublisherOperation(ctx, "group_startup")
 	defer func() { finishStartup(result) }()
@@ -65,7 +63,7 @@ func (r GroupRunner) Serve(ctx context.Context, job Job, profile *clientstate.St
 	defer release()
 	setupCtx, cancelSetup := context.WithTimeout(setup, 30*time.Second)
 	defer cancelSetup()
-	signingLock, err := profile.LockPublisherSigningIdentity(setupCtx, credentialfile.GroupSelection(job.GroupMember.ProjectKey, job.GroupMember.GroupId, job.GroupInstance))
+	signingLock, err := profile.LockPublisherSigningIdentity(setupCtx, credentialfile.GroupSelection(job.GroupMember.ProjectKey, job.GroupMember.EnvironmentId, job.GroupInstance))
 	if err != nil {
 		return err
 	}
@@ -83,7 +81,7 @@ func (r GroupRunner) Serve(ctx context.Context, job Job, profile *clientstate.St
 	if err != nil {
 		return errors.Join(ErrScope, err)
 	}
-	value, err = credentialfile.ResolveGroup(setupCtx, client, value, job.Server, member.ProjectKey, member.GroupName, job.GroupInstance)
+	value, err = credentialfile.ResolveGroup(setupCtx, client, value, job.Server, member.ProjectKey, member.EnvironmentId, job.GroupInstance)
 	if err != nil {
 		return err
 	}
@@ -91,7 +89,7 @@ func (r GroupRunner) Serve(ctx context.Context, job Job, profile *clientstate.St
 	if err := credentialfile.RetainGroup(setupCtx, profile, value); err != nil {
 		return err
 	}
-	if _, err := credentialfile.ImportGroup(setupCtx, profile, value, job.Server, member.ProjectKey, member.GroupName, job.GroupInstance); err != nil {
+	if _, err := credentialfile.ImportGroup(setupCtx, profile, value, job.Server, member.ProjectKey, member.EnvironmentId, job.GroupInstance); err != nil {
 		return err
 	}
 	job.GroupMember = &member
@@ -107,17 +105,7 @@ func (r GroupRunner) Serve(ctx context.Context, job Job, profile *clientstate.St
 		ctx = observability.Independent(setup)
 		cancelSetup()
 		release()
-		err := (publishergroup.Runtime{Control: client, Member: member, Private: private, Deployment: r.Deployment, Observe: observe, MemberChanged: func(current controlv1.PublisherGroupMember) error {
-			value, err := credentialfile.NewGroup(job.Server, job.GroupInstance, current, private)
-			if err != nil {
-				return err
-			}
-			if err := credentialfile.RetainGroup(ctx, profile, value); err != nil {
-				return err
-			}
-			_, err = credentialfile.ImportGroup(ctx, profile, value, job.Server, current.ProjectKey, current.GroupName, job.GroupInstance)
-			return err
-		}, Publish: publications.Publish}).Serve(ctx)
+		err := (publishergroup.Runtime{Control: client, Publisher: member, Private: private, Deployment: r.Deployment, Observe: observe, Publish: publications.Publish}).Serve(ctx)
 		if errors.Is(err, publishergroup.ErrAssignment) {
 			return errors.Join(ErrScope, err)
 		}
@@ -149,9 +137,9 @@ func WithCertificateState(ctx context.Context, job Job, profile *clientstate.Sto
 	if err != nil {
 		return err
 	}
-	actual := assignments.Member
-	actual.GroupName = member.GroupName
-	if actual != member || assignments.CertificateStatePlans == nil {
+	publication := assignments.Environment
+	hash, hashErr := hex.DecodeString(publication.ConfigurationHash)
+	if assignments.Publisher != member || publication.EnvironmentId != member.EnvironmentId || publication.MutationRevision < 1 || hashErr != nil || len(hash) != 32 || hex.EncodeToString(hash) != publication.ConfigurationHash || assignments.CertificateStatePlans == nil {
 		return failure.Wrap("read publisher certificate recovery boundary", failure.ServerResponseInvalid, ErrScope)
 	}
 	found, err := profile.PublisherCertificateMaterialExists(ctx, member.TeamId, member.PublisherIdentityId)

@@ -120,20 +120,13 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	group := "remote"
-	applied, err := owner.ApplyProjectConfiguration(ctx, "egress", controlv1.ApplyProjectConfigurationRequest{TeamId: m.TeamID, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {PublisherGroup: &group, Target: "api.internal:3000"}, "db": {PublisherGroup: &group, Target: "db.internal:5432", Protocol: new(controlv1.Postgres)}}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	e, err := owner.CreatePublisherGroupEnrollment(ctx, "egress", group, controlv1.CreatePublisherGroupEnrollmentRequest{TeamId: m.TeamID, MaxMembers: 2, ExpiresIn: 600})
-	if err != nil {
-		t.Fatal(err)
-	}
+	environment := retainedHTTPEnvironment(t, owner, m.TeamID, "egress", "remote", map[string]controlv1.ServiceDefinitionService{"api": {Protocol: "http"}, "db": {Protocol: "postgres"}}, controlv1.EnvironmentTargets{"api": {Address: new("api.internal:3000")}, "db": {Address: new("db.internal:5432")}})
+	e := retainedHTTPEnrollment(t, owner, environment, []string{"api", "db"}, 2)
 	public, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	member, err := client.RedeemPublisherGroupEnrollment(ctx, e.EnrollmentKey, public)
+	member, err := client.RedeemEnvironmentPublisherEnrollment(ctx, e.EnrollmentKey, public)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +147,7 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	if read(member.PublisherIdentityId) != nil {
 		t.Fatal("enrollment recorded operator egress")
 	}
-	runtime, err := publisherruntime.New(client, server, member.PublisherIdentityId, member.KeyId, member.GroupId, key)
+	runtime, err := publisherruntime.New(client, server, member.PublisherIdentityId, member.KeyId, member.EnvironmentId, key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,11 +172,12 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	if !reflect.DeepEqual(read(member.PublisherIdentityId), first) {
 		t.Fatal("operator verification/preflight overwrote replica")
 	}
-	if _, err = owner.RenamePublisherGroup(ctx, "egress", group, controlv1.RenamePublisherGroupRequest{TeamId: m.TeamID, Name: "live", ExpectedRevision: applied.Revision}); err != nil {
+	targets := controlv1.EnvironmentTargets{"api": {Address: new("replacement.internal:3000")}, "db": {Address: new("db.internal:5432")}}
+	if _, err = owner.ApplyEnvironment(ctx, "egress", environment.Id, controlv1.ApplyEnvironmentRequest{TeamId: m.TeamID, ExpectedRevision: environment.MutationRevision, DefinitionRevision: environment.AppliedDefinitionRevision, Targets: &targets}); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(read(member.PublisherIdentityId), first) {
-		t.Fatal("rename lost immutable observation")
+		t.Fatal("environment update lost immutable observation")
 	}
 	transport.set(proxy, "10.0.0.2:1234", "2606:4700:4700::1111")
 	if _, err = runtime.Renew(ctx); err != nil {
@@ -224,11 +218,11 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	if _, err = owner.ListPublisherIdentities(ctx, "team_other", ""); !errors.Is(err, clientcontrol.ErrNotFound) {
 		t.Fatal("cross-team status", err)
 	}
-	if _, err = client.GetProjectConfiguration(ctx, m.TeamID, "egress"); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+	if _, err = client.ListEnvironmentPublishers(ctx, m.TeamID, "egress", environment.Id); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("anonymous project status", err)
 	}
-	project, err := owner.GetProjectConfiguration(ctx, m.TeamID, "egress")
-	if err != nil || len(project.Members) != 1 || project.Members[0].Runtime == nil {
+	members, err := owner.ListEnvironmentPublishers(ctx, m.TeamID, "egress", environment.Id)
+	if err != nil || len(members) != 1 || members[0].Runtime == nil {
 		t.Fatal("server status missing runtime", err)
 	}
 	metadata, err := owner.GetProjectPublicMetadata(ctx, m.TeamID, "egress")
@@ -240,8 +234,8 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 		t.Fatal("runtime leaked into project metadata")
 	}
 	// a publication proof cannot start or replace a runtime, even for this identity.
-	proof, _ := publisherproof.Sign(member.PublisherIdentityId, member.KeyId, member.GroupId, server+"/v1/publisher-groups/verify", key, time.Now())
-	if _, err = client.PublisherRuntime(ctx, controlv1.PublisherRuntimeRequest{PublisherIdentityId: member.PublisherIdentityId, ScopeId: member.GroupId, ProcessRunId: strings.Repeat("e", 32), ExpectedEpoch: 1, Action: controlv1.RuntimeStart, Assertion: proof}); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+	proof, _ := publisherproof.Sign(member.PublisherIdentityId, member.KeyId, member.EnvironmentId, server+"/v1/environment-publishers/verify", key, time.Now())
+	if _, err = client.PublisherRuntime(ctx, controlv1.PublisherRuntimeRequest{PublisherIdentityId: member.PublisherIdentityId, ScopeId: member.EnvironmentId, ProcessRunId: strings.Repeat("e", 32), ExpectedEpoch: 1, Action: controlv1.RuntimeStart, Assertion: proof}); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("verification proof started runtime", err)
 	}
 	if err = runtime.Stop(ctx); err != nil {
@@ -257,13 +251,13 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	observed := make(chan struct{}, 1)
 	done := make(chan error, 1)
 	go func() {
-		done <- (publishergroup.Runtime{Control: groupClient, Member: member, Private: key, PollInterval: time.Second, Observe: func(int64, bool) error {
+		done <- (publishergroup.Runtime{Control: groupClient, Publisher: member, Private: key, PollInterval: time.Second, Observe: func(int64, bool) error {
 			select {
 			case observed <- struct{}{}:
 			default:
 			}
 			return nil
-		}, Publish: func(ctx context.Context, _ controlv1.PublisherGroupServiceAssignment, health func(bool)) error {
+		}, Publish: func(ctx context.Context, application controlv1.EnvironmentPublication, assignment controlv1.EnvironmentPublisherAssignment, health func(bool)) error {
 			started <- struct{}{}
 			health(true)
 			<-ctx.Done()
