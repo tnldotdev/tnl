@@ -9,7 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
-	ingresspool "github.com/tnldotdev/tnl/internal/ingress/pool"
+	ingresspool "github.com/tnldotdev/tnl/internal/naming/ingresspool"
 )
 
 const PrimaryIngressPoolID = string(ingresspool.PrimaryID)

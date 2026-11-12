@@ -17,7 +17,7 @@ import (
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 )
 
 type daemon struct {
@@ -39,7 +39,7 @@ type daemon struct {
 	route53Credentials     aws.CredentialsProvider
 	serviceHTTP            *http.Client
 	clusterSecret          string
-	clusterSecrets         serviceapi.BearerSecrets
+	clusterSecrets         serverhttp.BearerSecrets
 	relayClientTLS         *tls.Config
 	cancel                 context.CancelFunc
 	componentDone          chan error
@@ -88,7 +88,7 @@ func serveRuntime(ctx context.Context, cfg daemonconfig.Config, options runtimeO
 		}
 		clusterSecret = base64.RawURLEncoding.EncodeToString(random)
 	}
-	clusterSecrets, err := serviceapi.NewBearerSecrets(clusterSecret, cfg.ClusterSecretPrevious)
+	clusterSecrets, err := serverhttp.NewBearerSecrets(clusterSecret, cfg.ClusterSecretPrevious)
 	if err != nil {
 		return err
 	}

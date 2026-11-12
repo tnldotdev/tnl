@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
+
 	"github.com/tnldotdev/tnl/internal/client/project/sourcestate"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	publisherv1 "github.com/tnldotdev/tnl/pkg/api/publisher/browser/v1"
@@ -32,7 +34,7 @@ type browserTrail struct {
 
 func (f *feedbackRuntime) prepareBrowser(response http.ResponseWriter, request *http.Request) *http.Request {
 	var raw []byte
-	if cookie, err := request.Cookie(feedbackBrowserCookieName); err == nil {
+	if cookie, err := request.Cookie(httpaccess.FeedbackBrowserCookieName); err == nil {
 		raw, _ = base64.RawURLEncoding.DecodeString(cookie.Value)
 	}
 	if len(raw) != 32 {
@@ -41,7 +43,7 @@ func (f *feedbackRuntime) prepareBrowser(response http.ResponseWriter, request *
 			return request
 		}
 		http.SetCookie(response, &http.Cookie{
-			Name: feedbackBrowserCookieName, Value: base64.RawURLEncoding.EncodeToString(raw),
+			Name: httpaccess.FeedbackBrowserCookieName, Value: base64.RawURLEncoding.EncodeToString(raw),
 			Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode,
 			Expires: time.Now().Add(24 * time.Hour),
 		})
@@ -90,7 +92,7 @@ func (f *feedbackRuntime) observe(request *http.Request, status int) {
 
 func (f *feedbackRuntime) evidenceForBrowser(request *http.Request) []failedRequest {
 	result := make([]failedRequest, 0)
-	cookie, err := request.Cookie(feedbackBrowserCookieName)
+	cookie, err := request.Cookie(httpaccess.FeedbackBrowserCookieName)
 	if err != nil {
 		return result
 	}

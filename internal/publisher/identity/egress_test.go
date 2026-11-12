@@ -4,10 +4,10 @@ import (
 	"errors"
 	"testing"
 
-	publisherruntime "github.com/tnldotdev/tnl/internal/publisher/runtime"
+	processidentity "github.com/tnldotdev/tnl/internal/publisher/processidentity"
 )
 
-type runtimeEndpointControl struct{ publisherruntime.Control }
+type runtimeEndpointControl struct{ processidentity.Control }
 
 func TestRemoteRuntimeRequiresCapabilityAndExactEndpoint(t *testing.T) {
 	native, _ := privateScopeFixture(t)

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"strings"
 	"sync"
@@ -17,20 +18,52 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
+
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
-	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
-	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
+
+func TestPublicHTTPAuthorizationUsesAcceptedVisitorSource(t *testing.T) {
+	trusted := netip.MustParseAddrPort("198.51.100.7:5678")
+	var forwarded int
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "preview.example.test", Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded++
+		if r.RemoteAddr != trusted.String() || r.Header.Get("Authorization") != "Bearer application-secret" {
+			t.Error("HTTP authorization lost accepted visitor metadata or application authentication")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = route.Close() })
+	for _, remote := range []string{"192.0.2.1:1234", "not visitor metadata"} {
+		r := visitorfixture.Request()
+		r.RemoteAddr = remote
+		r.Header.Set("Authorization", "Bearer application-secret")
+		r.Header.Set("X-Forwarded-For", "203.0.113.99")
+		session := &visitorSession{visitor: Visitor{Run: route.run, Source: trusted}}
+		r = r.WithContext(context.WithValue(r.Context(), visitorSessionKey{}, session))
+		w := httptest.NewRecorder()
+		serveTestPublicRequest(t, route, w, r)
+		if w.Code != http.StatusNoContent {
+			t.Fatal("accepted visitor source was replaced by request metadata", w.Code)
+		}
+	}
+	if forwarded != 2 {
+		t.Fatal("accepted visitor did not reach the application", forwarded)
+	}
+}
 
 func TestVisitorSourceMetadataOnlyOpeningDoesNotConsumeFallbackProof(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var calls atomic.Int32
-		route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "route.example", Certificate: publicURLTestCertificate(t, "route.example"), Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "route.example", Certificate: visitorfixture.Certificate(t, "route.example"), Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			calls.Add(1)
 			w.WriteHeader(http.StatusNoContent)
 		})})
@@ -71,7 +104,7 @@ func TestVisitorSourceMetadataOnlyOpeningDoesNotConsumeFallbackProof(t *testing.
 		if consumed != 0 {
 			t.Fatal("metadata without visitor bytes consumed fallback source proof")
 		}
-		fallback := tls.Client(open("connection-b"), &tls.Config{RootCAs: rootsForCertificate(t, *route.certificate.Load()), ServerName: "route.example"})
+		fallback := tls.Client(open("connection-b"), &tls.Config{RootCAs: visitorfixture.Roots(t, *route.certificate.Load()), ServerName: "route.example"})
 		defer fallback.Close()
 		if err := fallback.HandshakeContext(t.Context()); err != nil {
 			t.Fatal("fallback could not use the uncommitted source proof", err)
@@ -280,7 +313,7 @@ func TestVisitorSourceCannotBeRewrittenOrReplayAcrossRelayConnectionsAfterReleas
 }
 
 func TestVisitorSourcePolicyChangeClosesPermissionButRetainsReplayAndStaleReleaseFence(t *testing.T) {
-	policy, update, token := httpPermissionScopeFixture(t, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: certificateTestPublicURLID}, "route.example", 443, false)
+	policy, update, token := visitorfixture.ScopePolicy(t, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: certificateTestPublicURLID}, "route.example", 443, false)
 	view, _, _ := policy.Current()
 	permission, err := visitortoken.VerifyBearer(token, view, time.Now())
 	if err != nil {
@@ -419,44 +452,5 @@ func TestVisitorSourcePolicyChangeClosesPermissionButRetainsReplayAndStaleReleas
 	f.wait(0, 0)
 	if calls.Load() != 2 {
 		t.Fatal("new IP restriction reached the application", calls.Load())
-	}
-}
-
-func TestPublisherVisitorPolicyRejectsMissingOrChangedSourceMasterWithoutExtendingPolicy(t *testing.T) {
-	for _, mutate := range []func(*controlv1.VisitorPolicyUpdate){
-		func(update *controlv1.VisitorPolicyUpdate) { update.VisitorSourceKey = nil },
-		func(update *controlv1.VisitorPolicyUpdate) { update.VisitorSourceKey = new([]byte{1}) },
-		func(update *controlv1.VisitorPolicyUpdate) { update.VisitorSourceKey = new(make([]byte, 32)) },
-		func(update *controlv1.VisitorPolicyUpdate) {
-			update.VisitorSourceKey = new(bytes.Repeat([]byte{2}, 32))
-		},
-		func(update *controlv1.VisitorPolicyUpdate) { update.VisitorSourceAuthority = new([]byte{1}) },
-	} {
-		synctest.Test(t, func(t *testing.T) {
-			base := &policyClientFixture{key: ed25519.NewKeyFromSeed([]byte(strings.Repeat("p", 32)))}
-			base.revision.Store(1)
-			var changed bool
-			client := policyClientFunc(func(ctx context.Context, request controlv1.PublisherVisitorPolicyRequest, token string) (controlv1.VisitorPolicyUpdate, error) {
-				update, err := base.ReadPublisherVisitorPolicy(ctx, request, token)
-				if changed {
-					mutate(&update)
-				}
-				return update, err
-			})
-			policy, err := prepareVisitorPolicy(t.Context(), client, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: certificateTestPublicURLID}, "run", 1, "run-secret", nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer policy.Close()
-			before, _, _ := policy.lease.Current()
-			changed = true
-			if err := policy.refresh(t.Context()); !errors.Is(err, visitorlease.ErrUpdate) {
-				t.Fatal("invalid run master lost its policy classification", err)
-			}
-			after, enabled, _ := policy.lease.Current()
-			if !enabled || !after.ValidUntil.Equal(before.ValidUntil) || policy.sourceKey != testPublicVisitorSourceKey {
-				t.Fatal("invalid source-key renewal changed serving authority")
-			}
-		})
 	}
 }

@@ -13,7 +13,7 @@ import (
 
 	failureproblem "github.com/tnldotdev/tnl/internal/failure/problem"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -318,7 +318,7 @@ func TestPublicPolicyStaleProcessImmediatelyFencesController(t *testing.T) {
 		name string
 		err  error
 	}{
-		{"direct", serviceapi.NewProblemError(409, "ingress_lease_stale", "ingress lease is stale")},
+		{"direct", serverhttp.NewProblemError(409, "ingress_lease_stale", "ingress lease is stale")},
 		{"HTTP", ingressHTTPProblem(409, &ingressv1.Problem{Status: 409, Type: failureproblem.URL("ingress_lease_stale"), Code: ingressv1.IngressLeaseStale})},
 	} {
 		t.Run(test.name, func(t *testing.T) {

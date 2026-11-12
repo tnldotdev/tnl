@@ -11,7 +11,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
-	publisherruntime "github.com/tnldotdev/tnl/internal/publisher/runtime"
+	processidentity "github.com/tnldotdev/tnl/internal/publisher/processidentity"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
@@ -48,7 +48,7 @@ type PublicURLControl interface {
 type NativeControl struct {
 	PublicURLControl
 	Services ServiceControl
-	Runtime  publisherruntime.Control
+	Runtime  processidentity.Control
 }
 
 // Native is the single grant-scoped adapter for CLI, app, SDK, and guest
@@ -60,7 +60,7 @@ type Native struct {
 	private   ed25519.PrivateKey
 	publicURL controlv1.PublicURL
 	traffic   *trafficlimits.Selection
-	runtime   *publisherruntime.Owner
+	runtime   *processidentity.Owner
 }
 
 func NewNative(control NativeControl, authority AssertionExchanger, identity authorityv1.PublisherEnrollmentResult, private ed25519.PrivateKey) (*Native, error) {

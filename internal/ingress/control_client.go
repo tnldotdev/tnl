@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
@@ -136,7 +136,7 @@ func (c *HTTPControlClient) ObservePublicURLRecovery(
 }
 
 func ingressHTTPProblem(status int, problem *ingressv1.Problem) error {
-	result := &serviceapi.ProblemError{Status: status}
+	result := &serverhttp.ProblemError{Status: status}
 	if problem != nil {
 		result.Type = problem.Type
 		result.Title = problem.Title

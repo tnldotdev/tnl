@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
+
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
@@ -106,7 +108,7 @@ func runSession(
 	if config.VisitorControl == nil {
 		return errors.New("publisher visitor policy client is required")
 	}
-	policy, err := prepareVisitorPolicy(ctx, config.VisitorControl, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: setup.PublicUrl.Id}, setup.PublishRun.Id,
+	policy, err := httpaccess.PreparePolicy(ctx, config.VisitorControl, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: setup.PublicUrl.Id}, setup.PublishRun.Id,
 		int64(version), publishRunToken.String(), func(error) {
 			if config.Logf != nil {
 				config.Logf("publisher: visitor policy renewal failed")
@@ -129,7 +131,7 @@ func runSession(
 		}
 		config.PreviewID = preview.Id
 	}
-	var shareRuntime *shareAccess
+	var shareRuntime *httpaccess.Shares
 	if setup.PublicUrl.ServiceProtocol == controlv1.Http && (setup.PublicUrl.Purpose == controlv1.App || setup.PublicUrl.Purpose == controlv1.Alias || setup.PublicUrl.Purpose == controlv1.Demo) {
 		if err := progress("share_access"); err != nil {
 			return err
@@ -145,7 +147,7 @@ func runSession(
 		if err := client.EnableShareAccess(ctx, setup.PublishRun.Id, version, previewID, publishRunToken); err != nil {
 			return fmt.Errorf("publisher: enable share access: %w", err)
 		}
-		shareRuntime = &shareAccess{client: client, runID: setup.PublishRun.Id, version: version, token: publishRunToken, logf: config.Logf}
+		shareRuntime = &httpaccess.Shares{Client: client, RunID: setup.PublishRun.Id, Number: version, Token: publishRunToken, Logf: config.Logf}
 	}
 	var material clientstate.Material
 	identity := authority.identity
@@ -158,9 +160,9 @@ func runSession(
 		return err
 	}
 	browser := browserAccessForRun(config, setup, publishRunToken)
-	var browserRenewal *browserTokens
+	var browserRenewal *httpaccess.Tokens
 	if browser != nil {
-		browserRenewal, err = startBrowserTokens(ctx, config.BrowserControl, policy.lease, func(error) {
+		browserRenewal, err = httpaccess.StartTokens(ctx, config.BrowserControl, policy.Lease(), func(error) {
 			if config.Logf != nil {
 				config.Logf("publisher: browser visitor token renewal failed")
 			}
@@ -169,9 +171,9 @@ func runSession(
 			return err
 		}
 		defer browserRenewal.Close()
-		browser.tokens, browser.policy = browserRenewal, policy
+		browser.Tokens, browser.Policy = browserRenewal, policy
 		if shareRuntime != nil {
-			shareRuntime.browser = browser
+			shareRuntime.Browser = browser
 		}
 	}
 	streamCapacity := 0
@@ -182,8 +184,8 @@ func runSession(
 		Context:               ctx,
 		AuditSink:             auditSink,
 		BrowserAccess:         browser,
-		VisitorPolicy:         policy.lease,
-		VisitorSourceKey:      policy.sourceKey,
+		VisitorPolicy:         policy.Lease(),
+		VisitorSourceKey:      policy.SourceKey(),
 		VisitorTokens:         browserRenewal,
 		BrowserLoginAvailable: config.BrowserLoginAvailable,
 		PreviewID:             config.PreviewID, PublicURLID: setup.PublicUrl.Id, PublishRunID: setup.PublishRun.Id, PublishRunNumber: version,

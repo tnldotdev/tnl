@@ -5,13 +5,13 @@ import (
 	"time"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	"github.com/tnldotdev/tnl/internal/client/supervisor"
+	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 )
 
 // Jobs lists or stops one installed connector. removal joins the supervisor's
 // attempt before releasing the remembered local port.
-func Jobs(ctx context.Context, options supervisor.ServiceOptions, name, action string) ([]supervisor.Job, error) {
-	registry, err := supervisor.Open(ctx, supervisor.OpenOptions{Root: options.Root, User: true})
+func Jobs(ctx context.Context, options installedjobs.ServiceOptions, name, action string) ([]installedjobs.Job, error) {
+	registry, err := installedjobs.Open(ctx, installedjobs.OpenOptions{Root: options.Root, User: true})
 	if err != nil {
 		return nil, err
 	}
@@ -20,7 +20,7 @@ func Jobs(ctx context.Context, options supervisor.ServiceOptions, name, action s
 	if err != nil {
 		return nil, err
 	}
-	connectors := []supervisor.Job{}
+	connectors := []installedjobs.Job{}
 	for _, job := range jobs {
 		if job.Kind == "connector" && (name == "" || job.Name == name || job.ID == name) {
 			connectors = append(connectors, job)
@@ -30,10 +30,10 @@ func Jobs(ctx context.Context, options supervisor.ServiceOptions, name, action s
 		return connectors, nil
 	}
 	if len(connectors) == 0 {
-		return nil, supervisor.ErrJobNotFound
+		return nil, installedjobs.ErrJobNotFound
 	}
 	if len(connectors) != 1 {
-		return nil, supervisor.ErrJobAmbiguous
+		return nil, installedjobs.ErrJobAmbiguous
 	}
 	job := connectors[0]
 	if err := registry.Stop(ctx, job.ID); err != nil {
@@ -69,8 +69,8 @@ func Jobs(ctx context.Context, options supervisor.ServiceOptions, name, action s
 	}
 	for _, current := range jobs {
 		if current.ID == job.ID {
-			return []supervisor.Job{current}, nil
+			return []installedjobs.Job{current}, nil
 		}
 	}
-	return []supervisor.Job{}, nil
+	return []installedjobs.Job{}, nil
 }

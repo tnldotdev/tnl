@@ -2,78 +2,70 @@ package publisher
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/sha256"
 	"crypto/tls"
-	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
+	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
+
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
-	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"golang.org/x/net/websocket"
 )
 
 const liveBrowserCookie = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
-type liveHTTPSource struct{ BrowserCookieSecret, ShareId, ShareCookieSecret *string }
-type liveHTTPDecision struct {
-	VisitAllowed bool
-	ValidUntil   *time.Time
-}
-
 type liveHTTPControl struct {
 	browserAccessStub
-	mu       sync.Mutex
-	check    func(liveHTTPSource) (liveHTTPDecision, error)
-	calls    int
-	policy   *visitorPolicy
-	tokens   *browserTokens
-	revision int64
-	sources  map[string]liveHTTPSource
-	allowed  map[string]bool
-	issued   map[string]visitortoken.Token
+	visitorfixture.HTTPControl
+	check  func(visitorfixture.HTTPSource) (visitorfixture.HTTPDecision, error)
+	policy *httpaccess.Policy
+	tokens *httpaccess.Tokens
 }
 
-func liveHTTPAllowed(until time.Time) (liveHTTPDecision, error) {
-	return liveHTTPDecision{VisitAllowed: true, ValidUntil: &until}, nil
+func liveHTTPAllowed(until time.Time) (visitorfixture.HTTPDecision, error) {
+	return visitorfixture.HTTPDecision{VisitAllowed: true, ValidUntil: &until}, nil
 }
 
 func prepareLiveHTTPControl(t *testing.T, control *liveHTTPControl) {
 	t.Helper()
-	control.revision = 1
-	control.sources, control.allowed, control.issued = make(map[string]liveHTTPSource), make(map[string]bool), make(map[string]visitortoken.Token)
-	policy, err := prepareVisitorPolicy(t.Context(), control, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: certificateTestPublicURLID}, "pr_0123456789abcdefghijkl", 1, "fixture-run-token", nil)
+	control.Check = control.check
+	control.Init()
+	policy, err := httpaccess.PreparePolicy(t.Context(), control, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: certificateTestPublicURLID}, "pr_0123456789abcdefghijkl", 1, "fixture-run-token", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(policy.Close)
 	control.policy = policy
-	control.tokens, err = startBrowserTokens(t.Context(), control, policy.lease, nil)
+	control.tokens, err = httpaccess.StartTokens(t.Context(), control, policy.Lease(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(control.tokens.Close)
+	control.Lease = policy.Lease()
+	browser := &httpaccess.Browser{Policy: policy, Tokens: control.tokens}
+	control.Prepare = func(ctx context.Context, source json.RawMessage, response controlv1.VisitorTokenResponse, parent time.Time) error {
+		_, err := browser.PrepareToken(ctx, source, response, parent)
+		return err
+	}
 }
 
 func startLiveHTTPRoute(t *testing.T, control *liveHTTPControl, handler http.Handler) *PublicURLServer {
 	t.Helper()
 	prepareLiveHTTPControl(t, control)
-	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Certificate: publicURLTestCertificate(t, "route.example"), Handler: handler,
-		PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", PublishRunNumber: 1, VisitorPolicy: control.policy.lease, VisitorTokens: control.tokens,
-		VisitorSourceKey: control.policy.sourceKey,
-		BrowserAccess:    &browserAccess{client: control, runID: "original-run", version: 1}})
+	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Certificate: visitorfixture.Certificate(t, "route.example"), Handler: handler,
+		PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", PublishRunNumber: 1, VisitorPolicy: control.policy.Lease(), VisitorTokens: control.tokens,
+		VisitorSourceKey: control.policy.SourceKey(),
+		BrowserAccess:    &httpaccess.Browser{Client: control, RunID: "original-run", Number: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,132 +76,12 @@ func startLiveHTTPRoute(t *testing.T, control *liveHTTPControl, handler http.Han
 	return route
 }
 
-func (c *liveHTTPControl) ReadPublisherVisitorPolicy(_ context.Context, body controlv1.PublisherVisitorPolicyRequest, _ string) (controlv1.VisitorPolicyUpdate, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for key, input := range c.sources {
-		decision, err := c.check(input)
-		c.calls++
-		if errors.Is(err, clientcontrol.ErrUnavailable) {
-			return controlv1.VisitorPolicyUpdate{}, err
-		}
-		allowed := err == nil && decision.VisitAllowed && decision.ValidUntil != nil && decision.ValidUntil.After(time.Now())
-		if allowed != c.allowed[key] {
-			c.revision++
-			c.allowed[key] = allowed
-		}
-	}
-	now := time.Now()
-	key := ed25519.NewKeyFromSeed([]byte(strings.Repeat("l", 32)))
-	events := []int64{}
-	if body.AfterRevision != 0 {
-		for next := body.AfterRevision + 1; next <= c.revision; next++ {
-			events = append(events, next)
-		}
-	}
-	return controlv1.VisitorPolicyUpdate{AfterRevision: body.AfterRevision, Revisions: events, SnapshotRequired: body.AfterRevision == 0,
-		VisitorSourceKey: testVisitorSourceKeyBytes(),
-		Policy: controlv1.VisitorPolicySnapshot{Resource: body.Resource, Hostname: "route.example", Port: 443, Issuer: "https://control.example.test", Enabled: true,
-			VisitorPolicyRevision: c.revision, KeyRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second),
-			VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "live", PublicKey: key.Public().(ed25519.PublicKey)}}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}}}, nil
-}
-
-func (c *liveHTTPControl) IssueVisitorToken(_ context.Context, body controlv1.VisitorTokenRequest) (controlv1.VisitorTokenResponse, error) {
-	var source struct {
-		Kind    string `json:"kind"`
-		Secret  string `json:"secret"`
-		ShareID string `json:"share_id"`
-	}
-	if json.Unmarshal(body.Source, &source) != nil {
-		return controlv1.VisitorTokenResponse{}, errors.New("invalid fixture token source")
-	}
-	keyID := source.Kind + ":" + source.ShareID + ":" + source.Secret
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	input, exists := c.sources[keyID]
-	if !exists {
-		return controlv1.VisitorTokenResponse{}, &clientcontrol.ProblemError{Status: http.StatusForbidden}
-	}
-	decision, err := c.check(input)
-	c.calls++
-	if err != nil {
-		if errors.Is(err, clientcontrol.ErrUnauthenticated) {
-			return controlv1.VisitorTokenResponse{}, &clientcontrol.ProblemError{Status: http.StatusUnauthorized}
-		}
-		return controlv1.VisitorTokenResponse{}, err
-	}
-	if !decision.VisitAllowed || decision.ValidUntil == nil || !decision.ValidUntil.After(time.Now()) {
-		return controlv1.VisitorTokenResponse{}, &clientcontrol.ProblemError{Status: http.StatusForbidden}
-	}
-	digest := sha256.Sum256([]byte(keyID))
-	id := hex.EncodeToString(digest[:11])
-	var subject visitortoken.Subject = visitortoken.Browser{IdentityID: "ident_" + id, SessionID: "cs_" + id}
-	if source.Kind == "share_session" {
-		subject = visitortoken.Share{ShareID: source.ShareID}
-	}
-	permission := visitortoken.Permission{Scope: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: certificateTestPublicURLID}, Hostname: "route.example", Port: 443,
-		VisitorPolicyRevision: c.revision, Subject: subject, ExpiresAt: decision.ValidUntil.Truncate(time.Second)}
-	private := ed25519.NewKeyFromSeed([]byte(strings.Repeat("l", 32)))
-	token, err := visitortoken.Sign("https://control.example.test", "live", private, permission, time.Now())
-	if err != nil {
-		return controlv1.VisitorTokenResponse{}, err
-	}
-	c.issued[keyID] = token
-	return controlv1.VisitorTokenResponse{Resource: body.Resource, Hostname: permission.Hostname, Port: 443, VisitorPolicyRevision: c.revision,
-		ExpiresAt: permission.ExpiresAt, VisitorToken: token.Reveal()}, nil
-}
-
-func (c *liveHTTPControl) credential(t *testing.T, cookie string, share bool) string {
-	t.Helper()
-	kind, shareID := "browser_session", ""
-	input := liveHTTPSource{BrowserCookieSecret: &cookie}
-	var source json.RawMessage
-	if share {
-		kind, shareID = "share_session", "shr_0123456789abcdefghijkl"
-		input.BrowserCookieSecret, input.ShareId, input.ShareCookieSecret = nil, &shareID, &cookie
-		source, _ = json.Marshal(controlv1.VisitorTokenShareSessionSource{Kind: controlv1.VisitorTokenShareSession, ShareId: shareID, Secret: cookie})
-	} else {
-		source = browserSourceFixture(cookie)
-	}
-	key := kind + ":" + shareID + ":" + cookie
-	c.mu.Lock()
-	if token, exists := c.issued[key]; exists {
-		c.mu.Unlock()
-		return token.Reveal()
-	}
-	c.sources[key], c.allowed[key] = input, true
-	c.mu.Unlock()
-	response, err := c.IssueVisitorToken(t.Context(), controlv1.VisitorTokenRequest{Resource: controlv1.VisitorResourceScope{Kind: "public_url", Id: certificateTestPublicURLID}, Source: source})
-	if err != nil {
-		return "invalid-visitor-permission"
-	}
-	if err := c.tokens.install(source, response, time.Now().Add(30*time.Minute)); err != nil {
-		t.Fatal(err)
-	}
-	c.mu.Lock()
-	c.issued[key] = visitortoken.Token(response.VisitorToken)
-	c.mu.Unlock()
-	return response.VisitorToken
-}
-
-func (c *liveHTTPControl) permission(t *testing.T, cookie string, share bool) controlv1.VisitorTokenResponse {
-	t.Helper()
-	token := c.credential(t, cookie, share)
-	view, _, _ := c.policy.lease.Current()
-	permission, err := visitortoken.VerifyBearer(visitortoken.Token(token), view, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	return controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: "public_url", Id: view.Scope.ID}, Hostname: view.Hostname, Port: int(view.Port),
-		VisitorPolicyRevision: permission.Facts().VisitorPolicyRevision, ExpiresAt: permission.Facts().ExpiresAt, VisitorToken: token}
-}
-
 func TestPublicHTTPLiveRenewalAndHTTP2Isolation(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var revoked bool
-		control := &liveHTTPControl{check: func(input liveHTTPSource) (liveHTTPDecision, error) {
+		control := &liveHTTPControl{check: func(input visitorfixture.HTTPSource) (visitorfixture.HTTPDecision, error) {
 			if input.BrowserCookieSecret != nil && *input.BrowserCookieSecret == liveBrowserCookie && revoked {
-				return liveHTTPDecision{}, clientcontrol.ErrUnauthenticated
+				return visitorfixture.HTTPDecision{}, clientcontrol.ErrUnauthenticated
 			}
 			return liveHTTPAllowed(time.Now().Add(2 * time.Minute))
 		}}
@@ -239,7 +111,7 @@ func TestPublicHTTPLiveRenewalAndHTTP2Isolation(t *testing.T) {
 		request := func(id, cookie string) *http.Response {
 			r, _ := http.NewRequest("POST", "https://route.example/stream?id="+id, strings.NewReader("original body"))
 			r.Header.Set("Authorization", "app-secret")
-			r.Header.Set("Cookie", "app=unchanged; "+visitorTokenCookie+"="+control.credential(t, cookie, false))
+			r.Header.Set("Cookie", "app=unchanged; "+httpaccess.VisitorTokenCookie+"="+control.Credential(t, cookie, false))
 			response, err := client.Do(r)
 			if err != nil {
 				t.Fatal(err)
@@ -259,12 +131,12 @@ func TestPublicHTTPLiveRenewalAndHTTP2Isolation(t *testing.T) {
 		defer sibling.Body.Close()
 		time.Sleep(5 * time.Minute)
 		synctest.Wait()
-		control.mu.Lock()
-		if control.calls < 12 {
+		control.Mu.Lock()
+		if control.Calls < 12 {
 			t.Error("long HTTP request did not renew")
 		}
 		revoked = true
-		control.mu.Unlock()
+		control.Mu.Unlock()
 		ended := make(chan error, 1)
 		go func() { _, err := io.Copy(io.Discard, first.Body); ended <- err }()
 		time.Sleep(30 * time.Second)
@@ -301,12 +173,12 @@ func TestPublicHTTPLiveOutageAndOriginalCredentialDeadline(t *testing.T) {
 					deadline = time.Now().Add(10 * time.Second)
 				}
 				var unavailable bool
-				control := &liveHTTPControl{check: func(input liveHTTPSource) (liveHTTPDecision, error) {
+				control := &liveHTTPControl{check: func(input visitorfixture.HTTPSource) (visitorfixture.HTTPDecision, error) {
 					if unavailable && mode == "outage" {
-						return liveHTTPDecision{}, clientcontrol.ErrUnavailable
+						return visitorfixture.HTTPDecision{}, clientcontrol.ErrUnavailable
 					}
 					if unavailable && mode == "share revoked" {
-						return liveHTTPDecision{}, &clientcontrol.ProblemError{Status: 403}
+						return visitorfixture.HTTPDecision{}, &clientcontrol.ProblemError{Status: 403}
 					}
 					return liveHTTPAllowed(deadline)
 				}}
@@ -326,9 +198,9 @@ func TestPublicHTTPLiveOutageAndOriginalCredentialDeadline(t *testing.T) {
 				client.Timeout = 0
 				r, _ := http.NewRequest("POST", "https://route.example/stream", strings.NewReader("exact body"))
 				if strings.HasPrefix(mode, "share") {
-					r.Header.Set("Cookie", visitorTokenCookie+"="+control.credential(t, liveBrowserCookie, true))
+					r.Header.Set("Cookie", httpaccess.VisitorTokenCookie+"="+control.Credential(t, liveBrowserCookie, true))
 				} else {
-					r.AddCookie(&http.Cookie{Name: visitorTokenCookie, Value: control.credential(t, liveBrowserCookie, false)})
+					r.AddCookie(&http.Cookie{Name: httpaccess.VisitorTokenCookie, Value: control.Credential(t, liveBrowserCookie, false)})
 				}
 				result := make(chan error, 1)
 				go func() {
@@ -343,9 +215,9 @@ func TestPublicHTTPLiveOutageAndOriginalCredentialDeadline(t *testing.T) {
 				case err := <-result:
 					t.Fatal("visitor failed before reaching the application", err)
 				}
-				control.mu.Lock()
+				control.Mu.Lock()
 				unavailable = true
-				control.mu.Unlock()
+				control.Mu.Unlock()
 				if mode != "share revoked" {
 					time.Sleep(time.Until(deadline) - time.Second)
 					synctest.Wait()
@@ -379,7 +251,7 @@ func TestPublicHTTPReplacementOnlyAuthorizesFutureRequests(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		originalDeadline := time.Now().Add(90 * time.Second)
 		replacement := "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA"
-		control := &liveHTTPControl{check: func(input liveHTTPSource) (liveHTTPDecision, error) {
+		control := &liveHTTPControl{check: func(input visitorfixture.HTTPSource) (visitorfixture.HTTPDecision, error) {
 			if input.BrowserCookieSecret != nil && *input.BrowserCookieSecret == liveBrowserCookie {
 				return liveHTTPAllowed(originalDeadline)
 			}
@@ -396,7 +268,7 @@ func TestPublicHTTPReplacementOnlyAuthorizesFutureRequests(t *testing.T) {
 		client.Timeout = 0
 		request := func(path, cookie string) *http.Response {
 			r, _ := http.NewRequest("GET", "https://route.example/"+path, nil)
-			r.AddCookie(&http.Cookie{Name: visitorTokenCookie, Value: control.credential(t, cookie, false)})
+			r.AddCookie(&http.Cookie{Name: httpaccess.VisitorTokenCookie, Value: control.Credential(t, cookie, false)})
 			response, err := client.Do(r)
 			if err != nil {
 				t.Fatal(err)
@@ -431,9 +303,9 @@ func TestPublicHTTPReplacementOnlyAuthorizesFutureRequests(t *testing.T) {
 func TestPublicHTTPGuardRetainsPreparedPolicyAge(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var revoked bool
-		control := &liveHTTPControl{check: func(liveHTTPSource) (liveHTTPDecision, error) {
+		control := &liveHTTPControl{check: func(visitorfixture.HTTPSource) (visitorfixture.HTTPDecision, error) {
 			if revoked {
-				return liveHTTPDecision{}, clientcontrol.ErrUnavailable
+				return visitorfixture.HTTPDecision{}, clientcontrol.ErrUnavailable
 			}
 			return liveHTTPAllowed(time.Now().Add(2 * time.Minute))
 		}}
@@ -452,7 +324,7 @@ func TestPublicHTTPGuardRetainsPreparedPolicyAge(t *testing.T) {
 		client.Timeout = 0
 		request := func(path string) *http.Response {
 			r, _ := http.NewRequest("GET", "https://route.example/"+path, nil)
-			r.AddCookie(&http.Cookie{Name: visitorTokenCookie, Value: control.credential(t, liveBrowserCookie, false)})
+			r.AddCookie(&http.Cookie{Name: httpaccess.VisitorTokenCookie, Value: control.Credential(t, liveBrowserCookie, false)})
 			response, err := client.Do(r)
 			if err != nil {
 				t.Fatal(err)
@@ -462,12 +334,12 @@ func TestPublicHTTPGuardRetainsPreparedPolicyAge(t *testing.T) {
 		warm := request("warm")
 		_ = warm.Body.Close()
 		time.Sleep(4 * time.Second)
-		control.mu.Lock()
+		control.Mu.Lock()
 		revoked = true
-		control.mu.Unlock()
+		control.Mu.Unlock()
 		// finish any successful in-flight refresh before capturing its deadline.
 		synctest.Wait()
-		confirmed, _, _ := control.policy.lease.Current()
+		confirmed, _, _ := control.policy.Lease().Current()
 		time.Sleep(time.Until(confirmed.ValidUntil) - 2*time.Second)
 		stream := request("stream")
 		defer stream.Body.Close()
@@ -494,12 +366,12 @@ func TestPublicHTTPGuardRetainsPreparedPolicyAge(t *testing.T) {
 func TestPublicHTTPWebSocketRenewsAndClosesOnRevocation(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var revoked bool
-		control := &liveHTTPControl{check: func(input liveHTTPSource) (liveHTTPDecision, error) {
+		control := &liveHTTPControl{check: func(input visitorfixture.HTTPSource) (visitorfixture.HTTPDecision, error) {
 			if input.BrowserCookieSecret == nil || *input.BrowserCookieSecret != liveBrowserCookie {
 				t.Error("upgrade lost its original credential")
 			}
 			if revoked {
-				return liveHTTPDecision{}, &clientcontrol.ProblemError{Status: 403}
+				return visitorfixture.HTTPDecision{}, &clientcontrol.ProblemError{Status: 403}
 			}
 			return liveHTTPAllowed(time.Now().Add(2 * time.Minute))
 		}}
@@ -523,9 +395,9 @@ func TestPublicHTTPWebSocketRenewsAndClosesOnRevocation(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer func() { _ = raw.Close(); <-done }()
-		secured := tls.Client(raw, &tls.Config{ServerName: "route.example", RootCAs: rootsForCertificate(t, *route.certificate.Load())})
+		secured := tls.Client(raw, &tls.Config{ServerName: "route.example", RootCAs: visitorfixture.Roots(t, *route.certificate.Load())})
 		config, _ := websocket.NewConfig("wss://route.example/socket", "https://route.example")
-		config.Header.Set("Cookie", visitorTokenCookie+"="+control.credential(t, liveBrowserCookie, false))
+		config.Header.Set("Cookie", httpaccess.VisitorTokenCookie+"="+control.Credential(t, liveBrowserCookie, false))
 		ws, err := websocket.NewClient(config, secured)
 		if err != nil {
 			t.Fatal(err)
@@ -540,9 +412,9 @@ func TestPublicHTTPWebSocketRenewsAndClosesOnRevocation(t *testing.T) {
 		if err := websocket.Message.Receive(ws, &text); err != nil || text != "still live" {
 			t.Fatal(text, err)
 		}
-		control.mu.Lock()
+		control.Mu.Lock()
 		revoked = true
-		control.mu.Unlock()
+		control.Mu.Unlock()
 		closed := make(chan error, 1)
 		go func() { closed <- websocket.Message.Receive(ws, &text) }()
 		time.Sleep(30 * time.Second)
@@ -563,8 +435,8 @@ func TestPublicHTTPWebSocketRenewsAndClosesOnRevocation(t *testing.T) {
 
 // malformed issuance never produces a usable permission.
 func TestPublicHTTPMissingDeadlineIsDenied(t *testing.T) {
-	control := &liveHTTPControl{check: func(liveHTTPSource) (liveHTTPDecision, error) {
-		return liveHTTPDecision{VisitAllowed: true}, nil
+	control := &liveHTTPControl{check: func(visitorfixture.HTTPSource) (visitorfixture.HTTPDecision, error) {
+		return visitorfixture.HTTPDecision{VisitAllowed: true}, nil
 	}}
 	route := startLiveHTTPRoute(t, control, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("malformed decision reached target") }))
 	r := newInlineTestRequest()

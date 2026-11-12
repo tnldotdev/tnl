@@ -14,9 +14,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/buildinfo"
 	"github.com/tnldotdev/tnl/internal/client/detached"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/publisherprovenance"
@@ -128,7 +128,7 @@ func runPublisherServe(ctx context.Context, flags publisherServeCommand, project
 	if err := validatePublisherServe(flags); err != nil {
 		return err
 	}
-	var options supervisor.ServiceOptions
+	var options installedjobs.ServiceOptions
 	var err error
 	if flags.Install {
 		options, err = (systemStateFlags{SystemStateDir: flags.SystemStateDir}).options()
@@ -301,11 +301,11 @@ func runPublisherServe(ctx context.Context, flags publisherServeCommand, project
 	if err != nil {
 		return err
 	}
-	job := supervisor.Job{Kind: supervisor.KindGroup, ID: supervisor.JobKey(server, "group", member.GroupId+":"+flags.Instance), Name: flags.Group + "-" + flags.Instance, Server: server, PublisherIdentityID: member.PublisherIdentityId, GroupMember: &member, GroupInstance: flags.Instance}
+	job := installedjobs.Job{Kind: installedjobs.KindGroup, ID: installedjobs.JobKey(server, "group", member.GroupId+":"+flags.Instance), Name: flags.Group + "-" + flags.Instance, Server: server, PublisherIdentityID: member.PublisherIdentityId, GroupMember: &member, GroupInstance: flags.Instance}
 	job.IdentityDir = profile.IdentityDirectory()
 	job.TelemetryDisabled = flags.telemetryDisabled
 	if flags.Install {
-		registry, err := supervisor.Open(ctx, supervisor.OpenOptions{Root: options.Root, User: true})
+		registry, err := installedjobs.Open(ctx, installedjobs.OpenOptions{Root: options.Root, User: true})
 		if err != nil {
 			return err
 		}
@@ -340,11 +340,11 @@ func runPublisherServe(ctx context.Context, flags publisherServeCommand, project
 	})
 }
 
-func servePublisherGroup(ctx context.Context, job supervisor.Job, profile *clientstate.Store, private ed25519.PrivateKey, telemetry *clienttelemetry.Collector, observe func(int64, bool) error) error {
+func servePublisherGroup(ctx context.Context, job installedjobs.Job, profile *clientstate.Store, private ed25519.PrivateKey, telemetry *clienttelemetry.Collector, observe func(int64, bool) error) error {
 	return servePublisherGroupWithDiscovery(ctx, job, profile, private, telemetry, observe, nil)
 }
 
-func servePublisherGroupWithDiscovery(ctx context.Context, job supervisor.Job, profile *clientstate.Store, private ed25519.PrivateKey, telemetry *clienttelemetry.Collector, observe func(int64, bool) error, provider publisherdiscovery.Provider) error {
+func servePublisherGroupWithDiscovery(ctx context.Context, job installedjobs.Job, profile *clientstate.Store, private ed25519.PrivateKey, telemetry *clienttelemetry.Collector, observe func(int64, bool) error, provider publisherdiscovery.Provider) error {
 	deployment, err := publisherprovenance.ReadEnvironment(os.LookupEnv, job.GroupInstance, buildinfo.Version)
 	if err != nil {
 		return err
@@ -352,5 +352,5 @@ func servePublisherGroupWithDiscovery(ctx context.Context, job supervisor.Job, p
 	if provider == nil {
 		provider = publisherdiscovery.AWS{}
 	}
-	return (supervisor.GroupRunner{Telemetry: telemetry, Discovery: provider, Deployment: deployment}).Serve(ctx, job, profile, private, observe)
+	return (installedjobs.GroupRunner{Telemetry: telemetry, Discovery: provider, Deployment: deployment}).Serve(ctx, job, profile, private, observe)
 }

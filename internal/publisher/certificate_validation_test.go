@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
+
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -128,7 +130,7 @@ func TestCertificateTransactionRejectsInvalidMaterialBeforeCommit(t *testing.T) 
 			i.CertificatePem = pointer("not a certificate")
 		}},
 		{"key_mismatch", func(i *controlv1.CertificateIssuance, _ *x509.Certificate) {
-			certificate := publicURLTestCertificate(t, "route.example")
+			certificate := visitorfixture.Certificate(t, "route.example")
 			i.CertificatePem = pointer(string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate.Certificate[0]})))
 		}},
 		{"validity_metadata", func(i *controlv1.CertificateIssuance, _ *x509.Certificate) {

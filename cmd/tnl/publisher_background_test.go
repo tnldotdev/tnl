@@ -17,11 +17,11 @@ import (
 
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
+	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
@@ -55,22 +55,22 @@ type backgroundControl struct {
 
 func (*backgroundControl) ControlURL() string { return "https://control.example" }
 
-func backgroundClients(c *backgroundControl) supervisor.PublisherClients {
-	return supervisor.PublisherClients{NativeControl: publisheridentity.NativeControl{PublicURLControl: c}}
+func backgroundClients(c *backgroundControl) installedjobs.PublisherClients {
+	return installedjobs.PublisherClients{NativeControl: publisheridentity.NativeControl{PublicURLControl: c}}
 }
 
 func (c *backgroundControl) PublisherPublicURL(context.Context, string) (controlv1.PublicURL, error) {
 	return c.publicURL, nil
 }
 
-func backgroundFixture(t *testing.T) (*supervisor.Registry, *backgroundAuthority, *backgroundControl, enrolledPublishSelection) {
+func backgroundFixture(t *testing.T) (*installedjobs.Registry, *backgroundAuthority, *backgroundControl, enrolledPublishSelection) {
 	t.Helper()
 	owner := os.Geteuid()
 	parent, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := supervisor.Open(t.Context(), supervisor.OpenOptions{Root: filepath.Join(parent, "system"), TestOwnerUID: &owner})
+	r, err := installedjobs.Open(t.Context(), installedjobs.OpenOptions{Root: filepath.Join(parent, "system"), TestOwnerUID: &owner})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestBackgroundInstallsEnrolledHTTPJobWithLocalTarget(t *testing.T) {
 	flags := publishCommand{Target: "https://127.0.0.1:5432", TargetTLSName: "web.internal"}
 	flags.ServerURL = "https://control.example"
 	bg := backgroundPublishFlags{Install: true, ServiceName: "database"}
-	clients := func(supervisor.Job) (supervisor.PublisherClients, publisheridentity.EnrollmentAuthority, error) {
+	clients := func(installedjobs.Job) (installedjobs.PublisherClients, publisheridentity.EnrollmentAuthority, error) {
 		return backgroundClients(c), a, nil
 	}
 	if err := installBackgroundJob(t.Context(), r, flags, selection, bg, strings.NewReader(""), clients, nil); err != nil {
@@ -104,7 +104,7 @@ func TestBackgroundInstallsEnrolledHTTPJobWithLocalTarget(t *testing.T) {
 		t.Fatalf("installed jobs: %+v, %v", jobs, err)
 	}
 	job := jobs[0]
-	if job.ID != supervisor.PublicURLJobKey(flags.ServerURL, c.publicURL.Id) || job.Name != "database" || job.Protocol != config.ProtocolHTTP || job.Target != flags.Target || job.TargetTLSName != "web.internal" || job.PublisherIdentityID != a.identity.ClientId {
+	if job.ID != installedjobs.PublicURLJobKey(flags.ServerURL, c.publicURL.Id) || job.Name != "database" || job.Protocol != config.ProtocolHTTP || job.Target != flags.Target || job.TargetTLSName != "web.internal" || job.PublisherIdentityID != a.identity.ClientId {
 		t.Fatalf("private target settings: %+v", job)
 	}
 	if c.publicURL.Target != "" {
@@ -144,7 +144,7 @@ func TestAppWorkflowInstallLoadsExplicitPublisherFromClientState(t *testing.T) {
 		t.Fatal(err)
 	}
 	flags := publishCommand{Target: "http://127.0.0.1:3000", remoteFlags: remoteFlags{ServerURL: "https://control.example", StateDir: state.Root()}}
-	clients := func(supervisor.Job) (supervisor.PublisherClients, publisheridentity.EnrollmentAuthority, error) {
+	clients := func(installedjobs.Job) (installedjobs.PublisherClients, publisheridentity.EnrollmentAuthority, error) {
 		return backgroundClients(c), a, nil
 	}
 	if err := installBackgroundJob(t.Context(), r, flags, enrolledPublishSelection{PublisherIdentityID: identity.ClientId}, backgroundPublishFlags{Install: true}, strings.NewReader(""), clients, nil); err != nil {
@@ -177,7 +177,7 @@ func TestBackgroundImportsPortableFileWithoutRedeemingEnrollment(t *testing.T) {
 	}
 	flags := publishCommand{Target: "http://127.0.0.1:5432"}
 	flags.ServerURL = f.ControlURL
-	clients := func(supervisor.Job) (supervisor.PublisherClients, publisheridentity.EnrollmentAuthority, error) {
+	clients := func(installedjobs.Job) (installedjobs.PublisherClients, publisheridentity.EnrollmentAuthority, error) {
 		return backgroundClients(c), a, nil
 	}
 	if err := installBackgroundJob(t.Context(), r, flags, enrolledPublishSelection{PublisherCredentialFile: path}, backgroundPublishFlags{Install: true, ServiceName: "database"}, strings.NewReader(""), clients, nil); err != nil {
@@ -209,7 +209,7 @@ func TestBackgroundRejectsNamespaceEphemeralAndImplicitServer(t *testing.T) {
 			case "open":
 				flags.Open = true
 			}
-			clients := func(supervisor.Job) (supervisor.PublisherClients, publisheridentity.EnrollmentAuthority, error) {
+			clients := func(installedjobs.Job) (installedjobs.PublisherClients, publisheridentity.EnrollmentAuthority, error) {
 				return backgroundClients(c), a, nil
 			}
 			err := installBackgroundJob(t.Context(), r, flags, selection, backgroundPublishFlags{Install: true, ServiceName: "one"}, strings.NewReader(""), clients, nil)
@@ -229,7 +229,7 @@ func TestInstallPreflightLeavesEnrollmentAndStateUntouched(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "not-installed")
 	flags := publishCommand{Target: "http://127.0.0.1:5432"}
 	flags.ServerURL = "https://control.example"
-	err := runEnrolledBackgroundPublish(t.Context(), flags, selection, backgroundPublishFlags{Install: true, SystemStateDir: root}, io.Discard, strings.NewReader(""), supervisor.ExecutorFunc(func(context.Context, supervisor.Command) error {
+	err := runEnrolledBackgroundPublish(t.Context(), flags, selection, backgroundPublishFlags{Install: true, SystemStateDir: root}, io.Discard, strings.NewReader(""), installedjobs.ExecutorFunc(func(context.Context, installedjobs.Command) error {
 		t.Fatal("missing service reached the manager")
 		return nil
 	}))
@@ -305,7 +305,7 @@ func TestConfiguredInstallPersistsReadinessWithExactGrant(t *testing.T) {
 	r, a, c, selection := backgroundFixture(t)
 	_, flags := configuredInstallFixture(t)
 	c.publicURL.CanonicalHostname = "orders.example"
-	clients := func(supervisor.Job) (supervisor.PublisherClients, publisheridentity.EnrollmentAuthority, error) {
+	clients := func(installedjobs.Job) (installedjobs.PublisherClients, publisheridentity.EnrollmentAuthority, error) {
 		return backgroundClients(c), a, nil
 	}
 	var id string
@@ -477,7 +477,7 @@ func TestConfiguredInstallPreflightDoesNotOpenProjectOrServiceState(t *testing.T
 	_, flags := configuredInstallFixture(t)
 	flags.StateDir = filepath.Join(t.TempDir(), "no-user-state")
 	serviceRoot := filepath.Join(t.TempDir(), "no-service")
-	err := runEnrolledBackgroundPublish(t.Context(), flags, enrolledPublishSelection{}, backgroundPublishFlags{Install: true, SystemStateDir: serviceRoot}, io.Discard, strings.NewReader(""), supervisor.ExecutorFunc(func(context.Context, supervisor.Command) error {
+	err := runEnrolledBackgroundPublish(t.Context(), flags, enrolledPublishSelection{}, backgroundPublishFlags{Install: true, SystemStateDir: serviceRoot}, io.Discard, strings.NewReader(""), installedjobs.ExecutorFunc(func(context.Context, installedjobs.Command) error {
 		t.Fatal("missing supervisor reached the manager")
 		return nil
 	}))
@@ -498,7 +498,7 @@ func TestInstalledConfiguredServiceRejectsStaleSavedTarget(t *testing.T) {
 	c.publicURL.ServiceProtocol = controlv1.Http
 	c.publicURL.CanonicalHostname = "orders.example"
 	c.publicURL.Target = "http://127.0.0.1:5000"
-	clients := func(supervisor.Job) (supervisor.PublisherClients, publisheridentity.EnrollmentAuthority, error) {
+	clients := func(installedjobs.Job) (installedjobs.PublisherClients, publisheridentity.EnrollmentAuthority, error) {
 		return backgroundClients(c), a, nil
 	}
 	err := installBackgroundJob(t.Context(), r, flags, selection, backgroundPublishFlags{Install: true}, strings.NewReader(""), clients, nil)
@@ -515,7 +515,7 @@ func TestExplicitPublisherCannotInstallAnotherServiceURL(t *testing.T) {
 	r, a, c, selection := backgroundFixture(t)
 	_, flags := configuredInstallFixture(t)
 	c.publicURL.CanonicalHostname = "orders.other-domain.example"
-	clients := func(supervisor.Job) (supervisor.PublisherClients, publisheridentity.EnrollmentAuthority, error) {
+	clients := func(installedjobs.Job) (installedjobs.PublisherClients, publisheridentity.EnrollmentAuthority, error) {
 		return backgroundClients(c), a, nil
 	}
 	if err := installBackgroundJob(t.Context(), r, flags, selection, backgroundPublishFlags{Install: true}, strings.NewReader(""), clients, nil); err == nil {
@@ -540,7 +540,7 @@ func TestConfiguredInstallSnapshotsTargetTrust(t *testing.T) {
 	flags.TargetCAFile, flags.TargetTLSName = "target.pem", "db.internal"
 	flags.Target = "https://127.0.0.1:5432"
 	c.publicURL.CanonicalHostname = "orders.example"
-	clients := func(supervisor.Job) (supervisor.PublisherClients, publisheridentity.EnrollmentAuthority, error) {
+	clients := func(installedjobs.Job) (installedjobs.PublisherClients, publisheridentity.EnrollmentAuthority, error) {
 		return backgroundClients(c), a, nil
 	}
 	if err := installBackgroundJob(t.Context(), r, flags, selection, backgroundPublishFlags{Install: true}, strings.NewReader(""), clients, nil); err != nil {
@@ -563,7 +563,7 @@ func TestInvalidConfiguredCARejectsBeforeEnrollment(t *testing.T) {
 		t.Fatal(err)
 	}
 	flags.TargetCAFile = path
-	clients := func(supervisor.Job) (supervisor.PublisherClients, publisheridentity.EnrollmentAuthority, error) {
+	clients := func(installedjobs.Job) (installedjobs.PublisherClients, publisheridentity.EnrollmentAuthority, error) {
 		t.Fatal("invalid trust reached the control API")
 		return backgroundClients(c), a, nil
 	}

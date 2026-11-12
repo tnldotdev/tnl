@@ -12,9 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
+
 	"github.com/tnldotdev/tnl/internal/config"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
-	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -108,7 +109,7 @@ func TestConnectorNonTCPPreparationOrdersAdmissionBeforePermissionRenewal(t *tes
 	b, p, trust, opening, _ := connectorPeerFixture(t, target.Listener.Addr().String())
 	b.prepared.managedProtocol = config.ProtocolHTTP
 	var err error
-	b.prepared.serviceHTTPRequests, err = publisher.NewServiceHTTPRequestLimits(nil)
+	b.prepared.serviceHTTPRequests, err = requestlimit.NewHTTP(nil)
 	if err != nil {
 		t.Fatal(err)
 	}

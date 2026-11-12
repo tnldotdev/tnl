@@ -8,7 +8,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -56,7 +56,7 @@ func TestPublicPolicyDrainJoinsRequestsAndPreservesLease(t *testing.T) {
 					<-ctx.Done()
 					close(canceled)
 					<-release
-					return controlv1.VisitorPolicyUpdate{}, serviceapi.NewProblemError(409, "ingress_lease_stale", "ingress is draining")
+					return controlv1.VisitorPolicyUpdate{}, serverhttp.NewProblemError(409, "ingress_lease_stale", "ingress is draining")
 				}}, drain: func(request ingressv1.IngressDrainRequest) (ingressv1.IngressLease, error) {
 					drains.Add(1)
 					updated := owner

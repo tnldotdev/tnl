@@ -15,6 +15,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
@@ -33,7 +34,7 @@ type Options struct {
 	Target              string
 	AccessMode          controlv1.VisitorAccessMode
 	IP                  []string
-	Limits              publisher.ApplicationLimits
+	Limits              applicationlimits.Limits
 	OnAllocated         func(controlv1.PublicURL) error
 	Observe             func(publisher.Event) error
 }

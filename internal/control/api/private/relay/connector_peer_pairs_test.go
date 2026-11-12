@@ -14,7 +14,7 @@ import (
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -106,7 +106,7 @@ func TestConnectorPeerClaimProblemPreservesCauseAndSafeOutput(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, err = direct.ClaimConnectorPeerPairLegFromAcceptedSocket(t.Context(), lease, netip.MustParseAddr("192.0.2.10"), proof, bytes.Repeat([]byte{3}, 64))
-			var local *serviceapi.ProblemError
+			var local *serverhttp.ProblemError
 			if !errors.As(err, &local) || local.Status != test.status || local.Code != test.code || strings.Contains(local.Detail, secretCause.Error()) {
 				t.Fatal("direct adapter changed the safe problem", err)
 			}

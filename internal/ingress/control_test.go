@@ -9,7 +9,7 @@ import (
 
 	controlingress "github.com/tnldotdev/tnl/internal/control/api/private/ingress"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -125,7 +125,7 @@ func TestControllerRetriesTransientErrorsButTerminatesStaleRun(t *testing.T) {
 		},
 		events: func(ctx context.Context) (ingressv1.IngressRoutingTablePage, error) {
 			if eventCalls.Add(1) == 1 {
-				return ingressv1.IngressRoutingTablePage{}, serviceapi.NewProblemError(409, "routing_table_resnapshot_required", "snapshot required")
+				return ingressv1.IngressRoutingTablePage{}, serverhttp.NewProblemError(409, "routing_table_resnapshot_required", "snapshot required")
 			}
 			<-ctx.Done()
 			return ingressv1.IngressRoutingTablePage{}, ctx.Err()
@@ -139,7 +139,7 @@ func TestControllerRetriesTransientErrorsButTerminatesStaleRun(t *testing.T) {
 			if renewals.Add(1) == 1 {
 				return ingressv1.IngressLease{}, errors.New("temporary renewal transport failure")
 			}
-			return ingressv1.IngressLease{}, serviceapi.NewProblemError(409, "ingress_lease_stale", "lease lost")
+			return ingressv1.IngressLease{}, serverhttp.NewProblemError(409, "ingress_lease_stale", "lease lost")
 		},
 	}
 	controller := testLeaseController(t, client)

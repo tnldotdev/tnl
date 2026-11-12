@@ -11,11 +11,11 @@ import (
 
 	"github.com/alecthomas/kong"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
-	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/httpjson"
+	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -50,8 +50,8 @@ func TestPublicationInputsRejectApplicationAuthSettings(t *testing.T) {
 		out  any
 	}{
 		{`{"target":"https://api.example","target_auth":{}}`, new(controlv1.ProjectServiceConfiguration)},
-		{`{"target":"https://api.example","target_auth":{}}`, new(supervisor.Job)},
-		{`{"secrets":[]}`, new(supervisor.GroupBinding)},
+		{`{"target":"https://api.example","target_auth":{}}`, new(installedjobs.Job)},
+		{`{"secrets":[]}`, new(installedjobs.GroupBinding)},
 	} {
 		if err := httpjson.Decode(json.NewDecoder(strings.NewReader(input.body)), input.out); err == nil {
 			t.Fatal("retired settings were silently ignored", input.body)

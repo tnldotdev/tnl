@@ -13,6 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
+	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
+
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -22,7 +25,7 @@ func promotionSessionPair(t *testing.T, ref tunnelv1.PublisherConnectionRef) (*t
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	t.Cleanup(cancel)
-	certificate := publicURLTestCertificate(t, "relay.example")
+	certificate := visitorfixture.Certificate(t, "relay.example")
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -48,7 +51,7 @@ func promotionSessionPair(t *testing.T, ref tunnelv1.PublisherConnectionRef) (*t
 		s, _, err := tunnel.Accept(ctx, transport, func(context.Context, tunnelv1.Message) error { return nil })
 		result <- accepted{session: s, err: err}
 	}()
-	transport, err := (muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{RootCAs: rootsForCertificate(t, certificate)}}).Connect(ctx, muxsession.Endpoint{Address: l.Addr().String(), ServerName: "relay.example"})
+	transport, err := (muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{RootCAs: visitorfixture.Roots(t, certificate)}}).Connect(ctx, muxsession.Endpoint{Address: l.Addr().String(), ServerName: "relay.example"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,13 +167,15 @@ func TestPromotedDeniedHTTPResponseOutlivesPendingDeadline(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			accessClient := &shareAccessTestClient{shareID: "shr_0123456789abcdefghijkl", cookie: base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("c", 32))), active: true, minted: true}
-			access := &shareAccess{client: accessClient, runID: "run-1", version: 1}
-			authority := &liveHTTPControl{check: func(liveHTTPSource) (liveHTTPDecision, error) { return liveHTTPAllowed(time.Now().Add(time.Minute)) }}
+			access := &httpaccess.Shares{Client: accessClient, RunID: "run-1", Number: 1}
+			authority := &liveHTTPControl{check: func(visitorfixture.HTTPSource) (visitorfixture.HTTPDecision, error) {
+				return liveHTTPAllowed(time.Now().Add(time.Minute))
+			}}
 			prepareLiveHTTPControl(t, authority)
-			permission := authority.credential(t, accessClient.cookie, true)
+			permission := authority.Credential(t, accessClient.cookie, true)
 			var promoted atomic.Int32
-			route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "route.example", Certificate: publicURLTestCertificate(t, "route.example"), ShareAccess: access,
-				VisitorPolicy: authority.policy.lease, VisitorTokens: authority.tokens,
+			route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "route.example", Certificate: visitorfixture.Certificate(t, "route.example"), ShareAccess: access,
+				VisitorPolicy: authority.policy.Lease(), VisitorTokens: authority.tokens,
 				PromoteVisitor: func(context.Context, Visitor) error { promoted.Add(1); return nil },
 				Handler:        http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { time.Sleep(6 * time.Second); w.WriteHeader(204) })})
 			if err != nil {
@@ -183,7 +188,7 @@ func TestPromotedDeniedHTTPResponseOutlivesPendingDeadline(t *testing.T) {
 			client := mixedVisitorClient(t, route, h2, true)
 			client.Timeout = 12 * time.Second
 			r, _ := http.NewRequest("GET", "https://route.example/", nil)
-			r.AddCookie(&http.Cookie{Name: visitorTokenCookie, Value: permission})
+			r.AddCookie(&http.Cookie{Name: httpaccess.VisitorTokenCookie, Value: permission})
 			response, err := client.Do(r)
 			if err != nil {
 				t.Fatal(err)

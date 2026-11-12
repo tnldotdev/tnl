@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
+	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -45,7 +47,16 @@ func TestFinishPreservesCleanupAlongsideSessionCause(t *testing.T) {
 			s.expirationDone = expired
 			cleanup, heartbeatFailure := errors.New("cleanup failed"), errors.New("heartbeat failed")
 			if completed {
-				close(s.route.admission.completed)
+				budget, err := requestlimit.New(applicationlimits.Limits{Requests: 1})
+				if err != nil {
+					t.Fatal(err)
+				}
+				s.route.admission = budget
+				release, status, _ := budget.Acquire(t.Context())
+				if status != 0 {
+					t.Fatal(status)
+				}
+				release()
 				heartbeat <- errors.Join(context.Canceled, heartbeatFailure)
 			} else {
 				cancel(heartbeatFailure)

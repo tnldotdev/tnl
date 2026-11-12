@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 )
 
 type Config struct {
@@ -31,7 +31,7 @@ func (c Config) Handler(next http.Handler) (http.Handler, error) {
 		origin, _ := url.Parse(c.Origin)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Host != origin.Host {
-				serviceapi.WriteProblem(w, http.StatusBadRequest, "invalid_request", "local control host is invalid", "")
+				serverhttp.WriteProblem(w, http.StatusBadRequest, "invalid_request", "local control host is invalid", "")
 				return
 			}
 			request := r.Clone(r.Context())
@@ -72,7 +72,7 @@ func (c Config) Handler(next http.Handler) (http.Handler, error) {
 			}
 		}
 		if !trusted {
-			serviceapi.WriteProblem(w, http.StatusForbidden, "forbidden", "control backend requires a trusted HTTPS proxy", "")
+			serverhttp.WriteProblem(w, http.StatusForbidden, "forbidden", "control backend requires a trusted HTTPS proxy", "")
 			return
 		}
 		// require one overwritten source value, not an ambiguous proxy chain.
@@ -83,7 +83,7 @@ func (c Config) Handler(next http.Handler) (http.Handler, error) {
 		}
 		proto := r.Header.Values("X-Forwarded-Proto")
 		if !source.IsValid() || source.Zone() != "" || len(proto) != 1 || proto[0] != "https" || r.Host != origin.Host {
-			serviceapi.WriteProblem(w, http.StatusBadRequest, "invalid_request", "control proxy metadata is invalid", "")
+			serverhttp.WriteProblem(w, http.StatusBadRequest, "invalid_request", "control proxy metadata is invalid", "")
 			return
 		}
 		request := r.Clone(r.Context())

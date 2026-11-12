@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
@@ -185,7 +185,7 @@ func TestControllerStalledRoutingUpdates(t *testing.T) {
 			advance(expires.Add(time.Second))
 			recovered := routingReliabilityEvent(now(), 2)
 			if resnapshot {
-				reply(eventReply{err: serviceapi.NewProblemError(409, "routing_table_resnapshot_required", "snapshot required")})
+				reply(eventReply{err: serverhttp.NewProblemError(409, "routing_table_resnapshot_required", "snapshot required")})
 				ingressAwait(t, snapshotStarted)
 				if controller.Ready(now()) {
 					t.Fatal("resnapshot-required response did not clear readiness")

@@ -24,7 +24,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 	publishergroup "github.com/tnldotdev/tnl/internal/publisher/group"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
-	publisherruntime "github.com/tnldotdev/tnl/internal/publisher/runtime"
+	processidentity "github.com/tnldotdev/tnl/internal/publisher/processidentity"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 	"github.com/tnldotdev/tnl/internal/testutil"
@@ -154,7 +154,7 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	if read(member.PublisherIdentityId) != nil {
 		t.Fatal("enrollment recorded operator egress")
 	}
-	runtime, err := publisherruntime.New(client, server, member.PublisherIdentityId, member.KeyId, member.GroupId, key)
+	runtime, err := processidentity.New(client, server, member.PublisherIdentityId, member.KeyId, member.GroupId, key)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -17,7 +17,7 @@ import (
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
@@ -130,7 +130,7 @@ func TestForegroundPublicationReusesItsIdentityAndNeverCreatesRunsWithTheSession
 	}
 	services := publisherServices{state: store, hostname: publicURL.CanonicalHostname, teamID: publicURL.TeamId, domainID: publicURL.DomainId, publicURLScope: controlv1.Shared, routes: control, authenticated: &auth.Client{ServerEndpoint: server, Control: control, Authority: authority}}
 	for range 2 {
-		cfg := services.config("http://127.0.0.1:3000", prefixes, publisher.ApplicationLimits{})
+		cfg := services.config("http://127.0.0.1:3000", prefixes, applicationlimits.Limits{})
 		cfg.ServiceProtocol = controlv1.Http
 		cleanup, err := selectForegroundPublisher(t.Context(), state, services, &cfg, nil)
 		if err != nil {

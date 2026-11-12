@@ -12,7 +12,7 @@ import (
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
-	publisherruntime "github.com/tnldotdev/tnl/internal/publisher/runtime"
+	processidentity "github.com/tnldotdev/tnl/internal/publisher/processidentity"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	publisherdiscovery "github.com/tnldotdev/tnl/internal/publisher/target/discovery"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -21,7 +21,7 @@ import (
 var ErrAssignment = errors.New("publisher group assignment does not match the enrolled project, group or revision")
 
 type Control interface {
-	publisherruntime.Control
+	processidentity.Control
 	ServerURL() string
 	Assignments(context.Context, string) (controlv1.PublisherGroupAssignments, error)
 	Acknowledge(context.Context, string, controlv1.PublisherGroupAcknowledgement) error
@@ -63,7 +63,7 @@ func (r Runtime) Serve(ctx context.Context) error {
 		return ErrAssignment
 	}
 	workers := map[string]*running{}
-	owner, err := publisherruntime.New(r.Control, r.Control.ServerURL(), r.Member.PublisherIdentityId, r.Member.KeyId, r.Member.GroupId, r.Private, r.Deployment)
+	owner, err := processidentity.New(r.Control, r.Control.ServerURL(), r.Member.PublisherIdentityId, r.Member.KeyId, r.Member.GroupId, r.Private, r.Deployment)
 	if err != nil {
 		return err
 	}

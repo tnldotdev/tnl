@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 )
 
 // this fixture is the deployment proxy: it terminates verified public TLS and
@@ -29,7 +29,7 @@ func serveIntegrationControlProxy(t *testing.T, owner *runtimeTopology, listener
 		r.Out.Header.Set("X-Forwarded-Proto", "https")
 	}, ErrorHandler: func(response http.ResponseWriter, _ *http.Request, _ error) {
 		// a stopped backend is an outage, not a malformed renewal response.
-		serviceapi.WriteProblem(response, http.StatusBadGateway, "unavailable", "control backend is unavailable", "")
+		serverhttp.WriteProblem(response, http.StatusBadGateway, "unavailable", "control backend is unavailable", "")
 	}}
 	server := controlHTTPServer(proxy, certificate)
 	done := make(chan error, 1)

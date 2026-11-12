@@ -22,7 +22,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 	"github.com/tnldotdev/tnl/internal/testutil/managedcert"
@@ -134,7 +134,7 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 		t.Fatal(err)
 	}
 	secret := strings.Repeat("s", 32)
-	secrets, err := serviceapi.NewBearerSecrets(secret, "")
+	secrets, err := serverhttp.NewBearerSecrets(secret, "")
 	if err != nil {
 		t.Fatal(err)
 	}

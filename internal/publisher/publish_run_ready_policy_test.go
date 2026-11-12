@@ -8,6 +8,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
+
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 )
 
@@ -25,9 +27,9 @@ func TestPublisherReadyRequiresPolicyBeforeRequestAndNotification(t *testing.T) 
 	for _, when := range []string{"current", "before request", "before notification"} {
 		t.Run(when, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				policy, update, _ := httpPermissionFixture(t, true)
+				policy, update, _ := visitorfixture.Policy(t, true)
 				route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: update.View.Hostname, PublicURLID: update.View.Scope.ID,
-					Certificate: publicURLTestCertificate(t, update.View.Hostname), VisitorPolicy: policy, Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})})
+					Certificate: visitorfixture.Certificate(t, update.View.Hostname), VisitorPolicy: policy, Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})})
 				if err != nil {
 					t.Fatal(err)
 				}

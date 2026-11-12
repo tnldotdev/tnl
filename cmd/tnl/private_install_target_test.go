@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	"github.com/tnldotdev/tnl/internal/config"
+	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	targetplan "github.com/tnldotdev/tnl/internal/publisher/target"
@@ -48,8 +48,8 @@ func TestScopedPrivateInstallCapturesTargetTrustForRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	control := installedServiceTargetControl{backgroundControl: base, service: controlv1.Service{Id: id, TeamId: authority.identity.TeamId, Name: "database", Enabled: true, Protocol: controlv1.Tcp, TrustRevision: 1, TargetTls: publisheridentity.ServiceTargetTLS(trust), Endpoint: &controlv1.ServiceEndpoint{Hostname: "database.worktree.member.example.test", Port: 25443}}}
-	clients := func(supervisor.Job) (supervisor.PublisherClients, publisheridentity.EnrollmentAuthority, error) {
-		return supervisor.PublisherClients{NativeControl: publisheridentity.NativeControl{PublicURLControl: control, Services: control}}, authority, nil
+	clients := func(installedjobs.Job) (installedjobs.PublisherClients, publisheridentity.EnrollmentAuthority, error) {
+		return installedjobs.PublisherClients{NativeControl: publisheridentity.NativeControl{PublicURLControl: control, Services: control}}, authority, nil
 	}
 	if err := installBackgroundJob(t.Context(), registry, flags, selection, backgroundPublishFlags{Install: true}, strings.NewReader(""), clients, nil); err != nil {
 		t.Fatal(err)
@@ -62,7 +62,7 @@ func TestScopedPrivateInstallCapturesTargetTrustForRuntime(t *testing.T) {
 		t.Fatalf("installed private jobs: %+v %v", jobs, err)
 	}
 	job := jobs[0]
-	if job.Kind != supervisor.KindService || job.Protocol != config.ProtocolTCP || job.Trust == nil || job.Trust.Digest != trust.Digest || job.TargetTLSName != "" || len(job.TargetCAPEM) != 0 {
+	if job.Kind != installedjobs.KindService || job.Protocol != config.ProtocolTCP || job.Trust == nil || job.Trust.Digest != trust.Digest || job.TargetTLSName != "" || len(job.TargetCAPEM) != 0 {
 		t.Fatalf("private target trust was split or lost: %+v", job)
 	}
 	if err := targetplan.PreflightPrivate(t.Context(), job.TargetPlan()); err != nil {

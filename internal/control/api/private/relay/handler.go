@@ -11,7 +11,7 @@ import (
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 )
 
@@ -29,7 +29,7 @@ type Store interface {
 
 type Config struct {
 	Store          Store
-	ClusterSecrets serviceapi.BearerSecrets
+	ClusterSecrets serverhttp.BearerSecrets
 	LeaseDuration  time.Duration
 	Now            func() time.Time
 	Report         func(error)
@@ -37,7 +37,7 @@ type Config struct {
 
 type handler struct {
 	service        *service
-	clusterSecrets serviceapi.BearerSecrets
+	clusterSecrets serverhttp.BearerSecrets
 	mux            *http.ServeMux
 }
 
@@ -61,17 +61,17 @@ func NewHandler(config Config) (*handler, error) {
 	relayv1.HandlerWithOptions(generatedServer{handler: h}, relayv1.StdHTTPServerOptions{
 		BaseRouter: h.mux,
 		ErrorHandlerFunc: func(response http.ResponseWriter, _ *http.Request, _ error) {
-			serviceapi.WriteProblem(response, http.StatusBadRequest, "invalid_request", "Relay request parameters are invalid", "")
+			serverhttp.WriteProblem(response, http.StatusBadRequest, "invalid_request", "Relay request parameters are invalid", "")
 		},
 	})
 	h.mux.HandleFunc("/", func(response http.ResponseWriter, _ *http.Request) {
-		serviceapi.WriteProblem(response, http.StatusNotFound, "not_found", "Relay service endpoint not found", "")
+		serverhttp.WriteProblem(response, http.StatusNotFound, "not_found", "Relay service endpoint not found", "")
 	})
 	return h, nil
 }
 
 func (h *handler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
-	if !serviceapi.AuthenticateClusterRequest(response, request, h.clusterSecrets) {
+	if !serverhttp.AuthenticateClusterRequest(response, request, h.clusterSecrets) {
 		return
 	}
 	h.mux.ServeHTTP(response, request)
@@ -85,38 +85,38 @@ func (h *handler) MatchedPattern(request *http.Request) string {
 
 func (h *handler) registerRelay(response http.ResponseWriter, request *http.Request) {
 	var body relayv1.RelayRegistration
-	if !serviceapi.DecodeJSON(response, request, &body) {
+	if !serverhttp.DecodeJSON(response, request, &body) {
 		return
 	}
 	lease, err := h.service.RegisterRelay(request.Context(), body)
 	if h.writeServiceError(response, request, err) {
 		return
 	}
-	serviceapi.WriteJSON(response, http.StatusOK, lease)
+	serverhttp.WriteJSON(response, http.StatusOK, lease)
 }
 
 func (h *handler) renewRelay(response http.ResponseWriter, request *http.Request, relayID relayv1.RelayID) {
 	var body relayv1.RelayRenewal
-	if !serviceapi.DecodeJSON(response, request, &body) {
+	if !serverhttp.DecodeJSON(response, request, &body) {
 		return
 	}
 	lease, err := h.service.RenewRelay(request.Context(), relayID, body)
 	if h.writeServiceError(response, request, err) {
 		return
 	}
-	serviceapi.WriteJSON(response, http.StatusOK, lease)
+	serverhttp.WriteJSON(response, http.StatusOK, lease)
 }
 
 func (h *handler) drainRelay(response http.ResponseWriter, request *http.Request, relayID relayv1.RelayID) {
 	var body relayv1.RelayDrainRequest
-	if !serviceapi.DecodeJSON(response, request, &body) {
+	if !serverhttp.DecodeJSON(response, request, &body) {
 		return
 	}
 	lease, err := h.service.DrainRelay(request.Context(), relayID, body)
 	if h.writeServiceError(response, request, err) {
 		return
 	}
-	serviceapi.WriteJSON(response, http.StatusOK, lease)
+	serverhttp.WriteJSON(response, http.StatusOK, lease)
 }
 
 func (h *handler) getRelayTransportCertificate(
@@ -129,7 +129,7 @@ func (h *handler) getRelayTransportCertificate(
 	if h.writeServiceError(response, request, err) {
 		return
 	}
-	serviceapi.WriteJSON(response, http.StatusOK, certificate)
+	serverhttp.WriteJSON(response, http.StatusOK, certificate)
 }
 
 func (h *handler) claimPublisherConnection(
@@ -138,14 +138,14 @@ func (h *handler) claimPublisherConnection(
 	publisherConnectionID relayv1.PublisherConnectionID,
 ) {
 	var body relayv1.PublisherConnectionClaim
-	if !serviceapi.DecodeJSON(response, request, &body) {
+	if !serverhttp.DecodeJSON(response, request, &body) {
 		return
 	}
 	connection, err := h.service.ClaimPublisherConnection(request.Context(), publisherConnectionID, body)
 	if h.writeServiceError(response, request, err) {
 		return
 	}
-	serviceapi.WriteJSON(response, http.StatusOK, connection)
+	serverhttp.WriteJSON(response, http.StatusOK, connection)
 }
 
 func (h *handler) markPublisherConnectionReady(
@@ -154,14 +154,14 @@ func (h *handler) markPublisherConnectionReady(
 	publisherConnectionID relayv1.PublisherConnectionID,
 ) {
 	var body relayv1.PublisherConnectionTransition
-	if !serviceapi.DecodeJSON(response, request, &body) {
+	if !serverhttp.DecodeJSON(response, request, &body) {
 		return
 	}
 	connection, err := h.service.MarkPublisherConnectionReady(request.Context(), publisherConnectionID, body)
 	if h.writeServiceError(response, request, err) {
 		return
 	}
-	serviceapi.WriteJSON(response, http.StatusOK, connection)
+	serverhttp.WriteJSON(response, http.StatusOK, connection)
 }
 
 func (h *handler) disconnectPublisherConnection(
@@ -170,14 +170,14 @@ func (h *handler) disconnectPublisherConnection(
 	publisherConnectionID relayv1.PublisherConnectionID,
 ) {
 	var body relayv1.PublisherConnectionDisconnect
-	if !serviceapi.DecodeJSON(response, request, &body) {
+	if !serverhttp.DecodeJSON(response, request, &body) {
 		return
 	}
 	connection, err := h.service.DisconnectPublisherConnection(request.Context(), publisherConnectionID, body)
 	if h.writeServiceError(response, request, err) {
 		return
 	}
-	serviceapi.WriteJSON(response, http.StatusOK, connection)
+	serverhttp.WriteJSON(response, http.StatusOK, connection)
 }
 
 type publisherConnectionFields struct {
@@ -191,7 +191,7 @@ type publisherConnectionFields struct {
 }
 
 func (h *handler) writeServiceError(response http.ResponseWriter, request *http.Request, err error) bool {
-	return serviceapi.WriteServiceError(response, request, err, h.service.report, "The relay service request failed")
+	return serverhttp.WriteError(response, request, err, h.service.report, "The relay service request failed")
 }
 
 // storeProblem is shared by HTTP and standalone adapters. role controllers see
@@ -228,8 +228,8 @@ func relayLeaseIdentity(
 	relayServiceID, relayID, relayRunID string,
 	relayLeaseRevision int64,
 ) (controlstate.RelayLeaseIdentity, bool) {
-	revision, ok := serviceapi.Positive(relayLeaseRevision)
-	if !ok || !serviceapi.ValidIdentifiers(relayServiceID, relayID, relayRunID) {
+	revision, ok := serverhttp.Positive(relayLeaseRevision)
+	if !ok || !serverhttp.ValidIdentifiers(relayServiceID, relayID, relayRunID) {
 		return controlstate.RelayLeaseIdentity{}, false
 	}
 	return controlstate.RelayLeaseIdentity{

@@ -13,6 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
+	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
+
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	publisherv1 "github.com/tnldotdev/tnl/pkg/api/publisher/browser/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -26,7 +29,7 @@ func TestBrowserAccessStatusSharesTheForwardingDecision(t *testing.T) {
 	}))
 	defer upstream.Close()
 	route, err := newTestPublicURLServer(t, PublicURLServerConfig{
-		Hostname: "route.example", Target: upstream.URL, Certificate: publicURLTestCertificate(t, "route.example"),
+		Hostname: "route.example", Target: upstream.URL, Certificate: visitorfixture.Certificate(t, "route.example"),
 		PreviewID: "pv_0123456789abcdefghijkl", PublicURLID: "url_0123456789abcdefghijkl", PublishRunNumber: 2,
 	})
 	if err != nil {
@@ -67,7 +70,7 @@ func TestBrowserAccessStatusSharesTheForwardingDecision(t *testing.T) {
 			for _, path := range []string{"/__tnl/access", "/"} {
 				credential := ""
 				if denied {
-					credential = visitorTokenHeader + ": invalid-visitor-token\r\n"
+					credential = httpaccess.VisitorTokenHeader + ": invalid-visitor-token\r\n"
 				}
 				if _, err := fmt.Fprintf(visitor, "GET %s HTTP/1.1\r\nHost: route.example\r\n%s\r\n", path, credential); err != nil {
 					t.Fatal(err)

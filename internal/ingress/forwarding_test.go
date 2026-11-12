@@ -23,7 +23,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/relay"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
@@ -522,9 +522,9 @@ func (s *forwardingTestServer) address() string {
 	return s.listener.Addr().String()
 }
 
-func forwardingTestSecrets(t *testing.T) serviceapi.BearerSecrets {
+func forwardingTestSecrets(t *testing.T) serverhttp.BearerSecrets {
 	t.Helper()
-	secrets, err := serviceapi.NewBearerSecrets(forwardingClusterSecret, "")
+	secrets, err := serverhttp.NewBearerSecrets(forwardingClusterSecret, "")
 	if err != nil {
 		t.Fatal(err)
 	}

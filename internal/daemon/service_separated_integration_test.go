@@ -15,7 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -54,7 +54,7 @@ func startSeparatedPrivateIngress(t *testing.T, f *privateSeparatedFixture, inde
 		ctx = observability.WithMetrics(ctx, observability.FromContext(f.processContext("ingress")))
 		metrics = observability.FromContext(ctx)
 	}
-	secrets, err := serviceapi.NewBearerSecrets(serviceRuntimeClusterSecret, "")
+	secrets, err := serverhttp.NewBearerSecrets(serviceRuntimeClusterSecret, "")
 	if err != nil {
 		t.Fatal(err)
 	}

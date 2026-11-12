@@ -7,8 +7,7 @@ import (
 	"time"
 
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
-
-	"github.com/tnldotdev/tnl/internal/client/supervisor"
+	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	"github.com/tnldotdev/tnl/internal/observability"
 	publishergroup "github.com/tnldotdev/tnl/internal/publisher/group"
 	publisherdiscovery "github.com/tnldotdev/tnl/internal/publisher/target/discovery"
@@ -31,11 +30,11 @@ func TestSignedCloudAssignmentProductionCallbackAndTargetTLS(t *testing.T) {
 			defer metrics.Shutdown(context.Background())
 			ctx, cancel := context.WithCancel(observability.WithMetrics(t.Context(), metrics))
 			defer cancel()
-			client, err := supervisor.GroupClient(fixture.Job)
+			client, err := installedjobs.GroupClient(fixture.Job)
 			if err != nil {
 				t.Fatal(err)
 			}
-			control, authority, err := supervisor.Clients(fixture.Job)
+			control, authority, err := installedjobs.Clients(fixture.Job)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -44,8 +43,8 @@ func TestSignedCloudAssignmentProductionCallbackAndTargetTLS(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer resolver.Close()
-			publication := supervisor.GroupPublisher{Member: *fixture.Job.GroupMember, Private: fixture.Key, State: fixture.Profile, Control: control.NativeControl, Authority: authority, Discovery: resolver}
-			runtime := func(ctx context.Context, job supervisor.Job, observe func(int64, bool) error) error {
+			publication := publishergroup.AssignmentPublisher{Member: *fixture.Job.GroupMember, Private: fixture.Key, State: fixture.Profile, Control: control.NativeControl, Authority: authority, Discovery: resolver}
+			runtime := func(ctx context.Context, job installedjobs.Job, observe func(int64, bool) error) error {
 				return (publishergroup.Runtime{Control: client, Member: *job.GroupMember, Private: fixture.Key, PollInterval: 5 * time.Millisecond, Observe: observe, Publish: publication.Publish}).Serve(ctx)
 			}
 			done := make(chan struct{})
@@ -55,7 +54,7 @@ func TestSignedCloudAssignmentProductionCallbackAndTargetTLS(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				registry, err := supervisor.Open(t.Context(), supervisor.OpenOptions{Root: filepath.Join(parent, "registry"), User: true})
+				registry, err := installedjobs.Open(t.Context(), installedjobs.OpenOptions{Root: filepath.Join(parent, "registry"), User: true})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -63,7 +62,7 @@ func TestSignedCloudAssignmentProductionCallbackAndTargetTLS(t *testing.T) {
 				if err := registry.InstallGroup(t.Context(), fixture.Job, *fixture.Job.GroupMember, fixture.Key); err != nil {
 					t.Fatal(err)
 				}
-				engine := supervisor.Engine{Registry: registry, PollInterval: 5 * time.Millisecond, Group: func(ctx context.Context, job supervisor.Job, telemetry *clienttelemetry.Collector, observe func(int64, bool) error) error {
+				engine := installedjobs.Engine{Registry: registry, PollInterval: 5 * time.Millisecond, Group: func(ctx context.Context, job installedjobs.Job, telemetry *clienttelemetry.Collector, observe func(int64, bool) error) error {
 					member, key, profile, err := registry.GroupIdentity(ctx, job)
 					if err != nil {
 						return err
@@ -159,7 +158,7 @@ func TestCloudAssignmentRejectsSavedServiceDriftBeforeAWS(t *testing.T) {
 			case "wrong-provider-protocol":
 				assignment.Configuration.TargetDiscovery.Type = controlv1.Rds
 			}
-			control, authority, err := supervisor.Clients(fixture.Job)
+			control, authority, err := installedjobs.Clients(fixture.Job)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -168,7 +167,7 @@ func TestCloudAssignmentRejectsSavedServiceDriftBeforeAWS(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer resolver.Close()
-			publication := supervisor.GroupPublisher{Member: *fixture.Job.GroupMember, Private: fixture.Key, State: fixture.Profile, Control: control.NativeControl, Authority: authority, Discovery: resolver}
+			publication := publishergroup.AssignmentPublisher{Member: *fixture.Job.GroupMember, Private: fixture.Key, State: fixture.Profile, Control: control.NativeControl, Authority: authority, Discovery: resolver}
 			if err := publication.Publish(t.Context(), assignment, nil); err == nil {
 				t.Fatal("mismatched assignment was accepted")
 			}
@@ -181,7 +180,7 @@ func TestCloudAssignmentRejectsSavedServiceDriftBeforeAWS(t *testing.T) {
 
 func TestCloudAssignmentChangedDescriptorPreparesIndependentPin(t *testing.T) {
 	fixture := groupdiscovery.New(t)
-	client, err := supervisor.GroupClient(fixture.Job)
+	client, err := installedjobs.GroupClient(fixture.Job)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +188,7 @@ func TestCloudAssignmentChangedDescriptorPreparesIndependentPin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	control, authority, err := supervisor.Clients(fixture.Job)
+	control, authority, err := installedjobs.Clients(fixture.Job)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +197,7 @@ func TestCloudAssignmentChangedDescriptorPreparesIndependentPin(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resolver.Close()
-	publication := supervisor.GroupPublisher{Member: *fixture.Job.GroupMember, Private: fixture.Key, State: fixture.Profile, Control: control.NativeControl, Authority: authority, Discovery: resolver}
+	publication := publishergroup.AssignmentPublisher{Member: *fixture.Job.GroupMember, Private: fixture.Key, State: fixture.Profile, Control: control.NativeControl, Authority: authority, Discovery: resolver}
 	for _, cluster := range []string{"production", "replacement"} {
 		assignment := fixture.Assignment()
 		assignment.Configuration.TargetDiscovery.Cluster = new(cluster)

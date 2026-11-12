@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -63,7 +63,7 @@ func connectorClaimError(err error) error {
 				code = classified.Problem.Code
 			}
 			problem(classified.Status, code)
-		case *serviceapi.ProblemError:
+		case *serverhttp.ProblemError:
 			explained = true
 			problem(classified.Status, relayv1.ProblemCode(classified.Code))
 		case *temporaryControlError:

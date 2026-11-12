@@ -9,7 +9,7 @@ import (
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
@@ -116,7 +116,7 @@ func TestDirectRenewRejectsMismatchedPathBeforeStore(t *testing.T) {
 	_, err = client.RenewIngress(t.Context(), "path-ingress", ingressv1.IngressRenewal{
 		IngressId: "body-ingress", IngressRunId: "run-1", IngressLeaseRevision: 7,
 	})
-	var problem *serviceapi.ProblemError
+	var problem *serverhttp.ProblemError
 	if !errors.As(err, &problem) || problem.Status != http.StatusBadRequest || calls != 0 {
 		t.Fatalf("error = %v; store calls %d", err, calls)
 	}

@@ -17,8 +17,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
+	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
+
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -60,11 +62,11 @@ type shareHeaderDecisionClient struct {
 
 func preparedShareAuthority(t *testing.T, client *shareAccessTestClient) *liveHTTPControl {
 	t.Helper()
-	authority := &liveHTTPControl{check: func(liveHTTPSource) (liveHTTPDecision, error) {
-		return liveHTTPDecision{VisitAllowed: client.active && client.minted, ValidUntil: new(time.Now().Add(5 * time.Minute))}, nil
+	authority := &liveHTTPControl{check: func(visitorfixture.HTTPSource) (visitorfixture.HTTPDecision, error) {
+		return visitorfixture.HTTPDecision{VisitAllowed: client.active && client.minted, ValidUntil: new(time.Now().Add(5 * time.Minute))}, nil
 	}}
 	prepareLiveHTTPControl(t, authority)
-	client.permission = func() controlv1.VisitorTokenResponse { return authority.permission(t, client.cookie, true) }
+	client.permission = func() controlv1.VisitorTokenResponse { return authority.Permission(t, client.cookie, true) }
 	return authority
 }
 
@@ -84,34 +86,34 @@ func TestShareHeaderUsesCurrentDecisionAndIsRemovedBeforeForwarding(t *testing.T
 	shareID := "shr_0123456789abcdefghijkl"
 	secret := base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("s", 32)))
 	client := &shareHeaderDecisionClient{shareID: shareID, secret: secret}
-	authority := &liveHTTPControl{check: func(input liveHTTPSource) (liveHTTPDecision, error) {
-		return liveHTTPDecision{VisitAllowed: !client.revoked && input.ShareId != nil && *input.ShareId == shareID && input.ShareCookieSecret != nil && *input.ShareCookieSecret == secret,
+	authority := &liveHTTPControl{check: func(input visitorfixture.HTTPSource) (visitorfixture.HTTPDecision, error) {
+		return visitorfixture.HTTPDecision{VisitAllowed: !client.revoked && input.ShareId != nil && *input.ShareId == shareID && input.ShareCookieSecret != nil && *input.ShareCookieSecret == secret,
 			ValidUntil: new(time.Now().Add(5 * time.Minute))}, nil
 	}}
 	prepareLiveHTTPControl(t, authority)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get(shareAccessHeaderName) != "" || r.Header.Get(visitorTokenHeader) != "" || r.Header.Get("Cookie") != "app_session=ok" {
-			t.Errorf("tnl share credential reached local service: header=%q cookie=%q", r.Header.Get(shareAccessHeaderName), r.Header.Get("Cookie"))
+		if r.Header.Get(httpaccess.ShareHeaderName) != "" || r.Header.Get(httpaccess.VisitorTokenHeader) != "" || r.Header.Get("Cookie") != "app_session=ok" {
+			t.Errorf("tnl share credential reached local service: header=%q cookie=%q", r.Header.Get(httpaccess.ShareHeaderName), r.Header.Get("Cookie"))
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer upstream.Close()
 	route, err := NewPublicURLServer(PublicURLServerConfig{
 		Hostname: "route.example", Target: upstream.URL,
-		PublicURLID: certificateTestPublicURLID, VisitorPolicy: authority.policy.lease, VisitorTokens: authority.tokens,
-		BrowserAccess: &browserAccess{client: client, runID: "run_test", version: 1},
+		PublicURLID: certificateTestPublicURLID, VisitorPolicy: authority.policy.Lease(), VisitorTokens: authority.tokens,
+		BrowserAccess: &httpaccess.Browser{Client: client, RunID: "run_test", Number: 1},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer route.Close()
-	token := authority.credential(t, secret, true)
+	token := authority.Credential(t, secret, true)
 	visit := func() (int, string) {
 		request := httptest.NewRequest(http.MethodGet, "/", nil)
 		request.Host = "route.example"
 		request.TLS = &tls.ConnectionState{ServerName: "route.example"}
 		request = request.WithContext(context.WithValue(request.Context(), denialContextKey{}, true))
-		request.Header.Set(visitorTokenHeader, token)
+		request.Header.Set(httpaccess.VisitorTokenHeader, token)
 		request.Header.Set("Cookie", "app_session=ok; __Host-tnl-share=expired")
 		response := httptest.NewRecorder()
 		serveTestPublicRequest(t, route, response, request)
@@ -120,13 +122,12 @@ func TestShareHeaderUsesCurrentDecisionAndIsRemovedBeforeForwarding(t *testing.T
 	if got, body := visit(); got != http.StatusNoContent {
 		t.Fatalf("valid share header = %d: %s", got, body)
 	}
-	authority.mu.Lock()
+	authority.Mu.Lock()
 	client.revoked = true
-	authority.mu.Unlock()
-	if err := authority.policy.refresh(t.Context()); err != nil {
+	authority.Mu.Unlock()
+	if err := authority.policy.Refresh(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	authority.tokens.refresh(t.Context(), nil)
 	if got, body := visit(); got != http.StatusForbidden {
 		t.Fatalf("revoked share header = %d: %s", got, body)
 	}
@@ -134,24 +135,6 @@ func TestShareHeaderUsesCurrentDecisionAndIsRemovedBeforeForwarding(t *testing.T
 
 func (*shareAccessTestClient) EnableShareAccess(context.Context, string, uint64, string, credentials.PublishRunToken) error {
 	return nil
-}
-
-func TestSharePreparationFailureDoesNotLogCauses(t *testing.T) {
-	for _, test := range []struct {
-		err  error
-		want string
-	}{
-		{fmt.Errorf("private detail: %w", context.DeadlineExceeded), "policy refresh timed out"},
-		{fmt.Errorf("private detail: %w", visitortoken.ErrPolicy), "visitor policy unavailable"},
-		{fmt.Errorf("private detail: %w", visitortoken.ErrKey), "verification key unavailable"},
-		{fmt.Errorf("private detail: %w", visitortoken.ErrToken), "visitor token invalid"},
-		{fmt.Errorf("private detail: %w", visitortoken.ErrBinding), "visitor token binding invalid"},
-		{errors.New("private detail"), "visitor permission unavailable"},
-	} {
-		if got := sharePreparationFailure(test.err); got != test.want {
-			t.Fatalf("share preparation reason = %q, want %q", got, test.want)
-		}
-	}
 }
 
 func (c *shareAccessTestClient) RedeemPublishRunShare(_ context.Context, _ string, body controlv1.RedeemShareRequest, _ credentials.PublishRunToken) (controlv1.ShareRedemption, error) {
@@ -180,16 +163,16 @@ func TestShareHTTPDenialsRedemptionAndCookieIsolation(t *testing.T) {
 	client := &shareAccessTestClient{
 		shareID: "shr_0123456789abcdefghijkl", cookie: base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("c", 32))), active: true,
 	}
-	authority := &liveHTTPControl{check: func(liveHTTPSource) (liveHTTPDecision, error) {
-		return liveHTTPDecision{VisitAllowed: client.active && client.minted, ValidUntil: new(time.Now().Add(5 * time.Minute))}, nil
+	authority := &liveHTTPControl{check: func(visitorfixture.HTTPSource) (visitorfixture.HTTPDecision, error) {
+		return visitorfixture.HTTPDecision{VisitAllowed: client.active && client.minted, ValidUntil: new(time.Now().Add(5 * time.Minute))}, nil
 	}}
 	prepareLiveHTTPControl(t, authority)
-	client.permission = func() controlv1.VisitorTokenResponse { return authority.permission(t, client.cookie, true) }
-	access := &shareAccess{client: client, runID: "pr_test", version: 1}
+	client.permission = func() controlv1.VisitorTokenResponse { return authority.Permission(t, client.cookie, true) }
+	access := &httpaccess.Shares{Client: client, RunID: "pr_test", Number: 1}
 	decisions := &shareHeaderDecisionClient{shareID: client.shareID, cookieSecret: client.cookie}
 	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Target: upstream.URL, ShareAccess: access,
-		PublicURLID: certificateTestPublicURLID, VisitorPolicy: authority.policy.lease, VisitorTokens: authority.tokens,
-		BrowserAccess: &browserAccess{client: decisions, runID: "run_test", version: 1}})
+		PublicURLID: certificateTestPublicURLID, VisitorPolicy: authority.policy.Lease(), VisitorTokens: authority.tokens,
+		BrowserAccess: &httpaccess.Browser{Client: decisions, RunID: "run_test", Number: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +203,7 @@ func TestShareHTTPDenialsRedemptionAndCookieIsolation(t *testing.T) {
 	}
 	visitorCookies := "app_session=ok"
 	for _, cookie := range issued {
-		if (cookie.Name != shareCookieName && cookie.Name != visitorTokenCookie) || !cookie.Secure || !cookie.HttpOnly || cookie.Path != "/" || cookie.Domain != "" {
+		if (cookie.Name != httpaccess.ShareCookieName && cookie.Name != httpaccess.VisitorTokenCookie) || !cookie.Secure || !cookie.HttpOnly || cookie.Path != "/" || cookie.Domain != "" {
 			t.Fatalf("host-only visitor cookie = %#v", cookie)
 		}
 		visitorCookies += "; " + cookie.Name + "=" + cookie.Value
@@ -237,14 +220,13 @@ func TestShareHTTPDenialsRedemptionAndCookieIsolation(t *testing.T) {
 	if got := <-upstreamCookies; got != "app_session=ok" {
 		t.Fatalf("local service saw share cookie on another request: %q", got)
 	}
-	authority.mu.Lock()
+	authority.Mu.Lock()
 	client.active = false
-	authority.mu.Unlock()
+	authority.Mu.Unlock()
 	decisions.revoked = true
-	if err := authority.policy.refresh(t.Context()); err != nil {
+	if err := authority.policy.Refresh(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	authority.tokens.refresh(t.Context(), nil)
 	if got := serve("/", true, visitorCookies); got.Code != http.StatusForbidden {
 		t.Fatalf("revoked visitor = %d", got.Code)
 	}
@@ -262,7 +244,7 @@ func TestShareHandoffBridgeResetsLongRedirectChains(t *testing.T) {
 		Permission: controlv1.VisitorTokenResponse{VisitorToken: "signed-share-permission", ExpiresAt: time.Now().Add(5 * time.Minute)},
 	}
 	response := httptest.NewRecorder()
-	shareRedirect(response, redemption)
+	httpaccess.ShareRedirect(response, redemption)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `step=8&amp;next=9`) ||
 		!strings.Contains(response.Body.String(), "http-equiv=\"refresh\"") ||
 		response.Header().Get("Referrer-Policy") != "no-referrer" || len(response.Result().Cookies()) != 2 {
@@ -282,11 +264,11 @@ func TestShareVisitorClearsDeniedTLSDeadlineAfterRealHandshake(t *testing.T) {
 		shareID: "shr_0123456789abcdefghijkl", cookie: base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("c", 32))), active: true,
 	}
 	authority := preparedShareAuthority(t, client)
-	access := &shareAccess{client: client, runID: "pr_test", version: 1}
+	access := &httpaccess.Shares{Client: client, RunID: "pr_test", Number: 1}
 	route, err := newTestPublicURLServer(t, PublicURLServerConfig{
-		VisitorPolicy: authority.policy.lease, VisitorTokens: authority.tokens,
+		VisitorPolicy: authority.policy.Lease(), VisitorTokens: authority.tokens,
 		Hostname: "route.example", Target: upstream.URL, ShareAccess: access,
-		Certificate: publicURLTestCertificate(t, "route.example"),
+		Certificate: visitorfixture.Certificate(t, "route.example"),
 	})
 	if err != nil {
 		t.Fatal(err)

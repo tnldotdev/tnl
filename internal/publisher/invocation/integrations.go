@@ -21,6 +21,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
+	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/integrations"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -47,7 +48,7 @@ func projectOAuthPublisher(ctx context.Context, state *clientstate.Database, pro
 }
 
 func integrationURLConfig(services publisherServices, hostname string, purpose controlv1.PublicURLPurpose) publisher.Config {
-	config := services.config("", []string{}, publisher.ApplicationLimits{Concurrency: 32})
+	config := services.config("", []string{}, applicationlimits.Limits{Concurrency: 32})
 	config.Hostname, config.PublicURLScope, config.Ephemeral = hostname, services.publicURLScope, false
 	config.Purpose, config.ServiceProtocol, config.InspectionMode = purpose, controlv1.Http, inspection.None
 	return config

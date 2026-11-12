@@ -21,10 +21,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	"github.com/tnldotdev/tnl/internal/connector"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/failure"
+	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -370,7 +370,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 	// installed jobs keep immutable membership even when their captured selector
 	// predates a rename. run the actual user supervisor against its saved job.
 	supervisorRoot := filepath.Join(t.TempDir(), "supervisor")
-	registry, err := supervisor.Open(t.Context(), supervisor.OpenOptions{Root: supervisorRoot, User: true})
+	registry, err := installedjobs.Open(t.Context(), installedjobs.OpenOptions{Root: supervisorRoot, User: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,7 +379,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	job := supervisor.Job{Kind: supervisor.KindGroup, ID: supervisor.JobKey(f.url, "group", value.Member.GroupId+":replica-1"), Name: "production-replica-1", Server: f.url, PublisherIdentityID: value.Member.PublisherIdentityId, GroupMember: &value.Member, GroupInstance: "replica-1", IdentityDir: identityDir}
+	job := installedjobs.Job{Kind: installedjobs.KindGroup, ID: installedjobs.JobKey(f.url, "group", value.Member.GroupId+":replica-1"), Name: "production-replica-1", Server: f.url, PublisherIdentityID: value.Member.PublisherIdentityId, GroupMember: &value.Member, GroupInstance: "replica-1", IdentityDir: identityDir}
 	if err := registry.InstallGroup(t.Context(), job, value.Member, private); err != nil {
 		t.Fatal(err)
 	}

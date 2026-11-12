@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/adhoc"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -59,7 +60,7 @@ func Open(ctx context.Context, handler http.Handler, options Options) (*Tunnel, 
 	if handler == nil {
 		return nil, errors.New("an HTTP handler is required")
 	}
-	limits := publisher.ApplicationLimits{Requests: options.Limits.Requests, RateRequests: options.Limits.Rate.Requests,
+	limits := applicationlimits.Limits{Requests: options.Limits.Requests, RateRequests: options.Limits.Rate.Requests,
 		RatePer: options.Limits.Rate.Per, Concurrency: options.Limits.Concurrency}
 	if err := limits.Validate(); err != nil {
 		return nil, err

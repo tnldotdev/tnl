@@ -19,7 +19,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
+	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/security/tlspolicy"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
@@ -59,11 +61,11 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	if config.ServiceProtocol != "" && config.ServiceProtocol != controlv1.Http {
 		return nil, errors.New("publisher: public URL server requires HTTP; use a private stream for TCP")
 	}
-	admission, err := newApplicationAdmission(config.Limits)
+	admission, err := requestlimit.New(config.Limits)
 	if err != nil {
 		return nil, err
 	}
-	config.Limits = admission.limits
+	config.Limits = admission.Limits()
 	if config.CertificatePlan.Identifiers != nil || config.CertificatePlan.CacheKey != "" || config.CertificatePlan.Scope != "" || config.CertificatePlan.ChallengeMethod != "" {
 		config.CertificatePlan, err = certificateidentity.CanonicalPlan(config.CertificatePlan)
 		if err != nil || !certificateidentity.Covers(config.CertificatePlan.Identifiers, hostname) {
@@ -215,7 +217,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 				}
 				var shareExpiry time.Time
 				sharePermitted := false
-				if sharePath(request.URL.EscapedPath()) {
+				if httpaccess.SharePath(request.URL.EscapedPath()) {
 					response.Header().Set("Cache-Control", "no-store")
 					response.Header().Set("Referrer-Policy", "no-referrer")
 					select {
@@ -233,7 +235,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					if connection, ok := request.Context().Value(shareConnectionKey{}).(*tls.Conn); ok {
 						_ = connection.SetDeadline(time.Now().Add(15 * time.Second))
 					}
-					redemption, err := config.ShareAccess.redeem(request.Context(), request.URL.EscapedPath())
+					redemption, err := config.ShareAccess.Redeem(request.Context(), request.URL.EscapedPath())
 					if err != nil {
 						diagnostic.WriteHTTP(response, request, diagnostic.VisitorAccessDenied, "")
 						return
@@ -242,7 +244,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 						_ = connection.SetDeadline(time.Time{})
 					}
 					auditOutcome, auditReason = "allowed", ""
-					shareRedirect(response, redemption)
+					httpaccess.ShareRedirect(response, redemption)
 					return
 				}
 				if config.BrowserAccess != nil {
@@ -259,7 +261,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 							_ = connection.SetDeadline(time.Now().Add(15 * time.Second))
 							defer connection.SetDeadline(time.Time{})
 						}
-						if config.BrowserAccess.handle(response, request) {
+						if config.BrowserAccess.Handle(response, request) {
 							return
 						}
 					}
@@ -267,27 +269,23 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 				// visitor credentials are checked here, after publisher TLS. this
 				// request never asks control for a permission or refreshes a cache.
 				serverPermitted := false
-				var permission httpPermission
+				var permission visitortoken.VerifiedPermission
 				if !proof {
-					var guard *publicHTTPGuard
+					var guard *httpaccess.Guard
 					var guarded *http.Request
 					var err error
-					permission, guard, guarded, err = authorizeHTTPRequest(response, request, config.VisitorPolicy, config.VisitorTokens)
+					// the accepted visitor owns source metadata; HTTP forwarding
+					// headers and socket defaults cannot replace it.
+					request.RemoteAddr = session.visitor.Source.String()
+					permission, guard, guarded, err = httpaccess.AuthorizeRequest(response, request, config.VisitorPolicy, config.VisitorTokens)
 					serverPermitted = err == nil
 					if serverPermitted {
-						defer guard.finish()
-						if config.VisitorTokens != nil && !permission.anonymous {
-							prepared, release, found := config.VisitorTokens.use(permission.token, guard.local)
-							guard.release = release
-							if found && (permission.renewed || prepared.VisitorToken != permission.token.Reveal()) {
-								_ = visitorPermissionCookie(response, prepared)
-							}
-						}
+						defer guard.Finish()
 						response, request = guard, guarded
 					}
 				}
-				if share, ok := permission.permission.Facts().Subject.(visitortoken.Share); ok && share.ShareID != "" && serverPermitted {
-					sharePermitted, shareExpiry = true, permission.permission.Facts().ExpiresAt
+				if share, ok := permission.Facts().Subject.(visitortoken.Share); ok && share.ShareID != "" && serverPermitted {
+					sharePermitted, shareExpiry = true, permission.Facts().ExpiresAt
 				} else {
 					sharePermitted = false
 				}
@@ -304,7 +302,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 				}
 				if !allowed {
 					auditReason = "authorization"
-					if config.BrowserAccess.redirectRestricted(response, request, config.BrowserLoginAvailable) {
+					if config.BrowserAccess.RedirectRestricted(response, request, config.BrowserLoginAvailable) {
 						return
 					}
 					diagnostic.WriteHTTP(response, request, diagnostic.VisitorAccessDenied, "")
@@ -317,8 +315,8 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					}
 					request = config.Feedback.prepareBrowser(response, request)
 				}
-				request = stripTnlCookies(request)
-				request.Header.Del(shareAccessHeaderName)
+				request = httpaccess.StripCookies(request)
+				request.Header.Del(httpaccess.ShareHeaderName)
 				if proof {
 					select {
 					case probeSlots <- struct{}{}:
@@ -337,7 +335,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					handler.ServeHTTP(response, request)
 					return
 				}
-				release, status, retryAfter := admission.acquire(request.Context())
+				release, status, retryAfter := admission.Acquire(request.Context())
 				if status != 0 {
 					auditOutcome, auditReason = "failed", "capacity"
 					if request.ProtoMajor == 1 {
@@ -345,7 +343,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 						response.Header().Set("Connection", "close")
 					}
 					if retryAfter > 0 {
-						response.Header().Set("Retry-After", strconv.FormatInt(retryAfterSeconds(retryAfter), 10))
+						response.Header().Set("Retry-After", strconv.FormatInt(requestlimit.RetryAfterSeconds(retryAfter), 10))
 					}
 					switch status {
 					case http.StatusTooManyRequests:
@@ -361,13 +359,13 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 				}
 				if err := session.admit(request.Context(), proof); err != nil {
 					auditOutcome, auditReason = "failed", "capacity"
-					admission.refund()
+					admission.Refund()
 					diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached, "")
 					return
 				}
 				if request.Context().Err() != nil {
 					auditOutcome, auditReason = "failed", "cancelled"
-					admission.refund()
+					admission.Refund()
 					return
 				}
 				defer release()

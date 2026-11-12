@@ -3,14 +3,11 @@ package publisher
 import (
 	"bufio"
 	"context"
-	"crypto/ecdsa"
 	"crypto/ed25519"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"errors"
 	"fmt"
 	"io"
@@ -23,6 +20,9 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
+	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
 
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
@@ -62,16 +62,16 @@ func newTestPublicURLServer(t *testing.T, config PublicURLServerConfig) (*Public
 		config.PublishRunNumber = 1
 	}
 	if config.VisitorPolicy == nil {
-		policy, err := prepareVisitorPolicy(t.Context(), testHTTPPolicyClient{hostname: config.Hostname, anonymous: config.AccessMode != "restricted"}, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: config.PublicURLID}, config.PublishRunID, int64(config.PublishRunNumber), "fixture-run-token", nil)
+		policy, err := httpaccess.PreparePolicy(t.Context(), testHTTPPolicyClient{hostname: config.Hostname, anonymous: config.AccessMode != "restricted"}, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: config.PublicURLID}, config.PublishRunID, int64(config.PublishRunNumber), "fixture-run-token", nil)
 		if err != nil {
 			return nil, err
 		}
 		t.Cleanup(policy.Close)
-		config.VisitorPolicy = policy.lease
+		config.VisitorPolicy = policy.Lease()
 	}
 	if (config.ServiceProtocol == "" || config.ServiceProtocol == controlv1.Http) && config.BrowserAccess == nil {
-		config.BrowserAccess = &browserAccess{client: &testVisitorControl{}, publicURLID: config.PublicURLID,
-			runID: config.PublishRunID, version: config.PublishRunNumber}
+		config.BrowserAccess = &httpaccess.Browser{Client: &testVisitorControl{}, PublicURLID: config.PublicURLID,
+			RunID: config.PublishRunID, Number: config.PublishRunNumber}
 	}
 	return NewPublicURLServer(config)
 }
@@ -150,7 +150,7 @@ func TestDeniedVisitorCompletesTLSButCannotReachLocalService(t *testing.T) {
 		response.WriteHeader(http.StatusOK)
 	}))
 	defer upstream.Close()
-	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "route.example", Target: upstream.URL, AccessMode: "restricted", Certificate: publicURLTestCertificate(t, "route.example")})
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "route.example", Target: upstream.URL, AccessMode: "restricted", Certificate: visitorfixture.Certificate(t, "route.example")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +262,7 @@ func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	publicURLCertificate := publicURLTestCertificate(t, "route.example")
+	publicURLCertificate := visitorfixture.Certificate(t, "route.example")
 	route, err := newTestPublicURLServer(t, PublicURLServerConfig{
 		PublishRunID: "publish_run_1", PublishRunNumber: 1,
 		Hostname: "route.example", Target: upstream.URL, Certificate: publicURLCertificate,
@@ -275,7 +275,7 @@ func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = route.Close() })
 
-	transportCertificate := publicURLTestCertificate(t, "relay.example")
+	transportCertificate := visitorfixture.Certificate(t, "relay.example")
 	roots := x509.NewCertPool()
 	roots.AddCert(transportCertificate.Leaf)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -413,7 +413,7 @@ func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 	}
 	client := tls.Client(stream, &tls.Config{
 		ServerName: "route.example", MinVersion: tls.VersionTLS13,
-		RootCAs: rootsForCertificate(t, publicURLCertificate),
+		RootCAs: visitorfixture.Roots(t, publicURLCertificate),
 	})
 	if _, err := fmt.Fprint(client, "GET / HTTP/1.1\r\nHost: route.example\r\nConnection: close\r\n\r\n"); err != nil {
 		t.Fatal(err)
@@ -490,7 +490,7 @@ func TestIntegrationURLHandlerSeesTrustedVisitorSourceAndRejectsOtherAuthorities
 	sources := make(chan string, 1)
 	url, err := newTestPublicURLServer(t, PublicURLServerConfig{
 		Hostname: "route.example", Purpose: controlv1.Webhooks,
-		Certificate: publicURLTestCertificate(t, "route.example"),
+		Certificate: visitorfixture.Certificate(t, "route.example"),
 		Handler: http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 			sources <- request.RemoteAddr
 			response.WriteHeader(http.StatusNoContent)
@@ -537,7 +537,7 @@ func TestIntegrationURLHandlerSeesTrustedVisitorSourceAndRejectsOtherAuthorities
 func startHTTPTestRouteServer(t *testing.T, target string) *PublicURLServer {
 	t.Helper()
 	route, err := newTestPublicURLServer(t, PublicURLServerConfig{
-		Hostname: "route.example", Target: target, Certificate: publicURLTestCertificate(t, "route.example"),
+		Hostname: "route.example", Target: target, Certificate: visitorfixture.Certificate(t, "route.example"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -603,7 +603,7 @@ func TestRouteServerSelectsOnlyInstalledCertificate(t *testing.T) {
 	}); err == nil {
 		t.Fatal("ordinary certificate was available before installation")
 	}
-	application := publicURLTestCertificate(t, "route.example")
+	application := visitorfixture.Certificate(t, "route.example")
 	if err := route.InstallCertificate(application); err != nil {
 		t.Fatal(err)
 	}
@@ -641,8 +641,8 @@ func TestManualCertificateRetainsStandardTLSCompatibility(t *testing.T) {
 }
 
 func TestAutomaticCertificateDoesNotTrustSuppliedLeaf(t *testing.T) {
-	certificate := publicURLTestCertificate(t, "other.example")
-	certificate.Leaf = publicURLTestCertificate(t, "route.example").Leaf
+	certificate := visitorfixture.Certificate(t, "other.example")
+	certificate.Leaf = visitorfixture.Certificate(t, "route.example").Leaf
 	if _, err := certificateidentity.ValidateCertificate(certificate, "route.example", []string{"route.example"}); err == nil {
 		t.Fatal("a supplied Leaf concealed a different certificate identity")
 	}
@@ -650,7 +650,7 @@ func TestAutomaticCertificateDoesNotTrustSuppliedLeaf(t *testing.T) {
 
 func TestManualCertificateExpires(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		certificate := publicURLTestCertificate(t, "route.example")
+		certificate := visitorfixture.Certificate(t, "route.example")
 		route, err := NewPublicURLServer(PublicURLServerConfig{
 			Hostname: "route.example", Target: "http://127.0.0.1:3000", Certificate: certificate,
 		})
@@ -670,7 +670,7 @@ func TestManualCertificateExpires(t *testing.T) {
 
 func TestCertificateReplacementAndExpirationAreAtomic(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		first := publicURLTestCertificateUntil(t, "route.example", time.Now().Add(time.Hour))
+		first := visitorfixture.CertificateUntil(t, "route.example", time.Now().Add(time.Hour))
 		route, err := NewPublicURLServer(PublicURLServerConfig{
 			Hostname: "route.example", Target: "http://127.0.0.1:3000", Certificate: first,
 		})
@@ -680,7 +680,7 @@ func TestCertificateReplacementAndExpirationAreAtomic(t *testing.T) {
 		defer route.Close()
 
 		time.Sleep(30 * time.Minute)
-		replacement := publicURLTestCertificateUntil(t, "route.example", time.Now().Add(2*time.Hour))
+		replacement := visitorfixture.CertificateUntil(t, "route.example", time.Now().Add(2*time.Hour))
 		if err := route.InstallCertificate(replacement); err != nil {
 			t.Fatal(err)
 		}
@@ -691,7 +691,7 @@ func TestCertificateReplacementAndExpirationAreAtomic(t *testing.T) {
 		default:
 		}
 		<-route.certificateExpiration()
-		if err := route.InstallCertificate(publicURLTestCertificate(t, "route.example")); !errors.Is(err, errCertificateExpired) {
+		if err := route.InstallCertificate(visitorfixture.Certificate(t, "route.example")); !errors.Is(err, errCertificateExpired) {
 			t.Fatalf("replacement after expiration = %v", err)
 		}
 	})
@@ -701,7 +701,7 @@ func TestReadyCallbackIsNotCalledAfterCertificateExpiry(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		route, err := NewPublicURLServer(PublicURLServerConfig{
 			Hostname: "route.example", Target: "http://127.0.0.1:3000",
-			Certificate: publicURLTestCertificate(t, "route.example"),
+			Certificate: visitorfixture.Certificate(t, "route.example"),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -717,44 +717,4 @@ func TestReadyCallbackIsNotCalledAfterCertificateExpiry(t *testing.T) {
 			t.Fatalf("ready after expiration = %v, calls = %d", err, calls)
 		}
 	})
-}
-
-func publicURLTestCertificate(t *testing.T, hostname string) tls.Certificate {
-	return publicURLTestCertificateUntil(t, hostname, time.Now().Add(time.Hour))
-}
-
-func publicURLTestCertificateUntil(t *testing.T, hostname string, notAfter time.Time) tls.Certificate {
-	t.Helper()
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	template := &x509.Certificate{
-		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: hostname}, DNSNames: []string{hostname},
-		NotBefore: time.Now().Add(-time.Minute), NotAfter: notAfter,
-		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-	}
-	der, err := x509.CreateCertificate(rand.Reader, template, template, privateKey.Public(), privateKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	leaf, err := x509.ParseCertificate(der)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: privateKey, Leaf: leaf}
-}
-
-func rootsForCertificate(t *testing.T, certificate tls.Certificate) *x509.CertPool {
-	t.Helper()
-	if certificate.Leaf == nil {
-		leaf, err := x509.ParseCertificate(certificate.Certificate[0])
-		if err != nil {
-			t.Fatal(err)
-		}
-		certificate.Leaf = leaf
-	}
-	roots := x509.NewCertPool()
-	roots.AddCert(certificate.Leaf)
-	return roots
 }

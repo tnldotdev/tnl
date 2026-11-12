@@ -11,7 +11,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/storagekey"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 )
 
 func (c Config) validateControl() error {
@@ -27,7 +27,7 @@ func (c Config) validateControl() error {
 		if err := validateHTTPSOrigin(c.EmailURL, "email receiver"); err != nil {
 			return failure.WrapSetting("configure email receiver", failure.ServerEmailConfigInvalid, failure.SettingEmailURL, err)
 		}
-		if _, err := serviceapi.NewBearerSecrets(c.WebhookSecret, ""); err != nil {
+		if _, err := serverhttp.NewBearerSecrets(c.WebhookSecret, ""); err != nil {
 			return failure.WrapSetting("configure email webhook", failure.ServerEmailConfigInvalid, failure.SettingWebhookSecret, err)
 		}
 	}
@@ -36,7 +36,7 @@ func (c Config) validateControl() error {
 			return failure.WrapSetting("configure website identity", failure.ServerWebsiteConfigInvalid, failure.SettingOIDCIssuer,
 				errors.New("website identity operations require an OIDC issuer"))
 		}
-		if _, err := serviceapi.NewBearerSecrets(c.WebServiceSecret, ""); err != nil {
+		if _, err := serverhttp.NewBearerSecrets(c.WebServiceSecret, ""); err != nil {
 			return failure.WrapSetting("configure website identity", failure.ServerWebsiteConfigInvalid, failure.SettingWebServiceSecret, err)
 		}
 	}
@@ -92,7 +92,7 @@ func (c Config) validateControl() error {
 			return failure.Wrap("validate standalone cluster secret", failure.ServerClusterSecretInvalid,
 				errors.New("standalone does not accept a configured cluster secret"))
 		}
-	} else if _, err := serviceapi.NewBearerSecrets(c.ClusterSecret, c.ClusterSecretPrevious); err != nil {
+	} else if _, err := serverhttp.NewBearerSecrets(c.ClusterSecret, c.ClusterSecretPrevious); err != nil {
 		return failure.Wrap("validate cluster secret", failure.ServerClusterSecretInvalid, err)
 	}
 	if err := c.validateOIDC(); err != nil {

@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
+
 	"github.com/tnldotdev/tnl/internal/browserfonts"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/httpjson"
@@ -27,14 +29,14 @@ func (f *feedbackRuntime) reviewerAccess(request *http.Request, denied bool) (co
 		source := session.visitor.Source.Addr().Unmap().String()
 		result.SourceIp = &source
 	}
-	if token := request.Header.Get(shareAccessHeaderName); token != "" {
+	if token := request.Header.Get(httpaccess.ShareHeaderName); token != "" {
 		if id, secret, found := strings.Cut(token, "."); found && opaqueid.Valid(id, opaqueid.SharePrefix) {
 			result.ShareId, result.ShareSecret = &id, &secret
 		}
 	}
-	if suppliedCookieCount(request, browserAccessCookieName) != 0 {
-		cookies := request.CookiesNamed(browserAccessCookieName)
-		if len(cookies) != 1 || suppliedCookieCount(request, browserAccessCookieName) != 1 {
+	if httpaccess.SuppliedCookieCount(request, httpaccess.BrowserCookieName) != 0 {
+		cookies := request.CookiesNamed(httpaccess.BrowserCookieName)
+		if len(cookies) != 1 || httpaccess.SuppliedCookieCount(request, httpaccess.BrowserCookieName) != 1 {
 			return result, false
 		}
 		raw, err := base64.RawURLEncoding.Strict().DecodeString(cookies[0].Value)
@@ -49,7 +51,7 @@ func (f *feedbackRuntime) reviewerAccess(request *http.Request, denied bool) (co
 	if result.ShareSecret != nil {
 		return result, true
 	}
-	cookie, err := request.Cookie(shareCookieName)
+	cookie, err := request.Cookie(httpaccess.ShareCookieName)
 	if err != nil {
 		return result, result.VisitAllowed || result.ShareSecret != nil || result.BrowserCookieSecret != nil
 	}

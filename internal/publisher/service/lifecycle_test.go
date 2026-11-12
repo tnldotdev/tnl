@@ -21,7 +21,6 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
-	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
@@ -30,7 +29,7 @@ import (
 )
 
 type lifecycleControl struct {
-	publisher.ServiceHTTPControl
+	HTTPControl
 	mu                                  sync.Mutex
 	prep                                controlv1.ServiceRunPreparation
 	setup                               controlv1.ServiceRunSetup

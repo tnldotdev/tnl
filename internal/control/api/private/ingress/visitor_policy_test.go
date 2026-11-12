@@ -12,7 +12,7 @@ import (
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -76,7 +76,7 @@ func TestIngressVisitorPolicyContractsMatchDirectAndHTTP(t *testing.T) {
 					}
 					got, err = client.ReadIngressVisitorPolicy(t.Context(), "ingress", request)
 					if err != nil {
-						var problem *serviceapi.ProblemError
+						var problem *serverhttp.ProblemError
 						if !errors.As(err, &problem) {
 							t.Fatal("unclassified direct error", err)
 						}

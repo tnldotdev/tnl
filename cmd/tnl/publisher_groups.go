@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 )
 
@@ -39,8 +39,8 @@ func validateFixedPublisherGroups(f publisherServeCommand) error {
 
 type fixedGroupInput struct {
 	value  credentialfile.GroupFile
-	runner supervisor.GroupRunner
-	job    supervisor.Job
+	runner installedjobs.GroupRunner
+	job    installedjobs.Job
 }
 
 // all local input and duplicate ownership checks finish before the engine can
@@ -49,18 +49,18 @@ func readFixedPublisherGroups(f publisherServeCommand) ([]fixedGroupInput, error
 	if err := validateFixedPublisherGroups(f); err != nil {
 		return nil, err
 	}
-	bindings := map[supervisor.GroupScope]supervisor.GroupBinding{}
+	bindings := map[installedjobs.GroupScope]installedjobs.GroupBinding{}
 	for _, path := range f.BindingFile {
-		binding, err := supervisor.ReadGroupBinding(path)
+		binding, err := installedjobs.ReadGroupBinding(path)
 		if err != nil {
 			return nil, err
 		}
 		if _, duplicate := bindings[binding.Scope]; duplicate {
-			return nil, supervisor.ErrJobExists
+			return nil, installedjobs.ErrJobExists
 		}
 		bindings[binding.Scope] = binding
 	}
-	startup, providers := supervisor.NewOperationLimiter(4), supervisor.NewOperationLimiter(8)
+	startup, providers := installedjobs.NewOperationLimiter(4), installedjobs.NewOperationLimiter(8)
 	seenPublishers, seenReplicas := map[string]bool{}, map[string]bool{}
 	inputs := make([]fixedGroupInput, 0, len(f.IdentityFile))
 	for _, path := range f.IdentityFile {
@@ -68,27 +68,27 @@ func readFixedPublisherGroups(f publisherServeCommand) ([]fixedGroupInput, error
 		if err != nil {
 			return nil, err
 		}
-		publisherKey := supervisor.JobKey(value.ControlURL, "publisher", value.Member.PublisherIdentityId)
-		replicaKey := supervisor.JobKey(value.ControlURL, "group", value.Member.GroupId+":"+value.Instance)
+		publisherKey := installedjobs.JobKey(value.ControlURL, "publisher", value.Member.PublisherIdentityId)
+		replicaKey := installedjobs.JobKey(value.ControlURL, "group", value.Member.GroupId+":"+value.Instance)
 		if seenPublishers[publisherKey] || seenReplicas[replicaKey] {
-			return nil, supervisor.ErrJobExists
+			return nil, installedjobs.ErrJobExists
 		}
 		seenPublishers[publisherKey], seenReplicas[replicaKey] = true, true
-		scope := supervisor.ScopeForGroup(value)
-		var selected *supervisor.GroupBinding
+		scope := installedjobs.ScopeForGroup(value)
+		var selected *installedjobs.GroupBinding
 		if binding, found := bindings[scope]; found {
 			selected = &binding
 			delete(bindings, scope)
 		}
-		runner, trust, err := supervisor.ScopedGroupRunner(value, selected, startup, providers)
+		runner, trust, err := installedjobs.ScopedGroupRunner(value, selected, startup, providers)
 		if err != nil {
 			return nil, err
 		}
-		job := supervisor.Job{Kind: supervisor.KindGroup, ID: replicaKey, Name: value.Member.GroupName + "-" + value.Instance, Server: value.ControlURL, PublisherIdentityID: value.Member.PublisherIdentityId, GroupMember: &value.Member, GroupInstance: value.Instance, ServerCAPEM: trust}
+		job := installedjobs.Job{Kind: installedjobs.KindGroup, ID: replicaKey, Name: value.Member.GroupName + "-" + value.Instance, Server: value.ControlURL, PublisherIdentityID: value.Member.PublisherIdentityId, GroupMember: &value.Member, GroupInstance: value.Instance, ServerCAPEM: trust}
 		inputs = append(inputs, fixedGroupInput{value, runner, job})
 	}
 	if len(bindings) != 0 {
-		return nil, supervisor.ErrScope
+		return nil, installedjobs.ErrScope
 	}
 	return inputs, nil
 }
@@ -102,13 +102,13 @@ func runFixedPublisherGroups(ctx context.Context, flags publisherServeCommand, d
 	if err != nil {
 		return err
 	}
-	registry, err := supervisor.Open(ctx, supervisor.OpenOptions{Root: root, StandaloneGroups: true})
+	registry, err := installedjobs.Open(ctx, installedjobs.OpenOptions{Root: root, StandaloneGroups: true})
 	if err != nil {
 		return err
 	}
 	defer registry.Close()
-	runners := map[string]supervisor.GroupRunner{}
-	var jobs []supervisor.GroupInstall
+	runners := map[string]installedjobs.GroupRunner{}
+	var jobs []installedjobs.GroupInstall
 	for _, input := range inputs {
 		private, err := input.value.Validate(input.value.ControlURL, input.value.Member.ProjectKey, input.value.Member.GroupName, input.value.Instance)
 		if err != nil {
@@ -124,11 +124,11 @@ func runFixedPublisherGroups(ctx context.Context, flags publisherServeCommand, d
 		}
 		input.job.IdentityDir = profile.IdentityDirectory()
 		input.job.TelemetryDisabled = flags.telemetryDisabled
-		jobs = append(jobs, supervisor.GroupInstall{Job: input.job, Private: private})
+		jobs = append(jobs, installedjobs.GroupInstall{Job: input.job, Private: private})
 		runners[input.job.ID] = input.runner
 	}
 	var outputMu sync.Mutex
-	engine := supervisor.Engine{Telemetry: flags.telemetry, Registry: registry, Initialize: func(ctx context.Context) error { return registry.ReplaceGroups(ctx, jobs) }, Group: func(ctx context.Context, job supervisor.Job, telemetry *clienttelemetry.Collector, observe func(int64, bool) error) error {
+	engine := installedjobs.Engine{Telemetry: flags.telemetry, Registry: registry, Initialize: func(ctx context.Context) error { return registry.ReplaceGroups(ctx, jobs) }, Group: func(ctx context.Context, job installedjobs.Job, telemetry *clienttelemetry.Collector, observe func(int64, bool) error) error {
 		_, private, profile, err := registry.GroupIdentity(ctx, job)
 		if err != nil {
 			return err
@@ -136,7 +136,7 @@ func runFixedPublisherGroups(ctx context.Context, flags publisherServeCommand, d
 		runner := runners[job.ID]
 		runner.Telemetry = telemetry
 		return runner.Serve(ctx, job, profile, private, observe)
-	}, Observe: func(job supervisor.Job, status supervisor.Status) error {
+	}, Observe: func(job installedjobs.Job, status installedjobs.Status) error {
 		outputMu.Lock()
 		defer outputMu.Unlock()
 		fields := []clioutput.Field{{Label: "job ID", Value: job.ID}, {Label: "server", Value: job.Server}, {Label: "team ID", Value: job.GroupMember.TeamId}, {Label: "group ID", Value: job.GroupMember.GroupId}, {Label: "publisher", Value: job.PublisherIdentityID}, {Label: "instance", Value: job.GroupInstance}, {Label: "observed revision", Value: strconv.FormatInt(status.ObservedRevision, 10)}}

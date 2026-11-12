@@ -13,8 +13,11 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
+	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -40,13 +43,13 @@ type PublicURLServerConfig struct {
 	AdmitRequest          func(*http.Request) error
 	ObserveResponse       func(*http.Response) error
 	Mounts                []publisherproxy.Mount
-	ShareAccess           *shareAccess
-	BrowserAccess         *browserAccess
+	ShareAccess           *httpaccess.Shares
+	BrowserAccess         *httpaccess.Browser
 	BrowserLoginAvailable bool
 	Feedback              *feedbackRuntime
-	Limits                ApplicationLimits
+	Limits                applicationlimits.Limits
 	VisitorPolicy         *visitorlease.Lease
-	VisitorTokens         *browserTokens
+	VisitorTokens         *httpaccess.Tokens
 	VisitorSourceKey      [32]byte
 	// authorized visitor connections across both relays; zero uses traffic defaults.
 	StreamCapacity  int
@@ -93,7 +96,7 @@ type PublicURLServer struct {
 	httpDone           chan error
 	closeOnce          sync.Once
 	closeErr           error
-	admission          *applicationAdmission
+	admission          *requestlimit.Budget
 	run                PublishRunIdentity
 	promote            PromoteVisitor
 	guard              AdmitVisitor

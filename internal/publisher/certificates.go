@@ -140,7 +140,7 @@ func attemptCertificateTransaction(
 	if err != nil || !leaf.NotBefore.Equal(*issuance.NotBefore) || !leaf.NotAfter.Equal(*issuance.NotAfter) {
 		return clientstate.Material{}, errors.New("publisher: server certificate validity does not match certificate material")
 	}
-	renewAt := certificateRenewAt(*issuance.NotBefore, *issuance.NotAfter)
+	renewAt := certificateidentity.RenewAt(*issuance.NotBefore, *issuance.NotAfter)
 	material, err := state.Stage(ctx, hostname, pending, []byte(*issuance.CertificatePem), renewAt, issuance.Id)
 	if err != nil {
 		return material, err
@@ -228,10 +228,6 @@ func certificateIssuanceStateError(state controlv1.CertificateIssuanceState) err
 		return &terminalCertificateIssuanceError{state: state}
 	}
 	return nil
-}
-
-func certificateRenewAt(notBefore, notAfter time.Time) time.Time {
-	return notBefore.Add(notAfter.Sub(notBefore) * 2 / 3).UTC()
 }
 
 func certificateIdempotencyKey(csrDER []byte) string {

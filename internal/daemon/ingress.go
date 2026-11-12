@@ -14,7 +14,7 @@ import (
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/ingress"
-	ingresspool "github.com/tnldotdev/tnl/internal/ingress/pool"
+	ingresspool "github.com/tnldotdev/tnl/internal/naming/ingresspool"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 	"github.com/tnldotdev/tnl/internal/observability"

@@ -19,6 +19,7 @@ import (
 	clientserver "github.com/tnldotdev/tnl/internal/client/server"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
@@ -191,7 +192,7 @@ func TestInvocationWorkerPublicationAndLimits(t *testing.T) {
 		if cfg.RequirePostQuantum == nil || !*cfg.RequirePostQuantum || !cfg.AssignedPublicURL.RequirePostQuantum {
 			t.Fatal("native invocation lost the public HTTPS requirement")
 		}
-		if cfg.Limits != (publisher.ApplicationLimits{Requests: 7, Concurrency: 2, RateRequests: 3, RatePer: 4 * time.Second}) {
+		if cfg.Limits != (applicationlimits.Limits{Requests: 7, Concurrency: 2, RateRequests: 3, RatePer: 4 * time.Second}) {
 			t.Fatalf("worker limits=%+v", cfg.Limits)
 		}
 	case <-time.After(3 * time.Second):

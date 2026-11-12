@@ -12,6 +12,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
@@ -47,8 +49,8 @@ type PublisherAuditClient interface {
 }
 
 type BrowserControlClient interface {
-	browserTokenClient
-	browserAccessClient
+	httpaccess.TokenClient
+	httpaccess.BrowserClient
 }
 
 type PreviewClient interface {
@@ -69,9 +71,9 @@ type Config struct {
 	Control                      PublicURLControlClient
 	Identity                     PublisherIdentityClient
 	Audit                        PublisherAuditClient
-	VisitorControl               VisitorPolicyClient
+	VisitorControl               httpaccess.PolicyClient
 	BrowserControl               BrowserControlClient
-	Shares                       ShareAccessClient
+	Shares                       httpaccess.ShareClient
 	Previews                     PreviewClient
 	FeedbackControl              FeedbackClient
 	Management                   PublicURLManagementClient
@@ -101,7 +103,7 @@ type Config struct {
 	AdmitRequest                 func(*http.Request, PublishRunIdentity) error
 	ObserveResponse              ResponseObserver
 	Mounts                       []publisherproxy.Mount
-	Limits                       ApplicationLimits
+	Limits                       applicationlimits.Limits
 	ObserveSummary               inspection.Observer
 	PromoteVisitor               PromoteVisitor
 	AdmitVisitor                 AdmitVisitor

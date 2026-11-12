@@ -11,7 +11,7 @@ import (
 	controlrelay "github.com/tnldotdev/tnl/internal/control/api/private/relay"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 )
 
 type unusedIngressStore struct{ controlingress.Store }
@@ -65,7 +65,7 @@ func TestPublicAPISurfacesFollowRegisteredRoutes(t *testing.T) {
 }
 
 func TestPrivateAPISurfacesFollowTheirRouters(t *testing.T) {
-	secrets, err := serviceapi.NewBearerSecrets("cluster-secret-012345678901234567890123", "")
+	secrets, err := serverhttp.NewBearerSecrets("cluster-secret-012345678901234567890123", "")
 	if err != nil {
 		t.Fatal(err)
 	}

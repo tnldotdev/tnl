@@ -33,11 +33,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/miekg/dns"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	"github.com/tnldotdev/tnl/internal/client/supervisor"
+	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	publisherdiscovery "github.com/tnldotdev/tnl/internal/publisher/target/discovery"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -46,7 +46,7 @@ const targetHostname = "cluster.local.example.test"
 
 type Fixture struct {
 	Server           *httptest.Server
-	Job              supervisor.Job
+	Job              installedjobs.Job
 	Key              ed25519.PrivateKey
 	Profile          *clientstate.Store
 	Heartbeat        chan controlv1.ServiceRunHeartbeat
@@ -97,8 +97,8 @@ func New(t *testing.T) *Fixture {
 	f.Server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { f.serve(t, w, r) }))
 	t.Cleanup(f.Server.Close)
 	serverCA := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: f.Server.Certificate().Raw})
-	f.Job = supervisor.Job{Kind: supervisor.KindGroup, Name: "cloud-default", Server: f.Server.URL, ServerCAPEM: serverCA, PublisherIdentityID: member.PublisherIdentityId, GroupMember: &member, GroupInstance: "default"}
-	f.Job.ID = supervisor.JobKey(f.Job.Server, "group", member.GroupId+":default")
+	f.Job = installedjobs.Job{Kind: installedjobs.KindGroup, Name: "cloud-default", Server: f.Server.URL, ServerCAPEM: serverCA, PublisherIdentityID: member.PublisherIdentityId, GroupMember: &member, GroupInstance: "default"}
+	f.Job.ID = installedjobs.JobKey(f.Job.Server, "group", member.GroupId+":default")
 	database, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
 	if err != nil {
 		t.Fatal(err)
@@ -263,10 +263,10 @@ func (f *Fixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 		}
 		// stop before relay admission: the fixture proves connector preparation and
 		// real verified target preflight, without inventing a ready relay.
-		serviceapi.WriteProblem(w, http.StatusServiceUnavailable, "unavailable", "fixture heartbeat boundary", "")
+		serverhttp.WriteProblem(w, http.StatusServiceUnavailable, "unavailable", "fixture heartbeat boundary", "")
 	default:
 		if strings.HasSuffix(r.URL.Path, "/certificate-issuances") {
-			serviceapi.WriteProblem(w, http.StatusServiceUnavailable, "unavailable", "fixture certificate boundary", "")
+			serverhttp.WriteProblem(w, http.StatusServiceUnavailable, "unavailable", "fixture certificate boundary", "")
 			return
 		}
 		t.Errorf("unexpected control operation %s %s", r.Method, r.URL.Path)

@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
@@ -20,7 +20,7 @@ import (
 type ForwardingAcceptorConfig struct {
 	Registry         *Registry
 	CurrentLease     func() relayv1.RelayLease
-	ClusterSecrets   serviceapi.BearerSecrets
+	ClusterSecrets   serverhttp.BearerSecrets
 	StreamCapacity   int
 	StreamsDelta     func(int)
 	CapacityRejected func()
@@ -36,7 +36,7 @@ type ForwardingAcceptorConfig struct {
 type ForwardingAcceptor struct {
 	registry         *Registry
 	currentLease     func() relayv1.RelayLease
-	secrets          serviceapi.BearerSecrets
+	secrets          serverhttp.BearerSecrets
 	streams          chan struct{}
 	streamsDelta     func(int)
 	capacityRejected func()

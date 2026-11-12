@@ -8,7 +8,7 @@ import (
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 )
 
@@ -34,7 +34,7 @@ func TestClaimRejectsMalformedCredentialWithoutStoreCall(t *testing.T) {
 			var problemType string
 			if transport == "direct" {
 				_, err = client.ClaimPublisherConnection(t.Context(), "connection-1", body)
-				var problem *serviceapi.ProblemError
+				var problem *serverhttp.ProblemError
 				if !errors.As(err, &problem) {
 					t.Fatalf("direct error = %v", err)
 				}
@@ -72,7 +72,7 @@ func TestDirectRenewStatus(t *testing.T) {
 	}
 	failure = controlstate.ErrRelayLeaseStale
 	_, err = client.RenewRelay(t.Context(), "relay-1", body)
-	var problem *serviceapi.ProblemError
+	var problem *serverhttp.ProblemError
 	if !errors.As(err, &problem) || problem.Status != http.StatusConflict || problem.Type != "https://tnl.dev/p/relay-lease-stale" {
 		t.Fatalf("stale lease = %#v, %v", problem, err)
 	}

@@ -16,7 +16,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -478,7 +478,7 @@ func retryableControlError(operation string, err error) error {
 }
 
 func relayControlError(operation string, err error) error {
-	var problem *serviceapi.ProblemError
+	var problem *serverhttp.ProblemError
 	if !errors.As(err, &problem) {
 		return retryableControlError(operation, err)
 	}

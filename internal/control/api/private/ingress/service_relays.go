@@ -7,7 +7,7 @@ import (
 	"net/netip"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
@@ -16,7 +16,7 @@ func (s *service) privateStateError(ctx context.Context, err error) error {
 		return nil
 	}
 	if errors.Is(err, controlstate.ErrServiceAccess) {
-		return serviceapi.NewProblemError(http.StatusForbidden, "forbidden", "direct visitor authorization is not current")
+		return serverhttp.NewProblemError(http.StatusForbidden, "forbidden", "direct visitor authorization is not current")
 	}
 	return s.storeError(ctx, err)
 }

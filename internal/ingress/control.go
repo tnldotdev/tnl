@@ -15,7 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
@@ -317,7 +317,7 @@ func (c *Controller) routingLoop(ctx context.Context) error {
 			if ctx.Err() != nil {
 				return nil
 			}
-			var problem *serviceapi.ProblemError
+			var problem *serverhttp.ProblemError
 			if errors.As(err, &problem) && problem.Status == http.StatusConflict &&
 				problem.Code == string(ingressv1.RoutingTableResnapshotRequired) {
 				c.mu.Lock()
@@ -592,7 +592,7 @@ func retryableIngressControlError(operation string, err error) error {
 }
 
 func ingressControlError(operation string, err error) error {
-	var problem *serviceapi.ProblemError
+	var problem *serverhttp.ProblemError
 	if !errors.As(err, &problem) {
 		return retryableIngressControlError(operation, err)
 	}

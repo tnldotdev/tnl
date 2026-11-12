@@ -48,7 +48,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher/local"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 	"github.com/tnldotdev/tnl/internal/relay"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/oidctest"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
@@ -944,7 +944,7 @@ func (f *cliWorkflow) relay(t *testing.T, database *controlstate.Database, id st
 	if err != nil {
 		t.Fatal(err)
 	}
-	secrets, err := serviceapi.NewBearerSecrets(cliWorkflowClusterSecret, "")
+	secrets, err := serverhttp.NewBearerSecrets(cliWorkflowClusterSecret, "")
 	if err != nil {
 		t.Fatal(err)
 	}

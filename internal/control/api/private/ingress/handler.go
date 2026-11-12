@@ -9,7 +9,7 @@ import (
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
@@ -30,7 +30,7 @@ type Store interface {
 
 type Config struct {
 	Store               Store
-	ClusterSecrets      serviceapi.BearerSecrets
+	ClusterSecrets      serverhttp.BearerSecrets
 	LeaseDuration       time.Duration
 	RoutingPollInterval time.Duration
 	Now                 func() time.Time
@@ -39,7 +39,7 @@ type Config struct {
 
 type handler struct {
 	service        *service
-	clusterSecrets serviceapi.BearerSecrets
+	clusterSecrets serverhttp.BearerSecrets
 	mux            *http.ServeMux
 }
 
@@ -64,17 +64,17 @@ func NewHandler(config Config) (*handler, error) {
 	ingressv1.HandlerWithOptions(generatedServer{handler: h}, ingressv1.StdHTTPServerOptions{
 		BaseRouter: h.mux,
 		ErrorHandlerFunc: func(response http.ResponseWriter, _ *http.Request, _ error) {
-			serviceapi.WriteProblem(response, http.StatusBadRequest, "invalid_request", "Ingress request parameters are invalid", "")
+			serverhttp.WriteProblem(response, http.StatusBadRequest, "invalid_request", "Ingress request parameters are invalid", "")
 		},
 	})
 	h.mux.HandleFunc("/", func(response http.ResponseWriter, _ *http.Request) {
-		serviceapi.WriteProblem(response, http.StatusNotFound, "not_found", "Ingress service endpoint not found", "")
+		serverhttp.WriteProblem(response, http.StatusNotFound, "not_found", "Ingress service endpoint not found", "")
 	})
 	return h, nil
 }
 
 func (h *handler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
-	if !serviceapi.AuthenticateClusterRequest(response, request, h.clusterSecrets) {
+	if !serverhttp.AuthenticateClusterRequest(response, request, h.clusterSecrets) {
 		return
 	}
 	h.mux.ServeHTTP(response, request)
@@ -88,38 +88,38 @@ func (h *handler) MatchedPattern(request *http.Request) string {
 
 func (h *handler) registerIngress(response http.ResponseWriter, request *http.Request) {
 	var body ingressv1.IngressRegistration
-	if !serviceapi.DecodeJSON(response, request, &body) {
+	if !serverhttp.DecodeJSON(response, request, &body) {
 		return
 	}
 	lease, err := h.service.RegisterIngress(request.Context(), body)
 	if h.writeServiceError(response, request, err) {
 		return
 	}
-	serviceapi.WriteJSON(response, http.StatusOK, lease)
+	serverhttp.WriteJSON(response, http.StatusOK, lease)
 }
 
 func (h *handler) renewIngress(response http.ResponseWriter, request *http.Request, ingressID ingressv1.IngressID) {
 	var body ingressv1.IngressRenewal
-	if !serviceapi.DecodeJSON(response, request, &body) {
+	if !serverhttp.DecodeJSON(response, request, &body) {
 		return
 	}
 	lease, err := h.service.RenewIngress(request.Context(), ingressID, body)
 	if h.writeServiceError(response, request, err) {
 		return
 	}
-	serviceapi.WriteJSON(response, http.StatusOK, lease)
+	serverhttp.WriteJSON(response, http.StatusOK, lease)
 }
 
 func (h *handler) drainIngress(response http.ResponseWriter, request *http.Request, ingressID ingressv1.IngressID) {
 	var body ingressv1.IngressDrainRequest
-	if !serviceapi.DecodeJSON(response, request, &body) {
+	if !serverhttp.DecodeJSON(response, request, &body) {
 		return
 	}
 	lease, err := h.service.DrainIngress(request.Context(), ingressID, body)
 	if h.writeServiceError(response, request, err) {
 		return
 	}
-	serviceapi.WriteJSON(response, http.StatusOK, lease)
+	serverhttp.WriteJSON(response, http.StatusOK, lease)
 }
 
 func (h *handler) routingTableSnapshot(
@@ -132,7 +132,7 @@ func (h *handler) routingTableSnapshot(
 	if h.writeServiceError(response, request, err) {
 		return
 	}
-	serviceapi.WriteJSON(response, http.StatusOK, snapshot)
+	serverhttp.WriteJSON(response, http.StatusOK, snapshot)
 }
 
 func (h *handler) routingTableEvents(
@@ -145,7 +145,7 @@ func (h *handler) routingTableEvents(
 	if h.writeServiceError(response, request, err) {
 		return
 	}
-	serviceapi.WriteJSON(response, http.StatusOK, page)
+	serverhttp.WriteJSON(response, http.StatusOK, page)
 }
 
 func (h *handler) observeRecovery(
@@ -155,24 +155,24 @@ func (h *handler) observeRecovery(
 	recoveryEpisodeID int64,
 ) {
 	var body ingressv1.PublicURLRecoveryObservationRequest
-	if !serviceapi.DecodeJSON(response, request, &body) {
+	if !serverhttp.DecodeJSON(response, request, &body) {
 		return
 	}
 	observation, err := h.service.ObservePublicURLRecovery(request.Context(), ingressID, recoveryEpisodeID, body)
 	if h.writeServiceError(response, request, err) {
 		return
 	}
-	serviceapi.WriteJSON(response, http.StatusOK, observation)
+	serverhttp.WriteJSON(response, http.StatusOK, observation)
 }
 
 func (h *handler) writeServiceError(response http.ResponseWriter, request *http.Request, err error) bool {
 	if err != nil {
-		var problem *serviceapi.ProblemError
+		var problem *serverhttp.ProblemError
 		if !errors.As(err, &problem) {
 			err = h.service.privateStateError(request.Context(), err)
 		}
 	}
-	return serviceapi.WriteServiceError(response, request, err, h.service.report, "The ingress service request failed")
+	return serverhttp.WriteError(response, request, err, h.service.report, "The ingress service request failed")
 }
 
 // storeProblem is shared by HTTP and standalone adapters. role controllers see
@@ -195,8 +195,8 @@ func ingressLeaseIdentity(
 	ingressID, ingressRunID string,
 	ingressLeaseRevision int64,
 ) (controlstate.IngressLeaseIdentity, bool) {
-	revision, ok := serviceapi.Positive(ingressLeaseRevision)
-	if !ok || !serviceapi.ValidIdentifiers(ingressID, ingressRunID) {
+	revision, ok := serverhttp.Positive(ingressLeaseRevision)
+	if !ok || !serverhttp.ValidIdentifiers(ingressID, ingressRunID) {
 		return controlstate.IngressLeaseIdentity{}, false
 	}
 	return controlstate.IngressLeaseIdentity{

@@ -10,6 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
+	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
+
 	"github.com/tnldotdev/tnl/internal/publisher/toolbar"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -125,7 +128,7 @@ func TestFeedbackResolveAndReopenUsePreviewAccess(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, "/__tnl/feedback/fb_0123456789abcdefghijkl/events", strings.NewReader(`{"schema_version":1,"type":"`+kind+`"}`))
 			request.Header.Set("Idempotency-Key", kind)
 			if !allowedIP {
-				request.AddCookie(&http.Cookie{Name: shareCookieName, Value: "shr_0123456789abcdefghijkl.secret"})
+				request.AddCookie(&http.Cookie{Name: httpaccess.ShareCookieName, Value: "shr_0123456789abcdefghijkl.secret"})
 			}
 			response := httptest.NewRecorder()
 			runtime.handle(response, request, !allowedIP)
@@ -163,7 +166,7 @@ func TestFeedbackListFiltersKeepPublisherScope(t *testing.T) {
 }
 
 func TestFeedbackBrowserAuthorComesFromSessionFactNotVisitorToken(t *testing.T) {
-	policy, _, token := httpPermissionFixture(t, false)
+	policy, _, token := visitorfixture.Policy(t, false)
 	client := &feedbackControlStub{}
 	runtime := &feedbackRuntime{client: client, runID: "pr_0123456789abcdefghijkl", version: 1, previewID: "pv_0123456789abcdefghijkl"}
 	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "preview.example.test", PublicURLID: "url_" + strings.Repeat("A", 22), VisitorPolicy: policy, Feedback: runtime,
@@ -172,10 +175,10 @@ func TestFeedbackBrowserAuthorComesFromSessionFactNotVisitorToken(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer route.Close()
-	for _, cookie := range []string{"", browserAccessCookieName + "=" + liveBrowserCookie, browserAccessCookieName + "=invalid", browserAccessCookieName + "=" + liveBrowserCookie + "; " + browserAccessCookieName + "=" + liveBrowserCookie} {
-		r := permissionRequest()
+	for _, cookie := range []string{"", httpaccess.BrowserCookieName + "=" + liveBrowserCookie, httpaccess.BrowserCookieName + "=invalid", httpaccess.BrowserCookieName + "=" + liveBrowserCookie + "; " + httpaccess.BrowserCookieName + "=" + liveBrowserCookie} {
+		r := visitorfixture.Request()
 		r.URL.Path = "/__tnl/feedback"
-		r.Header.Set(visitorTokenHeader, token.Reveal())
+		r.Header.Set(httpaccess.VisitorTokenHeader, token.Reveal())
 		r.Header.Set("Cookie", cookie)
 		response := httptest.NewRecorder()
 		client.page = controlv1.PreviewPageFeedbackRequest{}
@@ -184,7 +187,7 @@ func TestFeedbackBrowserAuthorComesFromSessionFactNotVisitorToken(t *testing.T) 
 			if response.Code != http.StatusOK || client.page.Access.BrowserCookieSecret != nil {
 				t.Fatal("visitor token supplied verified author facts")
 			}
-		} else if cookie == browserAccessCookieName+"="+liveBrowserCookie {
+		} else if cookie == httpaccess.BrowserCookieName+"="+liveBrowserCookie {
 			if response.Code != http.StatusOK || client.page.Access.BrowserCookieSecret == nil || *client.page.Access.BrowserCookieSecret != liveBrowserCookie {
 				t.Fatal("feedback lost its factual browser sign-in")
 			}

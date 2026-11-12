@@ -1,5 +1,3 @@
-// package privatepublisher owns service runs, verified visitor TLS and
-// authenticated publisher connections. certificate keys stay in CertificateCache.
 package service
 
 import (
@@ -19,11 +17,13 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
-	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
+	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/peer"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
+
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	telemetryv1 "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -41,10 +41,10 @@ type Prepared struct {
 	managedHostname     string
 	managedProtocol     config.ProtocolName
 	managedTargetTLS    *tls.Config
-	managedVisitor      func(tunnelv1.ServiceForwardingHeader) publisher.ServiceVisitorAuthentication
+	managedVisitor      func(tunnelv1.ServiceForwardingHeader) servicestream.Authentication
 	servicePort         uint16
 	managedPublic       bool
-	serviceHTTPRequests *publisher.ServiceHTTPRequestLimits
+	serviceHTTPRequests *requestlimit.HTTP
 	policy              *visitorlease.Lease
 	metadataRevision    int64
 }
@@ -510,9 +510,9 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConn
 	return b.forwardManaged(ctx, connection, b.prepared.managedVisitor(header), authority)
 }
 
-func (b *Bound) forwardManaged(ctx context.Context, stream net.Conn, visitor publisher.ServiceVisitorAuthentication, authority string) error {
+func (b *Bound) forwardManaged(ctx context.Context, stream net.Conn, visitor servicestream.Authentication, authority string) error {
 	check := func() error {
-		if native, ok := visitor.(publisher.ConnectorVisitor); ok {
+		if native, ok := visitor.(servicestream.ConnectorVisitor); ok {
 			_, err := native.Admission.CheckUse(ctx)
 			return err
 		}
@@ -525,7 +525,7 @@ func (b *Bound) forwardManaged(ctx context.Context, stream net.Conn, visitor pub
 	if b.prepared.targetResolver != nil {
 		resolve := ctx
 		cancel := func() {}
-		if native, ok := visitor.(publisher.ConnectorVisitor); ok {
+		if native, ok := visitor.(servicestream.ConnectorVisitor); ok {
 			resolve, cancel = context.WithDeadline(ctx, native.Admission.SetupDeadline())
 		}
 		var err error
@@ -544,7 +544,7 @@ func (b *Bound) forwardManaged(ctx context.Context, stream net.Conn, visitor pub
 	if err := check(); err != nil {
 		return err
 	}
-	managed := publisher.ServiceStream{Protocol: b.prepared.managedProtocol, Public: b.prepared.managedPublic, Hostname: b.prepared.managedHostname, Target: target, HTTPRequests: b.prepared.serviceHTTPRequests,
+	managed := servicestream.Stream{Protocol: b.prepared.managedProtocol, Public: b.prepared.managedPublic, Hostname: b.prepared.managedHostname, Target: target, HTTPRequests: b.prepared.serviceHTTPRequests,
 		Authority: authority,
 		TLS:       &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return b.prepared.currentCertificate() }}, TargetTLS: targetTLS, Visitor: visitor}
 	return managed.Forward(ctx, stream)

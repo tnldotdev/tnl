@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
+
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -84,7 +86,7 @@ func newCertificateTestControl(t *testing.T, hostname string, plan controlv1.Cer
 	if err != nil {
 		t.Fatal(err)
 	}
-	signer := publicURLTestCertificate(t, "issuer.example")
+	signer := visitorfixture.Certificate(t, "issuer.example")
 	signer.Leaf.IsCA, signer.Leaf.BasicConstraintsValid = true, true
 	signer.Leaf.KeyUsage, signer.Leaf.ExtKeyUsage = x509.KeyUsageCertSign, nil
 	signer.Leaf.NotAfter = time.Now().Add(90 * 24 * time.Hour)

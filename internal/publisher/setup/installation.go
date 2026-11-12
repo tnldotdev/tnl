@@ -14,9 +14,9 @@ import (
 	"time"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
@@ -26,7 +26,7 @@ import (
 // publicationInstallation is the entire privilege boundary. it cannot carry an
 // operator session, enrollment secret, arbitrary executable, or supervisor unit.
 type Installation struct {
-	Job        supervisor.Job      `json:"job"`
+	Job        installedjobs.Job   `json:"job"`
 	Credential credentialfile.File `json:"credential"`
 }
 
@@ -43,8 +43,8 @@ type Publication struct {
 	Server       string
 	Route        controlv1.PublicURL
 	Control      publisheridentity.OwnerControl
-	Options      supervisor.ServiceOptions
-	Job          supervisor.Job
+	Options      installedjobs.ServiceOptions
+	Job          installedjobs.Job
 	TargetCAFile string
 	ServerCAFile string
 	ProjectRoot  string
@@ -55,7 +55,7 @@ type Presentation struct {
 	Output      io.Writer
 	Diagnostics io.Writer
 	Installing  func() error
-	Jobs        func([]supervisor.Job, string) error
+	Jobs        func([]installedjobs.Job, string) error
 }
 
 func InstallPublication(ctx context.Context, selected Publication, presentation Presentation) error {
@@ -73,7 +73,7 @@ func InstallPublication(ctx context.Context, selected Publication, presentation 
 	if err != nil {
 		return err
 	}
-	control, authority, err := supervisor.Clients(supervisor.Job{Server: server})
+	control, authority, err := installedjobs.Clients(installedjobs.Job{Server: server})
 	if err != nil {
 		return err
 	}
@@ -82,7 +82,7 @@ func InstallPublication(ctx context.Context, selected Publication, presentation 
 		return err
 	}
 	job := selected.Job
-	job.Kind, job.ID, job.Server, job.PublicURLID, job.Protocol = supervisor.KindPublicURL, supervisor.PublicURLJobKey(server, publicURL.Id), server, publicURL.Id, config.ProtocolHTTP
+	job.Kind, job.ID, job.Server, job.PublicURLID, job.Protocol = installedjobs.KindPublicURL, installedjobs.PublicURLJobKey(server, publicURL.Id), server, publicURL.Id, config.ProtocolHTTP
 	job.PublisherIdentityID, job.GrantID, job.VerifyReadiness = credential.PublisherIdentityID, credential.GrantID, true
 	caPath := selected.TargetCAFile
 	if caPath != "" && !filepath.IsAbs(caPath) {
@@ -99,14 +99,14 @@ func InstallPublication(ctx context.Context, selected Publication, presentation 
 	return DeliverInstallation(ctx, options, Installation{Job: job, Credential: credential}, presentation)
 }
 
-func DeliverInstallation(ctx context.Context, options supervisor.ServiceOptions, payload Installation, presentation Presentation) error {
+func DeliverInstallation(ctx context.Context, options installedjobs.ServiceOptions, payload Installation, presentation Presentation) error {
 	binary, err := os.Executable()
 	if err != nil {
 		return err
 	}
 	if options.User || os.Geteuid() == 0 {
 		options.BinarySource = binary
-		return Register(ctx, options, payload, supervisor.HostExecutor{}, presentation.Jobs)
+		return Register(ctx, options, payload, installedjobs.HostExecutor{}, presentation.Jobs)
 	}
 	// sudo reads the password from the terminal before the private payload pipe
 	// is attached. no publisher key or human token enters argv or the environment.
@@ -132,11 +132,11 @@ func DeliverInstallation(ctx context.Context, options supervisor.ServiceOptions,
 	}
 	var result RegistrationResult
 	if json.Unmarshal(response.Bytes(), &result) != nil {
-		return failure.Wrap("read system installation result", failure.ServerResponseInvalid, supervisor.ErrScope)
+		return failure.Wrap("read system installation result", failure.ServerResponseInvalid, installedjobs.ErrScope)
 	}
 	if result.Reason != "" {
 		if _, ok := failure.DefinitionFor(result.Reason); !ok {
-			return supervisor.ErrScope
+			return installedjobs.ErrScope
 		}
 		return failure.Wrap("install system publication", result.Reason, errors.New("privileged installation failed"))
 	}
@@ -144,16 +144,16 @@ func DeliverInstallation(ctx context.Context, options supervisor.ServiceOptions,
 	return err
 }
 
-func RegisterInput(ctx context.Context, resolveOptions func() (supervisor.ServiceOptions, error), input io.Reader, executor supervisor.Executor, render func([]supervisor.Job, string) error) error {
+func RegisterInput(ctx context.Context, resolveOptions func() (installedjobs.ServiceOptions, error), input io.Reader, executor installedjobs.Executor, render func([]installedjobs.Job, string) error) error {
 	data, err := io.ReadAll(io.LimitReader(input, (512<<10)+1))
 	if err != nil || len(data) > 512<<10 {
-		return supervisor.ErrScope
+		return installedjobs.ErrScope
 	}
 	var payload Installation
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&payload) != nil || decoder.Decode(new(any)) != io.EOF {
-		return supervisor.ErrScope
+		return installedjobs.ErrScope
 	}
 	options, err := resolveOptions()
 	if err != nil {
@@ -164,21 +164,21 @@ func RegisterInput(ctx context.Context, resolveOptions func() (supervisor.Servic
 		return err
 	}
 	if executor == nil {
-		executor = supervisor.HostExecutor{}
+		executor = installedjobs.HostExecutor{}
 	}
 	return Register(ctx, options, payload, executor, render)
 }
 
-func Register(ctx context.Context, options supervisor.ServiceOptions, payload Installation, executor supervisor.Executor, render func([]supervisor.Job, string) error) error {
+func Register(ctx context.Context, options installedjobs.ServiceOptions, payload Installation, executor installedjobs.Executor, render func([]installedjobs.Job, string) error) error {
 	identity, private, err := payload.Credential.Validate()
 	if err != nil {
 		return err
 	}
 	job := payload.Job
 	if payload.Credential.ControlURL != job.Server || job.PublisherIdentityID != identity.ClientId || job.GrantID != identity.GrantId {
-		return supervisor.ErrScope
+		return installedjobs.ErrScope
 	}
-	control, authority, err := supervisor.Clients(job)
+	control, authority, err := installedjobs.Clients(job)
 	if err != nil {
 		return err
 	}
@@ -187,31 +187,31 @@ func Register(ctx context.Context, options supervisor.ServiceOptions, payload In
 		return err
 	}
 	switch job.Kind {
-	case supervisor.KindPublicURL:
+	case installedjobs.KindPublicURL:
 		job.VerifyReadiness = true
-		if identity.PublicUrlId == nil || *identity.PublicUrlId != job.PublicURLID || job.ID != supervisor.PublicURLJobKey(job.Server, job.PublicURLID) {
-			return supervisor.ErrScope
+		if identity.PublicUrlId == nil || *identity.PublicUrlId != job.PublicURLID || job.ID != installedjobs.PublicURLJobKey(job.Server, job.PublicURLID) {
+			return installedjobs.ErrScope
 		}
 		publicURL, err := native.SavedPublicURL(ctx)
 		if err != nil {
 			return err
 		}
 		if publicURL.Id != job.PublicURLID || publicURL.Ephemeral || publicURL.Purpose != controlv1.App || publicURL.ServiceProtocol != controlv1.Http {
-			return supervisor.ErrScope
+			return installedjobs.ErrScope
 		}
 		if _, err := target.EnrolledAddress(publicURL, job.Target); err != nil {
 			return err
 		}
-	case supervisor.KindService:
-		if identity.ServiceId == nil || *identity.ServiceId != job.ServiceID || job.ID != supervisor.ServiceJobKey(job.Server, job.ServiceID) {
-			return supervisor.ErrScope
+	case installedjobs.KindService:
+		if identity.ServiceId == nil || *identity.ServiceId != job.ServiceID || job.ID != installedjobs.ServiceJobKey(job.Server, job.ServiceID) {
+			return installedjobs.ErrScope
 		}
 		service, err := native.SavedService(ctx)
 		if err != nil {
 			return err
 		}
 		if service.TrustRevision != job.TrustRevision || service.PublisherPool != job.PublisherPool {
-			return supervisor.ErrScope
+			return installedjobs.ErrScope
 		}
 		if err := publisheridentity.MatchServiceDeclaration(service, string(job.Protocol), job.Trust); err != nil {
 			return err
@@ -220,9 +220,9 @@ func Register(ctx context.Context, options supervisor.ServiceOptions, payload In
 			return err
 		}
 	default:
-		return supervisor.ErrScope
+		return installedjobs.ErrScope
 	}
-	registry, err := supervisor.Open(ctx, supervisor.OpenOptions{Root: options.Root, User: options.User, TestOwnerUID: options.TestOwnerUID})
+	registry, err := installedjobs.Open(ctx, installedjobs.OpenOptions{Root: options.Root, User: options.User, TestOwnerUID: options.TestOwnerUID})
 	if err != nil {
 		return err
 	}
@@ -232,7 +232,7 @@ func Register(ctx context.Context, options supervisor.ServiceOptions, payload In
 	}
 	// desired state and the scoped key are durable before the supervisor starts.
 	// a failed install is retried with this same identity, never a broader grant.
-	if err := supervisor.InstallService(ctx, options, executor); err != nil {
+	if err := installedjobs.InstallService(ctx, options, executor); err != nil {
 		return err
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
@@ -247,13 +247,13 @@ func Register(ctx context.Context, options supervisor.ServiceOptions, payload In
 	return render(jobs, job.ID)
 }
 
-func WaitReady(ctx context.Context, registry *supervisor.Registry, id string) error {
+func WaitReady(ctx context.Context, registry *installedjobs.Registry, id string) error {
 	for {
 		job, err := registry.ResolveJob(ctx, id)
 		if err != nil {
 			return err
 		}
-		if job.Enabled && job.Status.State == "ready" && (job.Kind == supervisor.KindService || job.Status.RunNumber != 0 && job.Status.PublicURL != "") {
+		if job.Enabled && job.Status.State == "ready" && (job.Kind == installedjobs.KindService || job.Status.RunNumber != 0 && job.Status.PublicURL != "") {
 			return nil
 		}
 		if job.Status.State == "blocked" {

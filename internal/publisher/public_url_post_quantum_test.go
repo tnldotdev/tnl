@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+
+	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
 )
 
 func TestPublicHTTPSPostQuantumPolicy(t *testing.T) {
@@ -32,7 +34,7 @@ func TestPublicHTTPSPostQuantumPolicy(t *testing.T) {
 				w.WriteHeader(http.StatusNoContent)
 			}))
 			defer target.Close()
-			certificate := publicURLTestCertificate(t, "route.example")
+			certificate := visitorfixture.Certificate(t, "route.example")
 			route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "route.example", Target: target.URL, Certificate: certificate, RequirePostQuantum: test.require})
 			if err != nil {
 				t.Fatal(err)
@@ -48,7 +50,7 @@ func TestPublicHTTPSPostQuantumPolicy(t *testing.T) {
 			}
 			defer func() { _ = wire.Close(); awaitPublisherTest(t, handled) }()
 			visitor := tls.Client(wire, &tls.Config{
-				RootCAs: rootsForCertificate(t, certificate), ServerName: "route.example",
+				RootCAs: visitorfixture.Roots(t, certificate), ServerName: "route.example",
 				MinVersion: test.version, MaxVersion: test.version, CurvePreferences: []tls.CurveID{test.group},
 			})
 			err = visitor.HandshakeContext(t.Context())

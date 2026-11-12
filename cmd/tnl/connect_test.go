@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"github.com/alecthomas/kong"
-	clientSupervisor "github.com/tnldotdev/tnl/internal/client/supervisor"
 	"github.com/tnldotdev/tnl/internal/failure"
+	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 )
 
 func TestPrivateInstallPreflightPrecedesClientAndSupervisorState(t *testing.T) {
@@ -25,7 +25,7 @@ func TestPrivateInstallPreflightPrecedesClientAndSupervisorState(t *testing.T) {
 			args := append([]string{"--no-config"}, command...)
 			args = append(args, "--state-dir="+state, "--system-state-dir="+supervisor)
 			err := run(t.Context(), args, io.Discard, io.Discard)
-			systemOwnerPreflight := slices.Contains(command, "--system") && os.Geteuid() != 0 && errors.Is(err, clientSupervisor.ErrUnsafeState)
+			systemOwnerPreflight := slices.Contains(command, "--system") && os.Geteuid() != 0 && errors.Is(err, installedjobs.ErrUnsafeState)
 			if reason, ok := failure.ReasonOf(err); !systemOwnerPreflight && (!ok || reason != failure.ServiceNotInstalled) {
 				t.Fatalf("preflight = %v", err)
 			}

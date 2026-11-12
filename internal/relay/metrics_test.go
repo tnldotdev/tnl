@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -69,7 +69,7 @@ func TestRelayControlMetricsRecordCanceledAndTimedOutCalls(t *testing.T) {
 }
 
 func TestForwardingAcceptorReportsStreamCapacity(t *testing.T) {
-	secrets, err := serviceapi.NewBearerSecrets(strings.Repeat("s", 32), "")
+	secrets, err := serverhttp.NewBearerSecrets(strings.Repeat("s", 32), "")
 	if err != nil {
 		t.Fatal(err)
 	}

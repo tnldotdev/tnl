@@ -11,6 +11,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
+
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -20,7 +22,7 @@ func TestPublicCapacityGuestDeadlineClosesSetupAndIdleConnections(t *testing.T) 
 	for _, stage := range []string{"metadata", "tls", "authorized"} {
 		t.Run(stage, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				policy, update, _ := httpPermissionScopeFixture(t, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: certificateTestPublicURLID}, "route.example", 443, true)
+				policy, update, _ := visitorfixture.ScopePolicy(t, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: certificateTestPublicURLID}, "route.example", 443, true)
 				update.BoundConnections = true
 				update.View.ValidUntil = time.Now().Add(3 * time.Second)
 				if err := policy.Apply(policy.Begin(), update); err != nil {
@@ -28,7 +30,7 @@ func TestPublicCapacityGuestDeadlineClosesSetupAndIdleConnections(t *testing.T) 
 				}
 				route, err := newTestPublicURLServer(t, PublicURLServerConfig{
 					Hostname: "route.example", VisitorPolicy: policy, StreamCapacity: 1,
-					Certificate: publicURLTestCertificate(t, "route.example"),
+					Certificate: visitorfixture.Certificate(t, "route.example"),
 					Handler:     http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }),
 				})
 				if err != nil {
@@ -55,7 +57,7 @@ func TestPublicCapacityGuestDeadlineClosesSetupAndIdleConnections(t *testing.T) 
 					if _, err := peer.Write(metadata); err != nil {
 						t.Fatal(err)
 					}
-					secured := tls.Client(peer, &tls.Config{RootCAs: rootsForCertificate(t, *route.certificate.Load()), ServerName: "route.example"})
+					secured := tls.Client(peer, &tls.Config{RootCAs: visitorfixture.Roots(t, *route.certificate.Load()), ServerName: "route.example"})
 					if err := secured.HandshakeContext(t.Context()); err != nil {
 						t.Fatal(err)
 					}

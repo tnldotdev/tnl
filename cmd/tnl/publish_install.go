@@ -10,9 +10,9 @@ import (
 	"runtime"
 
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
-	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	"github.com/tnldotdev/tnl/internal/publisher/setup"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -46,7 +46,7 @@ func runPublicationInstall(ctx context.Context, flags publishCommand, output, di
 	if err != nil {
 		return err
 	}
-	if _, err := supervisor.ServiceUnit(runtime.GOOS, "/tnl", options.Root); err != nil {
+	if _, err := installedjobs.ServiceUnit(runtime.GOOS, "/tnl", options.Root); err != nil {
 		return err
 	}
 	settings := invocation.InstallationOptions{PublicOptions: publicOptions(flags), Installation: options, ServiceName: flags.ServiceName, ReadinessPath: flags.publicationReadinessPath(), ServerCAFile: flags.ServerCAFile}
@@ -57,12 +57,12 @@ func runPublicationInstall(ctx context.Context, flags publishCommand, output, di
 func installationPresentation(output, diagnostics io.Writer) setup.Presentation {
 	return setup.Presentation{Input: os.Stdin, Output: output, Diagnostics: diagnostics, Installing: func() error {
 		return writeHumanFrame(diagnostics, "tnl publish", "installing", "sudo will ask for permission to install the system publisher")
-	}, Jobs: func(jobs []supervisor.Job, selected string) error {
+	}, Jobs: func(jobs []installedjobs.Job, selected string) error {
 		return renderSystemJobs(output, "tnl publish", jobs, selected)
 	}}
 }
 
-func runPublicationRegister(ctx context.Context, flags serviceRegisterCommand, input io.Reader, output io.Writer, executor supervisor.Executor) error {
+func runPublicationRegister(ctx context.Context, flags serviceRegisterCommand, input io.Reader, output io.Writer, executor installedjobs.Executor) error {
 	if flags.PrivateResult {
 		flags.PrivateResult = false
 		var buffer bytes.Buffer
@@ -77,7 +77,7 @@ func runPublicationRegister(ctx context.Context, flags serviceRegisterCommand, i
 		}
 		return json.NewEncoder(output).Encode(result)
 	}
-	return setup.RegisterInput(ctx, flags.options, input, executor, func(jobs []supervisor.Job, selected string) error {
+	return setup.RegisterInput(ctx, flags.options, input, executor, func(jobs []installedjobs.Job, selected string) error {
 		return renderSystemJobs(output, "tnl publish", jobs, selected)
 	})
 }

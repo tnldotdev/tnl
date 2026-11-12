@@ -3,21 +3,21 @@ package identity
 import (
 	"context"
 
-	publisherruntime "github.com/tnldotdev/tnl/internal/publisher/runtime"
+	processidentity "github.com/tnldotdev/tnl/internal/publisher/processidentity"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // RemoteRuntime is called only by an actual deployed runtime owner, never while
 // provisioning, importing or verifying a key. local app adapters do not call it.
-func (n *Native) RemoteRuntime(server string) (*publisherruntime.Owner, error) {
+func (n *Native) RemoteRuntime(server string) (*processidentity.Owner, error) {
 	if n == nil || n.Runtime == nil || server != n.ControlURL() {
 		return nil, ErrScope
 	}
-	return publisherruntime.New(n.Runtime, server, n.identity.clientID, n.identity.keyID, n.identity.grantID, n.private)
+	return processidentity.New(n.Runtime, server, n.identity.clientID, n.identity.keyID, n.identity.grantID, n.private)
 }
 
-func (n *Native) WithRuntime(owner *publisherruntime.Owner) { n.runtime = owner }
+func (n *Native) WithRuntime(owner *processidentity.Owner) { n.runtime = owner }
 
 func (n *Native) renewRuntime(ctx context.Context) error {
 	if n.runtime == nil {

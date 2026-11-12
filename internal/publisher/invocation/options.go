@@ -7,10 +7,10 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/publisher"
+	installedjobs "github.com/tnldotdev/tnl/internal/installed"
+	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -40,7 +40,7 @@ type PublicOptions struct {
 	Anonymous          bool
 	IP                 []string
 	Access             *config.Access
-	Limits             publisher.ApplicationLimits
+	Limits             applicationlimits.Limits
 	InspectionMode     config.InspectionMode
 	Inspection         *config.Inspection
 	Resolver           target.TargetResolver
@@ -61,7 +61,7 @@ type ServiceOptions struct {
 	ServiceName             string
 	SystemStateDir          string
 	ServerCAFile            string
-	Installation            supervisor.ServiceOptions
+	Installation            installedjobs.ServiceOptions
 }
 
 type ServiceEvent struct {
@@ -77,7 +77,7 @@ type ServicePresentation struct {
 	Starting  func()
 	Ready     func()
 	Event     func(ServiceEvent) error
-	Installed func([]supervisor.Job, string) error
+	Installed func([]installedjobs.Job, string) error
 }
 
 type EnrolledOptions struct {
@@ -87,8 +87,8 @@ type EnrolledOptions struct {
 	Enrolled            bool
 	WorkLimits          *config.Limits
 	ReadinessPath       string
-	SelectProtocol      func(controlv1.PublicURLServiceProtocol) (publisher.ApplicationLimits, error)
-	SelectPrivate       func(controlv1.ServiceProtocol) (publisher.ApplicationLimits, error)
+	SelectProtocol      func(controlv1.PublicURLServiceProtocol) (applicationlimits.Limits, error)
+	SelectPrivate       func(controlv1.ServiceProtocol) (applicationlimits.Limits, error)
 	ServicePresentation *ServicePresentation
 }
 
@@ -98,5 +98,5 @@ type BackgroundOptions struct {
 	ServerFromConfig      bool
 	InspectionModeFromCLI bool
 	ReadinessPath         string
-	SelectProtocol        func(string, bool) (publisher.ApplicationLimits, error)
+	SelectProtocol        func(string, bool) (applicationlimits.Limits, error)
 }

@@ -12,7 +12,7 @@ import (
 	controlrelay "github.com/tnldotdev/tnl/internal/control/api/private/relay"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 )
 
 type privateControlSettings struct {
@@ -78,7 +78,7 @@ func privateControlHandler(ingressHandler, relayHandler privateAPIHandler, metri
 			request.Pattern = relayHandler.MatchedPattern(request)
 			relayObserved.ServeHTTP(response, request)
 		default:
-			serviceapi.WriteProblem(response, http.StatusNotFound, "not_found", "Private control endpoint not found", "")
+			serverhttp.WriteProblem(response, http.StatusNotFound, "not_found", "Private control endpoint not found", "")
 		}
 	})
 }

@@ -9,7 +9,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/oidc"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
@@ -68,7 +68,7 @@ type handler struct {
 	config    Config
 	store     Store
 	oidc      *oidc.Server
-	webSecret serviceapi.BearerSecrets
+	webSecret serverhttp.BearerSecrets
 }
 
 var _ authorityv1.ServerInterface = (*handler)(nil)
@@ -107,7 +107,7 @@ func Register(mux *http.ServeMux, cfg Config, store Store) (Routes, error) {
 			return nil, fmt.Errorf("authorityapi: website identity requires an OIDC issuer")
 		}
 		var err error
-		h.webSecret, err = serviceapi.NewBearerSecrets(cfg.WebServiceSecret, "")
+		h.webSecret, err = serverhttp.NewBearerSecrets(cfg.WebServiceSecret, "")
 		if err != nil {
 			return nil, err
 		}

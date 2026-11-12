@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -34,7 +34,7 @@ func TestForwardingAcceptorMalformedHeaderDoesNotCloseSession(t *testing.T) {
 
 func testForwardingHeaderIsolation(t *testing.T, malformed bool) {
 	t.Helper()
-	secrets, err := serviceapi.NewBearerSecrets(strings.Repeat("s", 32), "")
+	secrets, err := serverhttp.NewBearerSecrets(strings.Repeat("s", 32), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func testForwardingRejectionMetrics(t *testing.T, cancelRejection bool) {
 	t.Helper()
 	metrics := observability.New("relay")
 	observer := &forwardingMetricObserver{Metrics: metrics, done: make(chan struct{})}
-	secrets, err := serviceapi.NewBearerSecrets(strings.Repeat("s", 32), "")
+	secrets, err := serverhttp.NewBearerSecrets(strings.Repeat("s", 32), "")
 	if err != nil {
 		t.Fatal(err)
 	}

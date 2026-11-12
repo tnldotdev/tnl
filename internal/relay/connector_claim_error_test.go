@@ -11,15 +11,15 @@ import (
 	"net/netip"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func TestConnectorClaimErrorKeepsDenialOverStaleOverRetryAcrossJoinedCauses(t *testing.T) {
-	stale := &serviceapi.ProblemError{Status: http.StatusConflict, Code: string(relayv1.StaleNetworkBinding)}
-	denied := &serviceapi.ProblemError{Status: http.StatusForbidden, Code: string(relayv1.Unauthenticated)}
+	stale := &serverhttp.ProblemError{Status: http.StatusConflict, Code: string(relayv1.StaleNetworkBinding)}
+	denied := &serverhttp.ProblemError{Status: http.StatusForbidden, Code: string(relayv1.Unauthenticated)}
 	retry := &ControlProblemError{Status: http.StatusServiceUnavailable}
 	for _, test := range []struct {
 		cause error
@@ -34,7 +34,7 @@ func TestConnectorClaimErrorKeepsDenialOverStaleOverRetryAcrossJoinedCauses(t *t
 		{errors.Join(denied, errors.Join(retry, stale)), tunnelv1.Unauthenticated},
 		{errors.Join(&tunnel.ProtocolError{Code: tunnelv1.StaleNetworkBinding}, denied), tunnelv1.Unauthenticated},
 		{errors.Join(&tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}, stale), tunnelv1.Unauthenticated},
-		{&serviceapi.ProblemError{Status: http.StatusServiceUnavailable}, tunnelv1.Unavailable},
+		{&serverhttp.ProblemError{Status: http.StatusServiceUnavailable}, tunnelv1.Unavailable},
 		{errors.Join(retry, &ControlProblemError{Status: http.StatusForbidden}), tunnelv1.Unauthenticated},
 		{errors.New("denied"), tunnelv1.Unauthenticated},
 	} {
@@ -95,7 +95,7 @@ func TestConnectorHTTPClaimPreservesExactStaleNetworkProblem(t *testing.T) {
 	proof.RequestedAt = proof.RequestedAt.UTC()
 	lease := f.acceptor.CurrentLease()
 	_, err = client.ClaimConnectorPeerPairLegFromAcceptedSocket(context.Background(), lease, netip.MustParseAddr("192.0.2.1"), proof, make([]byte, 64))
-	var raw *serviceapi.ProblemError
+	var raw *serverhttp.ProblemError
 	var classified *tunnel.ProtocolError
 	if !errors.As(err, &raw) || raw.Code != string(relayv1.StaleNetworkBinding) || !errors.As(connectorClaimError(err), &classified) || classified.Code != tunnelv1.StaleNetworkBinding {
 		t.Fatal("HTTP claim erased its exact typed stale result", err)

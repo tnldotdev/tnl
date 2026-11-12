@@ -27,7 +27,7 @@ func runCertificateRenewals(
 	defer renewalTimer.Stop()
 	for {
 		select {
-		case <-route.admission.completed:
+		case <-route.admission.Completed():
 			if ctx.Err() != nil {
 				return context.Cause(ctx)
 			}
