@@ -72,9 +72,11 @@ The control baseline requires a fresh PostgreSQL database and a coordinated
 stop/start of all server roles. `tnld migrate` accepts only
 `TNLD_DATABASE_DIRECT_URL`; serving roles use pooled `TNLD_DATABASE_URL` and
 require the exact schema version and baseline identity. Connector session
-rebinding, publisher group templates with pinned ingress pool placement, and the post-quantum public URL policy are part of the version 1
-baseline. Use a fresh database, run `tnld migrate`, and start matching server,
-publisher, and connector binaries. Databases from previous baselines are rejected.
+rebinding, publisher group templates with pinned ingress pool placement, and the
+post-quantum public URL policy are part of the version 1 baseline, including
+provider-qualified ingress and relay regions and saved run preferences. Use a
+fresh database, run `tnld migrate`, and start matching server, publisher, and
+connector binaries. Databases from previous baselines are rejected.
 A publisher restart does not restore its application sockets.
 
 tnl-owned formats also start at version 1: project metadata, tunnel snapshots,

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -262,17 +263,39 @@ func (f *privateSeparatedFixture) startFixtureRelay(t *testing.T, id string) *pr
 	t.Helper()
 	name := id + ".private.integration.test"
 	internal := serviceRuntimeListener(t)
-	publisher := serviceRuntimeListener(t)
 	// relay discovery uses the same advertised address for TCP, QUIC and STUN.
-	packet, err := net.ListenPacket("udp4", publisher.Addr().String())
+	publisher, packet, err := reserveServiceRuntimeRelayListeners(net.Listen, net.ListenPacket)
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = publisher.Close() })
 	t.Cleanup(func() { _ = packet.Close() })
 	settings := relayProcessSettings{controlEndpoint: f.controlConfig.PrivateControlEndpoint(), controlAddress: f.controlConfig.PrivateControlListen, clusterSecret: serviceRuntimeClusterSecret,
 		relayServiceID: id, relayID: id, relayAddress: publisher.Addr().String(), tlsServerName: name, transportTLS: serviceRuntimeTLS(t, f.certificateAuthority, name), internalListener: internal, internalAddress: internal.Addr().String(),
 		tcpListener: publisher, udpPacket: packet, udpListen: packet.LocalAddr().String(), quic: f.controlConfig.RelayQUICConfig(), runtime: relaySettingsFrom(f.controlConfig)}
 	return f.runFixtureRelay(t, settings)
+}
+
+// TCP's ephemeral allocator cannot see occupied UDP ports. hold both sockets
+// through relay startup, releasing a partial reservation before choosing again.
+func reserveServiceRuntimeRelayListeners(listen func(string, string) (net.Listener, error), packet func(string, string) (net.PacketConn, error)) (net.Listener, net.PacketConn, error) {
+	var collision error
+	for range 16 {
+		listener, err := listen("tcp4", "127.0.0.1:0")
+		if err != nil {
+			return nil, nil, err
+		}
+		packets, err := packet("udp4", listener.Addr().String())
+		if err == nil {
+			return listener, packets, nil
+		}
+		closed := listener.Close()
+		if closed != nil || !errors.Is(err, syscall.EADDRINUSE) {
+			return nil, nil, errors.Join(err, closed)
+		}
+		collision = err
+	}
+	return nil, nil, collision
 }
 
 func (f *privateSeparatedFixture) runFixtureRelay(t *testing.T, settings relayProcessSettings) *privateRelayFixture {

@@ -18,6 +18,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
+	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 )
@@ -40,6 +41,7 @@ var (
 // PublishRunRequest carries authority already established by the control API
 // and the authenticated request secret used for retry-stable credentials.
 type PublishRunRequest struct {
+	PreferredRegions         []string
 	PublicURLID              string
 	TeamID                   string
 	MembershipID             string
@@ -103,6 +105,10 @@ func (d *Database) CreatePublishRun(
 	publisherLeaseDuration time.Duration,
 	connectionCredentialDuration time.Duration,
 ) (result PublishRunSetup, retErr error) {
+	request.PreferredRegions, retErr = region.Preferences(request.PreferredRegions)
+	if retErr != nil {
+		return result, retErr
+	}
 	ctx, finish := d.observeOperation(ctx, observability.OpCreatePublishRun)
 	defer func() { finish(retErr) }()
 	defer func() {
@@ -188,6 +194,7 @@ func (d *Database) createPublishRun(
 	if err != nil {
 		return result, err
 	}
+	request.RequestDigest = regionRequestDigest(request.RequestDigest, request.PreferredRegions)
 	if request.PublisherIdentityID != "" {
 		secret, err := d.authorizePublisherRun(ctx, queries, route, request, now)
 		if err != nil {
@@ -286,7 +293,7 @@ func (d *Database) createPublishRun(
 		}
 	}
 
-	placements, err := selectRelayServicePlacements(ctx, queries, now)
+	placements, err := selectRelayServicePlacements(ctx, queries, now, request.PreferredRegions...)
 	if err != nil {
 		return PublishRunSetup{}, err
 	}
@@ -313,7 +320,8 @@ func (d *Database) createPublishRun(
 		return PublishRunSetup{}, err
 	}
 	session, err := queries.InsertPublishRun(ctx, controlstatedb.InsertPublishRunParams{
-		ID: publishRunID, PublicURLID: request.PublicURLID, TeamID: request.TeamID, MembershipID: membershipID,
+		PreferredRegions: request.PreferredRegions,
+		ID:               publishRunID, PublicURLID: request.PublicURLID, TeamID: request.TeamID, MembershipID: membershipID,
 		ActingIdentityID: request.ActingIdentityID, ExpectedMutationRevision: positive(request.ExpectedMutationRevision),
 		PublisherIdentityID: nullableText(request.PublisherIdentityID), PublisherGrantID: nullableText(request.PublisherGrantID),
 		IdempotencyKey:          request.IdempotencyKey,
@@ -405,6 +413,7 @@ func (d *Database) createPublishRun(
 }
 
 type relayServicePlacement struct {
+	region         region.ID
 	relayServiceID string
 	relayAddress   string
 	tlsServerName  string
@@ -416,11 +425,13 @@ func selectRelayServicePlacements(
 	ctx context.Context,
 	queries *controlstatedb.Queries,
 	now time.Time,
+	preferences ...string,
 ) ([publishRunConnectionCount]relayServicePlacement, error) {
 	services, _, err := availableRelayServicePlacements(ctx, queries, now)
 	if err != nil {
 		return [publishRunConnectionCount]relayServicePlacement{}, fmt.Errorf("controlstate: create publish run: %w", err)
 	}
+	rankRelayPlacements(services, preferences)
 	var result [publishRunConnectionCount]relayServicePlacement
 	index := 0
 	for _, service := range services {
@@ -469,6 +480,7 @@ func availableRelayServicePlacements(
 		service := servicesByID[lease.RelayServiceID]
 		if service == nil {
 			service = &relayServicePlacement{
+				region:         region.ID(lease.Region),
 				relayServiceID: lease.RelayServiceID, relayAddress: lease.RelayAddress,
 				tlsServerName: lease.TlsServerName, assignments: assignments[lease.RelayServiceID],
 			}

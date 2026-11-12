@@ -572,7 +572,7 @@ func validateRegistration(registration relayv1.RelayRegistration) error {
 }
 
 func validateLease(registration relayv1.RelayRegistration, lease relayv1.RelayLease, now time.Time) error {
-	if lease.RelayServiceId != registration.RelayServiceId || lease.RelayId != registration.RelayId ||
+	if lease.Region != registration.Region || lease.RelayServiceId != registration.RelayServiceId || lease.RelayId != registration.RelayId ||
 		lease.RelayRunId != registration.RelayRunId || lease.ProtocolVersion != registration.ProtocolVersion ||
 		lease.RelayAddress != registration.RelayAddress || lease.TlsServerName != registration.TlsServerName ||
 		lease.InternalRelayAddress != registration.InternalRelayAddress ||
