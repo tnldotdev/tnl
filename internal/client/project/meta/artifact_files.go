@@ -16,6 +16,7 @@ const maxArtifactBytes = 1 << 20
 // generatedFiles is the complete set of portable outputs owned by tnl.
 var generatedFiles = [...]string{
 	"project.d.ts",
+	"services.ts",
 	"python/pyproject.toml",
 	"python/tnl_project/__init__.py",
 	"python/tnl_project/py.typed",
