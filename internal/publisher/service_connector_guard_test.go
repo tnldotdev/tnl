@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -109,5 +110,83 @@ func TestCertificateVisitorGuardKeepsExpiredDecisionFence(t *testing.T) {
 	}
 	if checks.Load() != 0 {
 		t.Fatal("certificate visitor refreshed an already expired decision")
+	}
+}
+
+type delayedConnectorGuardAdmission struct {
+	mu      sync.Mutex
+	until   time.Time
+	err     error
+	checked chan struct{}
+	release chan struct{}
+	first   sync.Once
+	checks  atomic.Int64
+}
+
+func (a *delayedConnectorGuardAdmission) CheckUse(context.Context) (time.Time, error) {
+	a.checks.Add(1)
+	a.mu.Lock()
+	until, err := a.until, a.err
+	a.mu.Unlock()
+	a.first.Do(func() { close(a.checked); <-a.release })
+	return until, err
+}
+func (*delayedConnectorGuardAdmission) SetupDeadline() time.Time { return time.Now().Add(time.Second) }
+func (*delayedConnectorGuardAdmission) FinishSetup() error       { return nil }
+func (*delayedConnectorGuardAdmission) Stop()                    {}
+
+func TestConnectorVisitorGuardRechecksDeadlineSupersededDuringObservation(t *testing.T) {
+	for _, state := range []string{"renewed", "expired", "revoked"} {
+		t.Run(state, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				admission := &delayedConnectorGuardAdmission{until: time.Now().Add(time.Second), checked: make(chan struct{}), release: make(chan struct{})}
+				stream := ServiceStream{Visitor: ConnectorVisitor{Admission: admission}}
+				client, peer := net.Pipe()
+				defer peer.Close()
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				done := make(chan struct{})
+				go func() {
+					defer close(done)
+					stream.guardVisitor(ctx, client, nil, tls.ConnectionState{}, ServiceVisitorDecision{})
+				}()
+				<-admission.checked
+				// pause after the admission was checked, then let renewal or revocation
+				// overtake that observation before the guard consumes its deadline.
+				admission.mu.Lock()
+				if state != "expired" {
+					admission.until = time.Now().Add(time.Minute)
+				}
+				if state == "revoked" {
+					admission.err = ErrEndpoint
+				}
+				admission.mu.Unlock()
+				time.Sleep(2 * time.Second)
+				close(admission.release)
+				synctest.Wait()
+				if admission.checks.Load() != 2 {
+					t.Fatal("elapsed observation was not rechecked exactly once")
+				}
+				if state == "renewed" {
+					select {
+					case <-done:
+						t.Fatal("superseded observation closed a renewed admission")
+					default:
+					}
+					// retaining the stream must not turn its next current denial into
+					// another cached permission or lend it a sibling's authority.
+					admission.mu.Lock()
+					admission.err = ErrEndpoint
+					admission.mu.Unlock()
+					time.Sleep(30 * time.Second)
+					synctest.Wait()
+				}
+				select {
+				case <-done:
+				default:
+					t.Fatal("current denial or unchanged expiry did not close the stream")
+				}
+			})
+		})
 	}
 }

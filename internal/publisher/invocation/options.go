@@ -16,6 +16,7 @@ import (
 
 // PublicOptions contains selected publication inputs, independent of CLI flags.
 type PublicOptions struct {
+	PreferredRegions   []string
 	RequirePostQuantum *bool
 	Target             string
 	TargetCAFile       string

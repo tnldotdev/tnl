@@ -218,7 +218,7 @@ func TestIntegrationConnectorPeerPairRelayClaimHTTPDirect(t *testing.T) {
 	t.Run("process key registration through HTTP", func(t *testing.T) {
 		for id, assigned := range leases {
 			encoded := base64.RawURLEncoding.EncodeToString(keys[id].Public().(ed25519.PublicKey))
-			body := relayv1.RelayRegistration{RelayServiceId: id, RelayId: assigned.RelayID, RelayRunId: assigned.RelayRunID, PeerSigningPublicKey: &encoded,
+			body := relayv1.RelayRegistration{Region: "local", RelayServiceId: id, RelayId: assigned.RelayID, RelayRunId: assigned.RelayRunID, PeerSigningPublicKey: &encoded,
 				ProtocolVersion: int64(tunnelv1.Version), RelayAddress: assigned.RelayAddress, TlsServerName: assigned.TLSServerName, InternalRelayAddress: assigned.InternalRelayAddress, InternalNetworks: []string{}, ConnectionCapacity: 20, StreamCapacity: 20}
 			registered, err := httpClient.RegisterRelay(ctx, body)
 			if err != nil || registered.PeerSigningPublicKey == nil || *registered.PeerSigningPublicKey != encoded || registered.RelayLeaseRevision != int64(assigned.RelayLeaseRevision) {

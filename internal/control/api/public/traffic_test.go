@@ -23,10 +23,13 @@ func TestPublishRunTrafficInputBoundary(t *testing.T) {
 		{`{"traffic":{"connections":0}}`, 400}, {`{"traffic":{"rate_per":"1ns"}}`, 400},
 		{`{"traffic":{"upload_bytes":1}}`, 400}, {`{"traffic":{"unknown":1}}`, 400}, {`{"unknown":1}`, 400},
 		{`{} {}`, 400}, {`null`, 400}, {`{"traffic":null}`, 400},
+		{`{"preferred_regions":["fly:sjc","aws:us-west-1"]}`, 0},
+		{`{"preferred_regions":["sjc"]}`, 400}, {`{"preferred_regions":["aws:sjc"]}`, 400},
+		{`{"preferred_regions":["fly:sjc","FLY:SJC"]}`, 400},
 	} {
 		r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(tc.body))
 		w := httptest.NewRecorder()
-		selection, ok := publishRunTrafficSelection(w, r)
+		selection, _, ok := publishRunTrafficSelection(w, r)
 		if ok != (tc.status == 0) || !ok && w.Code != tc.status {
 			t.Fatalf("body %s: %+v %t %d", tc.body, selection, ok, w.Code)
 		}
@@ -47,7 +50,7 @@ func TestCreatePublishRunCarriesTrafficSeparatelyFromPublisherAuthority(t *testi
 	}}
 	store.publisher = &controlstate.PublisherIdentity{ID: "publisher", GrantID: "grant", KeyID: "key", CreatorID: "identity", Scope: controlstate.PublisherScope{TeamID: "team", Kind: "saved_public_url", PublicURLID: "url"}}
 	store.publisherPlan = &authorization.CertificatePlan{CacheKey: "app.example.test", Scope: "app.example.test", Identifiers: []string{"app.example.test"}, ChallengeMethod: certificateidentity.ChallengeDNS01}
-	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"traffic":{"connections":48,"rate_per":"2s","total_upload_bytes":1048576}}`))
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"preferred_regions":["FLY:SJC","aws:us-west-1"],"traffic":{"connections":48,"rate_per":"2s","total_upload_bytes":1048576}}`))
 	r.Header.Set("Authorization", "Bearer publisher-access")
 	r.Header.Set("Idempotency-Key", "retry")
 	r.Header.Set("Publisher-Run-Proof", "proof")
@@ -58,6 +61,9 @@ func TestCreatePublishRunCarriesTrafficSeparatelyFromPublisherAuthority(t *testi
 		t.Fatalf("create run: %d %s", w.Code, w.Body.String())
 	}
 	request := store.sessionRequest
+	if len(request.PreferredRegions) != 2 || request.PreferredRegions[0] != "fly:sjc" || request.PreferredRegions[1] != "aws:us-west-1" {
+		t.Fatal("provider preferences changed at the API boundary")
+	}
 	if request.TrafficSelection == nil || *request.TrafficSelection.Connections != 48 || *request.TrafficSelection.RatePer != "2s" || *request.TrafficSelection.TotalUploadBytes != 1048576 || request.TrafficDefaults != defaults || request.TrafficCeiling != ceiling || request.PublisherIdentityID != "publisher" || request.PublisherRunProof != "proof" || len(request.RetrySecret) != 0 {
 		t.Fatal("traffic hooks changed or lost publisher authorization")
 	}

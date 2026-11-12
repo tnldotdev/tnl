@@ -96,6 +96,6 @@ type replacementTestControl struct {
 	createRun func(context.Context, string, string) (controlv1.PublishRunSetup, error)
 }
 
-func (c replacementTestControl) CreatePublishRun(ctx context.Context, id, key string) (controlv1.PublishRunSetup, error) {
+func (c replacementTestControl) CreatePublishRun(ctx context.Context, id, key string, _ ...string) (controlv1.PublishRunSetup, error) {
 	return c.createRun(ctx, id, key)
 }
