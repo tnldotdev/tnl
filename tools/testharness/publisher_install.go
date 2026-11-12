@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -15,7 +16,7 @@ import (
 
 // runPublisherInstall owns the privileged Ubuntu boundary. no systemctl, trust
 // installation, or sudo invocation runs on the caller's host.
-func runPublisherInstall(ctx context.Context, root string) error {
+func runPublisherInstall(ctx context.Context, root string) (result error) {
 	id := fmt.Sprintf("tnl-publisher-install-%d", time.Now().UnixNano())
 	command := func(args ...string) error {
 		child := exec.CommandContext(ctx, "docker", args...)
@@ -25,7 +26,7 @@ func runPublisherInstall(ctx context.Context, root string) error {
 	if err := command("build", "--file", filepath.Join(root, "tests/integration/fixtures/publisher-install/test.Dockerfile"), "--tag", id, root); err != nil {
 		return err
 	}
-	defer exec.Command("docker", "image", "rm", id).Run()
+	defer func() { result = errors.Join(result, exec.Command("docker", "image", "rm", id).Run()) }()
 	if err := prepareFixtureImage(ctx, postgresImage); err != nil {
 		return err
 	}
@@ -33,7 +34,7 @@ func runPublisherInstall(ctx context.Context, root string) error {
 	if err != nil {
 		return err
 	}
-	defer terminate(database)
+	defer func() { result = errors.Join(result, terminate(database)) }()
 	address, err := database.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
 		return err
@@ -49,7 +50,7 @@ func runPublisherInstall(ctx context.Context, root string) error {
 	if err := command("run", "--detach", "--name", id, "--privileged", "--cgroupns=private", "--env", "GOMAXPROCS", "--env", "GOFLAGS", "--network=container:"+database.GetContainerID(), "--tmpfs", "/run", "--tmpfs", "/run/lock", "--tmpfs", "/tmp:exec", "--mount", "type=bind,src="+root+",dst=/src,readonly", "--mount", "type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock", id); err != nil {
 		return err
 	}
-	defer exec.Command("docker", "rm", "--force", id).Run()
+	defer func() { result = errors.Join(result, exec.Command("docker", "rm", "--force", id).Run()) }()
 	for range 100 {
 		status, _ := exec.CommandContext(ctx, "docker", "exec", id, "systemctl", "is-system-running").Output()
 		if strings.TrimSpace(string(status)) == "running" || strings.TrimSpace(string(status)) == "degraded" {

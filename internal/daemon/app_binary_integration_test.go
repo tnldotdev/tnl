@@ -120,7 +120,7 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer state.Close()
-	visitor := newIntegrationVisitor(t, fixture.pebble.roots, "")
+	visitor := newIntegrationVisitor(t, fixture.pebble.roots, "", fixture.dependencies)
 	for index := 1; index <= 2; index++ {
 		owner := fmt.Sprintf("%032x", index)
 		var assigned publisherprotocol.Assignment

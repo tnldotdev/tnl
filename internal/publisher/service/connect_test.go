@@ -422,12 +422,12 @@ func (r *privateSlotRelay) options(t *testing.T, roots *tls.Config) ConnectOptio
 func newPrivateSlotRelay(t *testing.T, bound *Bound, datagrams bool, authenticate func(context.Context, tunnel.Transport, muxsession.Session) error, quicAcceptGate <-chan struct{}) *privateSlotRelay {
 	t.Helper()
 	serverTLS, roots := privateTransportTLS(t)
-	tcp, err := net.Listen("tcp", "127.0.0.1:0")
+	tcp, packet, err := transporttest.ListenTCPUDP()
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = tcp.Close() })
-	udp, err := muxsession.ListenQUIC(tcp.Addr().String(), serverTLS, muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: datagrams}})
+	t.Cleanup(func() { _ = tcp.Close(); _ = packet.Close() })
+	udp, err := muxsession.ListenQUICPacket(packet, serverTLS, muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: datagrams}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -208,22 +208,24 @@ func restartRebindingRelay(t *testing.T, f *privateSeparatedFixture, id string) 
 		t.Fatal(err)
 	}
 	settings := previous.settings
-	var err error
-	settings.internalListener, err = net.Listen("tcp", settings.internalAddress)
+	internal, err := net.Listen("tcp", settings.internalAddress)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = settings.internalListener.Close() })
-	settings.tcpListener, err = net.Listen("tcp", settings.relayAddress)
+	settings.internalListener = internal
+	f.owner.cleanupResource(t, func() { _ = internal.Close() })
+	tcp, err := net.Listen("tcp", settings.relayAddress)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = settings.tcpListener.Close() })
-	settings.udpPacket, err = net.ListenPacket("udp4", settings.udpListen)
+	settings.tcpListener = tcp
+	f.owner.cleanupResource(t, func() { _ = tcp.Close() })
+	packet, err := net.ListenPacket("udp4", settings.udpListen)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = settings.udpPacket.Close() })
+	settings.udpPacket = packet
+	f.owner.cleanupResource(t, func() { _ = packet.Close() })
 	f.runFixtureRelay(t, settings)
 }
 
@@ -326,7 +328,7 @@ func qualifyConnectorRebinding(t *testing.T, standalone, tcp bool, fault string)
 	}
 	claimed := make(chan *publisherservice.Claimed, 16)
 	f.publisherConnections = claimed
-	target := startPrivateEchoTarget(t)
+	target := startPrivateEchoTarget(t, f.owner)
 	prepared := startRebindingConnector(t, f, tcp, fault == "source-silent", target.address)
 	defer prepared.stop()
 	service, listener, control, transport := prepared.service, prepared.listener, prepared.control, prepared.transport

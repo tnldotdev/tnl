@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -42,6 +43,34 @@ func TestConnectorClaimErrorKeepsDenialOverStaleOverRetryAcrossJoinedCauses(t *t
 		if !errors.As(result, &classified) || classified.Code != test.want || !errors.Is(result, test.cause) {
 			t.Fatal("claim error changed scope or lost its cause", test.want, result)
 		}
+	}
+}
+
+func TestConnectorRetainedInvalidSocketSourceRemainsStale(t *testing.T) {
+	for _, address := range []net.Addr{nil, &net.UnixAddr{Name: "invalid"}, &net.UDPAddr{IP: net.IPv4zero}} {
+		t.Run(fmt.Sprint(address), func(t *testing.T) {
+			f := newConnectorBindingFixture(t)
+			d, outer := f.candidate(t, 1, "192.0.2.1:12345")
+			outer.connectorSourcePeer.mu.Lock()
+			outer.connectorSourcePeer.address = address
+			outer.connectorSourcePeer.mu.Unlock()
+			called := false
+			f.acceptor.Claim = connectorClaimFunc(func(context.Context, relayv1.RelayLease, netip.Addr, tunnelv1.ConnectorPairLegProof, []byte) (relayv1.ConnectorPeerPairLegClaim, error) {
+				called = true
+				return relayv1.ConnectorPeerPairLegClaim{}, errors.New("moved source reached control")
+			})
+			receipt, err := d.renew(t.Context(), f.acceptor, outer, d.proof)
+			var protocol *tunnel.ProtocolError
+			if called || receipt != (tunnelv1.ConnectorPairLegAccepted{}) || !errors.As(err, &protocol) || protocol.Code != tunnelv1.StaleNetworkBinding ||
+				!errors.Is(err, errConnectorSocketSourceChanged) || !errors.Is(err, errConnectorSocketSource) {
+				t.Fatal("retained source validation became an independent subject denial", err)
+			}
+			denied := &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
+			mixed := connectorClaimError(errors.Join(err, denied))
+			if !errors.As(mixed, &protocol) || protocol.Code != tunnelv1.Unauthenticated || !errors.Is(mixed, denied) || !errors.Is(mixed, errConnectorSocketSource) {
+				t.Fatal("authored source context hid an independent authorization denial", mixed)
+			}
+		})
 	}
 }
 

@@ -13,15 +13,6 @@ import (
 
 // this fixture is the deployment proxy: it terminates verified public TLS and
 // overwrites source metadata before forwarding HTTP to the private backend.
-func startIntegrationControlProxy(t *testing.T, owner *runtimeTopology, address, backend string, certificate *tls.Config) {
-	t.Helper()
-	listener, err := net.Listen("tcp", address)
-	if err != nil {
-		t.Fatal(err)
-	}
-	serveIntegrationControlProxy(t, owner, listener, backend, certificate)
-}
-
 func serveIntegrationControlProxy(t *testing.T, owner *runtimeTopology, listener net.Listener, backend string, certificate *tls.Config) {
 	t.Helper()
 	origin := &url.URL{Scheme: "http", Host: backend}
@@ -49,9 +40,5 @@ func serveIntegrationControlProxy(t *testing.T, owner *runtimeTopology, listener
 			t.Errorf("control proxy shutdown: %v", err)
 		}
 	}
-	if owner == nil {
-		t.Cleanup(cleanup)
-	} else {
-		owner.cleanupResource(t, cleanup)
-	}
+	owner.cleanupResource(t, cleanup)
 }

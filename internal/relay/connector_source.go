@@ -16,6 +16,18 @@ import (
 var errConnectorSocketSourceChanged = &tunnel.ProtocolError{Code: tunnelv1.StaleNetworkBinding}
 var errConnectorSocketSource = errors.New("relay: invalid connector socket source")
 
+// validation failure after an accepted source was pinned is evidence of a
+// changed binding, not an independent authorization denial.
+type connectorSocketSourceChange struct{ validation error }
+
+func (e *connectorSocketSourceChange) Error() string {
+	return "relay: accepted connector socket source changed: " + e.validation.Error()
+}
+
+func (e *connectorSocketSourceChange) Unwrap() []error {
+	return []error{errConnectorSocketSourceChanged, e.validation}
+}
+
 // connectorSocketSource binds one physical carrier to its accepted source IP.
 // QUIC may change RemoteAddr without closing; a detected change is irreversible
 // for this carrier, even if the socket later returns to its original address.
@@ -73,7 +85,10 @@ func (s *connectorSocketSource) check() error {
 	ip, err := connectorSocketIP(s.peer)
 	if err != nil || ip != s.ip {
 		s.stale.Store(true)
-		return errors.Join(errConnectorSocketSourceChanged, err)
+		if err != nil {
+			return &connectorSocketSourceChange{validation: err}
+		}
+		return errConnectorSocketSourceChanged
 	}
 	if s.stale.Load() {
 		return errConnectorSocketSourceChanged
@@ -92,49 +107,65 @@ type connectorSourceCarrier struct {
 	source *connectorSocketSource
 }
 
-// connectorBindingCarrier permits only path probes until control confirms this
-// exact binding active. it never validates an endpoint MAC or holds SessionKey.
+// connectorBindingCarrier owns physical readiness and source checks. its bridge
+// supplies packet admission; the carrier keeps no copy of binding authority.
+// it never validates an endpoint MAC or holds SessionKey.
 type connectorBindingCarrier struct {
 	peer.Carrier
-	source *connectorSocketSource
-	active atomic.Bool
+	source      *connectorSocketSource
+	admitPacket func(tunnelv1.PeerPacket) bool
+	ready       atomic.Bool
+	cancel      context.CancelFunc
 }
 
-func newConnectorBindingCarrier(carrier peer.Carrier, source *connectorSocketSource, state tunnelv1.ConnectorPeerLegBindingState) *connectorBindingCarrier {
-	c := &connectorBindingCarrier{Carrier: &connectorSourceCarrier{Carrier: carrier, source: source}, source: source}
-	c.active.Store(state == tunnelv1.ConnectorPeerLegBindingActive)
-	return c
+func newConnectorBindingCarrier(carrier peer.Carrier, source *connectorSocketSource, admit func(tunnelv1.PeerPacket) bool, cancel context.CancelFunc) *connectorBindingCarrier {
+	return &connectorBindingCarrier{Carrier: &connectorSourceCarrier{Carrier: carrier, source: source}, source: source, admitPacket: admit, cancel: cancel}
 }
 
 func (c *connectorBindingCarrier) permits(frame []byte) bool {
 	packet, err := tunnelv1.ParsePeerPacket(frame)
-	return err == nil && c.admit(packet)
-}
-
-func (c *connectorBindingCarrier) admit(packet tunnelv1.PeerPacket) bool {
-	return c != nil && c.source.check() == nil && (c.active.Load() || packet.Kind == tunnelv1.PeerProbe || packet.Kind == tunnelv1.PeerProbeReply)
+	return err == nil && c.admitPacket(packet)
 }
 
 func (c *connectorBindingCarrier) Send(ctx context.Context, frame []byte) error {
 	if err := c.source.check(); err != nil {
 		return err
 	}
-	if !c.permits(frame) {
+	// a TLS stream introduces itself with its first authenticated packet.
+	// publisher probes before then are dropped, never queued or replayed.
+	if !c.ready.Load() || !c.permits(frame) {
 		return context.Cause(ctx)
 	}
-	return c.Carrier.Send(ctx, frame)
+	err := c.Carrier.Send(ctx, frame)
+	if err != nil && !errors.Is(err, errConnectorSocketSourceChanged) {
+		c.cancel()
+	}
+	return err
 }
 
 func (c *connectorBindingCarrier) Receive(ctx context.Context) ([]byte, error) {
 	for {
 		frame, err := c.Carrier.Receive(ctx)
 		if err != nil {
+			if !errors.Is(err, errConnectorSocketSourceChanged) {
+				c.cancel()
+			}
 			return nil, err
 		}
 		if c.permits(frame) {
+			c.ready.Store(true)
 			return frame, nil
 		}
 	}
+}
+
+func (c *connectorBindingCarrier) Close() error {
+	// source migration retires packets but leaves the bounded control stream
+	// alive to report the exact stale result, rather than an outer close.
+	if !errors.Is(c.source.check(), errConnectorSocketSourceChanged) {
+		c.cancel()
+	}
+	return c.Carrier.Close()
 }
 
 func (c *connectorSourceCarrier) Send(ctx context.Context, frame []byte) error {

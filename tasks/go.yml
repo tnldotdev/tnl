@@ -24,8 +24,9 @@ tasks:
     vars:
       RUN: '{{default "." .RUN}}'
       FLAGS: '{{default "" .FLAGS}}'
+      COUNT: '{{default "1" .COUNT}}'
     cmds:
-      - go test {{.FLAGS}} {{.PACKAGES}} -run='{{.RUN}}' -count=1 -timeout=5m
+      - go test {{.FLAGS}} {{.PACKAGES}} -run='{{.RUN}}' -count={{.COUNT}} -timeout=5m
 
   test:coverage:
     desc: Produce a diagnostic Go coverage report

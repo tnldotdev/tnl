@@ -26,7 +26,7 @@ func activateSeparatedPublishers(t *testing.T, database *sql.DB, routes int) sep
 	// each publisher retains its own readiness deadline, starting at launch.
 	parallel := min(routes, *runtimeLoadStartParallel)
 	waves := (routes + parallel - 1) / parallel
-	for shard := range separatedPublisherComponents() {
+	for shard := range separatedNames("publishers") {
 		var result separatedPublishers
 		separatedWait(t, separatedPublisherShardKey(shard, "ready"), time.Duration(waves)*(*runtimeLoadReadyTimeout)+10*time.Second, &result)
 		if len(result.URLs) != routes || len(result.Ready) != routes {
@@ -61,7 +61,7 @@ func activateSeparatedPublishers(t *testing.T, database *sql.DB, routes int) sep
 	for _, ready := range publishers.Ready {
 		waitForReadyPublisherConnections(t, database, ready.PublicURLID, ready.PublishRunNumber, 2)
 	}
-	waitForIngressRoutingCurrentWithin(t, database, len(separatedIngresses()), separatedRoutingAcknowledgmentTimeout)
+	waitForIngressRoutingCurrentWithin(t, database, len(separatedNames("ingresses")), separatedRoutingAcknowledgmentTimeout)
 	var orders, installed, distinctPublicURLs int
 	var workerAttempts int64
 	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT count(*), count(*) FILTER (WHERE state = 'installed'), count(DISTINCT public_url_id), coalesce(sum(attempts), 0) FROM control.acme_orders`).Scan(&orders, &installed, &distinctPublicURLs, &workerAttempts); err != nil {
@@ -87,6 +87,9 @@ func activateSeparatedPublishers(t *testing.T, database *sql.DB, routes int) sep
 
 func runSeparatedWorkloadPhases(t *testing.T, database *sql.DB, publishers separatedPublishers, routes int, duration time.Duration, initialFault separatedRestart, sequence int) {
 	t.Helper()
+	plan := separatedPlan(t)
+	faultRelay, faultControl := plan["relays"][0], plan["controls"][0]
+	faultRelayID := plan["relay-id."+faultRelay][0]
 	phases := []string{"steady", "shutdown"}
 	if !*runtimeLoadCapacityOnly {
 		phases = []string{"steady", *runtimeLoadScenario, "shutdown"}
@@ -135,7 +138,7 @@ func runSeparatedWorkloadPhases(t *testing.T, database *sql.DB, publishers separ
 			restart = initialFault
 		}
 		if phase == "relay-kill" {
-			if err := database.QueryRowContext(integrationOperationContext(t), `SELECT relay_run_id FROM control.relay_leases WHERE relay_id = 'relay-a-1'`).Scan(&oldRelayRun); err != nil {
+			if err := database.QueryRowContext(integrationOperationContext(t), `SELECT relay_run_id FROM control.relay_leases WHERE relay_id = $1`, faultRelayID).Scan(&oldRelayRun); err != nil {
 				t.Fatal(err)
 			}
 			separatedWrite(t, "fault.request", phase)
@@ -160,7 +163,7 @@ func runSeparatedWorkloadPhases(t *testing.T, database *sql.DB, publishers separ
 		if phase == "publisher-blackhole" {
 			waitForIntegrationCondition(t, 65*time.Second, func(ctx context.Context) (bool, error) {
 				var count int
-				err := database.QueryRowContext(ctx, `SELECT count(*) FROM control.publish_run_connection_slots WHERE connected_relay_id='relay-a-1' AND state='ready'`).Scan(&count)
+				err := database.QueryRowContext(ctx, `SELECT count(*) FROM control.publish_run_connection_slots WHERE connected_relay_id=$1 AND state='ready'`, faultRelayID).Scan(&count)
 				return count == 0, err
 			})
 			t.Logf("publisher_connection_loss_detected elapsed_since_drop=%s", time.Since(restart.Exited))
@@ -169,12 +172,12 @@ func runSeparatedWorkloadPhases(t *testing.T, database *sql.DB, publishers separ
 			var restored time.Time
 			separatedWait(t, "fault.restored", 45*time.Second, &restored)
 			restart.Restored = restored
-			separatedWait(t, "relay-a.restarted", 10*time.Second, nil)
+			separatedWait(t, faultRelay+".restarted", 10*time.Second, nil)
 			// a killed relay waits out its 30-second lease. the next 15-second
 			// publisher heartbeat can then assign replacement connections.
 			repaired = separatedWaitForRecovery(t, database, publishers, 45*time.Second)
 			var currentRelayRun string
-			if err := database.QueryRowContext(integrationOperationContext(t), `SELECT relay_run_id FROM control.relay_leases WHERE relay_id='relay-a-1' AND lease_expires_at>now() AND NOT draining`).Scan(&currentRelayRun); err != nil {
+			if err := database.QueryRowContext(integrationOperationContext(t), `SELECT relay_run_id FROM control.relay_leases WHERE relay_id=$1 AND lease_expires_at>now() AND NOT draining`, faultRelayID).Scan(&currentRelayRun); err != nil {
 				t.Fatal(err)
 			}
 			if currentRelayRun == oldRelayRun {
@@ -183,19 +186,19 @@ func runSeparatedWorkloadPhases(t *testing.T, database *sql.DB, publishers separ
 		}
 		switch phase {
 		case "relay-restart":
-			separatedWrite(t, "relay-a.restart", time.Now())
-			separatedWait(t, "relay-a.stopped", 10*time.Second, &restart)
-			separatedWait(t, "relay-a.restarted", 10*time.Second, nil)
+			separatedWrite(t, faultRelay+".restart", time.Now())
+			separatedWait(t, faultRelay+".stopped", 10*time.Second, &restart)
+			separatedWait(t, faultRelay+".restarted", 10*time.Second, nil)
 			repaired = separatedWaitForRecovery(t, database, publishers, 25*time.Second)
 		case "control-restart":
-			separatedWrite(t, "control-a.restart", time.Now())
-			separatedWait(t, "control-a.stopped", 15*time.Second, &restart)
-			separatedWait(t, "control-a.restarted", 70*time.Second, &restart.Restored)
+			separatedWrite(t, faultControl+".restart", time.Now())
+			separatedWait(t, faultControl+".stopped", 15*time.Second, &restart)
+			separatedWait(t, faultControl+".restarted", 70*time.Second, &restart.Restored)
 			repaired = separatedWaitForRecovery(t, database, publishers, 25*time.Second)
 		case "shutdown":
 			separatedWrite(t, "close-half", time.Now())
 			var elapsed time.Duration
-			for shard := range separatedPublisherComponents() {
+			for shard := range separatedNames("publishers") {
 				var duration time.Duration
 				separatedWait(t, separatedPublisherShardKey(shard, "close-half.done"), time.Duration((routes/2+3)/4)*10*time.Second, &duration)
 				elapsed = max(elapsed, duration)
@@ -216,7 +219,7 @@ func runSeparatedWorkloadPhases(t *testing.T, database *sql.DB, publishers separ
 			assertSeparatedNoRejections(t, phase, before, after)
 			assertSeparatedNoMemoryLimitEvents(t, phase, before, after)
 		}
-		if phase == "steady" && *runtimeLoadHATopology {
+		if phase == "steady" && len(plan["ingresses"]) > 1 {
 			assertSeparatedIngressTraffic(t, before, after)
 		}
 		if visitorPhase.Combined {
@@ -226,7 +229,7 @@ func runSeparatedWorkloadPhases(t *testing.T, database *sql.DB, publishers separ
 			captureSeparatedHeapProfiles(t, database, after)
 		}
 		if phase == "steady" && runtimeBlackhole(*runtimeLoadScenario) {
-			assertRelayOpenedVisitors(t, before, after, "relay-a")
+			assertRelayOpenedVisitors(t, before, after, faultRelay)
 		}
 		// cover every live public URL, not only those sampled late in a traffic window.
 		separatedProbe(t, &sequence, benchworkload.Phase{Name: phase + "-correctness", URLs: urls})
@@ -235,7 +238,7 @@ func runSeparatedWorkloadPhases(t *testing.T, database *sql.DB, publishers separ
 		}
 		if runtimeControlledFault(phase) {
 			if runtimeBlackhole(phase) {
-				assertRelayOpenedVisitors(t, before, after, "relay-b")
+				assertRelayOpenedVisitors(t, before, after, plan["relays"][1])
 			}
 			separatedWrite(t, "fault.release", true)
 			separatedWait(t, "fault.restored", 15*time.Second, &restart.Restored)
@@ -254,16 +257,16 @@ func runSeparatedWorkloadPhases(t *testing.T, database *sql.DB, publishers separ
 
 func verifySeparatedShutdown(t *testing.T, database *sql.DB, routes int) {
 	t.Helper()
-	for i := 1; i <= 4; i++ {
+	for _, visitor := range separatedNames("visitors") {
 		var passed bool
-		separatedWait(t, fmt.Sprintf("visitor-%d.done", i), 30*time.Second, &passed)
+		separatedWait(t, visitor+".done", 30*time.Second, &passed)
 		if !passed {
-			t.Errorf("visitor-%d reported workload failures", i)
+			t.Errorf("%s reported workload failures", visitor)
 		}
 	}
 	separatedWrite(t, "close-all", time.Now())
 	var elapsed time.Duration
-	for shard := range separatedPublisherComponents() {
+	for shard := range separatedNames("publishers") {
 		var duration time.Duration
 		separatedWait(t, separatedPublisherShardKey(shard, "close-all.done"), time.Duration(((routes+1)/2+3)/4)*10*time.Second, &duration)
 		elapsed = max(elapsed, duration)
@@ -281,7 +284,7 @@ func verifySeparatedShutdown(t *testing.T, database *sql.DB, routes int) {
 	if *runtimeLoadCapacityOnly {
 		routingTimeout = 30 * time.Second
 	}
-	waitForIngressRoutingCurrentWithin(t, database, len(separatedIngresses()), routingTimeout)
+	waitForIngressRoutingCurrentWithin(t, database, len(separatedNames("ingresses")), routingTimeout)
 	separatedCapture(t, database, "final")
 	if got := separatedCAOrders(t); got != int64(routes) {
 		t.Errorf("certificate issuance changed during workload: got %d want %d", got, routes)
@@ -292,7 +295,7 @@ func verifySeparatedShutdown(t *testing.T, database *sql.DB, routes int) {
 	if *runtimeLoadCapacityOnly {
 		ingressStopTimeout = 35 * time.Second
 	}
-	for _, ingress := range separatedIngresses() {
+	for _, ingress := range separatedNames("ingresses") {
 		separatedWrite(t, ingress+".stop", time.Now())
 		separatedWait(t, ingress+".stopped", ingressStopTimeout, nil)
 	}

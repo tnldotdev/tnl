@@ -91,9 +91,10 @@ func TestConnectorPairDenialKeepsStartupAndRetirementBoundaries(t *testing.T) {
 					} else if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
 						t.Fatal("denied renewal did not close its admitted stream", err)
 					}
-					if conn, err := net.DialTimeout("tcp", f.localAddress, time.Second); err == nil {
-						_ = conn.Close()
-						t.Fatal("denied renewal retained its listener")
+					// inspect the owned listener, not its released address: another
+					// fixture may already have bound the same ephemeral port.
+					if err := f.localListener.SetDeadline(time.Now()); !errors.Is(err, net.ErrClosed) {
+						t.Fatal("denied renewal retained its listener", err)
 					}
 					if renewals.Load() != 1 || preparations.Load() != before || f.opened.Load() != 1 || f.assignments[0].Load() != 1 || f.assignments[1].Load() != 1 {
 						t.Fatal("denied renewal retried or replaced its pair, carriers, or application stream")

@@ -62,14 +62,15 @@ func reconnectBridgeFixture(t *testing.T) (*connectorBridge, func(uint64) (*conn
 		_ = outer.Close()
 	})
 	return b, func(n uint64) (*connectorDelivery, tunnelv1.ConnectorLegBinding) {
-		life, stop := context.WithCancel(ctx)
-		t.Cleanup(stop)
 		next := proof
 		next.RequestedAt = proof.RequestedAt.Add(time.Duration(n) * time.Microsecond)
 		next.Nonce = make([]byte, 32)
 		binary.BigEndian.PutUint64(next.Nonce[24:], n)
-		d := &connectorDelivery{ctx: life, cancel: stop, proof: next, claim: claim, carrier: newReconnectCarrier(), until: b.until.Add(time.Minute)}
-		t.Cleanup(func() { _ = d.carrier.Close() })
+		candidate := claim
+		candidate.receipt.ExpiresAt = b.until.Add(time.Minute)
+		d := newConnectorDelivery(ctx, ctx.Done(), next, candidate)
+		d.carrier = newConnectorBindingCarrier(newReconnectCarrier(), nil, d.admit, d.cancel)
+		t.Cleanup(func() { d.close(); _ = d.carrier.Close() })
 		return d, tunnelv1.ConnectorLegBinding{Nonce: next.Nonce, PreviousNonce: nonce, ReplacementNonce: bytes.Repeat([]byte{9}, 32), HandoffRevision: 1}
 	}
 }
@@ -97,7 +98,7 @@ func TestConnectorBridgeReconnectRecoversLostActivationReply(t *testing.T) {
 	if _, err := replaceBridgeBinding(t.Context(), b, retry, binding); err != nil {
 		t.Fatal("lost reply stranded slot", err)
 	}
-	if b.publisher != publisher || b.until != until || retry.until != until || b.handoff.operation.Revision() != 1 {
+	if b.publisher != publisher || b.until != until || retry.bridge.Load() != b || b.handoff.operation.Revision() != 1 {
 		t.Fatal("retry replaced publisher, extended authority or spent another handoff")
 	}
 	if _, err := replaceBridgeBinding(t.Context(), b, d, selection); err == nil {
@@ -119,7 +120,7 @@ func TestConnectorBridgeReconnectRecoversLostActivationReply(t *testing.T) {
 }
 
 func TestConnectorBridgeReconnectRejectsChangedAuthority(t *testing.T) {
-	for _, boundary := range []string{"source", "pair", "run", "assignment", "key", "publisher", "predecessor", "expired", "revoked", "canceled", "stale hello", "reused hello", "skipped revision"} {
+	for _, boundary := range []string{"source", "pair", "run", "assignment", "key", "publisher", "predecessor", "expired", "bridge canceled", "canceled", "stale hello", "reused hello", "skipped revision"} {
 		t.Run(boundary, func(t *testing.T) {
 			b, next := reconnectBridgeFixture(t)
 			d, selection := next(2)
@@ -140,7 +141,7 @@ func TestConnectorBridgeReconnectRejectsChangedAuthority(t *testing.T) {
 				selection.PreviousNonce = bytes.Repeat([]byte{8}, 32)
 			case "expired":
 				b.until = time.Now().Add(-time.Second)
-			case "revoked":
+			case "bridge canceled":
 				b.cancel()
 			case "canceled":
 				d.cancel()
@@ -155,7 +156,12 @@ func TestConnectorBridgeReconnectRejectsChangedAuthority(t *testing.T) {
 			generation := b.connector.Generation()
 			_, err := replaceBridgeBinding(t.Context(), b, d, selection)
 			var rejected *tunnel.ProtocolError
-			if !errors.As(err, &rejected) || rejected.Code != tunnelv1.Unauthenticated {
+			want := tunnelv1.Unauthenticated
+			if boundary == "bridge canceled" || boundary == "canceled" {
+				// local teardown is not an authorization result from control.
+				want = tunnelv1.Unavailable
+			}
+			if !errors.As(err, &rejected) || rejected.Code != want {
 				t.Fatal("rejection lost authority classification", err)
 			}
 			if b.active != nil || b.connector.Generation() != generation {
@@ -199,7 +205,7 @@ func TestConnectorBridgeMoreThan64HandoffsRetainsExactRetryAndAuthority(t *testi
 		if _, err := replaceBridgeBinding(t.Context(), b, retry, binding); err != nil {
 			t.Fatal("lost activation stranded chain", revision, err)
 		}
-		if b.publisher != publisher || b.until != until || retry.until != until || b.handoff.operation.Revision() != revision || b.active != retry {
+		if b.publisher != publisher || b.until != until || retry.bridge.Load() != b || b.handoff.operation.Revision() != revision || b.active != retry {
 			t.Fatal("handoff changed registration, revision or authority", revision)
 		}
 	}
@@ -234,8 +240,8 @@ func TestConnectorBridgeRevisionExhaustionIsNotAuthenticationDenial(t *testing.T
 func TestConnectorBridgeRetryCannotRestoreNarrowedOrExpiredAuthority(t *testing.T) {
 	b, next := reconnectBridgeFixture(t)
 	d, binding := next(2)
-	d.until = b.until.Add(-10 * time.Second)
-	narrowed := d.until
+	d.claim.receipt.ExpiresAt = b.until.Add(-10 * time.Second)
+	narrowed := d.claim.receipt.ExpiresAt
 	if _, err := replaceBridgeBinding(t.Context(), b, d, binding); err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +251,7 @@ func TestConnectorBridgeRetryCannotRestoreNarrowedOrExpiredAuthority(t *testing.
 	if _, err := replaceBridgeBinding(t.Context(), b, retry, same); err != nil {
 		t.Fatal(err)
 	}
-	if b.until != narrowed || retry.until != narrowed {
+	if b.until != narrowed || retry.bridge.Load() != b {
 		t.Fatal("fresh socket claim restored authority lost before its reply")
 	}
 	b.until = time.Now().Add(-time.Second)

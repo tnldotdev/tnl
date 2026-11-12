@@ -41,16 +41,16 @@ func separatedCapture(t *testing.T, database *sql.DB, name string) separatedSnap
 	}
 	coordinator.NetworkNamespace = "coordinator"
 	result.Resources["coordinator"] = coordinator
-	for _, component := range separatedActiveComponents() {
+	for _, component := range separatedNames("components") {
 		result.Resources[component] = separatedResource(t, component)
 	}
 	result.Resources["postgres"] = separatedPostgresResource(t, "postgres", func(query string, args ...any) pgx.Row {
 		return database.QueryRowContext(integrationOperationContext(t), query, args...)
 	})
-	if *runtimeLoadWorkload == "postgres" {
-		result.Resources["postgres-target"] = captureSeparatedPostgresTarget(t)
+	for _, target := range separatedPlan(t)["targets"] {
+		result.Resources[target] = captureSeparatedPostgresTarget(t)
 	}
-	for _, role := range separatedServerRoles() {
+	for _, role := range separatedNames("servers") {
 		response, err := integrationGET(integrationOperationContext(t), &http.Client{Timeout: 2 * time.Second}, "http://"+role+":9090/metrics")
 		if err != nil {
 			t.Fatal(err)
@@ -109,11 +109,7 @@ func separatedPostgresResource(t *testing.T, component string, query func(string
 
 func separatedReportResources(t *testing.T, phase string, before, after separatedSnapshot) {
 	t.Helper()
-	components := append(separatedActiveComponents(), "postgres", "coordinator")
-	if *runtimeLoadWorkload == "postgres" {
-		components = append(components, "postgres-target")
-	}
-	for _, component := range components {
+	for _, component := range separatedPlan(t)["resources"] {
 		a, b := before.Resources[component], after.Resources[component]
 		if a.ProcessRunID != b.ProcessRunID {
 			t.Logf("separated_resource phase=%s component=%s interval_reset=true before_run=%s after_run=%s memory=%d peak=%d fds=%d memory_anon=%d memory_file=%d memory_kernel=%d memory_kernel_stack=%d memory_pagetables=%d memory_sock=%d memory_slab=%d memory_shmem=%d memory_file_dirty=%d memory_file_writeback=%d memory_high_events=%d memory_max_events=%d oom_events=%d oom_kills=%d",
@@ -142,8 +138,8 @@ func separatedReportResources(t *testing.T, phase string, before, after separate
 				b.Postgres.BlocksRead-a.Postgres.BlocksRead, b.Postgres.BlocksHit-a.Postgres.BlocksHit, b.Postgres.TempBytes-a.Postgres.TempBytes)
 		}
 	}
-	for _, role := range separatedServerRoles() {
-		if role == "relay-a" && (phase == "relay-restart" || phase == "relay-kill") || role == "control-a" && phase == "control-restart" {
+	for _, role := range separatedNames("servers") {
+		if (phase == "relay-restart" || phase == "relay-kill" || phase == "control-restart") && slices.Contains(separatedPlan(t)["fault-targets"], role) {
 			continue
 		} // new runtime registry.
 		summaries, err := separatedDurationSummaries(before, after, role)
@@ -203,9 +199,9 @@ func separatedReportBandwidth(t *testing.T, name string, start time.Time, durati
 func separatedCollectVisitors(t *testing.T, phase string, timeout time.Duration) []separatedVisitorResult {
 	t.Helper()
 	var results []separatedVisitorResult
-	for i := 1; i <= 4; i++ {
+	for _, visitor := range separatedNames("visitors") {
 		var result separatedVisitorResult
-		separatedWait(t, fmt.Sprintf("%s.visitor-%d", phase, i), timeout, &result)
+		separatedWait(t, phase+"."+visitor, timeout, &result)
 		if result.RequestsFile != "" {
 			path := filepath.Join("/results", result.RequestsFile)
 			if _, err := streamSeparatedRequestFile(path, func(row benchworkload.RequestResult) {

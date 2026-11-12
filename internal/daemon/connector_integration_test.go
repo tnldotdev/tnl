@@ -85,7 +85,7 @@ func TestIntegrationPreparedConnectorHasNoArrivalRPCOrSigning(t *testing.T) {
 		for _, tcp := range []bool{false, true} {
 			t.Run(fmt.Sprintf("standalone=%t/tcp=%t", standalone, tcp), func(t *testing.T) {
 				f := newServiceRuntimeFixture(t, standalone, nil)
-				target := startPrivateEchoTarget(t)
+				target := startPrivateEchoTarget(t, f.owner)
 				key, err := opaqueid.New(opaqueid.IdempotencyPrefix)
 				if err != nil {
 					t.Fatal(err)

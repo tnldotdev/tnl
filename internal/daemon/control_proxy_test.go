@@ -11,18 +11,19 @@ import (
 )
 
 func TestControlProxyBackendFailureIsUnavailable(t *testing.T) {
+	owner := newRuntimeTopology(t)
 	ca := newIntegrationTestCA(t)
-	certificate := ca.issueServer(t, "control.example.test")
+	certificate := ca.issueServer(t, "control.example.test", owner)
 	serverTLS, err := staticServerTLS(certificate.certificateFile, certificate.privateKeyFile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	backend, listener := serviceRuntimeListener(t), serviceRuntimeListener(t)
+	backend, listener := serviceRuntimeListener(t, owner), serviceRuntimeListener(t, owner)
 	address := backend.Addr().String()
 	if err := backend.Close(); err != nil {
 		t.Fatal(err)
 	}
-	serveIntegrationControlProxy(t, nil, listener, address, serverTLS)
+	serveIntegrationControlProxy(t, owner, listener, address, serverTLS)
 	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: ca.roots, ServerName: "control.example.test", MinVersion: tls.VersionTLS13}}
 	t.Cleanup(transport.CloseIdleConnections)
 	client, err := clientcontrol.New("https://"+listener.Addr().String(), &http.Client{Transport: transport, Timeout: time.Second}, "")

@@ -11,13 +11,14 @@ import (
 )
 
 func TestControlProxyServesRetainedListener(t *testing.T) {
+	owner := newRuntimeTopology(t)
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
 	defer backend.Close()
 	ca := newTestCertificateAuthority(t)
 	const hostname = "control.private.integration.test"
-	listener := serviceRuntimeListener(t)
+	listener := serviceRuntimeListener(t, owner)
 	address := listener.Addr().String()
-	serveIntegrationControlProxy(t, nil, listener, strings.TrimPrefix(backend.URL, "http://"), serviceRuntimeTLS(t, ca, hostname))
+	serveIntegrationControlProxy(t, owner, listener, strings.TrimPrefix(backend.URL, "http://"), serviceRuntimeTLS(t, ca, hostname))
 	if competing, err := net.Listen("tcp", address); err == nil {
 		_ = competing.Close()
 		t.Fatal("proxy released its reserved listener before serving")

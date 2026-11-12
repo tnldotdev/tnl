@@ -134,7 +134,7 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	f := newServiceRuntimeFixtureTiming(t, false, nil, true)
 	faults := new(nativeDefaultFaults)
-	target := startPrivateEchoTarget(t)
+	target := startPrivateEchoTarget(t, f.owner)
 	key, _ := opaqueid.New(opaqueid.IdempotencyPrefix)
 	service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "default-leases", key, controlv1.ServiceMetadata{Protocol: controlv1.Tcp})
 	if err != nil {
@@ -156,7 +156,7 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 	_, tcp := f.connectors()
 	startOwner := func(name string, control connectorstream.Control) (net.Listener, func(func(error) bool)) {
 		t.Helper()
-		listener := serviceRuntimeListener(t)
+		listener := serviceRuntimeListener(t, f.owner)
 		ctx, cancel := context.WithCancel(t.Context())
 		ready, done := make(chan struct{}), make(chan error, 1)
 		go func() {

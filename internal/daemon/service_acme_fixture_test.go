@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -16,6 +15,7 @@ import (
 	controldns "github.com/tnldotdev/tnl/internal/control/dns"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	"github.com/tnldotdev/tnl/internal/testutil/transporttest"
 )
 
 // only the DNS provider is local. Pebble performs DNS-01 validation against
@@ -27,9 +27,13 @@ type privateFixtureDNS struct {
 	ip      map[string][]string
 }
 
-func newPrivateFixtureDNS(t *testing.T) *privateFixtureDNS {
+func newPrivateFixtureDNS(t *testing.T, owner *runtimeTopology) *privateFixtureDNS {
 	t.Helper()
-	listener, packet := privateFixtureDNSListeners(t)
+	listener, packet, err := transporttest.ListenTCPUDP()
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner.cleanupResource(t, func() { _ = listener.Close(); _ = packet.Close() })
 	f := &privateFixtureDNS{address: packet.LocalAddr().String(), txt: map[string][]string{}, ip: map[string][]string{}}
 	handler := dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
 		answer := new(dns.Msg)
@@ -57,32 +61,11 @@ func newPrivateFixtureDNS(t *testing.T) *privateFixtureDNS {
 		_ = w.WriteMsg(answer)
 	})
 	for _, server := range []*dns.Server{{PacketConn: packet, Handler: handler}, {Listener: listener, Handler: handler}} {
-		startOwnedDNSServer(t, server)
+		startOwnedDNSServer(t, server, owner)
 	}
 	return f
 }
 
-// TCP and UDP have independent port allocations. keep both reservations until
-// their servers take ownership, retrying only a collision with the other protocol.
-func privateFixtureDNSListeners(t *testing.T) (net.Listener, net.PacketConn) {
-	t.Helper()
-	for range 32 {
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
-		}
-		packet, err := net.ListenPacket("udp", listener.Addr().String())
-		if err == nil {
-			return listener, packet
-		}
-		_ = listener.Close()
-		if !errors.Is(err, syscall.EADDRINUSE) {
-			t.Fatal(err)
-		}
-	}
-	t.Fatal("reserve one DNS port for TCP and UDP")
-	return nil, nil
-}
 func (f *privateFixtureDNS) ReconcileChallenge(_ context.Context, r controldns.ChallengeRecord) (controldns.Zone, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -151,10 +134,10 @@ func (f *privateFixtureDNS) VerifyPublicURL(ctx context.Context, name string, ip
 	return len(ipv6) == 0 && slices.Equal(addresses, expected), nil
 }
 
-func privateFixtureACME(t *testing.T, d *controlstate.Database, cfg *daemonconfig.Config) (integrationPebble, *privateFixtureDNS) {
+func privateFixtureACME(t *testing.T, owner *runtimeTopology, d *controlstate.Database, cfg *daemonconfig.Config) (integrationPebble, *privateFixtureDNS) {
 	t.Helper()
-	provider := newPrivateFixtureDNS(t)
-	pebble := startIntegrationPebble(t, 0, provider.address)
+	provider := newPrivateFixtureDNS(t, owner)
+	pebble := startIntegrationPebble(t, 0, provider.address, owner)
 	cfg.Route53ManagedZoneID = "fixture-zone"
 	cfg.IngressIPv4Addresses = []string{"127.0.0.1"}
 	cfg.ACMEDirectoryURL = pebble.directoryURL

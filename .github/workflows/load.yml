@@ -18,8 +18,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   database:
@@ -120,7 +120,7 @@ jobs:
 
   load:
     name: Load tests
-    if: always()
+    if: ${{ !cancelled() }}
     needs: [database, runtime, runtime-extended]
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -128,15 +128,11 @@ jobs:
     steps:
       - name: Verify workload jobs passed
         env:
-          DATABASE_RESULT: ${{ needs.database.result }}
-          RUNTIME_RESULT: ${{ needs.runtime.result }}
-          EXTENDED_RESULT: ${{ needs.runtime-extended.result }}
+          RESULTS: ${{ toJSON(needs) }}
           EXTENDED_REQUIRED: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
         run: |
-          test "$DATABASE_RESULT" = success
-          test "$RUNTIME_RESULT" = success
-          if [ "$EXTENDED_REQUIRED" = true ]; then
-            test "$EXTENDED_RESULT" = success
-          else
-            test "$EXTENDED_RESULT" = skipped
-          fi
+          jq -r 'to_entries[] | "- \(.key): \(.value.result)"' <<< "$RESULTS" | tee -a "$GITHUB_STEP_SUMMARY"
+          jq --exit-status --argjson extended "$EXTENDED_REQUIRED" '
+            .database.result == "success" and .runtime.result == "success" and
+            .["runtime-extended"].result == (if $extended then "success" else "skipped" end)
+          ' <<< "$RESULTS" > /dev/null

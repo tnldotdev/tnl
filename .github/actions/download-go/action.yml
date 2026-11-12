@@ -1,0 +1,5 @@
+name: Download Go dependencies
+description: Prefetch both Go modules, retrying only transient download failures
+runs:
+  using: node24
+  main: ../../../scripts/ci/download-go.ts

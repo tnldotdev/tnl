@@ -15,7 +15,7 @@ import (
 // selected diagnostic run while the steady visitor workload is active.
 func captureSeparatedCPUProfiles(t *testing.T) {
 	t.Helper()
-	for _, relay := range []string{"relay-a", "relay-b"} {
+	for _, relay := range separatedPlan(t)["relays"] {
 		ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 		response, err := integrationGET(ctx, &http.Client{Timeout: 15 * time.Second},
 			"http://"+relay+":9090/debug/pprof/profile?seconds=10")

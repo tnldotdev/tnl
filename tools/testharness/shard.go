@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -32,84 +33,47 @@ func parseTestShard(value string) (testShard, error) {
 	return testShard{index: index, count: count}, nil
 }
 
-// discover through Go itself so build constraints and newly added tests use the
-// same inventory as execution. each complete top-level test belongs to one shard.
-func shardGoTestCommand(ctx context.Context, root string, command []string, value string) ([]string, error) {
+// discover and execute the same compiled binaries, with no second go invocation.
+func (p *preparedTests) selectShard(ctx context.Context, value string) error {
 	shard, err := parseTestShard(value)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	if len(command) < 2 || command[0] != "go" || command[1] != "test" {
-		return nil, errors.New("test sharding requires a go test command")
+	if shard.count > 1 && (!p.plan.explicitRun || strings.Contains(p.plan.run, "/")) {
+		return errors.New("test sharding requires an explicit top-level -run expression")
 	}
-	runIndex, run, err := goTestOption(command, "run")
-	if err != nil {
-		return nil, err
-	}
-	if shard.count > 1 && (runIndex == -1 || strings.Contains(run, "/")) {
-		return nil, errors.New("test sharding requires an explicit top-level -run expression")
-	}
-	if runIndex == -1 {
-		run = "."
-	}
-	_, skip, err := goTestOption(command, "skip")
-	if err != nil {
-		return nil, err
-	}
-	listIndex, _, err := goTestOption(command, "list")
-	if err != nil {
-		return nil, err
-	}
-	if listIndex != -1 {
-		return nil, errors.New("test sharding cannot combine -run and -list")
-	}
-	listing := slices.Clone(command)
 	// single-shard commands preserve subtest selection. discovery accounts for
 	// their top-level parent; multiple shards always select complete tests.
-	discoveryRun := run
-	discoverySkip := skip
+	discoveryRun, discoverySkip := p.plan.run, p.plan.skip
 	if shard.count == 1 {
-		discoveryRun, _ = topLevelTestExpression(run)
-		if _, subtest := topLevelTestExpression(skip); subtest {
+		discoveryRun, _ = topLevelTestExpression(discoveryRun)
+		if _, subtest := topLevelTestExpression(discoverySkip); subtest {
 			discoverySkip = ""
 		}
 	}
-	if runIndex == -1 {
-		index := slices.Index(listing, "-args")
-		if index == -1 {
-			index = len(listing)
+	var inventory strings.Builder
+	for _, binary := range p.binaries {
+		arguments := append(slices.Clone(p.arguments), "-test.list="+discoveryRun)
+		// -test.list ignores -test.skip; filtering belongs to shard selection.
+		child := exec.Command(binary.path, arguments...)
+		child.Dir = binary.directory
+		var output bytes.Buffer
+		child.Stdout, child.Stderr = &output, &output
+		if err := runTestProcess(ctx, child); err != nil {
+			return fmt.Errorf("discover tests for shard: %w\n%s", err, strings.TrimSpace(output.String()))
 		}
-		listing = slices.Insert(listing, index, "-list="+discoveryRun)
-	} else if strings.Contains(listing[runIndex], "=") {
-		listing[runIndex] = "-list=" + discoveryRun
-	} else {
-		listing[runIndex] = "-list"
-		listing[runIndex+1] = discoveryRun
+		inventory.Write(output.Bytes())
+		inventory.WriteByte('\n')
 	}
-	child := exec.CommandContext(ctx, listing[0], listing[1:]...)
-	child.Dir, child.Stderr = root, os.Stderr
-	output, err := child.Output()
+	pattern, selected, total, err := shardTestPattern(inventory.String(), discoveryRun, discoverySkip, shard)
 	if err != nil {
-		if details := strings.TrimSpace(string(output)); details != "" {
-			return nil, fmt.Errorf("discover tests for shard: %w\n%s", err, details)
-		}
-		return nil, fmt.Errorf("discover tests for shard: %w", err)
-	}
-	pattern, selected, total, err := shardTestPattern(string(output), discoveryRun, discoverySkip, shard)
-	if err != nil {
-		return nil, err
+		return err
 	}
 	fmt.Fprintf(os.Stderr, "test shard %d/%d: %d of %d tests\n", shard.index, shard.count, selected, total)
-	if shard.count == 1 {
-		return command, nil
+	if shard.count > 1 {
+		p.arguments = append(p.arguments, "-test.run="+pattern)
 	}
-	result := slices.Clone(command)
-	if strings.Contains(result[runIndex], "=") {
-		result[runIndex] = "-run=" + pattern
-	} else {
-		result[runIndex+1] = pattern
-	}
-	return result, nil
+	return nil
 }
 
 // a level separator follows a complete expression, not an unfinished group,
@@ -123,28 +87,6 @@ func topLevelTestExpression(pattern string) (string, bool) {
 		}
 	}
 	return pattern, false
-}
-
-func goTestOption(command []string, name string) (int, string, error) {
-	index, value := -1, ""
-	for i := 2; i < len(command) && command[i] != "-args"; i++ {
-		if command[i] != "-"+name && !strings.HasPrefix(command[i], "-"+name+"=") {
-			continue
-		}
-		if index != -1 {
-			return -1, "", fmt.Errorf("test sharding requires a single -%s option", name)
-		}
-		index = i
-		if _, text, ok := strings.Cut(command[i], "="); ok {
-			value = text
-		} else if i+1 < len(command) && command[i+1] != "-args" {
-			i++
-			value = command[i]
-		} else {
-			return -1, "", fmt.Errorf("test sharding requires a value for -%s", name)
-		}
-	}
-	return index, value, nil
 }
 
 func shardTestPattern(output, run, skip string, shard testShard) (string, int, int, error) {

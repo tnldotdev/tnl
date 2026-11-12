@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"maps"
@@ -50,33 +51,35 @@ import (
 	credentialv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
 )
 
+var connectionCLIBinary = flag.String("tnl-cli-binary", "", "CLI built by the connections Task before child lifecycle deadlines")
+
 // this runs the built connector owner and verifies TLS through two native relay
 // carriers. no saved human state or external service participates.
 func TestIntegrationConnectionConnectorOwnerHTTP(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	runConnectionNativeOwner(t, "http", true)
+	runConnectionNativeOwnerStartup(t, "http", "caller-prepared")
 }
 
 func TestIntegrationConnectionConnectorOwnerKubernetes(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	runConnectionNativeOwner(t, "kubernetes", true)
+	runConnectionNativeOwnerStartup(t, "kubernetes", "caller-prepared")
 }
 
 func TestIntegrationConnectionConnectorOwnerSDKSelectionBudget(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	var baseline, selected map[string]int
 	t.Run("baseline-sdk-sequence", func(t *testing.T) {
-		baseline = runConnectionNativeOwnerStartup(t, "http", true, "baseline-sdk")
+		baseline = runConnectionNativeOwnerStartup(t, "http", "baseline-sdk")
 	})
 	t.Run("native-sdk-selection", func(t *testing.T) {
-		selected = runConnectionNativeOwnerStartup(t, "http", true, "native-sdk")
+		selected = runConnectionNativeOwnerStartup(t, "http", "native-sdk")
 	})
 	if !maps.Equal(baseline, selected) {
 		t.Fatalf("native SDK selection changed the baseline SDK RPC budget: baseline=%v selected=%v", baseline, selected)
 	}
 	for _, language := range []string{"javascript", "python"} {
 		t.Run(language, func(t *testing.T) {
-			actual := runConnectionNativeOwnerStartup(t, "http", true, language)
+			actual := runConnectionNativeOwnerStartup(t, "http", language)
 			if !maps.Equal(baseline, actual) {
 				t.Fatalf("%s SDK changed cold RPC budget: baseline=%v actual=%v", language, baseline, actual)
 			}
@@ -89,7 +92,7 @@ func TestIntegrationConnectionConnectorOwnerSDKNativeWorkloadAcquisition(t *test
 	var baseline map[string]int
 	for _, language := range []string{"javascript-provider", "python-provider"} {
 		t.Run(language, func(t *testing.T) {
-			actual := runConnectionNativeOwnerStartup(t, "http", true, language)
+			actual := runConnectionNativeOwnerStartup(t, "http", language)
 			total := 0
 			for _, count := range actual {
 				total += count
@@ -106,28 +109,28 @@ func TestIntegrationConnectionConnectorOwnerGoogleConfigAcquisition(t *testing.T
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	for _, source := range []string{"caller-assertion", "token-file", "token-env"} {
 		t.Run(source, func(t *testing.T) {
-			runConnectionNativeOwnerStartup(t, "http", true, "config-google-"+source)
+			runConnectionNativeOwnerStartup(t, "http", "config-google-"+source)
 		})
 	}
 }
 
 func TestIntegrationConnectionConnectorOwnerSDKProcessContext(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	runConnectionNativeOwnerStartup(t, "http", true, "javascript-copies")
+	runConnectionNativeOwnerStartup(t, "http", "javascript-copies")
 }
 
 func TestIntegrationConnectionConnectorOwnerSDKPythonLifecycle(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	runConnectionNativeOwnerStartup(t, "http", true, "python-lifecycle")
+	runConnectionNativeOwnerStartup(t, "http", "python-lifecycle")
 }
 
 func TestIntegrationConnectionConnectorOwnerSDKPythonPrepareTimeout(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	t.Run("registered", func(t *testing.T) {
-		runConnectionNativeOwnerStartup(t, "http", true, "python-timeout")
+		runConnectionNativeOwnerStartup(t, "http", "python-timeout")
 	})
 	t.Run("startup", func(t *testing.T) {
-		runConnectionNativeOwnerStartup(t, "http", true, "python-startup-timeout")
+		runConnectionNativeOwnerStartup(t, "http", "python-startup-timeout")
 	})
 }
 
@@ -136,17 +139,9 @@ func TestIntegrationConnectionConnectorOwnerSDKBackgroundRefresh(t *testing.T) {
 	for _, language := range []string{"javascript-refresh", "python-refresh", "borrowed-refresh"} {
 		t.Run(language, func(t *testing.T) {
 			t.Parallel()
-			runConnectionNativeOwnerStartup(t, "http", true, language)
+			runConnectionNativeOwnerStartup(t, "http", language)
 		})
 	}
-}
-
-type connectorConnectionFixture struct {
-	Handle   string
-	Env      []string
-	WrongTLS *atomic.Bool
-	Canceled *atomic.Int32
-	Stop     func()
 }
 
 func readSDKSelection(t *testing.T, directory, service string) (connectorruntime.SDKOwner, connectorruntime.Connection) {
@@ -187,18 +182,12 @@ func readSDKRegistry(t *testing.T, file, service string) (connectorruntime.SDKOw
 	return connectorruntime.SDKOwner{}, connectorruntime.Connection{}
 }
 
-func runConnectionNativeOwner(t *testing.T, protocol string, public bool, qualify ...func(connectorConnectionFixture)) {
+func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map[string]int {
 	t.Helper()
-	runConnectionNativeOwnerStartup(t, protocol, public, "caller-prepared", qualify...)
-}
-
-func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool, startup string, qualify ...func(connectorConnectionFixture)) map[string]int {
-	t.Helper()
-	return runConnectionNativeOwnerBinary(t, protocol, public, startup, "", qualify...)
-}
-
-func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, startup, binary string, qualify ...func(connectorConnectionFixture)) map[string]int {
-	t.Helper()
+	binary := *connectionCLIBinary
+	if binary == "" {
+		t.Fatal("run task go:test:integration:connections to build the connector CLI")
+	}
 	serviceName := "api"
 	if protocol == "kubernetes" {
 		serviceName = "cluster"
@@ -235,15 +224,6 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 		t.Fatal(err)
 	}
 	pair := tls.Certificate{Certificate: [][]byte{serverDER, caDER}, PrivateKey: serverKey}
-	wrongLeaf := *serverLeaf
-	wrongLeaf.DNSNames = []string{"wrong.example.test"}
-	wrongDER, err := x509.CreateCertificate(rand.Reader, &wrongLeaf, ca, serverPublic, caKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wrongPair := tls.Certificate{Certificate: [][]byte{wrongDER, caDER}, PrivateKey: serverKey}
-	var wrongTLS atomic.Bool
-	var canceled atomic.Int32
 	var visits atomic.Int32
 	refreshAfter := make(chan struct{})
 	var refreshStreams atomic.Int32
@@ -253,12 +233,6 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 		}
 		if len(r.TLS.PeerCertificates) != 0 {
 			t.Error("connector requested an application client certificate")
-			return
-		}
-		if r.URL.Path == "/hang" {
-			_, _ = io.Copy(io.Discard, r.Body)
-			<-r.Context().Done()
-			canceled.Add(1)
 			return
 		}
 		if r.URL.Path == "/refresh-stream" {
@@ -284,12 +258,7 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 		w.WriteHeader(201)
 		_, _ = w.Write(data)
 	}))
-	application.TLS = &tls.Config{MinVersion: tls.VersionTLS12, ClientAuth: tls.NoClientCert, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
-		if wrongTLS.Load() {
-			return &wrongPair, nil
-		}
-		return &pair, nil
-	}}
+	application.TLS = &tls.Config{MinVersion: tls.VersionTLS12, ClientAuth: tls.NoClientCert, Certificates: []tls.Certificate{pair}}
 	application.StartTLS()
 	defer application.Close()
 	_, portString, _ := net.SplitHostPort(application.Listener.Addr().String())
@@ -604,9 +573,9 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 			}
 			_ = json.NewEncoder(w).Encode(current)
 		case r.URL.Path == "/v1/workload/services":
-			_ = json.NewEncoder(w).Encode(map[string]any{"services": []any{map[string]any{"id": service, "service": serviceName, "protocol": protocol, "endpoint": map[string]any{"hostname": managedHostname, "port": port, "public": public}}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"services": []any{map[string]any{"id": service, "service": serviceName, "protocol": protocol, "endpoint": map[string]any{"hostname": managedHostname, "port": port, "public": true}}}})
 		case strings.HasSuffix(r.URL.Path, "/run"):
-			_ = json.NewEncoder(w).Encode(map[string]any{"service_id": service, "service_run_id": serviceRun, "run_number": 1, "protocol": protocol, "trust_revision": trustRevision, "expires_at": time.Now().Add(time.Minute), "subject": current.Subject, "endpoint": map[string]any{"hostname": managedHostname, "port": port, "public": public}, "pair_ready": native.Ready})
+			_ = json.NewEncoder(w).Encode(map[string]any{"service_id": service, "service_run_id": serviceRun, "run_number": 1, "protocol": protocol, "trust_revision": trustRevision, "expires_at": time.Now().Add(time.Minute), "subject": current.Subject, "endpoint": map[string]any{"hostname": managedHostname, "port": port, "public": true}, "pair_ready": native.Ready})
 		case strings.Contains(r.URL.Path, "/connector-peer-pairs"):
 			var requested controlv1.ConnectorPeerPairRequest
 			var source controlv1.VisitorTokenWorkloadSource
@@ -631,7 +600,7 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 			if requested.Action == "renew" {
 				_ = json.NewEncoder(w).Encode(controlv1.ConnectorPeerPairRenewal{Pair: pair, RunValidUntil: pair.ExpiresAt,
 					Protocol: controlv1.ServiceProtocol(protocol), TrustRevision: trustRevision,
-					Endpoint: controlv1.ServiceEndpoint{Hostname: managedHostname, Port: port, Public: public},
+					Endpoint: controlv1.ServiceEndpoint{Hostname: managedHostname, Port: port, Public: true},
 					VisitorPermission: controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKindService, Id: service},
 						Hostname: managedHostname, Port: port, ServiceTrustRevision: &trustRevision, VisitorPolicyRevision: 1, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: pair.ExpiresAt}})
 				renewedOnce.Do(func() { close(renewed) })
@@ -713,7 +682,7 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 			workloadPolicy["token"] = map[string]any{"env": "FIXTURE_GOOGLE_ASSERTION"}
 		}
 	}
-	configuration := map[string]any{"version": 1, "tnl": map[string]any{"server": server, "team": team, "publisher_groups": map[string]any{"remote": map[string]any{"public": public}}, "services": map[string]any{serviceName: map[string]any{"publisher_group": "remote", "protocol": protocol, "target": targetDefinition}}, "workloads": map[string]any{"test": workloadPolicy}}}
+	configuration := map[string]any{"version": 1, "tnl": map[string]any{"server": server, "team": team, "publisher_groups": map[string]any{"remote": map[string]any{"public": true}}, "services": map[string]any{serviceName: map[string]any{"publisher_group": "remote", "protocol": protocol, "target": targetDefinition}}, "workloads": map[string]any{"test": workloadPolicy}}}
 	if startup == "action-wrong-provider" {
 		configuration["tnl"].(map[string]any)["workloads"] = map[string]any{"test": map[string]any{"fly": map[string]any{"app": "fixture", "org": "example"}, "services": []string{serviceName}}}
 	}
@@ -724,14 +693,6 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 	for _, args := range [][]string{{"init", "--quiet", root}, {"-C", root, "remote", "add", "origin", "https://github.com/fixture/shop.git"}} {
 		if output, err := exec.CommandContext(t.Context(), "git", args...).CombinedOutput(); err != nil {
 			t.Fatalf("git fixture: %v %s", err, output)
-		}
-	}
-	if binary == "" {
-		binary = filepath.Join(root, "tnl")
-		build := exec.CommandContext(t.Context(), "go", "build", "-race", "-o", binary, "./cmd/tnl")
-		build.Dir = "../../.."
-		if output, err := build.CombinedOutput(); err != nil {
-			t.Fatalf("native build: %v %s", err, output)
 		}
 	}
 	// the SDK resolves its native package by platform and matching version.
@@ -1471,7 +1432,7 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 		time.Sleep(10 * time.Millisecond)
 	}
 	snapshot := prepared.Connection
-	if prepared.Schema != 1 || prepared.ProjectRuntime.Services[serviceName].Hostname != managedHostname || prepared.ProjectRuntime.Services[serviceName].Public != public {
+	if prepared.Schema != 1 || prepared.ProjectRuntime.Services[serviceName].Hostname != managedHostname || !prepared.ProjectRuntime.Services[serviceName].Public {
 		t.Fatal("prepared read did not preserve the owner's public metadata")
 	}
 	if snapshot.Schema != 1 || snapshot.Host != "127.0.0.1" || snapshot.Port != port || snapshot.SSL == nil || snapshot.SSL.ServerName != managedHostname || !snapshot.SSL.RejectUnauthorized {
@@ -1537,11 +1498,6 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 	}
 	if protocol == "http" && visits.Load() != 4 || protocol == "kubernetes" && visits.Load() != 1 {
 		t.Fatal("SDK requests were not delivered exactly once")
-	}
-	for _, check := range qualify {
-		check(connectorConnectionFixture{Handle: state.ConnectionHandle, Env: slices.Clone(env), WrongTLS: &wrongTLS, Canceled: &canceled, Stop: func() {
-			call(nil, "stop", "--handle", state.ConnectionHandle)
-		}})
 	}
 	call(nil, "stop", "--handle", state.ConnectionHandle)
 	if state.Kubeconfig != "" {

@@ -6,33 +6,31 @@ import (
 	"testing"
 )
 
-// each topology declares its own inventory so independent test processes never
-// compete for the deployment's default ports on the host.
-func integrationServicePorts(t *testing.T) []string {
-	t.Helper()
-	ports, listeners := reserveIntegrationServicePorts(t)
-	for _, listener := range listeners {
-		_ = listener.Close()
-	}
-	return ports
-}
+type servicePortListeners []net.Listener
 
-func reserveIntegrationServicePorts(t *testing.T) ([]string, []net.Listener) {
+// inventory and serving use the same retained sockets, never released probes.
+func newServicePortListeners(t *testing.T, owner *runtimeTopology) servicePortListeners {
 	t.Helper()
-	var listeners []net.Listener
-	t.Cleanup(func() {
+	var listeners servicePortListeners
+	owner.cleanupResource(t, func() {
 		for _, listener := range listeners {
 			_ = listener.Close()
 		}
 	})
-	var ports []string
 	for range 8 {
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)
 		}
 		listeners = append(listeners, listener)
-		ports = append(ports, strconv.Itoa(listener.Addr().(*net.TCPAddr).Port))
 	}
-	return ports, listeners
+	return listeners
+}
+
+func (listeners servicePortListeners) inventory() []string {
+	ports := make([]string, len(listeners))
+	for index, listener := range listeners {
+		ports[index] = strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
+	}
+	return ports
 }

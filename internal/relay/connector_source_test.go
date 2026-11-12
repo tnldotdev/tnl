@@ -190,27 +190,27 @@ func connectorBindingFrame(t *testing.T, kind tunnelv1.PeerPacketKind) []byte {
 	return frame
 }
 
-func TestConnectorBindingPreparedAndUnspecifiedStateCarryOnlyProbes(t *testing.T) {
-	for _, state := range []tunnelv1.ConnectorPeerLegBindingState{"", tunnelv1.ConnectorPeerLegBindingPrepared} {
-		physical := &connectorSourceTestCarrier{}
-		binding := newConnectorBindingCarrier(physical, nil, state)
-		for _, kind := range []tunnelv1.PeerPacketKind{tunnelv1.PeerData, tunnelv1.PeerProbe, tunnelv1.PeerProbeReply} {
-			before := physical.sends.Load()
-			if err := binding.Send(t.Context(), connectorBindingFrame(t, kind)); err != nil {
-				t.Fatal(err)
-			}
-			got := physical.sends.Load() - before
-			if kind == tunnelv1.PeerData && got != 0 || kind != tunnelv1.PeerData && got != 1 {
-				t.Fatal("pending data escaped or probes were blocked", state, kind, got)
-			}
-		}
-		// endpoint frame MACs are deliberately zero here. only endpoints hold
-		// SessionKey; the relay gate may inspect packet shape, not verify that MAC.
-		binding.active.Store(true)
+func TestConnectorBindingCarrierUsesOwnerAdmission(t *testing.T) {
+	physical := &connectorSourceTestCarrier{}
+	active := false
+	binding := newConnectorBindingCarrier(physical, nil, func(packet tunnelv1.PeerPacket) bool { return active || connectorProbe(packet) }, func() {})
+	binding.ready.Store(true)
+	for _, kind := range []tunnelv1.PeerPacketKind{tunnelv1.PeerData, tunnelv1.PeerProbe, tunnelv1.PeerProbeReply} {
 		before := physical.sends.Load()
-		if err := binding.Send(t.Context(), connectorBindingFrame(t, tunnelv1.PeerData)); err != nil || physical.sends.Load() != before+1 {
-			t.Fatal("explicit active confirmation did not allow data", err)
+		if err := binding.Send(t.Context(), connectorBindingFrame(t, kind)); err != nil {
+			t.Fatal(err)
 		}
+		got := physical.sends.Load() - before
+		if kind == tunnelv1.PeerData && got != 0 || kind != tunnelv1.PeerData && got != 1 {
+			t.Fatal("pending data escaped or probes were blocked", kind, got)
+		}
+	}
+	// endpoint frame MACs are deliberately zero here. only endpoints hold
+	// SessionKey; the relay gate may inspect packet shape, not verify that MAC.
+	active = true
+	before := physical.sends.Load()
+	if err := binding.Send(t.Context(), connectorBindingFrame(t, tunnelv1.PeerData)); err != nil || physical.sends.Load() != before+1 {
+		t.Fatal("explicit active confirmation did not allow data", err)
 	}
 }
 
@@ -231,13 +231,19 @@ func (c *connectorGateReadCarrier) Receive(ctx context.Context) ([]byte, error) 
 func TestConnectorBindingPreparedInputDropsDataAndStillChecksEachSourceRead(t *testing.T) {
 	accepted, sourceCarrier, _ := connectorSourceFixture(t)
 	raw := &connectorGateReadCarrier{connectorSourceTestCarrier: &connectorSourceTestCarrier{}, frames: make(chan []byte, 2)}
-	binding := newConnectorBindingCarrier(raw, sourceCarrier.source, tunnelv1.ConnectorPeerLegBindingPrepared)
-	raw.frames <- connectorBindingFrame(t, tunnelv1.PeerData)
+	binding := newConnectorBindingCarrier(raw, sourceCarrier.source, connectorProbe, func() {})
 	probe := connectorBindingFrame(t, tunnelv1.PeerProbe)
+	if err := binding.Send(t.Context(), probe); err != nil || raw.sends.Load() != 0 {
+		t.Fatal("publisher probe was queued before the connector introduced its carrier", err)
+	}
+	raw.frames <- connectorBindingFrame(t, tunnelv1.PeerData)
 	raw.frames <- probe
 	got, err := binding.Receive(t.Context())
 	if err != nil || string(got) != string(probe) || len(raw.frames) != 0 {
 		t.Fatal("prepared data escaped or blocked probe reception", err)
+	}
+	if err := binding.Send(t.Context(), probe); err != nil || raw.sends.Load() != 1 {
+		t.Fatal("connector introduction did not release publisher probes", err)
 	}
 	accepted.move("192.0.2.2:12345")
 	if _, err := binding.Receive(t.Context()); !errors.Is(err, errConnectorSocketSourceChanged) {
