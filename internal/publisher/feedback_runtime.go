@@ -12,9 +12,8 @@ import (
 )
 
 const (
-	feedbackBrowserCookieName = "__Host-tnl-feedback-browser"
-	maximumFeedbackBrowsers   = 128
-	maximumFailedRequests     = 20
+	maximumFeedbackBrowsers = 128
+	maximumFailedRequests   = 20
 )
 
 type FeedbackClient interface {

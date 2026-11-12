@@ -21,11 +21,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
+
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/publisher"
+	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
+
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -78,7 +82,7 @@ func TestManagedPublicConnectorAcceptsLoopbackHTTPAuthority(t *testing.T) {
 				roots.AddCert(target.Certificate())
 				p.managedTargetTLS = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, ServerName: target.Certificate().DNSNames[0]}
 				var err error
-				p.serviceHTTPRequests, err = publisher.NewServiceHTTPRequestLimits(nil)
+				p.serviceHTTPRequests, err = requestlimit.NewHTTP(nil)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -141,7 +145,7 @@ func TestPublicServiceTLSCloseEndsReturnStreamExactlyOnce(t *testing.T) {
 	p, bound, ref, verification := privateFixture(t, target.Listener.Addr().String())
 	p.managedProtocol = config.ProtocolHTTP
 	var err error
-	p.serviceHTTPRequests, err = publisher.NewServiceHTTPRequestLimits(nil)
+	p.serviceHTTPRequests, err = requestlimit.NewHTTP(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,9 +217,9 @@ func privateFixture(t *testing.T, target string) (*Prepared, *Bound, tunnelv1.Se
 	if err := p.installManagedCertificate(certificate); err != nil {
 		t.Fatal(err)
 	}
-	p.managedVisitor = func(tunnelv1.ServiceForwardingHeader) publisher.ServiceVisitorAuthentication {
-		return publisher.CertificateVisitor{Check: func(context.Context, *x509.Certificate) (publisher.ServiceVisitorDecision, error) {
-			return publisher.ServiceVisitorDecision{Allowed: true, ValidUntil: time.Now().Add(time.Minute)}, nil
+	p.managedVisitor = func(tunnelv1.ServiceForwardingHeader) servicestream.Authentication {
+		return servicestream.CertificateVisitor{Check: func(context.Context, *x509.Certificate) (servicestream.Decision, error) {
+			return servicestream.Decision{Allowed: true, ValidUntil: time.Now().Add(time.Minute)}, nil
 		}}
 	}
 	setup := controlv1.ServiceRunSetup{ServiceId: service, ServiceRunId: prep.ServiceRunId, RunNumber: prep.RunNumber, RunToken: "service-run-token"}
@@ -269,9 +273,9 @@ func TestServiceStreamRejectsStaleAdmissionsBeforeTargetDial(t *testing.T) {
 			case "source":
 				header.SourceIP = "192.0.2.11"
 			case "denied":
-				p.managedVisitor = func(tunnelv1.ServiceForwardingHeader) publisher.ServiceVisitorAuthentication {
-					return publisher.CertificateVisitor{Check: func(context.Context, *x509.Certificate) (publisher.ServiceVisitorDecision, error) {
-						return publisher.ServiceVisitorDecision{}, nil
+				p.managedVisitor = func(tunnelv1.ServiceForwardingHeader) servicestream.Authentication {
+					return servicestream.CertificateVisitor{Check: func(context.Context, *x509.Certificate) (servicestream.Decision, error) {
+						return servicestream.Decision{}, nil
 					}}
 				}
 			case "wrong-certificate-name":

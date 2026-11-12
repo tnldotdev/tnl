@@ -9,7 +9,7 @@ import (
 	controlingress "github.com/tnldotdev/tnl/internal/control/api/private/ingress"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/ingress"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
@@ -45,7 +45,7 @@ func (c *cadenceIngressClient) GetIngressRoutingTableEvents(ctx context.Context,
 				params.After = 0
 				return c.ControlClient.GetIngressRoutingTableEvents(ctx, id, params)
 			}
-			return ingressv1.IngressRoutingTablePage{}, serviceapi.NewProblemError(http.StatusConflict, "routing_table_resnapshot_required", "cadence recovery resnapshot")
+			return ingressv1.IngressRoutingTablePage{}, serverhttp.NewProblemError(http.StatusConflict, "routing_table_resnapshot_required", "cadence recovery resnapshot")
 		default:
 		}
 	}

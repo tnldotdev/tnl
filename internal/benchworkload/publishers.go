@@ -19,6 +19,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
@@ -254,7 +255,7 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 		}
 	}
 	groupCtx, cancel := context.WithCancel(ctx)
-	limits := publisher.ApplicationLimits{Concurrency: config.Concurrency}
+	limits := applicationlimits.Limits{Concurrency: config.Concurrency}
 	if config.RateRequests > 0 {
 		limits.RateRequests, limits.RatePer, limits.RateBurst = config.RateRequests, time.Second, config.RateRequests
 	}

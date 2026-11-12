@@ -10,10 +10,10 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	"github.com/tnldotdev/tnl/internal/naming"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
@@ -51,7 +51,7 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 	if flags.System && !flags.Install || flags.ServiceName != "" && !flags.Install || flags.SystemStateDir != "" && !flags.Install || flags.ServerCAFile != "" && !flags.Install {
 		return publisherCLIError("--system, --service-name, --system-state-dir, and --server-ca-file require --install")
 	}
-	var options supervisor.ServiceOptions
+	var options installedjobs.ServiceOptions
 	if flags.Install {
 		options = flags.Installation
 	}
@@ -59,7 +59,7 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 	if err != nil {
 		return err
 	}
-	if err := supervisor.ValidateTrust(serverCAPEM); err != nil {
+	if err := installedjobs.ValidateTrust(serverCAPEM); err != nil {
 		return err
 	}
 	if flags.Service != "" {
@@ -120,9 +120,9 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 			return err
 		}
 	}
-	var registry *supervisor.Registry
+	var registry *installedjobs.Registry
 	if flags.Install {
-		registry, err = supervisor.Open(ctx, supervisor.OpenOptions{Root: options.Root, User: options.User})
+		registry, err = installedjobs.Open(ctx, installedjobs.OpenOptions{Root: options.Root, User: options.User})
 		if err != nil {
 			return err
 		}
@@ -151,7 +151,7 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 			return err
 		}
 	}
-	control, authority, err := supervisor.Clients(supervisor.Job{Server: server, ServerCAPEM: serverCAPEM})
+	control, authority, err := installedjobs.Clients(installedjobs.Job{Server: server, ServerCAPEM: serverCAPEM})
 	if err != nil {
 		return err
 	}
@@ -321,7 +321,7 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 	if err := publisheridentity.MatchServiceDeclaration(approved, string(protocol), trust); err != nil {
 		return failure.Wrap("match service declaration", failure.ServerConflict, errors.Join(err, errors.New("saved service protocol or TLS trust differs from the local declaration")))
 	}
-	job := supervisor.Job{Kind: supervisor.KindService, ID: supervisor.ServiceJobKey(server, *identity.ServiceId), Name: name, Server: server,
+	job := installedjobs.Job{Kind: installedjobs.KindService, ID: installedjobs.ServiceJobKey(server, *identity.ServiceId), Name: name, Server: server,
 		ServiceID: *identity.ServiceId, PublisherIdentityID: identity.ClientId, GrantID: identity.GrantId, Target: target, Protocol: config.ProtocolName(protocol), Trust: trust, ServerCAPEM: serverCAPEM,
 		TrustRevision: approved.TrustRevision, PublisherPool: approved.PublisherPool}
 	job.Limits = flags.Limits

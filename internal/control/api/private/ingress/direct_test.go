@@ -12,7 +12,7 @@ import (
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	failureproblem "github.com/tnldotdev/tnl/internal/failure/problem"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
@@ -44,7 +44,7 @@ func TestDirectRoutingEventsProblemFieldsMatchHTTP(t *testing.T) {
 				if transport == "direct" {
 					count := 8
 					_, err = client.GetIngressRoutingTableEvents(t.Context(), "ingress-1", ingressv1.GetIngressRoutingTableEventsParams{IngressRunId: "run-1", IngressLeaseRevision: 7, After: 11, Limit: &count})
-					var direct *serviceapi.ProblemError
+					var direct *serverhttp.ProblemError
 					if !errors.As(err, &direct) {
 						t.Fatalf("direct error = %v", err)
 					}

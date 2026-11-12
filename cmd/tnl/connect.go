@@ -9,9 +9,9 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/client/detached"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
-	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/connector"
+	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -104,7 +104,7 @@ func validateConnectMode(flags connectStartCommand) error {
 	return connector.ValidateMode(flags.options())
 }
 
-func runInstalledConnector(ctx context.Context, job supervisor.Job, ready func() error) error {
+func runInstalledConnector(ctx context.Context, job installedjobs.Job, ready func() error) error {
 	return connectorOperations().RunInstalled(ctx, job, ready)
 }
 func runKubeCredential(ctx context.Context, flags kubeCredentialCommand, output io.Writer) error {
@@ -154,7 +154,7 @@ func runConnectJobs(ctx context.Context, flags connectListCommand, name, action 
 	}
 	if name != "" {
 		if len(jobs) == 0 {
-			return supervisor.ErrJobNotFound
+			return installedjobs.ErrJobNotFound
 		}
 		return renderSystemJobs(output, "tnl connect stop", jobs, jobs[0].ID)
 	}

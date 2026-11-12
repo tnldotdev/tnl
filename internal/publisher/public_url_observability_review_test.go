@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
+
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/relay"
@@ -52,7 +54,7 @@ func TestPublicURLTruncatedTargetBodyAbortsVisitorResponse(t *testing.T) {
 			summaries := make(chan inspection.Summary, 1)
 			route, err := newTestPublicURLServer(t, PublicURLServerConfig{Context: owner, Hostname: "route.example", PublicURLID: certificateTestPublicURLID, Target: upstream.URL,
 				ObserveSummary: func(summary inspection.Summary) { summaries <- summary },
-				Certificate:    publicURLTestCertificate(t, "route.example"), AdmitRequest: func(r *http.Request) error {
+				Certificate:    visitorfixture.Certificate(t, "route.example"), AdmitRequest: func(r *http.Request) error {
 					if r.Context().Value(http.ServerContextKey) == nil || r.Context().Value(http.LocalAddrContextKey) == nil {
 						t.Error("visitor scope discarded net/http server context")
 					}
@@ -173,7 +175,7 @@ func TestPublicURLManagerRecoveryReachesRegisteredHTTPVisitorsAndStaysRunLocal(t
 				control.setup.PublishRun.PublicUrlId = control.setup.PublicUrl.Id
 				runOwner := observability.NarrowIdentity(ctx, observability.Identity{PublicURLID: control.setup.PublicUrl.Id})
 				route, err := newTestPublicURLServer(t, PublicURLServerConfig{Context: runOwner, Hostname: "route.example", Target: target.URL, PublicURLID: control.setup.PublicUrl.Id,
-					PublishRunID: control.setup.PublishRun.Id, PublishRunNumber: 1, Certificate: publicURLTestCertificate(t, "route.example"), PromoteVisitor: func(context.Context, Visitor) error { return nil }})
+					PublishRunID: control.setup.PublishRun.Id, PublishRunNumber: 1, Certificate: visitorfixture.Certificate(t, "route.example"), PromoteVisitor: func(context.Context, Visitor) error { return nil }})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -211,7 +213,7 @@ func TestPublicURLManagerRecoveryReachesRegisteredHTTPVisitorsAndStaysRunLocal(t
 					}
 					result.peers[peer.connection.Ref().ConnectionSlot] = peer.connection
 				}
-				transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: rootsForCertificate(t, *route.certificate.Load()), ServerName: "route.example"},
+				transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: visitorfixture.Roots(t, *route.certificate.Load()), ServerName: "route.example"},
 					DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 						stream, err := result.peers[1].OpenVisitor(ctx, "vc_0123456789abcdefghijkl", false, true, nil, tunnel.ReturnEvents{})
 						if err != nil {

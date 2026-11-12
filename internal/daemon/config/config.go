@@ -6,11 +6,11 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure"
-	ingresspool "github.com/tnldotdev/tnl/internal/ingress/pool"
 	"github.com/tnldotdev/tnl/internal/naming"
+	ingresspool "github.com/tnldotdev/tnl/internal/naming/ingresspool"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/region"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 )
 
@@ -220,7 +220,7 @@ func (c Config) Validate() (retErr error) {
 				return fmt.Errorf("private control address: %w", err)
 			}
 		}
-		if _, err := serviceapi.NewBearerSecrets(c.ClusterSecret, c.ClusterSecretPrevious); err != nil {
+		if _, err := serverhttp.NewBearerSecrets(c.ClusterSecret, c.ClusterSecretPrevious); err != nil {
 			return failure.Wrap("validate cluster secret", failure.ServerClusterSecretInvalid, err)
 		}
 		if c.EmailURL != "" || c.WebhookSecret != "" || c.WebServiceSecret != "" || c.StorageKey != "" || c.StorageKeyPrevious != "" ||

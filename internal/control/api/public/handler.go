@@ -1,4 +1,5 @@
-// Package controlapi serves the control API and authorizes public URL operations.
+// package public adapts control API requests and performs request preflight.
+// state owns the transactional authorization and lifecycle changes it requests.
 package public
 
 import (

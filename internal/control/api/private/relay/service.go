@@ -13,7 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
 	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 )
 
@@ -41,35 +41,35 @@ func newService(config DirectConfig) (*service, error) {
 
 func (s *service) RegisterRelay(ctx context.Context, body relayv1.RelayRegistration) (relayv1.RelayLease, error) {
 	if !region.ID(body.Region).Valid() {
-		return relayv1.RelayLease{}, serviceapi.NewProblemError(http.StatusBadRequest, "invalid_request", "relay region must be an exact catalog provider:region ID or local")
+		return relayv1.RelayLease{}, serverhttp.NewProblemError(http.StatusBadRequest, "invalid_request", "relay region must be an exact catalog provider:region ID or local")
 	}
 	var publicKey []byte
 	if body.PeerSigningPublicKey != nil {
 		var err error
 		publicKey, err = base64.RawURLEncoding.Strict().DecodeString(*body.PeerSigningPublicKey)
 		if err != nil || len(publicKey) != ed25519.PublicKeySize || base64.RawURLEncoding.EncodeToString(publicKey) != *body.PeerSigningPublicKey {
-			return relayv1.RelayLease{}, serviceapi.NewProblemError(http.StatusBadRequest, "invalid_request", "relay peer signing public key must be a 32-byte base64url value")
+			return relayv1.RelayLease{}, serverhttp.NewProblemError(http.StatusBadRequest, "invalid_request", "relay peer signing public key must be a 32-byte base64url value")
 		}
 	}
-	if !serviceapi.ValidIdentifiers(
+	if !serverhttp.ValidIdentifiers(
 		body.RelayServiceId, body.RelayId, body.RelayRunId, body.RelayAddress,
 		body.TlsServerName, body.InternalRelayAddress,
 	) {
-		return relayv1.RelayLease{}, serviceapi.NewProblemError(
+		return relayv1.RelayLease{}, serverhttp.NewProblemError(
 			http.StatusBadRequest, "invalid_request", "Relay registration identifiers are invalid",
 		)
 	}
-	protocolVersion, protocolOK := serviceapi.Positive(body.ProtocolVersion)
-	connectionCapacity, connectionOK := serviceapi.Positive(body.ConnectionCapacity)
-	streamCapacity, streamOK := serviceapi.Positive(body.StreamCapacity)
+	protocolVersion, protocolOK := serverhttp.Positive(body.ProtocolVersion)
+	connectionCapacity, connectionOK := serverhttp.Positive(body.ConnectionCapacity)
+	streamCapacity, streamOK := serverhttp.Positive(body.StreamCapacity)
 	if !protocolOK || !connectionOK || !streamOK {
-		return relayv1.RelayLease{}, serviceapi.NewProblemError(
+		return relayv1.RelayLease{}, serverhttp.NewProblemError(
 			http.StatusBadRequest, "invalid_request", "Relay protocol and capacities must be positive",
 		)
 	}
 	internalNetworks, ok := canonicalPrefixes(body.InternalNetworks)
 	if !ok {
-		return relayv1.RelayLease{}, serviceapi.NewProblemError(
+		return relayv1.RelayLease{}, serverhttp.NewProblemError(
 			http.StatusBadRequest, "invalid_request",
 			"internal_networks must contain at most 64 distinct canonical masked prefixes",
 		)
@@ -97,10 +97,10 @@ func (s *service) RenewRelay(
 		return relayv1.RelayLease{}, relayPathMismatchError()
 	}
 	identity, ok := relayLeaseIdentity(body.RelayServiceId, body.RelayId, body.RelayRunId, body.RelayLeaseRevision)
-	reportedConnections, connectionsOK := serviceapi.Nonnegative(body.ReportedConnections)
-	reportedStreams, streamsOK := serviceapi.Nonnegative(body.ReportedStreams)
+	reportedConnections, connectionsOK := serverhttp.Nonnegative(body.ReportedConnections)
+	reportedStreams, streamsOK := serverhttp.Nonnegative(body.ReportedStreams)
 	if !ok || !connectionsOK || !streamsOK {
-		return relayv1.RelayLease{}, serviceapi.NewProblemError(
+		return relayv1.RelayLease{}, serverhttp.NewProblemError(
 			http.StatusBadRequest, "invalid_request", "Relay renewal identity or counters are invalid",
 		)
 	}
@@ -123,7 +123,7 @@ func (s *service) DrainRelay(
 	}
 	identity, ok := relayLeaseIdentity(body.RelayServiceId, body.RelayId, body.RelayRunId, body.RelayLeaseRevision)
 	if !ok || !body.Deadline.After(s.now()) {
-		return relayv1.RelayLease{}, serviceapi.NewProblemError(
+		return relayv1.RelayLease{}, serverhttp.NewProblemError(
 			http.StatusBadRequest, "invalid_request", "Relay drain identity or deadline is invalid",
 		)
 	}
@@ -141,7 +141,7 @@ func (s *service) GetRelayTransportCertificate(
 ) (relayv1.RelayTransportCertificate, error) {
 	identity, ok := relayLeaseIdentity(relayServiceID, params.RelayId, params.RelayRunId, params.RelayLeaseRevision)
 	if !ok {
-		return relayv1.RelayTransportCertificate{}, serviceapi.NewProblemError(
+		return relayv1.RelayTransportCertificate{}, serverhttp.NewProblemError(
 			http.StatusBadRequest, "invalid_request", "Relay certificate lease identity is invalid",
 		)
 	}
@@ -175,7 +175,7 @@ func (s *service) ClaimPublisherConnection(
 		credentials.PublisherConnectionCredential(body.PublisherConnectionCredential),
 	)
 	if err != nil {
-		return relayv1.ClaimedPublisherConnection{}, serviceapi.NewProblemError(
+		return relayv1.ClaimedPublisherConnection{}, serverhttp.NewProblemError(
 			http.StatusUnauthorized, "invalid_publisher_connection_credential",
 			"Publisher connection credential is invalid",
 		)
@@ -239,19 +239,19 @@ func publisherConnectionClaim(
 	if publisherConnectionID != fields.publisherConnectionID {
 		return controlstate.PublisherConnectionClaimRequest{}, relayPathMismatchError()
 	}
-	if !serviceapi.ValidIdentifiers(
+	if !serverhttp.ValidIdentifiers(
 		fields.publishRunID, fields.publicURLID, fields.publisherConnectionID, fields.relayServiceID,
 		fields.relayID, fields.relayRunID, fields.claimID,
 	) || fields.connectionSlot < 0 || fields.connectionSlot > 1 {
-		return controlstate.PublisherConnectionClaimRequest{}, serviceapi.NewProblemError(
+		return controlstate.PublisherConnectionClaimRequest{}, serverhttp.NewProblemError(
 			http.StatusBadRequest, "invalid_request", "Publisher connection identity is invalid",
 		)
 	}
-	publishRunNumber, routeOK := serviceapi.Positive(fields.publishRunNumber)
-	assignmentRevision, assignmentOK := serviceapi.Positive(fields.assignmentRevision)
-	leaseRevision, leaseOK := serviceapi.Positive(fields.relayLeaseRevision)
+	publishRunNumber, routeOK := serverhttp.Positive(fields.publishRunNumber)
+	assignmentRevision, assignmentOK := serverhttp.Positive(fields.assignmentRevision)
+	leaseRevision, leaseOK := serverhttp.Positive(fields.relayLeaseRevision)
 	if !routeOK || !assignmentOK || !leaseOK {
-		return controlstate.PublisherConnectionClaimRequest{}, serviceapi.NewProblemError(
+		return controlstate.PublisherConnectionClaimRequest{}, serverhttp.NewProblemError(
 			http.StatusBadRequest, "invalid_request", "Publisher connection revisions are invalid",
 		)
 	}
@@ -274,11 +274,11 @@ func (s *service) storeError(ctx context.Context, err error) error {
 		return context.Cause(ctx)
 	}
 	status, kind, detail := storeProblem(err, s.report)
-	return serviceapi.NewProblemError(status, kind, detail)
+	return serverhttp.NewProblemError(status, kind, detail)
 }
 
 func relayPathMismatchError() error {
-	return serviceapi.NewProblemError(
+	return serverhttp.NewProblemError(
 		http.StatusBadRequest, "invalid_request", "Path and request body identifiers do not match",
 	)
 }

@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -59,7 +59,7 @@ func TestResolveVisitorAccessUsesCurrentIPOnlyWhenExplicit(t *testing.T) {
 }
 
 func TestPublisherConfigPreservesEphemeralRouteChoice(t *testing.T) {
-	configured := (publisherServices{ephemeral: true}).config("http://127.0.0.1:3000", nil, publisher.ApplicationLimits{Concurrency: 750})
+	configured := (publisherServices{ephemeral: true}).config("http://127.0.0.1:3000", nil, applicationlimits.Limits{Concurrency: 750})
 	if !configured.Ephemeral {
 		t.Fatal("ephemeral route choice was not passed to the publisher")
 	}

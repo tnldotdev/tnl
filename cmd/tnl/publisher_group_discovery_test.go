@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/client/supervisor"
+	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	"github.com/tnldotdev/tnl/internal/testutil/groupdiscovery"
 )
 
@@ -75,7 +75,7 @@ func TestPublisherGroupDiscoveryShutdownJoinsAWSLookupsAndWorkers(t *testing.T) 
 				if err != nil {
 					t.Fatal(err)
 				}
-				registry, err := supervisor.Open(t.Context(), supervisor.OpenOptions{Root: filepath.Join(parent, "registry"), User: true})
+				registry, err := installedjobs.Open(t.Context(), installedjobs.OpenOptions{Root: filepath.Join(parent, "registry"), User: true})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -83,7 +83,7 @@ func TestPublisherGroupDiscoveryShutdownJoinsAWSLookupsAndWorkers(t *testing.T) 
 				if err := registry.InstallGroup(t.Context(), fixture.Job, *fixture.Job.GroupMember, fixture.Key); err != nil {
 					t.Fatal(err)
 				}
-				engine := supervisor.Engine{Registry: registry, PollInterval: 5 * time.Millisecond, Group: func(ctx context.Context, job supervisor.Job, observe func(int64, bool) error) error {
+				engine := installedjobs.Engine{Registry: registry, PollInterval: 5 * time.Millisecond, Group: func(ctx context.Context, job installedjobs.Job, observe func(int64, bool) error) error {
 					_, private, profile, err := registry.GroupIdentity(ctx, job)
 					if err != nil {
 						return err

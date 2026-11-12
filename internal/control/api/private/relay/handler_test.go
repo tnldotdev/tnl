@@ -14,7 +14,7 @@ import (
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	failureproblem "github.com/tnldotdev/tnl/internal/failure/problem"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 )
 
@@ -238,7 +238,7 @@ func TestRelayStoreErrorsHaveStableProblems(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, err = client.ClaimPublisherConnection(t.Context(), body.PublisherConnectionId, body)
-			var direct *serviceapi.ProblemError
+			var direct *serverhttp.ProblemError
 			if !errors.As(err, &direct) || direct.Status != wire.StatusCode() || wire.ApplicationproblemJSONDefault == nil ||
 				direct.Type != wire.ApplicationproblemJSONDefault.Type || direct.Title != wire.ApplicationproblemJSONDefault.Title ||
 				direct.Detail != wire.ApplicationproblemJSONDefault.Detail {
@@ -261,9 +261,9 @@ func testRelayHandler(t *testing.T, store Store, now time.Time, report func(erro
 	return h
 }
 
-func testRelaySecrets(t *testing.T) serviceapi.BearerSecrets {
+func testRelaySecrets(t *testing.T) serverhttp.BearerSecrets {
 	t.Helper()
-	secrets, err := serviceapi.NewBearerSecrets(testRelayClusterSecret, "")
+	secrets, err := serverhttp.NewBearerSecrets(testRelayClusterSecret, "")
 	if err != nil {
 		t.Fatal(err)
 	}

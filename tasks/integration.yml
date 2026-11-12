@@ -122,8 +122,8 @@ tasks:
     desc: Check both SDKs against disposable PostgreSQL and MySQL with verified TLS
     deps: [":js:build", ":py:sync"]
     cmds:
-      - go -C tools/testharness run . postgres-tls -- go test -race -v ./internal/publisher -run='^TestIntegration(ManagedDatabaseProviders|DatabaseSDKSmoke|ManagedPostgres)' -count=1 -timeout=5m -args -tnl-test-tier=integration
-      - go -C tools/testharness run . mysql-tls -- go test -race -v ./internal/publisher -run='^TestIntegration(ManagedDatabaseProviders|DatabaseSDKSmoke)/mysql' -count=1 -timeout=5m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres-tls -- go test -race -v ./internal/publisher/service/stream -run='^TestIntegration(ManagedDatabaseProviders|DatabaseSDKSmoke|ManagedPostgres)' -count=1 -timeout=5m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . mysql-tls -- go test -race -v ./internal/publisher/service/stream -run='^TestIntegration(ManagedDatabaseProviders|DatabaseSDKSmoke)/mysql' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
   binary:
     desc: Check built server processes on Linux with disposable PostgreSQL
@@ -147,7 +147,7 @@ tasks:
     vars:
       KIND: '{{default "kind" .KIND}}'
     cmds:
-      - go test -v ./internal/publisher -run='^TestIntegrationKubernetesKubectl$' -count=1 -timeout=8m -args -tnl-test-tier=integration -tnl-kind-binary={{.KIND}}
+      - go test -v ./internal/publisher/service/stream -run='^TestIntegrationKubernetesKubectl$' -count=1 -timeout=8m -args -tnl-test-tier=integration -tnl-kind-binary={{.KIND}}
 
   compose:
     desc: Check disposable host-side Compose HTTP and TCP targets

@@ -17,6 +17,9 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
+	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
+	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
 )
 
 func newInlineTestRequest() *http.Request {
@@ -29,14 +32,14 @@ func newInlineTestRequest() *http.Request {
 func TestInlinePublisherAppliesTotalAndRateAfterVisitorAccess(t *testing.T) {
 	for _, test := range []struct {
 		name       string
-		limits     ApplicationLimits
+		limits     applicationlimits.Limits
 		status     int
 		code       string
 		retryAfter string
 		completed  bool
 	}{
-		{"total", ApplicationLimits{Requests: 1}, http.StatusServiceUnavailable, "TNL_REQUEST_BUDGET_EXHAUSTED", "", true},
-		{"rate", ApplicationLimits{RateRequests: 1, RatePer: time.Minute}, http.StatusTooManyRequests, "TNL_REQUEST_RATE_LIMITED", "60", false},
+		{"total", applicationlimits.Limits{Requests: 1}, http.StatusServiceUnavailable, "TNL_REQUEST_BUDGET_EXHAUSTED", "", true},
+		{"rate", applicationlimits.Limits{RateRequests: 1, RatePer: time.Minute}, http.StatusTooManyRequests, "TNL_REQUEST_RATE_LIMITED", "60", false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var served atomic.Int32
@@ -57,7 +60,7 @@ func TestInlinePublisherAppliesTotalAndRateAfterVisitorAccess(t *testing.T) {
 				t.Fatalf("first request = %d", first.Code)
 			}
 			denied := newInlineTestRequest()
-			denied.Header.Set(visitorTokenHeader, "invalid-visitor-token")
+			denied.Header.Set(httpaccess.VisitorTokenHeader, "invalid-visitor-token")
 			denied = denied.WithContext(context.WithValue(denied.Context(), denialContextKey{}, true))
 			policy := httptest.NewRecorder()
 			serveTestPublicRequest(t, server, policy, denied)
@@ -71,7 +74,7 @@ func TestInlinePublisherAppliesTotalAndRateAfterVisitorAccess(t *testing.T) {
 				t.Fatalf("rejected request = %d, headers = %v, served = %d", second.Code, second.Header(), served.Load())
 			}
 			select {
-			case <-server.admission.completed:
+			case <-server.admission.Completed():
 				if !test.completed {
 					t.Fatal("rate rejection ended the publish run")
 				}
@@ -88,7 +91,7 @@ func TestInlinePublisherAdmissionFollowsVisitorAccess(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	server, err := newTestPublicURLServer(t, PublicURLServerConfig{
-		Hostname: "route.example", Limits: ApplicationLimits{Concurrency: 1},
+		Hostname: "route.example", Limits: applicationlimits.Limits{Concurrency: 1},
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			close(started)
 			<-release
@@ -112,7 +115,7 @@ func TestInlinePublisherAdmissionFollowsVisitorAccess(t *testing.T) {
 	}
 
 	denied := newInlineTestRequest()
-	denied.Header.Set(visitorTokenHeader, "invalid-visitor-token")
+	denied.Header.Set(httpaccess.VisitorTokenHeader, "invalid-visitor-token")
 	denied = denied.WithContext(context.WithValue(denied.Context(), denialContextKey{}, true))
 	response := httptest.NewRecorder()
 	serveTestPublicRequest(t, server, response, denied)
@@ -200,7 +203,7 @@ func TestRouteServerRejectsMisdirectedHTTP2StreamWithRetryableStatus(t *testing.
 	t.Cleanup(upstream.Close)
 	route, err := newTestPublicURLServer(t, PublicURLServerConfig{
 		Hostname: "route.example", Target: upstream.URL,
-		Certificate: publicURLTestCertificate(t, "*.example"),
+		Certificate: visitorfixture.Certificate(t, "*.example"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -367,8 +370,8 @@ func TestRouteServerCompletedBodiesAllowLongResponses(t *testing.T) {
 func startLimitedTestPublicURL(t *testing.T, target string, limit int, timeout time.Duration) (*PublicURLServer, chan struct{}) {
 	t.Helper()
 	route, err := newTestPublicURLServer(t, PublicURLServerConfig{
-		Hostname: "route.example", Target: target, Limits: ApplicationLimits{Concurrency: limit},
-		Certificate: publicURLTestCertificate(t, "route.example"),
+		Hostname: "route.example", Target: target, Limits: applicationlimits.Limits{Concurrency: limit},
+		Certificate: visitorfixture.Certificate(t, "route.example"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -402,7 +405,7 @@ func singleConnectionRouteClient(t *testing.T, route *PublicURLServer, h2 bool) 
 	transport := &http.Transport{
 		ForceAttemptHTTP2: h2,
 		TLSClientConfig: &tls.Config{
-			ServerName: "route.example", RootCAs: rootsForCertificate(t, *route.certificate.Load()),
+			ServerName: "route.example", RootCAs: visitorfixture.Roots(t, *route.certificate.Load()),
 		},
 		DialContext: func(context.Context, string, string) (net.Conn, error) {
 			if dialed.Swap(true) {
@@ -489,7 +492,7 @@ func assertHTTP1OverloadDoesNotDrainBody(t *testing.T, route *PublicURLServer) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = connection.Close(); awaitPublisherTest(t, handled) })
-	client := tls.Client(connection, &tls.Config{ServerName: "route.example", RootCAs: rootsForCertificate(t, *route.certificate.Load())})
+	client := tls.Client(connection, &tls.Config{ServerName: "route.example", RootCAs: visitorfixture.Roots(t, *route.certificate.Load())})
 	if _, err := io.WriteString(client, "POST / HTTP/1.1\r\nHost: route.example\r\nContent-Length: 2\r\n\r\n"); err != nil {
 		t.Fatal(err)
 	}

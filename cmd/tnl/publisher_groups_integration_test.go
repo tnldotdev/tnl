@@ -17,8 +17,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
-	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
+	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -104,7 +104,7 @@ func TestIntegrationFixedGroupsCrossTeamIsolation(t *testing.T) {
 		identities = append(identities, identity)
 		identityPaths = append(identityPaths, path)
 		bindingPath := filepath.Join(t.TempDir(), "binding.json")
-		writeJSON(bindingPath, supervisor.GroupBinding{Version: 1, Scope: supervisor.ScopeForGroup(identity)})
+		writeJSON(bindingPath, installedjobs.GroupBinding{Version: 1, Scope: installedjobs.ScopeForGroup(identity)})
 		bindingPaths = append(bindingPaths, bindingPath)
 	}
 	if identities[0].Member.ProjectKey != identities[1].Member.ProjectKey || identities[0].Member.GroupName != identities[1].Member.GroupName || identities[0].Instance != identities[1].Instance || identities[0].PrivateKey == identities[1].PrivateKey || identities[0].Member.GroupId == identities[1].Member.GroupId {
@@ -137,7 +137,7 @@ func TestIntegrationFixedGroupsCrossTeamIsolation(t *testing.T) {
 		})
 		return cancel, done
 	}
-	registry, err := supervisor.Open(t.Context(), supervisor.OpenOptions{Root: state, StandaloneGroups: true})
+	registry, err := installedjobs.Open(t.Context(), installedjobs.OpenOptions{Root: state, StandaloneGroups: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +235,7 @@ func TestIntegrationFixedGroupsCrossTeamIsolation(t *testing.T) {
 			return response.StatusCode == 200 && string(body) == want && response.TLS != nil && len(response.TLS.PeerCertificates) > 0 && bytes.Equal(response.TLS.PeerCertificates[0].RawSubjectPublicKeyInfo, visitorKeys[index])
 		})
 	}
-	jobA := supervisor.JobKey(f.url, "group", identities[0].Member.GroupId+":default")
+	jobA := installedjobs.JobKey(f.url, "group", identities[0].Member.GroupId+":default")
 	if err := registry.Stop(t.Context(), jobA); err != nil {
 		t.Fatal(err)
 	}

@@ -19,12 +19,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
+
 	quic "github.com/quic-go/quic-go"
 	"github.com/tnldotdev/tnl/internal/config"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
-	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/testutil/transporttest"
@@ -625,7 +626,7 @@ func TestConnectorServicePeerHTTPConsumerJoinsHandlerAndTarget(t *testing.T) {
 	b, p, verification, opening, _ := connectorPeerFixture(t, target.Listener.Addr().String())
 	b.prepared.managedProtocol = config.ProtocolHTTP
 	var err error
-	b.prepared.serviceHTTPRequests, err = publisher.NewServiceHTTPRequestLimits(nil)
+	b.prepared.serviceHTTPRequests, err = requestlimit.NewHTTP(nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -20,7 +20,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
@@ -189,7 +189,7 @@ func TestPrivateRelayPreservesOriginalProxyAndRejectsStaleAssignment(t *testing.
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = registry.Close() })
-	secrets, err := serviceapi.NewBearerSecrets(strings.Repeat("s", 32), "")
+	secrets, err := serverhttp.NewBearerSecrets(strings.Repeat("s", 32), "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
+
 	"github.com/tnldotdev/tnl/internal/relay"
 	"github.com/tnldotdev/tnl/internal/testutil/transporttest"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
@@ -27,9 +29,9 @@ type drainTestRelay struct {
 func drainTestConnections(t *testing.T, ctx context.Context, control *certificateTestControl, kind string) (muxsession.Connector, <-chan drainTestRelay, <-chan muxsession.Session) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(ctx)
-	certificate := publicURLTestCertificate(t, "relay.example")
+	certificate := visitorfixture.Certificate(t, "relay.example")
 	serverTLS := &tls.Config{Certificates: []tls.Certificate{certificate}}
-	clientTLS := &tls.Config{RootCAs: rootsForCertificate(t, certificate)}
+	clientTLS := &tls.Config{RootCAs: visitorfixture.Roots(t, certificate)}
 	relays, publishers := make(chan drainTestRelay, 2), make(chan muxsession.Session, 2)
 	var connector muxsession.Connector
 	var listeners []io.Closer

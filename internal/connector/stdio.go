@@ -10,15 +10,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	"github.com/tnldotdev/tnl/internal/config"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
+	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"golang.org/x/sys/unix"
 )
 
 func runConnectStdio(ctx context.Context, session *Session, service controlv1.Service, input *os.File, output io.Writer) error {
-	configuration, err := connectConfiguration(ctx, session, supervisor.Job{ServiceID: service.Id,
+	configuration, err := connectConfiguration(ctx, session, installedjobs.Job{ServiceID: service.Id,
 		IdentityID: session.identity.Identity.Id, Protocol: config.ProtocolTCP, TrustRevision: service.TrustRevision, Endpoint: service.Endpoint})
 	if err != nil {
 		return err

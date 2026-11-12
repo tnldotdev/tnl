@@ -8,7 +8,7 @@ import (
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 )
 
@@ -23,7 +23,7 @@ func TestRegionRegistrationRejectsUnqualifiedInputs(t *testing.T) {
 	}
 	for _, value := range []string{"", "sjc", "us-west-1", "aws:sjc", "fly:unknown", "FLY:SJC"} {
 		_, err := client.RegisterRelay(t.Context(), relayv1.RelayRegistration{Region: value})
-		var problem *serviceapi.ProblemError
+		var problem *serverhttp.ProblemError
 		if !errors.As(err, &problem) || problem.Status != http.StatusBadRequest || problem.Code != "invalid_request" || calls != 0 {
 			t.Fatal("invalid region reached storage or lost classification", value, err)
 		}

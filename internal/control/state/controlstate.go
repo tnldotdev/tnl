@@ -1,5 +1,3 @@
-// Package controlstate stores persistent control state in PostgreSQL and changes
-// that state in transactions. it also manages schema migrations.
 package state
 
 import (

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 )
 
 func TestPublicURLStreamingUploadRetainsCookieFilteredTrailers(t *testing.T) {
@@ -54,7 +56,7 @@ func TestPublicURLStreamingUploadRetainsCookieFilteredTrailers(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			request.Header.Set("Cookie", feedbackBrowserCookieName+"=internal; app=kept")
+			request.Header.Set("Cookie", httpaccess.FeedbackBrowserCookieName+"=internal; app=kept")
 			request.Header.Set("Authorization", "Bearer application")
 			request.Header.Set("X-Api-Key", "application-key")
 			request.Trailer = http.Header{"X-Upload-Digest": nil}

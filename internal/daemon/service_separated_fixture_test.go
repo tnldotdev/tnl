@@ -27,7 +27,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/transporttest"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
@@ -152,7 +152,7 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 	}
 	serviceHTTP := &http.Client{Transport: serviceTransport, Timeout: 10 * time.Second}
 	t.Cleanup(serviceTransport.CloseIdleConnections)
-	secrets, err := serviceapi.NewBearerSecrets(serviceRuntimeClusterSecret, "")
+	secrets, err := serverhttp.NewBearerSecrets(serviceRuntimeClusterSecret, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,7 +306,7 @@ func (f *privateSeparatedFixture) runFixtureRelay(t *testing.T, settings relayPr
 		lifetime = observability.WithMetrics(lifetime, observability.FromContext(f.processContext("relay")))
 		metrics = observability.FromContext(lifetime)
 	}
-	secrets, err := serviceapi.NewBearerSecrets(serviceRuntimeClusterSecret, "")
+	secrets, err := serverhttp.NewBearerSecrets(serviceRuntimeClusterSecret, "")
 	if err != nil {
 		cancel()
 		t.Fatal(err)

@@ -435,9 +435,10 @@ type Querier interface {
 	LockPublisherEnrollment(ctx context.Context, id string) (ControlPublisherEnrollment, error)
 	LockPublisherIdentity(ctx context.Context, id string) (ControlPublisherIdentity, error)
 	LockRelayServiceForCertificate(ctx context.Context, relayServiceID string) (string, error)
-	// callers hold affected public URL rows and any existing publish run rows.
-	// take the assignment-total guard before relay-service guards and lease rows;
-	// lock all services before checking capacity or locking leases.
+	// callers hold the affected public URL and existing publish run rows, or the
+	// affected service and existing service run rows. take the assignment-total
+	// guard before relay service guards and lease rows; lock every relay service
+	// before checking capacity or locking leases.
 	LockRelayServicesForPlacement(ctx context.Context) ([]string, error)
 	LockService(ctx context.Context, id string) (ControlService, error)
 	LockServiceAuditClock(ctx context.Context, teamID string) error

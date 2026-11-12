@@ -5,6 +5,7 @@ import (
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -13,9 +14,9 @@ import (
 // browser and feedback operations.
 // saved URL operations and signed run creation remain owned by Native.
 type publicationVisitors interface {
-	publisher.VisitorPolicyClient
+	httpaccess.PolicyClient
 	publisher.BrowserControlClient
-	publisher.ShareAccessClient
+	httpaccess.ShareClient
 	publisher.PreviewClient
 	publisher.FeedbackClient
 }

@@ -13,14 +13,14 @@ import (
 	controlrelay "github.com/tnldotdev/tnl/internal/control/api/private/relay"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func TestRelayControlErrorHandlesEmptyProblem(t *testing.T) {
 	t.Parallel()
-	err := relayControlError("register relay", &serviceapi.ProblemError{})
+	err := relayControlError("register relay", &serverhttp.ProblemError{})
 	var problem *ControlProblemError
 	if !errors.As(err, &problem) || problem.Operation != "register relay" || problem.Status != 0 || problem.Problem != nil {
 		t.Fatalf("error = %#v", err)
@@ -262,7 +262,7 @@ func (s *relayDrainControlStub) RenewRelay(
 	if calls == 2 {
 		close(s.secondRenewal)
 	}
-	return relayv1.RelayLease{}, &serviceapi.ProblemError{
+	return relayv1.RelayLease{}, &serverhttp.ProblemError{
 		Status: 409, Type: "https://tnl.dev/p/relay-lease-stale",
 	}
 }

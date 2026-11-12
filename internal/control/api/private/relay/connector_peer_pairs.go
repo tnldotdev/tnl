@@ -13,7 +13,7 @@ import (
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -39,7 +39,7 @@ func connectorLegProof(encoded string) (tunnelv1.ConnectorPairLegProof, bool) {
 
 func (s *service) ClaimConnectorPeerPairLeg(ctx context.Context, pairID string, slot int, body relayv1.ConnectorPeerPairLegClaimRequest) (relayv1.ConnectorPeerPairLegClaim, error) {
 	invalid := func() (relayv1.ConnectorPeerPairLegClaim, error) {
-		return relayv1.ConnectorPeerPairLegClaim{}, serviceapi.NewProblemError(http.StatusBadRequest, "invalid_request", "connector peer pair leg claim is invalid")
+		return relayv1.ConnectorPeerPairLegClaim{}, serverhttp.NewProblemError(http.StatusBadRequest, "invalid_request", "connector peer pair leg claim is invalid")
 	}
 	proof, valid := connectorLegProof(body.ProofFrame)
 	lease, leaseOK := relayLeaseIdentity(body.RelayLease.RelayServiceId, body.RelayLease.RelayId,
@@ -60,15 +60,15 @@ func (s *service) ClaimConnectorPeerPairLeg(ctx context.Context, pairID string, 
 			return relayv1.ConnectorPeerPairLegClaim{}, context.Cause(ctx)
 		}
 		if errors.Is(err, controlstate.ErrServiceAccess) || errors.Is(err, controlstate.ErrVisitorPermission) || errors.Is(err, controlstate.ErrWorkloadDenied) {
-			return relayv1.ConnectorPeerPairLegClaim{}, serviceapi.NewProblemError(http.StatusForbidden, "unauthenticated", "connector peer pair leg is no longer authorized")
+			return relayv1.ConnectorPeerPairLegClaim{}, serverhttp.NewProblemError(http.StatusForbidden, "unauthenticated", "connector peer pair leg is no longer authorized")
 		}
 		if errors.Is(err, controlstate.ErrConnectorPeerBindingStale) {
-			return relayv1.ConnectorPeerPairLegClaim{}, serviceapi.NewProblemError(http.StatusConflict, "stale_network_binding", "connector network binding changed")
+			return relayv1.ConnectorPeerPairLegClaim{}, serverhttp.NewProblemError(http.StatusConflict, "stale_network_binding", "connector network binding changed")
 		}
 		// the operator adapter emits authored text and safe fields, retaining the
 		// provider cause for classification rather than printing it to the caller.
 		s.report(failure.Wrap("claim connector peer pair leg", failure.ServerAPIInternal, err))
-		return relayv1.ConnectorPeerPairLegClaim{}, serviceapi.NewProblemError(http.StatusInternalServerError, "internal", "connector peer pair claim failed")
+		return relayv1.ConnectorPeerPairLegClaim{}, serverhttp.NewProblemError(http.StatusInternalServerError, "internal", "connector peer pair claim failed")
 	}
 	return relayv1.ConnectorPeerPairLegClaim{PairId: claim.PairID, DeliveryId: base64.RawURLEncoding.EncodeToString(claim.DeliveryID[:]), DeliveryGeneration: claim.DeliveryGeneration,
 		ConnectionSlot: claim.ConnectionSlot, Key: claim.Key, SourceIp: claim.SourceIP.String(), ObservedAt: claim.ObservedAt, ExpiresAt: claim.ExpiresAt, BindingState: relayv1.ConnectorPeerLegBindingState(claim.BindingState)}, nil
@@ -77,14 +77,14 @@ func (s *service) ClaimConnectorPeerPairLeg(ctx context.Context, pairID string, 
 func (h *handler) claimConnectorPeerPairLeg(w http.ResponseWriter, r *http.Request, pairID string, slot int) {
 	var body relayv1.ConnectorPeerPairLegClaimRequest
 	r.Body = http.MaxBytesReader(w, r.Body, int64(base64.RawURLEncoding.EncodedLen(tunnelv1.MaxConnectorPairLegProofBytes+4)+2048))
-	if !serviceapi.DecodeJSON(w, r, &body) {
+	if !serverhttp.DecodeJSON(w, r, &body) {
 		return
 	}
 	claim, err := h.service.ClaimConnectorPeerPairLeg(r.Context(), pairID, slot, body)
 	if h.writeServiceError(w, r, err) {
 		return
 	}
-	serviceapi.WriteJSON(w, http.StatusOK, claim)
+	serverhttp.WriteJSON(w, http.StatusOK, claim)
 }
 
 // ClaimConnectorPeerPairLegFromAcceptedSocket executes the same checked operation

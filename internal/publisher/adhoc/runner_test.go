@@ -9,7 +9,7 @@ import (
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/publishingtest"
 	"github.com/tnldotdev/tnl/internal/testutil"
@@ -39,7 +39,7 @@ func TestRunCleansExactAllocationAfterCanceledCallback(t *testing.T) {
 	defer cancel()
 	registrationErr := errors.New("registration is no longer current")
 	allocated := ""
-	err = Run(ctx, Options{ControlURL: f.URL, HTTPClient: f.HTTP, State: state, EnrollmentKey: secret, InvocationID: invocation, Target: "http://app.internal:3000", Limits: publisher.ApplicationLimits{Requests: 1}, OnAllocated: func(publicURL controlv1.PublicURL) error { allocated = publicURL.Id; cancel(); return registrationErr }})
+	err = Run(ctx, Options{ControlURL: f.URL, HTTPClient: f.HTTP, State: state, EnrollmentKey: secret, InvocationID: invocation, Target: "http://app.internal:3000", Limits: applicationlimits.Limits{Requests: 1}, OnAllocated: func(publicURL controlv1.PublicURL) error { allocated = publicURL.Id; cancel(); return registrationErr }})
 	deleted := f.DeletedIDs()
 	if !errors.Is(err, registrationErr) || f.Allocations.Load() != 1 || f.Deletions.Load() != 1 || len(deleted) != 1 || deleted[0] != allocated || f.Runs.Load() != 0 {
 		t.Fatalf("allocation cleanup lost exact ownership: err=%v allocations=%d deleted=%v allocated=%s", err, f.Allocations.Load(), deleted, allocated)
@@ -48,11 +48,11 @@ func TestRunCleansExactAllocationAfterCanceledCallback(t *testing.T) {
 
 func TestRunRejectsLimitsAndMissingScopeBeforeAllocation(t *testing.T) {
 	invocation, _ := opaqueid.New(opaqueid.InvocationPrefix)
-	options := Options{ControlURL: "https://control.example", State: &clientstate.Store{}, InvocationID: invocation, Target: "http://127.0.0.1:3000", Limits: publisher.ApplicationLimits{RateRequests: 1, RatePer: -time.Second}}
+	options := Options{ControlURL: "https://control.example", State: &clientstate.Store{}, InvocationID: invocation, Target: "http://127.0.0.1:3000", Limits: applicationlimits.Limits{RateRequests: 1, RatePer: -time.Second}}
 	if err := Run(t.Context(), options); err == nil {
 		t.Fatal("invalid rate reached allocation")
 	}
-	options.Limits = publisher.ApplicationLimits{}
+	options.Limits = applicationlimits.Limits{}
 	if err := Run(t.Context(), options); !errors.Is(err, publisheridentity.ErrSelection) {
 		t.Fatalf("missing scope accepted: %v", err)
 	}

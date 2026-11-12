@@ -25,10 +25,10 @@ import (
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	"github.com/tnldotdev/tnl/internal/publisher/setup"
@@ -172,8 +172,8 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	if !strings.Contains(output, "https://opencode.") || !strings.Contains(output, "ready") || probes.Load() == 0 {
 		t.Fatal("setup returned before verified public readiness", output)
 	}
-	root := supervisor.DefaultRoot("linux")
-	registry, err := supervisor.Open(t.Context(), supervisor.OpenOptions{Root: root})
+	root := installedjobs.DefaultRoot("linux")
+	registry, err := installedjobs.Open(t.Context(), installedjobs.OpenOptions{Root: root})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,11 +208,11 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	// interrupt after the desired job/key commit, before supervisor installation.
-	err = setup.Register(t.Context(), supervisor.ServiceOptions{Root: root, BinarySource: filepath.Join(binDir, "missing")}, setup.Installation{Job: job, Credential: credential},
-		supervisor.ExecutorFunc(func(context.Context, supervisor.Command) error {
+	err = setup.Register(t.Context(), installedjobs.ServiceOptions{Root: root, BinarySource: filepath.Join(binDir, "missing")}, setup.Installation{Job: job, Credential: credential},
+		installedjobs.ExecutorFunc(func(context.Context, installedjobs.Command) error {
 			t.Fatal("interrupted installer reached systemd")
 			return nil
-		}), func([]supervisor.Job, string) error { return nil })
+		}), func([]installedjobs.Job, string) error { return nil })
 	if err == nil {
 		t.Fatal("interrupted installation unexpectedly succeeded")
 	}
@@ -237,9 +237,9 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	installFixtureCommand(t, "chown", "-R", "0:0", filepath.Dir(person))
 	firstRun = job.Status.RunNumber
 	installFixtureCommand(t, binary, "auth", "logout", "--server", f.url, "--state-dir", person)
-	installFixtureCommand(t, "systemctl", "is-enabled", supervisor.SystemdUnit)
+	installFixtureCommand(t, "systemctl", "is-enabled", installedjobs.SystemdUnit)
 	installFixtureCommand(t, "systemctl", "daemon-reexec")
-	installFixtureCommand(t, "systemctl", "restart", supervisor.SystemdUnit)
+	installFixtureCommand(t, "systemctl", "restart", installedjobs.SystemdUnit)
 	workflowWait(t, 30*time.Second, func() bool {
 		job, err = registry.ResolveJob(t.Context(), "opencode")
 		return err == nil && job.Status.State == "ready" && job.Status.RunNumber > firstRun
@@ -248,15 +248,15 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 		t.Fatal("logout/restart changed publication ownership")
 	}
 	checkSeparation()
-	installFixtureCommand(t, "systemctl", "stop", supervisor.SystemdUnit)
-	t.Cleanup(func() { _ = exec.Command("systemctl", "stop", supervisor.SystemdUnit).Run() })
+	installFixtureCommand(t, "systemctl", "stop", installedjobs.SystemdUnit)
+	t.Cleanup(func() { _ = exec.Command("systemctl", "stop", installedjobs.SystemdUnit).Run() })
 	// keep control/ingress/relay alive in this runner while a separate installed
 	// machine reboots through its real init. only the exact credential crosses.
 	machine := "tnl-installed-" + fmt.Sprint(time.Now().UnixNano())
 	installFixtureCommand(t, "docker", "run", "--detach", "--name", machine, "--privileged", "--cgroupns=private", "--network=container:"+*publisherInstallNetwork, "--tmpfs", "/run", "--tmpfs", "/run/lock", *publisherInstallImage)
 	t.Cleanup(func() {
 		if t.Failed() {
-			for _, args := range [][]string{{"logs", machine}, {"exec", machine, "systemctl", "status", supervisor.SystemdUnit, "--no-pager"}, {"exec", machine, binary, "service", "status", "opencode", "--system"}} {
+			for _, args := range [][]string{{"logs", machine}, {"exec", machine, "systemctl", "status", installedjobs.SystemdUnit, "--no-pager"}, {"exec", machine, binary, "service", "status", "opencode", "--system"}} {
 				output, _ := exec.Command("docker", args...).CombinedOutput()
 				t.Log(string(output))
 			}
@@ -285,7 +285,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 		t.Fatal("logged-out human session still has control access")
 	}
 	// the publisher can still read its exact URL without that human session.
-	control, authority, err := supervisor.Clients(job)
+	control, authority, err := installedjobs.Clients(job)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +327,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	if json.Unmarshal([]byte(status), &auth) != nil || auth.Status != "unauthenticated" || auth.Source != "none" {
 		t.Fatal("rebooted publisher contains human credentials")
 	}
-	installFixtureCommand(t, "docker", "exec", machine, "systemctl", "stop", supervisor.SystemdUnit)
+	installFixtureCommand(t, "docker", "exec", machine, "systemctl", "stop", installedjobs.SystemdUnit)
 	staleOwner, err := scoped.RemoteRuntime(f.url)
 	if err != nil {
 		t.Fatal(err)
@@ -506,7 +506,7 @@ func waitInstallFixtureBoot(t *testing.T, machine string) {
 	})
 }
 
-func installConfiguredHealthTarget(t *testing.T, registry *supervisor.Registry, old supervisor.Job, binDir, binary, person string) supervisor.Job {
+func installConfiguredHealthTarget(t *testing.T, registry *installedjobs.Registry, old installedjobs.Job, binDir, binary, person string) installedjobs.Job {
 	t.Helper()
 	var probes atomic.Int64
 	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -566,7 +566,7 @@ func installConfiguredHealthTarget(t *testing.T, registry *supervisor.Registry, 
 	if job.Status.State != "ready" || probes.Load() == 0 {
 		t.Fatal("installed /health target did not become ready", err)
 	}
-	logs := installFixtureCommand(t, "journalctl", "--unit", supervisor.SystemdUnit, "--no-pager")
+	logs := installFixtureCommand(t, "journalctl", "--unit", installedjobs.SystemdUnit, "--no-pager")
 	if strings.Contains(logs, "PRIVATE KEY") {
 		t.Fatal("supervisor logged private credentials")
 	}

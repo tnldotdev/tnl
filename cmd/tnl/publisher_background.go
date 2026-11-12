@@ -6,8 +6,8 @@ import (
 	"os"
 	"runtime"
 
-	"github.com/tnldotdev/tnl/internal/client/supervisor"
-	"github.com/tnldotdev/tnl/internal/publisher"
+	installedjobs "github.com/tnldotdev/tnl/internal/installed"
+	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 )
 
@@ -28,15 +28,15 @@ func (flags backgroundPublishFlags) settings() invocation.BackgroundSettings {
 
 func backgroundOptions(flags publishCommand) invocation.BackgroundOptions {
 	options := invocation.BackgroundOptions{ServiceOptions: privateOptions(flags), Open: flags.Open, ServerFromConfig: flags.serverFromConfig, InspectionModeFromCLI: flags.inspectionModeFromCLI, ReadinessPath: flags.publicationReadinessPath()}
-	options.SelectProtocol = func(protocol string, private bool) (publisher.ApplicationLimits, error) {
+	options.SelectProtocol = func(protocol string, private bool) (applicationlimits.Limits, error) {
 		flags.service = private
 		if private {
 			if err := applyProtocolLimits(&flags.tunnelFlags, protocol); err != nil {
-				return publisher.ApplicationLimits{}, err
+				return applicationlimits.Limits{}, err
 			}
 		}
 		if err := validateTCPPublishOptions(flags, protocol); err != nil {
-			return publisher.ApplicationLimits{}, err
+			return applicationlimits.Limits{}, err
 		}
 		return flags.limits(), nil
 	}
@@ -47,12 +47,12 @@ func backgroundSelection(flags publishCommand, selection enrolledPublishSelectio
 	return invocation.ValidateBackground(backgroundOptions(flags), invocation.EnrolledSelection{EnrollmentKey: selection.EnrollmentKey, PublisherIdentityID: selection.PublisherIdentityID, PublisherCredentialFile: selection.PublisherCredentialFile}, background.settings())
 }
 
-func runEnrolledBackgroundPublish(ctx context.Context, flags publishCommand, selection enrolledPublishSelection, background backgroundPublishFlags, output io.Writer, input io.Reader, executor supervisor.Executor) error {
+func runEnrolledBackgroundPublish(ctx context.Context, flags publishCommand, selection enrolledPublishSelection, background backgroundPublishFlags, output io.Writer, input io.Reader, executor installedjobs.Executor) error {
 	options, err := (systemStateFlags{System: background.System, SystemStateDir: background.SystemStateDir}).options()
 	if err != nil {
 		return err
 	}
-	if _, err := supervisor.ServiceUnit(runtime.GOOS, "/tnl", options.Root); err != nil {
+	if _, err := installedjobs.ServiceUnit(runtime.GOOS, "/tnl", options.Root); err != nil {
 		return err
 	}
 	return invocation.InstallEnrolled(ctx, backgroundOptions(flags), invocation.EnrolledSelection{EnrollmentKey: selection.EnrollmentKey, PublisherIdentityID: selection.PublisherIdentityID, PublisherCredentialFile: selection.PublisherCredentialFile}, background.settings(), options, installationPresentation(output, os.Stderr), input, executor)

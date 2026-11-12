@@ -11,9 +11,9 @@ import (
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
@@ -295,7 +295,7 @@ func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection Enrol
 	cfg.Logf = output.Logf
 	cfg.Observe = func(event publisher.Event) error { return output.publisherEvent(ctx, tunnel, server, event) }
 	if flags.Enrolled {
-		supervisor.VerifyPublicationReadiness(ctx, &cfg, flags.ReadinessPath)
+		installedjobs.VerifyPublicationReadiness(ctx, &cfg, flags.ReadinessPath)
 	}
 	stopRuntime, err := startDeployedPublisher(ctx, native, server)
 	if err != nil {

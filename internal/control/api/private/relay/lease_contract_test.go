@@ -10,7 +10,7 @@ import (
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 )
 
@@ -119,7 +119,7 @@ func TestDirectRenewRejectsMismatchedPathBeforeStore(t *testing.T) {
 	_, err = client.RenewRelay(t.Context(), "path-relay", relayv1.RelayRenewal{
 		RelayServiceId: "service-1", RelayId: "body-relay", RelayRunId: "run-1", RelayLeaseRevision: 7,
 	})
-	var problem *serviceapi.ProblemError
+	var problem *serverhttp.ProblemError
 	if !errors.As(err, &problem) || problem.Status != http.StatusBadRequest || calls != 0 {
 		t.Fatalf("error = %v; store calls %d", err, calls)
 	}

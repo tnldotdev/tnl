@@ -18,6 +18,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
+
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/relay"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -262,7 +264,7 @@ func (h *visitorDrainHarness) startVisitor(stream net.Conn, keepAlive bool) <-ch
 	if _, err := stream.Write(metadata); err != nil {
 		h.t.Fatal(err)
 	}
-	visitor := tls.Client(stream, &tls.Config{ServerName: "route.example", RootCAs: rootsForCertificate(h.t, h.control.signer)})
+	visitor := tls.Client(stream, &tls.Config{ServerName: "route.example", RootCAs: visitorfixture.Roots(h.t, h.control.signer)})
 	h.t.Cleanup(func() { _ = visitor.Close() })
 	request := "GET / HTTP/1.1\r\nHost: route.example\r\nConnection: close\r\n\r\n"
 	if keepAlive {

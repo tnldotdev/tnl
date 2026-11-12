@@ -16,7 +16,7 @@ import (
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	failureproblem "github.com/tnldotdev/tnl/internal/failure/problem"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
@@ -284,7 +284,7 @@ func TestIngressStoreErrorsHaveStableProblems(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, err = client.RenewIngress(t.Context(), body.IngressId, body)
-			var direct *serviceapi.ProblemError
+			var direct *serverhttp.ProblemError
 			if !errors.As(err, &direct) || direct.Status != wire.StatusCode() || wire.ApplicationproblemJSONDefault == nil ||
 				direct.Type != wire.ApplicationproblemJSONDefault.Type || direct.Title != wire.ApplicationproblemJSONDefault.Title ||
 				direct.Detail != wire.ApplicationproblemJSONDefault.Detail {
@@ -307,9 +307,9 @@ func testIngressHandler(t *testing.T, store Store, now time.Time, report func(er
 	return h
 }
 
-func testIngressSecrets(t *testing.T) serviceapi.BearerSecrets {
+func testIngressSecrets(t *testing.T) serverhttp.BearerSecrets {
 	t.Helper()
-	secrets, err := serviceapi.NewBearerSecrets(testIngressClusterSecret, "")
+	secrets, err := serverhttp.NewBearerSecrets(testIngressClusterSecret, "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -12,6 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
+	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
+
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -89,20 +92,20 @@ func TestBrowserAccessForRunControlOrigins(t *testing.T) {
 			if access == nil {
 				t.Fatal("valid control origin disabled browser access")
 			}
-			if access.controlURL != test.want || access.client != client || access.publicURLID != setup.PublicUrl.Id ||
-				access.previewID != config.PreviewID || access.runID != setup.PublishRun.Id || access.version != 1 || access.token != "fixture-run-token" {
+			if access.ControlURL != test.want || access.Client != client || access.PublicURLID != setup.PublicUrl.Id ||
+				access.PreviewID != config.PreviewID || access.RunID != setup.PublishRun.Id || access.Number != 1 || access.Token != "fixture-run-token" {
 				t.Fatal("browser access lost its control origin or publish run binding")
 			}
 			navigation := httptest.NewRequest(http.MethodGet, "https://web.example.test/settings?tab=profile", nil)
 			navigation.Header.Set("Sec-Fetch-Mode", "navigate")
 			navigation.Header.Set("Sec-Fetch-Dest", "document")
 			redirect := httptest.NewRecorder()
-			if !access.redirectRestricted(redirect, navigation, true) || redirect.Code != http.StatusSeeOther {
+			if !access.RedirectRestricted(redirect, navigation, true) || redirect.Code != http.StatusSeeOther {
 				t.Fatal("restricted browser navigation did not start sign-in")
 			}
 			login := httptest.NewRequest(http.MethodGet, redirect.Header().Get("Location"), nil)
 			response := httptest.NewRecorder()
-			if !access.handle(response, login) || response.Code != http.StatusSeeOther {
+			if !access.Handle(response, login) || response.Code != http.StatusSeeOther {
 				t.Fatal("browser sign-in did not redirect to control")
 			}
 			location, err := url.Parse(response.Header().Get("Location"))
@@ -144,14 +147,14 @@ func TestBrowserTeamAccessIsAdditiveAndKeepsCookiesOutOfTheLocalService(t *testi
 	}))
 	defer upstream.Close()
 	client := &browserAccessStub{member: true}
-	access := &browserAccess{client: client, previewID: "pv_0123456789abcdefghijkl", publicURLID: "url_0123456789abcdefghijkl",
-		runID: "pr_0123456789abcdefghijkl", version: 1, controlURL: "https://control.example.test"}
-	authority := &liveHTTPControl{check: func(liveHTTPSource) (liveHTTPDecision, error) {
-		return liveHTTPDecision{VisitAllowed: client.member || client.invited, ValidUntil: new(time.Now().Add(5 * time.Minute))}, nil
+	access := &httpaccess.Browser{Client: client, PreviewID: "pv_0123456789abcdefghijkl", PublicURLID: "url_0123456789abcdefghijkl",
+		RunID: "pr_0123456789abcdefghijkl", Number: 1, ControlURL: "https://control.example.test"}
+	authority := &liveHTTPControl{check: func(visitorfixture.HTTPSource) (visitorfixture.HTTPDecision, error) {
+		return visitorfixture.HTTPDecision{VisitAllowed: client.member || client.invited, ValidUntil: new(time.Now().Add(5 * time.Minute))}, nil
 	}}
 	prepareLiveHTTPControl(t, authority)
-	server, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", PublicURLID: access.publicURLID, Target: upstream.URL,
-		BrowserAccess: access, BrowserLoginAvailable: true, VisitorPolicy: authority.policy.lease, VisitorTokens: authority.tokens})
+	server, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", PublicURLID: access.PublicURLID, Target: upstream.URL,
+		BrowserAccess: access, BrowserLoginAvailable: true, VisitorPolicy: authority.policy.Lease(), VisitorTokens: authority.tokens})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,43 +200,41 @@ func TestBrowserTeamAccessIsAdditiveAndKeepsCookiesOutOfTheLocalService(t *testi
 		!strings.Contains(bridge.Body.String(), client.next) || bridge.Header().Get("Content-Security-Policy") != "default-src 'none'; base-uri 'none'" {
 		t.Fatalf("cross-host bridge = %d, %q", bridge.Code, bridge.Header().Get("Content-Security-Policy"))
 	}
-	visitorCookie := "app_session=ok; " + visitorTokenCookie + "=" + authority.credential(t, liveBrowserCookie, false)
+	visitorCookie := "app_session=ok; " + httpaccess.VisitorTokenCookie + "=" + authority.Credential(t, liveBrowserCookie, false)
 	if response := serve("/settings", visitorCookie, true); response.Code != http.StatusOK {
 		t.Fatalf("signed-in team member = %d", response.Code)
 	}
 	if got := <-cookies; got != "app_session=ok" {
 		t.Fatalf("local app received browser credential: %q", got)
 	}
-	authority.mu.Lock()
+	authority.Mu.Lock()
 	client.member = false
-	authority.mu.Unlock()
-	if err := authority.policy.refresh(t.Context()); err != nil {
+	authority.Mu.Unlock()
+	if err := authority.policy.Refresh(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	authority.tokens.refresh(t.Context(), nil)
 	if response := serve("/settings", visitorCookie, true); response.Code != http.StatusForbidden {
 		t.Fatalf("nonmember without share or IP = %d", response.Code)
 	}
-	authority.mu.Lock()
+	authority.Mu.Lock()
 	client.invited = true
-	authority.mu.Unlock()
-	if err := authority.policy.refresh(t.Context()); err != nil {
+	authority.Mu.Unlock()
+	if err := authority.policy.Refresh(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	visitorCookie = "app_session=ok; " + visitorTokenCookie + "=" + authority.credential(t, "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA", false)
+	visitorCookie = "app_session=ok; " + httpaccess.VisitorTokenCookie + "=" + authority.Credential(t, "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA", false)
 	if response := serve("/settings", visitorCookie, true); response.Code != http.StatusOK {
 		t.Fatalf("invited identity outside the team = %d", response.Code)
 	}
 	if got := <-cookies; got != "app_session=ok" {
 		t.Fatalf("local app received visitor credential: %q", got)
 	}
-	authority.mu.Lock()
+	authority.Mu.Lock()
 	client.invited = false
-	authority.mu.Unlock()
-	if err := authority.policy.refresh(t.Context()); err != nil {
+	authority.Mu.Unlock()
+	if err := authority.policy.Refresh(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	authority.tokens.refresh(t.Context(), nil)
 	if response := serve("/settings", visitorCookie, false); response.Code != http.StatusForbidden {
 		t.Fatalf("source IP bypassed visitor access: %d", response.Code)
 	}
@@ -245,135 +246,39 @@ func TestBrowserTeamAccessIsAdditiveAndKeepsCookiesOutOfTheLocalService(t *testi
 	}
 }
 
-func TestBrowserAndShareSessionsReprepareWithoutExpiredVisitorCookie(t *testing.T) {
-	for _, name := range []string{"browser", "share", "share without browser login"} {
-		share := name != "browser"
-		t.Run(name, func(t *testing.T) {
-			var revoked atomic.Bool
-			var unavailable atomic.Bool
-			var deadline atomic.Int64
-			deadline.Store(time.Now().Add(45 * time.Second).UnixNano())
-			control := &liveHTTPControl{check: func(liveHTTPSource) (liveHTTPDecision, error) {
-				if unavailable.Load() {
-					return liveHTTPDecision{}, clientcontrol.ErrUnavailable
-				}
-				if revoked.Load() {
-					return liveHTTPDecision{}, clientcontrol.ErrUnauthenticated
-				}
-				return liveHTTPAllowed(time.Unix(0, deadline.Load()))
-			}}
-			prepareLiveHTTPControl(t, control)
-			access := &browserAccess{subject: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: certificateTestPublicURLID}, client: control,
-				policy: control.policy, tokens: control.tokens}
-			server, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", PublicURLID: certificateTestPublicURLID,
-				Handler:       http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
-				BrowserAccess: access, BrowserLoginAvailable: name != "share without browser login", VisitorPolicy: control.policy.lease, VisitorTokens: control.tokens})
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = server.Close() })
-			secret := liveBrowserCookie
-			cookie := browserAccessCookieName + "=" + secret
-			if share {
-				cookie = shareCookieName + "=shr_0123456789abcdefghijkl." + secret
-			}
-			_ = control.credential(t, secret, share)
-			control.tokens.mu.Lock()
-			for _, source := range control.tokens.sources {
-				source.used = time.Now().Add(-6 * time.Minute)
-			}
-			control.tokens.mu.Unlock()
-			control.tokens.refresh(t.Context(), nil)
-			serve := func(path, cookies string, navigate bool) *httptest.ResponseRecorder {
-				r := httptest.NewRequest(http.MethodGet, path, nil)
-				r.Host = "route.example"
-				r.TLS = &tls.ConnectionState{ServerName: "route.example"}
-				r.Header.Set("Cookie", cookies)
-				if navigate {
-					r.Header.Set("Sec-Fetch-Mode", "navigate")
-					r.Header.Set("Sec-Fetch-Dest", "document")
-				}
-				r = r.WithContext(context.WithValue(r.Context(), denialContextKey{}, true))
-				w := httptest.NewRecorder()
-				serveTestPublicRequest(t, server, w, r)
-				return w
-			}
-			if denied := serve("/settings", cookie, false); denied.Code != http.StatusForbidden {
-				t.Fatal("session cookie bypassed missing visitor permission", denied.Code)
-			}
-			redirect := serve("/settings", cookie, true)
-			if redirect.Code != http.StatusSeeOther || redirect.Header().Get("Location") != "/__tnl/team/renew?return=%2Fsettings" {
-				t.Fatal("top-level visit did not offer session re-preparation", redirect.Code, redirect.Header().Get("Location"))
-			}
-			renewed := serve("/__tnl/team/renew?return=%2Fsettings", cookie, false)
-			if renewed.Code != http.StatusSeeOther || renewed.Header().Get("Location") != "/settings" || len(renewed.Result().Cookies()) != 1 || renewed.Result().Cookies()[0].Name != visitorTokenCookie {
-				t.Fatal("valid session was not exchanged for a visitor cookie", renewed.Code, renewed.Body.String())
-			}
-			visitor := cookie + "; " + visitorTokenCookie + "=" + renewed.Result().Cookies()[0].Value
-			if allowed := serve("/settings", visitor, false); allowed.Code != http.StatusOK {
-				t.Fatal("prepared visitor was denied", allowed.Code)
-			}
-			deadline.Store(time.Now().Add(2 * time.Minute).UnixNano())
-			if repeated := serve("/__tnl/team/renew?return=%2Fsettings", cookie, false); repeated.Code != http.StatusSeeOther || len(repeated.Result().Cookies()) != 1 {
-				t.Fatal("fresh session evidence could not advance a provisional token deadline", repeated.Code, repeated.Body.String())
-			}
-			deadline.Store(time.Now().Add(3 * time.Minute).UnixNano())
-			control.tokens.refresh(t.Context(), nil)
-			control.tokens.mu.Lock()
-			var extended bool
-			for _, source := range control.tokens.sources {
-				extended = source.reprepared && source.parentDeadline.After(renewed.Result().Cookies()[0].Expires)
-			}
-			control.tokens.mu.Unlock()
-			if !extended {
-				t.Fatal("re-prepared session did not keep renewing beyond its first short token")
-			}
-			unavailable.Store(true)
-			if unavailableResponse := serve("/__tnl/team/renew?return=%2Fsettings", cookie, false); unavailableResponse.Code != http.StatusServiceUnavailable || len(unavailableResponse.Result().Cookies()) != 0 {
-				t.Fatal("issuer outage looked like session revocation", unavailableResponse.Code)
-			}
-			unavailable.Store(false)
-			revoked.Store(true)
-			if rejected := serve("/__tnl/team/renew?return=%2Fsettings", cookie, false); rejected.Code != http.StatusForbidden || len(rejected.Result().Cookies()) != 0 {
-				t.Fatal("revoked parent renewed visitor permission", rejected.Code)
-			}
-		})
-	}
-}
-
 func TestBrowserSessionRenewalIsIndependentOfRevokedShare(t *testing.T) {
 	var shareRevoked atomic.Bool
 	var unavailable atomic.Bool
-	control := &liveHTTPControl{check: func(input liveHTTPSource) (liveHTTPDecision, error) {
+	control := &liveHTTPControl{check: func(input visitorfixture.HTTPSource) (visitorfixture.HTTPDecision, error) {
 		if unavailable.Load() {
-			return liveHTTPDecision{}, clientcontrol.ErrUnavailable
+			return visitorfixture.HTTPDecision{}, clientcontrol.ErrUnavailable
 		}
 		if input.ShareId != nil && shareRevoked.Load() {
-			return liveHTTPDecision{}, clientcontrol.ErrUnauthenticated
+			return visitorfixture.HTTPDecision{}, clientcontrol.ErrUnauthenticated
 		}
 		return liveHTTPAllowed(time.Now().Add(2 * time.Minute))
 	}}
 	prepareLiveHTTPControl(t, control)
-	_ = control.credential(t, liveBrowserCookie, false)
-	_ = control.credential(t, liveBrowserCookie, true)
-	issuer := &browserTokenClientFixture{issue: control.IssueVisitorToken}
-	tokens, err := startBrowserTokens(t.Context(), issuer, control.policy.lease, nil)
+	_ = control.Credential(t, liveBrowserCookie, false)
+	_ = control.Credential(t, liveBrowserCookie, true)
+	issuer := &visitorfixture.TokenClient{Issue: control.IssueVisitorToken}
+	tokens, err := httpaccess.StartTokens(t.Context(), issuer, control.policy.Lease(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(tokens.Close)
-	access := &browserAccess{subject: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: certificateTestPublicURLID}, client: control,
-		policy: control.policy, tokens: tokens}
+	access := &httpaccess.Browser{Subject: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: certificateTestPublicURLID}, Client: control,
+		Policy: control.policy, Tokens: tokens}
 	for _, revoked := range []bool{false, true} {
 		shareRevoked.Store(revoked)
 		r := httptest.NewRequest(http.MethodGet, "/__tnl/team/renew?return=%2Fsettings", nil)
-		r.AddCookie(&http.Cookie{Name: shareCookieName, Value: "shr_0123456789abcdefghijkl." + liveBrowserCookie})
-		r.AddCookie(&http.Cookie{Name: browserAccessCookieName, Value: liveBrowserCookie})
+		r.AddCookie(&http.Cookie{Name: httpaccess.ShareCookieName, Value: "shr_0123456789abcdefghijkl." + liveBrowserCookie})
+		r.AddCookie(&http.Cookie{Name: httpaccess.BrowserCookieName, Value: liveBrowserCookie})
 		w := httptest.NewRecorder()
-		if !access.handle(w, r) || w.Code != http.StatusSeeOther || len(w.Result().Cookies()) != 1 {
+		if !access.Handle(w, r) || w.Code != http.StatusSeeOther || len(w.Result().Cookies()) != 1 {
 			t.Fatal("independent session could not prepare visitor access", revoked, w.Code, w.Body.String())
 		}
-		view, _, _ := control.policy.lease.Current()
+		view, _, _ := control.policy.Lease().Current()
 		permission, err := visitortoken.VerifyBearer(visitortoken.Token(w.Result().Cookies()[0].Value), view, time.Now())
 		if err != nil {
 			t.Fatal(err)
@@ -384,13 +289,13 @@ func TestBrowserSessionRenewalIsIndependentOfRevokedShare(t *testing.T) {
 		}
 	}
 	unavailable.Store(true)
-	before := issuer.calls.Load()
+	before := issuer.Calls.Load()
 	r := httptest.NewRequest(http.MethodGet, "/__tnl/team/renew?return=%2Fsettings", nil)
-	r.AddCookie(&http.Cookie{Name: shareCookieName, Value: "shr_0123456789abcdefghijkl." + liveBrowserCookie})
-	r.AddCookie(&http.Cookie{Name: browserAccessCookieName, Value: liveBrowserCookie})
+	r.AddCookie(&http.Cookie{Name: httpaccess.ShareCookieName, Value: "shr_0123456789abcdefghijkl." + liveBrowserCookie})
+	r.AddCookie(&http.Cookie{Name: httpaccess.BrowserCookieName, Value: liveBrowserCookie})
 	w := httptest.NewRecorder()
-	if !access.handle(w, r) || w.Code != http.StatusServiceUnavailable || len(w.Result().Cookies()) != 0 || issuer.calls.Load() != before+1 {
-		t.Fatal("issuer outage triggered another credential exchange or issued a visitor cookie", w.Code, issuer.calls.Load()-before)
+	if !access.Handle(w, r) || w.Code != http.StatusServiceUnavailable || len(w.Result().Cookies()) != 0 || issuer.Calls.Load() != before+1 {
+		t.Fatal("issuer outage triggered another credential exchange or issued a visitor cookie", w.Code, issuer.Calls.Load()-before)
 	}
 }
 
@@ -404,29 +309,29 @@ func (c reviewerHandoffClient) RedeemBrowserHandoff(_ context.Context, _ string,
 		c.t.Error("publisher lost the share session at sign-in")
 	}
 	return controlv1.BrowserHandoffResponse{CookieSecret: liveBrowserCookie, ReturnPath: "/settings", ExpiresAt: time.Now().Add(time.Hour),
-		Permission: c.permission(c.t, secret, true)}, nil
+		Permission: c.Permission(c.t, secret, true)}, nil
 }
 
 func TestBrowserHandoffRetainsShareVisitorPermissionForSignedInReviewer(t *testing.T) {
-	control := &liveHTTPControl{check: func(liveHTTPSource) (liveHTTPDecision, error) {
+	control := &liveHTTPControl{check: func(visitorfixture.HTTPSource) (visitorfixture.HTTPDecision, error) {
 		return liveHTTPAllowed(time.Now().Add(2 * time.Minute))
 	}}
 	prepareLiveHTTPControl(t, control)
-	access := &browserAccess{subject: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: certificateTestPublicURLID},
-		client: reviewerHandoffClient{liveHTTPControl: control, t: t}, tokens: control.tokens, policy: control.policy}
+	access := &httpaccess.Browser{Subject: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: certificateTestPublicURLID},
+		Client: reviewerHandoffClient{liveHTTPControl: control, t: t}, Tokens: control.tokens, Policy: control.policy}
 	r := httptest.NewRequest(http.MethodGet, "/__tnl/team/handoff/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", nil)
-	r.AddCookie(&http.Cookie{Name: shareCookieName, Value: "shr_0123456789abcdefghijkl." + liveBrowserCookie})
+	r.AddCookie(&http.Cookie{Name: httpaccess.ShareCookieName, Value: "shr_0123456789abcdefghijkl." + liveBrowserCookie})
 	w := httptest.NewRecorder()
-	if !access.handle(w, r) || w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/settings" {
+	if !access.Handle(w, r) || w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/settings" {
 		t.Fatal("share reviewer could not finish identity handoff", w.Code, w.Body.String())
 	}
 	var token string
 	for _, cookie := range w.Result().Cookies() {
-		if cookie.Name == visitorTokenCookie {
+		if cookie.Name == httpaccess.VisitorTokenCookie {
 			token = cookie.Value
 		}
 	}
-	view, _, _ := control.policy.lease.Current()
+	view, _, _ := control.policy.Lease().Current()
 	permission, err := visitortoken.VerifyBearer(visitortoken.Token(token), view, time.Now())
 	if err != nil || permission.Facts().Subject != (visitortoken.Share{ShareID: "shr_0123456789abcdefghijkl"}) {
 		t.Fatal("sign-in replaced share-backed visitor access", err)

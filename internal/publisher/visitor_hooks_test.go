@@ -14,6 +14,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
+	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
+
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -62,12 +65,12 @@ func (c *deniedHTTPDecision) IssueVisitorToken(_ context.Context, request contro
 }
 
 func TestHTTPAuthorizationPrecedesPromotionAndTarget(t *testing.T) {
-	certificate := publicURLTestCertificate(t, "route.example")
+	certificate := visitorfixture.Certificate(t, "route.example")
 	client := &deniedHTTPDecision{called: make(chan controlv1.VisitorTokenRequest, 1)}
 	var promoted, forwarded atomic.Int32
 	route, err := newTestPublicURLServer(t, PublicURLServerConfig{
 		Hostname: "route.example", PublicURLID: certificateTestPublicURLID, PublishRunNumber: 7, Certificate: certificate, AccessMode: "restricted",
-		BrowserAccess:  &browserAccess{client: client, publicURLID: "public-test", runID: "run-test", version: 7},
+		BrowserAccess:  &httpaccess.Browser{Client: client, PublicURLID: "public-test", RunID: "run-test", Number: 7},
 		PromoteVisitor: func(context.Context, Visitor) error { promoted.Add(1); return nil },
 		Handler:        http.HandlerFunc(func(http.ResponseWriter, *http.Request) { forwarded.Add(1) }),
 	})
@@ -79,7 +82,7 @@ func TestHTTPAuthorizationPrecedesPromotionAndTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	visitor := realHTTPVisitor(t, route)
-	secured := tls.Client(visitor, &tls.Config{ServerName: "route.example", RootCAs: rootsForCertificate(t, certificate)})
+	secured := tls.Client(visitor, &tls.Config{ServerName: "route.example", RootCAs: visitorfixture.Roots(t, certificate)})
 	if err := secured.Handshake(); err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +212,7 @@ func TestReadinessProofForHTTPSTargetIsSingleUseAndPrivate(t *testing.T) {
 
 func TestHTTPPromotionRunsOncePerVisitorAndBeforeTarget(t *testing.T) {
 	var promoted atomic.Int32
-	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "route.example", Certificate: publicURLTestCertificate(t, "route.example"),
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "route.example", Certificate: visitorfixture.Certificate(t, "route.example"),
 		PromoteVisitor: func(_ context.Context, v Visitor) error {
 			if v.Source.Addr().String() != "192.0.2.10" {
 				t.Error("lost trusted visitor source")
@@ -247,7 +250,7 @@ func TestHTTPPromotionRunsOncePerVisitorAndBeforeTarget(t *testing.T) {
 }
 
 func TestHTTPPublisherAcceptsVerifiedTargetTLSServerName(t *testing.T) {
-	certificate := publicURLTestCertificate(t, "target.internal")
+	certificate := visitorfixture.Certificate(t, "target.internal")
 	target := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.TLS.ServerName != "target.internal" {
 			t.Error("target TLS name missing")
@@ -257,7 +260,7 @@ func TestHTTPPublisherAcceptsVerifiedTargetTLSServerName(t *testing.T) {
 	target.TLS = &tls.Config{Certificates: []tls.Certificate{certificate}}
 	target.StartTLS()
 	defer target.Close()
-	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "route.example", Target: target.URL, TargetTLSName: "target.internal", TargetOptions: publisherproxy.TargetOptions{RootCAs: rootsForCertificate(t, certificate)}})
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "route.example", Target: target.URL, TargetTLSName: "target.internal", TargetOptions: publisherproxy.TargetOptions{RootCAs: visitorfixture.Roots(t, certificate)}})
 	if err != nil {
 		t.Fatal(err)
 	}

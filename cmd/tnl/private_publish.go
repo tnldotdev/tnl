@@ -9,8 +9,8 @@ import (
 	"strconv"
 
 	"github.com/tnldotdev/tnl/internal/client/detached"
-	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -53,7 +53,7 @@ func runPrivatePublish(ctx context.Context, flags publishCommand, output, diagno
 func privatePresentation(ctx context.Context, flags publishCommand, output, diagnostics io.Writer) *invocation.ServicePresentation {
 	return &invocation.ServicePresentation{
 		Starting: func() { detached.Starting(ctx) }, Ready: func() { detached.Ready(ctx) },
-		Installed: func(jobs []supervisor.Job, selected string) error {
+		Installed: func(jobs []installedjobs.Job, selected string) error {
 			return renderSystemJobs(output, "tnl publish", jobs, selected)
 		},
 		Event: func(event invocation.ServiceEvent) error {

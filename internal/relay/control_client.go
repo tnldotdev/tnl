@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 )
 
@@ -146,7 +146,7 @@ func (c *HTTPControlClient) DisconnectPublisherConnection(
 }
 
 func relayHTTPProblem(status int, problem *relayv1.Problem) error {
-	result := &serviceapi.ProblemError{Status: status}
+	result := &serverhttp.ProblemError{Status: status}
 	if problem != nil {
 		result.Type = problem.Type
 		result.Title = problem.Title

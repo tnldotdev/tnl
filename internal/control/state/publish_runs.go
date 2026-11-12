@@ -38,8 +38,9 @@ var (
 	errRelayPlacementCapacity    = errors.New("controlstate: relay-service placement capacity exhausted")
 )
 
-// PublishRunRequest carries authority already established by the control API
-// and the authenticated request secret used for retry-stable credentials.
+// PublishRunRequest carries authenticated request facts, expected revisions,
+// and the request secret used for retry-stable credentials. creation rechecks
+// current authority in the transaction that creates the publish run.
 type PublishRunRequest struct {
 	PreferredRegions         []string
 	PublicURLID              string

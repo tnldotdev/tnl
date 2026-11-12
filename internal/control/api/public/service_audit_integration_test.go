@@ -20,7 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -125,7 +125,7 @@ func TestIntegrationServiceAuditBatchAPI(t *testing.T) {
 	post(server.Client(), endpoint, tokens[0].String(), body, 403)
 	post(server.Client(), endpoint, tokens[0].String(), map[string]any{"publish_run_number": 1, "events": []map[string]any{{"actor_identity_id": actor}}}, 400)
 	secret := strings.Repeat("a", 32)
-	secrets, _ := serviceapi.NewBearerSecrets(secret, "")
+	secrets, _ := serverhttp.NewBearerSecrets(secret, "")
 	ingressHandler, err := controlingress.NewHandler(controlingress.Config{Store: d, ClusterSecrets: secrets, LeaseDuration: time.Minute})
 	if err != nil {
 		t.Fatal(err)

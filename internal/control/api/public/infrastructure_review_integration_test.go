@@ -13,7 +13,7 @@ import (
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
@@ -76,7 +76,7 @@ func TestIntegrationPoolAndIngressCertificateHTTPReview(t *testing.T) {
 		t.Fatalf("anonymous pool configuration accepted: %+v %v", anonymous, err)
 	}
 	secret := strings.Repeat("x", 32)
-	secrets, err := serviceapi.NewBearerSecrets(secret, "")
+	secrets, err := serverhttp.NewBearerSecrets(secret, "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
+
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -45,7 +47,7 @@ func TestHTTPServiceAuditRecordsFinalAuthorizationWithoutRequestSecrets(t *testi
 		r.Header.Set("Authorization", "Bearer never-audit-this")
 		r.Header.Set("Cookie", "secret=never-audit-this")
 		if denied {
-			r.Header.Set(visitorTokenHeader, "invalid-visitor-token")
+			r.Header.Set(httpaccess.VisitorTokenHeader, "invalid-visitor-token")
 		}
 		r = r.WithContext(context.WithValue(r.Context(), denialContextKey{}, denied))
 		r = r.WithContext(context.WithValue(r.Context(), visitorSessionKey{}, &visitorSession{visitor: Visitor{Run: route.run, Header: tunnelv1.VisitorStreamHeader{VisitorConnectionID: visitorID}, Source: netip.MustParseAddrPort("192.0.2.7:1234")}}))

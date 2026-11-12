@@ -7,7 +7,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 )
 
 func authenticatePublisher(ctx context.Context, state *clientstate.Database, serverURL, accessToken, command string, stdin io.Reader, diagnostics io.Writer) (*auth.Client, error) {
@@ -18,8 +18,8 @@ func projectAuthentication(ctx context.Context, state *clientstate.Database, ser
 	return authenticatePublisher(ctx, state, server, "", command, input, diagnostics)
 }
 
-func (flags tunnelFlags) limits() publisher.ApplicationLimits {
-	limits := publisher.ApplicationLimits{}
+func (flags tunnelFlags) limits() applicationlimits.Limits {
+	limits := applicationlimits.Limits{}
 	if flags.Requests != nil {
 		limits.Requests = *flags.Requests
 	}

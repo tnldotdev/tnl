@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
+
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -26,7 +28,7 @@ func startCertificateTLSYamuxHarness(t *testing.T, control *certificateTestContr
 	t.Cleanup(upstream.Close)
 	control.setup.PublicUrl.Target = upstream.URL
 	control.routes = []controlv1.PublicURL{control.setup.PublicUrl}
-	certificate := publicURLTestCertificate(t, "relay.example")
+	certificate := visitorfixture.Certificate(t, "relay.example")
 	ctx, cancel := context.WithCancel(t.Context())
 	var workers sync.WaitGroup
 	var listeners []net.Listener
@@ -91,6 +93,6 @@ func startCertificateTLSYamuxHarness(t *testing.T, control *certificateTestContr
 		QUICConnector: muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
 			return nil, errors.New("test uses TLS/yamux")
 		}),
-		TCPConnector: muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{RootCAs: rootsForCertificate(t, certificate)}},
+		TCPConnector: muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{RootCAs: visitorfixture.Roots(t, certificate)}},
 	}
 }

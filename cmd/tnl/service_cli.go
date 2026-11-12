@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
+	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 )
 
 type serviceCommand struct {
@@ -49,14 +49,14 @@ type serviceRegisterCommand struct {
 	PrivateResult    bool `name:"private-result" hidden:""`
 }
 
-var serviceUserRoot = supervisor.DefaultUserRoot
+var serviceUserRoot = installedjobs.DefaultUserRoot
 
 func (flags systemStateFlags) root() (string, error) {
 	if flags.SystemStateDir != "" {
 		return flags.SystemStateDir, nil
 	}
 	if flags.System {
-		return supervisor.DefaultRoot(runtime.GOOS), nil
+		return installedjobs.DefaultRoot(runtime.GOOS), nil
 	}
 	root, err := serviceUserRoot(runtime.GOOS)
 	if err != nil {
@@ -68,35 +68,35 @@ func (flags systemStateFlags) root() (string, error) {
 	return root, nil
 }
 
-func (flags systemStateFlags) options() (supervisor.ServiceOptions, error) {
+func (flags systemStateFlags) options() (installedjobs.ServiceOptions, error) {
 	root, err := flags.root()
-	return supervisor.ServiceOptions{Root: root, User: !flags.System}, err
+	return installedjobs.ServiceOptions{Root: root, User: !flags.System}, err
 }
 
-func requireInstalledService(ctx context.Context, options supervisor.ServiceOptions, executor supervisor.Executor) error {
+func requireInstalledService(ctx context.Context, options installedjobs.ServiceOptions, executor installedjobs.Executor) error {
 	if executor == nil {
-		executor = supervisor.HostExecutor{}
+		executor = installedjobs.HostExecutor{}
 	}
-	return installedServiceError(ctx, supervisor.CheckActiveService(ctx, options, executor))
+	return installedServiceError(ctx, installedjobs.CheckActiveService(ctx, options, executor))
 }
 
-func requireConfiguredService(ctx context.Context, options supervisor.ServiceOptions, executor supervisor.Executor) error {
+func requireConfiguredService(ctx context.Context, options installedjobs.ServiceOptions, executor installedjobs.Executor) error {
 	if executor == nil {
-		executor = supervisor.HostExecutor{}
+		executor = installedjobs.HostExecutor{}
 	}
-	return installedServiceError(ctx, supervisor.CheckService(ctx, options, executor))
+	return installedServiceError(ctx, installedjobs.CheckService(ctx, options, executor))
 }
 
 func installedServiceError(ctx context.Context, err error) error {
-	if err == nil || ctx.Err() != nil || err == supervisor.ErrUnsafeState {
+	if err == nil || ctx.Err() != nil || err == installedjobs.ErrUnsafeState {
 		return err
 	}
 	return failure.Wrap("check installed service", failure.ServiceNotInstalled, err)
 }
 
-func runServiceInstall(ctx context.Context, flags serviceInstallCommand, output io.Writer, executor supervisor.Executor) error {
+func runServiceInstall(ctx context.Context, flags serviceInstallCommand, output io.Writer, executor installedjobs.Executor) error {
 	if executor == nil {
-		executor = supervisor.HostExecutor{}
+		executor = installedjobs.HostExecutor{}
 	}
 	binary := flags.Binary
 	if binary == "" {
@@ -111,24 +111,24 @@ func runServiceInstall(ctx context.Context, flags serviceInstallCommand, output 
 		return err
 	}
 	options.BinarySource = binary
-	if err := supervisor.InstallService(ctx, options, executor); err != nil {
+	if err := installedjobs.InstallService(ctx, options, executor); err != nil {
 		return err
 	}
 	return writeHumanFrame(output, "tnl service install", "installed", "", clioutput.Fields(clioutput.Field{Label: "state directory", Value: options.Root}))
 }
 
-func runServiceStart(ctx context.Context, flags serviceJobCommand, output io.Writer, executor supervisor.Executor) error {
+func runServiceStart(ctx context.Context, flags serviceJobCommand, output io.Writer, executor installedjobs.Executor) error {
 	options, err := flags.options()
 	if err != nil {
 		return err
 	}
 	if executor == nil {
-		executor = supervisor.HostExecutor{}
+		executor = installedjobs.HostExecutor{}
 	}
 	if err := requireConfiguredService(ctx, options, executor); err != nil {
 		return err
 	}
-	registry, err := supervisor.Open(ctx, supervisor.OpenOptions{Root: options.Root, User: options.User})
+	registry, err := installedjobs.Open(ctx, installedjobs.OpenOptions{Root: options.Root, User: options.User})
 	if err != nil {
 		return err
 	}
@@ -140,7 +140,7 @@ func runServiceStart(ctx context.Context, flags serviceJobCommand, output io.Wri
 	if err := registry.Start(ctx, job.ID); err != nil {
 		return err
 	}
-	if err := supervisor.StartService(ctx, options, executor); err != nil {
+	if err := installedjobs.StartService(ctx, options, executor); err != nil {
 		return err
 	}
 	return writeSystemJobs(ctx, registry, output, "tnl service start", job.ID)
@@ -154,7 +154,7 @@ func runServiceStop(ctx context.Context, flags serviceJobCommand, output io.Writ
 	if err := requireConfiguredService(ctx, options, nil); err != nil {
 		return err
 	}
-	registry, err := supervisor.Open(ctx, supervisor.OpenOptions{Root: options.Root, User: options.User})
+	registry, err := installedjobs.Open(ctx, installedjobs.OpenOptions{Root: options.Root, User: options.User})
 	if err != nil {
 		return err
 	}
@@ -177,7 +177,7 @@ func runServiceRemove(ctx context.Context, flags serviceJobCommand, output io.Wr
 	if err := requireConfiguredService(ctx, options, nil); err != nil {
 		return err
 	}
-	registry, err := supervisor.Open(ctx, supervisor.OpenOptions{Root: options.Root, User: options.User})
+	registry, err := installedjobs.Open(ctx, installedjobs.OpenOptions{Root: options.Root, User: options.User})
 	if err != nil {
 		return err
 	}
@@ -208,7 +208,7 @@ func runServiceList(ctx context.Context, flags serviceListCommand, output io.Wri
 	if err := requireConfiguredService(ctx, options, nil); err != nil {
 		return err
 	}
-	registry, err := supervisor.Open(ctx, supervisor.OpenOptions{Root: options.Root, User: options.User})
+	registry, err := installedjobs.Open(ctx, installedjobs.OpenOptions{Root: options.Root, User: options.User})
 	if err != nil {
 		return err
 	}
@@ -224,7 +224,7 @@ func runServiceStatus(ctx context.Context, flags serviceJobCommand, output io.Wr
 	if err := requireConfiguredService(ctx, options, nil); err != nil {
 		return err
 	}
-	registry, err := supervisor.Open(ctx, supervisor.OpenOptions{Root: options.Root, User: options.User})
+	registry, err := installedjobs.Open(ctx, installedjobs.OpenOptions{Root: options.Root, User: options.User})
 	if err != nil {
 		return err
 	}
@@ -241,26 +241,26 @@ func runServiceServe(ctx context.Context, flags serviceServeCommand) error {
 }
 
 // user publications and connectors share one supervisor and joined shutdown.
-func runServiceServeWithUserJobs(ctx context.Context, flags serviceServeCommand, runners []supervisor.UserJobRunner) error {
+func runServiceServeWithUserJobs(ctx context.Context, flags serviceServeCommand, runners []installedjobs.UserJobRunner) error {
 	if flags.User && flags.System {
-		return supervisor.ErrScope
+		return installedjobs.ErrScope
 	}
 	if flags.System && len(runners) != 0 {
-		return supervisor.ErrScope
+		return installedjobs.ErrScope
 	}
 	options, err := flags.options()
 	if err != nil {
 		return err
 	}
-	registry, err := supervisor.Open(ctx, supervisor.OpenOptions{Root: options.Root, User: options.User})
+	registry, err := installedjobs.Open(ctx, installedjobs.OpenOptions{Root: options.Root, User: options.User})
 	if err != nil {
 		return err
 	}
 	defer registry.Close()
-	engine := supervisor.Engine{Registry: registry, UserJobs: runners}
+	engine := installedjobs.Engine{Registry: registry, UserJobs: runners}
 	if options.User {
 		engine.Connect = runInstalledConnector
-		engine.Group = func(ctx context.Context, job supervisor.Job, observe func(int64, bool) error) error {
+		engine.Group = func(ctx context.Context, job installedjobs.Job, observe func(int64, bool) error) error {
 			_, private, profile, err := registry.GroupIdentity(ctx, job)
 			if err != nil {
 				return err
@@ -271,13 +271,13 @@ func runServiceServeWithUserJobs(ctx context.Context, flags serviceServeCommand,
 	return engine.Serve(ctx)
 }
 
-func writeSystemJobs(ctx context.Context, registry *supervisor.Registry, output io.Writer, command, selected string) error {
+func writeSystemJobs(ctx context.Context, registry *installedjobs.Registry, output io.Writer, command, selected string) error {
 	jobs, err := registry.List(ctx)
 	if err != nil {
 		return err
 	}
 	for i := range jobs {
-		if jobs[i].Kind != supervisor.KindGroup {
+		if jobs[i].Kind != installedjobs.KindGroup {
 			continue
 		}
 		member, _, _, err := registry.GroupIdentity(ctx, jobs[i])
@@ -290,7 +290,7 @@ func writeSystemJobs(ctx context.Context, registry *supervisor.Registry, output 
 	return renderSystemJobs(output, command, jobs, selected)
 }
 
-func renderSystemJobs(output io.Writer, command string, jobs []supervisor.Job, selected string) error {
+func renderSystemJobs(output io.Writer, command string, jobs []installedjobs.Job, selected string) error {
 	blocks := []clioutput.Block{}
 	state := "no jobs"
 	for _, job := range jobs {
@@ -330,12 +330,12 @@ func renderSystemJobs(output io.Writer, command string, jobs []supervisor.Job, s
 		blocks = append(blocks, clioutput.Section(displayJobName(job), clioutput.Fields(fields...)))
 	}
 	if selected != "" && len(blocks) == 0 {
-		return supervisor.ErrJobNotFound
+		return installedjobs.ErrJobNotFound
 	}
 	return writeHumanFrame(output, command, state, "", blocks...)
 }
 
-func displayJobName(job supervisor.Job) string {
+func displayJobName(job installedjobs.Job) string {
 	if job.Name != "" {
 		return job.Name
 	}

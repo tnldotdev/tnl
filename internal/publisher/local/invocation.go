@@ -17,6 +17,7 @@ import (
 	clientserver "github.com/tnldotdev/tnl/internal/client/server"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
@@ -172,8 +173,8 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 	return publisherprotocol.Registration{Version: 1, RegistrationID: id, Owner: request.Owner, Target: request.Target}, nil
 }
 
-func invocationLimits(input *controlv1.PublisherApplicationLimits) (publisher.ApplicationLimits, error) {
-	var limits publisher.ApplicationLimits
+func invocationLimits(input *controlv1.PublisherApplicationLimits) (applicationlimits.Limits, error) {
+	var limits applicationlimits.Limits
 	if input != nil {
 		if input.Requests != nil {
 			if *input.Requests < 1 {

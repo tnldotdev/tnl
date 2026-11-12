@@ -8,7 +8,7 @@ import (
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 )
 
@@ -24,7 +24,7 @@ func privateRelayIdentity(id, run string, revision int64) controlstate.RelayLeas
 
 func privateRelayProblem(h *handler, w http.ResponseWriter, r *http.Request, err error) bool {
 	if errors.Is(err, controlstate.ErrServiceAccess) {
-		serviceapi.WriteProblem(w, 409, "stale_connection_assignment", "Private publisher connection is not current", "")
+		serverhttp.WriteProblem(w, 409, "stale_connection_assignment", "Private publisher connection is not current", "")
 		return true
 	}
 	return h.writeServiceError(w, r, err)
@@ -38,12 +38,12 @@ func privateRelayResponse(row controlstate.ServicePublisherConnection) relayv1.S
 
 func (h *handler) claimServicePublisherConnection(w http.ResponseWriter, r *http.Request, id relayv1.Identifier) {
 	var body relayv1.ServicePublisherConnectionClaim
-	if !serviceapi.DecodeJSON(w, r, &body) {
+	if !serverhttp.DecodeJSON(w, r, &body) {
 		return
 	}
 	if !opaqueid.Valid(id, opaqueid.PublisherConnectionPrefix) || !opaqueid.Valid(body.ServiceId, opaqueid.ServicePrefix) ||
 		!opaqueid.Valid(body.ServiceRunId, opaqueid.ServiceRunPrefix) || body.RunNumber <= 0 || body.ConnectionAssignmentRevision <= 0 || body.RelayLeaseRevision <= 0 {
-		serviceapi.WriteProblem(w, 400, "invalid_request", "Private connection claim is invalid", "")
+		serverhttp.WriteProblem(w, 400, "invalid_request", "Private connection claim is invalid", "")
 		return
 	}
 	row, err := h.service.store.ClaimServicePublisherConnection(r.Context(), id, body.ServiceId, body.ServiceRunId,
@@ -52,7 +52,7 @@ func (h *handler) claimServicePublisherConnection(w http.ResponseWriter, r *http
 	if privateRelayProblem(h, w, r, err) {
 		return
 	}
-	serviceapi.WriteJSON(w, 200, privateRelayResponse(row))
+	serverhttp.WriteJSON(w, 200, privateRelayResponse(row))
 }
 
 func (h *handler) readyServicePublisherConnection(w http.ResponseWriter, r *http.Request, id relayv1.Identifier) {
@@ -65,12 +65,12 @@ func (h *handler) disconnectServicePublisherConnection(w http.ResponseWriter, r 
 
 func (h *handler) servicePublisherTransition(w http.ResponseWriter, r *http.Request, id string, disconnect bool) {
 	var body relayv1.ServicePublisherConnectionTransition
-	if !serviceapi.DecodeJSON(w, r, &body) {
+	if !serverhttp.DecodeJSON(w, r, &body) {
 		return
 	}
 	if !opaqueid.Valid(id, opaqueid.PublisherConnectionPrefix) || !opaqueid.Valid(body.ServiceRunId, opaqueid.ServiceRunPrefix) ||
 		body.RunNumber <= 0 || body.ConnectionAssignmentRevision <= 0 || body.RelayLeaseRevision <= 0 {
-		serviceapi.WriteProblem(w, 400, "invalid_request", "Private connection transition is invalid", "")
+		serverhttp.WriteProblem(w, 400, "invalid_request", "Private connection transition is invalid", "")
 		return
 	}
 	store := h.service.store
@@ -91,7 +91,7 @@ func (h *handler) servicePublisherTransition(w http.ResponseWriter, r *http.Requ
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	serviceapi.WriteJSON(w, 200, privateRelayResponse(row))
+	serverhttp.WriteJSON(w, 200, privateRelayResponse(row))
 }
 
 func (c *DirectClient) ClaimServicePublisherConnection(ctx context.Context, id string, body relayv1.ServicePublisherConnectionClaim) (relayv1.ServicePublisherConnection, error) {

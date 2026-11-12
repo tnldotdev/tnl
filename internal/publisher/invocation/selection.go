@@ -13,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -128,7 +129,7 @@ func namespaceForMembership(current TeamSelection, domain authorityv1.Domain) st
 	return namespace
 }
 
-func (p publisherServices) config(target string, allowedIPPrefixes []string, limits publisher.ApplicationLimits) publisher.Config {
+func (p publisherServices) config(target string, allowedIPPrefixes []string, limits applicationlimits.Limits) publisher.Config {
 	relayTransportTLS := &tls.Config{MinVersion: tls.VersionTLS13}
 	return publisher.Config{
 		Control:           p.routes,

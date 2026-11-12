@@ -3,7 +3,7 @@ package invocation
 import (
 	"context"
 
-	"github.com/tnldotdev/tnl/internal/client/supervisor"
+	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/publisher/setup"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
@@ -12,7 +12,7 @@ import (
 
 type InstallationOptions struct {
 	PublicOptions
-	Installation  supervisor.ServiceOptions
+	Installation  installedjobs.ServiceOptions
 	ServiceName   string
 	ReadinessPath string
 	ServerCAFile  string
@@ -64,7 +64,7 @@ func InstallHTTP(ctx context.Context, flags InstallationOptions, presentation se
 	if name == "" {
 		name = flags.Name
 	}
-	job := supervisor.Job{Name: name, Target: address, TargetTLSName: flags.TargetTLSName, Limits: flags.Limits, ReadinessPath: flags.ReadinessPath}
+	job := installedjobs.Job{Name: name, Target: address, TargetTLSName: flags.TargetTLSName, Limits: flags.Limits, ReadinessPath: flags.ReadinessPath}
 	job.PreferredRegions = flags.PreferredRegions
 	return setup.InstallPublication(ctx, setup.Publication{Database: database, Server: server, Route: publicURL, Control: authenticated.Control, Options: flags.Installation, Job: job, TargetCAFile: flags.TargetCAFile, ServerCAFile: flags.ServerCAFile, ProjectRoot: flags.ProjectRoot}, presentation)
 }

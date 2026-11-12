@@ -19,7 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/relay"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -170,7 +170,7 @@ type relayRuntimeConfig struct {
 	tlsServerName      string
 	transportTLS       *tls.Config
 	certificateChanged func(relayv1.RelayTransportCertificate) error
-	clusterSecrets     serviceapi.BearerSecrets
+	clusterSecrets     serverhttp.BearerSecrets
 	internalAddress    string
 	internalListener   net.Listener
 	metrics            *observability.Metrics

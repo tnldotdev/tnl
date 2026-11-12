@@ -11,6 +11,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
+
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -27,7 +29,7 @@ func TestPublicCapacityRetainsPromotionDecision(t *testing.T) {
 			entered, ack := make(chan struct{}), make(chan struct{})
 			release := sync.OnceFunc(func() { close(ack) })
 			defer release()
-			policy, _, token := httpPermissionScopeFixture(t, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: certificateTestPublicURLID}, "route.example", 443, false)
+			policy, _, token := visitorfixture.ScopePolicy(t, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: certificateTestPublicURLID}, "route.example", 443, false)
 			f := newPublicCapacityFixture(t, 1, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { calls.Add(1); w.WriteHeader(204) }), func(c *PublicURLServerConfig) {
 				c.AccessMode, c.VisitorPolicy = "restricted", policy
 				c.PromoteVisitor = func(ctx context.Context, visitor Visitor) error {
@@ -87,7 +89,7 @@ func TestPublicCapacityRetainsPromotionDecision(t *testing.T) {
 
 func TestPublicCapacityAutomaticPromotionUsesWrappedStream(t *testing.T) {
 	var calls, promoted atomic.Int32
-	policy, _, token := httpPermissionScopeFixture(t, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: certificateTestPublicURLID}, "route.example", 443, false)
+	policy, _, token := visitorfixture.ScopePolicy(t, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: certificateTestPublicURLID}, "route.example", 443, false)
 	f := newPublicCapacityFixture(t, 1, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { calls.Add(1); w.WriteHeader(204) }), func(c *PublicURLServerConfig) {
 		c.AccessMode, c.VisitorPolicy = "restricted", policy
 	})

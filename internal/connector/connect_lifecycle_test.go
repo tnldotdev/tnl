@@ -8,9 +8,9 @@ import (
 	"net"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	"github.com/tnldotdev/tnl/internal/config"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
+	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -49,7 +49,7 @@ func TestConnectMetadataLifecycle(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer listener.Close()
-			job := supervisor.Job{ServiceID: "exact-approved-id", IdentityID: "identity", Name: "database", Protocol: "tcp", TrustRevision: 1, Target: listener.Addr().String()}
+			job := installedjobs.Job{ServiceID: "exact-approved-id", IdentityID: "identity", Name: "database", Protocol: "tcp", TrustRevision: 1, Target: listener.Addr().String()}
 			service := controlv1.Service{Id: job.ServiceID, Name: job.Name, Protocol: "tcp", TrustRevision: 2}
 			requested := ""
 			switch scenario {
@@ -90,13 +90,13 @@ func TestConnectMetadataLifecycle(t *testing.T) {
 					}
 					return []controlv1.Service{service}, nil
 				}),
-				listen: func(_ context.Context, next supervisor.Job) (net.Listener, error) {
+				listen: func(_ context.Context, next installedjobs.Job) (net.Listener, error) {
 					if next.Target != job.Target || next.ServiceID != job.ServiceID || next.IdentityID != job.IdentityID {
 						t.Fatal("refresh changed reserved listener identity")
 					}
 					return net.Listen("tcp", next.Target)
 				},
-				serve: func(_ context.Context, listener net.Listener, current supervisor.Job, ready func() error) error {
+				serve: func(_ context.Context, listener net.Listener, current installedjobs.Job, ready func() error) error {
 					calls++
 					defer listener.Close()
 					if state != "starting" {
@@ -128,7 +128,7 @@ func TestConnectMetadataLifecycle(t *testing.T) {
 					}
 					return reload
 				},
-				ready: func(supervisor.Job) error {
+				ready: func(installedjobs.Job) error {
 					if state != "starting" {
 						t.Fatal("ready callback retained stale readiness")
 					}

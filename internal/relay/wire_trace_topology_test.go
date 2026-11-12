@@ -22,7 +22,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	"github.com/tnldotdev/tnl/internal/testutil/transporttest"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
@@ -164,7 +164,7 @@ func TestWireTraceSeparatedInfrastructureExport(t *testing.T) {
 					t.Fatal(ctx.Err())
 				}
 				secret := strings.Repeat("s", 32)
-				secrets, err := serviceapi.NewBearerSecrets(secret, "")
+				secrets, err := serverhttp.NewBearerSecrets(secret, "")
 				if err != nil {
 					t.Fatal(err)
 				}

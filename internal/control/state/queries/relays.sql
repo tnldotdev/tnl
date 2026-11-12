@@ -255,9 +255,10 @@ WHERE connected_relay_id = sqlc.arg(relay_id)
   AND session_open
   AND state IN ('connected', 'ready', 'draining');
 
--- callers hold affected public URL rows and any existing publish run rows.
--- take the assignment-total guard before relay-service guards and lease rows;
--- lock all services before checking capacity or locking leases.
+-- callers hold the affected public URL and existing publish run rows, or the
+-- affected service and existing service run rows. take the assignment-total
+-- guard before relay service guards and lease rows; lock every relay service
+-- before checking capacity or locking leases.
 -- name: LockRelayServicesForPlacement :many
 WITH assignment_guard AS MATERIALIZED (
     SELECT pg_advisory_xact_lock(hashtextextended('tnl:relay-assignment-totals', 0))

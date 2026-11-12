@@ -23,7 +23,7 @@ import (
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 	"github.com/tnldotdev/tnl/internal/testutil/managedcert"
@@ -194,7 +194,7 @@ func TestIntegrationConnectorPeerPairRelayClaimHTTPDirect(t *testing.T) {
 	}
 	checkDelivery(pair.PairId, pair.DeliveryId)
 	secret := strings.Repeat("s", 32)
-	secrets, err := serviceapi.NewBearerSecrets(secret, "")
+	secrets, err := serverhttp.NewBearerSecrets(secret, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -341,7 +341,7 @@ func TestIntegrationConnectorPeerPairRelayClaimHTTPDirect(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			_, httpErr := httpClient.ClaimConnectorPeerPairLegFromAcceptedSocket(ctx, lease, source, proof, signature)
 			_, directErr := direct.ClaimConnectorPeerPairLegFromAcceptedSocket(ctx, lease, source, proof, signature)
-			var remote, local *serviceapi.ProblemError
+			var remote, local *serverhttp.ProblemError
 			if !errors.As(httpErr, &remote) || !errors.As(directErr, &local) ||
 				remote.Status != local.Status || remote.Code != local.Code || remote.Detail != local.Detail ||
 				remote.Status != http.StatusForbidden || remote.Code != "unauthenticated" {
@@ -467,7 +467,7 @@ func TestIntegrationConnectorPeerPairRelayClaimHTTPDirect(t *testing.T) {
 		_, httpErr := httpClient.ClaimConnectorPeerPairLegFromAcceptedSocket(ctx, lease0, observed, changed, signature)
 		_, directErr := direct.ClaimConnectorPeerPairLegFromAcceptedSocket(ctx, lease0, observed, changed, signature)
 		for _, err := range []error{httpErr, directErr} {
-			var problem *serviceapi.ProblemError
+			var problem *serverhttp.ProblemError
 			if !errors.As(err, &problem) || problem.Status != http.StatusConflict || problem.Code != "stale_network_binding" {
 				t.Fatal("authenticated network change lost its recoverable classification", err)
 			}

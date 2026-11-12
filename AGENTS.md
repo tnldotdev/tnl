@@ -32,9 +32,11 @@ Public product, client, and operator docs live in the sibling `../tnl.dev`
 repository, under `apps/accounts/src/content/docs/`. The repository README and
 npm package README link there. Update the relevant docs alongside behavior changes.
 
-Keep contributor setup in [contributing.md](contributing.md). Explain implementation
-boundaries in source and tests rather than a separate documentation tree. Put work
-logs and check results in the PR.
+Keep contributor setup in [contributing.md](contributing.md). Read
+[architecture.md](architecture.md) before changing package ownership or
+dependencies. Keep that root guide as the repository map; explain detailed
+implementation boundaries in source and tests rather than a separate
+documentation tree. Put work logs and check results in the PR.
 
 Never add to NOTICE. If you have a software license to add, ONLY add it to
 THIRD_PARTY_LICENSES.txt in a clean way that matches the existing format.
@@ -340,6 +342,9 @@ operational procedures and current capability limits in
 
 ## place implementation with its owner
 
+Follow [architecture.md](architecture.md) for the repository map, traffic flows,
+authority boundaries, dependency direction, and examples of choosing an owner.
+
 Start with an operation-focused file in the package that owns the behavior.
 Create a package only for a concrete lifecycle or authority boundary with a useful
 consumer. Explain its owner, allowed dependency direction, and why the existing
@@ -347,18 +352,24 @@ owner cannot be reused. File size or a new directory name is not an ownership
 reason. Move supporting types, fixtures, assertions, and callers with the real
 implementation.
 
-| Tree                                                                | Responsibility                                                                                                                                                      |
-| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cmd/{tnl,tnld}`                                                    | Flags, process composition, and presentation; reusable operations live below commands                                                                               |
-| `internal/publisher`                                                | Publication runtime; children own app state, local process/API, invocation operations, identity, groups, targets, and browser assets                                |
-| `internal/connector`                                                | Visitor-side selection, connector owner and connection operations; `stream`, `runtime`, `workload`, and `kubeconfig` own their narrower lifetimes                   |
-| `internal/control`                                                  | Serving APIs, PostgreSQL state, authorization, certificates, DNS, OIDC, delivery, and maintenance                                                                   |
-| `internal/{ingress,relay,daemon}`                                   | Visitor acceptance, publisher streams, and server process composition, respectively                                                                                 |
-| `internal/client`                                                   | Shared auth/state/team selection, project evaluation/resolution/init/generation, and installed service jobs                                                         |
-| `internal/config`                                                   | Static project configuration types, validation, and schema; `client/project` evaluates selected configuration, `daemon/config` resolves operational server settings |
-| `internal/{transport,policy,security,naming,failure,observability}` | Focused mechanics and validated shared values; no command or daemon startup                                                                                         |
-| `packages/{ts,py}`, `connect`                                       | SDK bindings and the independently built GitHub Action                                                                                                              |
-| `tasks`, `scripts`, `development`, `deploy`, `tests/integration`    | Task implementations, owned tooling, contributor stack, deployment templates, and black-box suites/fixtures                                                         |
+| Tree                                                                | Responsibility                                                                                                                                                                |
+| ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cmd/{tnl,tnld}`                                                    | Flags, process composition, and presentation; reusable operations live below commands                                                                                         |
+| `internal/publisher`                                                | Public URL publish runs; children own app state, local process/API, invocation operations, saved service runs/streams, identities, groups, targets, and browser access/assets |
+| `internal/publisher/service`                                        | Saved service run, certificates, publisher connections, and service HTTP frontend composition; `stream` owns visitor TLS, protocol, target connection, and expiry             |
+| `internal/publisher/httpaccess`                                     | Shared run-bound visitor policy refresh, browser handoffs, token renewal, cookies, and HTTP authorization; run owners join its workers                                        |
+| `internal/publisher/requestlimit`                                   | Shared per-run HTTP request budgets across visitor connections; no publication orchestration                                                                                  |
+| `internal/publisher/processidentity`                                | Signed publisher process identity and control lease; callers own renewal/stop loops                                                                                           |
+| `internal/connector`                                                | Visitor-side selection, connector owner and connection operations; `stream`, `runtime`, `workload`, and `kubeconfig` own their narrower lifetimes                             |
+| `internal/control`                                                  | Serving APIs, durable transactional authorization and lifecycle state in PostgreSQL, certificates, DNS, OIDC, delivery, and maintenance                                       |
+| `internal/{ingress,relay,daemon}`                                   | Visitor acceptance, publisher streams, and server process composition, respectively                                                                                           |
+| `internal/client`                                                   | Shared auth, API clients, protected local state, team selection, and project evaluation/resolution/init/generation; no installed-process composition                          |
+| `internal/installed`                                                | Installed publisher/connector jobs, registry, OS setup, supervision, and joined shutdown; shared client packages must not import it                                           |
+| `internal/config`                                                   | Static project configuration types, validation, and schema; `client/project` evaluates selected configuration, `daemon/config` resolves operational server settings           |
+| `internal/{transport,policy,security,naming,failure,observability}` | Focused mechanics and validated shared values; no command or daemon startup                                                                                                   |
+| `internal/serverhttp`                                               | Shared server HTTP decoding, problems, control cookies (including public authority API), and private cluster authentication; no saved-service authority                       |
+| `packages/{ts,py}`, `connect`                                       | SDK bindings and the independently built GitHub Action                                                                                                                        |
+| `tasks`, `scripts`, `development`, `deploy`, `tests/integration`    | Task implementations, owned tooling, contributor stack, deployment templates, and black-box suites/fixtures                                                                   |
 
 Commands compose operations, operations compose owned runtimes/state, and those
 owners depend on focused shared leaves and public contracts. Directory nesting
@@ -369,6 +380,15 @@ at the smallest boundary, or compose it above both users. For example,
 call back into the process owner. Connector `stream` does not import connector
 root operations. Control state never imports HTTP handlers; ingress and relay
 never import control state.
+
+Dependency checks reject publisher-root imports from the `publisher/service`
+tree and the shared `publisher/httpaccess` and `publisher/requestlimit` packages.
+Service-specific HTTP frontend composition lives in `publisher/service/http.go`.
+Installed job reconciliation and publisher-specific composition stay in the one
+`internal/installed` lifecycle owner, using the existing job model and authority.
+Publisher group assignment publication belongs to `publisher/group`; foreground
+commands and installed job runners compose that same operation. Shared HTTP limit
+values use `policy/applicationlimits.Limits` directly, without publisher aliases.
 
 Classify by lifecycle and authority, not executable: `tnl publish` is publisher
 work, `tnl connect` is connector work, `tnl apply` sends a control mutation, and

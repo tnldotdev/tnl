@@ -13,7 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
+	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
 )
 
 // admission belongs to the publisher, including streams and upgrades that no
@@ -37,7 +39,7 @@ func TestPublicURLPublisherSharesRequestLimitDuringStreams(t *testing.T) {
 				}
 				_, _ = io.WriteString(w, "last")
 			})
-			config := PublicURLServerConfig{Hostname: "route.example", Limits: ApplicationLimits{Concurrency: 1}}
+			config := PublicURLServerConfig{Hostname: "route.example", Limits: applicationlimits.Limits{Concurrency: 1}}
 			path := "/hold"
 			if kind == "inline" {
 				config.Handler = service
@@ -126,8 +128,8 @@ func TestPublicURLPublisherHoldsRequestLimitDuringUpgrades(t *testing.T) {
 				}
 				result <- err
 			})
-			config := PublicURLServerConfig{Hostname: "route.example", Limits: ApplicationLimits{Concurrency: 1},
-				Certificate: publicURLTestCertificate(t, "route.example")}
+			config := PublicURLServerConfig{Hostname: "route.example", Limits: applicationlimits.Limits{Concurrency: 1},
+				Certificate: visitorfixture.Certificate(t, "route.example")}
 			path := "/hmr"
 			if kind == "inline" {
 				config.Handler = service
@@ -165,7 +167,7 @@ func TestPublicURLPublisherHoldsRequestLimitDuringUpgrades(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = stream.Close(); awaitPublisherTest(t, handled) })
-			conn := tls.Client(stream, &tls.Config{ServerName: "route.example", RootCAs: rootsForCertificate(t, config.Certificate)})
+			conn := tls.Client(stream, &tls.Config{ServerName: "route.example", RootCAs: visitorfixture.Roots(t, config.Certificate)})
 			defer conn.Close()
 			if _, err := io.WriteString(conn, "GET "+path+" HTTP/1.1\r\nHost: route.example\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n"); err != nil {
 				t.Fatal(err)

@@ -37,7 +37,7 @@ func (s *publishRunCleanup) finish(result error) error {
 	if s.heartbeatStarted {
 		heartbeatErr := <-s.heartbeatDone
 		select {
-		case <-s.route.admission.completed:
+		case <-s.route.admission.Completed():
 			if failure.Only(heartbeatErr, context.Canceled) {
 				heartbeatErr = nil
 			}

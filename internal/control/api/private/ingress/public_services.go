@@ -8,7 +8,7 @@ import (
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	"github.com/tnldotdev/tnl/internal/serviceapi"
+	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
@@ -24,7 +24,7 @@ func (s *service) AdmitPublicServiceVisitor(ctx context.Context, id string, body
 	lease, ok := ingressLeaseIdentity(id, body.IngressRunId, body.IngressLeaseRevision)
 	source, sourceOK := privateSource(body.ObservedSourceIp)
 	if !ok || !sourceOK {
-		return result, serviceapi.NewProblemError(400, "invalid_request", "invalid public service admission")
+		return result, serverhttp.NewProblemError(400, "invalid_request", "invalid public service admission")
 	}
 	admitted, err := s.store.AdmitPublicServiceVisitor(ctx, lease, body.IngressPoolId, body.VisitorConnectionId, body.DestinationPort, source, s.now())
 	if err != nil {
@@ -37,7 +37,7 @@ func (s *service) PublicServiceVisitorStatus(ctx context.Context, id string, bod
 	var result ingressv1.PublicServiceVisitorStatus
 	lease, ok := ingressLeaseIdentity(id, body.IngressRunId, body.IngressLeaseRevision)
 	if !ok {
-		return result, serviceapi.NewProblemError(400, "invalid_request", "invalid public service lease")
+		return result, serverhttp.NewProblemError(400, "invalid_request", "invalid public service lease")
 	}
 	status, err := s.store.PublicServiceVisitorStatus(ctx, lease, body.VisitorConnectionId, s.now())
 	if errors.Is(err, controlstate.ErrServiceAccess) || errors.Is(err, controlstate.ErrIngressLeaseStale) {
@@ -52,7 +52,7 @@ func (s *service) PublicServiceVisitorStatus(ctx context.Context, id string, bod
 func (s *service) PromotePublicServiceVisitor(ctx context.Context, id string, body ingressv1.PublicServiceVisitorLookup) error {
 	lease, ok := ingressLeaseIdentity(id, body.IngressRunId, body.IngressLeaseRevision)
 	if !ok {
-		return serviceapi.NewProblemError(400, "invalid_request", "invalid public service lease")
+		return serverhttp.NewProblemError(400, "invalid_request", "invalid public service lease")
 	}
 	return s.privateStateError(ctx, s.store.PromotePublicServiceVisitor(ctx, lease, body.VisitorConnectionId, s.now()))
 }
@@ -60,36 +60,36 @@ func (s *service) PromotePublicServiceVisitor(ctx context.Context, id string, bo
 func (s *service) ClosePublicServiceVisitor(ctx context.Context, id string, body ingressv1.PublicServiceVisitorLookup) error {
 	lease, ok := ingressLeaseIdentity(id, body.IngressRunId, body.IngressLeaseRevision)
 	if !ok {
-		return serviceapi.NewProblemError(400, "invalid_request", "invalid public service lease")
+		return serverhttp.NewProblemError(400, "invalid_request", "invalid public service lease")
 	}
 	return s.privateStateError(ctx, s.store.ClosePublicServiceVisitor(ctx, lease, body.VisitorConnectionId, s.now()))
 }
 
 func (s generatedServer) AdmitPublicServiceVisitor(w http.ResponseWriter, r *http.Request, id ingressv1.IngressID) {
 	var body ingressv1.PublicServiceVisitorClaim
-	if !serviceapi.DecodeJSON(w, r, &body) {
+	if !serverhttp.DecodeJSON(w, r, &body) {
 		return
 	}
 	result, err := s.handler.service.AdmitPublicServiceVisitor(r.Context(), id, body)
 	if !s.handler.writeServiceError(w, r, err) {
-		serviceapi.WriteJSON(w, http.StatusOK, result)
+		serverhttp.WriteJSON(w, http.StatusOK, result)
 	}
 }
 
 func (s generatedServer) PublicServiceVisitorStatus(w http.ResponseWriter, r *http.Request, id ingressv1.IngressID) {
 	var body ingressv1.PublicServiceVisitorLookup
-	if !serviceapi.DecodeJSON(w, r, &body) {
+	if !serverhttp.DecodeJSON(w, r, &body) {
 		return
 	}
 	result, err := s.handler.service.PublicServiceVisitorStatus(r.Context(), id, body)
 	if !s.handler.writeServiceError(w, r, err) {
-		serviceapi.WriteJSON(w, http.StatusOK, result)
+		serverhttp.WriteJSON(w, http.StatusOK, result)
 	}
 }
 
 func (s generatedServer) ClosePublicServiceVisitor(w http.ResponseWriter, r *http.Request, id ingressv1.IngressID) {
 	var body ingressv1.PublicServiceVisitorLookup
-	if !serviceapi.DecodeJSON(w, r, &body) {
+	if !serverhttp.DecodeJSON(w, r, &body) {
 		return
 	}
 	if !s.handler.writeServiceError(w, r, s.handler.service.ClosePublicServiceVisitor(r.Context(), id, body)) {
@@ -99,7 +99,7 @@ func (s generatedServer) ClosePublicServiceVisitor(w http.ResponseWriter, r *htt
 
 func (s generatedServer) PromotePublicServiceVisitor(w http.ResponseWriter, r *http.Request, id ingressv1.IngressID) {
 	var body ingressv1.PublicServiceVisitorLookup
-	if !serviceapi.DecodeJSON(w, r, &body) {
+	if !serverhttp.DecodeJSON(w, r, &body) {
 		return
 	}
 	if !s.handler.writeServiceError(w, r, s.handler.service.PromotePublicServiceVisitor(r.Context(), id, body)) {

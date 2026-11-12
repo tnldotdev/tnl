@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"errors"
 	"io"
-	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -16,7 +15,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
+	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -31,7 +32,7 @@ func TestReadinessHasIndependentBoundedProbeCapacity(t *testing.T) {
 	}
 	entered, release := make(chan struct{}, 4), make(chan struct{})
 	var workers sync.WaitGroup
-	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, ReadinessProof: proof, Limits: ApplicationLimits{Requests: 1, Concurrency: 1, RateRequests: 1, RatePer: time.Hour},
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, ReadinessProof: proof, Limits: applicationlimits.Limits{Requests: 1, Concurrency: 1, RateRequests: 1, RatePer: time.Hour},
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if publisherproxy.IsReadinessProbe(r) {
 				entered <- struct{}{}
@@ -80,8 +81,13 @@ func TestReadinessHasIndependentBoundedProbeCapacity(t *testing.T) {
 	}
 	ordinary := httptest.NewRecorder()
 	serveTestPublicRequest(t, route, ordinary, request("/app", ""))
-	if ordinary.Code != 204 || route.admission.used != 1 || route.admission.active != 0 {
-		t.Fatalf("probes spent application budgets: status=%d used=%d active=%d", ordinary.Code, route.admission.used, route.admission.active)
+	if ordinary.Code != 204 {
+		t.Fatalf("probes spent application budgets: status=%d", ordinary.Code)
+	}
+	select {
+	case <-route.admission.Completed():
+	default:
+		t.Fatal("ordinary request did not spend the one-request budget or release its active slot")
 	}
 }
 
@@ -109,7 +115,7 @@ func TestReadinessProofDoesNotAuthorizeBodiesOrUpgrades(t *testing.T) {
 func mixedVisitorClient(t *testing.T, route *PublicURLServer, h2, denied bool) *http.Client {
 	t.Helper()
 	var dialed atomic.Bool
-	transport := &http.Transport{ForceAttemptHTTP2: h2, TLSClientConfig: &tls.Config{ServerName: "route.example", RootCAs: rootsForCertificate(t, *route.certificate.Load())},
+	transport := &http.Transport{ForceAttemptHTTP2: h2, TLSClientConfig: &tls.Config{ServerName: "route.example", RootCAs: visitorfixture.Roots(t, *route.certificate.Load())},
 		DialContext: func(context.Context, string, string) (net.Conn, error) {
 			if dialed.Swap(true) {
 				return nil, errors.New("test attempted to replace its visitor connection")
@@ -154,7 +160,7 @@ func TestReadinessDoesNotPromoteOrSpendApplicationBudgets(t *testing.T) {
 				}
 				route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number,
 					AccessMode:     access,
-					ReadinessProof: proof, Certificate: publicURLTestCertificate(t, run.Hostname), Limits: ApplicationLimits{Requests: 1, RateRequests: 1, RatePer: time.Hour},
+					ReadinessProof: proof, Certificate: visitorfixture.Certificate(t, run.Hostname), Limits: applicationlimits.Limits{Requests: 1, RateRequests: 1, RatePer: time.Hour},
 					PromoteVisitor: func(_ context.Context, v Visitor) error {
 						if v.Readiness {
 							t.Error("proof reached ordinary ingress promotion")
@@ -232,7 +238,7 @@ func TestReadinessDoesNotCacheRejectedApplicationPromotion(t *testing.T) {
 	for _, h2 := range []bool{false, true} {
 		proof, _ := NewReadinessProof(run, "/health")
 		var calls atomic.Int32
-		route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, Certificate: publicURLTestCertificate(t, run.Hostname), ReadinessProof: proof,
+		route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, Certificate: visitorfixture.Certificate(t, run.Hostname), ReadinessProof: proof,
 			PromoteVisitor: func(context.Context, Visitor) error {
 				calls.Add(1)
 				return &tunnel.ProtocolError{Code: tunnelv1.CapacityExceeded}
@@ -325,7 +331,7 @@ func TestHTTP2CanceledFirstRequestDoesNotPoisonConnection(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	firstDone := make(chan struct{})
 	var calls, forwarded atomic.Int32
-	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "route.example", Certificate: publicURLTestCertificate(t, "route.example"),
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "route.example", Certificate: visitorfixture.Certificate(t, "route.example"),
 		PromoteVisitor: func(ctx context.Context, _ Visitor) error {
 			calls.Add(1)
 			close(started)
@@ -384,8 +390,8 @@ func TestHTTP2ProofDoesNotWaitForApplicationPromotion(t *testing.T) {
 	proof, _ := NewReadinessProof(run, "/health")
 	started, release := make(chan struct{}), make(chan struct{})
 	var calls atomic.Int32
-	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, Certificate: publicURLTestCertificate(t, run.Hostname), ReadinessProof: proof,
-		Limits: ApplicationLimits{Requests: 1, Concurrency: 1, RateRequests: 1, RatePer: time.Hour},
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, Certificate: visitorfixture.Certificate(t, run.Hostname), ReadinessProof: proof,
+		Limits: applicationlimits.Limits{Requests: 1, Concurrency: 1, RateRequests: 1, RatePer: time.Hour},
 		PromoteVisitor: func(ctx context.Context, _ Visitor) error {
 			calls.Add(1)
 			close(started)
@@ -451,25 +457,5 @@ func TestPromotionCloseCancelsAndJoinsSharedWork(t *testing.T) {
 	}
 	if err := v.admit(t.Context(), false); !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("closed admission=%v", err)
-	}
-}
-
-func TestExtremeRatePeriodRetryAfterDoesNotOverflow(t *testing.T) {
-	a, err := newApplicationAdmission(ApplicationLimits{RateRequests: 1, RatePer: time.Duration(math.MaxInt64), RateBurst: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	now := time.Now()
-	if status, _ := a.enter(now); status != 0 {
-		t.Fatal(status)
-	}
-	a.leave()
-	status, retry := a.enter(now)
-	if status != 429 || retry != time.Duration(math.MaxInt64) || retryAfterSeconds(retry) != 9223372037 {
-		t.Fatalf("status=%d retry=%d seconds=%d", status, retry, retryAfterSeconds(retry))
-	}
-	_, retry = a.enter(now.Add(time.Second))
-	if retry < time.Duration(math.MaxInt64)-2*time.Second {
-		t.Fatalf("overflow after partial refill: %s", retry)
 	}
 }

@@ -8,8 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/publisher"
+	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
+
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -51,7 +52,7 @@ func TestDirectAuthorizationWaitsForAdmissionAndPreservesInfrastructureCause(t *
 			}
 			defer cancel()
 			visitor := prepared.managedVisitor(tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{PublicService: &tunnelv1.PublicServiceAdmission{}}})
-			certificate := visitor.(publisher.CertificateVisitor)
+			certificate := visitor.(servicestream.CertificateVisitor)
 			decision, err := certificate.Check(t.Context(), &x509.Certificate{})
 			if infrastructureFailure {
 				if !errors.Is(err, cause) || decision.Allowed || c.calls.Load() != 1 {

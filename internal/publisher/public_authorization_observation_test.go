@@ -21,9 +21,12 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
+	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
 	"go.opentelemetry.io/otel/trace"
 	collectortrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
@@ -171,20 +174,20 @@ func TestPublicHTTPAuthorizationObservationRealPermissionAndBind(t *testing.T) {
 	for _, scenario := range []string{"anonymous", "signed", "bad credential", "ambiguous credential", "IP denied", "expired", "revoked", "revoked key", "canceled"} {
 		t.Run(scenario, func(t *testing.T) {
 			o := newPublicAuthorizationObserver(t)
-			policy, update, token := httpPermissionFixture(t, true)
-			r := permissionRequest().WithContext(o.ctx)
+			policy, update, token := visitorfixture.Policy(t, true)
+			r := visitorfixture.Request().WithContext(o.ctx)
 			r.URL.Path = "/private-request-path"
 			r.Header.Set("Authorization", "private-application-credential")
 			state, outcome, code := "admitted", "success", ""
 			status := http.StatusNoContent
 			if scenario != "anonymous" {
-				r.Header.Set(visitorTokenHeader, token.Reveal())
+				r.Header.Set(httpaccess.VisitorTokenHeader, token.Reveal())
 			}
 			switch scenario {
 			case "bad credential":
-				r.Header.Set(visitorTokenHeader, "private-invalid-visitor-token")
+				r.Header.Set(httpaccess.VisitorTokenHeader, "private-invalid-visitor-token")
 			case "ambiguous credential":
-				r.AddCookie(&http.Cookie{Name: visitorTokenCookie, Value: token.Reveal()})
+				r.AddCookie(&http.Cookie{Name: httpaccess.VisitorTokenCookie, Value: token.Reveal()})
 			case "IP denied":
 				ip, err := ippolicy.New([32]byte{1}, nil)
 				if err != nil {
@@ -198,7 +201,7 @@ func TestPublicHTTPAuthorizationObservationRealPermissionAndBind(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				r.Header.Set(visitorTokenHeader, expired.Reveal())
+				r.Header.Set(httpaccess.VisitorTokenHeader, expired.Reveal())
 			case "revoked":
 				update.View.VisitorPolicyRevision++
 			case "revoked key":
@@ -228,7 +231,7 @@ func TestPublicHTTPAuthorizationObservationRealPermissionAndBind(t *testing.T) {
 				AdmitRequest: func(r *http.Request) error { parent = trace.SpanContextFromContext(r.Context()); return nil },
 				Handler: http.HandlerFunc(func(w http.ResponseWriter, bound *http.Request) {
 					forwarded++
-					if !trace.SpanContextFromContext(bound.Context()).Equal(parent) || bound.Context().Done() == r.Context().Done() || bound.Header.Get(visitorTokenHeader) != "" || bound.Header.Get("Authorization") != "private-application-credential" {
+					if !trace.SpanContextFromContext(bound.Context()).Equal(parent) || bound.Context().Done() == r.Context().Done() || bound.Header.Get(httpaccess.VisitorTokenHeader) != "" || bound.Header.Get("Authorization") != "private-application-credential" {
 						t.Error("authorization changed the HTTP parent, discarded guarded cancellation or altered application credentials")
 					}
 					if publicAuthorizationCount(t, o.metrics, "tnl_publisher_operation_duration_seconds", map[string]string{"tnl_operation": "visitor_authorization"}) != 1 {
@@ -256,7 +259,7 @@ func TestPublicHTTPAuthorizationObservationRealPermissionAndBind(t *testing.T) {
 func TestPublicHTTPAuthorizationObservationBindExpiryRetainsCause(t *testing.T) {
 	o := newPublicAuthorizationObserver(t)
 	base, armed, checks := time.Now(), false, 0
-	policy, _, token := httpPermissionFixtureClock(t, true, func() time.Time {
+	policy, _, token := visitorfixture.PolicyClock(t, true, func() time.Time {
 		if armed {
 			checks++
 			if checks > 1 {
@@ -265,20 +268,20 @@ func TestPublicHTTPAuthorizationObservationBindExpiryRetainsCause(t *testing.T) 
 		}
 		return base
 	})
-	r := permissionRequest().WithContext(o.ctx)
-	r.Header.Set(visitorTokenHeader, token.Reveal())
+	r := visitorfixture.Request().WithContext(o.ctx)
+	r.Header.Set(httpaccess.VisitorTokenHeader, token.Reveal())
 	armed = true
-	var permission httpPermission
+	var permission visitortoken.VerifiedPermission
 	var decisionErr error
 	observability.PublisherHTTP(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var guard *publicHTTPGuard
+		var guard *httpaccess.Guard
 		var guarded *http.Request
-		permission, guard, guarded, decisionErr = authorizeHTTPRequest(w, r, policy, nil)
+		permission, guard, guarded, decisionErr = httpaccess.AuthorizeRequest(w, r, policy, nil)
 		if guard != nil || guarded != nil {
 			t.Error("expired bind created a request guard")
 		}
 	})).ServeHTTP(httptest.NewRecorder(), r)
-	if !permission.permission.Valid() || !errors.Is(decisionErr, visitortoken.ErrPolicy) {
+	if !permission.Valid() || !errors.Is(decisionErr, visitortoken.ErrPolicy) {
 		t.Fatal("did not verify the real signed token before the current bind failed", decisionErr)
 	}
 	assertPublicAuthorizationDecision(t, o.snapshot(t), "denied", "denied", string(diagnostic.VisitorAccessDenied))
@@ -294,13 +297,13 @@ func TestPublicHTTPAuthorizationObservationSkipsReadinessAndSeparatesCapacity(t 
 		t.Fatal(err)
 	}
 	forwarded := 0
-	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, ReadinessProof: proof, Limits: ApplicationLimits{Requests: 1}, Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { forwarded++; w.WriteHeader(204) })})
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, ReadinessProof: proof, Limits: applicationlimits.Limits{Requests: 1}, Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { forwarded++; w.WriteHeader(204) })})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = route.Close() })
 	request := func(path, secret string) int {
-		r := permissionRequest().WithContext(ctx)
+		r := visitorfixture.Request().WithContext(ctx)
 		r.Host, r.TLS.ServerName, r.URL.Path = run.Hostname, run.Hostname, path
 		r.RequestURI = path
 		if secret != "" {
@@ -324,7 +327,7 @@ func TestPublicHTTPAuthorizationObservationSkipsReadinessAndSeparatesCapacity(t 
 func TestPublicHTTPAuthorizationObservationRealPromotionKeepsLifetimeParent(t *testing.T) {
 	o := newPublicAuthorizationObserver(t)
 	var promoted int
-	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Context: o.ctx, Hostname: "route.example", Certificate: publicURLTestCertificate(t, "route.example"),
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Context: o.ctx, Hostname: "route.example", Certificate: visitorfixture.Certificate(t, "route.example"),
 		PromoteVisitor: func(_ context.Context, visitor Visitor) error {
 			if visitor.Readiness || visitor.Source.Addr().String() != "192.0.2.10" {
 				t.Error("promotion lost its real visitor/source binding")
@@ -346,7 +349,7 @@ func TestPublicHTTPAuthorizationObservationRealPromotionKeepsLifetimeParent(t *t
 	}
 	handled := make(chan struct{})
 	var dialed atomic.Bool
-	transport := &http.Transport{TLSClientConfig: &tls.Config{ServerName: "route.example", RootCAs: rootsForCertificate(t, *route.certificate.Load())},
+	transport := &http.Transport{TLSClientConfig: &tls.Config{ServerName: "route.example", RootCAs: visitorfixture.Roots(t, *route.certificate.Load())},
 		DialContext: func(context.Context, string, string) (net.Conn, error) {
 			if dialed.Swap(true) {
 				return nil, errors.New("test attempted to replace its visitor connection")

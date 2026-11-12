@@ -1,5 +1,8 @@
 # contributing
 
+Use [architecture](architecture.md) to find the owner of a change and
+understand its dependencies. Read [AGENTS.md](AGENTS.md) for repository policies.
+
 ## get set up
 
 Install [mise](https://mise.jdx.dev), then run these from the repository root:
@@ -33,11 +36,18 @@ For one Go package or test:
 mise exec -- task go:test:focused PACKAGES=./internal/publisher/target RUN=Test
 ```
 
+Dependency checks keep the service tree and shared publisher packages from
+importing publisher root. For HTTP changes, use `internal/publisher/httpaccess`
+for visitor policy and browser authorization, `internal/publisher/requestlimit`
+for per-run budgets, and `internal/publisher/service/http.go` for service frontend
+composition. See [package dependencies](architecture.md#how-packages-fit-together)
+for those boundaries.
+
 Find integration, race, load, and packaging checks with
-`mise exec -- task --list-all`. Integration tests need Docker and Pebble
-(installed by mise); their tasks create and clean up test databases. Some CLI
-integration tests need Linux. The full CI matrix lives in
-[the workflows](.github/workflows/).
+`mise exec -- task --list-all`. Integration tests use Docker, Pebble, and kind
+as needed; mise installs Pebble and kind. Tasks that need test databases create
+and clean up their own. Some CLI integration tests need Linux. The full CI matrix
+lives in [the workflows](.github/workflows/).
 
 For warm PostgreSQL latency, run `mise exec -- task go:test:load:postgres`.
 It compares a direct database connection with the connector/publisher path using

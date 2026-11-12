@@ -12,6 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
+	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
+
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
@@ -47,7 +50,7 @@ func newPublicCapacityFixture(t *testing.T, capacity int, handler http.Handler, 
 	second := first
 	second.ConnectionSlot, second.PublisherConnectionID, second.RelayServiceID = 1, "connection-b", "relay-b"
 	config := PublicURLServerConfig{Hostname: "route.example", PublicURLID: first.PublicURLID, PublishRunID: first.PublishRunID, PublishRunNumber: 1,
-		StreamCapacity: capacity, Certificate: publicURLTestCertificate(t, "route.example"), Handler: handler}
+		StreamCapacity: capacity, Certificate: visitorfixture.Certificate(t, "route.example"), Handler: handler}
 	for _, apply := range configure {
 		apply(&config)
 	}
@@ -120,7 +123,7 @@ func (f *publicCapacityFixture) secure(stream net.Conn, protocols ...string) (*t
 	if _, err := stream.Write(f.metadataFor(stream)); err != nil {
 		return nil, err
 	}
-	client := tls.Client(stream, &tls.Config{RootCAs: rootsForCertificate(f.t, *f.route.certificate.Load()), ServerName: "route.example", NextProtos: protocols})
+	client := tls.Client(stream, &tls.Config{RootCAs: visitorfixture.Roots(f.t, *f.route.certificate.Load()), ServerName: "route.example", NextProtos: protocols})
 	return client, client.HandshakeContext(f.ctx)
 }
 
@@ -139,7 +142,7 @@ func capacityRequest(client net.Conn, path string, closeConnection bool, token .
 	}
 	credential := ""
 	if len(token) != 0 {
-		credential = visitorTokenHeader + ": " + token[0] + "\r\n"
+		credential = httpaccess.VisitorTokenHeader + ": " + token[0] + "\r\n"
 	}
 	if _, err := fmt.Fprintf(client, "GET %s HTTP/1.1\r\nHost: route.example\r\nConnection: %s\r\n%s\r\n", path, connection, credential); err != nil {
 		return nil, err

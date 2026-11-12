@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
+
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 )
 
@@ -14,7 +16,7 @@ func TestVisitorPolicyRevisionClosesStreamsWithoutStoppingPublisher(t *testing.T
 	defer stream.Close()
 	defer peer.Close()
 	route := &PublicURLServer{streams: map[net.Conn]*publicVisitorAdmission{stream: {connection: newDoneConn(stream)}}}
-	policy, update, token := httpPermissionFixture(t, false)
+	policy, update, token := visitorfixture.Policy(t, false)
 	view, _, _ := policy.Current()
 	permission, err := visitortoken.VerifyBearer(token, view, time.Now())
 	if err != nil {

@@ -12,11 +12,12 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
-	"github.com/tnldotdev/tnl/internal/publisher"
+	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/peer"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
+
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -583,7 +584,7 @@ func (a *connectorAdmission) forwardPeer() (result error) {
 		return err
 	}
 	visitorCtx := observability.WithVisitor(observability.ExtractWireTrace(a.ctx, entry.TraceContext), entry.VisitorConnectionID)
-	return b.forwardManaged(visitorCtx, owned, publisher.ConnectorVisitor{Admission: a}, "")
+	return b.forwardManaged(visitorCtx, owned, servicestream.ConnectorVisitor{Admission: a}, "")
 }
 
 // dispatch never waits for policy installation or application IO. at most one
