@@ -9,6 +9,16 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example.com
 paths:
+  /v1/projects/{project_key}/service-definitions:
+    $ref: "./paths/environments.yaml#/paths/~1v1~1projects~1{project_key}~1service-definitions"
+  /v1/projects/{project_key}/environments:
+    $ref: "./paths/environments.yaml#/paths/~1v1~1projects~1{project_key}~1environments"
+  /v1/projects/{project_key}/environments/{environment_id}:
+    $ref: "./paths/environments.yaml#/paths/~1v1~1projects~1{project_key}~1environments~1{environment_id}"
+  /v1/projects/{project_key}/environments/{environment_id}/apply:
+    $ref: "./paths/environments.yaml#/paths/~1v1~1projects~1{project_key}~1environments~1{environment_id}~1apply"
+  /v1/projects/{project_key}/environments/apply:
+    $ref: "./paths/environments.yaml#/paths/~1v1~1projects~1{project_key}~1environments~1apply"
   /v1/projects/{project_key}/publisher-groups:
     $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1projects~1{project_key}~1publisher-groups"
   /v1/projects/{project_key}/publisher-groups/{group_name}/bindings:
@@ -304,6 +314,36 @@ components:
     Problem:
       $ref: "./schemas/common.yaml#/responses/Problem"
   schemas:
+    EnvironmentPublication:
+      $ref: "./schemas/environments.yaml#/schemas/EnvironmentPublication"
+    ServiceDefinition:
+      $ref: "./schemas/environments.yaml#/schemas/ServiceDefinition"
+    ServiceDefinitionService:
+      $ref: "./schemas/environments.yaml#/schemas/ServiceDefinitionService"
+    ServiceDefinitionRevision:
+      $ref: "./schemas/environments.yaml#/schemas/ServiceDefinitionRevision"
+    CreateServiceDefinitionRequest:
+      $ref: "./schemas/environments.yaml#/schemas/CreateServiceDefinitionRequest"
+    EnvironmentTargetTLS:
+      $ref: "./schemas/environments.yaml#/schemas/EnvironmentTargetTLS"
+    EnvironmentTarget:
+      $ref: "./schemas/environments.yaml#/schemas/EnvironmentTarget"
+    EnvironmentTargets:
+      $ref: "./schemas/environments.yaml#/schemas/EnvironmentTargets"
+    EnvironmentReference:
+      $ref: "./schemas/environments.yaml#/schemas/EnvironmentReference"
+    EnvironmentService:
+      $ref: "./schemas/environments.yaml#/schemas/EnvironmentService"
+    Environment:
+      $ref: "./schemas/environments.yaml#/schemas/Environment"
+    CreateEnvironmentRequest:
+      $ref: "./schemas/environments.yaml#/schemas/CreateEnvironmentRequest"
+    ApplyEnvironmentRequest:
+      $ref: "./schemas/environments.yaml#/schemas/ApplyEnvironmentRequest"
+    EnvironmentApplication:
+      $ref: "./schemas/environments.yaml#/schemas/EnvironmentApplication"
+    ApplyEnvironmentsRequest:
+      $ref: "./schemas/environments.yaml#/schemas/ApplyEnvironmentsRequest"
     ConnectorPeerPairCandidate:
       $ref: "./schemas/service-runs.yaml#/schemas/ConnectorPeerPairCandidate"
     ConnectorPeerPairOwnerAuthority:

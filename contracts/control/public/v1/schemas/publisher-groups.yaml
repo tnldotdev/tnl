@@ -217,6 +217,7 @@ schemas:
       hostname: { type: string }
       trust_revision: { type: integer, format: int64 }
       configuration: { $ref: "../openapi.yaml#/components/schemas/ProjectServiceConfiguration" }
+      environment: { $ref: "../openapi.yaml#/components/schemas/EnvironmentPublication" }
   PublisherGroupAcknowledgement:
     type: object
     additionalProperties: false

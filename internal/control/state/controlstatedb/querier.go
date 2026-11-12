@@ -196,6 +196,9 @@ type Querier interface {
 	GetDNSChallengeChange(ctx context.Context, arg GetDNSChallengeChangeParams) (GetDNSChallengeChangeRow, error)
 	GetDNSChallengeContext(ctx context.Context, arg GetDNSChallengeContextParams) (GetDNSChallengeContextRow, error)
 	GetDNSChallengeSubject(ctx context.Context, arg GetDNSChallengeSubjectParams) (GetDNSChallengeSubjectRow, error)
+	GetEnvironment(ctx context.Context, arg GetEnvironmentParams) (ControlEnvironment, error)
+	GetEnvironmentForGroup(ctx context.Context, id string) (ControlEnvironment, error)
+	GetEnvironmentPublisherGroup(ctx context.Context, id string) (ControlProjectPublisherGroup, error)
 	GetFeedbackEventByActorKey(ctx context.Context, arg GetFeedbackEventByActorKeyParams) (ControlFeedbackEvent, error)
 	GetFeedbackPublicURL(ctx context.Context, id string) (ControlPublicUrl, error)
 	GetFeedbackThread(ctx context.Context, id string) (ControlFeedbackThread, error)
@@ -334,6 +337,7 @@ type Querier interface {
 	ListConnectorPeerPairCandidates(ctx context.Context, arg ListConnectorPeerPairCandidatesParams) ([]ListConnectorPeerPairCandidatesRow, error)
 	ListCurrentDomainNames(ctx context.Context) ([]string, error)
 	ListDNSChallengePresentations(ctx context.Context, baseIdentifier string) ([]ListDNSChallengePresentationsRow, error)
+	ListEnvironments(ctx context.Context, arg ListEnvironmentsParams) ([]ControlEnvironment, error)
 	ListFeedbackEventsForTeam(ctx context.Context, arg ListFeedbackEventsForTeamParams) ([]ControlFeedbackEvent, error)
 	ListFeedbackEventsForThread(ctx context.Context, arg ListFeedbackEventsForThreadParams) ([]ControlFeedbackEvent, error)
 	ListFeedbackThreadsForPage(ctx context.Context, arg ListFeedbackThreadsForPageParams) ([]ControlFeedbackThread, error)
@@ -396,6 +400,7 @@ type Querier interface {
 	LockDeviceLoginCapacity(ctx context.Context) error
 	LockDomainPublicURLs(ctx context.Context, arg LockDomainPublicURLsParams) ([]ControlPublicUrl, error)
 	LockEligibleRelayLeases(ctx context.Context, arg LockEligibleRelayLeasesParams) ([]LockEligibleRelayLeasesRow, error)
+	LockEnvironment(ctx context.Context, arg LockEnvironmentParams) (ControlEnvironment, error)
 	LockExpiredEphemeralPublicURLs(ctx context.Context, arg LockExpiredEphemeralPublicURLsParams) ([]ControlPublicUrl, error)
 	// lock public URLs before publish runs, as heartbeat and closure do. the
 	// partial expiration index finds candidates; SKIP LOCKED leaves busy public
@@ -505,6 +510,7 @@ type Querier interface {
 	PrunePublisherAccess(ctx context.Context, arg PrunePublisherAccessParams) error
 	PrunePublisherAssertions(ctx context.Context, arg PrunePublisherAssertionsParams) error
 	PublishRunServingPrepared(ctx context.Context, arg PublishRunServingPreparedParams) (pgtype.Bool, error)
+	PublisherGroupEnvironmentOwnership(ctx context.Context, id string) (PublisherGroupEnvironmentOwnershipRow, error)
 	// the caller supplies the canonical MachinePublisherAuthority result at now.
 	PublisherRuntimeActive(ctx context.Context, arg PublisherRuntimeActiveParams) (bool, error)
 	// this read does not lock resources after identities. URL and service
@@ -518,6 +524,7 @@ type Querier interface {
 	ReadConnectorPeerObservationRelayBounds(ctx context.Context, arg ReadConnectorPeerObservationRelayBoundsParams) ([]ReadConnectorPeerObservationRelayBoundsRow, error)
 	ReadIngressRoutingTableClock(ctx context.Context) (ControlIngressRoutingTableClock, error)
 	ReadPublishRunPreparationRouting(ctx context.Context, arg ReadPublishRunPreparationRoutingParams) (ControlIngressRoutingTableEvent, error)
+	ReadServiceDefinition(ctx context.Context, arg ReadServiceDefinitionParams) (ControlServiceDefinition, error)
 	ReadVisitorGrantVerifiers(ctx context.Context, arg ReadVisitorGrantVerifiersParams) ([]ReadVisitorGrantVerifiersRow, error)
 	ReadVisitorPolicyEvents(ctx context.Context, arg ReadVisitorPolicyEventsParams) ([]ReadVisitorPolicyEventsRow, error)
 	ReadVisitorPolicyRevision(ctx context.Context, arg ReadVisitorPolicyRevisionParams) (int64, error)
@@ -614,6 +621,7 @@ type Querier interface {
 	ServiceNamespaceOwnsHostname(ctx context.Context, hostname string) (bool, error)
 	ServicePortPoolCapacity(ctx context.Context) ([]ServicePortPoolCapacityRow, error)
 	ServicePublicEndpointBinding(ctx context.Context, visitorConnectionID string) (ServicePublicEndpointBindingRow, error)
+	ServicePublisherGroup(ctx context.Context, serviceID pgtype.Text) (pgtype.Text, error)
 	SetDNSReadyDomainDefault(ctx context.Context, arg SetDNSReadyDomainDefaultParams) (int64, error)
 	SetDomainAuthorityRevision(ctx context.Context, arg SetDomainAuthorityRevisionParams) error
 	SetIdentityInitialTeam(ctx context.Context, arg SetIdentityInitialTeamParams) error

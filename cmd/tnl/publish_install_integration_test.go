@@ -293,7 +293,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scoped, err := publisheridentity.NewNative(control.NativeControl, authority, identity, signing)
+	scoped, err := publisheridentity.NewNative(control.NativeControl, authority, identity, signing, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

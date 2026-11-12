@@ -28,11 +28,21 @@ func lockAppliedProjectPublications(ctx context.Context, tx pgx.Tx, team, projec
 		ORDER BY service.id FOR UPDATE OF service`, team, project); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `SELECT service.id FROM control.public_urls service
+	if _, err := tx.Exec(ctx, `SELECT service.id FROM control.public_urls service
 		WHERE service.id IN (
 			SELECT public_url_id FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2
 			UNION SELECT public_url_id FROM control.local_project_services WHERE team_id=$1 AND project_key=$2)
-		ORDER BY service.id FOR NO KEY UPDATE OF service`, team, project)
+		ORDER BY service.id FOR NO KEY UPDATE OF service`, team, project); err != nil {
+		return err
+	}
+	return lockAppliedPublicationReservations(ctx, tx)
+}
+
+// callers prelock their complete publication parent set first. closing a run
+// changes shared relay reservations, so take this guard before any port inventory
+// lock, including batches that mix removals with retained-service updates.
+func lockAppliedPublicationReservations(ctx context.Context, tx pgx.Tx) error {
+	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('tnl:relay-assignment-totals',0))`)
 	return err
 }
 
@@ -41,6 +51,22 @@ func (d *Database) createAppliedService(ctx context.Context, tx pgx.Tx, q *contr
 }
 
 func (d *Database) createAppliedServiceForIssuer(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, r ApplyProjectConfigurationRequest, key, scope string, s ProjectServiceConfiguration, issuer publisherIssuer) (string, error) {
+	id, err := d.createAppliedServiceResource(ctx, tx, q, r, key, scope, s, issuer)
+	if err != nil || issuer.MachineID != "" {
+		return id, err
+	}
+	// legacy project apply retains its explicit owner-access behavior. remote
+	// environment materialization calls resource creation only.
+	digest := sha256.Sum256([]byte(r.TeamID + "\x00" + r.ProjectKey + "\x00" + key))
+	grant, err := opaqueid.New(opaqueid.ServiceGrantPrefix)
+	if err != nil {
+		return "", err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO control.visitor_grants(id,service_id,team_id,kind,identity_id,auto_owner,created_by_identity_id,idempotency_key,request_digest,created_at) VALUES($1,$2,$3,'identity',$4,true,$4,$5,$6,$7)`, grant, id, r.TeamID, issuer.IdentityID, "applied-owner/"+id, digest[:], r.Now)
+	return id, err
+}
+
+func (d *Database) createAppliedServiceResource(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, r ApplyProjectConfigurationRequest, key, scope string, s ProjectServiceConfiguration, issuer publisherIssuer) (string, error) {
 	id, err := opaqueid.New(opaqueid.ServicePrefix)
 	if err != nil {
 		return "", err
@@ -62,16 +88,7 @@ func (d *Database) createAppliedServiceForIssuer(ctx context.Context, tx pgx.Tx,
 	if err != nil {
 		return "", err
 	}
-	// provisioning creates publication resources, never personal visitor access.
-	if issuer.MachineID != "" {
-		return id, nil
-	}
-	grant, err := opaqueid.New(opaqueid.ServiceGrantPrefix)
-	if err != nil {
-		return "", err
-	}
-	_, err = tx.Exec(ctx, `INSERT INTO control.visitor_grants(id,service_id,team_id,kind,identity_id,auto_owner,created_by_identity_id,idempotency_key,request_digest,created_at) VALUES($1,$2,$3,'identity',$4,true,$4,$5,$6,$7)`, grant, id, r.TeamID, issuer.IdentityID, "applied-owner/"+id, digest[:], r.Now)
-	return id, err
+	return id, nil
 }
 
 func (d *Database) updateAppliedService(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, id, scope string, s ProjectServiceConfiguration, now time.Time) error {

@@ -249,6 +249,13 @@ func (d *Database) verifyGroupMachine(ctx context.Context, tx pgx.Tx, group cont
 }
 
 func machineGroupPermission(ctx context.Context, tx pgx.Tx, group controlstatedb.ControlProjectPublisherGroup, workload, machine, permission string, now time.Time) (m MachineIdentity, a machineWorkloadAuthority, err error) {
+	var environment bool
+	if err = tx.QueryRow(ctx, `SELECT environment_id IS NOT NULL OR EXISTS(SELECT 1 FROM control.environments reverse_owner WHERE reverse_owner.group_id=publisher_group.id) FROM control.project_publisher_groups publisher_group WHERE id=$1`, group.ID).Scan(&environment); err != nil {
+		return m, a, err
+	}
+	if environment {
+		return m, a, ErrMachineDenied
+	}
 	m, err = machineIdentity(ctx, tx, machine)
 	if err != nil {
 		return m, a, err
@@ -324,7 +331,7 @@ func (d *Database) ExchangeMachineWorkload(ctx context.Context, r ExchangeWorklo
 
 func verifyMachineSession(ctx context.Context, tx pgx.Tx, id string, now time.Time) error {
 	var allowed bool
-	err := tx.QueryRow(ctx, `SELECT NOT EXISTS(SELECT 1 FROM control.workload_session_machines x WHERE x.session_id=$1) OR EXISTS(SELECT 1 FROM control.workload_session_machines x JOIN control.workload_sessions w ON w.id=x.session_id JOIN control.machine_identities m ON m.id=x.machine_id AND m.team_id=w.team_id AND m.revision=x.identity_revision AND m.revoked_at IS NULL JOIN control.machine_workload_permissions p ON p.id=x.permission_id AND p.machine_id=m.id AND p.team_id=w.team_id AND p.project_key=w.project_key AND p.workload=w.workload_name AND p.revoked_at IS NULL AND p.expires_at>$2 JOIN control.project_publisher_groups g ON g.id=x.group_id AND g.team_id=w.team_id AND g.project_key=w.project_key AND g.template_name=ANY(p.templates) AND g.deleted_at IS NULL WHERE x.session_id=$1)`, id, now).Scan(&allowed)
+	err := tx.QueryRow(ctx, `SELECT NOT EXISTS(SELECT 1 FROM control.workload_session_machines x WHERE x.session_id=$1) OR EXISTS(SELECT 1 FROM control.workload_session_machines x JOIN control.workload_sessions w ON w.id=x.session_id JOIN control.machine_identities m ON m.id=x.machine_id AND m.team_id=w.team_id AND m.revision=x.identity_revision AND m.revoked_at IS NULL JOIN control.machine_workload_permissions p ON p.id=x.permission_id AND p.machine_id=m.id AND p.team_id=w.team_id AND p.project_key=w.project_key AND p.workload=w.workload_name AND p.revoked_at IS NULL AND p.expires_at>$2 JOIN control.project_publisher_groups g ON g.id=x.group_id AND g.team_id=w.team_id AND g.project_key=w.project_key AND g.environment_id IS NULL AND g.template_name=ANY(p.templates) AND g.deleted_at IS NULL WHERE x.session_id=$1)`, id, now).Scan(&allowed)
 	if err != nil {
 		return err
 	}

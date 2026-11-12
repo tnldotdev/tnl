@@ -475,7 +475,7 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 		t.Fatal(err)
 	}
 	identity := authorityv1.PublisherEnrollmentResult{ClientId: issuedPublisher.ClientId, KeyId: issuedPublisher.KeyId, GrantId: issuedPublisher.GrantId, TeamId: issuedPublisher.TeamId, PublicUrlId: &publicURL.Id, Kind: authorityv1.SavedPublicUrl}
-	native, err := publisheridentity.NewNative(publisheridentity.NativeControl{PublicURLControl: scoped}, authority, identity, private)
+	native, err := publisheridentity.NewNative(publisheridentity.NativeControl{PublicURLControl: scoped}, authority, identity, private, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

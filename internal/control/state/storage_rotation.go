@@ -345,6 +345,8 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 		{`SELECT ctid::text, team_id || '/' || project_key, configuration_ciphertext FROM control.applied_projects
 		  WHERE storage_key_id=$1 ORDER BY team_id,project_key FOR UPDATE SKIP LOCKED LIMIT $2`,
 			"configuration_ciphertext", "storage_key_id", "control.applied_projects", func(id string) string { return "applied-project/" + id }},
+		// environment targets share this envelope, including retired environments.
+		// do not filter these rows through active groups or environment status.
 		{`SELECT ctid::text, group_id, bindings_ciphertext FROM control.publisher_group_bindings
 		  WHERE storage_key_id=$1 ORDER BY group_id FOR UPDATE SKIP LOCKED LIMIT $2`,
 			"bindings_ciphertext", "storage_key_id", "control.publisher_group_bindings", publisherGroupBindingsContext},

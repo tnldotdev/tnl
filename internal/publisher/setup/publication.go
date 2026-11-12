@@ -24,7 +24,7 @@ func EnsurePublication(ctx context.Context, store *clientstate.Store, operator p
 	if !found {
 		return credentialfile.File{}, publisheridentity.ErrScope
 	}
-	native, err := publisheridentity.NewNative(control, authority, identity, saved.SigningKey)
+	native, err := publisheridentity.NewNative(control, authority, identity, saved.SigningKey, nil)
 	if err != nil {
 		return credentialfile.File{}, err
 	}

@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
@@ -21,6 +22,78 @@ type privateScopeControl struct {
 	service      controlv1.Service
 	declarations []controlv1.ServiceRunDeclaration
 	reads        int
+}
+
+func TestNativeEnvironmentPublicationCannotBeOverriddenOrDropped(t *testing.T) {
+	native, control := privateScopeFixture(t)
+	id, err := opaqueid.New(opaqueid.EnvironmentPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	native.environmentPublication = &controlv1.EnvironmentPublication{EnvironmentId: id, MutationRevision: 4, ConfigurationHash: strings.Repeat("a", 64)}
+	declaration := ServiceDeclaration(control.service)
+	override := *native.environmentPublication
+	override.MutationRevision++
+	declaration.Environment = &override
+	if _, err := native.PrepareServiceRun(t.Context(), control.service.Id, "override", "access", declaration); !errors.Is(err, ErrScope) || len(control.declarations) != 0 {
+		t.Fatal("caller replaced the selected application fence", err)
+	}
+	grant, err := opaqueid.New(opaqueid.PublisherGrantPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clone, err := native.ForGrant(controlv1.PublisherGrant{Id: grant, Kind: "service", ServiceId: &control.service.Id})
+	if err != nil || !sameEnvironmentPublication(clone.environmentPublication, native.environmentPublication) || clone.environmentPublication == native.environmentPublication {
+		t.Fatal("same-service grant clone lost or shared its pinned application", err)
+	}
+	copy, err := native.WithTraffic(nil)
+	if err != nil || !sameEnvironmentPublication(copy.environmentPublication, native.environmentPublication) || copy.environmentPublication == native.environmentPublication {
+		t.Fatal("worker clone lost or shared its pinned application", err)
+	}
+	fork, err := native.Fork()
+	if err != nil || !sameEnvironmentPublication(fork.environmentPublication, native.environmentPublication) || fork.environmentPublication == native.environmentPublication {
+		t.Fatal("invocation fork lost or shared its pinned application", err)
+	}
+	otherService, err := opaqueid.New(opaqueid.ServicePrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := native.ForGrant(controlv1.PublisherGrant{Id: grant, Kind: "service", ServiceId: &otherService})
+	if err != nil || other.environmentPublication != nil {
+		t.Fatal("different-service grant inherited another environment's application", err)
+	}
+	ordinary, ordinaryControl := privateScopeFixture(t)
+	declaration = ServiceDeclaration(ordinaryControl.service)
+	declaration.Environment = cloneEnvironmentPublication(native.environmentPublication)
+	if _, err := ordinary.PrepareServiceRun(t.Context(), ordinaryControl.service.Id, "injected", "access", declaration); !errors.Is(err, ErrScope) {
+		t.Fatal("ordinary service client accepted an injected environment context", err)
+	}
+}
+
+func TestNativeConstructorValidatesAndCopiesEnvironmentPublication(t *testing.T) {
+	original, _ := privateScopeFixture(t)
+	id, err := opaqueid.New(opaqueid.EnvironmentPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fence := &controlv1.EnvironmentPublication{EnvironmentId: id, MutationRevision: 2, ConfigurationHash: strings.Repeat("a", 64)}
+	native, err := NewNative(original.NativeControl, original.authority, original.identity.enrollment(), original.private, fence)
+	if err != nil || !sameEnvironmentPublication(native.environmentPublication, fence) || native.environmentPublication == fence {
+		t.Fatal("native constructor lost or shared the assigned snapshot", err)
+	}
+	fence.MutationRevision++
+	if native.environmentPublication.MutationRevision != 2 {
+		t.Fatal("caller changed a constructed native publisher's application")
+	}
+	for _, invalid := range []controlv1.EnvironmentPublication{
+		{EnvironmentId: "pgrp_invalid", MutationRevision: 1, ConfigurationHash: strings.Repeat("a", 64)},
+		{EnvironmentId: id, MutationRevision: 0, ConfigurationHash: strings.Repeat("a", 64)},
+		{EnvironmentId: id, MutationRevision: 1, ConfigurationHash: strings.Repeat("A", 64)},
+	} {
+		if _, err := NewNative(original.NativeControl, original.authority, original.identity.enrollment(), original.private, &invalid); !errors.Is(err, ErrScope) {
+			t.Fatal("malformed environment context entered the native publisher", err)
+		}
+	}
 }
 
 type privateOwnerControl struct {
@@ -100,7 +173,7 @@ func privateScopeFixture(t *testing.T) (*Native, *privateScopeControl) {
 		t.Fatal(err)
 	}
 	control := &privateScopeControl{service: controlv1.Service{Id: serviceID, TeamId: "team", Name: "orders", Enabled: true, Protocol: controlv1.Postgres, TrustRevision: 3}}
-	native, err := NewNative(NativeControl{PublicURLControl: control, Services: control}, &lostEnrollmentResponse{}, identity, key)
+	native, err := NewNative(NativeControl{PublicURLControl: control, Services: control}, &lostEnrollmentResponse{}, identity, key, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -174,7 +174,7 @@ func TestIntegrationServiceAuditPrivateSourceScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := d.PrepareServiceRun(t.Context(), service.ID, publisher, "audit-private", now, ServiceMetadata{Protocol: "tcp", TrustRevision: 1})
+	run, err := d.PrepareServiceRun(t.Context(), service.ID, publisher, "audit-private", now, ServiceMetadata{Protocol: "tcp", TrustRevision: 1}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -391,7 +391,7 @@ func TestIntegrationServiceAuditCrossTeamClockOrder(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		run, err := d.PrepareServiceRun(t.Context(), s.ID, publisher, "audit-clock", now, s.ServiceMetadata)
+		run, err := d.PrepareServiceRun(t.Context(), s.ID, publisher, "audit-clock", now, s.ServiceMetadata, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

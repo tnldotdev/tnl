@@ -86,6 +86,7 @@ JOIN control.ingress_leases ingress ON ingress.ingress_id=v.ingress_id AND ingre
 JOIN control.publisher_grants g ON g.id=run.publisher_grant_id AND g.kind='service'
     AND g.service_id=service.id AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>sqlc.arg(now))
 JOIN control.publisher_identities publisher ON publisher.id=g.publisher_identity_id AND publisher.id=run.publisher_identity_id AND publisher.revoked_at IS NULL
+    AND control.active_publisher(publisher.id,sqlc.arg(now))
 WHERE v.visitor_connection_id=sqlc.arg(visitor_connection_id) AND v.service_id=sqlc.arg(service_id)
 AND v.service_run_id=sqlc.arg(service_run_id) AND v.run_number=sqlc.arg(run_number)
 AND v.source_ip=sqlc.arg(source_ip) AND v.destination_port=sqlc.arg(destination_port)
@@ -101,8 +102,10 @@ SELECT destination_port,identity_id,device_id,workload_session_id FROM control.p
 WHERE visitor_connection_id=$1;
 
 -- name: ServiceHTTPAppliedConfiguration :one
-SELECT project.team_id,project.project_key,project.configuration_ciphertext,project.storage_key_id,service.service FROM control.applied_project_services service
+SELECT project.team_id,project.project_key,project.configuration_ciphertext,project.storage_key_id,service.service,service.group_id,COALESCE(publisher_group.environment_id,environment.id,'')::text AS environment_id FROM control.applied_project_services service
 JOIN control.applied_projects project ON project.team_id=service.team_id AND project.project_key=service.project_key
+LEFT JOIN control.project_publisher_groups publisher_group ON publisher_group.id=service.group_id
+LEFT JOIN control.environments environment ON environment.group_id=publisher_group.id
 WHERE service.service_id=$1;
 
 -- name: CleanupServiceHTTPLogins :exec

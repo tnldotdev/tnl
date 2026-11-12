@@ -94,7 +94,7 @@ func TestIntegrationConnectorPeerPairRelayClaimHTTPDirect(t *testing.T) {
 		}
 		leases[id], keys[id] = lease, private
 	}
-	prepared, err := d.PrepareServiceRun(ctx, service.ID, publisher, "peer-claim", now, controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1})
+	prepared, err := d.PrepareServiceRun(ctx, service.ID, publisher, "peer-claim", now, controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

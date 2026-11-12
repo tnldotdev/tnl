@@ -40,7 +40,7 @@ func (d *Database) livePublisher(ctx context.Context, q *controlstatedb.Queries,
 		}
 	}
 	result := PublisherIdentity{ID: id, GrantID: grant, CreatorID: i.CreatedByIdentityID.String, CreatorMachineID: i.CreatedByMachineID.String, ProvisioningGrantID: i.ProvisioningGrantID.String, Kind: i.Kind, GuestID: i.GuestID.String, Scope: scopeFromGrant(i.TeamID, g), Ownership: i.Ownership, OwnerMembershipID: i.OwnerMembershipID.String}
-	available, err := q.PublisherScopeAvailable(ctx, controlstatedb.PublisherScopeAvailableParams{PublisherIdentityID: id, GrantID: grant})
+	available, err := q.PublisherScopeAvailable(ctx, controlstatedb.PublisherScopeAvailableParams{PublisherIdentityID: id, GrantID: grant, Now: timestamptz(now)})
 	if err != nil {
 		return PublisherIdentity{}, g, err
 	}

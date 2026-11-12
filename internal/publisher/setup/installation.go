@@ -182,7 +182,7 @@ func Register(ctx context.Context, options supervisor.ServiceOptions, payload In
 	if err != nil {
 		return err
 	}
-	native, err := publisheridentity.NewNative(control.NativeControl, authority, identity, private)
+	native, err := publisheridentity.NewNative(control.NativeControl, authority, identity, private, nil)
 	if err != nil {
 		return err
 	}

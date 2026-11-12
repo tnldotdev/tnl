@@ -73,7 +73,7 @@ func TestIntegrationDurableVisitorBearerSurvivesNewPublisherRun(t *testing.T) {
 				}
 				start = func(at time.Time, key string) (controlv1.VisitorPolicyUpdate, func()) {
 					t.Helper()
-					prepared, err := d.PrepareServiceRun(t.Context(), service.ID, publisher, key, at, ServiceMetadata{Protocol: "http", TrustRevision: service.TrustRevision})
+					prepared, err := d.PrepareServiceRun(t.Context(), service.ID, publisher, key, at, ServiceMetadata{Protocol: "http", TrustRevision: service.TrustRevision}, nil)
 					if err != nil {
 						t.Fatal(err)
 					}

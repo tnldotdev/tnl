@@ -82,7 +82,7 @@ func exerciseWorkloadConnectorPeerPair(t *testing.T, d *controlstate.Database, j
 		}
 		relays[id] = relay
 	}
-	prep, err := d.PrepareServiceRun(ctx, service, access.PublisherIdentity, "workload-connector-pair", now, controlstate.ServiceMetadata{Protocol: grant.Configuration.Protocol, PublisherPool: true, TrustRevision: grant.TrustRevision})
+	prep, err := d.PrepareServiceRun(ctx, service, access.PublisherIdentity, "workload-connector-pair", now, controlstate.ServiceMetadata{Protocol: grant.Configuration.Protocol, PublisherPool: true, TrustRevision: grant.TrustRevision}, nil)
 	if err != nil {
 		t.Fatal("prepare service run", err)
 	}

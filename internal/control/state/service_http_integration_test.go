@@ -44,7 +44,7 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 		t.Helper()
 		a := replica.assignments.Services[index]
 		access := groupAssignmentAccess(t, d, replica, a, now)
-		prep, err := d.PrepareServiceRun(t.Context(), a.ServiceID, access.PublisherIdentity, key, now, ServiceMetadata{Protocol: "http", TrustRevision: a.TrustRevision})
+		prep, err := d.PrepareServiceRun(t.Context(), a.ServiceID, access.PublisherIdentity, key, now, ServiceMetadata{Protocol: "http", TrustRevision: a.TrustRevision}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

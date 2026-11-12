@@ -423,6 +423,30 @@ type ControlDomain struct {
 	UpdatedAt               pgtype.Timestamptz
 }
 
+type ControlEnvironment struct {
+	ID                        string
+	TeamID                    string
+	ProjectKey                string
+	Name                      string
+	GroupID                   string
+	AppliedDefinitionRevision int64
+	MutationRevision          int64
+	ConfigurationHash         string
+	InitialDefinitionRevision int64
+	CreationDigest            []byte
+	CreatedByIdentityID       string
+	CreatedAt                 pgtype.Timestamptz
+	UpdatedAt                 pgtype.Timestamptz
+	RetiredAt                 pgtype.Timestamptz
+}
+
+type ControlEnvironmentCreation struct {
+	TeamID         string
+	ProjectKey     string
+	IdempotencyKey string
+	EnvironmentID  string
+}
+
 type ControlFeedbackEvent struct {
 	Cursor            int64
 	SchemaVersion     int16
@@ -787,6 +811,7 @@ type ControlProjectPublisherGroup struct {
 	Namespace     string
 	Public        bool
 	DeletedAt     pgtype.Timestamptz
+	EnvironmentID pgtype.Text
 }
 
 type ControlPublicServiceVisitor struct {
@@ -1367,6 +1392,17 @@ type ControlServiceConnectionSlot struct {
 	AssignedAt                   pgtype.Timestamptz
 }
 
+type ControlServiceDefinition struct {
+	TeamID              string
+	ProjectKey          string
+	Revision            int64
+	SourceFingerprint   string
+	ConfigurationHash   string
+	Definition          []byte
+	CreatedByIdentityID string
+	CreatedAt           pgtype.Timestamptz
+}
+
 type ControlServiceEndpoint struct {
 	Hostname              string
 	ServiceID             string
@@ -1466,37 +1502,40 @@ type ControlServicePortClaim struct {
 }
 
 type ControlServiceRun struct {
-	ID                         string
-	ServiceID                  string
-	TeamID                     string
-	RunNumber                  int64
-	PublisherIdentityID        string
-	PublisherGrantID           string
-	PublisherKeyID             string
-	IdempotencyKey             string
-	RequestDigest              []byte
-	PreparationExpiresAt       pgtype.Timestamptz
-	AssignmentSeedCiphertext   []byte
-	AssignmentSeedStorageKeyID string
-	RunTokenDigest             []byte
-	StartedAt                  pgtype.Timestamptz
-	State                      string
-	Healthy                    bool
-	StreamCapacity             int32
-	ReportedStreams            int32
-	CertificateCacheKey        string
-	CertificateScope           string
-	CertificateIdentifiers     []string
-	CertificateDomainID        pgtype.Text
-	CertificateHostname        string
-	ServicePort                pgtype.Int4
-	CertificateIssuanceID      pgtype.Text
-	CertificateExpiresAt       pgtype.Timestamptz
-	CreatedAt                  pgtype.Timestamptz
-	PublisherExpiresAt         pgtype.Timestamptz
-	ReadyAt                    pgtype.Timestamptz
-	ClosedAt                   pgtype.Timestamptz
-	AssignmentsOpen            pgtype.Bool
+	ID                           string
+	ServiceID                    string
+	TeamID                       string
+	RunNumber                    int64
+	PublisherIdentityID          string
+	PublisherGrantID             string
+	PublisherKeyID               string
+	IdempotencyKey               string
+	RequestDigest                []byte
+	PreparationExpiresAt         pgtype.Timestamptz
+	EnvironmentID                pgtype.Text
+	EnvironmentMutationRevision  pgtype.Int8
+	EnvironmentConfigurationHash pgtype.Text
+	AssignmentSeedCiphertext     []byte
+	AssignmentSeedStorageKeyID   string
+	RunTokenDigest               []byte
+	StartedAt                    pgtype.Timestamptz
+	State                        string
+	Healthy                      bool
+	StreamCapacity               int32
+	ReportedStreams              int32
+	CertificateCacheKey          string
+	CertificateScope             string
+	CertificateIdentifiers       []string
+	CertificateDomainID          pgtype.Text
+	CertificateHostname          string
+	ServicePort                  pgtype.Int4
+	CertificateIssuanceID        pgtype.Text
+	CertificateExpiresAt         pgtype.Timestamptz
+	CreatedAt                    pgtype.Timestamptz
+	PublisherExpiresAt           pgtype.Timestamptz
+	ReadyAt                      pgtype.Timestamptz
+	ClosedAt                     pgtype.Timestamptz
+	AssignmentsOpen              pgtype.Bool
 }
 
 type ControlServiceVisitorCapacity struct {

@@ -62,6 +62,7 @@ type PublisherGroupVerification struct {
 	GroupNames []string             `json:"group_names"`
 }
 type PublisherGroupServiceAssignment struct {
+	Environment   *EnvironmentPublication     `json:"environment,omitempty"`
 	Service       string                      `json:"service"`
 	ServiceID     string                      `json:"service_id"`
 	Kind          string                      `json:"service_kind"`
@@ -158,6 +159,13 @@ func (d *Database) RedeemPublisherGroupEnrollment(ctx context.Context, secret st
 	}
 	actual := sha256.Sum256([]byte(secret))
 	if !live || !until.After(clock.current()) || subtle.ConstantTimeCompare(actual[:], digest) != 1 {
+		return result, ErrPublisherGroup
+	}
+	var currentParent bool
+	if err = tx.QueryRow(ctx, `SELECT control.environment_group_manager($1,$2,$3)`, gid, actor.IdentityID, clock.current()).Scan(&currentParent); err != nil {
+		return result, err
+	}
+	if !currentParent {
 		return result, ErrPublisherGroup
 	}
 	result = PublisherGroupMember{TeamID: team, ProjectKey: project, GroupID: gid, GroupName: name}
@@ -305,6 +313,7 @@ func (d *Database) VerifyPublisherGroupIdentity(ctx context.Context, id, group, 
 }
 
 func authorizePublisherGroupAssertion(ctx context.Context, tx pgx.Tx, id, group, assertion, audience string, now time.Time) (result PublisherGroupMember, err error) {
+	clock := newAuthorizationClock(now)
 	kid, err := publisherproof.KeyID(assertion)
 	if err != nil {
 		return result, ErrPublisherGroup
@@ -317,7 +326,7 @@ func authorizePublisherGroupAssertion(ctx context.Context, tx pgx.Tx, id, group,
 		return result, publisherLookupError(err, ErrPublisherGroup)
 	}
 	var public []byte
-	err = tx.QueryRow(ctx, `SELECT k.public_key,g.project_key,g.name FROM control.publisher_group_members m JOIN control.project_publisher_groups g ON g.id=m.group_id JOIN control.publisher_identities p ON p.id=m.publisher_identity_id JOIN control.publisher_identity_keys k ON k.id=m.key_id AND k.publisher_identity_id=p.id WHERE p.id=$1 AND g.id=$2 AND k.id=$3 AND g.deleted_at IS NULL AND p.revoked_at IS NULL AND k.retired_at IS NULL FOR UPDATE OF m,p`, id, group, kid).Scan(&public, &result.ProjectKey, &result.GroupName)
+	err = tx.QueryRow(ctx, `SELECT k.public_key,g.project_key,g.name FROM control.publisher_group_members m JOIN control.project_publisher_groups g ON g.id=m.group_id JOIN control.publisher_identities p ON p.id=m.publisher_identity_id JOIN control.publisher_identity_keys k ON k.id=m.key_id AND k.publisher_identity_id=p.id WHERE p.id=$1 AND g.id=$2 AND k.id=$3 AND g.deleted_at IS NULL AND control.active_publisher(p.id,$4) AND k.retired_at IS NULL FOR UPDATE OF m,p`, id, group, kid, clock.current()).Scan(&public, &result.ProjectKey, &result.GroupName)
 	if err != nil {
 		return result, publisherLookupError(err, ErrPublisherGroup)
 	}
@@ -374,6 +383,7 @@ func issuePublisherGroupLease(ctx context.Context, tx pgx.Tx, id, key string, un
 }
 
 func lockPublisherGroupLease(ctx context.Context, tx pgx.Tx, token string, now time.Time) (result PublisherGroupMember, err error) {
+	clock := newAuthorizationClock(now)
 	if !strings.HasPrefix(token, "pgl_") {
 		return result, ErrPublisherGroup
 	}
@@ -388,7 +398,7 @@ func lockPublisherGroupLease(ctx context.Context, tx pgx.Tx, token string, now t
 	if _, err = controlstatedb.New(tx).LockLocalTeamForMutation(ctx, result.TeamID); err != nil {
 		return result, publisherLookupError(err, ErrPublisherGroup)
 	}
-	err = tx.QueryRow(ctx, `SELECT g.project_key,g.id,g.name,m.publisher_identity_id,m.key_id FROM control.publisher_group_leases l JOIN control.publisher_group_members m ON m.publisher_identity_id=l.publisher_identity_id JOIN control.project_publisher_groups g ON g.id=m.group_id JOIN control.publisher_identities p ON p.id=m.publisher_identity_id JOIN control.publisher_identity_keys k ON k.id=l.key_id AND k.publisher_identity_id=p.id WHERE l.token_digest=$1 AND l.expires_at>$2 AND g.deleted_at IS NULL AND p.revoked_at IS NULL AND k.retired_at IS NULL`, digest, now).Scan(&result.ProjectKey, &result.GroupID, &result.GroupName, &result.PublisherIdentityID, &result.KeyID)
+	err = tx.QueryRow(ctx, `SELECT g.project_key,g.id,g.name,m.publisher_identity_id,m.key_id FROM control.publisher_group_leases l JOIN control.publisher_group_members m ON m.publisher_identity_id=l.publisher_identity_id JOIN control.project_publisher_groups g ON g.id=m.group_id JOIN control.publisher_identities p ON p.id=m.publisher_identity_id JOIN control.publisher_identity_keys k ON k.id=l.key_id AND k.publisher_identity_id=p.id WHERE l.token_digest=$1 AND l.expires_at>$2 AND g.deleted_at IS NULL AND control.active_publisher(p.id,$2) AND k.retired_at IS NULL`, digest, clock.current()).Scan(&result.ProjectKey, &result.GroupID, &result.GroupName, &result.PublisherIdentityID, &result.KeyID)
 	return result, publisherLookupError(err, ErrPublisherGroup)
 }
 
@@ -403,23 +413,11 @@ func (d *Database) GetPublisherGroupAssignments(ctx context.Context, token strin
 		return result, err
 	}
 	q := controlstatedb.New(tx)
-	row, err := q.LockAppliedProject(ctx, controlstatedb.LockAppliedProjectParams{TeamID: m.TeamID, ProjectKey: m.ProjectKey})
+	c, revision, hash, environment, err := d.publisherGroupConfiguration(ctx, tx, m)
 	if err != nil {
 		return result, err
 	}
-	c, err := d.openAppliedProject(row)
-	if err != nil {
-		return result, err
-	}
-	groups, err := q.ListProjectPublisherGroups(ctx, controlstatedb.ListProjectPublisherGroupsParams{TeamID: m.TeamID, ProjectKey: m.ProjectKey})
-	if err != nil {
-		return result, err
-	}
-	c, err = d.expandedPublisherConfiguration(ctx, tx, c, groups)
-	if err != nil {
-		return result, err
-	}
-	result = PublisherGroupAssignments{Member: m, Revision: row.Revision, ConfigurationHash: row.ConfigurationHash, Services: []PublisherGroupServiceAssignment{}}
+	result = PublisherGroupAssignments{Member: m, Revision: revision, ConfigurationHash: hash, Services: []PublisherGroupServiceAssignment{}}
 	result.CertificateStatePlans = []CertificatePlan{}
 	checkpoints, err := q.ListPublisherCertificateCheckpoints(ctx, m.PublisherIdentityID)
 	if err != nil {
@@ -450,7 +448,15 @@ func (d *Database) GetPublisherGroupAssignments(ctx context.Context, token strin
 			}
 			return result, publisherLookupError(err, ErrPublisherGroup)
 		}
-		a := PublisherGroupServiceAssignment{Service: appliedServiceName(s.Service), ServiceID: s.PublicURLID.String, Kind: "public_url", GrantID: grant, Configuration: c.Services[s.Service]}
+		configuration, found := c.Services[s.Service]
+		if !found {
+			return result, ErrProjectConfigurationStale
+		}
+		a := PublisherGroupServiceAssignment{Service: appliedServiceName(s.Service), ServiceID: s.PublicURLID.String, Kind: "public_url", GrantID: grant, Configuration: configuration}
+		if environment != nil {
+			publication := *environment
+			a.Environment = &publication
+		}
 		if s.ServiceID.Valid {
 			a.ServiceID, a.Kind = s.ServiceID.String, "service"
 			if err = tx.QueryRow(ctx, `SELECT trust_revision FROM control.services WHERE id=$1 AND enabled AND deleted_at IS NULL`, a.ServiceID).Scan(&a.TrustRevision); err != nil {
@@ -474,11 +480,11 @@ func (d *Database) AcknowledgePublisherGroupConfiguration(ctx context.Context, t
 	if err != nil {
 		return err
 	}
-	row, err := controlstatedb.New(tx).LockAppliedProject(ctx, controlstatedb.LockAppliedProjectParams{TeamID: m.TeamID, ProjectKey: m.ProjectKey})
+	_, currentRevision, currentHash, _, err := d.publisherGroupConfiguration(ctx, tx, m)
 	if err != nil {
 		return err
 	}
-	if revision < 1 || row.Revision != revision || !bytes.Equal([]byte(row.ConfigurationHash), []byte(hash)) {
+	if revision < 1 || currentRevision != revision || !bytes.Equal([]byte(currentHash), []byte(hash)) {
 		return ErrProjectConfigurationStale
 	}
 	err = controlstatedb.New(tx).AcknowledgePublisherGroupConfiguration(ctx, controlstatedb.AcknowledgePublisherGroupConfigurationParams{PublisherIdentityID: m.PublisherIdentityID, Revision: revision, Healthy: healthy, AcknowledgedAt: timestamptz(now)})

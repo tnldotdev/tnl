@@ -61,9 +61,12 @@ type Native struct {
 	publicURL controlv1.PublicURL
 	traffic   *trafficlimits.Selection
 	runtime   *publisherruntime.Owner
+	// the selected group assignment pins publication freshness independently of
+	// protocol/TLS metadata. never refresh it from a saved-service lookup.
+	environmentPublication *controlv1.EnvironmentPublication
 }
 
-func NewNative(control NativeControl, authority AssertionExchanger, identity authorityv1.PublisherEnrollmentResult, private ed25519.PrivateKey) (*Native, error) {
+func NewNative(control NativeControl, authority AssertionExchanger, identity authorityv1.PublisherEnrollmentResult, private ed25519.PrivateKey, environment *controlv1.EnvironmentPublication) (*Native, error) {
 	if control.PublicURLControl == nil || authority == nil || !validSigningKey(private) {
 		return nil, ErrScope
 	}
@@ -78,7 +81,10 @@ func NewNative(control NativeControl, authority AssertionExchanger, identity aut
 	if scope.kind == authorityv1.Service && control.Services == nil {
 		return nil, ErrScope
 	}
-	return &Native{NativeControl: control, authority: authority, identity: scope, private: append(ed25519.PrivateKey(nil), private...)}, nil
+	if environment != nil && (scope.kind != authorityv1.Service || !validEnvironmentPublication(environment)) {
+		return nil, ErrScope
+	}
+	return &Native{NativeControl: control, authority: authority, identity: scope, private: append(ed25519.PrivateKey(nil), private...), environmentPublication: cloneEnvironmentPublication(environment)}, nil
 }
 
 func validSigningKey(private ed25519.PrivateKey) bool {
@@ -105,7 +111,11 @@ func (n *Native) ForGrant(g controlv1.PublisherGrant) (*Native, error) {
 	i := n.identity.enrollment()
 	i.GrantId, i.Kind, i.PublicUrlId, i.DomainId, i.Namespace = g.Id, authorityv1.PublisherEnrollmentResultKind(g.Kind), g.PublicUrlId, g.DomainId, g.Namespace
 	i.ServiceId = g.ServiceId
-	copy, err := NewNative(n.NativeControl, n.authority, i, n.private)
+	var environment *controlv1.EnvironmentPublication
+	if n.identity.kind == authorityv1.Service && i.Kind == authorityv1.Service && i.ServiceId != nil && n.identity.serviceID == *i.ServiceId {
+		environment = n.environmentPublication
+	}
+	copy, err := NewNative(n.NativeControl, n.authority, i, n.private, environment)
 	if err != nil {
 		return nil, err
 	}

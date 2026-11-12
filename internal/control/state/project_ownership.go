@@ -9,6 +9,8 @@ import (
 )
 
 // normal resource APIs cannot change definitions or grants owned by apply.
+// environment resources use the same exact applied_project_services bindings;
+// an environment name or a project's latest definition is never an owner lookup.
 // extra visitor grants and operational publisher identity revocation are separate.
 var ErrProjectManaged = errors.New("resource is managed by project configuration")
 

@@ -52,7 +52,7 @@ func TestIntegrationPublisherGroupBindingChangesInvalidateRuns(t *testing.T) {
 			t.Fatal(err)
 		}
 		metadata := ServiceMetadata{Protocol: assignment.Configuration.Protocol, TLS: trust, PublisherPool: true, TrustRevision: assignment.TrustRevision}
-		prepared, err := d.PrepareServiceRun(ctx, assignment.ServiceID, access.PublisherIdentity, "binding-regression/"+assignment.GrantID, now, metadata)
+		prepared, err := d.PrepareServiceRun(ctx, assignment.ServiceID, access.PublisherIdentity, "binding-regression/"+assignment.GrantID, now, metadata, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

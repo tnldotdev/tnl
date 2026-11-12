@@ -11,7 +11,7 @@ import (
 )
 
 type serviceRunStore interface {
-	PrepareServiceRun(context.Context, string, controlstate.PublisherIdentity, string, time.Time, controlstate.ServiceMetadata) (controlstate.ServiceRunPreparation, error)
+	PrepareServiceRun(context.Context, string, controlstate.PublisherIdentity, string, time.Time, controlstate.ServiceMetadata, *controlstate.EnvironmentPublication) (controlstate.ServiceRunPreparation, error)
 	HeartbeatServiceRun(context.Context, string, string, string, time.Time, controlstate.ServiceRunHealth) (controlstate.ServiceRunState, error)
 	CloseServiceRun(context.Context, string, string, string, time.Time) error
 }
@@ -73,7 +73,11 @@ func (h *handler) PrepareServiceRun(w http.ResponseWriter, r *http.Request, serv
 	if !ok {
 		return
 	}
-	prepared, err := store.PrepareServiceRun(r.Context(), serviceID, publisher, r.Header.Get("Idempotency-Key"), time.Now(), declaration)
+	var environment *controlstate.EnvironmentPublication
+	if body.Environment != nil {
+		environment = &controlstate.EnvironmentPublication{EnvironmentID: body.Environment.EnvironmentId, MutationRevision: body.Environment.MutationRevision, ConfigurationHash: body.Environment.ConfigurationHash}
+	}
+	prepared, err := store.PrepareServiceRun(r.Context(), serviceID, publisher, r.Header.Get("Idempotency-Key"), time.Now(), declaration, environment)
 	if err != nil {
 		serviceRunProblem(r.Context(), w, "prepare service run", err)
 		return

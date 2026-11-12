@@ -329,7 +329,7 @@ func (e Engine) attempt(ctx context.Context, job Job, attempts uint64, runtime *
 	if job.Kind == KindPublicURL && control.Discovery == nil {
 		return false, ErrScope
 	}
-	native, err := publisheridentity.NewNative(control.NativeControl, authority, identity, private)
+	native, err := publisheridentity.NewNative(control.NativeControl, authority, identity, private, nil)
 	if err != nil {
 		return false, err
 	}

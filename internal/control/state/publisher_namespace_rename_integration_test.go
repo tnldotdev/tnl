@@ -27,7 +27,7 @@ func TestIntegrationPublisherNamespaceRenameAtomicAuthority(t *testing.T) {
 	replica := enrollAppliedGroup(t, d, r, e, now)
 	assignment := replica.assignments.Services[0]
 	access := groupAssignmentAccess(t, d, replica, assignment, now)
-	prep, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "old-run", now, ServiceMetadata{Protocol: assignment.Configuration.Protocol, TrustRevision: assignment.TrustRevision})
+	prep, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "old-run", now, ServiceMetadata{Protocol: assignment.Configuration.Protocol, TrustRevision: assignment.TrustRevision}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestIntegrationPublisherNamespaceRenameAtomicAuthority(t *testing.T) {
 	if _, err := d.HeartbeatServiceRun(t.Context(), run.ServiceID, run.RunID, run.Token, request.Now, ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); err == nil {
 		t.Fatal("old run token survived namespace rename")
 	}
-	if _, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "stale-authority", request.Now, ServiceMetadata{Protocol: assignment.Configuration.Protocol, TrustRevision: assignment.TrustRevision}); err == nil {
+	if _, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "stale-authority", request.Now, ServiceMetadata{Protocol: assignment.Configuration.Protocol, TrustRevision: assignment.TrustRevision}, nil); err == nil {
 		t.Fatal("old publication authority survived rename")
 	}
 	next, err := d.GetPublisherGroupAssignments(t.Context(), replica.lease.AccessToken, request.Now)
@@ -74,7 +74,7 @@ func TestIntegrationPublisherNamespaceRenameAtomicAuthority(t *testing.T) {
 	}
 	replica.assignments = next
 	newAccess := groupAssignmentAccess(t, d, replica, next.Services[0], request.Now)
-	newPrep, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, newAccess.PublisherIdentity, "new-run", request.Now, ServiceMetadata{Protocol: assignment.Configuration.Protocol, TrustRevision: assignment.TrustRevision})
+	newPrep, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, newAccess.PublisherIdentity, "new-run", request.Now, ServiceMetadata{Protocol: assignment.Configuration.Protocol, TrustRevision: assignment.TrustRevision}, nil)
 	if err != nil || newPrep.CertificatePlan.Scope == prep.CertificatePlan.Scope || reflect.DeepEqual(newPrep.CertificatePlan.Identifiers, prep.CertificatePlan.Identifiers) {
 		t.Fatal("old certificate scope reused", err)
 	}

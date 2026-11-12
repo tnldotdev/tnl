@@ -121,16 +121,17 @@ type AppliedProjectService struct {
 	Public          bool   `json:"public,omitempty"`
 }
 type AppliedPublisherGroup struct {
-	IngressPoolID string                 `json:"ingress_pool_id"`
-	Bindings      PublisherGroupBindings `json:"bindings"`
-	Retired       bool                   `json:"retired"`
-	Template      string                 `json:"template,omitempty"`
-	GroupNames    []string               `json:"group_names"`
-	ID            string                 `json:"id"`
-	Name          string                 `json:"name"`
-	Namespace     string                 `json:"namespace"`
-	DomainID      string                 `json:"domain_id"`
-	Public        bool                   `json:"public"`
+	MutationRevision int64                  `json:"-"`
+	IngressPoolID    string                 `json:"ingress_pool_id"`
+	Bindings         PublisherGroupBindings `json:"bindings"`
+	Retired          bool                   `json:"retired"`
+	Template         string                 `json:"template,omitempty"`
+	GroupNames       []string               `json:"group_names"`
+	ID               string                 `json:"id"`
+	Name             string                 `json:"name"`
+	Namespace        string                 `json:"namespace"`
+	DomainID         string                 `json:"domain_id"`
+	Public           bool                   `json:"public"`
 }
 type AppliedProjectConfiguration struct {
 	ProjectLabel      string                       `json:"-"`
@@ -288,6 +289,16 @@ func (d *Database) applyProjectConfigurationTx(ctx context.Context, tx pgx.Tx, r
 	}
 	if err = checkLocalProjectSource(ctx, tx, r.TeamID, r.ProjectKey, r.SourceFingerprint); err != nil {
 		return result, err
+	}
+	// the legacy reconciler owns the whole project document. until its public
+	// cutover it must not sweep independently pinned environments or local apps
+	// alongside them. environment operations use their own scoped materializer.
+	var hasEnvironments bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.environments WHERE team_id=$1 AND project_key=$2)`, r.TeamID, r.ProjectKey).Scan(&hasEnvironments); err != nil {
+		return result, err
+	}
+	if hasEnvironments {
+		return result, ErrProjectManaged
 	}
 	if r.ProjectLabel == "" {
 		r.ProjectLabel = r.ProjectKey
@@ -705,7 +716,7 @@ func (d *Database) appliedProjectStatusForGroups(ctx context.Context, tx pgx.Tx,
 	if err != nil {
 		return result, err
 	}
-	c, err = publisherTemplateConfiguration(c, groups, "", bindings)
+	c, err = d.expandedPublisherConfiguration(ctx, tx, c, groups)
 	if err != nil {
 		return result, err
 	}
@@ -740,7 +751,15 @@ func (d *Database) appliedProjectStatusForGroups(ctx context.Context, tx pgx.Tx,
 		if err := tx.QueryRow(ctx, `SELECT array_agg(name ORDER BY name) FROM control.publisher_group_names WHERE group_id=$1`, group.ID).Scan(&names); err != nil {
 			return result, err
 		}
-		result.Groups = append(result.Groups, AppliedPublisherGroup{IngressPoolID: group.IngressPoolID.String, Bindings: bindings[group.ID], Template: group.TemplateName, ID: group.ID, Name: group.Name, GroupNames: names, Namespace: group.Namespace, DomainID: group.DomainID.String, Public: group.Public})
+		v := AppliedPublisherGroup{IngressPoolID: group.IngressPoolID.String, Bindings: bindings[group.ID], Template: group.TemplateName, ID: group.ID, Name: group.Name, GroupNames: names, Namespace: group.Namespace, DomainID: group.DomainID.String, Public: group.Public}
+		if group.EnvironmentID.Valid {
+			environment, e := controlstatedb.New(tx).GetEnvironmentForGroup(ctx, group.ID)
+			if e != nil {
+				return result, e
+			}
+			v.MutationRevision = environment.MutationRevision
+		}
+		result.Groups = append(result.Groups, v)
 	}
 	return result, err
 }

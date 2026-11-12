@@ -49,7 +49,7 @@ func newConnectorPairCompanyFixture(t *testing.T) connectorPairCompanyFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := d.PrepareServiceRun(ctx, service.ID, publisher, "company-pair", now, ServiceMetadata{Protocol: "tcp", TrustRevision: 1})
+	prepared, err := d.PrepareServiceRun(ctx, service.ID, publisher, "company-pair", now, ServiceMetadata{Protocol: "tcp", TrustRevision: 1}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

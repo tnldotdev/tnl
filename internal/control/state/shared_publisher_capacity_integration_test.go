@@ -31,7 +31,7 @@ func TestIntegrationPublicAndPrivatePublishersShareRelayPlacementCapacity(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := d.PrepareServiceRun(t.Context(), service.ID, publisher, "private", now, ServiceMetadata{Protocol: "tcp", TrustRevision: 1})
+	prepared, err := d.PrepareServiceRun(t.Context(), service.ID, publisher, "private", now, ServiceMetadata{Protocol: "tcp", TrustRevision: 1}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -277,7 +277,7 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 		if err != nil {
 			return err
 		}
-		native, err = publisheridentity.NewNative(control.NativeControl, authority, identity, signing)
+		native, err = publisheridentity.NewNative(control.NativeControl, authority, identity, signing, nil)
 		if err != nil {
 			return err
 		}

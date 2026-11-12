@@ -96,7 +96,7 @@ func (d *Database) SelectVisitorServiceRun(ctx context.Context, serviceID string
 	    JOIN control.publisher_grants g ON g.id=runtime.publisher_grant_id
 	    JOIN control.publisher_identities p ON p.id=run.publisher_identity_id
 	    WHERE runtime.service_id=$1 AND runtime.state='ready' AND runtime.healthy AND runtime.closed_at IS NULL AND runtime.publisher_expires_at>$2
-	    AND g.revoked_at IS NULL AND(g.expires_at IS NULL OR g.expires_at>$2) AND p.revoked_at IS NULL
+	    AND g.revoked_at IS NULL AND(g.expires_at IS NULL OR g.expires_at>$2) AND control.active_publisher(p.id,$2)
 	    AND run.certificate_expires_at>$2
 	    AND EXISTS(SELECT 1 FROM control.publisher_service_connection_slots slot JOIN control.relay_leases lease ON lease.relay_id=slot.connected_relay_id
 	        AND lease.relay_run_id=slot.connected_relay_run_id AND lease.relay_lease_revision=slot.connected_relay_lease_revision

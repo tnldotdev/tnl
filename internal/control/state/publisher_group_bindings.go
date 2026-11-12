@@ -219,5 +219,41 @@ func (d *Database) expandedPublisherConfiguration(ctx context.Context, tx pgx.Tx
 	if err != nil {
 		return c, err
 	}
-	return publisherTemplateConfiguration(c, groups, "", bindings)
+	legacy := make([]controlstatedb.ControlProjectPublisherGroup, 0, len(groups))
+	environments := make(map[string]controlstatedb.ControlEnvironment)
+	for _, group := range groups {
+		row, mapped, err := publisherGroupEnvironment(ctx, controlstatedb.New(tx), group.ID)
+		if err != nil {
+			return ProjectConfiguration{}, err
+		}
+		if !mapped {
+			legacy = append(legacy, group)
+		} else {
+			environments[group.ID] = row
+		}
+	}
+	result, err := publisherTemplateConfiguration(c, legacy, "", bindings)
+	if err != nil {
+		return result, err
+	}
+	for _, group := range groups {
+		row, mapped := environments[group.ID]
+		if !mapped {
+			continue
+		}
+		if row.RetiredAt.Valid {
+			return ProjectConfiguration{}, ErrEnvironmentRetired
+		}
+		_, _, projection, e := d.environmentProjection(ctx, tx, row)
+		if e != nil {
+			return ProjectConfiguration{}, e
+		}
+		for key, s := range projection.Services {
+			result.Services[key] = s
+		}
+		for name, g := range projection.PublisherGroups {
+			result.PublisherGroups[name] = g
+		}
+	}
+	return result, nil
 }

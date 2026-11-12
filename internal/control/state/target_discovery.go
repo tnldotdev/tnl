@@ -60,6 +60,13 @@ func (d *Database) visitorKubernetesAuth(ctx context.Context, q *controlstatedb.
 	if err != nil {
 		return nil, err
 	}
+	if row.EnvironmentID != "" {
+		s, err := d.environmentServiceConfiguration(ctx, q, row.EnvironmentID, row.GroupID.String, appliedServiceName(row.Service))
+		if err != nil {
+			return nil, err
+		}
+		return visitorKubernetesAuthForConfiguration(s)
+	}
 	c, err := d.openAppliedProject(controlstatedb.ControlAppliedProject{TeamID: row.TeamID, ProjectKey: row.ProjectKey, ConfigurationCiphertext: row.ConfigurationCiphertext, StorageKeyID: row.StorageKeyID})
 	if err != nil {
 		return nil, err
@@ -89,6 +96,10 @@ func (d *Database) visitorKubernetesAuth(ctx context.Context, q *controlstatedb.
 			return nil, err
 		}
 	}
+	return visitorKubernetesAuthForConfiguration(s)
+}
+
+func visitorKubernetesAuthForConfiguration(s ProjectServiceConfiguration) (*controlv1.KubernetesAuth, error) {
 	target := s.TargetDiscovery
 	if s.Protocol != "kubernetes" || target == nil || target.Type != "eks" {
 		return nil, nil

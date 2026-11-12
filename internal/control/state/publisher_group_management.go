@@ -34,6 +34,9 @@ func PublisherGroupResources(project AppliedProjectConfiguration) []PublisherGro
 	result := []PublisherGroupResource{}
 	for _, group := range project.Groups {
 		resource := PublisherGroupResource{ID: group.ID, Name: group.Name, From: group.Template, Revision: project.Revision, Retired: group.Retired, Bindings: group.Bindings, Services: []AppliedProjectService{}, Members: []PublisherGroupMemberStatus{}}
+		if group.MutationRevision > 0 {
+			resource.Revision = group.MutationRevision
+		}
 		if resource.Bindings == nil {
 			resource.Bindings = PublisherGroupBindings{}
 		}
@@ -95,6 +98,13 @@ func (d *Database) appendRetiredPublisherGroup(ctx context.Context, tx pgx.Tx, p
 	err := tx.QueryRow(ctx, `SELECT g.id,g.name,g.template_name,g.namespace,COALESCE(g.domain_id,''),g.public,g.deleted_at IS NOT NULL,COALESCE(g.ingress_pool_id,'') FROM control.project_publisher_groups g WHERE (g.id=$1 OR EXISTS(SELECT 1 FROM control.publisher_group_names alias WHERE alias.group_id=g.id AND alias.name=$1)) AND g.team_id=$2 AND g.project_key=$3`, id, project.TeamID, project.ProjectKey).Scan(&group.ID, &group.Name, &group.Template, &group.Namespace, &group.DomainID, &group.Public, &group.Retired, &group.IngressPoolID)
 	if err != nil {
 		return err
+	}
+	environment, mapped, err := publisherGroupEnvironment(ctx, controlstatedb.New(tx), group.ID)
+	if err != nil {
+		return err
+	}
+	if mapped {
+		group.MutationRevision = environment.MutationRevision
 	}
 	group.Bindings = PublisherGroupBindings{}
 	settings, err := controlstatedb.New(tx).GetPublisherGroupBindings(ctx, group.ID)

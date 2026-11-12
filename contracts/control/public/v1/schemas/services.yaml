@@ -78,11 +78,13 @@ schemas:
   ServiceRunDeclaration:
     type: object
     additionalProperties: false
+    description: Protocol and trust approved for this worker. Environment-owned services also require the exact environment application from its assignment; non-environment services reject an environment fence. A target-only update or rollback invalidates an older application even when protocol and TLS are unchanged.
     required: [protocol, trust_revision]
     properties:
       protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
       target_tls: { $ref: "../openapi.yaml#/components/schemas/ServiceTargetTLS" }
       trust_revision: { type: integer, format: int64, minimum: 1 }
+      environment: { $ref: "../openapi.yaml#/components/schemas/EnvironmentPublication" }
   Service:
     type: object
     additionalProperties: false

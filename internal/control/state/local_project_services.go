@@ -163,12 +163,16 @@ func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLoca
 		if project.SourceFingerprint != r.SourceFingerprint {
 			return result, ErrProjectSourceConflict
 		}
-		applied, e := d.openAppliedProject(project)
-		if e != nil {
-			return result, e
-		}
-		if !reflect.DeepEqual(applied.Services[r.Service], s) {
-			return result, ErrProjectConfigurationStale
+		// definition-only provenance does not declare local listeners. those
+		// registrations stay partial and app-owned, as before the first apply.
+		if project.Revision > 0 {
+			applied, e := d.openAppliedProject(project)
+			if e != nil {
+				return result, e
+			}
+			if !reflect.DeepEqual(applied.Services[r.Service], s) {
+				return result, ErrProjectConfigurationStale
+			}
 		}
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return result, err

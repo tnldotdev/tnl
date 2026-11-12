@@ -86,6 +86,7 @@ SELECT EXISTS (
     LEFT JOIN control.services s ON s.id = g.service_id
     LEFT JOIN control.domains d ON d.id = COALESCE(g.domain_id, u.domain_id, s.domain_id)
     WHERE p.id = sqlc.arg(publisher_identity_id) AND g.id = sqlc.arg(grant_id)
+      AND control.active_publisher(p.id,sqlc.arg(now))
       AND (p.ownership <> 'member' OR control.active_membership(p.owner_membership_id, CURRENT_TIMESTAMP))
       AND (p.kind = 'guest' OR EXISTS (SELECT 1 FROM control.teams t WHERE t.id = p.team_id AND t.deleted_at IS NULL))
       AND ((g.kind = 'service' AND p.kind <> 'guest' AND s.team_id = p.team_id

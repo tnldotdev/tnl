@@ -72,6 +72,15 @@ func (d *Database) authorizeGroupCaller(ctx context.Context, tx pgx.Tx, caller G
 	}
 	a.scope = scope
 	if caller.credential != "" {
+		if scope.GroupID != "" {
+			var environment bool
+			if err = tx.QueryRow(ctx, `SELECT environment_id IS NOT NULL OR EXISTS(SELECT 1 FROM control.environments reverse_owner WHERE reverse_owner.group_id=publisher_group.id) FROM control.project_publisher_groups publisher_group WHERE id=$1`, scope.GroupID).Scan(&environment); err != nil {
+				return a, err
+			}
+			if environment {
+				return a, ErrMachineDenied
+			}
+		}
 		p, e := d.AuthorizeProvisioning(ctx, tx, caller.credential, scope, clock.current())
 		if e != nil {
 			return a, e

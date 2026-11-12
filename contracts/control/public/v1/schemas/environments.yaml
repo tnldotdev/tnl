@@ -1,0 +1,166 @@
+schemas:
+  EnvironmentPublication:
+    type: object
+    additionalProperties: false
+    description: The exact saved environment application assigned to this publisher worker. This is a publication freshness fence, not a visitor, provisioning, or publisher permission. Preparation must supply it unchanged; control never substitutes the latest application for an omitted or stale value.
+    required: [environment_id, mutation_revision, configuration_hash]
+    properties:
+      environment_id: { type: string }
+      mutation_revision: { type: integer, format: int64, minimum: 1 }
+      configuration_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+  ServiceDefinition:
+    type: object
+    additionalProperties: false
+    description: Reusable service shape only. Targets, target trust, identities, permissions, and collection membership are separate state. Publishing a definition does not update any environment.
+    required: [services]
+    properties:
+      services:
+        type: object
+        minProperties: 1
+        maxProperties: 128
+        additionalProperties:
+          $ref: "../openapi.yaml#/components/schemas/ServiceDefinitionService"
+  ServiceDefinitionService:
+    type: object
+    additionalProperties: false
+    required: [protocol]
+    properties:
+      protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
+  ServiceDefinitionRevision:
+    type: object
+    additionalProperties: false
+    required: [team_id, project_key, source_fingerprint, revision, configuration_hash, definition]
+    properties:
+      team_id: { type: string }
+      project_key: { type: string }
+      source_fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
+      revision: { type: integer, format: int64, minimum: 1 }
+      configuration_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+      definition: { $ref: "../openapi.yaml#/components/schemas/ServiceDefinition" }
+  CreateServiceDefinitionRequest:
+    type: object
+    additionalProperties: false
+    required: [team_id, source_fingerprint, definition]
+    properties:
+      team_id: { type: string }
+      source_fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
+      project_label:
+        { type: string, minLength: 1, maxLength: 63, pattern: "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$" }
+      definition: { $ref: "../openapi.yaml#/components/schemas/ServiceDefinition" }
+  EnvironmentTargetTLS:
+    type: object
+    additionalProperties: false
+    description: Explicit verified publisher-to-target TLS. An empty object uses the destination hostname and system roots. ca_pem adds a CA-only snapshot, never a server-side file path. Saved targets return the normalized hostname and approved digest. Protocol-specific negotiation has no plaintext or unverified fallback.
+    properties:
+      hostname: { type: string, minLength: 1, maxLength: 253 }
+      ca_pem: { type: string, maxLength: 1048576 }
+      digest: { type: string, pattern: "^[0-9a-f]{64}$" }
+  EnvironmentTarget:
+    type: object
+    additionalProperties: false
+    description: One environment's approved destination, with exactly one of address or discovery. The service definition supplies the protocol; a target cannot override it. Provider discovery supplies its own target trust and cannot be combined with tls. Discovery uses the assigned publisher's credentials, never control's credentials.
+    properties:
+      address: { type: string, minLength: 1, maxLength: 8192 }
+      tls: { $ref: "../openapi.yaml#/components/schemas/EnvironmentTargetTLS" }
+      discovery: { $ref: "../openapi.yaml#/components/schemas/ProjectTargetDiscovery" }
+  EnvironmentTargets:
+    type: object
+    maxProperties: 128
+    description: Complete approved targets keyed by logical service name. Unknown services and missing assigned services are rejected. This has the same target shape for creation and replacement.
+    additionalProperties: { $ref: "../openapi.yaml#/components/schemas/EnvironmentTarget" }
+  EnvironmentReference:
+    type: object
+    additionalProperties: false
+    description: Nonsecret selection of one immutable environment on one control server. Possession of this reference grants no access.
+    required: [server, project_key, environment_id]
+    properties:
+      server: { type: string, format: uri }
+      project_key: { type: string }
+      environment_id: { type: string }
+  EnvironmentService:
+    type: object
+    additionalProperties: false
+    required: [service, service_id, protocol, hostname, port, public, trust_revision]
+    properties:
+      service: { type: string }
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
+      hostname: { type: string }
+      port: { type: integer, minimum: 1, maximum: 65535 }
+      public: { type: boolean }
+      trust_revision: { type: integer, format: int64, minimum: 1 }
+  Environment:
+    type: object
+    additionalProperties: false
+    description: Manager-only saved environment and its applied resources. Targets are sensitive management data, not browser metadata or connection credentials. Definition rollback increases mutation_revision and never restores revoked authorization.
+    required:
+      [
+        id,
+        ref,
+        team_id,
+        project_key,
+        name,
+        applied_definition_revision,
+        mutation_revision,
+        configuration_hash,
+        targets,
+        services,
+      ]
+    properties:
+      id: { type: string }
+      ref: { $ref: "../openapi.yaml#/components/schemas/EnvironmentReference" }
+      team_id: { type: string }
+      project_key: { type: string }
+      name: { type: string, minLength: 1, maxLength: 128 }
+      applied_definition_revision: { type: integer, format: int64, minimum: 1 }
+      mutation_revision: { type: integer, format: int64, minimum: 1 }
+      configuration_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+      targets: { $ref: "../openapi.yaml#/components/schemas/EnvironmentTargets" }
+      services:
+        type: array
+        maxItems: 128
+        items: { $ref: "../openapi.yaml#/components/schemas/EnvironmentService" }
+  CreateEnvironmentRequest:
+    type: object
+    additionalProperties: false
+    required: [team_id, source_fingerprint, name, definition_revision, targets, idempotency_key]
+    properties:
+      team_id: { type: string }
+      source_fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
+      project_label:
+        { type: string, minLength: 1, maxLength: 63, pattern: "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$" }
+      name: { type: string, minLength: 1, maxLength: 128 }
+      definition_revision: { type: integer, format: int64, minimum: 1 }
+      targets: { $ref: "../openapi.yaml#/components/schemas/EnvironmentTargets" }
+      idempotency_key: { type: string, minLength: 1, maxLength: 256 }
+  ApplyEnvironmentRequest:
+    type: object
+    additionalProperties: false
+    description: Apply only the selected environment. Omitted targets retain saved approvals. A changed protocol or added service requires explicit complete replacement targets. This operation changes no visitor, workload, provisioning, or enrollment permission.
+    required: [team_id, expected_revision, definition_revision]
+    properties:
+      team_id: { type: string }
+      expected_revision: { type: integer, format: int64, minimum: 1 }
+      definition_revision: { type: integer, format: int64, minimum: 1 }
+      targets: { $ref: "../openapi.yaml#/components/schemas/EnvironmentTargets" }
+  EnvironmentApplication:
+    type: object
+    additionalProperties: false
+    required: [environment_id, expected_revision, definition_revision]
+    properties:
+      environment_id: { type: string }
+      expected_revision: { type: integer, format: int64, minimum: 1 }
+      definition_revision: { type: integer, format: int64, minimum: 1 }
+      targets: { $ref: "../openapi.yaml#/components/schemas/EnvironmentTargets" }
+  ApplyEnvironmentsRequest:
+    type: object
+    additionalProperties: false
+    description: Atomically apply the explicitly selected environments in this project on this server. All expected environment revisions must match. Any failure rolls back every selected environment; unselected environments and current authorization are unchanged.
+    required: [team_id, environments]
+    properties:
+      team_id: { type: string }
+      environments:
+        type: array
+        minItems: 1
+        maxItems: 128
+        items: { $ref: "../openapi.yaml#/components/schemas/EnvironmentApplication" }

@@ -5,11 +5,13 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -66,7 +68,7 @@ func servicePublisherMatches(p PublisherIdentity, serviceID string) bool {
 		opaqueid.Valid(p.GrantID, opaqueid.PublisherGrantPrefix)
 }
 
-func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p PublisherIdentity, key string, now time.Time, metadata ServiceMetadata) (result ServiceRunPreparation, retErr error) {
+func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p PublisherIdentity, key string, now time.Time, metadata ServiceMetadata, environment *EnvironmentPublication) (result ServiceRunPreparation, retErr error) {
 	if !servicePublisherMatches(p, serviceID) || len(key) == 0 || len(key) > 128 {
 		return result, ErrServiceAccess
 	}
@@ -88,6 +90,9 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 	if err != nil {
 		return result, err
 	}
+	if err = validateEnvironmentPublication(ctx, q, serviceID, environment); err != nil {
+		return result, errors.Join(ErrServiceConflict, err)
+	}
 	saved, err := checkedServiceMetadata(service)
 	if err != nil {
 		return result, err
@@ -105,7 +110,15 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 	if keyRecord.RetiredAt.Valid || len(keyRecord.PublicKey) != ed25519.PublicKeySize {
 		return result, ErrServiceAccess
 	}
-	digest := sha256.Sum256([]byte(serviceID + "\x00" + p.ID + "\x00" + p.GrantID + "\x00" + p.KeyID))
+	request := []byte(serviceID + "\x00" + p.ID + "\x00" + p.GrantID + "\x00" + p.KeyID)
+	if environment != nil {
+		encoded, err := json.Marshal(environment)
+		if err != nil {
+			return result, err
+		}
+		request = append(append(request, '\x00'), encoded...)
+	}
+	digest := sha256.Sum256(request)
 	var existingID string
 	err = tx.QueryRow(ctx, `SELECT id FROM control.service_runs WHERE service_id=$1 AND idempotency_key=$2 AND publisher_identity_id=$3`, serviceID, key, p.ID).Scan(&existingID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
@@ -118,6 +131,10 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 		}
 		if serviceRunLifecycleState(run.State) != serviceRunPrepared || run.ClosedAt.Valid || !run.PreparationExpiresAt.Time.After(now) || !bytes.Equal(run.RequestDigest, digest[:]) || run.PublisherIdentityID != p.ID || run.PublisherGrantID != p.GrantID || run.PublisherKeyID != p.KeyID {
 			return result, ErrServiceConflict
+		}
+		stored, err := preparedEnvironmentPublication(run)
+		if err != nil || !sameEnvironmentPublication(stored, environment) {
+			return result, errors.Join(ErrServiceConflict, err)
 		}
 		if err = tx.Commit(ctx); err != nil {
 			return result, err
@@ -139,7 +156,12 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 		if !serviceRunLifecycleState(active.State).valid() {
 			return result, ErrServiceAccess
 		}
-		if active.PublisherExpiresAt.Time.After(now) && (serviceRunLifecycleState(active.State) != serviceRunPrepared || active.PreparationExpiresAt.Time.After(now)) {
+		stored, err := preparedEnvironmentPublication(active)
+		if err != nil {
+			return result, err
+		}
+		stalePreparation := serviceRunLifecycleState(active.State) == serviceRunPrepared && stored != nil && environment != nil && stored.EnvironmentID == environment.EnvironmentID && !sameEnvironmentPublication(stored, environment)
+		if !stalePreparation && active.PublisherExpiresAt.Time.After(now) && (serviceRunLifecycleState(active.State) != serviceRunPrepared || active.PreparationExpiresAt.Time.After(now)) {
 			return result, ErrServiceConflict
 		}
 		if _, err = q.CloseServiceRun(ctx, controlstatedb.CloseServiceRunParams{
@@ -171,14 +193,20 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 	if err != nil {
 		return result, err
 	}
-	run, err := q.PrepareServiceRun(ctx, controlstatedb.PrepareServiceRunParams{
+	parameters := controlstatedb.PrepareServiceRunParams{
 		ID: id, ServiceID: serviceID, TeamID: service.TeamID, RunNumber: int64(number),
 		PublisherIdentityID: p.ID, PublisherGrantID: p.GrantID, PublisherKeyID: p.KeyID, IdempotencyKey: key,
 		RequestDigest: digest[:], PreparationExpiresAt: timestamptz(now.Add(2 * time.Minute)),
 		AssignmentSeedCiphertext: ciphertext, AssignmentSeedStorageKeyID: d.storageKey.CurrentID(),
 		CertificateCacheKey: plan.CacheKey, CertificateScope: plan.Scope, CertificateIdentifiers: plan.Identifiers, CertificateDomainID: service.DomainID, CertificateHostname: service.CertificateHostname, ServicePort: service.ServicePort,
 		Now: timestamptz(now), PublisherExpiresAt: timestamptz(now.Add(2 * time.Minute)),
-	})
+	}
+	if environment != nil {
+		parameters.EnvironmentID = text(environment.EnvironmentID)
+		parameters.EnvironmentMutationRevision = pgtype.Int8{Int64: environment.MutationRevision, Valid: true}
+		parameters.EnvironmentConfigurationHash = text(environment.ConfigurationHash)
+	}
+	run, err := q.PrepareServiceRun(ctx, parameters)
 	if err != nil {
 		return result, err
 	}
@@ -260,7 +288,7 @@ func serviceRunAuthorization(ctx context.Context, tx pgx.Tx, q *controlstatedb.Q
 		WHERE grant_record.id=$1 AND publisher.id=$2 AND grant_record.kind='service'
 		AND grant_record.service_id=$4 AND grant_record.revoked_at IS NULL
 		AND (grant_record.expires_at IS NULL OR grant_record.expires_at > $5)
-		AND publisher.revoked_at IS NULL)`, run.PublisherGrantID, run.PublisherIdentityID, run.PublisherKeyID, serviceID, now).Scan(&current); err != nil {
+		AND control.active_publisher(publisher.id,$5))`, run.PublisherGrantID, run.PublisherIdentityID, run.PublisherKeyID, serviceID, now).Scan(&current); err != nil {
 		return run, err
 	}
 	if !current {

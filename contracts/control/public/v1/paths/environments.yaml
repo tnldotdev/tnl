@@ -1,0 +1,127 @@
+paths:
+  /v1/projects/{project_key}/service-definitions:
+    parameters:
+      - { name: project_key, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: createServiceDefinition
+      security: [{ bearerAuth: [] }]
+      description: Save an immutable project service definition as a current team manager. Equal normalized definitions reuse their revision. Publishing a definition alone changes no environment, target, permission, or publisher assignment.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/CreateServiceDefinitionRequest" }
+      responses:
+        "200":
+          description: Immutable service-definition revision
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/ServiceDefinitionRevision" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/projects/{project_key}/environments:
+    parameters:
+      - { name: project_key, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: createEnvironment
+      security: [{ bearerAuth: [] }]
+      description: Materialize one environment from an immutable definition and complete approved targets as a current team manager. Creation grants no visitor or workload permission. Authorized identical retries return the same environment; changed requests or retired creation keys conflict. The name does not select a target, publisher identity, or authorization scope.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/CreateEnvironmentRequest" }
+      responses:
+        "200":
+          description: Saved environment and assigned resources, not a traffic-readiness acknowledgement
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/Environment" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+    get:
+      operationId: listEnvironments
+      security: [{ bearerAuth: [] }]
+      description: List active environments in this project as a current team manager. Contains sensitive target settings; never use as browser metadata.
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
+      responses:
+        "200":
+          description: Current saved environments
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "../openapi.yaml#/components/schemas/Environment" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/projects/{project_key}/environments/{environment_id}:
+    parameters:
+      - { name: project_key, in: path, required: true, schema: { type: string } }
+      - { name: environment_id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getEnvironment
+      security: [{ bearerAuth: [] }]
+      description: Read one exact immutable environment in this project as a current team manager. Does not search names, another project, or another team.
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
+      responses:
+        "200":
+          description: Saved environment and applied resources
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/Environment" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+    delete:
+      operationId: retireEnvironment
+      security: [{ bearerAuth: [] }]
+      description: Retire only this environment and its publications as a current team manager. Its saved creation key cannot recreate it. Other environments, local worktrees, and their authorizations remain unchanged.
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
+        - {
+            name: expected_revision,
+            in: query,
+            required: true,
+            schema: { type: integer, format: int64, minimum: 1 },
+          }
+      responses:
+        "204": { description: Environment retired }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/projects/{project_key}/environments/{environment_id}/apply:
+    post:
+      operationId: applyEnvironment
+      security: [{ bearerAuth: [] }]
+      description: Apply one pinned definition and approved targets to this exact environment as a current team manager. A rollback still advances its mutation revision. No other environment is reconciled; no current permission is restored from definition history.
+      parameters:
+        - { name: project_key, in: path, required: true, schema: { type: string } }
+        - { name: environment_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/ApplyEnvironmentRequest" }
+      responses:
+        "200":
+          description: Saved environment after atomic apply, not traffic readiness
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/Environment" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/projects/{project_key}/environments/apply:
+    post:
+      operationId: applyEnvironments
+      security: [{ bearerAuth: [] }]
+      description: Atomically apply the selected environments as a current team manager. Check every expected environment revision in one transaction; any validation, capacity, or revision failure saves nothing. Definition rollout does not reconcile current authorization.
+      parameters:
+        - { name: project_key, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/ApplyEnvironmentsRequest" }
+      responses:
+        "200":
+          description: Applied environments
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "../openapi.yaml#/components/schemas/Environment" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

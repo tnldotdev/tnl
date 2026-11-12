@@ -11,6 +11,7 @@ func (n *Native) WithTraffic(selection *trafficlimits.Selection) (*Native, error
 	copy := *n
 	copy.private = append(copy.private[:0:0], n.private...)
 	copy.publicURL = clonePublicURL(n.publicURL)
+	copy.environmentPublication = cloneEnvironmentPublication(n.environmentPublication)
 	copy.traffic = nil
 	if selection == nil {
 		return &copy, nil

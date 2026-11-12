@@ -154,7 +154,7 @@ func recheckWorkloadPublicServiceVisitor(ctx context.Context, tx pgx.Tx, service
         JOIN control.service_runs run ON run.id=v.service_run_id AND run.service_id=s.id AND run.run_number=v.run_number AND run.state='ready' AND run.healthy AND run.closed_at IS NULL AND run.publisher_expires_at>$8 AND run.certificate_expires_at>$8
         JOIN control.ingress_leases ingress ON ingress.ingress_id=v.ingress_id AND ingress.ingress_run_id=v.ingress_run_id AND ingress.ingress_lease_revision=v.ingress_lease_revision AND ingress.lease_expires_at>$8
         JOIN control.publisher_grants g ON g.id=run.publisher_grant_id AND g.service_id=s.id AND g.revoked_at IS NULL AND(g.expires_at IS NULL OR g.expires_at>$8)
-        JOIN control.publisher_identities p ON p.id=run.publisher_identity_id AND p.id=g.publisher_identity_id AND p.revoked_at IS NULL
+        JOIN control.publisher_identities p ON p.id=run.publisher_identity_id AND p.id=g.publisher_identity_id AND control.active_publisher(p.id,$8)
         JOIN control.workload_client_certificates cert ON cert.certificate_digest=COALESCE($7::bytea,v.certificate_digest) AND cert.service_id=s.id AND cert.workload_session_id=$5 AND cert.expires_at>$8
         WHERE v.visitor_connection_id=$1 AND v.service_id=$2 AND v.service_run_id=$3 AND v.run_number=$4 AND v.source_ip=$6 AND v.closed_at IS NULL AND v.valid_until>$8
         AND v.identity_id IS NULL AND v.device_id IS NULL AND (v.workload_session_id IS NULL OR v.workload_session_id=$5) AND(v.certificate_digest IS NULL OR v.certificate_digest=cert.certificate_digest)

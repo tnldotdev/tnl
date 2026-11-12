@@ -231,7 +231,7 @@ func TestIntegrationAppliedProjectGroupAssignmentsRunsAndRevocation(t *testing.T
 					t.Fatal(err)
 				}
 				metadata := ServiceMetadata{Protocol: assignment.Configuration.Protocol, TLS: trust, PublisherPool: true, TrustRevision: assignment.TrustRevision}
-				prepared, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "group", now, metadata)
+				prepared, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "group", now, metadata, nil)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -440,7 +440,7 @@ func TestIntegrationAppliedProjectGroupReassignmentKeepsSavedService(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.PrepareServiceRun(t.Context(), a.ServiceID, current.PublisherIdentity, "http", now, ServiceMetadata{Protocol: "http", TLS: trust, PublisherPool: true, TrustRevision: a.TrustRevision}); err != nil {
+	if _, err = d.PrepareServiceRun(t.Context(), a.ServiceID, current.PublisherIdentity, "http", now, ServiceMetadata{Protocol: "http", TLS: trust, PublisherPool: true, TrustRevision: a.TrustRevision}, nil); err != nil {
 		t.Fatal("private HTTP/TLS assignment is not publishable", err)
 	}
 	var teamGrants int

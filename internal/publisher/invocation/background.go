@@ -401,7 +401,7 @@ func SelectConfiguredPublisherCandidates(ctx context.Context, server string, pro
 		if json.Unmarshal(saved.PublicDocument, &identity) != nil || identity.ClientId != saved.ID || identity.PublicUrlId == nil || *identity.PublicUrlId != id || identity.Kind != authorityv1.SavedPublicUrl {
 			return nil, selected, nil, savedURL, supervisor.ErrScope
 		}
-		native, err := publisheridentity.NewNative(control, authority, identity, saved.SigningKey)
+		native, err := publisheridentity.NewNative(control, authority, identity, saved.SigningKey, nil)
 		if err != nil {
 			return nil, selected, nil, savedURL, err
 		}

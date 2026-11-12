@@ -46,7 +46,7 @@ func connectorPairFixtureFromRun(t *testing.T, f publishRunFixture) connectorPai
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := d.PrepareServiceRun(t.Context(), service.ID, publisher, "observations", now, ServiceMetadata{Protocol: "tcp", TrustRevision: 1})
+	prepared, err := d.PrepareServiceRun(t.Context(), service.ID, publisher, "observations", now, ServiceMetadata{Protocol: "tcp", TrustRevision: 1}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

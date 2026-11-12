@@ -44,6 +44,13 @@ func (d *Database) RenamePublisherNamespace(ctx context.Context, r RenamePublish
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}
+	var mapped bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.environments WHERE team_id=$1 AND project_key=$2)`, r.TeamID, r.ProjectKey).Scan(&mapped); err != nil {
+		return result, err
+	}
+	if mapped {
+		return result, ErrProjectManaged
+	}
 	request, _ := json.Marshal(struct {
 		Group, Label string
 		Revision     int64

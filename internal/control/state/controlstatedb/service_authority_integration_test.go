@@ -115,7 +115,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	publisherIdentityID, keyID, publisherGrantID := p.ID, p.KeyID, p.GrantID
 	publicURLScope := p
 	publicURLScope.Scope.Kind, publicURLScope.Scope.ServiceID, publicURLScope.Scope.PublicURLID = "saved_public_url", "", service.ID
-	if _, err = d.PrepareServiceRun(ctx, service.ID, publicURLScope, "wrong-scope", now, controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1}); !errors.Is(err, controlstate.ErrServiceAccess) {
+	if _, err = d.PrepareServiceRun(ctx, service.ID, publicURLScope, "wrong-scope", now, controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1}, nil); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("public URL scope selected service: %v", err)
 	}
 	for _, relay := range []string{"relay-a", "relay-b"} {
@@ -127,11 +127,11 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 			registered_at, renewed_at, lease_expires_at)
 			VALUES ($1, $1, $2, 1, 1, $3, 8, 8, $4, $4, $5)`, relay, runID, relay+":444", now, now.Add(10*time.Minute))
 	}
-	prepared, err := d.PrepareServiceRun(ctx, service.ID, p, "first", now, controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1})
+	prepared, err := d.PrepareServiceRun(ctx, service.ID, p, "first", now, controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	again, err := d.PrepareServiceRun(ctx, service.ID, p, "first", now, controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1})
+	again, err := d.PrepareServiceRun(ctx, service.ID, p, "first", now, controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1}, nil)
 	if err != nil || again.RunID != prepared.RunID || again.Hostname != prepared.Hostname || again.DomainID != prepared.DomainID || again.ServicePort != prepared.ServicePort {
 		t.Fatalf("idempotent preparation: %+v, %v", again, err)
 	}
@@ -253,7 +253,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	exec(`UPDATE control.publisher_identity_keys SET retired_at=$2 WHERE id=$1`, keyID, now)
 	exec(`INSERT INTO control.publisher_identity_keys(id, publisher_identity_id, public_key, revision, created_at)
 		VALUES ($1, $2, $3, 3, $4)`, newKeyID, publisherIdentityID, newIdentityKey, now)
-	if _, err = d.PrepareServiceRun(ctx, service.ID, p, "retired-key", now, controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1}); !errors.Is(err, controlstate.ErrServiceAccess) {
+	if _, err = d.PrepareServiceRun(ctx, service.ID, p, "retired-key", now, controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1}, nil); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("retired key prepared another run: %v", err)
 	}
 	if _, err = d.HeartbeatServiceRun(ctx, service.ID, prepared.RunID, retried.Token, now, controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); err != nil {
@@ -523,7 +523,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 		t.Fatal("closed run kept active visitor")
 	}
 	p.KeyID = newKeyID
-	replacement, err := d.PrepareServiceRun(ctx, service.ID, p, "replacement", now.Add(time.Second), controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1})
+	replacement, err := d.PrepareServiceRun(ctx, service.ID, p, "replacement", now.Add(time.Second), controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1}, nil)
 	if err != nil || replacement.RunNumber != prepared.RunNumber+1 {
 		t.Fatalf("replacement: %+v, %v", replacement, err)
 	}
@@ -533,7 +533,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	if err = d.RevokePublisherGrant(ctx, teamID, publisherIdentityID, publisherGrantID, identityID, now.Add(2*time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.PrepareServiceRun(ctx, service.ID, p, "after-revoke", now.Add(2*time.Second), controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1}); !errors.Is(err, controlstate.ErrServiceAccess) {
+	if _, err = d.PrepareServiceRun(ctx, service.ID, p, "after-revoke", now.Add(2*time.Second), controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1}, nil); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("revoked exact publisher grant prepared another run: %v", err)
 	}
 	if _, err = d.AdmitPublicServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, newID(opaqueid.VisitorConnectionPrefix), prepared.ServicePort, source, now.Add(2*time.Second)); !errors.Is(err, controlstate.ErrServiceAccess) {

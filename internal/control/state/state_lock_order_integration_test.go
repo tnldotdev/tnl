@@ -226,7 +226,7 @@ func TestIntegrationStateLockOrderApplyExpiration(t *testing.T) {
 	}
 	replica := enrollAppliedGroup(t, d, r, e, now)
 	access := groupAssignmentAccess(t, d, replica, replica.assignments.Services[1], now)
-	prepared, err := d.PrepareServiceRun(t.Context(), service, access.PublisherIdentity, "prepared", now, ServiceMetadata{Protocol: "tcp", PublisherPool: true, TrustRevision: 1})
+	prepared, err := d.PrepareServiceRun(t.Context(), service, access.PublisherIdentity, "prepared", now, ServiceMetadata{Protocol: "tcp", PublisherPool: true, TrustRevision: 1}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

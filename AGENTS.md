@@ -99,12 +99,28 @@ mutation counters; public URL counters are publish run numbers.
 ## services
 
 Use **service** for a saved application service and **service run** for one active
-publication of it. A **publisher group** assigns services to enrolled publisher
-identities. Keep the group name, group ID, service name, service ID, and publisher
-identity ID distinct. A **service endpoint** contains its visitor hostname, port,
-and reachability; **service target TLS** describes publisher-to-target trust.
-Reachability (public or connector-only) and visitor access rules are independent.
-Services and public URLs have separate records, credentials, and lifecycles.
+publication of it. A **service definition** describes a project's reusable logical
+services and protocols. An **environment** applies one immutable service-definition
+revision to its own approved targets and saved service IDs. Applying or rolling
+back one environment must not update another environment or restore revoked
+authorization. Environment mutation revisions increase even when selecting an
+older service definition.
+
+A **collection** groups environments for management and explicitly scoped
+permissions. Its default definition applies to new environments, not existing
+members. Membership is saved authorization state, not an editable label. A grant
+covering future environments still names the services it allows; it does not
+include future service names automatically. Definitions contain no identities,
+permissions, target trust, or collection membership.
+
+A **publisher group** is the internal assignment of services to enrolled publisher
+replicas. Reusing this machinery must not expose a second service template in the
+environment API. Keep environment, collection, service, and publisher identity IDs
+distinct. Names and server-qualified references select resources; they grant no
+access. A **service endpoint** contains its visitor hostname, port, and reachability;
+**service target TLS** describes publisher-to-target trust. Reachability (public or
+connector-only) and visitor access rules are independent. Services and public URLs
+have separate records, credentials, and lifecycles.
 
 ## addresses and dns
 
@@ -260,41 +276,46 @@ TLS negotiation are separate concepts.
 
 ## machine field names
 
-| Concept                         | Field                                                |
-| ------------------------------- | ---------------------------------------------------- |
-| Public URL ID                   | `public_url_id`                                      |
-| Preview ID                      | `preview_id`                                         |
-| Share ID                        | `share_id`                                           |
-| Feedback ID                     | `feedback_id`                                        |
-| Publish run ID                  | `publish_run_id`                                     |
-| Publish run number              | `publish_run_number`                                 |
-| Publish run token               | `publish_run_token`                                  |
-| Service ID                      | `service_id`                                         |
-| Service run ID                  | `service_run_id`                                     |
-| Service run number              | `run_number` (`service_run_number` in mixed records) |
-| Service run token               | `run_token`                                          |
-| Policy revision                 | `policy_revision`                                    |
-| Public URL mutation revision    | `public_url_mutation_revision`                       |
-| Publisher connection ID         | `publisher_connection_id`                            |
-| Connection slot                 | `connection_slot`                                    |
-| Connection assignment revision  | `connection_assignment_revision`                     |
-| Publisher connection credential | `publisher_connection_credential`                    |
-| Visitor connection ID           | `visitor_connection_id`                              |
-| Ingress identity                | `ingress_id`                                         |
-| Ingress process run ID          | `ingress_run_id`                                     |
-| Ingress lease revision          | `ingress_lease_revision`                             |
-| Relay service identity          | `relay_service_id`                                   |
-| Relay identity                  | `relay_id`                                           |
-| Relay process run ID            | `relay_run_id`                                       |
-| Relay lease revision            | `relay_lease_revision`                               |
-| Lease expiration                | `lease_expires_at`                                   |
-| Relay address                   | `relay_address`                                      |
-| Internal relay address          | `internal_relay_address`                             |
-| Ingress routing-table revision  | `routing_table_revision`                             |
-| Recovery episode ID             | `recovery_episode_id`                                |
-| DNS authority reference         | `dns_authority_reference`                            |
-| Transport                       | `transport`                                          |
-| Cluster secret                  | `cluster_secret`                                     |
+| Concept                             | Field                                                                  |
+| ----------------------------------- | ---------------------------------------------------------------------- |
+| Public URL ID                       | `public_url_id`                                                        |
+| Environment ID                      | `environment_id`                                                       |
+| Collection ID                       | `collection_id`                                                        |
+| Service-definition revision         | `revision` (`definition_revision` in references)                       |
+| Applied service-definition revision | `applied_definition_revision`                                          |
+| Environment mutation revision       | `mutation_revision` (`environment_mutation_revision` in mixed records) |
+| Preview ID                          | `preview_id`                                                           |
+| Share ID                            | `share_id`                                                             |
+| Feedback ID                         | `feedback_id`                                                          |
+| Publish run ID                      | `publish_run_id`                                                       |
+| Publish run number                  | `publish_run_number`                                                   |
+| Publish run token                   | `publish_run_token`                                                    |
+| Service ID                          | `service_id`                                                           |
+| Service run ID                      | `service_run_id`                                                       |
+| Service run number                  | `run_number` (`service_run_number` in mixed records)                   |
+| Service run token                   | `run_token`                                                            |
+| Policy revision                     | `policy_revision`                                                      |
+| Public URL mutation revision        | `public_url_mutation_revision`                                         |
+| Publisher connection ID             | `publisher_connection_id`                                              |
+| Connection slot                     | `connection_slot`                                                      |
+| Connection assignment revision      | `connection_assignment_revision`                                       |
+| Publisher connection credential     | `publisher_connection_credential`                                      |
+| Visitor connection ID               | `visitor_connection_id`                                                |
+| Ingress identity                    | `ingress_id`                                                           |
+| Ingress process run ID              | `ingress_run_id`                                                       |
+| Ingress lease revision              | `ingress_lease_revision`                                               |
+| Relay service identity              | `relay_service_id`                                                     |
+| Relay identity                      | `relay_id`                                                             |
+| Relay process run ID                | `relay_run_id`                                                         |
+| Relay lease revision                | `relay_lease_revision`                                                 |
+| Lease expiration                    | `lease_expires_at`                                                     |
+| Relay address                       | `relay_address`                                                        |
+| Internal relay address              | `internal_relay_address`                                               |
+| Ingress routing-table revision      | `routing_table_revision`                                               |
+| Recovery episode ID                 | `recovery_episode_id`                                                  |
+| DNS authority reference             | `dns_authority_reference`                                              |
+| Transport                           | `transport`                                                            |
+| Cluster secret                      | `cluster_secret`                                                       |
 
 # cli human output
 

@@ -117,7 +117,7 @@ func (p GroupPublisher) Publish(ctx context.Context, assignment controlv1.Publis
 		return publishergroup.ErrAssignment
 	}
 	identity := authorityv1.PublisherEnrollmentResult{ClientId: p.Member.PublisherIdentityId, KeyId: p.Member.KeyId, TeamId: p.Member.TeamId, GrantId: assignment.GrantId, Kind: authorityv1.Service, ServiceId: &assignment.ServiceId}
-	native, err := publisheridentity.NewNative(p.Control, p.Authority, identity, p.Private)
+	native, err := publisheridentity.NewNative(p.Control, p.Authority, identity, p.Private, assignment.Environment)
 	if err != nil {
 		return err
 	}

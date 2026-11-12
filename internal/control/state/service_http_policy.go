@@ -40,6 +40,15 @@ func (d *Database) serviceHTTPSettings(ctx context.Context, q *controlstatedb.Qu
 	if err != nil {
 		return nil, err
 	}
+	if row.EnvironmentID != "" {
+		s, err := d.environmentServiceConfiguration(ctx, q, row.EnvironmentID, row.GroupID.String, appliedServiceName(row.Service))
+		if err != nil {
+			return nil, err
+		}
+		// this definition version carries protocol only. current visitor policy
+		// is separate authority, never inherited from the live project document.
+		return s.HTTP, nil
+	}
 	c, err := d.openAppliedProject(controlstatedb.ControlAppliedProject{TeamID: row.TeamID, ProjectKey: row.ProjectKey, ConfigurationCiphertext: row.ConfigurationCiphertext, StorageKeyID: row.StorageKeyID})
 	if err != nil {
 		return nil, err

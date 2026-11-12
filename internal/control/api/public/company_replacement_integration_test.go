@@ -429,7 +429,7 @@ func replacementPublications(t *testing.T, f *companyHTTPFixture, team controlst
 	private := func(ownership string) replacementPrivatePublication {
 		t.Helper()
 		p, _ := enroll(controlstate.PublisherScope{TeamID: team.ID, Kind: "service", ServiceID: service.ID}, ownership, "private-"+ownership)
-		prepared, err := d.PrepareServiceRun(ctx, service.ID, p, "before-replacement", time.Now().UTC(), service.ServiceMetadata)
+		prepared, err := d.PrepareServiceRun(ctx, service.ID, p, "before-replacement", time.Now().UTC(), service.ServiceMetadata, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

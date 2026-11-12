@@ -37,6 +37,13 @@ func (d *Database) RenamePublisherGroup(ctx context.Context, team, project, old,
 	if err != nil {
 		return result, publisherLookupError(err, ErrPublisherGroup)
 	}
+	var mapped bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.environments WHERE team_id=$1 AND project_key=$2)`, team, project).Scan(&mapped); err != nil {
+		return result, err
+	}
+	if mapped {
+		return result, ErrProjectManaged
+	}
 	c, err := d.openAppliedProject(row)
 	if err != nil {
 		return result, err

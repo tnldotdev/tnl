@@ -122,7 +122,7 @@ func LoadFile(path, server string, control NativeControl, authority AssertionExc
 	if err != nil {
 		return nil, err
 	}
-	return NewNative(control, authority, i, key)
+	return NewNative(control, authority, i, key, nil)
 }
 
 // ResolveAdHoc selects one scoped identity for tnl.open and app-owned HTTP

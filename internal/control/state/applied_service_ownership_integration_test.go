@@ -364,7 +364,7 @@ func assertAppliedPrivateRetired(t *testing.T, d *Database, r ApplyProjectConfig
 
 func readyAppliedServiceRun(t *testing.T, d *Database, access PublisherAccess, key ed25519.PrivateKey, service ServiceRecord, leases map[string]RelayLease, now time.Time) ServiceRunState {
 	t.Helper()
-	prepared, err := d.PrepareServiceRun(t.Context(), service.ID, access.PublisherIdentity, "ownership", now, service.ServiceMetadata)
+	prepared, err := d.PrepareServiceRun(t.Context(), service.ID, access.PublisherIdentity, "ownership", now, service.ServiceMetadata, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

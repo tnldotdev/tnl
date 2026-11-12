@@ -61,7 +61,7 @@ func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressL
 		    JOIN control.publisher_grants g ON g.id=run.publisher_grant_id JOIN control.publisher_identities p ON p.id=run.publisher_identity_id
 		    WHERE service.id=$1 AND service.public AND service.enabled AND service.deleted_at IS NULL AND service.ingress_pool_id=$2 AND service.service_port=$3
 		    AND run.state='ready' AND run.healthy AND run.closed_at IS NULL AND run.publisher_expires_at>$4 AND run.certificate_expires_at>$4
-		    AND g.revoked_at IS NULL AND(g.expires_at IS NULL OR g.expires_at>$4) AND p.revoked_at IS NULL
+		    AND g.revoked_at IS NULL AND(g.expires_at IS NULL OR g.expires_at>$4) AND control.active_publisher(p.id,$4)
 		    AND GREATEST(run.reported_streams,(SELECT count(*) FROM control.service_visitor_capacity v WHERE v.service_run_id=run.id AND v.closed_at IS NULL AND v.valid_until>$4))<run.stream_capacity
 		    ORDER BY GREATEST(run.reported_streams,(SELECT count(*) FROM control.service_visitor_capacity v WHERE v.service_run_id=run.id AND v.closed_at IS NULL AND v.valid_until>$4))::numeric/run.stream_capacity,run.run_number LIMIT 1`, result.ServiceID, pool, port, now).Scan(&result.RunID, &result.RunNumber)
 	}
@@ -83,7 +83,7 @@ func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressL
 	    JOIN control.publisher_identities publisher ON publisher.id=run.publisher_identity_id
 	    WHERE run.id=$1 AND run.service_id=$2 AND run.run_number=$3 AND run.state='ready' AND run.healthy
 	    AND run.closed_at IS NULL AND run.publisher_expires_at>$4 AND run.certificate_expires_at>$4
-	    AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>$4) AND publisher.revoked_at IS NULL`, result.RunID, result.ServiceID, result.RunNumber, now).Scan(&runUntil)
+	    AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>$4) AND control.active_publisher(publisher.id,$4)`, result.RunID, result.ServiceID, result.RunNumber, now).Scan(&runUntil)
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}

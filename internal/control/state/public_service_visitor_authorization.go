@@ -30,7 +30,7 @@ func recheckPublicServiceVisitor(ctx context.Context, tx pgx.Tx, service, run st
 	    JOIN control.service_runs run ON run.id=v.service_run_id AND run.service_id=service.id AND run.run_number=v.run_number AND run.state='ready' AND run.healthy AND run.closed_at IS NULL AND run.publisher_expires_at>$9 AND run.certificate_expires_at>$9
 	    JOIN control.ingress_leases ingress ON ingress.ingress_id=v.ingress_id AND ingress.ingress_run_id=v.ingress_run_id AND ingress.ingress_lease_revision=v.ingress_lease_revision AND ingress.lease_expires_at>$9
 	    JOIN control.publisher_grants g ON g.id=run.publisher_grant_id AND g.kind='service' AND g.service_id=service.id AND g.revoked_at IS NULL AND(g.expires_at IS NULL OR g.expires_at>$9)
-	    JOIN control.publisher_identities p ON p.id=run.publisher_identity_id AND p.id=g.publisher_identity_id AND p.revoked_at IS NULL
+	    JOIN control.publisher_identities p ON p.id=run.publisher_identity_id AND p.id=g.publisher_identity_id AND control.active_publisher(p.id,$9)
 	    JOIN control.service_client_certificates cert ON cert.certificate_digest=COALESCE($8::bytea,v.certificate_digest) AND cert.service_id=service.id AND cert.identity_id=$5 AND cert.device_id=$6 AND cert.revoked_at IS NULL AND cert.expires_at>$9
 	    JOIN control.visitor_devices device ON device.id=cert.device_id AND device.identity_id=cert.identity_id AND device.revoked_at IS NULL
 	    WHERE v.visitor_connection_id=$1 AND v.service_id=$2 AND v.service_run_id=$3 AND v.run_number=$4 AND v.source_ip=$7 AND v.closed_at IS NULL AND v.valid_until>$9

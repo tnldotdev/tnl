@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-explicit-capabilities-machine-publications')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-explicit-capabilities-environment-revisions')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-explicit-capabilities-machine-publications');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-explicit-capabilities-environment-revisions');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -1615,13 +1615,6 @@ CREATE TABLE control.publisher_identity_keys (
     created_at timestamptz NOT NULL, retired_at timestamptz,
     UNIQUE (publisher_identity_id, revision), UNIQUE (id, publisher_identity_id)
 );
--- +goose StatementBegin
-CREATE FUNCTION control.active_publisher(publisher_identity_id text, at_time timestamptz)
-RETURNS boolean LANGUAGE sql STABLE AS $$
-    SELECT EXISTS (SELECT 1 FROM control.publisher_identities p WHERE p.id=publisher_identity_id
-        AND p.revoked_at IS NULL AND (p.ownership<>'member' OR control.active_membership(p.owner_membership_id,at_time)))
-$$;
--- +goose StatementEnd
 CREATE UNIQUE INDEX publisher_identity_keys_current ON control.publisher_identity_keys(publisher_identity_id) WHERE retired_at IS NULL;
 CREATE TABLE control.publisher_grants (
     id text PRIMARY KEY CHECK (id <> ''), publisher_identity_id text NOT NULL REFERENCES control.publisher_identities(id) ON DELETE CASCADE,
@@ -1832,6 +1825,11 @@ CREATE TABLE control.service_runs (
     idempotency_key text NOT NULL CHECK (idempotency_key <> ''),
     request_digest bytea NOT NULL CHECK (octet_length(request_digest) = 32),
     preparation_expires_at timestamptz NOT NULL,
+    environment_id text,
+    environment_mutation_revision bigint CHECK (environment_mutation_revision>0),
+    environment_configuration_hash text CHECK (environment_configuration_hash ~ '^[0-9a-f]{64}$'),
+    CHECK ((environment_id IS NULL AND environment_mutation_revision IS NULL AND environment_configuration_hash IS NULL)
+        OR (environment_id IS NOT NULL AND environment_mutation_revision IS NOT NULL AND environment_configuration_hash IS NOT NULL)),
     assignment_seed_ciphertext bytea NOT NULL,
     assignment_seed_storage_key_id text NOT NULL CHECK (assignment_seed_storage_key_id <> ''),
     run_token_digest bytea UNIQUE CHECK (run_token_digest IS NULL OR octet_length(run_token_digest) = 32),
@@ -1868,6 +1866,18 @@ CREATE TABLE control.service_runs (
 );
 CREATE UNIQUE INDEX service_runs_active ON control.service_runs(service_id, publisher_identity_id) WHERE closed_at IS NULL;
 CREATE INDEX service_runs_expiring ON control.service_runs(publisher_expires_at) WHERE closed_at IS NULL;
+-- +goose StatementBegin
+CREATE FUNCTION control.reject_service_run_environment_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF ROW(NEW.environment_id,NEW.environment_mutation_revision,NEW.environment_configuration_hash)
+        IS DISTINCT FROM ROW(OLD.environment_id,OLD.environment_mutation_revision,OLD.environment_configuration_hash) THEN
+        RAISE EXCEPTION 'prepared environment publication is immutable' USING ERRCODE='23514';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+-- +goose StatementEnd
+CREATE TRIGGER service_run_environment_immutable BEFORE UPDATE OF environment_id,environment_mutation_revision,environment_configuration_hash ON control.service_runs FOR EACH ROW EXECUTE FUNCTION control.reject_service_run_environment_change();
 ALTER TABLE control.acme_orders ADD CONSTRAINT acme_orders_service_run_fkey
     FOREIGN KEY(service_run_parent,service_parent,service_run_number)
     REFERENCES control.service_runs(id,service_id,run_number) ON DELETE RESTRICT;
@@ -2132,6 +2142,70 @@ CREATE TABLE control.project_publisher_groups (
 );
 CREATE UNIQUE INDEX project_publisher_groups_active ON control.project_publisher_groups(team_id, project_key, name) WHERE deleted_at IS NULL;
 CREATE UNIQUE INDEX project_publisher_groups_namespace ON control.project_publisher_groups(namespace) WHERE deleted_at IS NULL AND namespace <> '';
+-- definitions contain only immutable service shape. targets and authorization
+-- have separate owners; no environment follows a live project declaration.
+CREATE TABLE control.service_definitions (
+    team_id text NOT NULL,
+    project_key text NOT NULL,
+    revision bigint NOT NULL CHECK (revision>0),
+    source_fingerprint text NOT NULL CHECK (source_fingerprint ~ '^[0-9a-f]{64}$'),
+    configuration_hash text NOT NULL CHECK (configuration_hash ~ '^[0-9a-f]{64}$'),
+    definition jsonb NOT NULL CHECK (octet_length(definition::text)<=32768),
+    created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
+    created_at timestamptz NOT NULL,
+    PRIMARY KEY(team_id,project_key,revision),
+    UNIQUE(team_id,project_key,configuration_hash),
+    FOREIGN KEY(team_id,project_key) REFERENCES control.applied_projects(team_id,project_key) ON DELETE RESTRICT
+);
+-- +goose StatementBegin
+CREATE FUNCTION control.reject_service_definition_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'service definitions are immutable' USING ERRCODE='23514';
+END;
+$$;
+-- +goose StatementEnd
+CREATE TRIGGER service_definition_immutable BEFORE UPDATE OR DELETE ON control.service_definitions FOR EACH ROW EXECUTE FUNCTION control.reject_service_definition_mutation();
+CREATE TABLE control.environments (
+    id text PRIMARY KEY,
+    team_id text NOT NULL,
+    project_key text NOT NULL,
+    name text NOT NULL CHECK (length(name) BETWEEN 1 AND 128),
+    group_id text NOT NULL UNIQUE,
+    applied_definition_revision bigint NOT NULL,
+    mutation_revision bigint NOT NULL CHECK (mutation_revision>0),
+    configuration_hash text NOT NULL CHECK (configuration_hash ~ '^[0-9a-f]{64}$'),
+    initial_definition_revision bigint NOT NULL,
+    creation_digest bytea NOT NULL CHECK (octet_length(creation_digest)=32),
+    created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
+    created_at timestamptz NOT NULL,
+    updated_at timestamptz NOT NULL,
+    retired_at timestamptz,
+    UNIQUE(id,team_id,project_key),
+    UNIQUE(id,team_id),
+    UNIQUE(team_id,project_key,name),
+    FOREIGN KEY(group_id,team_id,project_key) REFERENCES control.project_publisher_groups(id,team_id,project_key) ON DELETE RESTRICT,
+    FOREIGN KEY(team_id,project_key,applied_definition_revision) REFERENCES control.service_definitions(team_id,project_key,revision) ON DELETE RESTRICT,
+    FOREIGN KEY(team_id,project_key,initial_definition_revision) REFERENCES control.service_definitions(team_id,project_key,revision) ON DELETE RESTRICT
+);
+CREATE TABLE control.environment_creations (
+    team_id text NOT NULL,
+    project_key text NOT NULL,
+    idempotency_key text NOT NULL CHECK (length(idempotency_key) BETWEEN 1 AND 256),
+    environment_id text NOT NULL,
+    PRIMARY KEY(team_id,project_key,idempotency_key),
+    FOREIGN KEY(environment_id,team_id,project_key) REFERENCES control.environments(id,team_id,project_key) ON DELETE RESTRICT
+);
+ALTER TABLE control.project_publisher_groups ADD COLUMN environment_id text UNIQUE REFERENCES control.environments(id) ON DELETE RESTRICT;
+-- both directions are one association. deferred checks permit group ->
+-- environment -> forward-link bootstrap, never a committed half association.
+ALTER TABLE control.project_publisher_groups ADD CONSTRAINT publisher_group_environment_owner UNIQUE(id,environment_id,team_id,project_key);
+ALTER TABLE control.environments ADD CONSTRAINT environment_group_owner UNIQUE(group_id,id,team_id,project_key);
+ALTER TABLE control.environments ADD CONSTRAINT environment_group_reciprocal
+    FOREIGN KEY(group_id,id,team_id,project_key) REFERENCES control.project_publisher_groups(id,environment_id,team_id,project_key) DEFERRABLE INITIALLY DEFERRED;
+ALTER TABLE control.project_publisher_groups ADD CONSTRAINT publisher_group_environment_reciprocal
+    FOREIGN KEY(id,environment_id,team_id,project_key) REFERENCES control.environments(group_id,id,team_id,project_key) DEFERRABLE INITIALLY DEFERRED;
+ALTER TABLE control.service_runs ADD CONSTRAINT service_run_environment_scope
+    FOREIGN KEY(environment_id,team_id) REFERENCES control.environments(id,team_id) ON DELETE RESTRICT;
 -- +goose StatementBegin
 CREATE FUNCTION control.reject_publisher_group_ingress_pool_move() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -2296,6 +2370,40 @@ CREATE TABLE control.publisher_group_members (
     UNIQUE (group_id, publisher_identity_id),
     FOREIGN KEY (key_id, publisher_identity_id) REFERENCES control.publisher_identity_keys(id, publisher_identity_id) ON DELETE RESTRICT
 );
+-- enrollment issuance and redemption check the current manager. installed
+-- team publishers depend on their own membership, identity/key and exact grant,
+-- never on the human bootstrap issuer or bootstrap key lifetime.
+-- +goose StatementBegin
+CREATE FUNCTION control.environment_group_manager(group_identity text, actor_identity text, at_time timestamptz)
+RETURNS boolean LANGUAGE sql STABLE AS $$
+    SELECT EXISTS(SELECT 1 FROM control.project_publisher_groups publisher_group
+        WHERE publisher_group.id=group_identity AND publisher_group.deleted_at IS NULL
+        AND ((publisher_group.environment_id IS NULL AND NOT EXISTS(SELECT 1 FROM control.environments reverse_owner WHERE reverse_owner.group_id=publisher_group.id)) OR EXISTS(
+            SELECT 1 FROM control.environments environment
+            JOIN control.teams team ON team.id=environment.team_id AND team.deleted_at IS NULL
+            JOIN control.team_memberships member ON member.team_id=team.id AND member.identity_id=actor_identity
+            JOIN control.identities person ON person.id=member.identity_id AND person.disabled_at IS NULL
+            WHERE environment.id=publisher_group.environment_id AND environment.group_id=publisher_group.id
+                AND environment.team_id=publisher_group.team_id AND environment.project_key=publisher_group.project_key
+                AND environment.retired_at IS NULL AND member.role IN('owner','admin')
+                AND control.active_membership(member.id,at_time))))
+$$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+CREATE FUNCTION control.active_publisher(publisher_identity_id text, at_time timestamptz)
+RETURNS boolean LANGUAGE sql STABLE AS $$
+    SELECT EXISTS (SELECT 1 FROM control.publisher_identities p WHERE p.id=publisher_identity_id
+        AND p.revoked_at IS NULL AND (p.ownership<>'member' OR control.active_membership(p.owner_membership_id,at_time))
+        AND NOT EXISTS(SELECT 1 FROM control.publisher_group_members member
+            JOIN control.project_publisher_groups publisher_group ON publisher_group.id=member.group_id
+            LEFT JOIN control.environments environment ON environment.group_id=publisher_group.id
+            WHERE member.publisher_identity_id=p.id AND (publisher_group.environment_id IS NOT NULL OR environment.id IS NOT NULL)
+                AND (publisher_group.environment_id IS NULL OR environment.id IS NULL
+                    OR publisher_group.environment_id<>environment.id OR publisher_group.team_id<>environment.team_id
+                    OR publisher_group.project_key<>environment.project_key OR publisher_group.deleted_at IS NOT NULL
+                    OR environment.retired_at IS NOT NULL)))
+$$;
+-- +goose StatementEnd
 CREATE TABLE control.publisher_group_leases (
     token_digest bytea PRIMARY KEY CHECK (octet_length(token_digest)=32),
     publisher_identity_id text NOT NULL REFERENCES control.publisher_group_members(publisher_identity_id) ON DELETE CASCADE,

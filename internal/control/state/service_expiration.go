@@ -16,7 +16,7 @@ func (d *Database) ExpireServiceRuns(ctx context.Context, now time.Time) (count 
 	    JOIN control.services service ON service.id=run.service_id JOIN control.teams team ON team.id=service.team_id
 	    JOIN control.publisher_grants grant_record ON grant_record.id=run.publisher_grant_id JOIN control.publisher_identities publisher ON publisher.id=run.publisher_identity_id
 	    WHERE run.closed_at IS NULL AND(run.publisher_expires_at<=$1 OR run.state='prepared' AND run.preparation_expires_at<=$1
-	        OR NOT service.enabled OR service.deleted_at IS NOT NULL OR team.deleted_at IS NOT NULL OR publisher.revoked_at IS NOT NULL
+	        OR NOT service.enabled OR service.deleted_at IS NOT NULL OR team.deleted_at IS NOT NULL OR NOT control.active_publisher(publisher.id,$1)
 	        OR grant_record.revoked_at IS NOT NULL OR grant_record.expires_at<=$1)
 	    ORDER BY run.publisher_expires_at,run.id LIMIT 100`, now)
 	if err != nil {
@@ -62,7 +62,7 @@ func (d *Database) ExpireServiceRuns(ctx context.Context, now time.Time) (count 
 			var current bool
 			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.teams team JOIN control.publisher_grants g ON g.id=$2
 			    JOIN control.publisher_identities p ON p.id=$3 WHERE team.id=$1 AND team.deleted_at IS NULL AND g.revoked_at IS NULL
-			    AND(g.expires_at IS NULL OR g.expires_at>$4) AND p.revoked_at IS NULL)`, service.TeamID, run.PublisherGrantID, run.PublisherIdentityID, now).Scan(&current); err != nil {
+			    AND(g.expires_at IS NULL OR g.expires_at>$4) AND control.active_publisher(p.id,$4))`, service.TeamID, run.PublisherGrantID, run.PublisherIdentityID, now).Scan(&current); err != nil {
 				return false, err
 			}
 			if current && service.Enabled && !service.DeletedAt.Valid && run.PublisherExpiresAt.Time.After(now) && (run.State != "prepared" || run.PreparationExpiresAt.Time.After(now)) {

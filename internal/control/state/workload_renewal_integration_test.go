@@ -303,7 +303,7 @@ func workloadPairRenewalRequest(t *testing.T, d *Database, r ApplyProjectConfigu
 	}
 	access := groupAssignmentAccess(t, d, replica, assignment, now)
 	prepared, err := d.PrepareServiceRun(ctx, service, access.PublisherIdentity, "renewal-wait", now,
-		ServiceMetadata{Protocol: assignment.Configuration.Protocol, PublisherPool: true, TrustRevision: assignment.TrustRevision})
+		ServiceMetadata{Protocol: assignment.Configuration.Protocol, PublisherPool: true, TrustRevision: assignment.TrustRevision}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

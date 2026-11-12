@@ -156,7 +156,7 @@ func (q *Queries) ListAppliedProjectServices(ctx context.Context, arg ListApplie
 }
 
 const listProjectPublisherGroups = `-- name: ListProjectPublisherGroups :many
-SELECT ingress_pool_id, template_name, ownership, id, team_id, project_key, name, description, domain_id, namespace, public, deleted_at FROM control.project_publisher_groups WHERE team_id=$1 AND project_key=$2 AND deleted_at IS NULL ORDER BY name
+SELECT ingress_pool_id, template_name, ownership, id, team_id, project_key, name, description, domain_id, namespace, public, deleted_at, environment_id FROM control.project_publisher_groups WHERE team_id=$1 AND project_key=$2 AND deleted_at IS NULL ORDER BY name
 `
 
 type ListProjectPublisherGroupsParams struct {
@@ -186,6 +186,7 @@ func (q *Queries) ListProjectPublisherGroups(ctx context.Context, arg ListProjec
 			&i.Namespace,
 			&i.Public,
 			&i.DeletedAt,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -199,13 +200,14 @@ func (q *Queries) ListProjectPublisherGroups(ctx context.Context, arg ListProjec
 
 const listPublisherGroupMemberStatus = `-- name: ListPublisherGroupMemberStatus :many
 SELECT g.id AS group_id, g.name AS group_name, m.publisher_identity_id, m.key_id,
-    m.observed_revision, p.revision AS current_revision, m.acknowledged_at,
-    (m.healthy AND m.lease_expires_at>$1 AND m.observed_revision=p.revision)::boolean AS healthy,
+    m.observed_revision, CASE WHEN g.environment_id IS NOT NULL OR environment.id IS NOT NULL THEN COALESCE(environment.mutation_revision,0) ELSE p.revision END::bigint AS current_revision, m.acknowledged_at,
+    (m.healthy AND control.active_publisher(i.id,$1) AND m.lease_expires_at>$1 AND m.observed_revision=CASE WHEN g.environment_id IS NOT NULL OR environment.id IS NOT NULL THEN COALESCE(environment.mutation_revision,0) ELSE p.revision END)::boolean AS healthy,
     m.lease_expires_at
 FROM control.project_publisher_groups g
 JOIN control.publisher_group_members m ON m.group_id=g.id
 JOIN control.publisher_identities i ON i.id=m.publisher_identity_id
 JOIN control.applied_projects p ON p.team_id=g.team_id AND p.project_key=g.project_key
+LEFT JOIN control.environments environment ON environment.group_id=g.id
 WHERE g.team_id=$2 AND g.project_key=$3
     AND g.deleted_at IS NULL AND i.revoked_at IS NULL
 ORDER BY g.name,m.publisher_identity_id

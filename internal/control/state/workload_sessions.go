@@ -155,6 +155,10 @@ func (d *Database) ExchangeWorkload(ctx context.Context, r ExchangeWorkloadReque
 	for _, s := range services {
 		binding := s
 		if groupID, name, qualified := strings.Cut(s, "/"); qualified {
+			if groupsByID[groupID].EnvironmentID.Valid {
+				// legacy logical/template scopes do not authorize exact environments.
+				return result, ErrWorkloadDenied
+			}
 			if group, found := groupsByID[groupID]; found && group.TemplateName == "" && configuration.Services[name].PublisherGroup == group.Name {
 				binding = name
 			}

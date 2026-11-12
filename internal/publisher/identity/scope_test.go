@@ -36,19 +36,19 @@ func TestNativeRequiresEndpointIdentityAndSelectedCapabilities(t *testing.T) {
 	id, _ := opaqueid.New(opaqueid.PublicURLPrefix)
 	url.Kind, url.ServiceId, url.PublicUrlId = authorityv1.SavedPublicUrl, nil, &id
 	for _, server := range []string{"", "https://control.example/path", "https://CONTROL.example/"} {
-		if _, err := NewNative(NativeControl{PublicURLControl: endpointControl{server: server}}, &lostEnrollmentResponse{}, url, fixture.private); !errors.Is(err, ErrScope) {
+		if _, err := NewNative(NativeControl{PublicURLControl: endpointControl{server: server}}, &lostEnrollmentResponse{}, url, fixture.private, nil); !errors.Is(err, ErrScope) {
 			t.Fatalf("invalid endpoint identity %q accepted: %v", server, err)
 		}
 	}
 	control := NativeControl{PublicURLControl: &unusedControl{}}
-	if _, err := NewNative(control, &lostEnrollmentResponse{}, service, fixture.private); !errors.Is(err, ErrScope) {
+	if _, err := NewNative(control, &lostEnrollmentResponse{}, service, fixture.private, nil); !errors.Is(err, ErrScope) {
 		t.Fatal("service grant accepted without service capabilities", err)
 	}
-	if _, err := NewNative(control, &lostEnrollmentResponse{}, url, fixture.private); err != nil {
+	if _, err := NewNative(control, &lostEnrollmentResponse{}, url, fixture.private, nil); err != nil {
 		t.Fatal("URL-only grant required irrelevant service capabilities", err)
 	}
 	// endpoint validation does not weaken signing-key validation.
-	if _, err := NewNative(control, &lostEnrollmentResponse{}, url, make(ed25519.PrivateKey, ed25519.PrivateKeySize)); !errors.Is(err, ErrScope) {
+	if _, err := NewNative(control, &lostEnrollmentResponse{}, url, make(ed25519.PrivateKey, ed25519.PrivateKeySize), nil); !errors.Is(err, ErrScope) {
 		t.Fatal("invalid signing key accepted", err)
 	}
 }
@@ -68,7 +68,7 @@ func TestNativeScopeAndSelectedURLSnapshots(t *testing.T) {
 	expected := clonePublicURL(u)
 	control := &snapshotURLControl{url: u}
 	private := bytes.Clone(fixture.private)
-	n, err := NewNative(NativeControl{PublicURLControl: control}, &lostEnrollmentResponse{}, identity, private)
+	n, err := NewNative(NativeControl{PublicURLControl: control}, &lostEnrollmentResponse{}, identity, private, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestNativeForkAndForGrantOwnIndependentScopes(t *testing.T) {
 	domain, _ := opaqueid.New(opaqueid.DomainPrefix)
 	namespace := "member.example"
 	i.Kind, i.ServiceId, i.DomainId, i.Namespace = authorityv1.Namespace, nil, &domain, &namespace
-	n, err := NewNative(NativeControl{PublicURLControl: &unusedControl{}}, &lostEnrollmentResponse{}, i, fixture.private)
+	n, err := NewNative(NativeControl{PublicURLControl: &unusedControl{}}, &lostEnrollmentResponse{}, i, fixture.private, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -164,7 +164,7 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 		}
 		relays[name] = r
 	}
-	prepared, err := d.PrepareServiceRun(ctx, service.ID, publisher, "audit-composition", now, controlstate.ServiceMetadata{Protocol: "http", TrustRevision: 1})
+	prepared, err := d.PrepareServiceRun(ctx, service.ID, publisher, "audit-composition", now, controlstate.ServiceMetadata{Protocol: "http", TrustRevision: 1}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

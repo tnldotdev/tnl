@@ -206,7 +206,7 @@ func enrollGuestNativeWithClients(ctx context.Context, store *clientstate.Store,
 			return nil, err
 		}
 	}
-	native, err := publisheridentity.NewNative(control, authority, identity, private)
+	native, err := publisheridentity.NewNative(control, authority, identity, private, nil)
 	if err != nil {
 		return nil, err
 	}

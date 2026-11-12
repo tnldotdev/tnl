@@ -83,11 +83,20 @@ func (g *Group) Poll(ctx context.Context) (controlv1.PublisherGroupAssignments, 
 	}
 	g.member.GroupName = assignments.Member.GroupName
 	seen := map[string]bool{}
-	for _, a := range assignments.Services {
+	var environment *controlv1.EnvironmentPublication
+	for index, a := range assignments.Services {
 		if a.Service == "" || seen[a.Service] || !opaqueid.Valid(a.GrantId, opaqueid.PublisherGrantPrefix) || a.Configuration.PublisherGroup == nil || *a.Configuration.PublisherGroup != g.member.GroupName {
 			return controlv1.PublisherGroupAssignments{}, ErrScope
 		}
 		seen[a.Service] = true
+		if a.Environment != nil && (!validEnvironmentPublication(a.Environment) || a.Environment.MutationRevision != assignments.Revision || a.Environment.ConfigurationHash != assignments.ConfigurationHash) {
+			return controlv1.PublisherGroupAssignments{}, ErrScope
+		}
+		if index == 0 {
+			environment = a.Environment
+		} else if !sameEnvironmentPublication(environment, a.Environment) {
+			return controlv1.PublisherGroupAssignments{}, ErrScope
+		}
 		if _, err = groupAssignmentIdentity(g.member, a); err != nil {
 			return controlv1.PublisherGroupAssignments{}, err
 		}
@@ -98,9 +107,11 @@ func (g *Group) Poll(ctx context.Context) (controlv1.PublisherGroupAssignments, 
 	if err != nil {
 		return controlv1.PublisherGroupAssignments{}, err
 	}
-	if err = json.Unmarshal(encoded, &g.assigned); err != nil {
+	var snapshot controlv1.PublisherGroupAssignments
+	if err = json.Unmarshal(encoded, &snapshot); err != nil {
 		return controlv1.PublisherGroupAssignments{}, err
 	}
+	g.assigned = snapshot
 	return assignments, nil
 }
 
@@ -134,7 +145,7 @@ func (g *Group) Service(a controlv1.PublisherGroupServiceAssignment) (*Native, e
 	if err != nil {
 		return nil, err
 	}
-	return NewNative(g.control, g.authority, i, g.private)
+	return NewNative(g.control, g.authority, i, g.private, a.Environment)
 }
 
 func (g *Group) Acknowledge(ctx context.Context, revision int64, hash string, healthy bool) error {

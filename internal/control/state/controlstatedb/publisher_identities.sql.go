@@ -590,6 +590,7 @@ SELECT EXISTS (
     LEFT JOIN control.services s ON s.id = g.service_id
     LEFT JOIN control.domains d ON d.id = COALESCE(g.domain_id, u.domain_id, s.domain_id)
     WHERE p.id = $1 AND g.id = $2
+      AND control.active_publisher(p.id,$3)
       AND (p.ownership <> 'member' OR control.active_membership(p.owner_membership_id, CURRENT_TIMESTAMP))
       AND (p.kind = 'guest' OR EXISTS (SELECT 1 FROM control.teams t WHERE t.id = p.team_id AND t.deleted_at IS NULL))
       AND ((g.kind = 'service' AND p.kind <> 'guest' AND s.team_id = p.team_id
@@ -607,12 +608,13 @@ SELECT EXISTS (
 type PublisherScopeAvailableParams struct {
 	PublisherIdentityID string
 	GrantID             string
+	Now                 pgtype.Timestamptz
 }
 
 // this read does not lock resources after identities. URL and service
 // run transactions lock their own saved resource first and recheck the grant.
 func (q *Queries) PublisherScopeAvailable(ctx context.Context, arg PublisherScopeAvailableParams) (bool, error) {
-	row := q.db.QueryRow(ctx, publisherScopeAvailable, arg.PublisherIdentityID, arg.GrantID)
+	row := q.db.QueryRow(ctx, publisherScopeAvailable, arg.PublisherIdentityID, arg.GrantID, arg.Now)
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err

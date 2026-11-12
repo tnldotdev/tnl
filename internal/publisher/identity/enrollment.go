@@ -47,7 +47,7 @@ func EnrollNative(ctx context.Context, state *clientstate.Store, control NativeC
 		if json.Unmarshal(installed.PublicDocument, &identity) != nil || identity.ClientId != installed.ID {
 			return nil, identity, ErrScope
 		}
-		native, err := NewNative(control, authority, identity, installed.SigningKey)
+		native, err := NewNative(control, authority, identity, installed.SigningKey, nil)
 		return native, identity, err
 	}
 	saved, found, err := state.PendingPublisherEnrollment(ctx, p[0])
@@ -87,7 +87,7 @@ func EnrollNative(ctx context.Context, state *clientstate.Store, control NativeC
 			return nil, identity, err
 		}
 	}
-	native, err := NewNative(control, authority, identity, private)
+	native, err := NewNative(control, authority, identity, private, nil)
 	if err != nil {
 		return nil, identity, err
 	}
@@ -115,7 +115,7 @@ func LoadNative(ctx context.Context, state *clientstate.Store, control NativeCon
 	if json.Unmarshal(saved.PublicDocument, &identity) != nil || identity.ClientId != publisherIdentityID || saved.ID != publisherIdentityID {
 		return nil, identity, ErrScope
 	}
-	native, err := NewNative(control, authority, identity, saved.SigningKey)
+	native, err := NewNative(control, authority, identity, saved.SigningKey, nil)
 	return native, identity, err
 }
 

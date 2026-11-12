@@ -66,7 +66,14 @@ func (n *Native) PrepareServiceRun(ctx context.Context, serviceID, key, access s
 	if err != nil {
 		return controlv1.ServiceRunPreparation{}, err
 	}
-	if !sameServiceDeclaration(declaration, ServiceDeclaration(service)) {
+	approved := ServiceDeclaration(service)
+	approved.Environment = cloneEnvironmentPublication(n.environmentPublication)
+	if declaration.Environment == nil {
+		// only the pinned assignment supplies this value. a current metadata read
+		// must not upgrade a stale worker to a newer environment application.
+		declaration.Environment = cloneEnvironmentPublication(n.environmentPublication)
+	}
+	if !sameServiceDeclaration(declaration, approved) {
 		return controlv1.ServiceRunPreparation{}, ErrScope
 	}
 	return control.PrepareServiceRun(ctx, serviceID, key, access, declaration)

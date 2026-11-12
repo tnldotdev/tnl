@@ -37,6 +37,13 @@ func (d *Database) StartServiceRun(ctx context.Context, service, id string, numb
 	if run.RunNumber != number || run.PublisherIdentityID != publisher.ID || run.PublisherGrantID != publisher.GrantID || run.PublisherKeyID != publisher.KeyID || run.ClosedAt.Valid || len(run.CertificateIdentifiers) == 0 || !run.PublisherExpiresAt.Time.After(now) {
 		return result, ErrServiceAccess
 	}
+	environment, err := preparedEnvironmentPublication(run)
+	if err != nil {
+		return result, errors.Join(ErrServiceAccess, err)
+	}
+	if err = validateEnvironmentPublication(ctx, q, service, environment); err != nil {
+		return result, errors.Join(ErrServiceAccess, err)
+	}
 	if run.CertificateHostname != endpoint.CertificateHostname || run.CertificateDomainID != endpoint.DomainID || run.ServicePort != endpoint.ServicePort {
 		return result, ErrServiceAccess
 	}

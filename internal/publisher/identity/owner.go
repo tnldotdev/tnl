@@ -43,7 +43,7 @@ func (n *Native) Fork() (*Native, error) {
 	if n == nil {
 		return nil, ErrScope
 	}
-	copy, err := NewNative(n.NativeControl, n.authority, n.identity.enrollment(), n.private)
+	copy, err := NewNative(n.NativeControl, n.authority, n.identity.enrollment(), n.private, n.environmentPublication)
 	if err != nil {
 		return nil, err
 	}

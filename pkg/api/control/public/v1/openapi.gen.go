@@ -1890,6 +1890,22 @@ type AppliedPublisherGroup struct {
 	Template *string `json:"template,omitempty"`
 }
 
+// ApplyEnvironmentRequest Apply only the selected environment. Omitted targets retain saved approvals. A changed protocol or added service requires explicit complete replacement targets. This operation changes no visitor, workload, provisioning, or enrollment permission.
+type ApplyEnvironmentRequest struct {
+	DefinitionRevision int64 `json:"definition_revision"`
+	ExpectedRevision   int64 `json:"expected_revision"`
+
+	// Targets Complete approved targets keyed by logical service name. Unknown services and missing assigned services are rejected. This has the same target shape for creation and replacement.
+	Targets *EnvironmentTargets `json:"targets,omitempty"`
+	TeamId  string              `json:"team_id"`
+}
+
+// ApplyEnvironmentsRequest Atomically apply the explicitly selected environments in this project on this server. All expected environment revisions must match. Any failure rolls back every selected environment; unselected environments and current authorization are unchanged.
+type ApplyEnvironmentsRequest struct {
+	Environments []EnvironmentApplication `json:"environments"`
+	TeamId       string                   `json:"team_id"`
+}
+
 // ApplyProjectConfigurationRequest defines model for ApplyProjectConfigurationRequest.
 type ApplyProjectConfigurationRequest struct {
 	// Configuration Normalized declarative configuration, at most 512 KiB encoded. All local declarations defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its groups.
@@ -2305,6 +2321,19 @@ type CreateCertificateIssuanceRequest struct {
 	PublishRunNumber int64  `json:"publish_run_number"`
 }
 
+// CreateEnvironmentRequest defines model for CreateEnvironmentRequest.
+type CreateEnvironmentRequest struct {
+	DefinitionRevision int64   `json:"definition_revision"`
+	IdempotencyKey     string  `json:"idempotency_key"`
+	Name               string  `json:"name"`
+	ProjectLabel       *string `json:"project_label,omitempty"`
+	SourceFingerprint  string  `json:"source_fingerprint"`
+
+	// Targets Complete approved targets keyed by logical service name. Unknown services and missing assigned services are rejected. This has the same target shape for creation and replacement.
+	Targets EnvironmentTargets `json:"targets"`
+	TeamId  string             `json:"team_id"`
+}
+
 // CreateFeedbackReportRequest defines model for CreateFeedbackReportRequest.
 type CreateFeedbackReportRequest struct {
 	Access           FeedbackReviewerAccess `json:"access"`
@@ -2411,6 +2440,15 @@ type CreateServiceCertificateIssuanceRequest struct {
 	RunNumber int64  `json:"run_number"`
 }
 
+// CreateServiceDefinitionRequest defines model for CreateServiceDefinitionRequest.
+type CreateServiceDefinitionRequest struct {
+	// Definition Reusable service shape only. Targets, target trust, identities, permissions, and collection membership are separate state. Publishing a definition does not update any environment.
+	Definition        ServiceDefinition `json:"definition"`
+	ProjectLabel      *string           `json:"project_label,omitempty"`
+	SourceFingerprint string            `json:"source_fingerprint"`
+	TeamId            string            `json:"team_id"`
+}
+
 // CreateServiceGrantRequest defines model for CreateServiceGrantRequest.
 type CreateServiceGrantRequest struct {
 	ExpiresAt  *time.Time                    `json:"expires_at,omitempty"`
@@ -2485,6 +2523,80 @@ type EnrollGuestPublisherRequest struct {
 	PublicKey   string      `json:"public_key"`
 	PublicUrlId PublicURLID `json:"public_url_id"`
 }
+
+// Environment Manager-only saved environment and its applied resources. Targets are sensitive management data, not browser metadata or connection credentials. Definition rollback increases mutation_revision and never restores revoked authorization.
+type Environment struct {
+	AppliedDefinitionRevision int64  `json:"applied_definition_revision"`
+	ConfigurationHash         string `json:"configuration_hash"`
+	Id                        string `json:"id"`
+	MutationRevision          int64  `json:"mutation_revision"`
+	Name                      string `json:"name"`
+	ProjectKey                string `json:"project_key"`
+
+	// Ref Nonsecret selection of one immutable environment on one control server. Possession of this reference grants no access.
+	Ref      EnvironmentReference `json:"ref"`
+	Services []EnvironmentService `json:"services"`
+
+	// Targets Complete approved targets keyed by logical service name. Unknown services and missing assigned services are rejected. This has the same target shape for creation and replacement.
+	Targets EnvironmentTargets `json:"targets"`
+	TeamId  string             `json:"team_id"`
+}
+
+// EnvironmentApplication defines model for EnvironmentApplication.
+type EnvironmentApplication struct {
+	DefinitionRevision int64  `json:"definition_revision"`
+	EnvironmentId      string `json:"environment_id"`
+	ExpectedRevision   int64  `json:"expected_revision"`
+
+	// Targets Complete approved targets keyed by logical service name. Unknown services and missing assigned services are rejected. This has the same target shape for creation and replacement.
+	Targets *EnvironmentTargets `json:"targets,omitempty"`
+}
+
+// EnvironmentPublication The exact saved environment application assigned to this publisher worker. This is a publication freshness fence, not a visitor, provisioning, or publisher permission. Preparation must supply it unchanged; control never substitutes the latest application for an omitted or stale value.
+type EnvironmentPublication struct {
+	ConfigurationHash string `json:"configuration_hash"`
+	EnvironmentId     string `json:"environment_id"`
+	MutationRevision  int64  `json:"mutation_revision"`
+}
+
+// EnvironmentReference Nonsecret selection of one immutable environment on one control server. Possession of this reference grants no access.
+type EnvironmentReference struct {
+	EnvironmentId string `json:"environment_id"`
+	ProjectKey    string `json:"project_key"`
+	Server        string `json:"server"`
+}
+
+// EnvironmentService defines model for EnvironmentService.
+type EnvironmentService struct {
+	Hostname      string          `json:"hostname"`
+	Port          int             `json:"port"`
+	Protocol      ServiceProtocol `json:"protocol"`
+	Public        bool            `json:"public"`
+	Service       string          `json:"service"`
+	ServiceId     ServiceID       `json:"service_id"`
+	TrustRevision int64           `json:"trust_revision"`
+}
+
+// EnvironmentTarget One environment's approved destination, with exactly one of address or discovery. The service definition supplies the protocol; a target cannot override it. Provider discovery supplies its own target trust and cannot be combined with tls. Discovery uses the assigned publisher's credentials, never control's credentials.
+type EnvironmentTarget struct {
+	Address *string `json:"address,omitempty"`
+
+	// Discovery Exact provider selector resolved by the assigned publisher with its own AWS credentials. Control does not discover targets or credentials. EKS requires kubernetes; RDS requires postgres or mysql, verified against provider metadata.
+	Discovery *ProjectTargetDiscovery `json:"discovery,omitempty"`
+
+	// Tls Explicit verified publisher-to-target TLS. An empty object uses the destination hostname and system roots. ca_pem adds a CA-only snapshot, never a server-side file path. Saved targets return the normalized hostname and approved digest. Protocol-specific negotiation has no plaintext or unverified fallback.
+	Tls *EnvironmentTargetTLS `json:"tls,omitempty"`
+}
+
+// EnvironmentTargetTLS Explicit verified publisher-to-target TLS. An empty object uses the destination hostname and system roots. ca_pem adds a CA-only snapshot, never a server-side file path. Saved targets return the normalized hostname and approved digest. Protocol-specific negotiation has no plaintext or unverified fallback.
+type EnvironmentTargetTLS struct {
+	CaPem    *string `json:"ca_pem,omitempty"`
+	Digest   *string `json:"digest,omitempty"`
+	Hostname *string `json:"hostname,omitempty"`
+}
+
+// EnvironmentTargets Complete approved targets keyed by logical service name. Unknown services and missing assigned services are rejected. This has the same target shape for creation and replacement.
+type EnvironmentTargets map[string]EnvironmentTarget
 
 // FeedbackAnchor defines model for FeedbackAnchor.
 type FeedbackAnchor struct {
@@ -3316,7 +3428,10 @@ type PublisherGroupResource struct {
 
 // PublisherGroupServiceAssignment defines model for PublisherGroupServiceAssignment.
 type PublisherGroupServiceAssignment struct {
-	Configuration ProjectServiceConfiguration                `json:"configuration"`
+	Configuration ProjectServiceConfiguration `json:"configuration"`
+
+	// Environment The exact saved environment application assigned to this publisher worker. This is a publication freshness fence, not a visitor, provisioning, or publisher permission. Preparation must supply it unchanged; control never substitutes the latest application for an omitted or stale value.
+	Environment   *EnvironmentPublication                    `json:"environment,omitempty"`
 	GrantId       string                                     `json:"grant_id"`
 	Hostname      *string                                    `json:"hostname,omitempty"`
 	Service       string                                     `json:"service"`
@@ -3647,6 +3762,28 @@ type ServiceClientCertificateDecision struct {
 	ValidUntil time.Time `json:"valid_until"`
 }
 
+// ServiceDefinition Reusable service shape only. Targets, target trust, identities, permissions, and collection membership are separate state. Publishing a definition does not update any environment.
+type ServiceDefinition struct {
+	Services map[string]ServiceDefinitionService `json:"services"`
+}
+
+// ServiceDefinitionRevision defines model for ServiceDefinitionRevision.
+type ServiceDefinitionRevision struct {
+	ConfigurationHash string `json:"configuration_hash"`
+
+	// Definition Reusable service shape only. Targets, target trust, identities, permissions, and collection membership are separate state. Publishing a definition does not update any environment.
+	Definition        ServiceDefinition `json:"definition"`
+	ProjectKey        string            `json:"project_key"`
+	Revision          int64             `json:"revision"`
+	SourceFingerprint string            `json:"source_fingerprint"`
+	TeamId            string            `json:"team_id"`
+}
+
+// ServiceDefinitionService defines model for ServiceDefinitionService.
+type ServiceDefinitionService struct {
+	Protocol ServiceProtocol `json:"protocol"`
+}
+
 // ServiceEndpoint Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
 type ServiceEndpoint struct {
 	Hostname string `json:"hostname"`
@@ -3788,9 +3925,11 @@ type ServicePlacement struct {
 // ServiceProtocol defines model for ServiceProtocol.
 type ServiceProtocol string
 
-// ServiceRunDeclaration defines model for ServiceRunDeclaration.
+// ServiceRunDeclaration Protocol and trust approved for this worker. Environment-owned services also require the exact environment application from its assignment; non-environment services reject an environment fence. A target-only update or rollback invalidates an older application even when protocol and TLS are unchanged.
 type ServiceRunDeclaration struct {
-	Protocol ServiceProtocol `json:"protocol"`
+	// Environment The exact saved environment application assigned to this publisher worker. This is a publication freshness fence, not a visitor, provisioning, or publisher permission. Preparation must supply it unchanged; control never substitutes the latest application for an omitted or stale value.
+	Environment *EnvironmentPublication `json:"environment,omitempty"`
+	Protocol    ServiceProtocol         `json:"protocol"`
 
 	// TargetTls Approved publisher-to-target trust. This never selects or disables visitor TLS.
 	TargetTls     *ServiceTargetTLS `json:"target_tls,omitempty"`
@@ -4419,6 +4558,22 @@ type GetProjectConfigurationParams struct {
 	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
 }
 
+// ListEnvironmentsParams defines parameters for ListEnvironments.
+type ListEnvironmentsParams struct {
+	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
+}
+
+// RetireEnvironmentParams defines parameters for RetireEnvironment.
+type RetireEnvironmentParams struct {
+	TeamId           TeamIDQuery `form:"team_id" json:"team_id"`
+	ExpectedRevision int64       `form:"expected_revision" json:"expected_revision"`
+}
+
+// GetEnvironmentParams defines parameters for GetEnvironment.
+type GetEnvironmentParams struct {
+	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
+}
+
 // GetLocalProjectServiceParams defines parameters for GetLocalProjectService.
 type GetLocalProjectServiceParams struct {
 	TeamId            TeamIDQuery `form:"team_id" json:"team_id"`
@@ -4670,6 +4825,15 @@ type SetPreviewTeamAccessJSONRequestBody = SetPreviewTeamAccessRequest
 // ApplyProjectConfigurationJSONRequestBody defines body for ApplyProjectConfiguration for application/json ContentType.
 type ApplyProjectConfigurationJSONRequestBody = ApplyProjectConfigurationRequest
 
+// CreateEnvironmentJSONRequestBody defines body for CreateEnvironment for application/json ContentType.
+type CreateEnvironmentJSONRequestBody = CreateEnvironmentRequest
+
+// ApplyEnvironmentsJSONRequestBody defines body for ApplyEnvironments for application/json ContentType.
+type ApplyEnvironmentsJSONRequestBody = ApplyEnvironmentsRequest
+
+// ApplyEnvironmentJSONRequestBody defines body for ApplyEnvironment for application/json ContentType.
+type ApplyEnvironmentJSONRequestBody = ApplyEnvironmentRequest
+
 // RealizeLocalProjectServiceJSONRequestBody defines body for RealizeLocalProjectService for application/json ContentType.
 type RealizeLocalProjectServiceJSONRequestBody = RealizeLocalProjectServiceRequest
 
@@ -4690,6 +4854,9 @@ type RenamePublisherNamespaceJSONRequestBody = RenamePublisherNamespaceRequest
 
 // RenamePublisherGroupJSONRequestBody defines body for RenamePublisherGroup for application/json ContentType.
 type RenamePublisherGroupJSONRequestBody = RenamePublisherGroupRequest
+
+// CreateServiceDefinitionJSONRequestBody defines body for CreateServiceDefinition for application/json ContentType.
+type CreateServiceDefinitionJSONRequestBody = CreateServiceDefinitionRequest
 
 // CreatePublicURLJSONRequestBody defines body for CreatePublicURL for application/json ContentType.
 type CreatePublicURLJSONRequestBody = CreatePublicURLRequest
@@ -5218,6 +5385,57 @@ type ClientInterface interface {
 	// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
 	ApplyProjectConfiguration(ctx context.Context, projectKey string, body ApplyProjectConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListEnvironments performs a GET /v1/projects/{project_key}/environments (the `ListEnvironments` operationId) request.
+	//
+	// List active environments in this project as a current team manager. Contains sensitive target settings; never use as browser metadata.
+	ListEnvironments(ctx context.Context, projectKey string, params *ListEnvironmentsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateEnvironmentWithBody performs a POST /v1/projects/{project_key}/environments (the `CreateEnvironment` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Materialize one environment from an immutable definition and complete approved targets as a current team manager. Creation grants no visitor or workload permission. Authorized identical retries return the same environment; changed requests or retired creation keys conflict. The name does not select a target, publisher identity, or authorization scope.
+	CreateEnvironmentWithBody(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateEnvironment performs a POST /v1/projects/{project_key}/environments (the `CreateEnvironment` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Materialize one environment from an immutable definition and complete approved targets as a current team manager. Creation grants no visitor or workload permission. Authorized identical retries return the same environment; changed requests or retired creation keys conflict. The name does not select a target, publisher identity, or authorization scope.
+	CreateEnvironment(ctx context.Context, projectKey string, body CreateEnvironmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ApplyEnvironmentsWithBody performs a POST /v1/projects/{project_key}/environments/apply (the `ApplyEnvironments` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Atomically apply the selected environments as a current team manager. Check every expected environment revision in one transaction; any validation, capacity, or revision failure saves nothing. Definition rollout does not reconcile current authorization.
+	ApplyEnvironmentsWithBody(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ApplyEnvironments performs a POST /v1/projects/{project_key}/environments/apply (the `ApplyEnvironments` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Atomically apply the selected environments as a current team manager. Check every expected environment revision in one transaction; any validation, capacity, or revision failure saves nothing. Definition rollout does not reconcile current authorization.
+	ApplyEnvironments(ctx context.Context, projectKey string, body ApplyEnvironmentsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RetireEnvironment performs a DELETE /v1/projects/{project_key}/environments/{environment_id} (the `RetireEnvironment` operationId) request.
+	//
+	// Retire only this environment and its publications as a current team manager. Its saved creation key cannot recreate it. Other environments, local worktrees, and their authorizations remain unchanged.
+	RetireEnvironment(ctx context.Context, projectKey string, environmentId string, params *RetireEnvironmentParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetEnvironment performs a GET /v1/projects/{project_key}/environments/{environment_id} (the `GetEnvironment` operationId) request.
+	//
+	// Read one exact immutable environment in this project as a current team manager. Does not search names, another project, or another team.
+	GetEnvironment(ctx context.Context, projectKey string, environmentId string, params *GetEnvironmentParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ApplyEnvironmentWithBody performs a POST /v1/projects/{project_key}/environments/{environment_id}/apply (the `ApplyEnvironment` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Apply one pinned definition and approved targets to this exact environment as a current team manager. A rollback still advances its mutation revision. No other environment is reconciled; no current permission is restored from definition history.
+	ApplyEnvironmentWithBody(ctx context.Context, projectKey string, environmentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ApplyEnvironment performs a POST /v1/projects/{project_key}/environments/{environment_id}/apply (the `ApplyEnvironment` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Apply one pinned definition and approved targets to this exact environment as a current team manager. A rollback still advances its mutation revision. No other environment is reconciled; no current permission is restored from definition history.
+	ApplyEnvironment(ctx context.Context, projectKey string, environmentId string, body ApplyEnvironmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetLocalProjectService performs a GET /v1/projects/{project_key}/local-services/{service} (the `GetLocalProjectService` operationId) request.
 	//
 	// Read the exact service previously realized for this team, project source, service key, and worktree. Requires current ordinary private visitor access, not project management access. Returns only immutable identity and approved visitor protocol/TLS metadata, never configuration, targets, or credentials. Does not realize or adopt a service. Missing or unauthorized bindings return not found; an authorized binding with another source fingerprint returns conflict. No other team, project, worktree, or saved name is searched.
@@ -5331,6 +5549,18 @@ type ClientInterface interface {
 	//
 	// Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
 	RenamePublisherGroup(ctx context.Context, projectKey string, groupName string, body RenamePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateServiceDefinitionWithBody performs a POST /v1/projects/{project_key}/service-definitions (the `CreateServiceDefinition` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Save an immutable project service definition as a current team manager. Equal normalized definitions reuse their revision. Publishing a definition alone changes no environment, target, permission, or publisher assignment.
+	CreateServiceDefinitionWithBody(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateServiceDefinition performs a POST /v1/projects/{project_key}/service-definitions (the `CreateServiceDefinition` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Save an immutable project service definition as a current team manager. Equal normalized definitions reuse their revision. Publishing a definition alone changes no environment, target, permission, or publisher assignment.
+	CreateServiceDefinition(ctx context.Context, projectKey string, body CreateServiceDefinitionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetProjectService performs a GET /v1/projects/{project_key}/services/{service} (the `GetProjectService` operationId) request.
 	//
@@ -6786,6 +7016,147 @@ func (c *Client) ApplyProjectConfiguration(ctx context.Context, projectKey strin
 	return c.Client.Do(req)
 }
 
+// ListEnvironments performs a GET /v1/projects/{project_key}/environments (the `ListEnvironments` operationId) request.
+//
+// List active environments in this project as a current team manager. Contains sensitive target settings; never use as browser metadata.
+func (c *Client) ListEnvironments(ctx context.Context, projectKey string, params *ListEnvironmentsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListEnvironmentsRequest(c.Server, projectKey, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateEnvironmentWithBody performs a POST /v1/projects/{project_key}/environments (the `CreateEnvironment` operationId) request,
+// with any type of body and a specified content type.
+//
+// Materialize one environment from an immutable definition and complete approved targets as a current team manager. Creation grants no visitor or workload permission. Authorized identical retries return the same environment; changed requests or retired creation keys conflict. The name does not select a target, publisher identity, or authorization scope.
+func (c *Client) CreateEnvironmentWithBody(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateEnvironmentRequestWithBody(c.Server, projectKey, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateEnvironment performs a POST /v1/projects/{project_key}/environments (the `CreateEnvironment` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Materialize one environment from an immutable definition and complete approved targets as a current team manager. Creation grants no visitor or workload permission. Authorized identical retries return the same environment; changed requests or retired creation keys conflict. The name does not select a target, publisher identity, or authorization scope.
+func (c *Client) CreateEnvironment(ctx context.Context, projectKey string, body CreateEnvironmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateEnvironmentRequest(c.Server, projectKey, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ApplyEnvironmentsWithBody performs a POST /v1/projects/{project_key}/environments/apply (the `ApplyEnvironments` operationId) request,
+// with any type of body and a specified content type.
+//
+// Atomically apply the selected environments as a current team manager. Check every expected environment revision in one transaction; any validation, capacity, or revision failure saves nothing. Definition rollout does not reconcile current authorization.
+func (c *Client) ApplyEnvironmentsWithBody(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApplyEnvironmentsRequestWithBody(c.Server, projectKey, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ApplyEnvironments performs a POST /v1/projects/{project_key}/environments/apply (the `ApplyEnvironments` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Atomically apply the selected environments as a current team manager. Check every expected environment revision in one transaction; any validation, capacity, or revision failure saves nothing. Definition rollout does not reconcile current authorization.
+func (c *Client) ApplyEnvironments(ctx context.Context, projectKey string, body ApplyEnvironmentsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApplyEnvironmentsRequest(c.Server, projectKey, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RetireEnvironment performs a DELETE /v1/projects/{project_key}/environments/{environment_id} (the `RetireEnvironment` operationId) request.
+//
+// Retire only this environment and its publications as a current team manager. Its saved creation key cannot recreate it. Other environments, local worktrees, and their authorizations remain unchanged.
+func (c *Client) RetireEnvironment(ctx context.Context, projectKey string, environmentId string, params *RetireEnvironmentParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRetireEnvironmentRequest(c.Server, projectKey, environmentId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetEnvironment performs a GET /v1/projects/{project_key}/environments/{environment_id} (the `GetEnvironment` operationId) request.
+//
+// Read one exact immutable environment in this project as a current team manager. Does not search names, another project, or another team.
+func (c *Client) GetEnvironment(ctx context.Context, projectKey string, environmentId string, params *GetEnvironmentParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetEnvironmentRequest(c.Server, projectKey, environmentId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ApplyEnvironmentWithBody performs a POST /v1/projects/{project_key}/environments/{environment_id}/apply (the `ApplyEnvironment` operationId) request,
+// with any type of body and a specified content type.
+//
+// Apply one pinned definition and approved targets to this exact environment as a current team manager. A rollback still advances its mutation revision. No other environment is reconciled; no current permission is restored from definition history.
+func (c *Client) ApplyEnvironmentWithBody(ctx context.Context, projectKey string, environmentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApplyEnvironmentRequestWithBody(c.Server, projectKey, environmentId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ApplyEnvironment performs a POST /v1/projects/{project_key}/environments/{environment_id}/apply (the `ApplyEnvironment` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Apply one pinned definition and approved targets to this exact environment as a current team manager. A rollback still advances its mutation revision. No other environment is reconciled; no current permission is restored from definition history.
+func (c *Client) ApplyEnvironment(ctx context.Context, projectKey string, environmentId string, body ApplyEnvironmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApplyEnvironmentRequest(c.Server, projectKey, environmentId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetLocalProjectService performs a GET /v1/projects/{project_key}/local-services/{service} (the `GetLocalProjectService` operationId) request.
 //
 // Read the exact service previously realized for this team, project source, service key, and worktree. Requires current ordinary private visitor access, not project management access. Returns only immutable identity and approved visitor protocol/TLS metadata, never configuration, targets, or credentials. Does not realize or adopt a service. Missing or unauthorized bindings return not found; an authorized binding with another source fingerprint returns conflict. No other team, project, worktree, or saved name is searched.
@@ -7110,6 +7481,38 @@ func (c *Client) RenamePublisherGroupWithBody(ctx context.Context, projectKey st
 // Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
 func (c *Client) RenamePublisherGroup(ctx context.Context, projectKey string, groupName string, body RenamePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRenamePublisherGroupRequest(c.Server, projectKey, groupName, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateServiceDefinitionWithBody performs a POST /v1/projects/{project_key}/service-definitions (the `CreateServiceDefinition` operationId) request,
+// with any type of body and a specified content type.
+//
+// Save an immutable project service definition as a current team manager. Equal normalized definitions reuse their revision. Publishing a definition alone changes no environment, target, permission, or publisher assignment.
+func (c *Client) CreateServiceDefinitionWithBody(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateServiceDefinitionRequestWithBody(c.Server, projectKey, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateServiceDefinition performs a POST /v1/projects/{project_key}/service-definitions (the `CreateServiceDefinition` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Save an immutable project service definition as a current team manager. Equal normalized definitions reuse their revision. Publishing a definition alone changes no environment, target, permission, or publisher assignment.
+func (c *Client) CreateServiceDefinition(ctx context.Context, projectKey string, body CreateServiceDefinitionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateServiceDefinitionRequest(c.Server, projectKey, body)
 	if err != nil {
 		return nil, err
 	}
@@ -10898,6 +11301,347 @@ func NewApplyProjectConfigurationRequestWithBody(server string, projectKey strin
 	return req, nil
 }
 
+// NewListEnvironmentsRequest constructs an http.Request for the ListEnvironments method
+func NewListEnvironmentsRequest(server string, projectKey string, params *ListEnvironmentsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/environments", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateEnvironmentRequest calls the generic CreateEnvironment builder with application/json body
+func NewCreateEnvironmentRequest(server string, projectKey string, body CreateEnvironmentJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateEnvironmentRequestWithBody(server, projectKey, "application/json", bodyReader)
+}
+
+// NewCreateEnvironmentRequestWithBody constructs an http.Request for the CreateEnvironment method, with any body, and a specified content type
+func NewCreateEnvironmentRequestWithBody(server string, projectKey string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/environments", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewApplyEnvironmentsRequest calls the generic ApplyEnvironments builder with application/json body
+func NewApplyEnvironmentsRequest(server string, projectKey string, body ApplyEnvironmentsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewApplyEnvironmentsRequestWithBody(server, projectKey, "application/json", bodyReader)
+}
+
+// NewApplyEnvironmentsRequestWithBody constructs an http.Request for the ApplyEnvironments method, with any body, and a specified content type
+func NewApplyEnvironmentsRequestWithBody(server string, projectKey string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/environments/apply", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRetireEnvironmentRequest constructs an http.Request for the RetireEnvironment method
+func NewRetireEnvironmentRequest(server string, projectKey string, environmentId string, params *RetireEnvironmentParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "environment_id", environmentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/environments/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "expected_revision", params.ExpectedRevision, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetEnvironmentRequest constructs an http.Request for the GetEnvironment method
+func NewGetEnvironmentRequest(server string, projectKey string, environmentId string, params *GetEnvironmentParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "environment_id", environmentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/environments/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewApplyEnvironmentRequest calls the generic ApplyEnvironment builder with application/json body
+func NewApplyEnvironmentRequest(server string, projectKey string, environmentId string, body ApplyEnvironmentJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewApplyEnvironmentRequestWithBody(server, projectKey, environmentId, "application/json", bodyReader)
+}
+
+// NewApplyEnvironmentRequestWithBody constructs an http.Request for the ApplyEnvironment method, with any body, and a specified content type
+func NewApplyEnvironmentRequestWithBody(server string, projectKey string, environmentId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "environment_id", environmentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/environments/%s/apply", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetLocalProjectServiceRequest constructs an http.Request for the GetLocalProjectService method
 func NewGetLocalProjectServiceRequest(server string, projectKey string, service string, params *GetLocalProjectServiceParams) (*http.Request, error) {
 	var err error
@@ -11779,6 +12523,53 @@ func NewRenamePublisherGroupRequestWithBody(server string, projectKey string, gr
 	}
 
 	operationPath := fmt.Sprintf("/v1/projects/%s/publisher-groups/%s/rename", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewCreateServiceDefinitionRequest calls the generic CreateServiceDefinition builder with application/json body
+func NewCreateServiceDefinitionRequest(server string, projectKey string, body CreateServiceDefinitionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateServiceDefinitionRequestWithBody(server, projectKey, "application/json", bodyReader)
+}
+
+// NewCreateServiceDefinitionRequestWithBody constructs an http.Request for the CreateServiceDefinition method, with any body, and a specified content type
+func NewCreateServiceDefinitionRequestWithBody(server string, projectKey string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/service-definitions", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -16950,6 +17741,69 @@ type ClientWithResponsesInterface interface {
 	// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
 	ApplyProjectConfigurationWithResponse(ctx context.Context, projectKey string, body ApplyProjectConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*ApplyProjectConfigurationResponse, error)
 
+	// ListEnvironmentsWithResponse performs a GET /v1/projects/{project_key}/environments (the `ListEnvironments` operationId) request.
+	//
+	// List active environments in this project as a current team manager. Contains sensitive target settings; never use as browser metadata.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ListEnvironmentsWithResponse(ctx context.Context, projectKey string, params *ListEnvironmentsParams, reqEditors ...RequestEditorFn) (*ListEnvironmentsResponse, error)
+
+	// CreateEnvironmentWithBodyWithResponse performs a POST /v1/projects/{project_key}/environments (the `CreateEnvironment` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Materialize one environment from an immutable definition and complete approved targets as a current team manager. Creation grants no visitor or workload permission. Authorized identical retries return the same environment; changed requests or retired creation keys conflict. The name does not select a target, publisher identity, or authorization scope.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CreateEnvironmentWithBodyWithResponse(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateEnvironmentResponse, error)
+
+	// CreateEnvironmentWithResponse performs a POST /v1/projects/{project_key}/environments (the `CreateEnvironment` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Materialize one environment from an immutable definition and complete approved targets as a current team manager. Creation grants no visitor or workload permission. Authorized identical retries return the same environment; changed requests or retired creation keys conflict. The name does not select a target, publisher identity, or authorization scope.
+	CreateEnvironmentWithResponse(ctx context.Context, projectKey string, body CreateEnvironmentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateEnvironmentResponse, error)
+
+	// ApplyEnvironmentsWithBodyWithResponse performs a POST /v1/projects/{project_key}/environments/apply (the `ApplyEnvironments` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Atomically apply the selected environments as a current team manager. Check every expected environment revision in one transaction; any validation, capacity, or revision failure saves nothing. Definition rollout does not reconcile current authorization.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ApplyEnvironmentsWithBodyWithResponse(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApplyEnvironmentsResponse, error)
+
+	// ApplyEnvironmentsWithResponse performs a POST /v1/projects/{project_key}/environments/apply (the `ApplyEnvironments` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Atomically apply the selected environments as a current team manager. Check every expected environment revision in one transaction; any validation, capacity, or revision failure saves nothing. Definition rollout does not reconcile current authorization.
+	ApplyEnvironmentsWithResponse(ctx context.Context, projectKey string, body ApplyEnvironmentsJSONRequestBody, reqEditors ...RequestEditorFn) (*ApplyEnvironmentsResponse, error)
+
+	// RetireEnvironmentWithResponse performs a DELETE /v1/projects/{project_key}/environments/{environment_id} (the `RetireEnvironment` operationId) request.
+	//
+	// Retire only this environment and its publications as a current team manager. Its saved creation key cannot recreate it. Other environments, local worktrees, and their authorizations remain unchanged.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RetireEnvironmentWithResponse(ctx context.Context, projectKey string, environmentId string, params *RetireEnvironmentParams, reqEditors ...RequestEditorFn) (*RetireEnvironmentResponse, error)
+
+	// GetEnvironmentWithResponse performs a GET /v1/projects/{project_key}/environments/{environment_id} (the `GetEnvironment` operationId) request.
+	//
+	// Read one exact immutable environment in this project as a current team manager. Does not search names, another project, or another team.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	GetEnvironmentWithResponse(ctx context.Context, projectKey string, environmentId string, params *GetEnvironmentParams, reqEditors ...RequestEditorFn) (*GetEnvironmentResponse, error)
+
+	// ApplyEnvironmentWithBodyWithResponse performs a POST /v1/projects/{project_key}/environments/{environment_id}/apply (the `ApplyEnvironment` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Apply one pinned definition and approved targets to this exact environment as a current team manager. A rollback still advances its mutation revision. No other environment is reconciled; no current permission is restored from definition history.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ApplyEnvironmentWithBodyWithResponse(ctx context.Context, projectKey string, environmentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApplyEnvironmentResponse, error)
+
+	// ApplyEnvironmentWithResponse performs a POST /v1/projects/{project_key}/environments/{environment_id}/apply (the `ApplyEnvironment` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Apply one pinned definition and approved targets to this exact environment as a current team manager. A rollback still advances its mutation revision. No other environment is reconciled; no current permission is restored from definition history.
+	ApplyEnvironmentWithResponse(ctx context.Context, projectKey string, environmentId string, body ApplyEnvironmentJSONRequestBody, reqEditors ...RequestEditorFn) (*ApplyEnvironmentResponse, error)
+
 	// GetLocalProjectServiceWithResponse performs a GET /v1/projects/{project_key}/local-services/{service} (the `GetLocalProjectService` operationId) request.
 	//
 	// Read the exact service previously realized for this team, project source, service key, and worktree. Requires current ordinary private visitor access, not project management access. Returns only immutable identity and approved visitor protocol/TLS metadata, never configuration, targets, or credentials. Does not realize or adopt a service. Missing or unauthorized bindings return not found; an authorized binding with another source fingerprint returns conflict. No other team, project, worktree, or saved name is searched.
@@ -17093,6 +17947,20 @@ type ClientWithResponsesInterface interface {
 	//
 	// Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
 	RenamePublisherGroupWithResponse(ctx context.Context, projectKey string, groupName string, body RenamePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*RenamePublisherGroupResponse, error)
+
+	// CreateServiceDefinitionWithBodyWithResponse performs a POST /v1/projects/{project_key}/service-definitions (the `CreateServiceDefinition` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Save an immutable project service definition as a current team manager. Equal normalized definitions reuse their revision. Publishing a definition alone changes no environment, target, permission, or publisher assignment.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CreateServiceDefinitionWithBodyWithResponse(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateServiceDefinitionResponse, error)
+
+	// CreateServiceDefinitionWithResponse performs a POST /v1/projects/{project_key}/service-definitions (the `CreateServiceDefinition` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Save an immutable project service definition as a current team manager. Equal normalized definitions reuse their revision. Publishing a definition alone changes no environment, target, permission, or publisher assignment.
+	CreateServiceDefinitionWithResponse(ctx context.Context, projectKey string, body CreateServiceDefinitionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateServiceDefinitionResponse, error)
 
 	// GetProjectServiceWithResponse performs a GET /v1/projects/{project_key}/services/{service} (the `GetProjectService` operationId) request.
 	//
@@ -19444,6 +20312,287 @@ func (r ApplyProjectConfigurationResponse) ContentType() string {
 	return ""
 }
 
+type ListEnvironmentsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]Environment
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListEnvironmentsResponse) GetJSON200() *[]Environment {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListEnvironmentsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListEnvironmentsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListEnvironmentsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListEnvironmentsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListEnvironmentsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateEnvironmentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Environment
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CreateEnvironmentResponse) GetJSON200() *Environment {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateEnvironmentResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateEnvironmentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateEnvironmentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateEnvironmentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateEnvironmentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ApplyEnvironmentsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]Environment
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ApplyEnvironmentsResponse) GetJSON200() *[]Environment {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ApplyEnvironmentsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ApplyEnvironmentsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ApplyEnvironmentsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ApplyEnvironmentsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ApplyEnvironmentsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RetireEnvironmentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RetireEnvironmentResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RetireEnvironmentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RetireEnvironmentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RetireEnvironmentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RetireEnvironmentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetEnvironmentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Environment
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetEnvironmentResponse) GetJSON200() *Environment {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetEnvironmentResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetEnvironmentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetEnvironmentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetEnvironmentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetEnvironmentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ApplyEnvironmentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Environment
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ApplyEnvironmentResponse) GetJSON200() *Environment {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ApplyEnvironmentResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ApplyEnvironmentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ApplyEnvironmentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ApplyEnvironmentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ApplyEnvironmentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetLocalProjectServiceResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -20144,6 +21293,54 @@ func (r RenamePublisherGroupResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RenamePublisherGroupResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateServiceDefinitionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ServiceDefinitionRevision
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CreateServiceDefinitionResponse) GetJSON200() *ServiceDefinitionRevision {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateServiceDefinitionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateServiceDefinitionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateServiceDefinitionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateServiceDefinitionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateServiceDefinitionResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -25314,6 +26511,123 @@ func (c *ClientWithResponses) ApplyProjectConfigurationWithResponse(ctx context.
 	return ParseApplyProjectConfigurationResponse(rsp)
 }
 
+// ListEnvironmentsWithResponse performs a GET /v1/projects/{project_key}/environments (the `ListEnvironments` operationId) request.
+//
+// List active environments in this project as a current team manager. Contains sensitive target settings; never use as browser metadata.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ListEnvironmentsWithResponse(ctx context.Context, projectKey string, params *ListEnvironmentsParams, reqEditors ...RequestEditorFn) (*ListEnvironmentsResponse, error) {
+	rsp, err := c.ListEnvironments(ctx, projectKey, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListEnvironmentsResponse(rsp)
+}
+
+// CreateEnvironmentWithBodyWithResponse performs a POST /v1/projects/{project_key}/environments (the `CreateEnvironment` operationId) request,
+// with any type of body and a specified content type.
+//
+// Materialize one environment from an immutable definition and complete approved targets as a current team manager. Creation grants no visitor or workload permission. Authorized identical retries return the same environment; changed requests or retired creation keys conflict. The name does not select a target, publisher identity, or authorization scope.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreateEnvironmentWithBodyWithResponse(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateEnvironmentResponse, error) {
+	rsp, err := c.CreateEnvironmentWithBody(ctx, projectKey, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateEnvironmentResponse(rsp)
+}
+
+// CreateEnvironmentWithResponse performs a POST /v1/projects/{project_key}/environments (the `CreateEnvironment` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Materialize one environment from an immutable definition and complete approved targets as a current team manager. Creation grants no visitor or workload permission. Authorized identical retries return the same environment; changed requests or retired creation keys conflict. The name does not select a target, publisher identity, or authorization scope.
+func (c *ClientWithResponses) CreateEnvironmentWithResponse(ctx context.Context, projectKey string, body CreateEnvironmentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateEnvironmentResponse, error) {
+	rsp, err := c.CreateEnvironment(ctx, projectKey, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateEnvironmentResponse(rsp)
+}
+
+// ApplyEnvironmentsWithBodyWithResponse performs a POST /v1/projects/{project_key}/environments/apply (the `ApplyEnvironments` operationId) request,
+// with any type of body and a specified content type.
+//
+// Atomically apply the selected environments as a current team manager. Check every expected environment revision in one transaction; any validation, capacity, or revision failure saves nothing. Definition rollout does not reconcile current authorization.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ApplyEnvironmentsWithBodyWithResponse(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApplyEnvironmentsResponse, error) {
+	rsp, err := c.ApplyEnvironmentsWithBody(ctx, projectKey, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApplyEnvironmentsResponse(rsp)
+}
+
+// ApplyEnvironmentsWithResponse performs a POST /v1/projects/{project_key}/environments/apply (the `ApplyEnvironments` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Atomically apply the selected environments as a current team manager. Check every expected environment revision in one transaction; any validation, capacity, or revision failure saves nothing. Definition rollout does not reconcile current authorization.
+func (c *ClientWithResponses) ApplyEnvironmentsWithResponse(ctx context.Context, projectKey string, body ApplyEnvironmentsJSONRequestBody, reqEditors ...RequestEditorFn) (*ApplyEnvironmentsResponse, error) {
+	rsp, err := c.ApplyEnvironments(ctx, projectKey, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApplyEnvironmentsResponse(rsp)
+}
+
+// RetireEnvironmentWithResponse performs a DELETE /v1/projects/{project_key}/environments/{environment_id} (the `RetireEnvironment` operationId) request.
+//
+// Retire only this environment and its publications as a current team manager. Its saved creation key cannot recreate it. Other environments, local worktrees, and their authorizations remain unchanged.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RetireEnvironmentWithResponse(ctx context.Context, projectKey string, environmentId string, params *RetireEnvironmentParams, reqEditors ...RequestEditorFn) (*RetireEnvironmentResponse, error) {
+	rsp, err := c.RetireEnvironment(ctx, projectKey, environmentId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRetireEnvironmentResponse(rsp)
+}
+
+// GetEnvironmentWithResponse performs a GET /v1/projects/{project_key}/environments/{environment_id} (the `GetEnvironment` operationId) request.
+//
+// Read one exact immutable environment in this project as a current team manager. Does not search names, another project, or another team.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) GetEnvironmentWithResponse(ctx context.Context, projectKey string, environmentId string, params *GetEnvironmentParams, reqEditors ...RequestEditorFn) (*GetEnvironmentResponse, error) {
+	rsp, err := c.GetEnvironment(ctx, projectKey, environmentId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetEnvironmentResponse(rsp)
+}
+
+// ApplyEnvironmentWithBodyWithResponse performs a POST /v1/projects/{project_key}/environments/{environment_id}/apply (the `ApplyEnvironment` operationId) request,
+// with any type of body and a specified content type.
+//
+// Apply one pinned definition and approved targets to this exact environment as a current team manager. A rollback still advances its mutation revision. No other environment is reconciled; no current permission is restored from definition history.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ApplyEnvironmentWithBodyWithResponse(ctx context.Context, projectKey string, environmentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApplyEnvironmentResponse, error) {
+	rsp, err := c.ApplyEnvironmentWithBody(ctx, projectKey, environmentId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApplyEnvironmentResponse(rsp)
+}
+
+// ApplyEnvironmentWithResponse performs a POST /v1/projects/{project_key}/environments/{environment_id}/apply (the `ApplyEnvironment` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Apply one pinned definition and approved targets to this exact environment as a current team manager. A rollback still advances its mutation revision. No other environment is reconciled; no current permission is restored from definition history.
+func (c *ClientWithResponses) ApplyEnvironmentWithResponse(ctx context.Context, projectKey string, environmentId string, body ApplyEnvironmentJSONRequestBody, reqEditors ...RequestEditorFn) (*ApplyEnvironmentResponse, error) {
+	rsp, err := c.ApplyEnvironment(ctx, projectKey, environmentId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApplyEnvironmentResponse(rsp)
+}
+
 // GetLocalProjectServiceWithResponse performs a GET /v1/projects/{project_key}/local-services/{service} (the `GetLocalProjectService` operationId) request.
 //
 // Read the exact service previously realized for this team, project source, service key, and worktree. Requires current ordinary private visitor access, not project management access. Returns only immutable identity and approved visitor protocol/TLS metadata, never configuration, targets, or credentials. Does not realize or adopt a service. Missing or unauthorized bindings return not found; an authorized binding with another source fingerprint returns conflict. No other team, project, worktree, or saved name is searched.
@@ -25588,6 +26902,32 @@ func (c *ClientWithResponses) RenamePublisherGroupWithResponse(ctx context.Conte
 		return nil, err
 	}
 	return ParseRenamePublisherGroupResponse(rsp)
+}
+
+// CreateServiceDefinitionWithBodyWithResponse performs a POST /v1/projects/{project_key}/service-definitions (the `CreateServiceDefinition` operationId) request,
+// with any type of body and a specified content type.
+//
+// Save an immutable project service definition as a current team manager. Equal normalized definitions reuse their revision. Publishing a definition alone changes no environment, target, permission, or publisher assignment.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreateServiceDefinitionWithBodyWithResponse(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateServiceDefinitionResponse, error) {
+	rsp, err := c.CreateServiceDefinitionWithBody(ctx, projectKey, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateServiceDefinitionResponse(rsp)
+}
+
+// CreateServiceDefinitionWithResponse performs a POST /v1/projects/{project_key}/service-definitions (the `CreateServiceDefinition` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Save an immutable project service definition as a current team manager. Equal normalized definitions reuse their revision. Publishing a definition alone changes no environment, target, permission, or publisher assignment.
+func (c *ClientWithResponses) CreateServiceDefinitionWithResponse(ctx context.Context, projectKey string, body CreateServiceDefinitionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateServiceDefinitionResponse, error) {
+	rsp, err := c.CreateServiceDefinition(ctx, projectKey, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateServiceDefinitionResponse(rsp)
 }
 
 // GetProjectServiceWithResponse performs a GET /v1/projects/{project_key}/services/{service} (the `GetProjectService` operationId) request.
@@ -28488,6 +29828,200 @@ func ParseApplyProjectConfigurationResponse(rsp *http.Response) (*ApplyProjectCo
 	return response, nil
 }
 
+// ParseListEnvironmentsResponse parses an HTTP response from a ListEnvironmentsWithResponse call
+func ParseListEnvironmentsResponse(rsp *http.Response) (*ListEnvironmentsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListEnvironmentsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []Environment
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateEnvironmentResponse parses an HTTP response from a CreateEnvironmentWithResponse call
+func ParseCreateEnvironmentResponse(rsp *http.Response) (*CreateEnvironmentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateEnvironmentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Environment
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseApplyEnvironmentsResponse parses an HTTP response from a ApplyEnvironmentsWithResponse call
+func ParseApplyEnvironmentsResponse(rsp *http.Response) (*ApplyEnvironmentsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ApplyEnvironmentsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []Environment
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRetireEnvironmentResponse parses an HTTP response from a RetireEnvironmentWithResponse call
+func ParseRetireEnvironmentResponse(rsp *http.Response) (*RetireEnvironmentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RetireEnvironmentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetEnvironmentResponse parses an HTTP response from a GetEnvironmentWithResponse call
+func ParseGetEnvironmentResponse(rsp *http.Response) (*GetEnvironmentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetEnvironmentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Environment
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseApplyEnvironmentResponse parses an HTTP response from a ApplyEnvironmentWithResponse call
+func ParseApplyEnvironmentResponse(rsp *http.Response) (*ApplyEnvironmentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ApplyEnvironmentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Environment
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetLocalProjectServiceResponse parses an HTTP response from a GetLocalProjectServiceWithResponse call
 func ParseGetLocalProjectServiceResponse(rsp *http.Response) (*GetLocalProjectServiceResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -28958,6 +30492,39 @@ func ParseRenamePublisherGroupResponse(rsp *http.Response) (*RenamePublisherGrou
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest AppliedProjectConfiguration
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateServiceDefinitionResponse parses an HTTP response from a CreateServiceDefinitionWithResponse call
+func ParseCreateServiceDefinitionResponse(rsp *http.Response) (*CreateServiceDefinitionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateServiceDefinitionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ServiceDefinitionRevision
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -32323,6 +33890,24 @@ type ServerInterface interface {
 	// (PUT /v1/projects/{project_key}/configuration)
 	ApplyProjectConfiguration(w http.ResponseWriter, r *http.Request, projectKey string)
 
+	// (GET /v1/projects/{project_key}/environments)
+	ListEnvironments(w http.ResponseWriter, r *http.Request, projectKey string, params ListEnvironmentsParams)
+
+	// (POST /v1/projects/{project_key}/environments)
+	CreateEnvironment(w http.ResponseWriter, r *http.Request, projectKey string)
+
+	// (POST /v1/projects/{project_key}/environments/apply)
+	ApplyEnvironments(w http.ResponseWriter, r *http.Request, projectKey string)
+
+	// (DELETE /v1/projects/{project_key}/environments/{environment_id})
+	RetireEnvironment(w http.ResponseWriter, r *http.Request, projectKey string, environmentId string, params RetireEnvironmentParams)
+
+	// (GET /v1/projects/{project_key}/environments/{environment_id})
+	GetEnvironment(w http.ResponseWriter, r *http.Request, projectKey string, environmentId string, params GetEnvironmentParams)
+
+	// (POST /v1/projects/{project_key}/environments/{environment_id}/apply)
+	ApplyEnvironment(w http.ResponseWriter, r *http.Request, projectKey string, environmentId string)
+
 	// (GET /v1/projects/{project_key}/local-services/{service})
 	GetLocalProjectService(w http.ResponseWriter, r *http.Request, projectKey string, service string, params GetLocalProjectServiceParams)
 
@@ -32367,6 +33952,9 @@ type ServerInterface interface {
 
 	// (POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename)
 	RenamePublisherGroup(w http.ResponseWriter, r *http.Request, projectKey string, groupName string)
+
+	// (POST /v1/projects/{project_key}/service-definitions)
+	CreateServiceDefinition(w http.ResponseWriter, r *http.Request, projectKey string)
 
 	// (GET /v1/projects/{project_key}/services/{service})
 	GetProjectService(w http.ResponseWriter, r *http.Request, projectKey string, service ServiceName, params GetProjectServiceParams)
@@ -33579,6 +35167,250 @@ func (siw *ServerInterfaceWrapper) ApplyProjectConfiguration(w http.ResponseWrit
 	handler.ServeHTTP(w, r)
 }
 
+// ListEnvironments operation middleware
+func (siw *ServerInterfaceWrapper) ListEnvironments(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListEnvironmentsParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListEnvironments(w, r, projectKey, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateEnvironment operation middleware
+func (siw *ServerInterfaceWrapper) CreateEnvironment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateEnvironment(w, r, projectKey)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ApplyEnvironments operation middleware
+func (siw *ServerInterfaceWrapper) ApplyEnvironments(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ApplyEnvironments(w, r, projectKey)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RetireEnvironment operation middleware
+func (siw *ServerInterfaceWrapper) RetireEnvironment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment_id" -------------
+	var environmentId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment_id", r.PathValue("environment_id"), &environmentId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params RetireEnvironmentParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "expected_revision" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "expected_revision", r.URL.Query(), &params.ExpectedRevision, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "expected_revision"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "expected_revision", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RetireEnvironment(w, r, projectKey, environmentId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetEnvironment operation middleware
+func (siw *ServerInterfaceWrapper) GetEnvironment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment_id" -------------
+	var environmentId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment_id", r.PathValue("environment_id"), &environmentId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetEnvironmentParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetEnvironment(w, r, projectKey, environmentId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ApplyEnvironment operation middleware
+func (siw *ServerInterfaceWrapper) ApplyEnvironment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment_id" -------------
+	var environmentId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment_id", r.PathValue("environment_id"), &environmentId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ApplyEnvironment(w, r, projectKey, environmentId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetLocalProjectService operation middleware
 func (siw *ServerInterfaceWrapper) GetLocalProjectService(w http.ResponseWriter, r *http.Request) {
 
@@ -34244,6 +36076,32 @@ func (siw *ServerInterfaceWrapper) RenamePublisherGroup(w http.ResponseWriter, r
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RenamePublisherGroup(w, r, projectKey, groupName)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateServiceDefinition operation middleware
+func (siw *ServerInterfaceWrapper) CreateServiceDefinition(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateServiceDefinition(w, r, projectKey)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -37728,6 +39586,13 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/service-definitions", wrapper.CreateServiceDefinition)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/environments", wrapper.ListEnvironments)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/environments", wrapper.CreateEnvironment)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/projects/{project_key}/environments/{environment_id}", wrapper.RetireEnvironment)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/environments/{environment_id}", wrapper.GetEnvironment)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/environments/{environment_id}/apply", wrapper.ApplyEnvironment)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/environments/apply", wrapper.ApplyEnvironments)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups", wrapper.ListPublisherGroups)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups", wrapper.CreateBoundPublisherGroup)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups/{group_name}/bindings", wrapper.UpdatePublisherGroupBindings)

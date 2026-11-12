@@ -248,7 +248,7 @@ func (d *Database) AuthorizeProvisioning(ctx context.Context, tx pgx.Tx, credent
 	template := scope.Template
 	if scope.GroupID != "" {
 		var actual string
-		if err = tx.QueryRow(ctx, `SELECT template_name FROM control.project_publisher_groups WHERE id=$1 AND team_id=$2 AND project_key=$3 AND deleted_at IS NULL FOR UPDATE`, scope.GroupID, scope.TeamID, scope.ProjectKey).Scan(&actual); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT template_name FROM control.project_publisher_groups publisher_group WHERE id=$1 AND team_id=$2 AND project_key=$3 AND environment_id IS NULL AND NOT EXISTS(SELECT 1 FROM control.environments reverse_owner WHERE reverse_owner.group_id=publisher_group.id) AND deleted_at IS NULL FOR UPDATE`, scope.GroupID, scope.TeamID, scope.ProjectKey).Scan(&actual); err != nil {
 			return r, publisherLookupError(err, ErrMachineDenied)
 		}
 		if template != "" && template != actual {

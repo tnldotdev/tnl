@@ -1172,7 +1172,7 @@ func (q *Queries) LockService(ctx context.Context, id string) (ControlService, e
 }
 
 const lockServiceRun = `-- name: LockServiceRun :one
-SELECT id, service_id, team_id, run_number, publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key, request_digest, preparation_expires_at, assignment_seed_ciphertext, assignment_seed_storage_key_id, run_token_digest, started_at, state, healthy, stream_capacity, reported_streams, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_domain_id, certificate_hostname, service_port, certificate_issuance_id, certificate_expires_at, created_at, publisher_expires_at, ready_at, closed_at, assignments_open FROM control.service_runs
+SELECT id, service_id, team_id, run_number, publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key, request_digest, preparation_expires_at, environment_id, environment_mutation_revision, environment_configuration_hash, assignment_seed_ciphertext, assignment_seed_storage_key_id, run_token_digest, started_at, state, healthy, stream_capacity, reported_streams, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_domain_id, certificate_hostname, service_port, certificate_issuance_id, certificate_expires_at, created_at, publisher_expires_at, ready_at, closed_at, assignments_open FROM control.service_runs
 WHERE id = $1 AND service_id = $2 FOR UPDATE
 `
 
@@ -1195,6 +1195,9 @@ func (q *Queries) LockServiceRun(ctx context.Context, arg LockServiceRunParams) 
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.PreparationExpiresAt,
+		&i.EnvironmentID,
+		&i.EnvironmentMutationRevision,
+		&i.EnvironmentConfigurationHash,
 		&i.AssignmentSeedCiphertext,
 		&i.AssignmentSeedStorageKeyID,
 		&i.RunTokenDigest,
@@ -1223,36 +1226,39 @@ func (q *Queries) LockServiceRun(ctx context.Context, arg LockServiceRunParams) 
 const prepareServiceRun = `-- name: PrepareServiceRun :one
 INSERT INTO control.service_runs(id, service_id, team_id, run_number,
     publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key,
-    request_digest, preparation_expires_at, assignment_seed_ciphertext,
+    request_digest, preparation_expires_at, environment_id,environment_mutation_revision,environment_configuration_hash,assignment_seed_ciphertext,
     assignment_seed_storage_key_id, certificate_cache_key,certificate_scope,certificate_identifiers,certificate_domain_id,certificate_hostname,service_port,state, created_at, publisher_expires_at)
 VALUES ($1, $2, $3, $4,
     $5, $6, $7,
     $8, $9,
-    $10, $11,
-    $12,$13,$14,$15,$16,$17,$18, 'prepared', $19, $20) RETURNING id, service_id, team_id, run_number, publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key, request_digest, preparation_expires_at, assignment_seed_ciphertext, assignment_seed_storage_key_id, run_token_digest, started_at, state, healthy, stream_capacity, reported_streams, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_domain_id, certificate_hostname, service_port, certificate_issuance_id, certificate_expires_at, created_at, publisher_expires_at, ready_at, closed_at, assignments_open
+    $10,$11,$12,$13, $14,
+    $15,$16,$17,$18,$19,$20,$21, 'prepared', $22, $23) RETURNING id, service_id, team_id, run_number, publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key, request_digest, preparation_expires_at, environment_id, environment_mutation_revision, environment_configuration_hash, assignment_seed_ciphertext, assignment_seed_storage_key_id, run_token_digest, started_at, state, healthy, stream_capacity, reported_streams, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_domain_id, certificate_hostname, service_port, certificate_issuance_id, certificate_expires_at, created_at, publisher_expires_at, ready_at, closed_at, assignments_open
 `
 
 type PrepareServiceRunParams struct {
-	ID                         string
-	ServiceID                  string
-	TeamID                     string
-	RunNumber                  int64
-	PublisherIdentityID        string
-	PublisherGrantID           string
-	PublisherKeyID             string
-	IdempotencyKey             string
-	RequestDigest              []byte
-	PreparationExpiresAt       pgtype.Timestamptz
-	AssignmentSeedCiphertext   []byte
-	AssignmentSeedStorageKeyID string
-	CertificateCacheKey        string
-	CertificateScope           string
-	CertificateIdentifiers     []string
-	CertificateDomainID        pgtype.Text
-	CertificateHostname        string
-	ServicePort                pgtype.Int4
-	Now                        pgtype.Timestamptz
-	PublisherExpiresAt         pgtype.Timestamptz
+	ID                           string
+	ServiceID                    string
+	TeamID                       string
+	RunNumber                    int64
+	PublisherIdentityID          string
+	PublisherGrantID             string
+	PublisherKeyID               string
+	IdempotencyKey               string
+	RequestDigest                []byte
+	PreparationExpiresAt         pgtype.Timestamptz
+	EnvironmentID                pgtype.Text
+	EnvironmentMutationRevision  pgtype.Int8
+	EnvironmentConfigurationHash pgtype.Text
+	AssignmentSeedCiphertext     []byte
+	AssignmentSeedStorageKeyID   string
+	CertificateCacheKey          string
+	CertificateScope             string
+	CertificateIdentifiers       []string
+	CertificateDomainID          pgtype.Text
+	CertificateHostname          string
+	ServicePort                  pgtype.Int4
+	Now                          pgtype.Timestamptz
+	PublisherExpiresAt           pgtype.Timestamptz
 }
 
 // caller locks the service, checks the live publisher grant and enrolled key,
@@ -1270,6 +1276,9 @@ func (q *Queries) PrepareServiceRun(ctx context.Context, arg PrepareServiceRunPa
 		arg.IdempotencyKey,
 		arg.RequestDigest,
 		arg.PreparationExpiresAt,
+		arg.EnvironmentID,
+		arg.EnvironmentMutationRevision,
+		arg.EnvironmentConfigurationHash,
 		arg.AssignmentSeedCiphertext,
 		arg.AssignmentSeedStorageKeyID,
 		arg.CertificateCacheKey,
@@ -1293,6 +1302,9 @@ func (q *Queries) PrepareServiceRun(ctx context.Context, arg PrepareServiceRunPa
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.PreparationExpiresAt,
+		&i.EnvironmentID,
+		&i.EnvironmentMutationRevision,
+		&i.EnvironmentConfigurationHash,
 		&i.AssignmentSeedCiphertext,
 		&i.AssignmentSeedStorageKeyID,
 		&i.RunTokenDigest,
@@ -1379,7 +1391,7 @@ WHERE run.id = $2 AND run.run_number = $3
         WHERE slot.service_run_id = run.id AND slot.state = 'ready' AND slot.session_open
         GROUP BY slot.service_run_id
         HAVING count(*) >= CASE WHEN run.ready_at IS NULL THEN 2 ELSE 1 END)
-RETURNING run.id, run.service_id, run.team_id, run.run_number, run.publisher_identity_id, run.publisher_grant_id, run.publisher_key_id, run.idempotency_key, run.request_digest, run.preparation_expires_at, run.assignment_seed_ciphertext, run.assignment_seed_storage_key_id, run.run_token_digest, run.started_at, run.state, run.healthy, run.stream_capacity, run.reported_streams, run.certificate_cache_key, run.certificate_scope, run.certificate_identifiers, run.certificate_domain_id, run.certificate_hostname, run.service_port, run.certificate_issuance_id, run.certificate_expires_at, run.created_at, run.publisher_expires_at, run.ready_at, run.closed_at, run.assignments_open
+RETURNING run.id, run.service_id, run.team_id, run.run_number, run.publisher_identity_id, run.publisher_grant_id, run.publisher_key_id, run.idempotency_key, run.request_digest, run.preparation_expires_at, run.environment_id, run.environment_mutation_revision, run.environment_configuration_hash, run.assignment_seed_ciphertext, run.assignment_seed_storage_key_id, run.run_token_digest, run.started_at, run.state, run.healthy, run.stream_capacity, run.reported_streams, run.certificate_cache_key, run.certificate_scope, run.certificate_identifiers, run.certificate_domain_id, run.certificate_hostname, run.service_port, run.certificate_issuance_id, run.certificate_expires_at, run.created_at, run.publisher_expires_at, run.ready_at, run.closed_at, run.assignments_open
 `
 
 type ReadyServiceRunParams struct {
@@ -1408,6 +1420,9 @@ func (q *Queries) ReadyServiceRun(ctx context.Context, arg ReadyServiceRunParams
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.PreparationExpiresAt,
+		&i.EnvironmentID,
+		&i.EnvironmentMutationRevision,
+		&i.EnvironmentConfigurationHash,
 		&i.AssignmentSeedCiphertext,
 		&i.AssignmentSeedStorageKeyID,
 		&i.RunTokenDigest,
@@ -1448,7 +1463,7 @@ WHERE run.id = $2 AND run.run_number = $3
     AND publisher.id = run.publisher_identity_id AND publisher.team_id = service.team_id
     AND publisher.revoked_at IS NULL
     AND control.active_publisher(publisher.id,$6)
-RETURNING run.id, run.service_id, run.team_id, run.run_number, run.publisher_identity_id, run.publisher_grant_id, run.publisher_key_id, run.idempotency_key, run.request_digest, run.preparation_expires_at, run.assignment_seed_ciphertext, run.assignment_seed_storage_key_id, run.run_token_digest, run.started_at, run.state, run.healthy, run.stream_capacity, run.reported_streams, run.certificate_cache_key, run.certificate_scope, run.certificate_identifiers, run.certificate_domain_id, run.certificate_hostname, run.service_port, run.certificate_issuance_id, run.certificate_expires_at, run.created_at, run.publisher_expires_at, run.ready_at, run.closed_at, run.assignments_open
+RETURNING run.id, run.service_id, run.team_id, run.run_number, run.publisher_identity_id, run.publisher_grant_id, run.publisher_key_id, run.idempotency_key, run.request_digest, run.preparation_expires_at, run.environment_id, run.environment_mutation_revision, run.environment_configuration_hash, run.assignment_seed_ciphertext, run.assignment_seed_storage_key_id, run.run_token_digest, run.started_at, run.state, run.healthy, run.stream_capacity, run.reported_streams, run.certificate_cache_key, run.certificate_scope, run.certificate_identifiers, run.certificate_domain_id, run.certificate_hostname, run.service_port, run.certificate_issuance_id, run.certificate_expires_at, run.created_at, run.publisher_expires_at, run.ready_at, run.closed_at, run.assignments_open
 `
 
 type RenewServiceRunParams struct {
@@ -1481,6 +1496,9 @@ func (q *Queries) RenewServiceRun(ctx context.Context, arg RenewServiceRunParams
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.PreparationExpiresAt,
+		&i.EnvironmentID,
+		&i.EnvironmentMutationRevision,
+		&i.EnvironmentConfigurationHash,
 		&i.AssignmentSeedCiphertext,
 		&i.AssignmentSeedStorageKeyID,
 		&i.RunTokenDigest,
