@@ -26,11 +26,11 @@ servers:
 tags:
   - name: discovery
     description: Discover server capabilities, readiness, client addresses, and webhook source policies.
-  - name: guest demos
+  - name: guest-demos
     description: Create a restricted guest trial and enroll its demo publisher.
   - name: projects
     description: Apply project declarations and resolve source-bound local and saved services.
-  - name: public URLs
+  - name: public-urls
     description: Manage saved public URLs and publisher-owned ephemeral public URLs.
   - name: services
     description: Manage saved services, their approved protocol, and target TLS trust.
@@ -40,33 +40,33 @@ tags:
     description: Create and revoke expiring access to an exact public URL snapshot.
   - name: feedback
     description: Read immutable reports and append ordered replies, source updates, and state changes.
-  - name: visitor access
+  - name: visitor-access
     description: Manage visitor grants and invitations, then prepare exact-resource visitor tokens.
-  - name: browser access
+  - name: browser-access
     description: Sign visitors in and exchange host-bound browser handoffs and sessions through publishers.
   - name: connectors
     description: Enroll visitor devices, select service runs, and prepare signed connector peer pairs.
   - name: workloads
     description: Discover and prepare service access using an existing visitor-only workload credential.
-  - name: publisher identities
+  - name: publisher-identities
     description: Issue enrollments, manage publisher grants, and read the resource selected by a grant.
-  - name: publisher groups
+  - name: publisher-groups
     description: Manage group enrollment and selectors, then lease and acknowledge assignments for one replica.
-  - name: publisher runtime
+  - name: publisher-runtime
     description: Inspect and update a signed publisher process lifetime independently of its publications.
-  - name: publish runs
+  - name: publish-runs
     description: Create, renew, ready, and close a public URL's active publication.
-  - name: service runs
+  - name: service-runs
     description: Prepare and maintain service publications and deliver connector bindings to their publisher.
   - name: certificates
     description: Issue and acknowledge the approved certificate for an exact public URL or service run.
-  - name: visitor policy
+  - name: visitor-policy
     description: Refresh run-scoped visitor policy, revocations, and public verification keys.
   - name: observations
     description: Report bounded connection observations without granting visitor access.
   - name: administration
     description: Inspect server roles and relay leases, drain relays, and set maintenance controls.
-  - name: service audit
+  - name: service-audit
     description: Read the team's bounded service access and lifecycle audit history.
 paths:
   /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs:

@@ -103,7 +103,7 @@ paths:
   /v1/guest-demo:
     post:
       operationId: createGuestDemo
-      tags: [guest demos]
+      tags: [guest-demos]
       description: Create a source-address-bound guest trial when guest demos are enabled. No existing credential is required. Network issuance limits apply; the returned credential grants only restricted demo operations, not a control session.
       summary: Create a restricted guest credential for the built-in demo
       security: []
@@ -119,7 +119,7 @@ paths:
   /v1/guest-demo/number:
     post:
       operationId: allocateGuestDemoNumber
-      tags: [guest demos]
+      tags: [guest-demos]
       description: Allocate the next demo hostname number using the guest credential returned by createGuestDemo. Control checks the trial deadline, source address, remaining allowance, and absence of an open demo publish run.
       summary: Allocate a new hostname number for this guest trial
       security:

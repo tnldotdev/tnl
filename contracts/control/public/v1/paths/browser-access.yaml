@@ -2,7 +2,7 @@ paths:
   /v1/browser/service-login:
     get:
       operationId: beginServiceBrowserLogin
-      tags: [browser access]
+      tags: [browser-access]
       summary: Start browser sign-in for one HTTP service
       security: []
       description: Start sign-in for one service HTTP service. Uses the common browser callback and a snapshot of ready runs; the allocated service port is retained.
@@ -26,7 +26,7 @@ paths:
   /v1/services/{service_id}/http-grants:
     get:
       operationId: listServiceHTTPGrants
-      tags: [visitor access]
+      tags: [visitor-access]
       summary: List an HTTP service's visitor credentials without secrets
       security: [{ bearerAuth: [] }]
       description: Secretless credential inventory for one service HTTP service. Requires current service management permission; includes expired and revoked records.
@@ -42,10 +42,10 @@ paths:
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
     post:
       operationId: createServiceHTTPGrant
-      tags: [visitor access]
+      tags: [visitor-access]
       summary: Create a service-scoped HTTP visitor token or share
       security: [{ bearerAuth: [] }]
-      description: Create a service-scoped HTTP token or share. Requires current service management permission. The secret is returned once and grants no management or feedback permission.
+      description: Create a service-scoped HTTP token or share. Requires current service management and visitor permission. The secret is returned once and grants no management or feedback permission.
       parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
       requestBody:
         required: true
@@ -62,7 +62,7 @@ paths:
   /v1/services/{service_id}/http-grants/{grant_id}:
     delete:
       operationId: revokeServiceHTTPGrant
-      tags: [visitor access]
+      tags: [visitor-access]
       summary: Revoke one service-scoped HTTP visitor credential
       description: Revoke the named token or share using current service management permission. The credential no longer authorizes new visitor permission; retained summaries remain visible without their secrets.
       security: [{ bearerAuth: [] }]
@@ -75,7 +75,7 @@ paths:
   /v1/services/{service_id}/runs/{service_run_id}/browser/handoff:
     post:
       operationId: redeemServiceBrowserHandoff
-      tags: [browser access]
+      tags: [browser-access]
       summary: Exchange a service browser handoff through its publisher run
       description: Authenticate the publisher with the exact service run token and exchange the body's one-time handoff secret for a host-bound browser credential. A visitor's control session cannot substitute for the publisher run token.
       security: [{ serviceRunAuth: [] }]
@@ -102,7 +102,7 @@ paths:
   /v1/services/{service_id}/runs/{service_run_id}/browser/session:
     post:
       operationId: checkServiceBrowserSession
-      tags: [browser access]
+      tags: [browser-access]
       summary: Check a browser session through its service publisher run
       description: Authenticate the publisher with the exact service run token and recheck the host-bound browser secret in the body against current service access. The result grants visitor access, not service management permission.
       security: [{ serviceRunAuth: [] }]
@@ -128,7 +128,7 @@ paths:
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
     delete:
       operationId: revokeServiceBrowserSession
-      tags: [browser access]
+      tags: [browser-access]
       summary: Revoke a browser session through its service publisher run
       description: Authenticate the publisher with the exact service run token and revoke the body's host-bound browser session. This does not revoke the person's control session or sessions on unrelated hosts.
       security: [{ serviceRunAuth: [] }]
@@ -151,7 +151,7 @@ paths:
   /v1/visitor/public-urls:
     get:
       operationId: listAvailablePublicURLs
-      tags: [visitor access]
+      tags: [visitor-access]
       summary: List public URLs available to the signed-in visitor
       description: Read a cursor-paginated visitor inventory across the identity's current grants, optionally selecting one team. The response omits management policy, targets, and secrets and does not itself grant a visitor token.
       security: [{ bearerAuth: [] }]
@@ -170,7 +170,7 @@ paths:
       - { $ref: "../openapi.yaml#/components/parameters/PublicURLID" }
     get:
       operationId: listVisitorGrants
-      tags: [visitor access]
+      tags: [visitor-access]
       summary: List visitor grants for one manageable public URL
       description: Read exact-public-URL team and identity visitor grants under current management authorization. Listing a grant is not a substitute for checking the visitor's current access.
       security: [{ bearerAuth: [] }]
@@ -184,7 +184,7 @@ paths:
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
     post:
       operationId: createTeamVisitorGrant
-      tags: [visitor access]
+      tags: [visitor-access]
       summary: Grant current members of a team access to one public URL
       description: Create an exact-public-URL grant for current members of the selected team using management authorization and an idempotency key. This grants visitor access, not public URL management or publisher authority.
       security: [{ bearerAuth: [] }]
@@ -205,7 +205,7 @@ paths:
   /v1/public-urls/{public_url_id}/visitor-identity-grants:
     post:
       operationId: createIdentityVisitorGrant
-      tags: [visitor access]
+      tags: [visitor-access]
       description: Create an exact-public-URL identity grant under current management authorization. Use an explicit identity grant even for the current identity when access must not depend on team membership.
       summary: Create an explicit identity grant, including for the current identity
       security: [{ bearerAuth: [] }]
@@ -228,7 +228,7 @@ paths:
   /v1/public-urls/{public_url_id}/visitor-grants/{grant_id}:
     delete:
       operationId: revokeVisitorGrant
-      tags: [visitor access]
+      tags: [visitor-access]
       summary: Revoke one public URL visitor grant
       description: Revoke the exact grant under current public URL management authorization. Current visitor policy determines access after revocation; other grants for the URL remain separate.
       security: [{ bearerAuth: [] }]
@@ -243,7 +243,7 @@ paths:
       - { $ref: "../openapi.yaml#/components/parameters/PublicURLID" }
     get:
       operationId: listVisitorInvitations
-      tags: [visitor access]
+      tags: [visitor-access]
       summary: List named visitor invitations for one public URL
       description: Read invitation records using current public URL management authorization. Invitation inventory does not reveal a reusable visitor credential or grant management permission to its recipients.
       security: [{ bearerAuth: [] }]
@@ -260,7 +260,7 @@ paths:
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
     post:
       operationId: createVisitorInvitation
-      tags: [visitor access]
+      tags: [visitor-access]
       summary: Invite a verified email identity to one public URL
       description: Issue an expiring one-use invitation under current public URL management authorization. Acceptance requires the recipient's verified email and creates an exact-URL identity grant, not team membership.
       security: [{ bearerAuth: [] }]
@@ -281,7 +281,7 @@ paths:
   /v1/public-urls/{public_url_id}/visitor-invitations/{invitation_id}:
     delete:
       operationId: revokeVisitorInvitation
-      tags: [visitor access]
+      tags: [visitor-access]
       summary: Revoke a public URL invitation and its accepted identity grant
       description: Revoke the named invitation using current public URL management authorization. If it was accepted, revoke the identity grant created by that invitation as well.
       security: [{ bearerAuth: [] }]
@@ -294,7 +294,7 @@ paths:
   /v1/visitor-invitations/accept:
     post:
       operationId: acceptVisitorInvitation
-      tags: [visitor access]
+      tags: [visitor-access]
       summary: Accept a public URL invitation for the signed-in identity
       description: Exchange the body's one-use secret using the current signed-in identity and matching verified email. Acceptance grants exact-URL visitor access, not management permission or team membership.
       security: [{ bearerAuth: [] }]
@@ -320,7 +320,7 @@ paths:
       - { $ref: "../openapi.yaml#/components/parameters/PublicURLID" }
     put:
       operationId: replaceVisitorAccess
-      tags: [visitor access]
+      tags: [visitor-access]
       description: Replace the complete saved visitor access policy under current public URL management authorization. Omitted optional policy members are not a partial patch; publishers must enforce the resulting current visitor policy for new work.
       summary: Replace the complete live visitor access policy
       security: [{ bearerAuth: [] }]
@@ -339,7 +339,7 @@ paths:
   /v1/browser/login:
     get:
       operationId: beginPreviewBrowserLogin
-      tags: [browser access]
+      tags: [browser-access]
       description: Begin the configured browser sign-in flow for a public URL, optionally within a preview. No bearer credential is required to begin sign-in; current visit permission is checked before a usable browser credential is issued.
       summary: Start sign-in for a preview visitor
       security: []
@@ -370,7 +370,7 @@ paths:
   /v1/browser/callback:
     get:
       operationId: completePreviewBrowserLogin
-      tags: [browser access]
+      tags: [browser-access]
       description: Complete the identity provider callback using the pending login state and authorization code, then redirect to a one-time host-bound handoff. No bearer token is used; the callback is authenticated by the checked login flow, not by the empty security array.
       summary: Return a signed-in visitor to the preview
       security: []
@@ -393,7 +393,7 @@ paths:
   /v1/publish-runs/{publish_run_id}/browser/handoff:
     post:
       operationId: redeemPreviewBrowserHandoff
-      tags: [browser access]
+      tags: [browser-access]
       description: Authenticate the publisher with the exact publish run token and exchange the body's one-time handoff for a host-bound browser cookie secret. A visitor's control session does not replace the publisher credential.
       summary: Redeem a one-time browser handoff on the publisher
       security:
@@ -418,7 +418,7 @@ paths:
   /v1/publish-runs/{publish_run_id}/browser/access:
     post:
       operationId: checkPreviewBrowserAccess
-      tags: [browser access]
+      tags: [browser-access]
       description: Authenticate the publisher with the exact publish run token and check the body's browser cookie secret against current public URL and preview access. A previously issued cookie alone is not proof of current permission.
       summary: Check a browser cookie against current preview access
       security:
@@ -443,7 +443,7 @@ paths:
   /v1/publish-runs/{publish_run_id}/browser/logout:
     post:
       operationId: revokePreviewBrowserAccess
-      tags: [browser access]
+      tags: [browser-access]
       description: Authenticate the publisher with the exact publish run token and revoke the host-bound browser session named in the body. Other hosts and the person's control session remain separate.
       summary: Revoke the current browser session
       security:

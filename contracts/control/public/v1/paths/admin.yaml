@@ -2,7 +2,7 @@ paths:
   /v1/teams/{team_id}/service-audit:
     get:
       operationId: listServiceAudit
-      tags: [service audit]
+      tags: [service-audit]
       summary: Read a team's service audit history
       description: Read a bounded page of service access and lifecycle events using the team's current management permission. Filter by exact service identity or time, and resume with the returned cursor; audit records do not grant visitor access.
       security: [{ bearerAuth: [] }]

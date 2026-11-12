@@ -6069,7 +6069,7 @@ type ClientInterface interface {
 
 	// CreateServiceHTTPGrantWithBody Create a service-scoped HTTP visitor token or share
 	//
-	// Create a service-scoped HTTP token or share. Requires current service management permission. The secret is returned once and grants no management or feedback permission.
+	// Create a service-scoped HTTP token or share. Requires current service management and visitor permission. The secret is returned once and grants no management or feedback permission.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6078,7 +6078,7 @@ type ClientInterface interface {
 
 	// CreateServiceHTTPGrant Create a service-scoped HTTP visitor token or share
 	//
-	// Create a service-scoped HTTP token or share. Requires current service management permission. The secret is returned once and grants no management or feedback permission.
+	// Create a service-scoped HTTP token or share. Requires current service management and visitor permission. The secret is returned once and grants no management or feedback permission.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6151,7 +6151,7 @@ type ClientInterface interface {
 
 	// HeartbeatServiceRunWithBody Renew a service run and report publisher health and capacity
 	//
-	// Renew only the current run under its exact publisher grant. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
+	// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6160,7 +6160,7 @@ type ClientInterface interface {
 
 	// HeartbeatServiceRun Renew a service run and report publisher health and capacity
 	//
-	// Renew only the current run under its exact publisher grant. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
+	// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6513,7 +6513,7 @@ type ClientInterface interface {
 
 	// ListAvailableServices List services available to the signed-in visitor
 	//
-	// Authorized saved services for tnl connect, including offline services. Initial readiness requires two ready publisher connections; after that one surviving ready connection keeps a run available during replacement. Inventory never grants a stream ticket by itself and contains no target address, DNS or key material.
+	// Authorized saved services for tnl connect, including offline services. Initial readiness requires two ready publisher connections; after that one surviving ready connection keeps a run available during replacement. Inventory includes the visitor endpoint hostname but grants no stream ticket and omits target addresses, target TLS trust, and secrets.
 	//
 	// Corresponds with GET /v1/visitor/services (the `ListAvailableServices` operationId).
 	ListAvailableServices(ctx context.Context, params *ListAvailableServicesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -9308,7 +9308,7 @@ func (c *Client) ListServiceHTTPGrants(ctx context.Context, serviceId ServiceID,
 
 // CreateServiceHTTPGrantWithBody Create a service-scoped HTTP visitor token or share
 //
-// Create a service-scoped HTTP token or share. Requires current service management permission. The secret is returned once and grants no management or feedback permission.
+// Create a service-scoped HTTP token or share. Requires current service management and visitor permission. The secret is returned once and grants no management or feedback permission.
 //
 // Takes any type of body and a specified content type.
 //
@@ -9327,7 +9327,7 @@ func (c *Client) CreateServiceHTTPGrantWithBody(ctx context.Context, serviceId S
 
 // CreateServiceHTTPGrant Create a service-scoped HTTP visitor token or share
 //
-// Create a service-scoped HTTP token or share. Requires current service management permission. The secret is returned once and grants no management or feedback permission.
+// Create a service-scoped HTTP token or share. Requires current service management and visitor permission. The secret is returned once and grants no management or feedback permission.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -9490,7 +9490,7 @@ func (c *Client) CloseServiceRun(ctx context.Context, serviceId ServiceID, servi
 
 // HeartbeatServiceRunWithBody Renew a service run and report publisher health and capacity
 //
-// Renew only the current run under its exact publisher grant. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
+// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
 //
 // Takes any type of body and a specified content type.
 //
@@ -9509,7 +9509,7 @@ func (c *Client) HeartbeatServiceRunWithBody(ctx context.Context, serviceId Serv
 
 // HeartbeatServiceRun Renew a service run and report publisher health and capacity
 //
-// Renew only the current run under its exact publisher grant. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
+// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -10272,7 +10272,7 @@ func (c *Client) ListAvailablePublicURLs(ctx context.Context, params *ListAvaila
 
 // ListAvailableServices List services available to the signed-in visitor
 //
-// Authorized saved services for tnl connect, including offline services. Initial readiness requires two ready publisher connections; after that one surviving ready connection keeps a run available during replacement. Inventory never grants a stream ticket by itself and contains no target address, DNS or key material.
+// Authorized saved services for tnl connect, including offline services. Initial readiness requires two ready publisher connections; after that one surviving ready connection keeps a run available during replacement. Inventory includes the visitor endpoint hostname but grants no stream ticket and omits target addresses, target TLS trust, and secrets.
 //
 // Corresponds with GET /v1/visitor/services (the `ListAvailableServices` operationId).
 func (c *Client) ListAvailableServices(ctx context.Context, params *ListAvailableServicesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -18353,7 +18353,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateServiceHTTPGrantWithBodyWithResponse Create a service-scoped HTTP visitor token or share
 	//
-	// Create a service-scoped HTTP token or share. Requires current service management permission. The secret is returned once and grants no management or feedback permission.
+	// Create a service-scoped HTTP token or share. Requires current service management and visitor permission. The secret is returned once and grants no management or feedback permission.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18362,7 +18362,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateServiceHTTPGrantWithResponse Create a service-scoped HTTP visitor token or share
 	//
-	// Create a service-scoped HTTP token or share. Requires current service management permission. The secret is returned once and grants no management or feedback permission.
+	// Create a service-scoped HTTP token or share. Requires current service management and visitor permission. The secret is returned once and grants no management or feedback permission.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18443,7 +18443,7 @@ type ClientWithResponsesInterface interface {
 
 	// HeartbeatServiceRunWithBodyWithResponse Renew a service run and report publisher health and capacity
 	//
-	// Renew only the current run under its exact publisher grant. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
+	// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18452,7 +18452,7 @@ type ClientWithResponsesInterface interface {
 
 	// HeartbeatServiceRunWithResponse Renew a service run and report publisher health and capacity
 	//
-	// Renew only the current run under its exact publisher grant. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
+	// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18821,7 +18821,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListAvailableServicesWithResponse List services available to the signed-in visitor
 	//
-	// Authorized saved services for tnl connect, including offline services. Initial readiness requires two ready publisher connections; after that one surviving ready connection keeps a run available during replacement. Inventory never grants a stream ticket by itself and contains no target address, DNS or key material.
+	// Authorized saved services for tnl connect, including offline services. Initial readiness requires two ready publisher connections; after that one surviving ready connection keeps a run available during replacement. Inventory includes the visitor endpoint hostname but grants no stream ticket and omits target addresses, target TLS trust, and secrets.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -27461,7 +27461,7 @@ func (c *ClientWithResponses) ListServiceHTTPGrantsWithResponse(ctx context.Cont
 
 // CreateServiceHTTPGrantWithBodyWithResponse Create a service-scoped HTTP visitor token or share
 //
-// Create a service-scoped HTTP token or share. Requires current service management permission. The secret is returned once and grants no management or feedback permission.
+// Create a service-scoped HTTP token or share. Requires current service management and visitor permission. The secret is returned once and grants no management or feedback permission.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -27476,7 +27476,7 @@ func (c *ClientWithResponses) CreateServiceHTTPGrantWithBodyWithResponse(ctx con
 
 // CreateServiceHTTPGrantWithResponse Create a service-scoped HTTP visitor token or share
 //
-// Create a service-scoped HTTP token or share. Requires current service management permission. The secret is returned once and grants no management or feedback permission.
+// Create a service-scoped HTTP token or share. Requires current service management and visitor permission. The secret is returned once and grants no management or feedback permission.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -27611,7 +27611,7 @@ func (c *ClientWithResponses) CloseServiceRunWithResponse(ctx context.Context, s
 
 // HeartbeatServiceRunWithBodyWithResponse Renew a service run and report publisher health and capacity
 //
-// Renew only the current run under its exact publisher grant. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
+// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -27626,7 +27626,7 @@ func (c *ClientWithResponses) HeartbeatServiceRunWithBodyWithResponse(ctx contex
 
 // HeartbeatServiceRunWithResponse Renew a service run and report publisher health and capacity
 //
-// Renew only the current run under its exact publisher grant. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
+// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28241,7 +28241,7 @@ func (c *ClientWithResponses) ListAvailablePublicURLsWithResponse(ctx context.Co
 
 // ListAvailableServicesWithResponse List services available to the signed-in visitor
 //
-// Authorized saved services for tnl connect, including offline services. Initial readiness requires two ready publisher connections; after that one surviving ready connection keeps a run available during replacement. Inventory never grants a stream ticket by itself and contains no target address, DNS or key material.
+// Authorized saved services for tnl connect, including offline services. Initial readiness requires two ready publisher connections; after that one surviving ready connection keeps a run available during replacement. Inventory includes the visitor endpoint hostname but grants no stream ticket and omits target addresses, target TLS trust, and secrets.
 //
 // Returns a wrapper object for the known response body format(s).
 //

@@ -117,7 +117,7 @@ describe("OpenAPI graph", () => {
     );
   });
 
-  it("rejects undefined security schemes and missing or multiple public primary tags", async () => {
+  it("rejects undefined security schemes and invalid public primary tags", async () => {
     const operation = {
       operationId: "getItems",
       summary: "Read items",
@@ -129,14 +129,17 @@ describe("OpenAPI graph", () => {
       { security: [{ missing: [] }] },
       { tags: [] },
       { tags: ["items", "items"] },
+      { tags: ["Bad tag"] },
     ]) {
       const api = {
         ...document({ "/items": { get: { ...operation, ...change } } }),
-        tags: [{ name: "items" }],
+        tags: [{ name: change.tags?.[0] ?? "items" }],
       };
       const files = await fixture({ "openapi.yaml": api });
       const graph = await new ContractGraph({ controlv1: files["openapi.yaml"] }).load();
-      expect(() => graph.bundle("controlv1")).toThrow(/undefined security scheme|primary tag/);
+      expect(() => graph.bundle("controlv1")).toThrow(
+        /undefined security scheme|primary tag|kebab-case/,
+      );
     }
   });
 

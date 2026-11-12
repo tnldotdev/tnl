@@ -258,6 +258,8 @@ export class ContractGraph {
       .array(z.object({ name: z.string() }))
       .parse(document.tags ?? [])
       .map((tag) => tag.name);
+    if (owner === "controlv1" && tags.some((tag) => !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(tag)))
+      throw new Error("expected lowercase kebab-case public tags");
     const operations: Record<string, unknown>[] = [];
     const responses = Object.values(record(components.responses ?? {}));
     for (const { method, path } of operationInventory(document)) {

@@ -64,7 +64,7 @@ paths:
       operationId: listAvailableServices
       tags: [connectors]
       summary: List services available to the signed-in visitor
-      description: Authorized saved services for tnl connect, including offline services. Initial readiness requires two ready publisher connections; after that one surviving ready connection keeps a run available during replacement. Inventory never grants a stream ticket by itself and contains no target address, DNS or key material.
+      description: Authorized saved services for tnl connect, including offline services. Initial readiness requires two ready publisher connections; after that one surviving ready connection keeps a run available during replacement. Inventory includes the visitor endpoint hostname but grants no stream ticket and omits target addresses, target TLS trust, and secrets.
       security: [{ bearerAuth: [] }]
       parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceCursor" }]
       responses:

@@ -134,7 +134,7 @@ paths:
   /v1/services/{service_id}/grants:
     get:
       operationId: listServiceGrants
-      tags: [visitor access]
+      tags: [visitor-access]
       summary: List a service's visitor grants and retained history
       description: Current managers may read up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent; inventory is not proof of current visitor access.
       security: [{ bearerAuth: [] }]
@@ -156,7 +156,7 @@ paths:
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
     post:
       operationId: createServiceGrant
-      tags: [visitor access]
+      tags: [visitor-access]
       summary: Grant a team or identity access to one service
       description: Create an exact-service visitor grant using current service management permission and an idempotency key. A visitor grant permits service use under current policy; it does not grant service management or publisher authority.
       security: [{ bearerAuth: [] }]
@@ -190,7 +190,7 @@ paths:
   /v1/services/{service_id}/grants/{grant_id}:
     delete:
       operationId: revokeServiceGrant
-      tags: [visitor access]
+      tags: [visitor-access]
       summary: Revoke one service visitor grant
       description: Revoke the named grant using current service management permission. Later visitor authorization checks reject access through that grant; retained history can still appear in grant inventory.
       security: [{ bearerAuth: [] }]
@@ -210,7 +210,7 @@ paths:
   /v1/services/{service_id}/invitations:
     get:
       operationId: listServiceInvitations
-      tags: [visitor access]
+      tags: [visitor-access]
       summary: List a service's visitor invitations without secrets
       description: Current managers may read up to 100 records ordered by ID, including accepted, expired and revoked history. Follow next_cursor until absent. Never returns secrets.
       security: [{ bearerAuth: [] }]
@@ -228,7 +228,7 @@ paths:
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
     post:
       operationId: inviteServiceVisitor
-      tags: [visitor access]
+      tags: [visitor-access]
       summary: Invite a verified email identity to one service
       description: A new key creates one exact-service invitation. An exact retry by the same actor returns HTTP 200 with the original ID and current state, without a secret, after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
       security: [{ bearerAuth: [] }]
@@ -268,7 +268,7 @@ paths:
   /v1/services/{service_id}/invitations/{invitation_id}:
     delete:
       operationId: revokeServiceInvitation
-      tags: [visitor access]
+      tags: [visitor-access]
       summary: Revoke a service invitation and its accepted grant
       description: Revoke the invitation using current service management permission, including the identity grant created if it was accepted. Revocation does not remove the retained invitation history.
       security: [{ bearerAuth: [] }]
@@ -284,7 +284,7 @@ paths:
   /v1/service-invitations/accept:
     post:
       operationId: acceptServiceInvitation
-      tags: [visitor access]
+      tags: [visitor-access]
       summary: Accept an invitation for the signed-in verified email identity
       description: Exchange the one-use invitation secret under the current signed-in identity. Control verifies the recipient email and creates an exact-service identity grant; acceptance grants no management or publisher permission.
       security: [{ bearerAuth: [] }]

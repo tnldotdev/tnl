@@ -2,7 +2,7 @@ paths:
   /v1/publisher-runtime:
     post:
       operationId: observePublisherRuntime
-      tags: [publisher runtime]
+      tags: [publisher-runtime]
       summary: Inspect or update a signed publisher process lifetime
       security: []
       description: >-
@@ -31,7 +31,7 @@ paths:
   /v1/publisher/service:
     get:
       operationId: getPublisherService
-      tags: [publisher identities]
+      tags: [publisher-identities]
       summary: Read the saved service selected by the current publisher grant
       security: [{ publisherAuth: [] }]
       description: Read the exact granted service's approved protocol and public TLS trust metadata. The publisher must declare its own matching configuration when preparing a run.
@@ -45,7 +45,7 @@ paths:
   /v1/guest-demo/publisher:
     post:
       operationId: enrollGuestPublisher
-      tags: [guest demos]
+      tags: [guest-demos]
       summary: Enroll a publisher key for the guest trial's assigned demo URL
       description: Authenticate with the guest trial credential and bind an Ed25519 key to the trial's assigned public URL. Control checks the trial and validated request source; the resulting identity grants no general control session or service management permission.
       security: [{ guestAuth: [] }]
@@ -64,7 +64,7 @@ paths:
   /v1/publisher/public-url:
     get:
       operationId: getPublisherPublicURL
-      tags: [publisher identities]
+      tags: [publisher-identities]
       description: Read the single saved public URL selected by the publisher access token's exact grant. Namespace allocation grants and control sessions do not substitute for an exact public URL publisher grant.
       summary: Read the saved URL selected by the current grant
       security:
@@ -81,7 +81,7 @@ paths:
   /v1/publisher-enrollments:
     post:
       operationId: createPublisherEnrollment
-      tags: [publisher identities]
+      tags: [publisher-identities]
       description: Issue an expiring one-use enrollment secret under current management authorization. Enrollment installs a publisher's signing key for the selected scope; it is separate from exchanging signed assertions for short-lived publisher access tokens.
       summary: Issue an expiring one-use publisher enrollment
       security:
@@ -104,7 +104,7 @@ paths:
   /v1/publisher-identities:
     get:
       operationId: listPublisherIdentities
-      tags: [publisher identities]
+      tags: [publisher-identities]
       description: Read a cursor-paginated inventory of publisher identities and their grants for a manageable team. Responses omit enrollment secrets and private signing keys; an inventory entry is not a publisher credential.
       summary: List publisher identities and grants without secrets
       security:
@@ -124,7 +124,7 @@ paths:
   /v1/publisher-identities/{publisher_identity_id}:
     delete:
       operationId: revokePublisherIdentity
-      tags: [publisher identities]
+      tags: [publisher-identities]
       description: Revoke an exact publisher identity under current team management authorization. Identity revocation invalidates its publishing authority independently of any individual grant record.
       summary: Revoke an identity independently of its grants
       security:
@@ -140,7 +140,7 @@ paths:
   /v1/publisher-identities/{publisher_identity_id}/grants:
     post:
       operationId: createPublisherGrant
-      tags: [publisher identities]
+      tags: [publisher-identities]
       summary: Add one authorized scope to a publisher identity
       description: Create a revocable publisher grant using current management authorization for the selected scope. The grant identifies what the native publisher may serve; it is not a visitor grant or a control session.
       security: [{ bearerAuth: [] }]
@@ -161,7 +161,7 @@ paths:
   /v1/publisher-identities/{publisher_identity_id}/grants/{grant_id}:
     delete:
       operationId: revokePublisherGrant
-      tags: [publisher identities]
+      tags: [publisher-identities]
       summary: Revoke one publisher grant without revoking the identity
       description: Revoke the named grant under current team management authorization. Other grants on the identity remain separate; the revoked grant can no longer authorize current publishing work.
       security: [{ bearerAuth: [] }]

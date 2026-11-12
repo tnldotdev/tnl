@@ -2,7 +2,7 @@ paths:
   /v1/public-urls/{public_url_id}/publish-runs:
     post:
       operationId: createPublishRun
-      tags: [publish runs]
+      tags: [publish-runs]
       description: Start a new publication under the exact publisher grant using an idempotency key and Publisher-Run-Proof signature. The publisher access token does not replace the required proof of the signing key; the response includes the separate run token and two connection assignments.
       summary: Create a publish run and allocate its publish run number
       security:
@@ -32,7 +32,7 @@ paths:
   /v1/publish-runs/{publish_run_id}/heartbeat:
     post:
       operationId: heartbeatPublishRun
-      tags: [publish runs]
+      tags: [publish-runs]
       description: Renew the exact current run using its publish run token and number. Control checks current authority and returns replacement connection assignments when needed; renewing does not bypass certificate or readiness requirements.
       summary: Renew a publish run and replace missing publisher connections
       security:
@@ -103,7 +103,7 @@ paths:
   /v1/publish-runs/{publish_run_id}/ready:
     post:
       operationId: markPublishRunReady
-      tags: [publish runs]
+      tags: [publish-runs]
       description: Ask control to mark the current run routable using its publish run token and number. First readiness requires the approved certificate and two ready publisher connections on independent relay services.
       summary: Mark a publish run ready after its certificate and two publisher connections are ready
       security:
@@ -153,7 +153,7 @@ paths:
   /v1/publish-runs/{publish_run_id}:
     delete:
       operationId: closePublishRun
-      tags: [publish runs]
+      tags: [publish-runs]
       description: Close the exact publication using its publish run token. Saved public URLs remain available for a later run; ephemeral public URLs follow their removal lifecycle instead.
       summary: Close and drain a publish run without deleting its public URL
       security:
