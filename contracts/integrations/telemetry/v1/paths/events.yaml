@@ -7,7 +7,7 @@ post:
       application/json:
         schema: { $ref: ../openapi.yaml#/components/schemas/Batch }
   responses:
-    "204": { description: Accepted, including already-received event IDs }
+    "204": { description: "Accepted, including already-received event IDs" }
     "400": { description: Invalid telemetry batch }
     "413": { description: Batch exceeds 64 KiB }
     "429": { description: Retry later }

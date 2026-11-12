@@ -21,8 +21,7 @@
         },
         "responses": {
           "204": {
-            "description": "Accepted",
-            "including already-received event IDs": null
+            "description": "Accepted, including already-received event IDs"
           },
           "400": {
             "description": "Invalid telemetry batch"

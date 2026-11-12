@@ -216,6 +216,15 @@ describe("OpenAPI graph", () => {
 });
 
 describe("repository contracts", () => {
+  it("keeps the telemetry acceptance description in one response field", async () => {
+    const telemetry = (await repositoryGraph()).bundle("telemetryv1");
+    const endpoint = record(record(telemetry.paths)["/api/telemetry"]);
+    const responses = record(record(endpoint.post).responses);
+    expect(responses["204"]).toEqual({
+      description: "Accepted, including already-received event IDs",
+    });
+  });
+
   it("exports deterministic portable bundles without running code generation", async () => {
     const directory = await mkdtemp(join(tmpdir(), "tnl-openapi-export-"));
     directories.push(directory);
