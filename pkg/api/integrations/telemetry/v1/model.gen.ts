@@ -2,32 +2,32 @@
 
 import * as z from "zod";
 
-export const Client = z.strictObject({
+export const clientSchema = z.strictObject({
   version: z.string().min(1).max(64),
   os: z.enum(["darwin", "linux", "windows", "other"]),
   arch: z.enum(["amd64", "arm64", "other"]),
   ci: z.boolean(),
 });
 
-export const PublicationReady = z.strictObject({
+export const publicationReadySchema = z.strictObject({
   server_kind: z.enum(["hosted", "self_hosted"]),
   publish_mode: z.enum(["app", "demo"]),
   framework: z.enum(["vite", "next", "other"]).optional(),
 });
 
-export const IntegrationOutcome = z.strictObject({
+export const integrationOutcomeSchema = z.strictObject({
   kind: z.enum(["oauth", "webhook"]),
   outcome: z.enum(["ready", "redirected", "reached_receiver"]),
   delivery: z.enum(["fanout", "selected"]).optional(),
 });
 
-export const Operation = z.enum(["relay_connect", "direct_connect", "fallback", "recovery"]);
+export const operationSchema = z.enum(["relay_connect", "direct_connect", "fallback", "recovery"]);
 
-export const Path = z.enum(["quic", "tls_tcp", "direct_udp"]);
+export const pathSchema = z.enum(["quic", "tls_tcp", "direct_udp"]);
 
-export const Outcome = z.enum(["succeeded", "failed", "canceled"]);
+export const outcomeSchema = z.enum(["succeeded", "failed", "canceled"]);
 
-export const CommandOutcome = z.strictObject({
+export const commandOutcomeSchema = z.strictObject({
   command: z.enum([
     "init",
     "login",
@@ -90,7 +90,7 @@ export const CommandOutcome = z.strictObject({
       "other",
     ])
     .optional(),
-  outcome: Outcome,
+  outcome: outcomeSchema,
   failure_stage: z
     .enum(["setup", "command", "authentication", "local_service", "public_url"])
     .optional(),
@@ -100,73 +100,73 @@ export const CommandOutcome = z.strictObject({
     .optional(),
 });
 
-export const Duration = z.enum(["lt_1s", "lt_10s", "lt_1m", "longer"]);
+export const durationSchema = z.enum(["lt_1s", "lt_10s", "lt_1m", "longer"]);
 
-export const Measurement = z.strictObject({
-  operation: Operation,
-  path: Path,
-  outcome: Outcome,
-  duration: Duration.optional(),
+export const measurementSchema = z.strictObject({
+  operation: operationSchema,
+  path: pathSchema,
+  outcome: outcomeSchema,
+  duration: durationSchema.optional(),
   count: z.int().gte(1).lte(1000000000),
 });
 
-export const TransportReport = z.strictObject({
+export const transportReportSchema = z.strictObject({
   role: z.enum(["publisher", "connector"]),
-  measurements: z.array(Measurement).min(1).max(144),
+  measurements: z.array(measurementSchema).min(1).max(144),
 });
 
-export const EventId = z.string().regex(/^tev_[A-Za-z0-9]{22}$/);
+export const eventIdSchema = z.string().regex(/^tev_[A-Za-z0-9]{22}$/);
 
-export const CommandEvent = z.strictObject({
-  event_id: EventId,
+export const commandEventSchema = z.strictObject({
+  event_id: eventIdSchema,
   event_version: z.literal(1),
   name: z.enum(["command.outcome"]),
-  payload: CommandOutcome,
+  payload: commandOutcomeSchema,
 });
 
-export const ReadyEvent = z.strictObject({
-  event_id: EventId,
+export const readyEventSchema = z.strictObject({
+  event_id: eventIdSchema,
   event_version: z.literal(1),
   name: z.enum(["tunnel.ready"]),
-  payload: PublicationReady,
+  payload: publicationReadySchema,
 });
 
-export const DemoEvent = z.strictObject({
-  event_id: EventId,
+export const demoEventSchema = z.strictObject({
+  event_id: eventIdSchema,
   event_version: z.literal(1),
   name: z.enum(["demo.first_ping"]),
   payload: z.strictObject({}),
 });
 
-export const IntegrationEvent = z.strictObject({
-  event_id: EventId,
+export const integrationEventSchema = z.strictObject({
+  event_id: eventIdSchema,
   event_version: z.literal(1),
   name: z.enum(["integration.outcome"]),
-  payload: IntegrationOutcome,
+  payload: integrationOutcomeSchema,
 });
 
-export const TransportEvent = z.strictObject({
-  event_id: EventId,
+export const transportEventSchema = z.strictObject({
+  event_id: eventIdSchema,
   event_version: z.literal(1),
   name: z.enum(["transport.report"]),
-  payload: TransportReport,
+  payload: transportReportSchema,
 });
 
-export const Event_ = z.discriminatedUnion("name", [
-  CommandEvent.extend({ name: z.literal("command.outcome") }),
-  ReadyEvent.extend({ name: z.literal("tunnel.ready") }),
-  DemoEvent.extend({ name: z.literal("demo.first_ping") }),
-  IntegrationEvent.extend({ name: z.literal("integration.outcome") }),
-  TransportEvent.extend({ name: z.literal("transport.report") }),
+export const eventSchema = z.discriminatedUnion("name", [
+  commandEventSchema.extend({ name: z.literal("command.outcome") }),
+  readyEventSchema.extend({ name: z.literal("tunnel.ready") }),
+  demoEventSchema.extend({ name: z.literal("demo.first_ping") }),
+  integrationEventSchema.extend({ name: z.literal("integration.outcome") }),
+  transportEventSchema.extend({ name: z.literal("transport.report") }),
 ]);
 
-export const CollectedEvent = z.strictObject({
-  client: Client,
-  event: Event_,
+export const collectedEventSchema = z.strictObject({
+  client: clientSchema,
+  event: eventSchema,
 });
 
-export const Batch = z.strictObject({
+export const batchSchema = z.strictObject({
   schema_version: z.literal(1),
   installation_id: z.string().regex(/^inst_[A-Za-z0-9]{22}$/),
-  events: z.array(CollectedEvent).min(1).max(25),
+  events: z.array(collectedEventSchema).min(1).max(25),
 });

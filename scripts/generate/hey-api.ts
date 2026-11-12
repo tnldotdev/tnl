@@ -25,7 +25,7 @@ export async function generateValidators(
         {
           name: "zod",
           compatibilityVersion: 4,
-          definitions: { name: "{{name}}", case: "PascalCase" },
+          definitions: { name: "{{name}}Schema", case: "camelCase" },
           requests: false,
           responses: false,
           exportFromIndex: false,

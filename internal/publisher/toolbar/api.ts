@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { FeedbackError } from "./errors.ts";
-import { BrowserFeedbackEventRequest, BrowserFeedbackEvidence } from "../browserapi/model.gen.ts";
+import {
+  browserFeedbackEventRequestSchema,
+  browserFeedbackEvidenceSchema,
+} from "../browserapi/model.gen.ts";
 import {
   evidenceSchema,
   eventPageSchema,
@@ -114,7 +117,7 @@ export function createFeedbackAPI(fetcher: typeof fetch = fetch): FeedbackAPI {
       (
         await request(
           "/evidence",
-          BrowserFeedbackEvidence.extend({
+          browserFeedbackEvidenceSchema.extend({
             schema_version: z.literal(1),
             failed_requests: evidenceSchema.shape.failed_requests,
           }),
@@ -130,7 +133,7 @@ export function createFeedbackAPI(fetcher: typeof fetch = fetch): FeedbackAPI {
         signal,
         parseInput(
           { schema_version: 1, type, ...(text ? { text } : {}) },
-          BrowserFeedbackEventRequest,
+          browserFeedbackEventRequestSchema,
         ),
         key,
       ),

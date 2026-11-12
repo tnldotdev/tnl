@@ -2,10 +2,7 @@ import { expect, test, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { createFeedbackAPI } from "./api.ts";
 import { reportInputSchema } from "./model.ts";
-import {
-  FeedbackThread as WireThread,
-  FeedbackEvent as WireEvent,
-} from "../browserapi/model.gen.ts";
+import { feedbackThreadSchema, feedbackEventSchema } from "../browserapi/model.gen.ts";
 
 function fixture(name: string): unknown {
   return JSON.parse(
@@ -72,8 +69,8 @@ test("browser mutations use same-origin cookies, an idempotency key, and an opti
 });
 
 test("shared Go wire fixtures produce a readable report and a bounded browser submission", async () => {
-  const wire = WireThread.parse(fixture("thread"));
-  const event = WireEvent.parse(fixture("event"));
+  const wire = feedbackThreadSchema.parse(fixture("thread"));
+  const event = feedbackEventSchema.parse(fixture("event"));
   const input = reportInputSchema.parse(fixture("report-request"));
   const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json(wire));
   const api = createFeedbackAPI(fetcher);
