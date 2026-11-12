@@ -7,6 +7,8 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/tnldotdev/tnl/internal/region"
+
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -93,6 +95,13 @@ func (c *Client) ListAvailableServices(ctx context.Context) ([]controlv1.Service
 }
 
 func (c *Client) PrepareServiceRun(ctx context.Context, serviceID, key, publisherAccess string, declared controlv1.ServiceRunDeclaration) (controlv1.ServiceRunPreparation, error) {
+	if declared.PreferredRegions != nil {
+		preferences, err := region.Preferences(*declared.PreferredRegions)
+		if err != nil {
+			return controlv1.ServiceRunPreparation{}, err
+		}
+		declared.PreferredRegions = &preferences
+	}
 	return request[controlv1.ServiceRunPreparation](ctx, c, publisherAccess, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.PrepareServiceRun(ctx, serviceID, &controlv1.PrepareServiceRunParams{IdempotencyKey: key}, declared, editors...)
 	})

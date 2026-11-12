@@ -18,11 +18,13 @@ func TestIngressLeaseMutationContracts(t *testing.T) {
 	deadline := now.Add(20 * time.Second)
 	wantIdentity := controlstate.IngressLeaseIdentity{IngressID: "ingress-1", IngressRunID: "run-1", IngressLeaseRevision: 7}
 	lease := controlstate.IngressLease{
+		Region:               "gcp:us-west1",
 		IngressLeaseIdentity: controlstate.IngressLeaseIdentity{IngressID: "ingress-result", IngressRunID: "run-result", IngressLeaseRevision: 9},
 		ProtocolVersion:      1, ConnectionCapacity: 100, ReportedConnections: 11, RoutingTableRevision: 19,
 		RegisteredAt: now.Add(-time.Minute), RenewedAt: now, LeaseExpiresAt: now.Add(30 * time.Second), Draining: true, DrainDeadline: &deadline,
 	}
 	wantLease := ingressv1.IngressLease{
+		Region:    "gcp:us-west1",
 		IngressId: "ingress-result", IngressRunId: "run-result", IngressLeaseRevision: 9, ProtocolVersion: 1,
 		ConnectionCapacity: 100, ReportedConnections: 11, RoutingTableRevision: 19,
 		RegisteredAt: now.Add(-time.Minute), RenewedAt: now, LeaseExpiresAt: now.Add(30 * time.Second), Draining: true, DrainDeadline: &deadline,

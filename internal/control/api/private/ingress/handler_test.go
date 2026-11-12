@@ -59,6 +59,7 @@ func TestRegisterIngressAuthorizesAndConvertsRequest(t *testing.T) {
 	) (controlstate.IngressLease, error) {
 		got, gotNow, gotDuration = registration, registeredAt, leaseDuration
 		return controlstate.IngressLease{
+			Region: registration.Region,
 			IngressLeaseIdentity: controlstate.IngressLeaseIdentity{
 				IngressID: registration.IngressID, IngressRunID: registration.IngressRunID,
 				IngressLeaseRevision: 7,
@@ -68,6 +69,7 @@ func TestRegisterIngressAuthorizesAndConvertsRequest(t *testing.T) {
 		}, nil
 	}}
 	body := ingressv1.IngressRegistration{
+		Region:    "aws:us-west-1",
 		IngressId: "ingress-1", IngressRunId: "run-1", ProtocolVersion: 1, ConnectionCapacity: 100,
 		IngressPoolId: "ingress-a", ServicePorts: []int{20000, 20001},
 	}
@@ -78,7 +80,7 @@ func TestRegisterIngressAuthorizesAndConvertsRequest(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
 	}
-	if got.IngressID != body.IngressId || got.IngressRunID != body.IngressRunId ||
+	if string(got.Region) != body.Region || got.IngressID != body.IngressId || got.IngressRunID != body.IngressRunId ||
 		got.ProtocolVersion != 1 || got.ConnectionCapacity != 100 || got.IngressPoolID != "ingress-a" || len(got.ServicePorts) != 2 || got.ServicePorts[1] != 20001 {
 		t.Fatalf("registration = %#v", got)
 	}
@@ -87,7 +89,7 @@ func TestRegisterIngressAuthorizesAndConvertsRequest(t *testing.T) {
 	}
 	var lease ingressv1.IngressLease
 	decodeIngressResponse(t, response, &lease)
-	if lease.IngressId != "ingress-1" || lease.IngressLeaseRevision != 7 {
+	if lease.Region != body.Region || lease.IngressId != "ingress-1" || lease.IngressLeaseRevision != 7 {
 		t.Fatalf("lease = %#v", lease)
 	}
 }
@@ -105,7 +107,7 @@ func TestIngressRegistrationRequiresExplicitBoundedPortInventory(t *testing.T) {
 		{"out of range", []int{65536}, "ingress-a"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			body := ingressv1.IngressRegistration{IngressId: "ingress-1", IngressRunId: "run-1", ProtocolVersion: 1, ConnectionCapacity: 100, IngressPoolId: test.pool, ServicePorts: test.ports}
+			body := ingressv1.IngressRegistration{Region: "local", IngressId: "ingress-1", IngressRunId: "run-1", ProtocolVersion: 1, ConnectionCapacity: 100, IngressPoolId: test.pool, ServicePorts: test.ports}
 			response := serveIngressJSON(t, testIngressHandler(t, &ingressStoreStub{}, time.Now(), nil), http.MethodPost, "/internal/v1/ingresses/register", body)
 			if response.Code != http.StatusBadRequest {
 				t.Fatalf("inventory status = %d", response.Code)

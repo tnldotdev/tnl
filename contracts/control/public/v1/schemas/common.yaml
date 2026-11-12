@@ -133,6 +133,18 @@ responses:
         schema:
           $ref: "../openapi.yaml#/components/schemas/Problem"
 schemas:
+  RegionID:
+    type: string
+    maxLength: 129
+    pattern: "^(local|[a-z][a-z0-9-]*:[a-z0-9][a-z0-9-]*)$"
+    description: Exact catalog provider:region identity, such as aws:us-west-2 or fly:sjc. local makes no geographic claim.
+  PreferredRegions:
+    type: array
+    maxItems: 8
+    uniqueItems: true
+    description: Ordered provider-qualified preferences, not hard placement constraints. Control uses nearby eligible capacity when preferred regions are unavailable. Omission preserves load-based placement.
+    items:
+      $ref: "#/schemas/RegionID"
   KubernetesAuth:
     type: object
     additionalProperties: false

@@ -26,7 +26,7 @@ import (
 
 const certificateTestPublicURLID = "url_0123456789abcdefghijkl"
 
-func (c *certificateTestControl) CreatePublishRun(_ context.Context, publicURLID, key string) (controlv1.PublishRunSetup, error) {
+func (c *certificateTestControl) CreatePublishRun(_ context.Context, publicURLID, key string, _ ...string) (controlv1.PublishRunSetup, error) {
 	if publicURLID != c.setup.PublicUrl.Id || key == "" {
 		return controlv1.PublishRunSetup{}, errors.New("unexpected publish run request")
 	}
