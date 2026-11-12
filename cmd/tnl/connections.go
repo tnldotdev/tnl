@@ -17,6 +17,7 @@ type connectionsCommand struct {
 	disabled       bool
 	Capabilities   connectionsCapabilities       `cmd:""`
 	Context        connectionsContextOptions     `cmd:""`
+	Local          connectionsLocalOptions       `cmd:"" hidden:""`
 	Start          connectionsStartOptions       `cmd:""`
 	Identity       connectionsContextOptions     `cmd:"" hidden:""`
 	Attach         connectionsHandleOptions      `cmd:"" hidden:""`
@@ -34,6 +35,12 @@ type connectionsCommand struct {
 }
 type connectionsCapabilities struct {
 	Output string `name:"output" enum:"json" default:"json"`
+}
+
+type connectionsLocalOptions struct {
+	Directory string `name:"directory" required:"" type:"path"`
+	Service   string `name:"service" required:""`
+	Protocol  string `name:"protocol" enum:"postgres" required:""`
 }
 type connectionsContextOptions struct {
 	Directory string   `name:"directory" required:"" type:"path"`
@@ -116,6 +123,8 @@ func runConnections(ctx context.Context, command string, flags connectionsComman
 	}
 	stopped := func(err error) error { return write(map[string]any{"schema": 1, "state": "stopped"}, err) }
 	switch command {
+	case "runtime connections local":
+		return write(connector.ConnectLocal(ctx, flags.Local.Directory, flags.Local.Service, flags.Local.Protocol, runtimeTargetResolver))
 	case "runtime connections identity":
 		identity, err := connector.Identify(ctx, flags.Identity.options(), os.Stdin)
 		if err != nil {

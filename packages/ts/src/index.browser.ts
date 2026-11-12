@@ -6,6 +6,16 @@ import { awaitableConnection } from "./internal/connector/awaitable_connection.j
 export type * from "./project.js";
 export type { TnlRuntime, TnlProjectConfig } from "./index.js";
 export { TnlError, type TnlErrorCode } from "./errors.js";
+export type {
+  ServiceFacts,
+  LocalDeployment,
+  LocalPostgresConnection,
+} from "./internal/connector/local_client.js";
+
+export const createClient: typeof import("./internal/connector/local_client.js").createClient =
+  () => {
+    throw new TnlError("sdk.connection_server_only");
+  };
 
 declare const process: { readonly env?: { readonly TNL_PROJECT_RUNTIME?: string } } | undefined;
 

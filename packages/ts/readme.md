@@ -65,6 +65,28 @@ await tunnel.wait();
 while using it; call `await tunnel.close()` during shutdown to remove the URL.
 By default, visitors need a current sign-in, share link, or token.
 
+## connect to local postgres
+
+With matching prerelease native and npm builds, `tnl generate` also exports
+immutable service facts in `.tnl/generated/services.ts`. Select a local deployment
+to connect to a configured loopback PostgreSQL listener without signing in:
+
+```ts
+import { createClient } from "@tnldotdev/tnl";
+import { services } from "./.tnl/generated/services.js";
+
+const local = createClient({ services }).deployment("local");
+const connection = await local.connect("database");
+// pass connection to pg, alongside your database credentials.
+await local.close();
+```
+
+This initial explicit-deployment API supports only local PostgreSQL. It does not
+start Docker or publish a tunnel, and it never falls back to a remote service.
+See the [local database recipe](https://tnl.dev/docs/private-services#connect-to-local-postgres-without-sign-in)
+for Compose port mappings, driver pools, and cleanup. Remote connections still use
+the API below.
+
 ## connect to a service
 
 Declare your service in project configuration and start its publisher, then sign

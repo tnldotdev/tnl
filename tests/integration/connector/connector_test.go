@@ -24,7 +24,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -697,31 +696,7 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 	}
 	// the SDK resolves its native package by platform and matching version.
 	// supply this test's built binary without installing an unrelated ORM.
-	manifest, err := os.ReadFile("../../../packages/ts/package.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var sdk struct {
-		Version string `json:"version"`
-	}
-	if err := json.Unmarshal(manifest, &sdk); err != nil {
-		t.Fatal(err)
-	}
-	arch := runtime.GOARCH
-	if arch == "amd64" {
-		arch = "x64"
-	}
-	packageName := fmt.Sprintf("tnl-%s-%s", runtime.GOOS, arch)
-	packageDir := filepath.Join(root, "node_modules", "@tnldotdev", packageName)
-	if err := os.MkdirAll(filepath.Join(packageDir, "bin"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(packageDir, "package.json"), []byte(fmt.Sprintf(`{"name":"@tnldotdev/%s","version":%q}`, packageName, sdk.Version)), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(binary, filepath.Join(packageDir, "bin", "tnl")); err != nil {
-		t.Fatal(err)
-	}
+	installSDKNativePackage(t, root, binary)
 	caPath := filepath.Join(root, "root.pem")
 	if err := os.WriteFile(caPath, caPEM, 0o600); err != nil {
 		t.Fatal(err)
