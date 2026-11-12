@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -28,16 +29,18 @@ const (
 )
 
 type candidateResult struct {
-	session   *Session
-	transport Transport
-	err       error
-	terminal  bool
+	session    *Session
+	transport  Transport
+	err        error
+	cleanupErr error
+	terminal   bool
 }
 
 // Race starts the primary candidate, then the fallback after fallbackDelay.
 // the first authenticated publisher connection wins, not the first TLS handshake.
 // a duplicate claim waits for a running sibling; other permanent rejections
-// stop both attempts. this race does not retry visitor streams.
+// stop both attempts. Race cancels and joins every started candidate, including
+// handshake cleanup and observations, before returning. it never retries streams.
 func Race(
 	ctx context.Context,
 	primary Candidate,
@@ -55,36 +58,59 @@ func Race(
 	if primary.Connector == nil || fallback.Connector == nil || primary.Transport == "" || fallback.Transport == "" || fallbackDelay < 0 {
 		return nil, "", errors.New("tunnel: two candidates and a non-negative fallback delay are required")
 	}
+	if cause := context.Cause(ctx); cause != nil {
+		return nil, "", errors.Join(ctx.Err(), cause)
+	}
 	raceCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	results := make(chan candidateResult, 2)
+	var workers sync.WaitGroup
+	remaining := 0
+	var failures []error
+	var cleanupErr error
+	defer func() {
+		cancel()
+		for range remaining {
+			result := <-results
+			failures = append(failures, result.err)
+			cleanupErr = errors.Join(cleanupErr, result.cleanupErr)
+			if result.session != nil {
+				cleanupErr = errors.Join(cleanupErr, result.session.Close())
+			}
+		}
+		workers.Wait()
+		if cause := context.Cause(ctx); cause != nil {
+			retErr = errors.Join(retErr, ctx.Err(), cause)
+		}
+		if session != nil && (retErr != nil || cleanupErr != nil) {
+			cleanupErr = errors.Join(cleanupErr, session.Close())
+			session, transport = nil, ""
+		}
+		if cleanupErr != nil {
+			retErr = &SessionCleanupError{Err: errors.Join(retErr, errors.Join(failures...), cleanupErr)}
+		}
+	}()
 	start := func(candidate Candidate) {
-		go func() { results <- dialCandidate(raceCtx, candidate, hello) }()
+		remaining++
+		workers.Go(func() { results <- dialCandidate(raceCtx, candidate, hello) })
 	}
 	start(primary)
 	timer := time.NewTimer(fallbackDelay)
 	defer timer.Stop()
 	fallbackStarted := false
-	remaining := 1
-	var failures []error
 	var duplicateFailure error
 	for remaining > 0 {
 		select {
 		case <-ctx.Done():
-			cancel()
-			closeLateWinner(results, remaining)
 			return nil, "", context.Cause(ctx)
 		case <-timer.C:
 			if !fallbackStarted {
 				fallbackStarted = true
-				remaining++
 				start(fallback)
 			}
 		case result := <-results:
 			remaining--
+			cleanupErr = errors.Join(cleanupErr, result.cleanupErr)
 			if result.session != nil {
-				cancel()
-				closeLateWinner(results, remaining)
 				return result.session, result.transport, nil
 			}
 			failures = append(failures, result.err)
@@ -94,8 +120,6 @@ func Race(
 					duplicateFailure = result.err
 					continue
 				}
-				cancel()
-				closeLateWinner(results, remaining)
 				return nil, "", result.err
 			}
 			if !fallbackStarted {
@@ -106,7 +130,6 @@ func Race(
 					}
 				}
 				fallbackStarted = true
-				remaining++
 				start(fallback)
 			}
 		}
@@ -121,23 +144,30 @@ func dialCandidate(ctx context.Context, candidate Candidate, hello tunnelv1.Mess
 	ctx, finish := observability.Start(ctx, "tunnel.transport_candidate", trace.WithAttributes(observability.Transport.Value(boundedTransport(candidate.Transport))))
 	started := time.Now()
 	defer func() {
-		finish(result.err)
-		observability.PublisherTransportCandidate(ctx, string(candidate.Transport), time.Since(started), result.err)
+		err := errors.Join(result.err, result.cleanupErr)
+		finish(err)
+		observability.PublisherTransportCandidate(ctx, string(candidate.Transport), time.Since(started), err)
 	}()
 	setupCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
+	if cause := context.Cause(setupCtx); cause != nil {
+		return candidateResult{err: errors.Join(setupCtx.Err(), cause)}
+	}
 	transport, err := candidate.Connector.Connect(setupCtx, candidate.Endpoint)
 	if err != nil {
-		return candidateResult{err: err}
+		var cleanup *muxsession.QUICTransportCloseError
+		var cleanupErr error
+		if errors.As(err, &cleanup) {
+			cleanupErr = err
+		}
+		return candidateResult{err: err, cleanupErr: cleanupErr}
 	}
 	if peer, ok := transport.(muxsession.AcceptedPeer); ok {
 		trace.SpanFromContext(ctx).SetAttributes(observability.TLSAttributes(peer.TLSConnectionState())...)
 	}
-	session, err := Dial(setupCtx, transport, hello)
-	if err == nil {
-		return candidateResult{session: session, transport: candidate.Transport}
-	}
-	return candidateResult{err: err, terminal: IsTerminalHandshakeError(err)}
+	dialed := dial(setupCtx, transport, hello, "", false)
+	return candidateResult{session: dialed.session, transport: candidate.Transport,
+		err: dialed.err, cleanupErr: dialed.cleanupErr, terminal: IsTerminalHandshakeError(dialed.err)}
 }
 
 func boundedTransport(transport Transport) observability.TransportValue {
@@ -154,18 +184,4 @@ func IsTerminalHandshakeError(err error) bool {
 	return errors.As(err, &protocolError) && protocolError.Code != tunnelv1.Unavailable &&
 		protocolError.Code != tunnelv1.CapacityExceeded && protocolError.Code != tunnelv1.DrainingPublisherConnection &&
 		protocolError.Code != tunnelv1.Internal
-}
-
-func closeLateWinner(results <-chan candidateResult, remaining int) {
-	if remaining == 0 {
-		return
-	}
-	go func() {
-		for range remaining {
-			result := <-results
-			if result.session != nil {
-				_ = result.session.Close()
-			}
-		}
-	}()
 }
