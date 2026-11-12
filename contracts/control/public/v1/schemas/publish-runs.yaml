@@ -45,6 +45,8 @@ schemas:
     type: object
     additionalProperties: false
     properties:
+      preferred_regions:
+        $ref: "./common.yaml#/schemas/PreferredRegions"
       traffic:
         $ref: "../openapi.yaml#/components/schemas/TrafficSelection"
   TrafficLimits:

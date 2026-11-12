@@ -650,7 +650,7 @@ func validateIngressLease(
 	lease ingressv1.IngressLease,
 	now time.Time,
 ) error {
-	if lease.IngressId != registration.IngressId || lease.IngressRunId != registration.IngressRunId ||
+	if lease.Region != registration.Region || lease.IngressId != registration.IngressId || lease.IngressRunId != registration.IngressRunId ||
 		lease.ProtocolVersion != registration.ProtocolVersion || lease.ConnectionCapacity != registration.ConnectionCapacity {
 		return errors.New("ingress: control lease does not match registration")
 	}

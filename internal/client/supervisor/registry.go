@@ -29,6 +29,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
+	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -62,6 +63,7 @@ const (
 )
 
 type Job struct {
+	PreferredRegions    []string                        `json:"preferred_regions,omitempty"`
 	GroupMember         *controlv1.PublisherGroupMember `json:"group_member,omitempty"`
 	GroupInstance       string                          `json:"group_instance,omitempty"`
 	IdentityDir         string                          `json:"identity_dir,omitempty"`
@@ -533,6 +535,11 @@ func (r *Registry) WaitStopped(ctx context.Context, id string) error {
 }
 
 func validateJob(job *Job) error {
+	preferences, err := region.Preferences(job.PreferredRegions)
+	if err != nil || len(preferences) != 0 && job.Kind != KindPublicURL && job.Kind != KindService {
+		return ErrScope
+	}
+	job.PreferredRegions = preferences
 	if !job.Status.State.Valid() {
 		return ErrScope
 	}

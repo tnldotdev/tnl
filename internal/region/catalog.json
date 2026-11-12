@@ -1,0 +1,874 @@
+{
+  "schema_version": 2,
+  "regions": [
+    {
+      "ids": [
+        "aws:us-west-1",
+        "azure:westus",
+        "fly:sjc",
+        "linode:us-west",
+        "oci:us-sanjose-1",
+        "vultr:sjc"
+      ],
+      "name": "San Jose",
+      "country": "US",
+      "latitude": 37.34,
+      "longitude": -121.89
+    },
+    {
+      "ids": ["digitalocean:sfo1", "digitalocean:sfo2", "digitalocean:sfo3"],
+      "name": "San Francisco",
+      "country": "US",
+      "latitude": 37.77,
+      "longitude": -122.42
+    },
+    {
+      "ids": ["azure:westus2", "linode:us-sea", "vultr:sea"],
+      "name": "Seattle",
+      "country": "US",
+      "latitude": 47.61,
+      "longitude": -122.33
+    },
+    {
+      "ids": ["aws:us-west-2", "gcp:us-west1", "hetzner:hil"],
+      "name": "Oregon",
+      "country": "US",
+      "latitude": 45.52,
+      "longitude": -122.68
+    },
+    {
+      "ids": ["fly:lax", "gcp:us-west2", "linode:us-lax", "vultr:lax"],
+      "name": "Los Angeles",
+      "country": "US",
+      "latitude": 34.05,
+      "longitude": -118.24
+    },
+    {
+      "ids": ["gcp:us-west3"],
+      "name": "Salt Lake City",
+      "country": "US",
+      "latitude": 40.76,
+      "longitude": -111.89
+    },
+    {
+      "ids": ["gcp:us-west4"],
+      "name": "Las Vegas",
+      "country": "US",
+      "latitude": 36.17,
+      "longitude": -115.14
+    },
+    {
+      "ids": ["azure:westus3", "oci:us-phoenix-1"],
+      "name": "Phoenix",
+      "country": "US",
+      "latitude": 33.45,
+      "longitude": -112.07
+    },
+    {
+      "ids": ["azure:southcentralus", "fly:dfw", "gcp:us-south1", "linode:us-central", "vultr:dfw"],
+      "name": "Dallas",
+      "country": "US",
+      "latitude": 32.78,
+      "longitude": -96.8
+    },
+    {
+      "ids": ["gcp:us-central1"],
+      "name": "Council Bluffs",
+      "country": "US",
+      "latitude": 41.26,
+      "longitude": -95.86
+    },
+    {
+      "ids": ["azure:centralus"],
+      "name": "Iowa",
+      "country": "US",
+      "latitude": 41.59,
+      "longitude": -93.62
+    },
+    {
+      "ids": ["digitalocean:mkc1"],
+      "name": "Kansas City",
+      "country": "US",
+      "latitude": 39.1,
+      "longitude": -94.58
+    },
+    {
+      "ids": ["digitalocean:mem1"],
+      "name": "Memphis",
+      "country": "US",
+      "latitude": 35.15,
+      "longitude": -90.05
+    },
+    {
+      "ids": ["azure:northcentralus", "fly:ord", "linode:us-ord", "oci:us-chicago-1", "vultr:ord"],
+      "name": "Chicago",
+      "country": "US",
+      "latitude": 41.88,
+      "longitude": -87.63
+    },
+    {
+      "ids": ["aws:us-east-2", "gcp:us-east5"],
+      "name": "Columbus",
+      "country": "US",
+      "latitude": 39.96,
+      "longitude": -83
+    },
+    {
+      "ids": [
+        "aws:us-east-1",
+        "azure:eastus",
+        "azure:eastus2",
+        "fly:iad",
+        "gcp:us-east4",
+        "hetzner:ash",
+        "linode:us-iad",
+        "linode:us-iad-2",
+        "oci:us-ashburn-1"
+      ],
+      "name": "Northern Virginia",
+      "country": "US",
+      "latitude": 38.95,
+      "longitude": -77.46
+    },
+    {
+      "ids": ["digitalocean:ric1"],
+      "name": "Richmond",
+      "country": "US",
+      "latitude": 37.54,
+      "longitude": -77.44
+    },
+    {
+      "ids": ["gcp:us-east1"],
+      "name": "South Carolina",
+      "country": "US",
+      "latitude": 33.2,
+      "longitude": -80.01
+    },
+    {
+      "ids": ["fly:ewr", "linode:us-east", "vultr:ewr"],
+      "name": "Newark",
+      "country": "US",
+      "latitude": 40.74,
+      "longitude": -74.17
+    },
+    {
+      "ids": ["digitalocean:nyc1", "digitalocean:nyc2", "digitalocean:nyc3"],
+      "name": "New York City",
+      "country": "US",
+      "latitude": 40.71,
+      "longitude": -74.01
+    },
+    {
+      "ids": ["digitalocean:atl1", "linode:us-southeast", "vultr:atl"],
+      "name": "Atlanta",
+      "country": "US",
+      "latitude": 33.75,
+      "longitude": -84.39
+    },
+    {
+      "ids": ["linode:us-mia", "vultr:mia"],
+      "name": "Miami",
+      "country": "US",
+      "latitude": 25.76,
+      "longitude": -80.19
+    },
+    {
+      "ids": ["vultr:hnl"],
+      "name": "Honolulu",
+      "country": "US",
+      "latitude": 21.31,
+      "longitude": -157.86
+    },
+    {
+      "ids": ["azure:westcentralus"],
+      "name": "Wyoming",
+      "country": "US",
+      "latitude": 41.14,
+      "longitude": -104.82
+    },
+    {
+      "ids": [
+        "azure:canadacentral",
+        "digitalocean:tor1",
+        "fly:yyz",
+        "gcp:northamerica-northeast2",
+        "linode:ca-central",
+        "linode:ca-toronto-1",
+        "oci:ca-toronto-1",
+        "vultr:yto"
+      ],
+      "name": "Toronto",
+      "country": "CA",
+      "latitude": 43.65,
+      "longitude": -79.38
+    },
+    {
+      "ids": ["aws:ca-central-1", "gcp:northamerica-northeast1", "oci:ca-montreal-1"],
+      "name": "Montréal",
+      "country": "CA",
+      "latitude": 45.5,
+      "longitude": -73.57
+    },
+    {
+      "ids": ["azure:canadaeast"],
+      "name": "Québec",
+      "country": "CA",
+      "latitude": 46.81,
+      "longitude": -71.21
+    },
+    {
+      "ids": ["aws:ca-west-1"],
+      "name": "Calgary",
+      "country": "CA",
+      "latitude": 51.05,
+      "longitude": -114.07
+    },
+    {
+      "ids": ["vultr:mex"],
+      "name": "Mexico City",
+      "country": "MX",
+      "latitude": 19.43,
+      "longitude": -99.13
+    },
+    {
+      "ids": [
+        "aws:mx-central-1",
+        "azure:mexicocentral",
+        "gcp:northamerica-south1",
+        "oci:mx-queretaro-1"
+      ],
+      "name": "Querétaro",
+      "country": "MX",
+      "latitude": 20.59,
+      "longitude": -100.39
+    },
+    {
+      "ids": ["oci:mx-monterrey-1"],
+      "name": "Monterrey",
+      "country": "MX",
+      "latitude": 25.69,
+      "longitude": -100.32
+    },
+    {
+      "ids": [
+        "aws:sa-east-1",
+        "azure:brazilsouth",
+        "fly:gru",
+        "gcp:southamerica-east1",
+        "linode:br-gru",
+        "oci:sa-saopaulo-1",
+        "vultr:sao"
+      ],
+      "name": "São Paulo",
+      "country": "BR",
+      "latitude": -23.55,
+      "longitude": -46.63
+    },
+    {
+      "ids": ["oci:sa-vinhedo-1"],
+      "name": "Vinhedo",
+      "country": "BR",
+      "latitude": -23.03,
+      "longitude": -46.98
+    },
+    {
+      "ids": ["azure:brazilsoutheast"],
+      "name": "Rio de Janeiro",
+      "country": "BR",
+      "latitude": -22.91,
+      "longitude": -43.2
+    },
+    {
+      "ids": ["azure:chilecentral", "gcp:southamerica-west1", "oci:sa-santiago-1", "vultr:scl"],
+      "name": "Santiago",
+      "country": "CL",
+      "latitude": -33.45,
+      "longitude": -70.67
+    },
+    {
+      "ids": ["oci:sa-valparaiso-1"],
+      "name": "Valparaíso",
+      "country": "CL",
+      "latitude": -33.05,
+      "longitude": -71.62
+    },
+    {
+      "ids": ["oci:sa-bogota-1"],
+      "name": "Bogotá",
+      "country": "CO",
+      "latitude": 4.71,
+      "longitude": -74.07
+    },
+    {
+      "ids": [
+        "aws:eu-west-2",
+        "azure:uksouth",
+        "digitalocean:lon1",
+        "fly:lhr",
+        "gcp:europe-west2",
+        "linode:gb-lon",
+        "linode:eu-west",
+        "oci:uk-london-1",
+        "vultr:lhr"
+      ],
+      "name": "London",
+      "country": "GB",
+      "latitude": 51.51,
+      "longitude": -0.13
+    },
+    {
+      "ids": ["azure:ukwest", "oci:uk-cardiff-1"],
+      "name": "Cardiff",
+      "country": "GB",
+      "latitude": 51.48,
+      "longitude": -3.18
+    },
+    {
+      "ids": ["vultr:man"],
+      "name": "Manchester",
+      "country": "GB",
+      "latitude": 53.48,
+      "longitude": -2.24
+    },
+    {
+      "ids": ["aws:eu-west-1", "azure:northeurope"],
+      "name": "Dublin",
+      "country": "IE",
+      "latitude": 53.35,
+      "longitude": -6.26
+    },
+    {
+      "ids": [
+        "azure:westeurope",
+        "digitalocean:ams2",
+        "digitalocean:ams3",
+        "fly:ams",
+        "linode:nl-ams",
+        "oci:eu-amsterdam-1",
+        "scaleway:nl-ams",
+        "vultr:ams"
+      ],
+      "name": "Amsterdam",
+      "country": "NL",
+      "latitude": 52.37,
+      "longitude": 4.9
+    },
+    {
+      "ids": ["gcp:europe-west4"],
+      "name": "Groningen",
+      "country": "NL",
+      "latitude": 53.22,
+      "longitude": 6.57
+    },
+    {
+      "ids": ["azure:belgiumcentral", "gcp:europe-west1"],
+      "name": "Belgium",
+      "country": "BE",
+      "latitude": 50.85,
+      "longitude": 4.35
+    },
+    {
+      "ids": [
+        "aws:eu-central-1",
+        "azure:germanywestcentral",
+        "digitalocean:fra1",
+        "fly:fra",
+        "gcp:europe-west3",
+        "linode:de-fra-2",
+        "linode:eu-central",
+        "oci:eu-frankfurt-1",
+        "vultr:fra"
+      ],
+      "name": "Frankfurt",
+      "country": "DE",
+      "latitude": 50.11,
+      "longitude": 8.68
+    },
+    {
+      "ids": ["hetzner:fsn1"],
+      "name": "Falkenstein",
+      "country": "DE",
+      "latitude": 50.48,
+      "longitude": 12.37
+    },
+    {
+      "ids": ["hetzner:nbg1"],
+      "name": "Nuremberg",
+      "country": "DE",
+      "latitude": 49.45,
+      "longitude": 11.08
+    },
+    {
+      "ids": ["gcp:europe-west10"],
+      "name": "Berlin",
+      "country": "DE",
+      "latitude": 52.52,
+      "longitude": 13.41
+    },
+    {
+      "ids": ["gcp:europe-north1", "hetzner:hel1"],
+      "name": "Helsinki",
+      "country": "FI",
+      "latitude": 60.17,
+      "longitude": 24.94
+    },
+    {
+      "ids": [
+        "aws:eu-north-1",
+        "fly:arn",
+        "gcp:europe-north2",
+        "linode:se-sto",
+        "oci:eu-stockholm-1",
+        "vultr:sto"
+      ],
+      "name": "Stockholm",
+      "country": "SE",
+      "latitude": 59.33,
+      "longitude": 18.07
+    },
+    {
+      "ids": ["azure:swedencentral"],
+      "name": "Gävle",
+      "country": "SE",
+      "latitude": 60.67,
+      "longitude": 17.14
+    },
+    {
+      "ids": ["azure:norwayeast"],
+      "name": "Oslo",
+      "country": "NO",
+      "latitude": 59.91,
+      "longitude": 10.75
+    },
+    {
+      "ids": ["azure:denmarkeast"],
+      "name": "Copenhagen",
+      "country": "DK",
+      "latitude": 55.68,
+      "longitude": 12.57
+    },
+    {
+      "ids": [
+        "aws:eu-west-3",
+        "azure:francecentral",
+        "fly:cdg",
+        "gcp:europe-west9",
+        "linode:fr-par",
+        "linode:fr-par-2",
+        "oci:eu-paris-1",
+        "scaleway:fr-par",
+        "vultr:cdg"
+      ],
+      "name": "Paris",
+      "country": "FR",
+      "latitude": 48.86,
+      "longitude": 2.35
+    },
+    {
+      "ids": ["azure:francesouth", "oci:eu-marseille-1"],
+      "name": "Marseille",
+      "country": "FR",
+      "latitude": 43.3,
+      "longitude": 5.37
+    },
+    {
+      "ids": [
+        "azure:spaincentral",
+        "gcp:europe-southwest1",
+        "linode:es-mad",
+        "oci:eu-madrid-1",
+        "oci:eu-madrid-3",
+        "vultr:mad"
+      ],
+      "name": "Madrid",
+      "country": "ES",
+      "latitude": 40.42,
+      "longitude": -3.7
+    },
+    {
+      "ids": ["aws:eu-south-2"],
+      "name": "Aragón",
+      "country": "ES",
+      "latitude": 41.65,
+      "longitude": -0.88
+    },
+    {
+      "ids": [
+        "aws:eu-south-1",
+        "azure:italynorth",
+        "gcp:europe-west8",
+        "linode:it-mil",
+        "oci:eu-milan-1",
+        "scaleway:it-mil",
+        "vultr:mxp"
+      ],
+      "name": "Milan",
+      "country": "IT",
+      "latitude": 45.46,
+      "longitude": 9.19
+    },
+    {
+      "ids": ["gcp:europe-west12", "oci:eu-turin-1"],
+      "name": "Turin",
+      "country": "IT",
+      "latitude": 45.07,
+      "longitude": 7.69
+    },
+    {
+      "ids": ["azure:polandcentral", "gcp:europe-central2", "scaleway:pl-waw", "vultr:waw"],
+      "name": "Warsaw",
+      "country": "PL",
+      "latitude": 52.23,
+      "longitude": 21.01
+    },
+    {
+      "ids": ["aws:eu-central-2", "azure:switzerlandnorth", "gcp:europe-west6", "oci:eu-zurich-1"],
+      "name": "Zurich",
+      "country": "CH",
+      "latitude": 47.38,
+      "longitude": 8.54
+    },
+    {
+      "ids": ["azure:switzerlandwest"],
+      "name": "Geneva",
+      "country": "CH",
+      "latitude": 46.2,
+      "longitude": 6.14
+    },
+    {
+      "ids": ["azure:austriaeast"],
+      "name": "Vienna",
+      "country": "AT",
+      "latitude": 48.21,
+      "longitude": 16.37
+    },
+    {
+      "ids": ["oci:eu-jovanovac-1"],
+      "name": "Jovanovac",
+      "country": "RS",
+      "latitude": 44.07,
+      "longitude": 21.06
+    },
+    {
+      "ids": [
+        "azure:southafricanorth",
+        "fly:jnb",
+        "gcp:africa-south1",
+        "oci:af-johannesburg-1",
+        "vultr:jnb"
+      ],
+      "name": "Johannesburg",
+      "country": "ZA",
+      "latitude": -26.2,
+      "longitude": 28.05
+    },
+    {
+      "ids": ["aws:af-south-1", "azure:southafricawest"],
+      "name": "Cape Town",
+      "country": "ZA",
+      "latitude": -33.93,
+      "longitude": 18.42
+    },
+    {
+      "ids": ["oci:af-casablanca-1"],
+      "name": "Casablanca",
+      "country": "MA",
+      "latitude": 33.57,
+      "longitude": -7.59
+    },
+    {
+      "ids": ["aws:il-central-1", "azure:israelcentral", "gcp:me-west1", "vultr:tlv"],
+      "name": "Tel Aviv",
+      "country": "IL",
+      "latitude": 32.08,
+      "longitude": 34.78
+    },
+    {
+      "ids": ["oci:il-jerusalem-1"],
+      "name": "Jerusalem",
+      "country": "IL",
+      "latitude": 31.77,
+      "longitude": 35.21
+    },
+    {
+      "ids": ["aws:me-south-1"],
+      "name": "Bahrain",
+      "country": "BH",
+      "latitude": 26.23,
+      "longitude": 50.59
+    },
+    {
+      "ids": ["azure:qatarcentral", "gcp:me-central1"],
+      "name": "Doha",
+      "country": "QA",
+      "latitude": 25.29,
+      "longitude": 51.53
+    },
+    {
+      "ids": ["gcp:me-central2"],
+      "name": "Dammam",
+      "country": "SA",
+      "latitude": 26.43,
+      "longitude": 50.1
+    },
+    {
+      "ids": ["oci:me-riyadh-1"],
+      "name": "Riyadh",
+      "country": "SA",
+      "latitude": 24.71,
+      "longitude": 46.67
+    },
+    {
+      "ids": ["oci:me-jeddah-1"],
+      "name": "Jeddah",
+      "country": "SA",
+      "latitude": 21.49,
+      "longitude": 39.19
+    },
+    {
+      "ids": ["aws:me-central-1", "azure:uaenorth", "oci:me-dubai-1"],
+      "name": "Dubai",
+      "country": "AE",
+      "latitude": 25.2,
+      "longitude": 55.27
+    },
+    {
+      "ids": ["azure:uaecentral", "oci:me-abudhabi-1"],
+      "name": "Abu Dhabi",
+      "country": "AE",
+      "latitude": 24.45,
+      "longitude": 54.37
+    },
+    {
+      "ids": [
+        "aws:ap-northeast-1",
+        "azure:japaneast",
+        "fly:nrt",
+        "gcp:asia-northeast1",
+        "linode:ap-northeast",
+        "linode:jp-tyo-3",
+        "oci:ap-tokyo-1",
+        "vultr:nrt"
+      ],
+      "name": "Tokyo",
+      "country": "JP",
+      "latitude": 35.68,
+      "longitude": 139.69
+    },
+    {
+      "ids": [
+        "aws:ap-northeast-3",
+        "azure:japanwest",
+        "gcp:asia-northeast2",
+        "linode:jp-osa",
+        "oci:ap-osaka-1",
+        "vultr:itm"
+      ],
+      "name": "Osaka",
+      "country": "JP",
+      "latitude": 34.69,
+      "longitude": 135.5
+    },
+    {
+      "ids": [
+        "aws:ap-northeast-2",
+        "azure:koreacentral",
+        "gcp:asia-northeast3",
+        "oci:ap-seoul-1",
+        "vultr:icn"
+      ],
+      "name": "Seoul",
+      "country": "KR",
+      "latitude": 37.57,
+      "longitude": 126.98
+    },
+    {
+      "ids": ["azure:koreasouth"],
+      "name": "Busan",
+      "country": "KR",
+      "latitude": 35.18,
+      "longitude": 129.08
+    },
+    {
+      "ids": ["oci:ap-chuncheon-1"],
+      "name": "Chuncheon",
+      "country": "KR",
+      "latitude": 37.88,
+      "longitude": 127.73
+    },
+    {
+      "ids": ["aws:ap-east-1", "azure:eastasia", "gcp:asia-east2"],
+      "name": "Hong Kong",
+      "country": "HK",
+      "latitude": 22.32,
+      "longitude": 114.17
+    },
+    {
+      "ids": ["aws:ap-east-2"],
+      "name": "Taipei",
+      "country": "TW",
+      "latitude": 25.03,
+      "longitude": 121.57
+    },
+    {
+      "ids": ["gcp:asia-east1"],
+      "name": "Changhua",
+      "country": "TW",
+      "latitude": 24.07,
+      "longitude": 120.54
+    },
+    {
+      "ids": [
+        "aws:ap-southeast-1",
+        "azure:southeastasia",
+        "digitalocean:sgp1",
+        "fly:sin",
+        "gcp:asia-southeast1",
+        "hetzner:sin",
+        "linode:ap-south",
+        "linode:sg-sin-2",
+        "oci:ap-singapore-1",
+        "oci:ap-singapore-2",
+        "vultr:sgp"
+      ],
+      "name": "Singapore",
+      "country": "SG",
+      "latitude": 1.29,
+      "longitude": 103.85
+    },
+    {
+      "ids": [
+        "aws:ap-southeast-3",
+        "azure:indonesiacentral",
+        "gcp:asia-southeast2",
+        "linode:id-cgk"
+      ],
+      "name": "Jakarta",
+      "country": "ID",
+      "latitude": -6.21,
+      "longitude": 106.85
+    },
+    {
+      "ids": ["oci:ap-batam-1"],
+      "name": "Batam",
+      "country": "ID",
+      "latitude": 1.05,
+      "longitude": 104.03
+    },
+    {
+      "ids": ["aws:ap-southeast-5", "azure:malaysiawest"],
+      "name": "Kuala Lumpur",
+      "country": "MY",
+      "latitude": 3.14,
+      "longitude": 101.69
+    },
+    {
+      "ids": ["oci:ap-kulai-2"],
+      "name": "Kulai",
+      "country": "MY",
+      "latitude": 1.66,
+      "longitude": 103.6
+    },
+    {
+      "ids": ["aws:ap-southeast-7", "gcp:asia-southeast3"],
+      "name": "Bangkok",
+      "country": "TH",
+      "latitude": 13.76,
+      "longitude": 100.5
+    },
+    {
+      "ids": [
+        "aws:ap-south-1",
+        "azure:westindia",
+        "gcp:asia-south1",
+        "linode:ap-west",
+        "linode:in-bom-2",
+        "oci:ap-mumbai-1",
+        "vultr:bom"
+      ],
+      "name": "Mumbai",
+      "country": "IN",
+      "latitude": 19.08,
+      "longitude": 72.88
+    },
+    {
+      "ids": ["aws:ap-south-2", "azure:indiasouthcentral", "oci:ap-hyderabad-1"],
+      "name": "Hyderabad",
+      "country": "IN",
+      "latitude": 17.39,
+      "longitude": 78.49
+    },
+    {
+      "ids": ["azure:centralindia"],
+      "name": "Pune",
+      "country": "IN",
+      "latitude": 18.52,
+      "longitude": 73.86
+    },
+    {
+      "ids": ["azure:southindia", "linode:in-maa"],
+      "name": "Chennai",
+      "country": "IN",
+      "latitude": 13.08,
+      "longitude": 80.27
+    },
+    {
+      "ids": ["digitalocean:blr1", "vultr:blr"],
+      "name": "Bengaluru",
+      "country": "IN",
+      "latitude": 12.97,
+      "longitude": 77.59
+    },
+    {
+      "ids": ["gcp:asia-south2", "vultr:del"],
+      "name": "Delhi",
+      "country": "IN",
+      "latitude": 28.61,
+      "longitude": 77.21
+    },
+    {
+      "ids": [
+        "aws:ap-southeast-2",
+        "azure:australiaeast",
+        "digitalocean:syd1",
+        "fly:syd",
+        "gcp:australia-southeast1",
+        "linode:ap-southeast",
+        "oci:ap-sydney-1",
+        "vultr:syd"
+      ],
+      "name": "Sydney",
+      "country": "AU",
+      "latitude": -33.87,
+      "longitude": 151.21
+    },
+    {
+      "ids": [
+        "aws:ap-southeast-4",
+        "azure:australiasoutheast",
+        "gcp:australia-southeast2",
+        "linode:au-mel",
+        "oci:ap-melbourne-1",
+        "vultr:mel"
+      ],
+      "name": "Melbourne",
+      "country": "AU",
+      "latitude": -37.81,
+      "longitude": 144.96
+    },
+    {
+      "ids": ["azure:australiacentral"],
+      "name": "Canberra",
+      "country": "AU",
+      "latitude": -35.28,
+      "longitude": 149.13
+    },
+    {
+      "ids": ["aws:ap-southeast-6", "azure:newzealandnorth"],
+      "name": "Auckland",
+      "country": "NZ",
+      "latitude": -36.85,
+      "longitude": 174.76
+    }
+  ]
+}
