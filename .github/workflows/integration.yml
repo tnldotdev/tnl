@@ -178,7 +178,7 @@ jobs:
 
   integration:
     name: Go integration
-    if: ${{ !cancelled() }}
+    if: always()
     needs: [postgres, clients, binary, compose, dns]
     runs-on: ubuntu-latest
     timeout-minutes: 5
