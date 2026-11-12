@@ -193,6 +193,8 @@ func MatchServiceDeclaration(service controlv1.Service, protocol string, trust *
 }
 
 func sameServiceDeclaration(a, b controlv1.ServiceRunDeclaration) bool {
+	// placement is a run-local preference, not part of the saved target trust.
+	a.PreferredRegions, b.PreferredRegions = nil, nil
 	x, err := json.Marshal(a)
 	if err != nil {
 		return false

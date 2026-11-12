@@ -7,11 +7,12 @@ import (
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/region"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type serviceRunStore interface {
-	PrepareServiceRun(context.Context, string, controlstate.PublisherIdentity, string, time.Time, controlstate.ServiceMetadata, *controlstate.EnvironmentPublication) (controlstate.ServiceRunPreparation, error)
+	PrepareServiceRun(context.Context, string, controlstate.PublisherIdentity, string, time.Time, controlstate.ServiceMetadata, *controlstate.EnvironmentPublication, ...string) (controlstate.ServiceRunPreparation, error)
 	HeartbeatServiceRun(context.Context, string, string, string, time.Time, controlstate.ServiceRunHealth) (controlstate.ServiceRunState, error)
 	CloseServiceRun(context.Context, string, string, string, time.Time) error
 }
@@ -25,6 +26,10 @@ func (h *handler) serviceRuns(w http.ResponseWriter) (serviceRunStore, bool) {
 }
 
 func serviceRunProblem(ctx context.Context, w http.ResponseWriter, operation string, err error) {
+	if errors.Is(err, region.ErrPreference) {
+		writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, region.ErrPreference.Error())
+		return
+	}
 	if errors.Is(err, controlstate.ErrInsufficientRelayServices) {
 		writeProblem(w, 503, controlv1.Unavailable, "two live relay services are required")
 		return
@@ -77,7 +82,11 @@ func (h *handler) PrepareServiceRun(w http.ResponseWriter, r *http.Request, serv
 	if body.Environment != nil {
 		environment = &controlstate.EnvironmentPublication{EnvironmentID: body.Environment.EnvironmentId, MutationRevision: body.Environment.MutationRevision, ConfigurationHash: body.Environment.ConfigurationHash}
 	}
-	prepared, err := store.PrepareServiceRun(r.Context(), serviceID, publisher, r.Header.Get("Idempotency-Key"), time.Now(), declaration, environment)
+	var preferences []string
+	if body.PreferredRegions != nil {
+		preferences = *body.PreferredRegions
+	}
+	prepared, err := store.PrepareServiceRun(r.Context(), serviceID, publisher, r.Header.Get("Idempotency-Key"), time.Now(), declaration, environment, preferences...)
 	if err != nil {
 		serviceRunProblem(r.Context(), w, "prepare service run", err)
 		return

@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 )
@@ -68,7 +69,11 @@ func servicePublisherMatches(p PublisherIdentity, serviceID string) bool {
 		opaqueid.Valid(p.GrantID, opaqueid.PublisherGrantPrefix)
 }
 
-func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p PublisherIdentity, key string, now time.Time, metadata ServiceMetadata, environment *EnvironmentPublication) (result ServiceRunPreparation, retErr error) {
+func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p PublisherIdentity, key string, now time.Time, metadata ServiceMetadata, environment *EnvironmentPublication, preferred ...string) (result ServiceRunPreparation, retErr error) {
+	preferred, retErr = region.Preferences(preferred)
+	if retErr != nil {
+		return result, retErr
+	}
 	if !servicePublisherMatches(p, serviceID) || len(key) == 0 || len(key) > 128 {
 		return result, ErrServiceAccess
 	}
@@ -119,6 +124,7 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 		request = append(append(request, '\x00'), encoded...)
 	}
 	digest := sha256.Sum256(request)
+	digest = regionRequestDigest(digest, preferred)
 	var existingID string
 	err = tx.QueryRow(ctx, `SELECT id FROM control.service_runs WHERE service_id=$1 AND idempotency_key=$2 AND publisher_identity_id=$3`, serviceID, key, p.ID).Scan(&existingID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
@@ -194,7 +200,8 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 		return result, err
 	}
 	parameters := controlstatedb.PrepareServiceRunParams{
-		ID: id, ServiceID: serviceID, TeamID: service.TeamID, RunNumber: int64(number),
+		PreferredRegions: preferred,
+		ID:               id, ServiceID: serviceID, TeamID: service.TeamID, RunNumber: int64(number),
 		PublisherIdentityID: p.ID, PublisherGrantID: p.GrantID, PublisherKeyID: p.KeyID, IdempotencyKey: key,
 		RequestDigest: digest[:], PreparationExpiresAt: timestamptz(now.Add(2 * time.Minute)),
 		AssignmentSeedCiphertext: ciphertext, AssignmentSeedStorageKeyID: d.storageKey.CurrentID(),
@@ -377,6 +384,7 @@ func replenishServiceConnections(ctx context.Context, q *controlstatedb.Queries,
 	if err != nil {
 		return err
 	}
+	rankRelayPlacements(services, run.PreferredRegions)
 	free := make(map[string]int64, len(replaced))
 	for _, old := range replaced {
 		if PublisherConnectionState(old.State) == PublisherConnectionAssigned {

@@ -573,6 +573,7 @@ type ControlIdentityConnection struct {
 }
 
 type ControlIngressLease struct {
+	Region               string
 	ID                   int64
 	IngressID            string
 	IngressRunID         string
@@ -912,6 +913,7 @@ type ControlPublicUrlRecoveryHistogram struct {
 }
 
 type ControlPublishRun struct {
+	PreferredRegions           []string
 	ID                         string
 	PublicURLID                string
 	TeamID                     string
@@ -1238,6 +1240,7 @@ type ControlRelayCertificateOrder struct {
 }
 
 type ControlRelayLease struct {
+	Region               string
 	PeerSigningPublicKey []byte
 	ID                   int64
 	RelayID              string
@@ -1267,6 +1270,7 @@ type ControlRelayRunSigningKey struct {
 }
 
 type ControlRelayService struct {
+	Region                          string
 	ID                              int64
 	RelayServiceID                  string
 	RelayAddress                    string
@@ -1502,6 +1506,7 @@ type ControlServicePortClaim struct {
 }
 
 type ControlServiceRun struct {
+	PreferredRegions             []string
 	ID                           string
 	ServiceID                    string
 	TeamID                       string

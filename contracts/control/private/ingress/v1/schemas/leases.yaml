@@ -5,6 +5,7 @@ schemas:
     required:
       [
         ingress_id,
+        region,
         ingress_run_id,
         protocol_version,
         connection_capacity,
@@ -12,6 +13,8 @@ schemas:
         service_ports,
       ]
     properties:
+      region:
+        $ref: "../../../../public/v1/schemas/common.yaml#/schemas/RegionID"
       ingress_pool_id:
         $ref: "../openapi.yaml#/components/schemas/Identifier"
       service_ports:
@@ -104,6 +107,7 @@ schemas:
       - ingress_id
       - ingress_run_id
       - ingress_lease_revision
+      - region
       - protocol_version
       - connection_capacity
       - reported_connections
@@ -113,6 +117,8 @@ schemas:
       - renewed_at
       - lease_expires_at
     properties:
+      region:
+        $ref: "../../../../public/v1/schemas/common.yaml#/schemas/RegionID"
       ingress_id:
         $ref: "../openapi.yaml#/components/schemas/Identifier"
       ingress_run_id:

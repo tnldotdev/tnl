@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"net/http"
+	"slices"
 	"testing"
 	"time"
 
@@ -82,7 +83,8 @@ func TestIntegrationEnvironmentHTTPPublicationFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	declaration := controlv1.ServiceRunDeclaration{Protocol: controlv1.ServiceProtocolHTTP, TrustRevision: assigned.TrustRevision}
+	preferences := []string{"fly:sjc", "aws:us-west-1"}
+	declaration := controlv1.ServiceRunDeclaration{Protocol: controlv1.ServiceProtocolHTTP, TrustRevision: assigned.TrustRevision, PreferredRegions: &preferences}
 	missing, err := f.client.PrepareServiceRunWithResponse(t.Context(), assigned.ServiceId, &controlv1.PrepareServiceRunParams{IdempotencyKey: "missing-application"}, declaration, bearer(access.Token))
 	if err != nil || missing == nil {
 		t.Fatal("preparation without an application failed without an HTTP response", err)
@@ -92,6 +94,10 @@ func TestIntegrationEnvironmentHTTPPublicationFence(t *testing.T) {
 	prepared, err := f.client.PrepareServiceRunWithResponse(t.Context(), assigned.ServiceId, &controlv1.PrepareServiceRunParams{IdempotencyKey: "pinned-application"}, declaration, bearer(access.Token))
 	if err != nil || prepared == nil || prepared.JSON201 == nil {
 		t.Fatal("prepare exact assigned application", prepared, err)
+	}
+	var storedPreferences []string
+	if err := inspect.QueryRow(t.Context(), `SELECT preferred_regions FROM control.service_runs WHERE id=$1`, prepared.JSON201.ServiceRunId).Scan(&storedPreferences); err != nil || !slices.Equal(storedPreferences, preferences) {
+		t.Fatal("environment HTTP preparation dropped ordered region preferences", err)
 	}
 	replacement := environmentHTTPTargets("db.original.internal", "5432")
 	replacement["api"] = controlv1.EnvironmentTarget{Address: new("replacement.internal:8080")}

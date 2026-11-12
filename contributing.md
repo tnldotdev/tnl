@@ -73,8 +73,9 @@ stop/start of all server roles. `tnld migrate` accepts only
 `TNLD_DATABASE_DIRECT_URL`; serving roles use pooled `TNLD_DATABASE_URL` and
 require the exact schema version and baseline identity. Connector session
 rebinding, pinned ingress pool placement, the post-quantum public URL policy,
-and independently applied environment revisions are part of the version 1
-baseline. Environment publisher assignments and prepared runs carry an exact
+provider-qualified regions, saved run preferences, and independently applied
+environment revisions are part of the version 1 baseline. Environment
+publisher assignments and prepared runs carry an exact
 application revision and hash; use matching server and publisher binaries.
 Use a fresh database, run `tnld migrate`, and start matching server,
 publisher, and connector binaries. Databases from previous baselines are rejected.

@@ -83,6 +83,7 @@ schemas:
     additionalProperties: false
     required:
       [
+        region,
         relay_service_id,
         relay_id,
         relay_run_id,
@@ -100,6 +101,8 @@ schemas:
         lease_expires_at,
       ]
     properties:
+      region:
+        $ref: "./common.yaml#/schemas/RegionID"
       relay_service_id:
         $ref: "../openapi.yaml#/components/schemas/RelayServiceID"
       relay_id:

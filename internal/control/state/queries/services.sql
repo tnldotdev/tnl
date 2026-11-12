@@ -136,11 +136,11 @@ ORDER BY s.id LIMIT 101;
 -- caller locks the service, checks the live publisher grant and enrolled key,
 -- allocates one run number and captures its managed certificate plan.
 -- a retry with the same idempotency key returns the same prepared row.
-INSERT INTO control.service_runs(id, service_id, team_id, run_number,
+INSERT INTO control.service_runs(preferred_regions, id, service_id, team_id, run_number,
     publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key,
     request_digest, preparation_expires_at, environment_id,environment_mutation_revision,environment_configuration_hash,assignment_seed_ciphertext,
     assignment_seed_storage_key_id, certificate_cache_key,certificate_scope,certificate_identifiers,certificate_domain_id,certificate_hostname,service_port,state, created_at, publisher_expires_at)
-VALUES (sqlc.arg(id), sqlc.arg(service_id), sqlc.arg(team_id), sqlc.arg(run_number),
+VALUES (sqlc.arg(preferred_regions), sqlc.arg(id), sqlc.arg(service_id), sqlc.arg(team_id), sqlc.arg(run_number),
     sqlc.arg(publisher_identity_id), sqlc.arg(publisher_grant_id), sqlc.arg(publisher_key_id),
     sqlc.arg(idempotency_key), sqlc.arg(request_digest),
     sqlc.arg(preparation_expires_at),sqlc.narg(environment_id),sqlc.narg(environment_mutation_revision),sqlc.narg(environment_configuration_hash), sqlc.arg(assignment_seed_ciphertext),

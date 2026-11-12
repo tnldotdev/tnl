@@ -81,6 +81,7 @@ WHERE id = sqlc.arg(public_url_id)
 RETURNING (next_publish_run_number - 1)::bigint AS publish_run_number, service_protocol
 )
 INSERT INTO control.publish_runs (
+    preferred_regions,
     id,
     public_url_id,
     team_id,
@@ -106,6 +107,7 @@ INSERT INTO control.publish_runs (
     last_heartbeat_at,
     publisher_expires_at
 ) SELECT
+    sqlc.arg(preferred_regions),
     sqlc.arg(id),
     sqlc.arg(public_url_id),
     sqlc.arg(team_id),
