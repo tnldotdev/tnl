@@ -6,3 +6,7 @@ allowBuilds:
   esbuild: false
 
 autoInstallPeers: false
+
+# hey api needs the compiler API; application checks still use TypeScript 7.
+overrides:
+  "@hey-api/openapi-ts>typescript": 6.0.3

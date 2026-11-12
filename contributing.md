@@ -98,6 +98,11 @@ OpenAPI sources live in `contracts/`. SQL sources live beside each state package
 `sqlc.yaml`. [Generation tasks](tasks/generate.yml) list the generated paths.
 The tunnel protocol in `pkg/protocol/tunnelv1` is handwritten.
 
+Hey API generates the browser and telemetry TypeScript validators. Its supported
+Zod resolvers keep closed request objects strict and JSON counters numeric; server
+authorization and validation remain authoritative. The generator uses a pinned
+TypeScript 6 compiler API without changing the TypeScript 7 application checks.
+
 The control baseline requires a fresh PostgreSQL database and a coordinated
 stop/start of all server roles. `tnld migrate` accepts only
 `TNLD_DATABASE_DIRECT_URL`; serving roles use pooled `TNLD_DATABASE_URL` and
