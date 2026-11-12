@@ -80,6 +80,8 @@ schemas:
     additionalProperties: false
     required: [protocol, trust_revision]
     properties:
+      preferred_regions:
+        $ref: "./common.yaml#/schemas/PreferredRegions"
       protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
       target_tls: { $ref: "../openapi.yaml#/components/schemas/ServiceTargetTLS" }
       trust_revision: { type: integer, format: int64, minimum: 1 }

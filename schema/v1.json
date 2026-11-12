@@ -3648,6 +3648,11 @@
           "type": "string",
           "description": "Stable ingress process identity."
         },
+        "region": {
+          "type": "string",
+          "description": "Provider-qualified region, such as fly:sjc or aws:us-west-2; local makes no geographic claim.",
+          "default": "local"
+        },
         "ingress_pool_id": {
           "type": "string",
           "description": "Ingress pool served by this ingress process.",

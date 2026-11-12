@@ -54,11 +54,11 @@ type integrationGuestPublisherControl struct {
 	policyRevision *atomic.Int64
 }
 
-func (c integrationGuestPublisherControl) CreatePublishRun(ctx context.Context, id, retry string) (controlv1.PublishRunSetup, error) {
+func (c integrationGuestPublisherControl) CreatePublishRun(ctx context.Context, id, retry string, preferred ...string) (controlv1.PublishRunSetup, error) {
 	if c.createRun != nil {
 		return c.createRun(ctx, id, retry)
 	}
-	return c.native.CreatePublishRun(ctx, id, retry)
+	return c.native.CreatePublishRun(ctx, id, retry, preferred...)
 }
 
 func (c integrationGuestPublisherControl) MarkPublishRunReady(ctx context.Context, run string, number uint64, token credentials.PublishRunToken) error {

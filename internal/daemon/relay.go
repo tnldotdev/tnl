@@ -177,6 +177,7 @@ type relayRuntimeConfig struct {
 }
 
 type relaySettings struct {
+	region                   string
 	publisherConnectionLimit int64
 	streamCapacity           int64
 	leaseRenewalInterval     time.Duration
@@ -185,6 +186,7 @@ type relaySettings struct {
 
 func relaySettingsFrom(cfg daemonconfig.Config) relaySettings {
 	return relaySettings{
+		region:                   string(cfg.ServingRegion()),
 		publisherConnectionLimit: cfg.PublisherConnectionLimit,
 		streamCapacity:           cfg.RelayStreamCapacity,
 		leaseRenewalInterval:     cfg.LeaseRenewalInterval,
@@ -241,6 +243,7 @@ func (d *daemon) startRelayRuntime(
 		Observer: runtimeConfig.metrics,
 		Client:   runtimeConfig.client,
 		Registration: relayv1.RelayRegistration{
+			Region:         settings.region,
 			RelayServiceId: runtimeConfig.relayServiceID, RelayId: runtimeConfig.relayID, RelayRunId: runID,
 			PeerSigningPublicKey: &encodedKey,
 			ProtocolVersion:      tunnelv1.Version, RelayAddress: runtimeConfig.relayAddress,
