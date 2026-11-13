@@ -245,12 +245,14 @@ func TestManagedProfile(t *testing.T) {
 		status                   int
 	}{
 		{"GET", "/", "", "", 0},
+		{"POST", "/ping", "", "", 0},
 		{"PATCH", "/api", "application/json", `{"name":"hello"}`, 0},
 		{"PUT", "/api", "application/problem+json", `{"title":"hello"}`, 0},
 		{"DELETE", "/api", "", "", 0},
 		{"OPTIONS", "/api", "", "", 0},
 		{"POST", "/upload", "application/octet-stream", "\x00\x01\xff", 0},
 		{"POST", "/upload", "text/plain", "hello", 0},
+		{"POST", "/upload", "", "hello", 403},
 		{"GET", "/?q=" + url.QueryEscape("<script>alert(1)</script>"), "", "", 403},
 		{"GET", "/?q=" + url.QueryEscape("' OR 1=1 --"), "", "", 403},
 		{"POST", "/api", "application/json", `{"q":"<script>alert(1)</script>"}`, 403},
@@ -271,6 +273,25 @@ func TestManagedProfile(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestEmptyPOSTContentType(t *testing.T) {
+	p := inspector(t, policy.Settings{})
+	for _, present := range []bool{false, true} {
+		r := request("POST", "/ping", "", "")
+		if present {
+			r.Header.Set("Content-Type", "")
+		}
+		_, cleanup, result := p.Inspect(r)
+		cleanup()
+		want := 0
+		if present {
+			want = http.StatusForbidden
+		}
+		if result.Status != want {
+			t.Fatalf("empty header present=%t: status=%d want=%d rules=%v", present, result.Status, want, result.RuleIDs)
+		}
 	}
 }
 
