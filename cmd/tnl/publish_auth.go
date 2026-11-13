@@ -14,10 +14,6 @@ func authenticatePublisher(ctx context.Context, state *clientstate.Database, ser
 	return auth.Authenticate(ctx, auth.Config{ServerEndpoint: serverURL, State: state, AccessToken: accessToken, Diagnostics: diagnostics, OpenURL: interactiveBrowserOpener(stdin), AuthenticationPrompt: authenticationPrompt(diagnostics, command)})
 }
 
-func projectAuthentication(ctx context.Context, state *clientstate.Database, server, command string, input io.Reader, diagnostics io.Writer) (*auth.Client, error) {
-	return authenticatePublisher(ctx, state, server, "", command, input, diagnostics)
-}
-
 func (flags tunnelFlags) limits() applicationlimits.Limits {
 	limits := applicationlimits.Limits{}
 	if flags.Requests != nil {

@@ -55,7 +55,7 @@ type cli struct {
 	Team        teamCommand      `cmd:"" help:"Manage teams and memberships." group:"manage"`
 	Domain      domainCommand    `cmd:"" help:"Manage team domains." group:"manage"`
 	URL         publicURLCommand `cmd:"" name:"url" help:"Manage public URLs." group:"manage"`
-	Share       shareCommand     `cmd:"" help:"Manage public URL shares and exact-service access." group:"manage"`
+	Share       shareCommand     `cmd:"" help:"Share this checkout's HTTP public URLs or manage existing access." group:"manage"`
 	Feedback    feedbackCommand  `cmd:"" help:"Read and follow up on preview feedback." group:"manage"`
 	Webhook     webhookCommand   `cmd:"" help:"Choose a receiver for a selected webhook." group:"manage"`
 	Alias       aliasCommand     `cmd:"" help:"Choose which worktree serves a project alias." group:"manage"`
@@ -823,6 +823,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, factories
 		return runURLUpdate(ctx, flags.URL.Update, stdout, stderr)
 	case "url delete <public-url-id>":
 		return runURLDelete(ctx, flags.URL.Delete, stdout, stderr)
+	case "share":
+		return runShareCheckout(ctx, flags.Share.Create, project, stdout, stderr)
 	case "share link create <url>":
 		return runShareCreate(ctx, flags.Share.Link.Create, project, stdout, stderr)
 	case "share token create <url>":
@@ -935,7 +937,7 @@ func commandFailureReason(command string) failure.Reason {
 		return failure.DomainUnavailable
 	case strings.HasPrefix(command, "tnl url "):
 		return failure.ServerConflict
-	case strings.HasPrefix(command, "tnl share "), strings.HasPrefix(command, "tnl feedback "):
+	case command == "tnl share", strings.HasPrefix(command, "tnl share "), strings.HasPrefix(command, "tnl feedback "):
 		return failure.ServerConflict
 	case strings.HasPrefix(command, "tnl webhook "):
 		return failure.ServerConflict
@@ -950,6 +952,8 @@ func commandFailureReason(command string) failure.Reason {
 
 func canonicalParsedCommand(command string) string {
 	switch command {
+	case "share create":
+		return "share"
 	case "auth login run":
 		return "auth login"
 	case "publish":
