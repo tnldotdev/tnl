@@ -303,7 +303,15 @@ type Event struct {
 
 // Invocation defines model for Invocation.
 type Invocation struct {
-	AccessMode              *InvocationAccessMode                    `json:"access_mode,omitempty"`
+	AccessMode *InvocationAccessMode `json:"access_mode,omitempty"`
+
+	// Deployment Private captured deployment selection. Omit service for a temporary URL; named publication retains the saved visitor policy and limits. The portable signing credential stays in memory and never enters snapshots, metadata, or logs.
+	Deployment *struct {
+		Credential string `json:"credential"`
+		Name       string `json:"name"`
+		Project    string `json:"project"`
+		Service    string `json:"service,omitempty"`
+	} `json:"deployment,omitempty"`
 	InvocationId            string                                   `json:"invocation_id"`
 	Ip                      *[]string                                `json:"ip,omitempty"`
 	Limits                  *externalRef0.PublisherApplicationLimits `json:"limits,omitempty"`
@@ -559,13 +567,13 @@ type ClientInterface interface {
 	// RegisterInvocationWithBody performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
+	// Invocation capability only. Publish a bound HTTP listener using either a captured deployment credential or a local namespace publisher. A deployment service selects its saved URL and limits; omitting it allocates a temporary URL. Local namespace publication allocates a temporary URL. Registration acknowledges its bound target before asynchronous provisioning. Renewal and unregister share the application's registration lifetime. Credentials stay private and are not stored in snapshots or metadata.
 	RegisterInvocationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RegisterInvocation performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request.
 	// Takes a body of the `application/json` content type.
 	//
-	// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
+	// Invocation capability only. Publish a bound HTTP listener using either a captured deployment credential or a local namespace publisher. A deployment service selects its saved URL and limits; omitting it allocates a temporary URL. Local namespace publication allocates a temporary URL. Registration acknowledges its bound target before asynchronous provisioning. Renewal and unregister share the application's registration lifetime. Credentials stay private and are not stored in snapshots or metadata.
 	RegisterInvocation(ctx context.Context, body RegisterInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// IssueCapabilityWithBody performs a POST /v1/capabilities (the `IssueCapability` operationId) request,
@@ -669,7 +677,7 @@ type ClientInterface interface {
 // RegisterInvocationWithBody performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request,
 // with any type of body and a specified content type.
 //
-// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
+// Invocation capability only. Publish a bound HTTP listener using either a captured deployment credential or a local namespace publisher. A deployment service selects its saved URL and limits; omitting it allocates a temporary URL. Local namespace publication allocates a temporary URL. Registration acknowledges its bound target before asynchronous provisioning. Renewal and unregister share the application's registration lifetime. Credentials stay private and are not stored in snapshots or metadata.
 func (c *Client) RegisterInvocationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRegisterInvocationRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -685,7 +693,7 @@ func (c *Client) RegisterInvocationWithBody(ctx context.Context, contentType str
 // RegisterInvocation performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request.
 // Takes a body of the `application/json` content type.
 //
-// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
+// Invocation capability only. Publish a bound HTTP listener using either a captured deployment credential or a local namespace publisher. A deployment service selects its saved URL and limits; omitting it allocates a temporary URL. Local namespace publication allocates a temporary URL. Registration acknowledges its bound target before asynchronous provisioning. Renewal and unregister share the application's registration lifetime. Credentials stay private and are not stored in snapshots or metadata.
 func (c *Client) RegisterInvocation(ctx context.Context, body RegisterInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRegisterInvocationRequest(c.Server, body)
 	if err != nil {
@@ -1463,7 +1471,7 @@ type ClientWithResponsesInterface interface {
 	// RegisterInvocationWithBodyWithResponse performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
+	// Invocation capability only. Publish a bound HTTP listener using either a captured deployment credential or a local namespace publisher. A deployment service selects its saved URL and limits; omitting it allocates a temporary URL. Local namespace publication allocates a temporary URL. Registration acknowledges its bound target before asynchronous provisioning. Renewal and unregister share the application's registration lifetime. Credentials stay private and are not stored in snapshots or metadata.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	RegisterInvocationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterInvocationResponse, error)
@@ -1471,7 +1479,7 @@ type ClientWithResponsesInterface interface {
 	// RegisterInvocationWithResponse performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
+	// Invocation capability only. Publish a bound HTTP listener using either a captured deployment credential or a local namespace publisher. A deployment service selects its saved URL and limits; omitting it allocates a temporary URL. Local namespace publication allocates a temporary URL. Registration acknowledges its bound target before asynchronous provisioning. Renewal and unregister share the application's registration lifetime. Credentials stay private and are not stored in snapshots or metadata.
 	RegisterInvocationWithResponse(ctx context.Context, body RegisterInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterInvocationResponse, error)
 
 	// IssueCapabilityWithBodyWithResponse performs a POST /v1/capabilities (the `IssueCapability` operationId) request,
@@ -2095,7 +2103,7 @@ func (r UnregisterResponse) ContentType() string {
 // RegisterInvocationWithBodyWithResponse performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request,
 // with any type of body and a specified content type.
 //
-// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
+// Invocation capability only. Publish a bound HTTP listener using either a captured deployment credential or a local namespace publisher. A deployment service selects its saved URL and limits; omitting it allocates a temporary URL. Local namespace publication allocates a temporary URL. Registration acknowledges its bound target before asynchronous provisioning. Renewal and unregister share the application's registration lifetime. Credentials stay private and are not stored in snapshots or metadata.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) RegisterInvocationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterInvocationResponse, error) {
@@ -2109,7 +2117,7 @@ func (c *ClientWithResponses) RegisterInvocationWithBodyWithResponse(ctx context
 // RegisterInvocationWithResponse performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
+// Invocation capability only. Publish a bound HTTP listener using either a captured deployment credential or a local namespace publisher. A deployment service selects its saved URL and limits; omitting it allocates a temporary URL. Local namespace publication allocates a temporary URL. Registration acknowledges its bound target before asynchronous provisioning. Renewal and unregister share the application's registration lifetime. Credentials stay private and are not stored in snapshots or metadata.
 func (c *ClientWithResponses) RegisterInvocationWithResponse(ctx context.Context, body RegisterInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterInvocationResponse, error) {
 	rsp, err := c.RegisterInvocation(ctx, body, reqEditors...)
 	if err != nil {

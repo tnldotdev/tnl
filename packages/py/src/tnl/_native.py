@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import stat
+from collections.abc import Mapping
 from pathlib import Path
 
 import httpx
@@ -63,9 +64,12 @@ class NativeRuntime:
         service: str | None = None,
         invocation_id: str | None = None,
         state_dir: str | None = None,
+        publications: bool = False,
+        environment: Mapping[str, str] | None = None,
     ) -> Endpoint:
         try:
-            mounted = os.environ.get("TNL_APP_ENDPOINT")
+            captured = os.environ if environment is None else environment
+            mounted = None if publications else captured.get("TNL_APP_ENDPOINT")
             if mounted is not None:
                 # an app can start before its publisher writes the scoped
                 # descriptor. only absence is retried; an unsafe or
@@ -92,7 +96,7 @@ class NativeRuntime:
                     directory,
                 ]
                 selected_state = (
-                    state_dir if state_dir is not None else os.environ.get("TNL_STATE_DIR")
+                    state_dir if state_dir is not None else captured.get("TNL_STATE_DIR")
                 )
                 if selected_state is not None:
                     args.extend(["--state-dir", selected_state])
@@ -100,8 +104,13 @@ class NativeRuntime:
                     args.extend(["--service", service])
                 if invocation_id is not None:
                     args.extend(["--invocation-id", invocation_id])
+                if publications:
+                    args.append("--publications")
                 child = await asyncio.create_subprocess_exec(
-                    *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
+                    *args,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL,
+                    env=environment,
                 )
                 assert child.stdout is not None
                 try:

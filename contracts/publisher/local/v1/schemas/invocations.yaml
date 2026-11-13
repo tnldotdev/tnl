@@ -33,6 +33,17 @@ schemas:
       pid: { type: integer, minimum: 1 }
       target: { type: string, maxLength: 4096 }
       server_url: { type: string, maxLength: 4096 }
+      deployment:
+        type: object
+        additionalProperties: false
+        required: [project, name, credential]
+        properties:
+          project: { type: string, minLength: 3, maxLength: 256 }
+          name: { type: string, minLength: 1, maxLength: 128 }
+          service:
+            { type: string, minLength: 1, maxLength: 32, x-go-type-skip-optional-pointer: true }
+          credential: { type: string, minLength: 1, maxLength: 32768 }
+        description: Private captured deployment selection. Omit service for a temporary URL; named publication retains the saved visitor policy and limits. The portable signing credential stays in memory and never enters snapshots, metadata, or logs.
       publisher_identity_id: { type: string, maxLength: 128, x-go-type-skip-optional-pointer: true }
       publisher_credential_file:
         { type: string, maxLength: 4096, x-go-type-skip-optional-pointer: true }

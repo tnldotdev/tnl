@@ -49,6 +49,8 @@ export interface EndpointSelection {
   readonly service?: string | undefined;
   readonly invocationID?: string | undefined;
   readonly stateDir?: string;
+  readonly publications?: boolean;
+  readonly environment?: NodeJS.ProcessEnv;
 }
 
 export function parseEndpoint(value: unknown, selection: EndpointSelection = {}): RuntimeEndpoint {
@@ -116,21 +118,23 @@ export async function startRuntime(
 ): Promise<RuntimeEndpoint> {
   try {
     let endpoint: RuntimeEndpoint;
-    const mounted = process.env.TNL_APP_ENDPOINT;
+    const environment = selection.environment ?? process.env;
+    const mounted = selection.publications ? undefined : environment.TNL_APP_ENDPOINT;
     if (mounted !== undefined) {
       return await waitMountedEndpoint(mounted, selection);
     } else {
       const args = ["--no-telemetry", "runtime", "endpoint", "--directory", directory];
-      const stateDir = selection.stateDir ?? process.env.TNL_STATE_DIR;
+      const stateDir = selection.stateDir ?? environment.TNL_STATE_DIR;
       if (stateDir !== undefined) args.push("--state-dir", stateDir);
       if (selection.service !== undefined) args.push("--service", selection.service);
       if (selection.invocationID !== undefined)
         args.push("--invocation-id", selection.invocationID);
+      if (selection.publications) args.push("--publications");
       const { stdout } = await promisify(execFile)(binary ?? resolveNativeBinary(), args, {
         timeout: 30_000,
         maxBuffer: 64 * 1024,
         encoding: "utf8",
-        env: launchEnvironment(),
+        env: launchEnvironment(environment),
       });
       endpoint = parseEndpoint(JSON.parse(stdout), selection);
     }

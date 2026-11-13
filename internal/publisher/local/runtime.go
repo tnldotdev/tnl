@@ -3,6 +3,8 @@ package local
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"net"
@@ -34,6 +36,7 @@ type Options struct {
 	Telemetry         *clienttelemetry.Collector
 	Directory         string
 	StateDir          string
+	Publications      bool
 	Snapshot          io.Reader
 	TargetResolver    target.TargetResolver
 	AttachPublication func(context.Context, publisherapp.Service, *publisher.Config) error
@@ -55,6 +58,28 @@ func ResolveProject(ctx context.Context, options Options) (clientproject.Project
 	directory, err = filepath.EvalSymlinks(directory)
 	if err != nil {
 		return clientproject.Project{}, "", err
+	}
+	if options.Publications && options.Snapshot == nil {
+		// deployment callers supply their captured selection over the private
+		// invocation API. they neither evaluate a config nor inspect a checkout.
+		// a separate journal key lets this same manager coexist with local apps.
+		runtime, err := publisherprotocol.RuntimeDir(root)
+		if err != nil {
+			return clientproject.Project{}, "", err
+		}
+		digest := sha256.Sum256([]byte(directory))
+		owner := filepath.Join(runtime, "publications-"+hex.EncodeToString(digest[:12]))
+		if err := os.Mkdir(owner, 0700); err != nil && !errors.Is(err, os.ErrExist) {
+			return clientproject.Project{}, "", err
+		}
+		info, err := os.Lstat(owner)
+		if err != nil {
+			return clientproject.Project{}, "", err
+		}
+		if err := clientstate.ValidatePrivateFile(info, true); err != nil {
+			return clientproject.Project{}, "", err
+		}
+		return clientproject.Project{Root: owner}, filepath.Dir(runtime), nil
 	}
 	if options.Snapshot != nil {
 		project, err := clientproject.ReadSnapshot(options.Snapshot)
@@ -173,6 +198,9 @@ func OwnerEndpoint(ctx context.Context, options Options) (publisherprotocol.Endp
 }
 
 func Endpoint(ctx context.Context, options Options, service, invocationID string) (publisherprotocol.Endpoint, error) {
+	if options.Publications && (service != "" || invocationID == "") {
+		return publisherprotocol.Endpoint{}, errors.New("configuration-free publication requires an invocation")
+	}
 	project, root, err := ResolveProject(ctx, options)
 	if err != nil {
 		return publisherprotocol.Endpoint{}, err

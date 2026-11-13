@@ -8,7 +8,7 @@ import {
 } from "./internal/project/runtime.js";
 import { TnlError } from "./errors.js";
 import type { PrepareOptions, PreparedService } from "./internal/publisher/app.js";
-import type { AdHocTunnel, OpenOptions } from "./internal/publisher/open.js";
+import type { Publication, OpenOptions } from "./internal/publisher/open.js";
 import type { LocalHTTPServer } from "./internal/publisher/register.js";
 import type { FetchHandler } from "./internal/publisher/fetch_types.js";
 import type {
@@ -26,7 +26,9 @@ import type {
 export type * from "./project.js";
 export type { PrepareOptions, PreparedService } from "./internal/publisher/app.js";
 export type {
-  AdHocTunnel,
+  Publication,
+  NamedPublicationOptions,
+  TemporaryPublicationOptions,
   OpenOptions,
   PublisherCredentialFile,
   PublisherIdentityID,
@@ -61,7 +63,7 @@ export type TnlRuntime = Readonly<
       readonly port: number;
       readonly dev: boolean;
       prepare(options?: PrepareOptions): Promise<PreparedService>;
-      open(server: LocalHTTPServer | FetchHandler, options?: OpenOptions): Promise<AdHocTunnel>;
+      open(server: LocalHTTPServer | FetchHandler, options?: OpenOptions): Promise<Publication>;
       connect<Name extends TnlServiceNames<Config>>(
         name: Name,
       ): TnlConnectionHandle<TnlConnection<Config, Name>>;
@@ -109,7 +111,7 @@ export const tnl = Object.freeze({
   async open(
     server: LocalHTTPServer | FetchHandler,
     options: OpenOptions = {},
-  ): Promise<AdHocTunnel> {
+  ): Promise<Publication> {
     if (typeof process === "undefined") throw new TnlError("sdk.configuration_invalid");
     const { openServer, openFetch } = await import("./internal/publisher/open.js");
     return typeof server === "function" ? openFetch(server, options) : openServer(server, options);

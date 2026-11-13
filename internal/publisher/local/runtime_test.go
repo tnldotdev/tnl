@@ -1,12 +1,14 @@
 package local
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
@@ -15,6 +17,36 @@ import (
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 )
+
+func TestPublicationOwnerBypassesConfigurationAndIsolatesLocalApps(t *testing.T) {
+	directory, state := t.TempDir(), filepath.Join(t.TempDir(), "state")
+	if err := os.WriteFile(filepath.Join(directory, "tnl.config.ts"), []byte(`throw new Error("remote publication must not evaluate this file")`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	options := Options{Directory: directory, StateDir: state, Publications: true}
+	project, root, err := ResolveProject(t.Context(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.Root == directory || project.Selection.Path != "" || project.Worktree.Root != "" || len(project.Config.Services) != 0 || !strings.HasPrefix(project.Root, filepath.Join(root, "runtime")+string(filepath.Separator)) {
+		t.Fatal("publication startup evaluated or adopted a configured project")
+	}
+	repeated, again, err := ResolveProject(t.Context(), options)
+	if err != nil || repeated.Root != project.Root || again != root {
+		t.Fatal("publication owner identity was not stable", err)
+	}
+	snapshot, _, err := project.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, _, err := ResolveProject(t.Context(), Options{Directory: project.Root, StateDir: root, Snapshot: bytes.NewReader(snapshot)})
+	if err != nil || child.Root != project.Root {
+		t.Fatal("child publication owner did not retain its config-free snapshot", err)
+	}
+	if _, err := Endpoint(t.Context(), options, "web", ""); err == nil {
+		t.Fatal("config-free owner selected a configured app capability")
+	}
+}
 
 func testAppRuntime(t *testing.T) (*appRuntime, publisherprotocol.Endpoint) {
 	t.Helper()

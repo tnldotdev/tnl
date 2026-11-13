@@ -12,6 +12,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from starlette.types import ASGIApp
+
+from ._asgi import AccessPolicy, Limits, Publication, _join_cleanup, start_publication
 from ._client import ClientFactory, _Factory
 from ._connections import Connection, _command, _error, _object, _Scope, _text, _TLSConnection
 from ._management_client import Deployments, Management, Publishers
@@ -40,6 +43,8 @@ class Deployment:
     ) -> None:
         service_name(name) if not name.startswith("pgrp_") else None
         self._local = name == "local"
+        self._project, self._name, self._token = project, name, token
+        self._environment = dict(os.environ)
         if not self._local and token is None:
             raise TnlError("sdk.configuration_invalid", "supply an approved deployment credential")
         self._services = dict(services)
@@ -57,6 +62,8 @@ class Deployment:
         self._pending: set[asyncio.Task[tuple[object, DeploymentConnection]]] = set()
         self._factories: set[ClientFactory[object]] = set()
         self._closing: asyncio.Task[None] | None = None
+        self._publications: set[Publication] = set()
+        self._publication_tasks: set[asyncio.Task[Publication]] = set()
 
     def __repr__(self) -> str:
         return "<tnl deployment (private)>"
@@ -148,6 +155,88 @@ class Deployment:
     async def connect(self, name: str) -> DeploymentConnection:
         return (await self._acquire(name))[1]
 
+    async def publish(
+        self,
+        first: str | ASGIApp,
+        app: ASGIApp | None = None,
+        *,
+        access: Literal["restricted", "anonymous"] | AccessPolicy | None = None,
+        limits: Limits | None = None,
+        require_post_quantum: bool | None = None,
+        telemetry: bool = True,
+    ) -> Publication:
+        if self._closed:
+            raise _error("closed")
+        if len(self._publications) + len(self._publication_tasks) >= 64:
+            raise TnlError("sdk.client_capacity", "close an unused publication")
+        service = first if isinstance(first, str) else None
+        application = first if service is None else app
+        if not callable(application) or service is None and app is not None:
+            raise TnlError(
+                "sdk.configuration_invalid", "pass an ASGI app, optionally after a service name"
+            )
+        if require_post_quantum is not None and type(require_post_quantum) is not bool:
+            raise TnlError("sdk.configuration_invalid", "require_post_quantum must be a boolean")
+        if service is not None:
+            service_name(service)
+            if (
+                self._services
+                and self._services.get(service) != "http"
+                or access is not None
+                or limits is not None
+                or require_post_quantum is not None
+            ):
+                raise TnlError(
+                    "sdk.configuration_invalid",
+                    "named publication requires HTTP and uses its saved policy and limits",
+                )
+        selection = (
+            None
+            if self._local
+            else {"project": self._project, "name": self._name, "credential": self._token or ""}
+        )
+        if selection is not None and service is not None:
+            selection["service"] = service
+
+        async def create() -> Publication:
+            publication = await start_publication(
+                application,
+                directory=self._scope.directory,
+                state_dir=self._environment.get("TNL_STATE_DIR"),
+                access=access,
+                limits=limits,
+                require_post_quantum=require_post_quantum or False,
+                telemetry=telemetry,
+                deployment=selection,
+                service=service if self._local else None,
+                on_close=self._publications.discard,
+                on_start=self._publications.add,
+                environment=self._environment,
+            )
+            if self._closed:
+                await publication.aclose()
+                raise _error("closed")
+            self._publications.add(publication)
+            return publication
+
+        work = asyncio.create_task(create())
+        self._publication_tasks.add(work)
+        work.add_done_callback(self._publication_tasks.discard)
+        try:
+            return await asyncio.shield(work)
+        except asyncio.CancelledError as primary:
+            work.cancel()
+            try:
+                publication = await _join_cleanup(work)
+                await _join_cleanup(asyncio.create_task(publication.aclose()))
+            except asyncio.CancelledError:
+                raise primary from None
+            except BaseException as cleanup:
+                raise BaseExceptionGroup(
+                    "publication cancellation and cleanup failed", [primary, cleanup]
+                ) from None
+            raise
+
     def client[T](
         self,
         name: str,
@@ -174,6 +263,28 @@ class Deployment:
 
         async def cleanup() -> None:
             failures: list[BaseException] = []
+            for work in tuple(self._publication_tasks):
+                work.cancel()
+            publication_results = await asyncio.gather(
+                *tuple(self._publication_tasks), return_exceptions=True
+            )
+            failures.extend(
+                value
+                for value in publication_results
+                if isinstance(value, BaseException)
+                and not isinstance(value, asyncio.CancelledError)
+                and not (isinstance(value, TnlError) and value.code == "sdk.connection_closed")
+            )
+            for publication in tuple(self._publications):
+                try:
+                    await publication.aclose()
+                except BaseException as error:
+                    failures.append(error)
+                else:
+                    try:
+                        await publication.wait()
+                    except BaseException as error:
+                        failures.append(error)
             pending = await asyncio.gather(*tuple(self._pending), return_exceptions=True)
             failures.extend(
                 value
@@ -198,7 +309,7 @@ class Deployment:
         if self._closing is None:
             self._closing = asyncio.create_task(cleanup())
         try:
-            await asyncio.shield(self._closing)
+            await _join_cleanup(self._closing)
         finally:
             if self._closing.done():
                 self._closing = None
@@ -208,8 +319,15 @@ class Deployment:
             raise _error("closed")
         return self
 
-    async def __aexit__(self, *_args: object) -> None:
-        await self.aclose()
+    async def __aexit__(self, _type: object, primary: object, _traceback: object) -> None:
+        try:
+            await self.aclose()
+        except BaseException as cleanup:
+            if isinstance(primary, BaseException):
+                raise BaseExceptionGroup(
+                    "deployment operation and cleanup failed", [primary, cleanup]
+                ) from None
+            raise
 
 
 class Client:

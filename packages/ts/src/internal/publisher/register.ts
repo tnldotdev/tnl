@@ -30,6 +30,63 @@ export interface NodeHTTPServer {
 
 export type LocalHTTPServer = NodeHTTPServer | BunHTTPServer;
 
+type StopObserver = () => Promise<void>;
+const bunObservers = new WeakMap<
+  BunHTTPServer,
+  {
+    original: BunHTTPServer["stop"];
+    wrapped: BunHTTPServer["stop"];
+    callbacks: Set<StopObserver>;
+  }
+>();
+
+// multiple publications may observe one application-owned listener. restore its
+// method when the last observer leaves, without undoing an application's edit.
+export function observeListenerClose(server: LocalHTTPServer, callback: StopObserver): () => void {
+  if (!isBunServer(server)) {
+    const stopped = () => {
+      void callback().catch(() => {});
+    };
+    server.once("close", stopped);
+    return () => {
+      server.off("close", stopped);
+    };
+  }
+  let observers = bunObservers.get(server);
+  if (observers === undefined) {
+    const original = server.stop;
+    const callbacks = new Set<StopObserver>();
+    const wrapped: BunHTTPServer["stop"] = async (force) => {
+      const failures: unknown[] = [];
+      try {
+        await original.call(server, force);
+      } catch (cause) {
+        failures.push(cause);
+      }
+      const results = await Promise.allSettled([...callbacks].map((callback) => callback()));
+      failures.push(
+        ...results.flatMap((result) =>
+          result.status === "rejected" ? [result.reason as unknown] : [],
+        ),
+      );
+      if (failures.length === 1) throw failures[0];
+      if (failures.length > 1)
+        throw new AggregateError(failures, "listener stop and publication cleanup failed");
+    };
+    observers = { original, wrapped, callbacks };
+    server.stop = wrapped;
+    bunObservers.set(server, observers);
+  }
+  const current = observers;
+  current.callbacks.add(callback);
+  return () => {
+    current.callbacks.delete(callback);
+    if (current.callbacks.size !== 0) return;
+    if (server.stop === current.wrapped) server.stop = current.original;
+    if (bunObservers.get(server) === current) bunObservers.delete(server);
+  };
+}
+
 export interface RegistrationOptions {
   /** hostname used to reach the listener, including for HTTPS certificate verification. */
   readonly targetHostname?: string;

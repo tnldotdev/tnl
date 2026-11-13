@@ -45,7 +45,7 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 		return publisherprotocol.Registration{}, err
 	}
 	file := request.PublisherCredentialFile
-	if file == "" && request.PublisherIdentityId == "" {
+	if file == "" && request.PublisherIdentityId == "" && request.Deployment == nil {
 		file = os.Getenv("TNL_PUBLISHER_CREDENTIAL_FILE")
 	}
 	if file != "" && (!filepath.IsAbs(file) || len(file) > 4096 || strings.ContainsRune(file, 0)) {
@@ -68,51 +68,66 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 		}
 		return publisherprotocol.Registration{Version: 1, RegistrationID: service.RegistrationID, Owner: request.Owner, Target: request.Target}, nil
 	}
-	server := valueOrEmpty(a.project.Config.Server)
-	if request.ServerUrl != nil {
-		selected, err := clientstate.CanonicalServer(*request.ServerUrl)
+	var native *publisheridentity.Native
+	var profile *clientstate.Store
+	var publicURL controlv1.PublicURL
+	server := ""
+	if request.Deployment != nil {
+		native, profile, publicURL, limits, err = a.prepareDeploymentInvocation(ctx, request)
 		if err != nil {
 			return publisherprotocol.Registration{}, err
 		}
-		if server != "" && server != selected {
-			return publisherprotocol.Registration{}, publisheridentity.ErrScope
+		server = native.ControlURL()
+	} else {
+		server = valueOrEmpty(a.project.Config.Server)
+		if request.ServerUrl != nil {
+			selected, err := clientstate.CanonicalServer(*request.ServerUrl)
+			if err != nil {
+				return publisherprotocol.Registration{}, err
+			}
+			if server != "" && server != selected {
+				return publisherprotocol.Registration{}, publisheridentity.ErrScope
+			}
+			server = selected
 		}
-		server = selected
-	}
-	server, err = clientserver.Select(ctx, a.state, server)
-	if err != nil {
-		return publisherprotocol.Registration{}, err
-	}
-	profile, err := a.state.Server(ctx, server)
-	if err != nil {
-		return publisherprotocol.Registration{}, err
-	}
-	control, err := clientcontrol.New(server, nil, "")
-	if err != nil {
-		return publisherprotocol.Registration{}, err
-	}
-	authority, err := clientauthority.New(server, nil, "")
-	if err != nil {
-		return publisherprotocol.Registration{}, err
-	}
-	native, err := publisheridentity.ResolveAdHoc(ctx, profile, publisheridentity.NativeControl{PublicURLControl: control}, authority, server, "", "", "", file, "", request.PublisherIdentityId, nil)
-	if err != nil {
-		if file != "" && errors.Is(err, publisheridentity.ErrScope) {
-			return publisherprotocol.Registration{}, credentialfile.ErrInvalid
+		server, err = clientserver.Select(ctx, a.state, server)
+		if err != nil {
+			return publisherprotocol.Registration{}, err
 		}
-		return publisherprotocol.Registration{}, err
-	}
-	allocation := controlv1.AllocateEphemeralPublicURLRequest{InvocationId: request.InvocationId, Target: request.Target, Ip: request.Ip, Limits: request.Limits}
-	allocation.RequirePostQuantum = request.RequirePostQuantum
-	if request.AccessMode != nil {
-		mode := controlv1.VisitorAccessMode(*request.AccessMode)
-		allocation.AccessMode = &mode
-	}
-	publicURL, err := native.Allocate(ctx, allocation)
-	if err != nil {
-		return publisherprotocol.Registration{}, err
+		profile, err = a.state.Server(ctx, server)
+		if err != nil {
+			return publisherprotocol.Registration{}, err
+		}
+		control, err := clientcontrol.New(server, nil, "")
+		if err != nil {
+			return publisherprotocol.Registration{}, err
+		}
+		authority, err := clientauthority.New(server, nil, "")
+		if err != nil {
+			return publisherprotocol.Registration{}, err
+		}
+		native, err = publisheridentity.ResolveAdHoc(ctx, profile, publisheridentity.NativeControl{PublicURLControl: control}, authority, server, "", "", "", file, "", request.PublisherIdentityId, nil)
+		if err != nil {
+			if file != "" && errors.Is(err, publisheridentity.ErrScope) {
+				return publisherprotocol.Registration{}, credentialfile.ErrInvalid
+			}
+			return publisherprotocol.Registration{}, err
+		}
+		allocation := controlv1.AllocateEphemeralPublicURLRequest{InvocationId: request.InvocationId, Target: request.Target, Ip: request.Ip, Limits: request.Limits}
+		allocation.RequirePostQuantum = request.RequirePostQuantum
+		if request.AccessMode != nil {
+			mode := controlv1.VisitorAccessMode(*request.AccessMode)
+			allocation.AccessMode = &mode
+		}
+		publicURL, err = native.Allocate(ctx, allocation)
+		if err != nil {
+			return publisherprotocol.Registration{}, err
+		}
 	}
 	cleanup := sync.OnceValue(func() error {
+		if !publicURL.Ephemeral {
+			return nil
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return native.DeletePublicURL(ctx, publicURL.Id)
@@ -141,9 +156,12 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 		return publisherprotocol.Registration{}, err
 	}
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13}
-	cfg := publisher.Config{Control: native, Identity: native, Audit: native, VisitorControl: native, BrowserControl: native, Shares: native, ControlURL: server, State: profile, TeamID: publicURL.TeamId, DomainID: publicURL.DomainId, PublicURLScope: publicURL.PublicUrlScope, Purpose: publicURL.Purpose, PolicyRevision: uint64(publicURL.PolicyRevision), Hostname: publicURL.CanonicalHostname, ProjectRoot: a.project.Root, Target: request.Target, ServiceProtocol: "http", Limits: limits, Ephemeral: true, AssignedPublicURL: &publicURL, TransportTLS: tlsConfig}
+	cfg := publisher.Config{Control: native, Identity: native, Audit: native, VisitorControl: native, BrowserControl: native, Shares: native, ControlURL: server, State: profile, TeamID: publicURL.TeamId, DomainID: publicURL.DomainId, PublicURLScope: publicURL.PublicUrlScope, Purpose: publicURL.Purpose, PolicyRevision: uint64(publicURL.PolicyRevision), Hostname: publicURL.CanonicalHostname, ProjectRoot: a.project.Root, Target: request.Target, ServiceProtocol: "http", Limits: limits, Ephemeral: publicURL.Ephemeral, AssignedPublicURL: &publicURL, TransportTLS: tlsConfig}
 	cfg.PublisherIdentityID = native.PublisherIdentityID()
 	cfg.RequirePostQuantum = request.RequirePostQuantum
+	if request.Deployment != nil {
+		cfg.RequirePostQuantum = new(publicURL.RequirePostQuantum)
+	}
 	if publicURL.MembershipId != nil {
 		cfg.MembershipID = *publicURL.MembershipId
 	}

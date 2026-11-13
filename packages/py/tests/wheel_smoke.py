@@ -7,6 +7,7 @@ import importlib.metadata
 import pathlib
 import subprocess
 import sys
+from collections.abc import Mapping
 
 import httpx
 import websockets
@@ -32,6 +33,8 @@ class NativeStub(NativeRuntime):
         service: str | None = None,
         invocation_id: str | None = None,
         state_dir: str | None = None,
+        publications: bool = False,
+        environment: Mapping[str, str] | None = None,
     ) -> Endpoint:
         self.invocation_id = invocation_id or ""
         return Endpoint(

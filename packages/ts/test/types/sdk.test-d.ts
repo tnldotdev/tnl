@@ -10,7 +10,7 @@ test("publication accepts either prepared identity and keeps app options separat
   const file: PublisherCredentialFile = { publisherCredentialFile: "/private/publisher.json" };
   const stored: PublisherIdentityID = { publisherIdentityID: `pub_${"A".repeat(22)}` };
   const handler = () => new Response("app");
-  assertType<Promise<import("@tnldotdev/tnl").AdHocTunnel>>(tnl.open(handler));
+  assertType<Promise<import("@tnldotdev/tnl").Publication>>(tnl.open(handler));
   void tnl.open(handler, file);
   void tnl.open(handler, { ...stored, stateDir: "/private/client", access: { ip: ["127.0.0.1"] } });
   void tnl.prepare({ service: "web", directory: "/project", stateDir: "/private/client" });

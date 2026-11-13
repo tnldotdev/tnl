@@ -6,6 +6,7 @@ import asyncio
 import json
 import selectors
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 
 import httpx
@@ -45,6 +46,8 @@ def test_initial_registration_reply_loss_reconciles_and_joins_before_asgi_shutdo
                 service: str | None = None,
                 invocation_id: str | None = None,
                 state_dir: str | None = None,
+                publications: bool = False,
+                environment: Mapping[str, str] | None = None,
             ) -> Endpoint:
                 # only discovery is supplied by the fixture; registration uses
                 # the actual scoped native HTTP handler and SQLite manager.

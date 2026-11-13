@@ -13,9 +13,22 @@ import { protocolSchema, serviceNameSchema } from "../values.js";
 import type { ServiceProtocol } from "../project/runtime.js";
 import { deploymentConnector } from "./connection.js";
 import { boundManagement } from "./management.js";
+import type { LocalHTTPServer } from "../publisher/register.js";
+import type { FetchHandler } from "../publisher/fetch_types.js";
+import type {
+  Publication,
+  NamedPublicationOptions,
+  TemporaryPublicationOptions,
+  PublicationSelection,
+} from "../publisher/open.js";
 
 export type ServiceFacts = Readonly<Record<string, Readonly<{ protocol: ServiceProtocol }>>>;
 type Names<Services extends ServiceFacts> = Extract<keyof Services, string>;
+type HTTPNames<Services extends ServiceFacts> = keyof Services extends never
+  ? string
+  : {
+      [Name in Names<Services>]: Services[Name]["protocol"] extends "http" ? Name : never;
+    }[Names<Services>];
 type Connections = Omit<TnlConnectionRegistry, "postgres"> & { postgres: LocalPostgresConnection };
 type Connection<
   Services extends ServiceFacts,
@@ -29,6 +42,15 @@ export interface LocalPostgresConnection {
 }
 
 export interface Deployment<Services extends ServiceFacts> {
+  publish<Name extends HTTPNames<Services>>(
+    name: Name,
+    server: LocalHTTPServer | FetchHandler,
+    options?: NamedPublicationOptions,
+  ): Promise<Publication>;
+  publish(
+    server: LocalHTTPServer | FetchHandler,
+    options?: TemporaryPublicationOptions,
+  ): Promise<Publication>;
   connect<Name extends Names<Services>>(name: Name): Promise<Connection<Services, Name>>;
   client<Name extends Names<Services>, Client>(
     name: Name,
@@ -156,6 +178,8 @@ export function createClient<const Services extends ServiceFacts = Record<never,
       const closedError = new TnlError("sdk.client_closed");
       const pending = new Set<Promise<unknown>>();
       const factories = new Set<{ close(): Promise<void> }>();
+      const publications = new Set<Publication>();
+      const publicationLifetime = new AbortController();
       let closed = false;
       let closing: Promise<void> | undefined;
       const validate = (service: string) => {
@@ -186,6 +210,100 @@ export function createClient<const Services extends ServiceFacts = Record<never,
         return work;
       };
       return Object.freeze({
+        async publish(
+          first: string | LocalHTTPServer | FetchHandler,
+          second?: LocalHTTPServer | FetchHandler | TemporaryPublicationOptions,
+          third?: NamedPublicationOptions,
+        ): Promise<Publication> {
+          if (closed) throw closedError;
+          if (publications.size + pending.size >= 64) throw new TnlError("sdk.client_capacity");
+          const service = typeof first === "string" ? first : undefined;
+          const server = (service === undefined ? first : second) as LocalHTTPServer | FetchHandler;
+          const options =
+            ((service === undefined ? second : third) as TemporaryPublicationOptions | undefined) ??
+            {};
+          if (
+            service !== undefined &&
+            (!serviceNameSchema.safeParse(service).success ||
+              (protocols.size > 0 && protocols.get(service) !== "http"))
+          )
+            throw new TnlError("sdk.configuration_invalid");
+          const work = (async () => {
+            const { openServer, openFetch, validatePublicationOptions } =
+              await import("../publisher/open.js");
+            if (closed) throw closedError;
+            validatePublicationOptions(options, service !== undefined);
+            const selection: PublicationSelection =
+              name === "local"
+                ? { kind: "local", environment, ...(service === undefined ? {} : { service }) }
+                : {
+                    kind: "deployment",
+                    project: project ?? "",
+                    name,
+                    credential: token ?? "",
+                    environment,
+                    ...(service === undefined ? {} : { service }),
+                  };
+            const signal =
+              options.signal === undefined
+                ? publicationLifetime.signal
+                : AbortSignal.any([publicationLifetime.signal, options.signal]);
+            const captured = {
+              ...options,
+              directory,
+              signal,
+              ...(environment.TNL_STATE_DIR === undefined
+                ? {}
+                : { stateDir: environment.TNL_STATE_DIR }),
+            };
+            const base = await (typeof server === "function"
+              ? openFetch(server, captured, undefined, selection)
+              : openServer(server, captured, undefined, selection));
+            if (closed) {
+              await base.close();
+              throw closedError;
+            }
+            let closing: Promise<void> | undefined;
+            const close = () =>
+              (closing ??= (async () => {
+                const results = await Promise.allSettled([base.close(), base.wait()]);
+                if (results[0]?.status === "fulfilled") publications.delete(handle);
+                const errors = [
+                  ...new Set(
+                    results.flatMap((result) =>
+                      result.status === "rejected" ? [result.reason as unknown] : [],
+                    ),
+                  ),
+                ];
+                if (errors.length === 1) throw errors[0];
+                if (errors.length > 1)
+                  throw new AggregateError(errors, "publication cleanup failed");
+              })().catch((cause: unknown) => {
+                closing = undefined;
+                throw cause;
+              }));
+            const handle: Publication = Object.freeze({
+              get url() {
+                return base.url;
+              },
+              close,
+              wait: () => base.wait(),
+              [Symbol.asyncDispose]: close,
+            });
+            publications.add(handle);
+            return handle;
+          })().catch((error: unknown) => {
+            if (closed && error instanceof DOMException && error.name === "AbortError")
+              throw closedError;
+            throw error;
+          });
+          pending.add(work);
+          void work.then(
+            () => pending.delete(work),
+            () => pending.delete(work),
+          );
+          return work;
+        },
         async connect<Name extends Names<Services>>(
           service: Name,
         ): Promise<Connection<Services, Name>> {
@@ -211,9 +329,12 @@ export function createClient<const Services extends ServiceFacts = Record<never,
         },
         close(): Promise<void> {
           closed = true;
+          const stoppingPublications = [...publications].map((publication) => publication.close());
+          publicationLifetime.abort();
           closing ??= (async () => {
             const results = await Promise.allSettled([
               ...pending,
+              ...stoppingPublications,
               ...[...factories].map(async (factory) => {
                 await factory.close();
                 factories.delete(factory);

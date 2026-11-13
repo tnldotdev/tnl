@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import socket
+from collections.abc import Mapping
 
 import httpx
 import pytest
@@ -37,6 +38,8 @@ class FakeNative(NativeRuntime):
         service: str | None = None,
         invocation_id: str | None = None,
         state_dir: str | None = None,
+        publications: bool = False,
+        environment: Mapping[str, str] | None = None,
     ) -> Endpoint:
         self.events.append("endpoint")
         self.starts += 1
@@ -306,7 +309,7 @@ def test_close_joins_an_inflight_replacement_acknowledgement(
         async with tnl.open(tnl.handler(endpoint), publisher_identity_id=_publisher) as tunnel:
             native.fail_status = True
             await asyncio.wait_for(registering.wait(), 2)
-            closing = asyncio.create_task(tunnel.close())
+            closing = asyncio.create_task(tunnel.aclose())
             await asyncio.sleep(0)
             assert not closing.done()
             acknowledge.set()
@@ -397,7 +400,7 @@ def test_asgi_setup_preserves_publication_and_cleanup_failures(
         assert tunnel is not None and not tunnel._serve_task.done()
         assert not tunnel._server.should_exit
         native.fail_cleanup = False
-        await tunnel.close()
+        await tunnel.aclose()
         assert tunnel._serve_task.done()
 
     asyncio.run(scenario())
