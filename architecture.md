@@ -142,7 +142,7 @@ internal/
       stream/          visitor TLS, protocol, expiry, and target connection
     processidentity/   signed process identity and control lease
     identity/          publisher identities and grants
-    group/             group assignments and publication
+    deployment/        deployment assignments and publication
     target/            target selection and preparation
     browserapi/        generated browser API validators
     toolbar/           development-only browser assets
@@ -237,7 +237,7 @@ Neither shared package nor the service tree imports publisher root.
 Installed jobs use publisher operations, not the other way around:
 
 ```text
-installed --> publisher/group --> publisher/service
+installed --> publisher/deployment --> publisher/service
     |
     +-------> shared client packages
 ```
@@ -247,7 +247,7 @@ and shutdown. It uses publisher operations and caller-supplied connector
 operations. Shared clients must not import it. A registry entry records a job;
 it does not grant permission to publish.
 
-`publisher/group` publishes assignments for both foreground commands and
+`publisher/deployment` publishes assignments for both foreground commands and
 installed jobs. Publishing an assignment does not need an installed-job registry.
 
 ### other important dependencies

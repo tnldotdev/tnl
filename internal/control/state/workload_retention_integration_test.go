@@ -217,12 +217,12 @@ func TestIntegrationWorkloadRetentionReferencesAndBatches(t *testing.T) {
 	if _, err := d.ApplyProjectConfiguration(ctx, r); err != nil {
 		t.Fatal(err)
 	}
-	e, err := d.IssuePublisherGroupEnrollment(ctx, r.TeamID, r.ProjectKey, "production", r.ActorID, 1, time.Hour, now)
+	e, err := testDeploymentPublisherEnrollment(d, ctx, r.TeamID, r.ProjectKey, "production", r.ActorID, 1, time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replica := enrollAppliedGroup(t, d, r, e, now)
-	access := groupAssignmentAccess(t, d, replica, replica.assignments.Services[0], now)
+	replica := enrollAppliedDeployment(t, d, r, e, now)
+	access := deploymentAssignmentAccess(t, d, replica, replica.assignments.Services[0], now)
 	service, err := d.GetServiceForPublisher(ctx, replica.assignments.Services[0].ServiceID, access.PublisherIdentity, now)
 	if err != nil {
 		t.Fatal(err)

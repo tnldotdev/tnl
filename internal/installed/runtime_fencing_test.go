@@ -13,14 +13,14 @@ import (
 
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/failure"
-	publishergroup "github.com/tnldotdev/tnl/internal/publisher/group"
+	publisherdeployment "github.com/tnldotdev/tnl/internal/publisher/deployment"
 	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // use the real supervisor, group loop and HTTP client error adapter. a synthetic
-// error returned directly by Engine.Group would not test the retry boundary.
-func TestInstalledGroupRuntimeConflictBlocksWithoutReclaim(t *testing.T) {
+// error returned directly by Engine.Deployment would not test the retry boundary.
+func TestInstalledDeploymentRuntimeConflictBlocksWithoutReclaim(t *testing.T) {
 	options := testOptions(t)
 	options.User = true
 	r, err := Open(t.Context(), options)
@@ -28,8 +28,8 @@ func TestInstalledGroupRuntimeConflictBlocksWithoutReclaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer r.Close()
-	job, _, key := kindFixture(t, KindGroup)
-	member := *job.GroupMember
+	job, _, key := kindFixture(t, KindDeployment)
+	member := *job.DeploymentMember
 	var replaced atomic.Bool
 	var mu sync.Mutex
 	var requests []controlv1.PublisherRuntimeRequest
@@ -55,10 +55,10 @@ func TestInstalledGroupRuntimeConflictBlocksWithoutReclaim(t *testing.T) {
 				return
 			}
 			until := time.Now().Add(100 * time.Millisecond)
-			_ = json.NewEncoder(w).Encode(controlv1.PublisherRuntimeResponse{Epoch: 1, LeaseExpiresAt: &until, GroupLease: &controlv1.PublisherGroupLease{AccessToken: "pgl_fixture", ExpiresAt: until}})
-		case "/v1/publisher/groups/assignments":
-			_ = json.NewEncoder(w).Encode(controlv1.PublisherGroupAssignments{Member: member, Revision: 1, ConfigurationHash: strings.Repeat("a", 64), Services: []controlv1.PublisherGroupServiceAssignment{}})
-		case "/v1/publisher/groups/configuration-acknowledgements":
+			_ = json.NewEncoder(w).Encode(controlv1.PublisherRuntimeResponse{Epoch: 1, LeaseExpiresAt: &until, DeploymentLease: &controlv1.DeploymentPublisherLease{AccessToken: "dpl_lease_fixture", ExpiresAt: until}})
+		case "/v1/publisher/deployments/assignments":
+			_ = json.NewEncoder(w).Encode(controlv1.DeploymentPublisherAssignments{Member: member, Revision: 1, ConfigurationHash: strings.Repeat("a", 64), Services: []controlv1.DeploymentPublisherServiceAssignment{}})
+		case "/v1/publisher/deployments/configuration-acknowledgements":
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			t.Errorf("unexpected request: %s", request.URL.Path)
@@ -67,21 +67,21 @@ func TestInstalledGroupRuntimeConflictBlocksWithoutReclaim(t *testing.T) {
 	}))
 	defer server.Close()
 	job.Server = server.URL
-	if err := r.InstallGroup(t.Context(), job, member, key); err != nil {
+	if err := r.InstallDeployment(t.Context(), job, member, key); err != nil {
 		t.Fatal(err)
 	}
-	client, err := publishergroup.NewClient(server.URL, server.Client())
+	client, err := publisherdeployment.NewClient(server.URL, server.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
 	var attempts atomic.Int64
-	engine := Engine{Registry: r, PollInterval: 5 * time.Millisecond, RetryMin: 5 * time.Millisecond, RetryMax: 10 * time.Millisecond, Group: func(ctx context.Context, job Job, _ *clienttelemetry.Collector, observe func(int64, bool) error) error {
+	engine := Engine{Registry: r, PollInterval: 5 * time.Millisecond, RetryMin: 5 * time.Millisecond, RetryMax: 10 * time.Millisecond, Deployment: func(ctx context.Context, job Job, _ *clienttelemetry.Collector, observe func(int64, bool) error) error {
 		attempts.Add(1)
-		current, private, _, err := r.GroupIdentity(ctx, job)
+		current, private, _, err := r.DeploymentIdentity(ctx, job)
 		if err != nil {
 			return err
 		}
-		return (publishergroup.Runtime{Control: client, Member: current, Private: private, Observe: observe, PollInterval: 5 * time.Millisecond, Publish: func(context.Context, controlv1.PublisherGroupServiceAssignment, func(bool)) error {
+		return (publisherdeployment.Runtime{Control: client, Member: current, Private: private, Observe: observe, PollInterval: 5 * time.Millisecond, Publish: func(context.Context, controlv1.DeploymentPublisherServiceAssignment, func(bool)) error {
 			t.Error("empty group published a service")
 			return ErrScope
 		}}).Serve(ctx)

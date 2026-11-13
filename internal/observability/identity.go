@@ -11,9 +11,9 @@ import (
 // the public URL and service slots are mutually exclusive. a conflicting
 // or invalid identity is cleared rather than attributed to the previous tenant.
 type Identity struct {
-	TeamID, PublisherGroupID, PublisherIdentityID, DeploymentID, ReplicaKey string
-	ServiceID, PublicURLID                                                  string
-	ServiceKind                                                             ServiceKind
+	TeamID, DeploymentID, PublisherIdentityID, ReportedDeploymentID, ReplicaKey string
+	ServiceID, PublicURLID                                                      string
+	ServiceKind                                                                 ServiceKind
 }
 type identityKey struct{}
 
@@ -42,7 +42,7 @@ func ReplaceIdentity(ctx context.Context, id Identity) context.Context {
 // publisher, group, or deployment starts a new scope instead of inheriting it.
 func NarrowIdentity(ctx context.Context, id Identity) context.Context {
 	p := IdentityFromContext(ctx)
-	if id.TeamID != "" && id.TeamID != p.TeamID || id.PublisherIdentityID != "" && id.PublisherIdentityID != p.PublisherIdentityID || id.PublisherGroupID != "" && id.PublisherGroupID != p.PublisherGroupID || id.DeploymentID != "" && id.DeploymentID != p.DeploymentID {
+	if id.TeamID != "" && id.TeamID != p.TeamID || id.PublisherIdentityID != "" && id.PublisherIdentityID != p.PublisherIdentityID || id.DeploymentID != "" && id.DeploymentID != p.DeploymentID || id.ReportedDeploymentID != "" && id.ReportedDeploymentID != p.ReportedDeploymentID {
 		return ReplaceIdentity(ctx, id)
 	}
 	if id.TeamID == "" {
@@ -51,8 +51,8 @@ func NarrowIdentity(ctx context.Context, id Identity) context.Context {
 	if id.PublisherIdentityID == "" {
 		id.PublisherIdentityID = p.PublisherIdentityID
 	}
-	if id.PublisherGroupID == "" {
-		id.PublisherGroupID = p.PublisherGroupID
+	if id.ReportedDeploymentID == "" {
+		id.ReportedDeploymentID = p.ReportedDeploymentID
 	}
 	if id.DeploymentID == "" {
 		id.DeploymentID = p.DeploymentID
@@ -73,7 +73,7 @@ func validIdentity(id Identity) bool {
 	if id.ServiceID != "" && id.ServiceKind == PublicURL || id.PublicURLID != "" && id.ServiceKind == Service {
 		return false
 	}
-	for _, v := range []string{id.TeamID, id.PublisherGroupID, id.PublisherIdentityID, id.DeploymentID, id.ReplicaKey, id.ServiceID, id.PublicURLID} {
+	for _, v := range []string{id.TeamID, id.DeploymentID, id.PublisherIdentityID, id.ReportedDeploymentID, id.ReplicaKey, id.ServiceID, id.PublicURLID} {
 		if len(v) > 128 || strings.ContainsAny(v, "\r\n\x00") {
 			return false
 		}
@@ -87,7 +87,7 @@ func identityAttributes(ctx context.Context) []attribute.KeyValue {
 	for _, item := range []struct {
 		k metricStringKey
 		v string
-	}{{TeamID, id.TeamID}, {PublisherGroupID, id.PublisherGroupID}, {PublisherIdentityID, id.PublisherIdentityID}, {DeploymentID, id.DeploymentID}, {ReplicaKey, id.ReplicaKey}, {ServiceID, id.ServiceID}, {PublicURLID, id.PublicURLID}} {
+	}{{TeamID, id.TeamID}, {DeploymentID, id.DeploymentID}, {PublisherIdentityID, id.PublisherIdentityID}, {ReportedDeploymentID, id.ReportedDeploymentID}, {ReplicaKey, id.ReplicaKey}, {ServiceID, id.ServiceID}, {PublicURLID, id.PublicURLID}} {
 		if item.v != "" {
 			out = append(out, item.k.String(item.v))
 		}

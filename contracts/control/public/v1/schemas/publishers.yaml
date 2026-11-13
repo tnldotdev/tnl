@@ -8,7 +8,7 @@ schemas:
       publisher_identity_id: { type: string }
       scope_id:
         type: string
-        description: Immutable group ID for a group replica, or an exact live grant ID for an installed publisher.
+        description: Immutable deployment ID for a deployment replica, or an exact live grant ID for an installed publisher.
       process_run_id: { type: string, pattern: "^[a-f0-9]{32}$" }
       expected_epoch:
         {
@@ -26,7 +26,7 @@ schemas:
   PublisherDeploymentReport:
     type: object
     additionalProperties: false
-    description: "Deployment metadata reported by a group publisher and covered by its signed runtime assertion. It is not cloud attestation or permission. Values cannot change within a process run; deployment, provider, replica, and instance remain bound to the publisher identity across restarts."
+    description: "Deployment metadata reported by a deployment publisher and covered by its signed runtime assertion. It is not cloud attestation or permission. Values cannot change within a process run; deployment, provider, replica, and instance remain bound to the publisher identity across restarts."
     required:
       [
         deployment_id,
@@ -56,11 +56,11 @@ schemas:
   PublisherDeploymentObservation:
     type: object
     additionalProperties: false
-    description: "An accepted publisher deployment report, with control receipt times and a control-derived group_id. It does not prove cloud state, image identity, or target health. The group/deployment/replica combination belongs to this publisher identity."
-    required: [report, group_id, evidence, first_observed_at, observed_at]
+    description: "An accepted publisher deployment report, with control receipt times and a control-derived deployment_id. It does not prove cloud state, image identity, or target health. The deployment/deployment/replica combination belongs to this publisher identity."
+    required: [report, deployment_id, evidence, first_observed_at, observed_at]
     properties:
       report: { $ref: "../openapi.yaml#/components/schemas/PublisherDeploymentReport" }
-      group_id: { type: string }
+      deployment_id: { type: string }
       evidence: { type: string, enum: [publisher_reported] }
       first_observed_at: { type: string, format: date-time }
       observed_at: { type: string, format: date-time }
@@ -76,7 +76,7 @@ schemas:
           x-oapi-codegen-extra-tags: { json: "epoch,string" },
         }
       lease_expires_at: { type: string, format: date-time }
-      group_lease: { $ref: "../openapi.yaml#/components/schemas/PublisherGroupLease" }
+      deployment_lease: { $ref: "../openapi.yaml#/components/schemas/DeploymentPublisherLease" }
   PublisherRuntimeStatus:
     type: object
     additionalProperties: false

@@ -405,15 +405,23 @@ func startWorkloadPublishers(t *testing.T, f *privateSeparatedFixture, group, tr
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := f.identity.routes.CreatePublisherGroupEnrollment(t.Context(), "workload", group, controlv1.CreatePublisherGroupEnrollmentRequest{TeamId: f.identity.teamID, MaxMembers: 1, ExpiresIn: 600})
+	deployment, err := f.identity.routes.GetDeployment(t.Context(), f.identity.teamID, "workload", group)
 	if err != nil {
 		t.Fatal(err)
 	}
-	member, err := f.identity.routes.RedeemPublisherGroupEnrollment(t.Context(), e.EnrollmentKey, public)
+	services := make([]string, 0, len(deployment.Services))
+	for name := range deployment.Services {
+		services = append(services, name)
+	}
+	e, err := f.identity.routes.CreateDeploymentPublisherEnrollment(t.Context(), f.identity.teamID, "workload", group, "workload-enrollment", controlv1.CreateDeploymentPublisherEnrollmentRequest{Services: services, MaxMembers: new(1), ExpiresIn: new(600)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	owner, err := publisheridentity.NewGroup(publisheridentity.NativeControl{PublicURLControl: f.identity.routes, Services: f.identity.routes}, f.identity.routes, f.identity.authority, f.identity.routes.ControlURL(), member, key)
+	member, err := f.identity.routes.RedeemDeploymentPublisherEnrollment(t.Context(), e.EnrollmentKey, public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := publisheridentity.NewDeployment(publisheridentity.NativeControl{PublicURLControl: f.identity.routes, Services: f.identity.routes}, f.identity.routes, f.identity.authority, f.identity.routes.ControlURL(), member, key)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -37,9 +37,9 @@ func (d *Database) SelectDeploymentServiceRun(ctx context.Context, team, project
 	defer rollback(ctx, tx, "resolve deployment service", &retErr)()
 	var id string
 	err = tx.QueryRow(ctx, `SELECT binding.service_id FROM control.applied_project_services binding
-	    JOIN control.project_publisher_groups deployment ON deployment.id=binding.group_id AND deployment.deleted_at IS NULL
+	    JOIN control.deployments deployment ON deployment.id=binding.deployment_id AND deployment.deleted_at IS NULL
 	    WHERE binding.team_id=$1 AND binding.project_key=$2 AND binding.service=$4
-	    AND (deployment.id=$3 OR EXISTS(SELECT 1 FROM control.publisher_group_names alias WHERE alias.group_id=deployment.id AND alias.name=$3))`, team, project, deployment, service).Scan(&id)
+	    AND (deployment.id=$3 OR EXISTS(SELECT 1 FROM control.deployment_names alias WHERE alias.deployment_id=deployment.id AND alias.name=$3))`, team, project, deployment, service).Scan(&id)
 	if err != nil {
 		return result, publisherLookupError(err, ErrVisitorPermission)
 	}

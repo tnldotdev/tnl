@@ -9,7 +9,7 @@ const project = { project_key: "shop" };
 const query = { team_id: "team-shop" };
 const serviceId = `svc_${"a".repeat(22)}`;
 const deployment: Deployment = {
-  id: "pgrp_customer",
+  id: "dpl_customer",
   team_id: query.team_id,
   project_key: project.project_key,
   name: "customer",
@@ -20,8 +20,8 @@ const deployment: Deployment = {
 const member = {
   team_id: query.team_id,
   project_key: project.project_key,
-  group_id: deployment.id,
-  group_name: deployment.name,
+  deployment_id: deployment.id,
+  deployment_name: deployment.name,
   publisher_identity_id: "pub_customer",
   key_id: "key_customer",
   observed_revision: "1",
@@ -91,7 +91,7 @@ describe("HTTP management entry point", () => {
           {
             enrollment_key: "private-enrollment",
             enrollment_id: "pge_customer",
-            group_id: deployment.id,
+            deployment_id: deployment.id,
             expires_at: "2026-11-13T13:00:00Z",
             max_members: 1,
             services: { db: "postgres" },

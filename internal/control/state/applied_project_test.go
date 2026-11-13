@@ -52,7 +52,7 @@ func TestNormalizeProjectConfiguration(t *testing.T) {
 		decoder := json.NewDecoder(strings.NewReader(retired))
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&c); err == nil {
-			t.Fatal("retired group configuration remained readable")
+			t.Fatal("retired deployment configuration remained readable")
 		}
 	}
 }

@@ -30,7 +30,20 @@ func exerciseWorkloadConnectorPeerPair(t *testing.T, d *controlstate.Database, j
 	t.Helper()
 	ctx := t.Context()
 	now := time.Now().UTC()
-	enrollment, err := d.IssuePublisherGroupEnrollment(ctx, team, "example", "production", actor, 1, time.Hour, now)
+	deployment, err := d.GetDeployment(ctx, controlstate.DeploymentScope{TeamID: team, ProjectKey: "example", ActorID: actor}, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var services []string
+	for name, binding := range deployment.Services {
+		if binding.ID == service {
+			services = append(services, name)
+		}
+	}
+	enrollment, err := d.CreateDeploymentPublisherEnrollment(ctx, controlstate.CreateDeploymentPublisherEnrollmentRequest{
+		DeploymentScope: controlstate.DeploymentScope{TeamID: team, ProjectKey: "example", ActorID: actor},
+		Selector:        deployment.ID, Services: services, MaxMembers: 1, Lifetime: time.Hour, Now: now, IdempotencyKey: "connector-publisher",
+	})
 	if err != nil {
 		t.Fatal("group enrollment", err)
 	}
@@ -38,23 +51,23 @@ func exerciseWorkloadConnectorPeerPair(t *testing.T, d *controlstate.Database, j
 	if err != nil {
 		t.Fatal(err)
 	}
-	member, err := d.RedeemPublisherGroupEnrollment(ctx, enrollment.Key, pub, now)
+	member, err := d.RedeemDeploymentPublisherEnrollment(ctx, enrollment.Key, pub, now)
 	if err != nil {
 		t.Fatal("redeem group", err)
 	}
-	leaseProof, err := publisherproof.Sign(member.PublisherIdentityID, member.KeyID, member.GroupID, server.URL+"/v1/publisher/groups/lease", key, now)
+	leaseProof, err := publisherproof.Sign(member.PublisherIdentityID, member.KeyID, member.DeploymentID, server.URL+"/v1/publisher/deployments/lease", key, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, err := d.AcquirePublisherGroupLease(ctx, member.PublisherIdentityID, member.GroupID, leaseProof, server.URL+"/v1/publisher/groups/lease", now)
+	lease, err := d.AcquireDeploymentPublisherLease(ctx, member.PublisherIdentityID, member.DeploymentID, leaseProof, server.URL+"/v1/publisher/deployments/lease", now)
 	if err != nil {
 		t.Fatal("group lease", err)
 	}
-	assignments, err := d.GetPublisherGroupAssignments(ctx, lease.AccessToken, now)
+	assignments, err := d.GetDeploymentPublisherAssignments(ctx, lease.AccessToken, now)
 	if err != nil {
 		t.Fatal("group assignments", err)
 	}
-	var grant controlstate.PublisherGroupServiceAssignment
+	var grant controlstate.DeploymentPublisherServiceAssignment
 	for _, candidate := range assignments.Services {
 		if candidate.ServiceID == service {
 			grant = candidate

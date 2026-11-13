@@ -69,7 +69,7 @@
       "slug": "app-remote-service",
       "class": "invalid",
       "message": "readiness checks require a local configured service",
-      "action": "select a local service with --service; use tnl status for applied publisher groups"
+      "action": "select a local service with --service; use tnl status for applied deployments"
     },
     {
       "code": "TNL_CLIENT_AUTHENTICATION_REQUIRED",

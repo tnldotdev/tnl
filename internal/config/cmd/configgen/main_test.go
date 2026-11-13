@@ -105,7 +105,7 @@ func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 
 func TestServiceSchemaKeepsServicesSeparateFromPublicURLs(t *testing.T) {
 	declaration := servicesSchema().AdditionalProperties
-	for _, field := range []string{"private", "public_url", "target", "tls", "name", "publisher_group", "http"} {
+	for _, field := range []string{"private", "public_url", "target", "tls", "name", "deployment", "http"} {
 		if _, found := declaration.Properties.Get(field); found {
 			t.Fatalf("logical service permits deployment field %s", field)
 		}

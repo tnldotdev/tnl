@@ -1,0 +1,180 @@
+paths:
+  /v1/projects/{project_key}/deployments/{deployment}/namespace/rename:
+    post:
+      operationId: renameDeploymentNamespace
+      tags: [deployment-runtime]
+      summary: Replace a deployment's DNS namespace label
+      security: [{ bearerAuth: [] }]
+      description: "Change the deployment's DNS label while keeping its IDs and ports. This closes old service runs and assigns new publication grants and certificate plans. Old names remain reserved until control finishes its certificate and DNS cleanup checks. The configuration key and separately configured public URLs do not change. Send the current expected revision; an identical retry with the same key returns the original result."
+      parameters:
+        - { name: project_key, in: path, required: true, schema: { type: string } }
+        - { name: deployment, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/RenameDeploymentNamespaceRequest" }
+      responses:
+        "200":
+          description: Applied descriptors with the new service hostnames
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/AppliedProjectConfiguration" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/projects/{project_key}/deployments/{deployment}/rename:
+    post:
+      operationId: renameDeployment
+      tags: [deployment-runtime]
+      summary: Rename a deployment's configuration selector without changing endpoints
+      security: [{ bearerAuth: [] }]
+      description: "Rename the configuration key without changing the deployment's ID, namespace, services, ports, or publisher grants. Old selectors remain reserved for this deployment. Update project configuration before the next apply; retrying a completed rename is safe."
+      parameters:
+        - { name: project_key, in: path, required: true, schema: { type: string } }
+        - { name: deployment, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/RenameDeploymentRequest" }
+      responses:
+        "200":
+          description: Renamed desired configuration and unchanged endpoint identities
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/AppliedProjectConfiguration" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/publisher/deployments/enroll:
+    post:
+      operationId: redeemDeploymentPublisherEnrollment
+      tags: [deployment-runtime]
+      summary: Enroll a replica's signing key with a deployment enrollment secret
+      security: []
+      description: "Register a replica's Ed25519 public key using enrollment_key in the body. Retrying the same key returns the same membership without consuming more enrollment capacity."
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    {
+                      $ref: "../openapi.yaml#/components/schemas/RedeemDeploymentPublisherEnrollmentRequest",
+                    },
+                },
+            },
+        }
+      responses:
+        "200":
+          {
+            description: One signed publisher identity scoped to one deployment,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      { $ref: "../openapi.yaml#/components/schemas/DeploymentPublisherIdentity" },
+                  },
+              },
+          }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/publisher/deployments/verify:
+    post:
+      operationId: verifyDeploymentIdentity
+      tags: [deployment-runtime]
+      summary: Verify a replica's deployment membership without acquiring a lease
+      security: []
+      description: "Verify deployment membership using a one-use signed assertion in the body. Its audience is this endpoint's full control URL. Returns current and historical selectors without replacing the running publisher's deployment lease."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/DeploymentPublisherLeaseRequest" }
+      responses:
+        "200":
+          description: Verified membership without a lease or service targets
+          content:
+            application/json:
+              schema:
+                { $ref: "../openapi.yaml#/components/schemas/DeploymentPublisherVerification" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/publisher/deployments/lease:
+    post:
+      operationId: acquireDeploymentPublisherLease
+      tags: [deployment-runtime]
+      summary: Exchange a signed replica assertion for a deployment lease
+      security: []
+      description: "Exchange a one-use signed assertion in the body for a dpl_lease_ deployment lease. The assertion's audience is this endpoint's full control URL, and its grant claim is the deployment ID."
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    { $ref: "../openapi.yaml#/components/schemas/DeploymentPublisherLeaseRequest" },
+                },
+            },
+        }
+      responses:
+        "200":
+          {
+            description: Current deployment lease,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      { $ref: "../openapi.yaml#/components/schemas/DeploymentPublisherLease" },
+                  },
+              },
+          }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/publisher/deployments/assignments:
+    get:
+      operationId: getDeploymentPublisherAssignments
+      tags: [deployment-runtime]
+      summary: Read services and grants assigned to one leased deployment replica
+      description: "Read the replica's assigned services and publisher grants using its current dpl_lease_ lease. Assignments can include targets. A pta_ publisher token cannot read them."
+      security: [{ deploymentPublisherLeaseAuth: [] }]
+      responses:
+        "200":
+          {
+            description: Exact assigned services and native publisher grants for this replica,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      {
+                        $ref: "../openapi.yaml#/components/schemas/DeploymentPublisherAssignments",
+                      },
+                  },
+              },
+          }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/publisher/deployments/configuration-acknowledgements:
+    post:
+      operationId: acknowledgeDeploymentPublisherConfiguration
+      tags: [deployment-runtime]
+      summary: Acknowledge the exact configuration installed by a deployment replica
+      description: "Report the installed configuration revision, hash, and health using the replica's current dpl_lease_ lease. Stale or mismatched configuration is rejected; a pta_ publisher token cannot acknowledge it."
+      security: [{ deploymentPublisherLeaseAuth: [] }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    {
+                      $ref: "../openapi.yaml#/components/schemas/DeploymentPublisherAcknowledgement",
+                    },
+                },
+            },
+        }
+      responses:
+        "204": { description: Exact current configuration revision acknowledged }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

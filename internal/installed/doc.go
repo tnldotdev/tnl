@@ -4,6 +4,6 @@
 //
 // this is a process composition owner, not a shared client facility. auth, state,
 // project, and control clients remain below it in client and must not import it.
-// group job runners compose group-owned assignment publication; foreground
+// deployment job runners compose deployment-owned assignment publication; foreground
 // callers can use that publisher operation without an installed job or registry.
 package installed

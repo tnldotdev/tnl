@@ -51,7 +51,7 @@ func TestPublicationInputsRejectApplicationAuthSettings(t *testing.T) {
 	}{
 		{`{"target":"https://api.example","target_auth":{}}`, new(controlv1.ProjectServiceConfiguration)},
 		{`{"target":"https://api.example","target_auth":{}}`, new(installedjobs.Job)},
-		{`{"secrets":[]}`, new(installedjobs.GroupBinding)},
+		{`{"secrets":[]}`, new(installedjobs.DeploymentBinding)},
 	} {
 		if err := httpjson.Decode(json.NewDecoder(strings.NewReader(input.body)), input.out); err == nil {
 			t.Fatal("retired settings were silently ignored", input.body)

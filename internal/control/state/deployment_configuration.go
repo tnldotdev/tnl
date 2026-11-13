@@ -24,7 +24,7 @@ type deploymentConfiguration struct {
 func deploymentConfigurationContext(id string) string { return "deployment-configuration/" + id }
 
 func (d *Database) saveDeploymentConfiguration(ctx context.Context, tx pgx.Tx, id string, c ProjectConfiguration) error {
-	row, err := controlstatedb.New(tx).LockProjectPublisherGroup(ctx, id)
+	row, err := controlstatedb.New(tx).LockDeploymentByID(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -39,7 +39,7 @@ func projectDeploymentConfiguration(namespace string, c ProjectConfiguration) de
 	}
 }
 
-func (d *Database) writeDeploymentConfiguration(ctx context.Context, tx pgx.Tx, row controlstatedb.ControlProjectPublisherGroup, snapshot deploymentConfiguration) error {
+func (d *Database) writeDeploymentConfiguration(ctx context.Context, tx pgx.Tx, row controlstatedb.ControlDeployment, snapshot deploymentConfiguration) error {
 	data, err := json.Marshal(snapshot)
 	if err != nil {
 		return err
@@ -57,21 +57,21 @@ func (d *Database) writeDeploymentConfiguration(ctx context.Context, tx pgx.Tx, 
 		if err != nil {
 			return err
 		}
-		if _, err = tx.Exec(ctx, `UPDATE control.project_publisher_groups SET revision=revision+1,
+		if _, err = tx.Exec(ctx, `UPDATE control.deployments SET revision=revision+1,
 			configuration_hash=$2,configuration_ciphertext=$3,storage_key_id=$4 WHERE id=$1`,
 			row.ID, hash, sealed, d.storageKey.CurrentID()); err != nil {
 			return err
 		}
 		row.Revision++
 	}
-	_, err = tx.Exec(ctx, `UPDATE control.applied_project_services SET desired_revision=$2 WHERE group_id=$1`, row.ID, row.Revision)
+	_, err = tx.Exec(ctx, `UPDATE control.applied_project_services SET desired_revision=$2 WHERE deployment_id=$1`, row.ID, row.Revision)
 	return err
 }
 
-func (d *Database) openDeploymentConfiguration(row controlstatedb.ControlProjectPublisherGroup) (deploymentConfiguration, error) {
+func (d *Database) openDeploymentConfiguration(row controlstatedb.ControlDeployment) (deploymentConfiguration, error) {
 	var c deploymentConfiguration
 	if row.Revision < 1 || !row.StorageKeyID.Valid {
-		return c, ErrPublisherGroup
+		return c, ErrDeploymentPublisher
 	}
 	data, _, err := d.storageKey.Open(row.StorageKeyID.String, deploymentConfigurationContext(row.ID), row.ConfigurationCiphertext)
 	if err != nil {

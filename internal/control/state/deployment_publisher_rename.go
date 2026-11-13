@@ -1,0 +1,103 @@
+package state
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"time"
+
+	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+)
+
+// rename changes the desired selector, not the durable namespace or credentials.
+// historical names remain bound to this ID so a stale deployment cannot enroll
+// into an unrelated deployment merely because its old key was reused.
+func (d *Database) RenameDeployment(ctx context.Context, team, project, old, name, actor string, expected int64, now time.Time) (result AppliedProjectConfiguration, retErr error) {
+	if !naming.ValidProjectKey(project) || !naming.ValidServiceName(old) && !opaqueid.Valid(old, "dpl_") || !naming.ValidServiceName(name) || name == "local" || old == "local" || expected < 1 || expected == 1<<63-1 {
+		return result, ErrProjectConfigurationInvalid
+	}
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return result, err
+	}
+	defer rollback(ctx, tx, "rename deployment", &retErr)()
+	q := controlstatedb.New(tx)
+	if _, err = q.LockLocalTeamForMutation(ctx, team); err != nil {
+		return result, publisherLookupError(err, ErrServiceAccess)
+	}
+	if err = serviceManager(ctx, tx, team, actor); err != nil {
+		return result, err
+	}
+	row, err := q.LockAppliedProject(ctx, controlstatedb.LockAppliedProjectParams{TeamID: team, ProjectKey: project})
+	if err != nil {
+		return result, publisherLookupError(err, ErrServiceAccess)
+	}
+	deployment, err := q.LockDeployment(ctx, controlstatedb.LockDeploymentParams{TeamID: team, ProjectKey: project, Selector: old})
+	if err != nil {
+		return result, publisherLookupError(err, ErrDeploymentPublisher)
+	}
+	id, current := deployment.ID, deployment.Name
+	record, err := d.openAppliedProjectRecord(row)
+	if err != nil {
+		return result, err
+	}
+	c, declared := record.Deployments[current]
+	if current == name {
+		result, err = d.appliedProjectStatus(ctx, tx, row, current, c)
+		if err != nil {
+			return result, err
+		}
+		return result, tx.Commit(ctx)
+	}
+	if current != old && id != old || row.Revision != expected {
+		return result, ErrProjectConfigurationStale
+	}
+	if _, exists := record.Deployments[name]; exists {
+		return result, ErrServiceConflict
+	}
+	if err = claimDeploymentName(ctx, tx, team, project, name, id, now); err != nil {
+		return result, err
+	}
+	if declared {
+		for key, policy := range c.Workloads {
+			policy.Deployment = name
+			c.Workloads[key] = policy
+		}
+		c, _, err = NormalizeProjectConfiguration(c)
+		if err != nil {
+			return result, err
+		}
+		delete(record.Deployments, current)
+		record.Deployments[name] = c
+	}
+	encoded, err := json.Marshal(record)
+	if err != nil {
+		return result, err
+	}
+	digest := sha256.Sum256(encoded)
+	hash := hex.EncodeToString(digest[:])
+	sealed, err := d.storageKey.Seal(appliedProjectContext(team, project), encoded)
+	if err != nil {
+		return result, err
+	}
+	if _, err = tx.Exec(ctx, `UPDATE control.deployments SET name=$2 WHERE id=$1`, id, name); err != nil {
+		return result, projectConstraintError(err)
+	}
+	if _, err = tx.Exec(ctx, `UPDATE control.applied_projects SET revision=revision+1,configuration_hash=$3,configuration_ciphertext=$4,storage_key_id=$5,updated_at=$6 WHERE team_id=$1 AND project_key=$2`, team, project, hash, sealed, d.storageKey.CurrentID(), now); err != nil {
+		return result, err
+	}
+	if err = recordDeploymentPublisherUpdate(ctx, tx, id, actor, "", "rename/"+old+"/"+name, now); err != nil {
+		return result, err
+	}
+	row.Revision++
+	row.ConfigurationHash = hash
+	row.ConfigurationCiphertext, row.StorageKeyID = sealed, d.storageKey.CurrentID()
+	result, err = d.appliedProjectStatus(ctx, tx, row, name, c)
+	if err != nil {
+		return result, err
+	}
+	return result, tx.Commit(ctx)
+}

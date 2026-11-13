@@ -31,7 +31,7 @@ const (
 
 type harnessArguments struct {
 	TestShard string   `name:"tnl-test-shard" help:"Run one stable test-name shard, numbered 1/N through N/N."`
-	Service   string   `arg:"" enum:"postgres,mysql,postgres-tls,mysql-tls,redis,connections,dns,runtime,publisher-install" help:"Disposable service or connections suite for the test command."`
+	Service   string   `arg:"" enum:"postgres,mysql,postgres-tls,mysql-tls,deployment-database,redis,connections,dns,runtime,publisher-install" help:"Disposable service or connections suite for the test command."`
 	Command   []string `arg:"" optional:"" passthrough:"" sep:"none" help:"Test command and arguments after --."`
 }
 

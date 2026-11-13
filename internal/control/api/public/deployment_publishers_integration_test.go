@@ -86,7 +86,7 @@ func TestIntegrationDeploymentPublisherHTTPContracts(t *testing.T) {
 	if enrollment.MaxMembers != 1 || len(enrollment.Services) != 1 || enrollment.Services["db"] != controlv1.Postgres || enrollment.ExpiresAt.Before(now.Add(9*time.Minute)) || enrollment.ExpiresAt.After(time.Now().Add(10*time.Minute)) {
 		t.Fatal("publisher setup lost defaults, captured scope, or bounded deadline")
 	}
-	recovered, err := api.CreateDeploymentPublisherEnrollmentWithResponse(ctx, "example", enrollment.GroupId, params, body, auth)
+	recovered, err := api.CreateDeploymentPublisherEnrollmentWithResponse(ctx, "example", enrollment.DeploymentId, params, body, auth)
 	if err != nil || recovered.JSON201 == nil || !bytes.Equal(created.Body, recovered.Body) {
 		t.Fatal("setup lost-response retry changed its secret or expiration", err)
 	}
@@ -111,7 +111,7 @@ func TestIntegrationDeploymentPublisherHTTPContracts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	redeemed, err := api.RedeemPublisherGroupEnrollmentWithResponse(ctx, controlv1.RedeemPublisherGroupEnrollmentRequest{EnrollmentKey: enrollment.EnrollmentKey, PublicKey: base64.RawURLEncoding.EncodeToString(public)})
+	redeemed, err := api.RedeemDeploymentPublisherEnrollmentWithResponse(ctx, controlv1.RedeemDeploymentPublisherEnrollmentRequest{EnrollmentKey: enrollment.EnrollmentKey, PublicKey: base64.RawURLEncoding.EncodeToString(public)})
 	if err != nil || redeemed.JSON200 == nil {
 		t.Fatal("scoped setup did not use the existing redemption exchange", err)
 	}
@@ -125,7 +125,7 @@ func TestIntegrationDeploymentPublisherHTTPContracts(t *testing.T) {
 			t.Fatal("publisher read exposed credentials or private targets")
 		}
 	}
-	listed, err := api.ListDeploymentPublishersWithResponse(ctx, "example", enrollment.GroupId, &controlv1.ListDeploymentPublishersParams{TeamId: team}, auth)
+	listed, err := api.ListDeploymentPublishersWithResponse(ctx, "example", enrollment.DeploymentId, &controlv1.ListDeploymentPublishersParams{TeamId: team}, auth)
 	if err != nil || listed.JSON200 == nil || len(listed.JSON200.Publishers) != 1 || listed.JSON200.Publishers[0].PublisherIdentityId != publisher {
 		t.Fatal("generated publisher list contract lost the selected identity", err)
 	}

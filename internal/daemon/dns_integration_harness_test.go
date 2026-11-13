@@ -55,7 +55,7 @@ func integrationDNSSubprocess(t *testing.T) bool {
 		"-tnl-test-postgres-url="+postgresURL,
 		"-tnl-dns-child="+t.Name(),
 	)
-	cleanupGroup := isolateIntegrationDNSProcess(t, command)
+	cleanupDeployment := isolateIntegrationDNSProcess(t, command)
 	temporaryDirectory := t.TempDir()
 	command.Env = append(os.Environ(),
 		"TMPDIR="+temporaryDirectory,
@@ -78,7 +78,7 @@ func integrationDNSSubprocess(t *testing.T) bool {
 		if err := owner.shutdown(time.Second, 5*time.Second); err != nil {
 			t.Errorf("isolated DNS shutdown: %v", err)
 		}
-		cleanupGroup()
+		cleanupDeployment()
 	}()
 	if err := waitForDone(ctx, owner.done); err != nil {
 		t.Fatalf("isolated runtime DNS test deadline: %v\n%s", err, output.String())

@@ -58,24 +58,17 @@ export const deploymentTargetStatusSchema = z.strictObject({
   discovery: projectTargetDiscoverySchema.optional(),
 });
 
-export const publisherGroupEnrollmentSchema = z.object({
-  enrollment_key: z.string(),
-  group_id: z.string(),
-  expires_at: z.iso.datetime({ offset: true }),
-  max_members: z.int(),
-});
-
-export const publisherGroupMemberSchema = z.object({
+export const deploymentPublisherIdentitySchema = z.object({
   team_id: z.string(),
   project_key: z.string(),
-  group_id: z.string(),
-  group_name: z.string(),
+  deployment_id: z.string(),
+  deployment_name: z.string(),
   publisher_identity_id: z.string(),
   key_id: z.string(),
 });
 
 /**
- * Deployment metadata reported by a group publisher and covered by its signed runtime assertion. It is not cloud attestation or permission. Values cannot change within a process run; deployment, provider, replica, and instance remain bound to the publisher identity across restarts.
+ * Deployment metadata reported by a deployment publisher and covered by its signed runtime assertion. It is not cloud attestation or permission. Values cannot change within a process run; deployment, provider, replica, and instance remain bound to the publisher identity across restarts.
  */
 export const publisherDeploymentReportSchema = z.strictObject({
   deployment_id: z
@@ -110,11 +103,11 @@ export const publisherDeploymentReportSchema = z.strictObject({
 });
 
 /**
- * An accepted publisher deployment report, with control receipt times and a control-derived group_id. It does not prove cloud state, image identity, or target health. The group/deployment/replica combination belongs to this publisher identity.
+ * An accepted publisher deployment report, with control receipt times and a control-derived deployment_id. It does not prove cloud state, image identity, or target health. The deployment/deployment/replica combination belongs to this publisher identity.
  */
 export const publisherDeploymentObservationSchema = z.strictObject({
   report: publisherDeploymentReportSchema,
-  group_id: z.string(),
+  deployment_id: z.string(),
   evidence: z.enum(["publisher_reported"]),
   first_observed_at: z.iso.datetime({ offset: true }),
   observed_at: z.iso.datetime({ offset: true }),
@@ -140,7 +133,7 @@ export const publisherRuntimeStatusSchema = z.strictObject({
   deployment: publisherDeploymentObservationSchema.optional(),
 });
 
-export const publisherGroupMemberStatusSchema = publisherGroupMemberSchema.and(
+export const deploymentPublisherStatusSchema = deploymentPublisherIdentitySchema.and(
   z.object({
     observed_revision: z.string().regex(/^[0-9]+$/),
     current_revision: z.string().regex(/^[0-9]+$/),
@@ -157,19 +150,21 @@ export const serviceIdSchema = z.string().regex(/^svc_[A-Za-z0-9]{22}$/);
 export const serviceProtocolSchema = z.enum(["http", "tcp", "mysql", "postgres", "kubernetes"]);
 
 /**
- * Privately deliver the bounded enrollment key to the publisher. group_id is the selected deployment ID. Recovery preserves this secret, captured scope, capacity, and expiration; it never renews or replaces exhausted setup authority.
+ * Privately deliver the bounded enrollment key to the publisher. deployment_id is the selected deployment ID. Recovery preserves this secret, captured scope, capacity, and expiration; it never renews or replaces exhausted setup authority.
  */
-export const deploymentPublisherEnrollmentSchema = publisherGroupEnrollmentSchema.and(
-  z.object({
-    enrollment_id: z.string(),
-    services: z.record(z.string(), serviceProtocolSchema),
-  }),
-);
+export const deploymentPublisherEnrollmentSchema = z.strictObject({
+  enrollment_id: z.string(),
+  enrollment_key: z.string(),
+  deployment_id: z.string(),
+  expires_at: z.iso.datetime({ offset: true }),
+  max_members: z.int().gte(1).lte(256),
+  services: z.record(z.string(), serviceProtocolSchema),
+});
 
 /**
- * One publisher in the selected deployment (group_id), including its retained last observation after revocation. No enrollment secret, signing key, access token, or target is returned. Healthy reports configuration acknowledgement and a current lease, not database login or SQL readiness.
+ * One publisher in the selected deployment (deployment_id), including its retained last observation after revocation. No enrollment secret, signing key, access token, or target is returned. Healthy reports configuration acknowledgement and a current lease, not database login or SQL readiness.
  */
-export const deploymentPublisherSchema = publisherGroupMemberStatusSchema.and(
+export const deploymentPublisherSchema = deploymentPublisherStatusSchema.and(
   z.object({
     services: z.record(z.string(), serviceProtocolSchema),
     revoked_at: z.iso.datetime({ offset: true }).optional(),

@@ -132,7 +132,7 @@ func TestIntegrationGeneratedManagementHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrolled, err := api.RedeemPublisherGroupEnrollmentWithResponse(ctx, controlv1.RedeemPublisherGroupEnrollmentRequest{EnrollmentKey: created["enrollment_key"], PublicKey: base64.RawURLEncoding.EncodeToString(publisherKey)})
+	enrolled, err := api.RedeemDeploymentPublisherEnrollmentWithResponse(ctx, controlv1.RedeemDeploymentPublisherEnrollmentRequest{EnrollmentKey: created["enrollment_key"], PublicKey: base64.RawURLEncoding.EncodeToString(publisherKey)})
 	if err != nil || enrolled.JSON200 == nil {
 		t.Fatal("redeem scoped SDK setup", err)
 	}

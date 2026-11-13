@@ -23,11 +23,11 @@ securitySchemes:
     scheme: bearer
     bearerFormat: tnl grant-scoped publisher access token
     description: "Short-lived pta_ token for one publisher grant. Obtain it from the authority API using a signed assertion."
-  publisherGroupLeaseAuth:
+  deploymentPublisherLeaseAuth:
     type: http
     scheme: bearer
-    bearerFormat: tnl publisher group lease
-    description: "A pgl_ lease for one publisher-group member. Use it to read assignments and acknowledge configuration."
+    bearerFormat: tnl deployment lease
+    description: "A dpl_lease_ lease for one deployment-publisher member. Use it to read assignments and acknowledge configuration."
   guestAuth:
     type: http
     scheme: bearer

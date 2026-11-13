@@ -30,24 +30,24 @@ func TestIntegrationManagedCertificateRunAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := d.IssuePublisherGroupEnrollment(t.Context(), r.TeamID, r.ProjectKey, "production", r.ActorID, 2, time.Hour, now)
+	e, err := testDeploymentPublisherEnrollment(d, t.Context(), r.TeamID, r.ProjectKey, "production", r.ActorID, 2, time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, b := enrollAppliedGroup(t, d, r, e, now), enrollAppliedGroup(t, d, r, e, now)
+	a, b := enrollAppliedDeployment(t, d, r, e, now), enrollAppliedDeployment(t, d, r, e, now)
 	if len(a.assignments.CertificateStatePlans) != 0 || len(b.assignments.CertificateStatePlans) != 0 {
 		t.Fatal("fresh replicas required nonexistent certificate state")
 	}
 	attempt := 0
-	start := func(replica enrolledGroupReplica, name string) (ServiceRunPreparation, ServiceRunState) {
+	start := func(replica enrolledDeploymentReplica, name string) (ServiceRunPreparation, ServiceRunState) {
 		t.Helper()
-		var assignment PublisherGroupServiceAssignment
+		var assignment DeploymentPublisherServiceAssignment
 		for _, candidate := range replica.assignments.Services {
 			if candidate.Service == name {
 				assignment = candidate
 			}
 		}
-		access := groupAssignmentAccess(t, d, replica, assignment, now)
+		access := deploymentAssignmentAccess(t, d, replica, assignment, now)
 		attempt++
 		prep, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, fmt.Sprintf("managed-test-%d", attempt), now, ServiceMetadata{Protocol: assignment.Configuration.Protocol, TrustRevision: assignment.TrustRevision})
 		if err != nil {
@@ -79,7 +79,7 @@ func TestIntegrationManagedCertificateRunAuthority(t *testing.T) {
 	_, other := start(b, "orders")
 	_, sibling := start(a, "api")
 	plan := prep.CertificatePlan
-	if plan.Scope != applied.Groups[0].Namespace || !slices.Equal(plan.Identifiers, []string{"*." + applied.Groups[0].Namespace}) || plan.ChallengeMethod != "dns-01" {
+	if plan.Scope != applied.Deployments[0].Namespace || !slices.Equal(plan.Identifiers, []string{"*." + applied.Deployments[0].Namespace}) || plan.ChallengeMethod != "dns-01" {
 		t.Fatal("private run did not capture its exact group plan", plan)
 	}
 	const directory = "https://acme.example.test/directory"
@@ -98,7 +98,7 @@ func TestIntegrationManagedCertificateRunAuthority(t *testing.T) {
 	if err != nil || issue.PublicURLID != "" || issue.PublishRunID != "" || issue.ServiceRunID != run.RunID {
 		t.Fatal("private issuance required a public subject", issue, err)
 	}
-	checkpointBoundary, err := d.GetPublisherGroupAssignments(t.Context(), a.lease.AccessToken, now)
+	checkpointBoundary, err := d.GetDeploymentPublisherAssignments(t.Context(), a.lease.AccessToken, now)
 	if err != nil || len(checkpointBoundary.CertificateStatePlans) == 0 {
 		t.Fatal("issuance did not require durable state for future replacements", err)
 	}
@@ -122,7 +122,7 @@ func TestIntegrationManagedCertificateRunAuthority(t *testing.T) {
 			t.Fatal("order cleanup erased durable plan checkpoint", err)
 		}
 	})
-	independent, err := d.GetPublisherGroupAssignments(t.Context(), b.lease.AccessToken, now)
+	independent, err := d.GetDeploymentPublisherAssignments(t.Context(), b.lease.AccessToken, now)
 	if err != nil || len(independent.CertificateStatePlans) != 0 {
 		t.Fatal("another replica inherited the certificate-state requirement", err)
 	}
@@ -263,12 +263,12 @@ func testServiceNamespaceCertificateRetirement(t *testing.T, d *Database, r Appl
 		t.Fatal(err)
 	}
 	saved := current.Configuration
-	oldGroup := current.Groups[0]
-	renamed, err := d.RenamePublisherNamespace(t.Context(), RenamePublisherNamespaceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, Group: oldGroup.Name, NamespaceLabel: "new-dns", ActorID: r.ActorID, ExpectedRevision: current.Revision, IdempotencyKey: "certificate-retirement", Now: now.Add(time.Second)})
+	oldDeployment := current.Deployments[0]
+	renamed, err := d.RenameDeploymentNamespace(t.Context(), RenameDeploymentNamespaceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, Deployment: oldDeployment.Name, NamespaceLabel: "new-dns", ActorID: r.ActorID, ExpectedRevision: current.Revision, IdempotencyKey: "certificate-retirement", Now: now.Add(time.Second)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if renamed.Groups[0].ID != oldGroup.ID || renamed.Groups[0].Namespace == oldGroup.Namespace {
+	if renamed.Deployments[0].ID != oldDeployment.ID || renamed.Deployments[0].Namespace == oldDeployment.Namespace {
 		t.Fatal("namespace operation replaced the group")
 	}
 	// settle the DNS retirement receipts introduced by the direct-exposure test
@@ -308,7 +308,7 @@ func testServiceNamespaceCertificateRetirement(t *testing.T, d *Database, r Appl
 	}
 	r.Now = now.Add(46 * 24 * time.Hour)
 	reused, err := d.ApplyProjectConfiguration(t.Context(), r)
-	if err != nil || len(reused.Groups) != 1 || reused.Groups[0].ID == oldGroup.ID || reused.Groups[0].Namespace != oldGroup.Namespace {
+	if err != nil || len(reused.Deployments) != 1 || reused.Deployments[0].ID == oldDeployment.ID || reused.Deployments[0].Namespace != oldDeployment.Namespace {
 		t.Fatal("retired certificate authority burned the namespace forever", reused, err)
 	}
 }

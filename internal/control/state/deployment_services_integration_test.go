@@ -32,12 +32,20 @@ func TestIntegrationDeploymentServiceBindingsAndRemovalAreIsolated(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	groups := map[string]string{}
-	for _, group := range first.Groups {
-		groups[group.Name] = group.ID
+	deployments := map[string]string{}
+	for _, deployment := range first.Deployments {
+		deployments[deployment.Name] = deployment.ID
 	}
-	for _, group := range status.Groups {
-		groups[group.Name] = group.ID
+	for _, deployment := range status.Deployments {
+		deployments[deployment.Name] = deployment.ID
+	}
+	stagingRequest = r
+	stagingRequest.Deployment, stagingRequest.ExpectedRevision = "staging", status.Revision
+	stagingRequest.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{
+		"db": {Name: "db", Protocol: "postgres", Target: "staging.internal:5432"},
+	}}
+	if _, err = d.ApplyProjectConfiguration(ctx, stagingRequest); err != nil {
+		t.Fatal(err)
 	}
 
 	// one logical name can bind different saved services in two deployments.
@@ -50,26 +58,15 @@ func TestIntegrationDeploymentServiceBindingsAndRemovalAreIsolated(t *testing.T)
 	if _, err = q.LockLocalTeamForMutation(ctx, r.TeamID); err != nil {
 		t.Fatal(err)
 	}
-	production, err := q.ListPublisherGroupServices(ctx, groups["production"])
+	production, err := q.ListDeploymentPublisherServices(ctx, deployments["production"])
 	if err != nil || len(production) != 1 {
 		t.Fatalf("production bindings: %v %v", production, err)
 	}
-	staging := controlstatedb.ControlAppliedProjectService{
-		TeamID: r.TeamID, ProjectKey: r.ProjectKey, Service: "db",
-		GroupID: text(groups["staging"]), DesiredRevision: status.Revision,
+	stagingBindings, err := q.ListDeploymentPublisherServices(ctx, deployments["staging"])
+	if err != nil || len(stagingBindings) != 1 {
+		t.Fatal("same service name in another deployment", stagingBindings, err)
 	}
-	id, err := d.createAppliedService(ctx, tx, q, r, "db", staging.GroupID.String, ProjectServiceConfiguration{
-		Name: "db", Protocol: "postgres", Target: "staging.internal:5432",
-	}, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	staging.ServiceID = text(id)
-	if _, err = tx.Exec(ctx, `INSERT INTO control.applied_project_services
-		(team_id,project_key,service,group_id,service_id,desired_revision) VALUES($1,$2,$3,$4,$5,$6)`,
-		staging.TeamID, staging.ProjectKey, staging.Service, staging.GroupID, staging.ServiceID, staging.DesiredRevision); err != nil {
-		t.Fatal("same service name in another deployment", err)
-	}
+	staging := stagingBindings[0]
 	for _, binding := range []controlstatedb.ControlAppliedProjectService{production[0], staging} {
 		if err = d.reconcileAppliedVisitorGrant(ctx, tx, binding, r.ActorID, true, now); err != nil {
 			t.Fatal(err)
@@ -81,7 +78,7 @@ func TestIntegrationDeploymentServiceBindingsAndRemovalAreIsolated(t *testing.T)
 
 	publishers := map[string]string{}
 	for _, name := range []string{"production", "staging"} {
-		enrollment, err := d.IssuePublisherGroupEnrollment(ctx, r.TeamID, r.ProjectKey, name, r.ActorID, 1, time.Hour, now)
+		enrollment, err := testDeploymentPublisherEnrollment(d, ctx, r.TeamID, r.ProjectKey, name, r.ActorID, 1, time.Hour, now)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -89,13 +86,13 @@ func TestIntegrationDeploymentServiceBindingsAndRemovalAreIsolated(t *testing.T)
 		if err != nil {
 			t.Fatal(err)
 		}
-		member, err := d.RedeemPublisherGroupEnrollment(ctx, enrollment.Key, public, now)
+		member, err := d.RedeemDeploymentPublisherEnrollment(ctx, enrollment.Key, public, now)
 		if err != nil {
 			t.Fatal(err)
 		}
 		publishers[name] = member.PublisherIdentityID
 		var service string
-		if err = d.pool.QueryRow(ctx, `SELECT publisher.service_id FROM control.publisher_group_service_grants assignment
+		if err = d.pool.QueryRow(ctx, `SELECT publisher.service_id FROM control.deployment_publisher_service_grants assignment
 			JOIN control.publisher_grants publisher ON publisher.id=assignment.grant_id
 			WHERE assignment.publisher_identity_id=$1 AND assignment.service='db'`, member.PublisherIdentityID).Scan(&service); err != nil {
 			t.Fatal(err)
@@ -108,7 +105,7 @@ func TestIntegrationDeploymentServiceBindingsAndRemovalAreIsolated(t *testing.T)
 			t.Fatalf("%s enrolled for another deployment's service: %s", name, service)
 		}
 	}
-	_, err = d.pool.Exec(ctx, `UPDATE control.publisher_group_service_grants SET group_id=$2 WHERE publisher_identity_id=$1`, publishers["production"], groups["staging"])
+	_, err = d.pool.Exec(ctx, `UPDATE control.deployment_publisher_service_grants SET deployment_id=$2 WHERE publisher_identity_id=$1`, publishers["production"], deployments["staging"])
 	var constraint *pgconn.PgError
 	if !errors.As(err, &constraint) || constraint.Code != "23503" {
 		t.Fatal("assignment accepted a publisher from another deployment", err)
@@ -126,11 +123,11 @@ func TestIntegrationDeploymentServiceBindingsAndRemovalAreIsolated(t *testing.T)
 	if err = d.removeAppliedService(ctx, tx, q, production[0], now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	remaining, err := q.ListPublisherGroupServices(ctx, staging.GroupID.String)
+	remaining, err := q.ListDeploymentPublisherServices(ctx, staging.DeploymentID.String)
 	if err != nil || len(remaining) != 1 || remaining[0].ServiceID != staging.ServiceID || !remaining[0].VisitorGrantID.Valid {
 		t.Fatalf("removal changed the sibling binding or visitor grant: %v %v", remaining, err)
 	}
-	removed, err := q.ListPublisherGroupServices(ctx, production[0].GroupID.String)
+	removed, err := q.ListDeploymentPublisherServices(ctx, production[0].DeploymentID.String)
 	if err != nil || len(removed) != 0 {
 		t.Fatalf("production binding retained: %v %v", removed, err)
 	}

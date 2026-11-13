@@ -8,8 +8,8 @@ import (
 
 func TestPublisherAWSConfigurationIsRejected(t *testing.T) {
 	for name, source := range map[string]string{
-		"tnl.json":      `{"version":1,"tnl":{"publisher_groups":{"production":{"aws":{"replicas":2}}}}}`,
-		"tnl.config.ts": `export default {publisherGroups: {production: {aws: {replicas: 2}}}};`,
+		"tnl.json":      `{"version":1,"tnl":{"deployments":{"production":{"aws":{"replicas":2}}}}}`,
+		"tnl.config.ts": `export default {deploymentPublishers: {production: {aws: {replicas: 2}}}};`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()

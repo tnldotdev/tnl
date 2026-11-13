@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: tnl control API
   version: 1.0.0
-  description: "Manage public URLs, services, projects, sharing, and publisher runtimes. Revisions, run numbers, generations, epochs, and event cursors are decimal strings in JSON, including mutation preconditions; their range is 0 through 9223372036854775807, subject to each operation's positive-value rules. Keep these values as strings in JavaScript, or use BigInt for comparison and arithmetic. Ports, bounded counts, and durations remain numbers. Each operation names the credential it accepts; control sessions, publisher tokens, group leases, run tokens, guest credentials, and workload credentials are not interchangeable. Some operations authenticate with a signed assertion or credential in the request body instead of Authorization. Use the authority API for sign-in, identities, teams, and domains."
+  description: "Manage public URLs, services, projects, sharing, and publisher runtimes. Revisions, run numbers, generations, epochs, and event cursors are decimal strings in JSON, including mutation preconditions; their range is 0 through 9223372036854775807, subject to each operation's positive-value rules. Keep these values as strings in JavaScript, or use BigInt for comparison and arithmetic. Ports, bounded counts, and durations remain numbers. Each operation names the credential it accepts; control sessions, publisher tokens, deployment leases, run tokens, guest credentials, and workload credentials are not interchangeable. Some operations authenticate with a signed assertion or credential in the request body instead of Authorization. Use the authority API for sign-in, identities, teams, and domains."
   license:
     name: BSD-3-Clause
     identifier: BSD-3-Clause
@@ -23,7 +23,7 @@ tags:
   - name: services
     description: Manage saved services, their approved protocol, and target TLS trust.
   - name: previews
-    description: Group public URLs for one project directory and select team visitor access.
+    description: Deployment public URLs for one project directory and select team visitor access.
   - name: shares
     description: Create and revoke expiring access to an exact public URL snapshot.
   - name: feedback
@@ -38,8 +38,8 @@ tags:
     description: Discover and prepare service access using an existing visitor-only workload credential.
   - name: publisher-identities
     description: Issue enrollments, manage publisher grants, and read the resource selected by a grant.
-  - name: publisher-groups
-    description: Manage group enrollment and selectors, then lease and acknowledge assignments for one replica.
+  - name: deployment-runtime
+    description: Manage deployment enrollment and selectors, then lease and acknowledge assignments for one replica.
   - name: publisher-runtime
     description: Inspect and update a signed publisher process lifetime independently of its publications.
   - name: publish-runs
@@ -121,24 +121,20 @@ paths:
     $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1certificate-issuances~1{issuance_id}"
   /v1/services/{service_id}/runs/{service_run_id}/certificate-installed:
     $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1certificate-installed"
-  /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename:
-    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1projects~1{project_key}~1publisher-groups~1{group_name}~1namespace~1rename"
-  /v1/projects/{project_key}/publisher-groups/{group_name}/rename:
-    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1projects~1{project_key}~1publisher-groups~1{group_name}~1rename"
+  /v1/projects/{project_key}/deployments/{deployment}/namespace/rename:
+    $ref: "./paths/deployment-runtime.yaml#/paths/~1v1~1projects~1{project_key}~1deployments~1{deployment}~1namespace~1rename"
+  /v1/projects/{project_key}/deployments/{deployment}/rename:
+    $ref: "./paths/deployment-runtime.yaml#/paths/~1v1~1projects~1{project_key}~1deployments~1{deployment}~1rename"
   /v1/projects/{project_key}/public-metadata:
     $ref: "./paths/projects.yaml#/paths/~1v1~1projects~1{project_key}~1public-metadata"
   /v1/projects/{project_key}/local-services/{service}:
     $ref: "./paths/projects.yaml#/paths/~1v1~1projects~1{project_key}~1local-services~1{service}"
-  /v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id}:
-    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1projects~1{project_key}~1publisher-groups~1{group_name}~1members~1{publisher_identity_id}"
   /v1/projects/{project_key}/configuration:
     $ref: "./paths/projects.yaml#/paths/~1v1~1projects~1{project_key}~1configuration"
-  /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments:
-    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1projects~1{project_key}~1publisher-groups~1{group_name}~1enrollments"
-  /v1/publisher/groups/enroll:
-    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1publisher~1groups~1enroll"
-  /v1/publisher/groups/verify:
-    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1publisher~1groups~1verify"
+  /v1/publisher/deployments/enroll:
+    $ref: "./paths/deployment-runtime.yaml#/paths/~1v1~1publisher~1deployments~1enroll"
+  /v1/publisher/deployments/verify:
+    $ref: "./paths/deployment-runtime.yaml#/paths/~1v1~1publisher~1deployments~1verify"
   /v1/publisher/runtimes/{publisher_identity_id}/inspect:
     $ref: "./paths/publishers.yaml#/paths/~1v1~1publisher~1runtimes~1{publisher_identity_id}~1inspect"
   /v1/publisher/runtimes/{publisher_identity_id}/start:
@@ -147,12 +143,12 @@ paths:
     $ref: "./paths/publishers.yaml#/paths/~1v1~1publisher~1runtimes~1{publisher_identity_id}~1renew"
   /v1/publisher/runtimes/{publisher_identity_id}/stop:
     $ref: "./paths/publishers.yaml#/paths/~1v1~1publisher~1runtimes~1{publisher_identity_id}~1stop"
-  /v1/publisher/groups/lease:
-    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1publisher~1groups~1lease"
-  /v1/publisher/groups/assignments:
-    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1publisher~1groups~1assignments"
-  /v1/publisher/groups/configuration-acknowledgements:
-    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1publisher~1groups~1configuration-acknowledgements"
+  /v1/publisher/deployments/lease:
+    $ref: "./paths/deployment-runtime.yaml#/paths/~1v1~1publisher~1deployments~1lease"
+  /v1/publisher/deployments/assignments:
+    $ref: "./paths/deployment-runtime.yaml#/paths/~1v1~1publisher~1deployments~1assignments"
+  /v1/publisher/deployments/configuration-acknowledgements:
+    $ref: "./paths/deployment-runtime.yaml#/paths/~1v1~1publisher~1deployments~1configuration-acknowledgements"
   /v1/teams/{team_id}/service-audit:
     $ref: "./paths/admin.yaml#/paths/~1v1~1teams~1{team_id}~1service-audit"
   /v1/publish-runs/{run_id}/service-observations:
@@ -333,8 +329,8 @@ components:
       $ref: "./schemas/common.yaml#/securitySchemes/serviceRunAuth"
     publisherAuth:
       $ref: "./schemas/common.yaml#/securitySchemes/publisherAuth"
-    publisherGroupLeaseAuth:
-      $ref: "./schemas/common.yaml#/securitySchemes/publisherGroupLeaseAuth"
+    deploymentPublisherLeaseAuth:
+      $ref: "./schemas/common.yaml#/securitySchemes/deploymentPublisherLeaseAuth"
     guestAuth:
       $ref: "./schemas/common.yaml#/securitySchemes/guestAuth"
   parameters:
@@ -526,10 +522,10 @@ components:
       $ref: "./schemas/projects.yaml#/schemas/ProjectWorkloadGitLab"
     ProjectTargetDiscovery:
       $ref: "./schemas/projects.yaml#/schemas/ProjectTargetDiscovery"
-    RenamePublisherNamespaceRequest:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/RenamePublisherNamespaceRequest"
-    RenamePublisherGroupRequest:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/RenamePublisherGroupRequest"
+    RenameDeploymentNamespaceRequest:
+      $ref: "./schemas/deployment-runtime.yaml#/schemas/RenameDeploymentNamespaceRequest"
+    RenameDeploymentRequest:
+      $ref: "./schemas/deployment-runtime.yaml#/schemas/RenameDeploymentRequest"
     ProjectWebhook:
       $ref: "./schemas/projects.yaml#/schemas/ProjectWebhook"
     ProjectServiceConfiguration:
@@ -552,20 +548,16 @@ components:
       $ref: "./schemas/projects.yaml#/schemas/ProjectServiceAccess"
     AppliedProjectConfiguration:
       $ref: "./schemas/projects.yaml#/schemas/AppliedProjectConfiguration"
-    AppliedPublisherGroup:
-      $ref: "./schemas/projects.yaml#/schemas/AppliedPublisherGroup"
+    AppliedDeployment:
+      $ref: "./schemas/projects.yaml#/schemas/AppliedDeployment"
     AppliedProjectService:
       $ref: "./schemas/projects.yaml#/schemas/AppliedProjectService"
-    CreatePublisherGroupEnrollmentRequest:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/CreatePublisherGroupEnrollmentRequest"
-    PublisherGroupEnrollment:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupEnrollment"
-    RedeemPublisherGroupEnrollmentRequest:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/RedeemPublisherGroupEnrollmentRequest"
-    PublisherGroupMember:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupMember"
-    PublisherGroupMemberStatus:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupMemberStatus"
+    RedeemDeploymentPublisherEnrollmentRequest:
+      $ref: "./schemas/deployment-runtime.yaml#/schemas/RedeemDeploymentPublisherEnrollmentRequest"
+    DeploymentPublisherIdentity:
+      $ref: "./schemas/deployment-runtime.yaml#/schemas/DeploymentPublisherIdentity"
+    DeploymentPublisherStatus:
+      $ref: "./schemas/deployment-runtime.yaml#/schemas/DeploymentPublisherStatus"
     PublisherRuntimeRequest:
       $ref: "./schemas/publishers.yaml#/schemas/PublisherRuntimeRequest"
     PublisherDeploymentReport:
@@ -576,18 +568,18 @@ components:
       $ref: "./schemas/publishers.yaml#/schemas/PublisherRuntimeResponse"
     PublisherRuntimeStatus:
       $ref: "./schemas/publishers.yaml#/schemas/PublisherRuntimeStatus"
-    PublisherGroupLeaseRequest:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupLeaseRequest"
-    PublisherGroupLease:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupLease"
-    PublisherGroupVerification:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupVerification"
-    PublisherGroupAssignments:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupAssignments"
-    PublisherGroupServiceAssignment:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupServiceAssignment"
-    PublisherGroupAcknowledgement:
-      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupAcknowledgement"
+    DeploymentPublisherLeaseRequest:
+      $ref: "./schemas/deployment-runtime.yaml#/schemas/DeploymentPublisherLeaseRequest"
+    DeploymentPublisherLease:
+      $ref: "./schemas/deployment-runtime.yaml#/schemas/DeploymentPublisherLease"
+    DeploymentPublisherVerification:
+      $ref: "./schemas/deployment-runtime.yaml#/schemas/DeploymentPublisherVerification"
+    DeploymentPublisherAssignments:
+      $ref: "./schemas/deployment-runtime.yaml#/schemas/DeploymentPublisherAssignments"
+    DeploymentPublisherServiceAssignment:
+      $ref: "./schemas/deployment-runtime.yaml#/schemas/DeploymentPublisherServiceAssignment"
+    DeploymentPublisherAcknowledgement:
+      $ref: "./schemas/deployment-runtime.yaml#/schemas/DeploymentPublisherAcknowledgement"
     ServiceAuditEvent:
       $ref: "./schemas/admin.yaml#/schemas/ServiceAuditEvent"
     ServiceAuditPage:

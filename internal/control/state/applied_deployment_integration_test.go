@@ -42,7 +42,7 @@ func TestIntegrationAppliedDeploymentSelectionPreservesSiblings(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if selected.Deployment != name || len(selected.Services) != 1 || len(selected.Groups) != 1 || selected.Services[0].PublisherGroup != name || selected.Configuration.Services["db"].Target != name+".internal:5432" {
+		if selected.Deployment != name || len(selected.Services) != 1 || len(selected.Deployments) != 1 || selected.Services[0].Deployment != name || selected.Configuration.Services["db"].Target != name+".internal:5432" {
 			t.Fatal("selected apply leaked sibling bindings", selected)
 		}
 		local.Revision = selected.Revision
