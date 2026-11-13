@@ -26,6 +26,7 @@ import (
 )
 
 const relaySessionSetupTimeout = 10 * time.Second
+const relayPendingTLSLimit = 128
 
 type relayRuntime struct {
 	configuredIdentity string
@@ -406,6 +407,7 @@ func serveTLSYamuxSessions(
 ) error {
 	var active sync.WaitGroup
 	defer active.Wait()
+	pending := make(chan struct{}, relayPendingTLSLimit)
 	for {
 		connection, err := listener.Accept()
 		if err != nil {
@@ -414,10 +416,21 @@ func serveTLSYamuxSessions(
 			}
 			return err
 		}
+		select {
+		case pending <- struct{}{}:
+		default:
+			_ = connection.Close()
+			continue
+		}
 		active.Go(func() {
-			setupCtx, cancel := context.WithTimeout(ctx, relaySessionSetupTimeout)
-			transport, err := muxsession.AcceptTLSYamux(setupCtx, connection, tlsConfig, transportConfig)
-			cancel()
+			transport, err := func() (muxsession.Session, error) {
+				// pending capacity covers TLS setup only, not an authenticated
+				// session's lifetime. reserve it before starting this worker.
+				defer func() { <-pending }()
+				setupCtx, cancel := context.WithTimeout(ctx, relaySessionSetupTimeout)
+				defer cancel()
+				return muxsession.AcceptTLSYamux(setupCtx, connection, tlsConfig, transportConfig)
+			}()
 			if err == nil {
 				err = accept(ctx, transport)
 			}
