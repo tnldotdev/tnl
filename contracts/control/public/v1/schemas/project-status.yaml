@@ -1,0 +1,67 @@
+schemas:
+  ProjectStatus:
+    type: object
+    additionalProperties: false
+    required: [team_id, project_key, project_label, revision, observed_at, publications]
+    properties:
+      team_id: { type: string }
+      project_key: { type: string }
+      project_label: { type: string }
+      revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "revision,string" },
+        }
+      observed_at: { type: string, format: date-time }
+      publications:
+        type: array
+        maxItems: 100
+        items: { $ref: "../openapi.yaml#/components/schemas/ProjectPublicationStatus" }
+      next_cursor: { type: string }
+  ProjectPublicationStatus:
+    type: object
+    additionalProperties: false
+    required:
+      [service, publisher_group, service_kind, hostname, ready, reason, ready_publisher_connections]
+    properties:
+      service: { type: string }
+      publisher_group: { type: string }
+      service_kind: { type: string, enum: [local, service, public_url] }
+      worktree_key: { type: string, description: "Opaque worktree selector, not a checkout path." }
+      service_id: { type: string }
+      public_url_id: { type: string }
+      hostname: { type: string }
+      port: { type: integer, minimum: 1, maximum: 65535 }
+      service_run_id: { type: string }
+      publish_run_id: { type: string }
+      run_number:
+        {
+          type: string,
+          pattern: "^[1-9][0-9]*$",
+          x-go-type: int64,
+          x-go-type-skip-optional-pointer: true,
+          x-oapi-codegen-extra-tags: { json: "run_number,omitempty,string" },
+        }
+      publication_state: { type: string, enum: [prepared, starting, ready] }
+      publisher_expires_at: { type: string, format: date-time }
+      certificate_expires_at: { type: string, format: date-time }
+      ready_publisher_connections: { type: integer, minimum: 0, maximum: 2 }
+      ready: { type: boolean }
+      reason:
+        type: string
+        enum:
+          [
+            not_realized,
+            not_publishing,
+            disabled,
+            publisher_expired,
+            certificate_pending,
+            certificate_expired,
+            publisher_unhealthy,
+            connections_pending,
+            dns_unavailable,
+            starting,
+            ready,
+          ]

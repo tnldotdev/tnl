@@ -179,6 +179,7 @@ type Querier interface {
 	GetActivePublishRunMembership(ctx context.Context, arg GetActivePublishRunMembershipParams) (GetActivePublishRunMembershipRow, error)
 	GetActiveShareForPublicURL(ctx context.Context, arg GetActiveShareForPublicURLParams) (GetActiveShareForPublicURLRow, error)
 	GetAdminRuntimeCounts(ctx context.Context, now pgtype.Timestamptz) (GetAdminRuntimeCountsRow, error)
+	GetAppliedProject(ctx context.Context, arg GetAppliedProjectParams) (ControlAppliedProject, error)
 	GetAuthorizedPublicURLByHostname(ctx context.Context, arg GetAuthorizedPublicURLByHostnameParams) (GetAuthorizedPublicURLByHostnameRow, error)
 	GetBrowserAccessSession(ctx context.Context, tokenDigest []byte) (ControlBrowserAccessSession, error)
 	GetCertificateOrderDomainKind(ctx context.Context, publicUrlID string) (string, error)
@@ -347,6 +348,9 @@ type Querier interface {
 	ListMaintenanceControls(ctx context.Context) ([]ControlMaintenanceControl, error)
 	ListOpenPublishRuns(ctx context.Context, publicUrlID string) ([]ControlPublishRun, error)
 	ListPreviewPublicURLs(ctx context.Context, previewID string) ([]string, error)
+	// one row per open publication, or one row for an idle/unrealized resource.
+	// worktree bytes are encoded so separators cannot alias another cursor key.
+	ListProjectPublications(ctx context.Context, arg ListProjectPublicationsParams) ([]ListProjectPublicationsRow, error)
 	ListProjectPublisherGroups(ctx context.Context, arg ListProjectPublisherGroupsParams) ([]ControlProjectPublisherGroup, error)
 	ListPublishRunConnections(ctx context.Context, publishRunID string) ([]ControlPublishRunConnectionSlot, error)
 	ListPublisherCertificateCheckpoints(ctx context.Context, publisherIdentityID string) ([][]byte, error)

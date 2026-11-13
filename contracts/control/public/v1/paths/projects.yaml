@@ -1,4 +1,22 @@
 paths:
+  /v1/projects/{project_key}/status:
+    get:
+      operationId: getProjectStatus
+      summary: Inspect project publications across worktrees and publisher groups
+      tags: [projects]
+      security: [{ bearerAuth: [] }]
+      description: "Read a manager-only snapshot of declared services, realized worktree resources, and open publications. Each publication appears separately; an idle resource or unrealized declaration appears once. Follow next_cursor with the same project, team, and identity. Readiness describes control's current lease, certificate, and relay observations, not a fresh visitor probe. Targets, credentials, and checkout paths are omitted."
+      parameters:
+        - { name: project_key, in: path, required: true, schema: { type: string } }
+        - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
+        - { name: cursor, in: query, schema: { type: string, maxLength: 2048 } }
+      responses:
+        "200":
+          description: Up to 100 observed project publications or idle services
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/ProjectStatus" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/projects/resolve-source:
     post:
       operationId: resolveProjectSource

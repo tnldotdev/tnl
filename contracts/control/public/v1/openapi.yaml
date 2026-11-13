@@ -55,6 +55,8 @@ tags:
   - name: service-audit
     description: Read the team's bounded service access and lifecycle audit history.
 paths:
+  /v1/projects/{project_key}/status:
+    $ref: "./paths/projects.yaml#/paths/~1v1~1projects~1{project_key}~1status"
   /v1/projects/resolve-source:
     $ref: "./paths/projects.yaml#/paths/~1v1~1projects~1resolve-source"
   /v1/projects:
@@ -356,6 +358,10 @@ components:
     Problem:
       $ref: "./schemas/common.yaml#/responses/Problem"
   schemas:
+    ProjectStatus:
+      $ref: "./schemas/project-status.yaml#/schemas/ProjectStatus"
+    ProjectPublicationStatus:
+      $ref: "./schemas/project-status.yaml#/schemas/ProjectPublicationStatus"
     ConnectorPeerPairCandidate:
       $ref: "./schemas/service-runs.yaml#/schemas/ConnectorPeerPairCandidate"
     ConnectorPeerPairOwnerAuthority:

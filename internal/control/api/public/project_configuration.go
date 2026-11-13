@@ -13,10 +13,34 @@ import (
 )
 
 type ProjectConfigurationStore interface {
+	GetProjectStatus(context.Context, string, string, string, string, time.Time) (controlstate.ProjectStatus, error)
 	ListProjects(context.Context, string, string, string) (controlstate.ProjectPage, error)
 	ResolveProjectConfiguration(context.Context, string, string, controlstate.ProjectConfiguration) (controlstate.ProjectConfiguration, error)
 	ApplyProjectConfiguration(context.Context, controlstate.ApplyProjectConfigurationRequest) (controlstate.AppliedProjectConfiguration, error)
 	GetProjectConfiguration(context.Context, string, string, string) (controlstate.AppliedProjectConfiguration, error)
+}
+
+func (h *handler) GetProjectStatus(w http.ResponseWriter, r *http.Request, project string, params controlv1.GetProjectStatusParams) {
+	w.Header().Set("Cache-Control", "no-store")
+	actor, ok := h.projectManager(w, r, params.TeamId)
+	if !ok {
+		return
+	}
+	store := h.dependencies.ProjectConfiguration
+	if store == nil {
+		writeProblem(w, 503, controlv1.Unavailable, "project status is unavailable")
+		return
+	}
+	cursor := ""
+	if params.Cursor != nil {
+		cursor = *params.Cursor
+	}
+	result, err := store.GetProjectStatus(r.Context(), params.TeamId, project, actor, cursor, time.Now().UTC())
+	if err != nil {
+		projectConfigurationProblem(r.Context(), w, "read project status", err)
+		return
+	}
+	writeJSON(w, 200, result)
 }
 
 func projectConfigurationProblem(ctx context.Context, w http.ResponseWriter, operation string, err error) {
