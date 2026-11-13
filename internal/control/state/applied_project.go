@@ -498,7 +498,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 		return s.GroupID.Valid && !managedGroups[s.GroupID.String] || !s.GroupID.Valid && r.Deployment != "local"
 	})
 	for _, s := range existing {
-		if _, exists := saved[s.Service]; exists {
+		if _, exists := saved[s.Service]; exists && !r.retire {
 			return result, ErrServiceConflict
 		}
 		saved[s.Service] = s
