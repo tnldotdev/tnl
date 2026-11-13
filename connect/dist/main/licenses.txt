@@ -148,7 +148,7 @@ SOFTWARE.
 --------------------------------------------------------------------------------
 
 package: zod
-version: 4.6.6
+version: 4.6.7
 license: MIT
 
 LICENSE
