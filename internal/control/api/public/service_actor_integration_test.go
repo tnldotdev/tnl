@@ -369,7 +369,7 @@ func TestIntegrationServiceActorCurrentCompanySource(t *testing.T) {
 		return f.serviceRawKey("POST", base+"/invitations", companyWebsiteSecret, token, invitationBody, "source-bound-retry")
 	}
 	serviceResult(t, retryInvitation(), 201, nil)
-	serviceResult(t, retryInvitation(), 200, nil)
+	serviceProblem(t, retryInvitation(), 409, authorityv1.CredentialDeliveryUnavailable)
 	pageProof := f.serviceToken(serviceOwnerSub, "GET", target, nil, valid)
 	if _, err := f.sql.Exec(t.Context(), `UPDATE control.company_eligibility SET eligible=false WHERE identity_connection_id=$1`, active.ID); err != nil {
 		t.Fatal(err)
@@ -380,7 +380,7 @@ func TestIntegrationServiceActorCurrentCompanySource(t *testing.T) {
 		t.Fatal(err)
 	}
 	serviceResult(t, f.serviceCall("GET", target, serviceOwnerSub, nil, valid), 200, nil)
-	serviceResult(t, retryInvitation(), 200, nil)
+	serviceProblem(t, retryInvitation(), 409, authorityv1.CredentialDeliveryUnavailable)
 	if _, err := f.sql.Exec(t.Context(), `UPDATE control.identity_connections SET state='retired',revision=revision+1 WHERE id=$1`, active.ID); err != nil {
 		t.Fatal(err)
 	}
