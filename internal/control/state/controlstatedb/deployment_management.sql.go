@@ -12,7 +12,7 @@ import (
 )
 
 const findDeploymentManagementRequest = `-- name: FindDeploymentManagementRequest :one
-SELECT approval.grant_id, approval.team_id, approval.project_key, approval.all_deployments, approval.created_by_identity_id, approval.idempotency_key, approval.request_digest, approval.initial_key_id, grant_record.publisher_identity_id, grant_record.expires_at
+SELECT approval.grant_id, approval.team_id, approval.project_key, approval.all_deployments, approval.temporary_publication, approval.created_by_identity_id, approval.idempotency_key, approval.request_digest, approval.initial_key_id, grant_record.publisher_identity_id, grant_record.expires_at
 FROM control.deployment_management_grants approval
 JOIN control.publisher_grants grant_record ON grant_record.id=approval.grant_id
 WHERE approval.team_id=$1 AND approval.project_key=$2
@@ -45,6 +45,7 @@ func (q *Queries) FindDeploymentManagementRequest(ctx context.Context, arg FindD
 		&i.ControlDeploymentManagementGrant.TeamID,
 		&i.ControlDeploymentManagementGrant.ProjectKey,
 		&i.ControlDeploymentManagementGrant.AllDeployments,
+		&i.ControlDeploymentManagementGrant.TemporaryPublication,
 		&i.ControlDeploymentManagementGrant.CreatedByIdentityID,
 		&i.ControlDeploymentManagementGrant.IdempotencyKey,
 		&i.ControlDeploymentManagementGrant.RequestDigest,
@@ -56,7 +57,7 @@ func (q *Queries) FindDeploymentManagementRequest(ctx context.Context, arg FindD
 }
 
 const getDeploymentManagementGrant = `-- name: GetDeploymentManagementGrant :one
-SELECT grant_id, team_id, project_key, all_deployments, created_by_identity_id, idempotency_key, request_digest, initial_key_id FROM control.deployment_management_grants WHERE grant_id=$1
+SELECT grant_id, team_id, project_key, all_deployments, temporary_publication, created_by_identity_id, idempotency_key, request_digest, initial_key_id FROM control.deployment_management_grants WHERE grant_id=$1
 `
 
 func (q *Queries) GetDeploymentManagementGrant(ctx context.Context, grantID string) (ControlDeploymentManagementGrant, error) {
@@ -67,6 +68,7 @@ func (q *Queries) GetDeploymentManagementGrant(ctx context.Context, grantID stri
 		&i.TeamID,
 		&i.ProjectKey,
 		&i.AllDeployments,
+		&i.TemporaryPublication,
 		&i.CreatedByIdentityID,
 		&i.IdempotencyKey,
 		&i.RequestDigest,

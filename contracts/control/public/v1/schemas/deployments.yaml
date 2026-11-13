@@ -28,6 +28,10 @@ schemas:
     additionalProperties: false
     description: One saved explicit address/TLS binding or a publisher-side discovery declaration saved by manager apply. Runtime mutations accept explicit addresses only and never evaluate these discovery declarations on control.
     properties:
+      app:
+        type: boolean
+        enum: [true]
+        description: The application supplies its bound HTTP listener at publication time.
       address: { type: string, minLength: 1, maxLength: 8192 }
       tls: { $ref: "../openapi.yaml#/components/schemas/DeploymentTargetTLS" }
       discovery: { $ref: "../openapi.yaml#/components/schemas/ProjectTargetDiscovery" }
@@ -55,10 +59,16 @@ schemas:
     additionalProperties: false
     required: [id, protocol, trust_revision]
     properties:
-      id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      id:
+        $ref: "../openapi.yaml#/components/schemas/ResourceID"
+        description: The bound saved service or public URL ID.
       protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
       trust_revision: { type: integer, format: int64, minimum: 1 }
       endpoint: { $ref: "../openapi.yaml#/components/schemas/ServiceEndpoint" }
+      public_url:
+        type: string
+        format: uri
+        description: The saved HTTP public URL when this binding uses one rather than a private service endpoint.
   Deployment:
     type: object
     additionalProperties: false

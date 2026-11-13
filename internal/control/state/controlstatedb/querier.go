@@ -142,6 +142,9 @@ type Querier interface {
 	DeleteServiceConnectionSlot(ctx context.Context, arg DeleteServiceConnectionSlotParams) (int64, error)
 	DemoteServiceRun(ctx context.Context, arg DemoteServiceRunParams) (int64, error)
 	DeploymentManagementPublisherAllowed(ctx context.Context, arg DeploymentManagementPublisherAllowedParams) (bool, error)
+	// callers validate the live identity/grant and hold the publication parent first.
+	// saved URL approval cannot authorize allocations or sibling private services.
+	DeploymentPublicationAllowed(ctx context.Context, arg DeploymentPublicationAllowedParams) (bool, error)
 	DeploymentPublisherServiceAllowed(ctx context.Context, arg DeploymentPublisherServiceAllowedParams) (bool, error)
 	DiscardInactiveInvitationEmails(ctx context.Context, now pgtype.Timestamptz) error
 	// close only the exact claim so a late disconnect cannot close its replacement.
@@ -162,6 +165,7 @@ type Querier interface {
 	FeedbackRunScope(ctx context.Context, arg FeedbackRunScopeParams) (FeedbackRunScopeRow, error)
 	FenceIngressRun(ctx context.Context, arg FenceIngressRunParams) (int64, error)
 	FindDeploymentManagementRequest(ctx context.Context, arg FindDeploymentManagementRequestParams) (FindDeploymentManagementRequestRow, error)
+	FindDeploymentPublicationAllocation(ctx context.Context, arg FindDeploymentPublicationAllocationParams) (FindDeploymentPublicationAllocationRow, error)
 	FindDeploymentPublisherEnrollmentRequest(ctx context.Context, arg FindDeploymentPublisherEnrollmentRequestParams) (ControlDeploymentPublisherEnrollment, error)
 	FindInvitationTeamByTokenDigest(ctx context.Context, tokenDigest []byte) (string, error)
 	FindManagedDomain(ctx context.Context) (ControlDomain, error)

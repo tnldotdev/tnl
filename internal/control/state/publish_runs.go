@@ -156,6 +156,7 @@ func (d *Database) createPublishRun(
 	publisherLeaseDuration time.Duration,
 	connectionCredentialDuration time.Duration,
 ) (result PublishRunSetup, retErr error) {
+	clock := newAuthorizationClock(now)
 	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return PublishRunSetup{}, fmt.Errorf("controlstate: create publish run: begin transaction: %w", err)
@@ -197,7 +198,7 @@ func (d *Database) createPublishRun(
 	}
 	request.RequestDigest = regionRequestDigest(request.RequestDigest, request.PreferredRegions)
 	if request.PublisherIdentityID != "" {
-		secret, err := d.authorizePublisherRun(ctx, queries, route, request, now)
+		secret, err := d.authorizePublisherRun(ctx, queries, route, request, clock.current())
 		if err != nil {
 			return PublishRunSetup{}, err
 		}
@@ -251,6 +252,11 @@ func (d *Database) createPublishRun(
 		}
 		if err := pendingEvents.publish(ctx, queries); err != nil {
 			return PublishRunSetup{}, err
+		}
+		if live, err := d.publisherRunLive(ctx, queries, route, existing, clock.current()); err != nil {
+			return PublishRunSetup{}, err
+		} else if !live {
+			return PublishRunSetup{}, ErrPublisherIdentity
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return PublishRunSetup{}, fmt.Errorf("controlstate: create publish run: commit retry: %w", err)
@@ -405,6 +411,11 @@ func (d *Database) createPublishRun(
 	}
 	if err := pendingEvents.publish(ctx, queries); err != nil {
 		return PublishRunSetup{}, err
+	}
+	if live, err := d.publisherRunLive(ctx, queries, route, session, clock.current()); err != nil {
+		return PublishRunSetup{}, err
+	} else if !live {
+		return PublishRunSetup{}, ErrPublisherIdentity
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return PublishRunSetup{}, fmt.Errorf("controlstate: create publish run: commit: %w", err)

@@ -175,15 +175,16 @@ func (q *Queries) GetPublishRun(ctx context.Context, publishRunID string) (Contr
 }
 
 const heartbeatPublishRun = `-- name: HeartbeatPublishRun :one
-UPDATE control.publish_runs
+UPDATE control.publish_runs AS run
 SET last_heartbeat_at = GREATEST(last_heartbeat_at, $1),
-    publisher_expires_at = GREATEST(publisher_expires_at, $2)
-WHERE id = $3
-  AND public_url_id = $4
-  AND publish_run_number = $5
-  AND closed_at IS NULL
-  AND publisher_expires_at > $1
-RETURNING preferred_regions, id, public_url_id, team_id, membership_id, acting_identity_id, publisher_identity_id, publisher_grant_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
+    publisher_expires_at = LEAST(GREATEST(publisher_expires_at, $2),
+        (SELECT grant_record.expires_at FROM control.publisher_grants grant_record WHERE grant_record.id=run.publisher_grant_id))
+WHERE run.id = $3
+  AND run.public_url_id = $4
+  AND run.publish_run_number = $5
+  AND run.closed_at IS NULL
+  AND run.publisher_expires_at > $1
+RETURNING run.preferred_regions, run.id, run.public_url_id, run.team_id, run.membership_id, run.acting_identity_id, run.publisher_identity_id, run.publisher_grant_id, run.publish_run_number, run.idempotency_key, run.request_digest_ciphertext, run.request_digest_storage_key_id, run.share_capable, run.publish_run_token_id, run.publish_run_token_digest, run.policy_revision, run.certificate_cache_key, run.certificate_scope, run.certificate_identifiers, run.certificate_challenge_method, run.traffic_limits, run.state, run.created_at, run.last_heartbeat_at, run.publisher_expires_at, run.certificate_installed_at, run.certificate_issuance_id, run.certificate_not_after, run.ready_at, run.closed_at, run.close_reason, run.assignments_open
 `
 
 type HeartbeatPublishRunParams struct {

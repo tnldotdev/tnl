@@ -20,6 +20,7 @@ func (d *Database) HeartbeatPublishRun(
 	leaseDuration time.Duration,
 	connectionCredentialDuration time.Duration,
 ) (result PublishRunSetup, retErr error) {
+	clock := newAuthorizationClock(now)
 	ctx, finish := d.observeOperation(ctx, observability.OpHeartbeatPublishRun)
 	defer func() { finish(retErr) }()
 	if err := validatePublishRunAuthentication(authentication); err != nil {
@@ -42,7 +43,7 @@ func (d *Database) HeartbeatPublishRun(
 	if err != nil {
 		return PublishRunSetup{}, err
 	}
-	live, err := d.publisherRunLive(ctx, queries, route, session, now)
+	live, err := d.publisherRunLive(ctx, queries, route, session, clock.current())
 	if err != nil {
 		return PublishRunSetup{}, err
 	}
@@ -139,6 +140,11 @@ func (d *Database) HeartbeatPublishRun(
 	}
 	if err := pendingEvents.publish(ctx, queries); err != nil {
 		return PublishRunSetup{}, err
+	}
+	if live, err := d.publisherRunLive(ctx, queries, route, session, clock.current()); err != nil {
+		return PublishRunSetup{}, err
+	} else if !live {
+		return PublishRunSetup{}, ErrPublisherIdentity
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return PublishRunSetup{}, fmt.Errorf("controlstate: heartbeat publish run: commit: %w", err)

@@ -65,15 +65,20 @@ type BindingReferences<
     ? Deployment extends "local"
       ? unknown
       : {
-          readonly publicURL?: never;
           readonly http?: { readiness?: never; paths?: never; open?: never };
         }
     : { readonly publicURL?: never; readonly http?: never }) &
   (Deployment extends "local"
     ? unknown
-    : ({ readonly address: string | number } | { readonly type: "eks" | "rds" }) & {
-        readonly type?: "address" | "eks" | "rds";
-      });
+    : Binding extends { readonly publicURL: object }
+      ? {
+          readonly type?: "app" | "address";
+          readonly publicURL?: { readonly ephemeral?: false };
+          readonly http?: { readonly access?: never; readonly limits?: never };
+        }
+      : ({ readonly address: string | number } | { readonly type: "eks" | "rds" }) & {
+          readonly type?: "address" | "eks" | "rds";
+        });
 
 type TargetReferences<Config> = { [Key in Exclude<keyof Config, keyof TnlConfig>]: never } & {
   [Key in keyof Config as Key extends "services" ? Key : never]: {

@@ -390,14 +390,15 @@ type ControlDeploymentManagementDeployment struct {
 }
 
 type ControlDeploymentManagementGrant struct {
-	GrantID             string
-	TeamID              string
-	ProjectKey          string
-	AllDeployments      bool
-	CreatedByIdentityID string
-	IdempotencyKey      string
-	RequestDigest       []byte
-	InitialKeyID        string
+	GrantID              string
+	TeamID               string
+	ProjectKey           string
+	AllDeployments       bool
+	TemporaryPublication string
+	CreatedByIdentityID  string
+	IdempotencyKey       string
+	RequestDigest        []byte
+	InitialKeyID         string
 }
 
 type ControlDeploymentManagementService struct {
@@ -1056,6 +1057,7 @@ type ControlPublisherNamespaceAllocation struct {
 	PublisherIdentityID string
 	PublisherGrantID    string
 	InvocationID        string
+	DeploymentID        pgtype.Text
 }
 
 type ControlPublisherRuntime struct {

@@ -11,7 +11,7 @@ import (
 )
 
 type authCredentialCommand struct {
-	Create authCredentialCreateCommand `cmd:"" help:"Approve independent deployment management and connection capabilities."`
+	Create authCredentialCreateCommand `cmd:"" help:"Approve independent deployment management, connection, and publication capabilities."`
 }
 type authCredentialCreateCommand struct {
 	scopedTeamFlags `embed:""`
@@ -19,6 +19,8 @@ type authCredentialCreateCommand struct {
 	Name            string        `arg:"" help:"Credential name."`
 	Manage          []string      `name:"manage" help:"Approved logical service; repeat for management."`
 	Connect         []string      `name:"connect" help:"Approved logical service; repeat for connections."`
+	Publish         []string      `name:"publish" help:"Approved HTTP service with a saved public URL; repeat for named publication."`
+	Temporary       string        `name:"temporary" help:"Approve temporary public URLs: restricted or anonymous (also permits explicit anonymous access)."`
 	DeploymentIDs   []string      `name:"deployment-id" help:"Exact approved deployment ID; repeat, or use --all-deployments."`
 	AllDeployments  bool          `name:"all-deployments" help:"Explicitly approve current and future deployments, including runtime creation."`
 	ExpiresIn       time.Duration `name:"expires-in" required:"" help:"Fixed lifetime from 1m to 720h."`
@@ -30,8 +32,8 @@ func runAuthCredentialCreate(ctx context.Context, flags authCredentialCreateComm
 	if err != nil {
 		return err
 	}
-	if flags.ExpiresIn < time.Minute || flags.ExpiresIn > 30*24*time.Hour || len(flags.Manage)+len(flags.Connect) == 0 || flags.AllDeployments == (len(flags.DeploymentIDs) > 0) {
-		return publisherCLIError("select independent --manage/--connect services, --deployment-id or --all-deployments, and --expires-in 1m-720h")
+	if flags.ExpiresIn < time.Minute || flags.ExpiresIn > 30*24*time.Hour || len(flags.Manage)+len(flags.Connect)+len(flags.Publish) == 0 && flags.Temporary == "" || flags.AllDeployments == (len(flags.DeploymentIDs) > 0) || flags.Temporary != "" && flags.Temporary != "restricted" && flags.Temporary != "anonymous" {
+		return publisherCLIError("select independent --manage/--connect/--publish services or --temporary restricted|anonymous, --deployment-id or --all-deployments, and --expires-in 1m-720h")
 	}
 	session, err := openTeamSession(ctx, flags.selection(), "tnl auth credential create", diagnostics)
 	if err != nil {
@@ -48,6 +50,15 @@ func runAuthCredentialCreate(ctx context.Context, flags authCredentialCreateComm
 	}
 	if len(flags.Connect) > 0 {
 		body.Permissions.Connect = &flags.Connect
+	}
+	if len(flags.Publish) > 0 || flags.Temporary != "" {
+		body.Permissions.Publish = &controlv1.DeploymentPublishSelection{}
+		if len(flags.Publish) > 0 {
+			body.Permissions.Publish.Services = &flags.Publish
+		}
+		if flags.Temporary != "" {
+			body.Permissions.Publish.Temporary = new(controlv1.DeploymentTemporaryPublication(flags.Temporary))
+		}
 	}
 	if flags.AllDeployments {
 		body.AllDeployments = new(controlv1.RegisterDeploymentCredentialRequestAllDeployments(true))
