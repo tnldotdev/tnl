@@ -17,6 +17,12 @@ func Wire(s tunnelv1.VisitorSubject) controlv1.VisitorSubject {
 	if s.WorkloadSessionID != "" {
 		r.WorkloadSessionId = new(s.WorkloadSessionID)
 	}
+	if s.GrantID != "" {
+		r.GrantId = new(s.GrantID)
+	}
+	if s.KeyID != "" {
+		r.KeyId = new(s.KeyID)
+	}
 	return r
 }
 
@@ -32,8 +38,16 @@ func Parse(s controlv1.VisitorSubject) (tunnelv1.VisitorSubject, error) {
 	if s.WorkloadSessionId != nil {
 		r.WorkloadSessionID = *s.WorkloadSessionId
 	}
+	if s.GrantId != nil {
+		r.GrantID = *s.GrantId
+	}
+	if s.KeyId != nil {
+		r.KeyID = *s.KeyId
+	}
 	if r.Kind == tunnelv1.VisitorHumanDevice && (s.IdentityId == nil || s.DeviceId == nil || s.WorkloadSessionId != nil) ||
-		r.Kind == tunnelv1.VisitorWorkloadSession && (s.WorkloadSessionId == nil || s.IdentityId != nil || s.DeviceId != nil) {
+		r.Kind == tunnelv1.VisitorWorkloadSession && (s.WorkloadSessionId == nil || s.IdentityId != nil || s.DeviceId != nil) ||
+		r.Kind != tunnelv1.VisitorRegisteredKey && (s.GrantId != nil || s.KeyId != nil) ||
+		r.Kind == tunnelv1.VisitorRegisteredKey && (s.GrantId == nil || s.KeyId == nil || s.IdentityId != nil || s.DeviceId != nil || s.WorkloadSessionId != nil) {
 		return tunnelv1.VisitorSubject{}, tunnelv1.ErrInvalidVisitorSubject
 	}
 	return r, r.Validate()

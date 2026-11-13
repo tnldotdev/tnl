@@ -173,11 +173,13 @@ schemas:
     additionalProperties: false
     required: [kind]
     properties:
-      kind: { type: string, enum: [human_device, workload_session] }
+      kind: { type: string, enum: [human_device, workload_session, registered_key] }
       identity_id: { type: string }
       device_id: { type: string }
       workload_session_id: { type: string, pattern: "^wls_[A-Za-z0-9]{22}$" }
-    description: Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
+      grant_id: { type: string }
+      key_id: { type: string }
+    description: Exactly identity_id and device_id for human_device; workload_session_id for workload_session; grant_id and key_id for registered_key. A machine never borrows a human device or provider identity.
   ServiceEndpoint:
     type: object
     additionalProperties: false

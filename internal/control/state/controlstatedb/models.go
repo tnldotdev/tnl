@@ -362,6 +362,34 @@ type ControlControlSession struct {
 	RevokedBy               pgtype.Text
 }
 
+type ControlDeploymentManagementDeployment struct {
+	GrantID      string
+	TeamID       string
+	ProjectKey   string
+	DeploymentID string
+}
+
+type ControlDeploymentManagementGrant struct {
+	GrantID             string
+	TeamID              string
+	ProjectKey          string
+	AllDeployments      bool
+	CreatedByIdentityID string
+	IdempotencyKey      string
+	RequestDigest       []byte
+	InitialKeyID        string
+}
+
+type ControlDeploymentManagementService struct {
+	GrantID    string
+	TeamID     string
+	ProjectKey string
+	Capability string
+	Service    string
+	Protocol   string
+	RevokedAt  pgtype.Timestamptz
+}
+
 type ControlDeviceLogin struct {
 	CredentialDigest []byte
 	UserCode         string
@@ -700,7 +728,7 @@ type ControlProjectPublisherGroup struct {
 	ConfigurationHash       string
 	ConfigurationCiphertext []byte
 	StorageKeyID            pgtype.Text
-	CreateActorID           pgtype.Text
+	CreatePrincipalID       pgtype.Text
 	CreateIdempotencyKey    pgtype.Text
 	CreateRequestDigest     []byte
 	DeletedAt               pgtype.Timestamptz
@@ -941,6 +969,21 @@ type ControlPublisherGroupEnrollment struct {
 	CreatedByIdentityID string
 	ExpiresAt           pgtype.Timestamptz
 	RevokedAt           pgtype.Timestamptz
+	Scoped              bool
+	CreatePrincipalID   pgtype.Text
+	IdempotencyKey      pgtype.Text
+	RequestDigest       []byte
+	SecretCiphertext    []byte
+	StorageKeyID        pgtype.Text
+}
+
+type ControlPublisherGroupEnrollmentService struct {
+	EnrollmentID string
+	Service      string
+	Protocol     string
+	ServiceID    pgtype.Text
+	PublicURLID  pgtype.Text
+	RevokedAt    pgtype.Timestamptz
 }
 
 type ControlPublisherGroupLease struct {
