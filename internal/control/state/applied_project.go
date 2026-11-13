@@ -96,6 +96,7 @@ type ProjectWebhook struct {
 	SourceIPs []string `json:"source_ips,omitempty"`
 }
 type ApplyProjectConfigurationRequest struct {
+	retire                                         bool
 	TeamID, ProjectKey, SourceFingerprint, ActorID string
 	Source                                         *naming.GitProjectSource
 	ProjectLabel                                   string
@@ -125,6 +126,7 @@ type AppliedPublisherGroup struct {
 	Public     bool     `json:"public"`
 }
 type AppliedProjectConfiguration struct {
+	RetiredAt         *time.Time                   `json:"retired_at,omitempty"`
 	TeamID            string                       `json:"team_id"`
 	ProjectKey        string                       `json:"project_key"`
 	SourceFingerprint string                       `json:"source_fingerprint"`
@@ -263,6 +265,9 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	if r.SourceFingerprint == "" {
 		row, err := q.LockAppliedProject(ctx, controlstatedb.LockAppliedProjectParams{TeamID: r.TeamID, ProjectKey: r.ProjectKey})
 		if errors.Is(err, pgx.ErrNoRows) {
+			if r.retire {
+				return result, err
+			}
 			return result, ErrProjectConfigurationInvalid
 		}
 		if err != nil {
@@ -326,7 +331,17 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	if row.SourceFingerprint != r.SourceFingerprint {
 		return result, ErrProjectSourceConflict
 	}
-	if row.ConfigurationHash == hash {
+	if row.RetiredAt.Valid && r.retire {
+		if r.ExpectedRevision != row.Revision && r.ExpectedRevision != row.Revision-1 {
+			return result, ErrProjectConfigurationStale
+		}
+		result, err = d.appliedProjectStatus(ctx, tx, row, c)
+		if err != nil {
+			return result, err
+		}
+		return result, tx.Commit(ctx)
+	}
+	if row.ConfigurationHash == hash && !r.retire && !row.RetiredAt.Valid {
 		if r.ExpectedRevision > row.Revision {
 			return result, ErrProjectConfigurationStale
 		}
@@ -488,11 +503,15 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	if err != nil {
 		return result, err
 	}
-	_, err = tx.Exec(ctx, `UPDATE control.applied_projects SET revision=$3,configuration_hash=$4,configuration_ciphertext=$5,storage_key_id=$6,updated_at=$7 WHERE team_id=$1 AND project_key=$2`, r.TeamID, r.ProjectKey, next, hash, sealed, d.storageKey.CurrentID(), r.Now)
+	_, err = tx.Exec(ctx, `UPDATE control.applied_projects SET revision=$3,configuration_hash=$4,configuration_ciphertext=$5,storage_key_id=$6,updated_at=$7,retired_at=CASE WHEN $8::boolean THEN $7::timestamptz ELSE NULL END WHERE team_id=$1 AND project_key=$2`, r.TeamID, r.ProjectKey, next, hash, sealed, d.storageKey.CurrentID(), r.Now, r.retire)
 	if err != nil {
 		return result, err
 	}
 	row.Revision, row.ConfigurationHash = next, hash
+	row.RetiredAt.Valid = r.retire
+	if r.retire {
+		row.RetiredAt = timestamptz(r.Now)
+	}
 	result, err = d.appliedProjectStatus(ctx, tx, row, c)
 	if err != nil {
 		return result, err
@@ -561,6 +580,7 @@ func (d *Database) GetProjectConfiguration(ctx context.Context, team, key, actor
 
 func (d *Database) appliedProjectStatus(ctx context.Context, tx pgx.Tx, row controlstatedb.ControlAppliedProject, c ProjectConfiguration) (AppliedProjectConfiguration, error) {
 	result := AppliedProjectConfiguration{TeamID: row.TeamID, ProjectKey: row.ProjectKey, SourceFingerprint: row.SourceFingerprint, Revision: row.Revision, ConfigurationHash: row.ConfigurationHash, Configuration: c, Services: []AppliedProjectService{}, Members: []PublisherGroupMemberStatus{}, Groups: []AppliedPublisherGroup{}}
+	result.RetiredAt = optionalTime(row.RetiredAt)
 	rows, err := controlstatedb.New(tx).ListAppliedProjectServices(ctx, controlstatedb.ListAppliedProjectServicesParams{TeamID: row.TeamID, ProjectKey: row.ProjectKey})
 	if err != nil {
 		return result, err

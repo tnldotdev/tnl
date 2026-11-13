@@ -13,11 +13,36 @@ import (
 )
 
 type ProjectConfigurationStore interface {
+	RetireProject(context.Context, string, string, string, int64, time.Time) (controlstate.AppliedProjectConfiguration, error)
 	GetProjectStatus(context.Context, string, string, string, string, time.Time) (controlstate.ProjectStatus, error)
 	ListProjects(context.Context, string, string, string) (controlstate.ProjectPage, error)
 	ResolveProjectConfiguration(context.Context, string, string, controlstate.ProjectConfiguration) (controlstate.ProjectConfiguration, error)
 	ApplyProjectConfiguration(context.Context, controlstate.ApplyProjectConfigurationRequest) (controlstate.AppliedProjectConfiguration, error)
 	GetProjectConfiguration(context.Context, string, string, string) (controlstate.AppliedProjectConfiguration, error)
+}
+
+func (h *handler) RetireProject(w http.ResponseWriter, r *http.Request, project string) {
+	w.Header().Set("Cache-Control", "no-store")
+	var body controlv1.RetireProjectJSONRequestBody
+	if decodeJSONLimited(w, r, &body, 16<<10) != nil || body.ExpectedRevision < 1 {
+		writeProblem(w, 400, controlv1.InvalidRequest, "retiring a project requires its current revision")
+		return
+	}
+	actor, ok := h.projectManager(w, r, body.TeamId)
+	if !ok {
+		return
+	}
+	store := h.dependencies.ProjectConfiguration
+	if store == nil {
+		writeProblem(w, 503, controlv1.Unavailable, "project retirement is unavailable")
+		return
+	}
+	result, err := store.RetireProject(r.Context(), body.TeamId, project, actor, body.ExpectedRevision, time.Now().UTC())
+	if err != nil {
+		projectConfigurationProblem(r.Context(), w, "retire project", err)
+		return
+	}
+	writeJSON(w, 200, result)
 }
 
 func (h *handler) GetProjectStatus(w http.ResponseWriter, r *http.Request, project string, params controlv1.GetProjectStatusParams) {

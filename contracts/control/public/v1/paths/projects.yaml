@@ -1,4 +1,37 @@
 paths:
+  /v1/projects/{project_key}/retire:
+    post:
+      operationId: retireProject
+      summary: Retire an applied project and its configuration-owned resources
+      tags: [projects]
+      security: [{ bearerAuth: [] }]
+      description: "Require current team manager access and the current revision. Atomically remove declared services and worktree realizations, close their runs, revoke their publisher and visitor grants, retire publisher groups, revoke workload sessions, and omit the project from active discovery. Keep its source binding, saved label, and incremented revision. An exact retry returns the retired record. Reads by project key still work; applying with the retired record's exact revision reactivates it under normal allocation rules. Previews, shares, feedback, and independently managed OAuth or webhook public URLs are separate lifecycles and are not deleted. This does not stop local applications or installed operating-system jobs."
+      parameters:
+        - { name: project_key, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [team_id, expected_revision]
+              properties:
+                team_id: { type: string }
+                expected_revision:
+                  {
+                    type: string,
+                    pattern: "^[1-9][0-9]*$",
+                    x-go-type: int64,
+                    x-oapi-codegen-extra-tags: { json: "expected_revision,string" },
+                  }
+      responses:
+        "200":
+          description: Retired project with empty desired configuration
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/AppliedProjectConfiguration" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/projects/{project_key}/status:
     get:
       operationId: getProjectStatus
@@ -42,7 +75,7 @@ paths:
       summary: List applied projects
       tags: [projects]
       security: [{ bearerAuth: [] }]
-      description: "List applied projects the current team manager may manage, ordered by project_key. Summaries omit configuration, targets, and checkout paths. Read a project's configuration for its groups, members, and editable declarations. Follow next_cursor unchanged; each page checks current access."
+      description: "List active applied projects the current team manager may manage, ordered by project_key. Retired projects are omitted but remain readable by key. Summaries omit configuration, targets, and checkout paths. Read a project's configuration for its groups, members, and editable declarations. Follow next_cursor unchanged; each page checks current access."
       parameters:
         - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
         - { name: cursor, in: query, schema: { type: string, maxLength: 2048 } }

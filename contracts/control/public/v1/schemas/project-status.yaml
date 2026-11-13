@@ -4,6 +4,7 @@ schemas:
     additionalProperties: false
     required: [team_id, project_key, project_label, revision, observed_at, publications]
     properties:
+      retired_at: { type: string, format: date-time }
       team_id: { type: string }
       project_key: { type: string }
       project_label: { type: string }

@@ -12,7 +12,7 @@ import (
 )
 
 const getAppliedProject = `-- name: GetAppliedProject :one
-SELECT team_id, project_key, source_fingerprint, project_label, revision, configuration_hash, configuration_ciphertext, storage_key_id, created_by_identity_id, updated_at FROM control.applied_projects WHERE team_id=$1 AND project_key=$2
+SELECT team_id, project_key, source_fingerprint, project_label, revision, configuration_hash, configuration_ciphertext, storage_key_id, created_by_identity_id, updated_at, retired_at FROM control.applied_projects WHERE team_id=$1 AND project_key=$2
 `
 
 type GetAppliedProjectParams struct {
@@ -34,6 +34,7 @@ func (q *Queries) GetAppliedProject(ctx context.Context, arg GetAppliedProjectPa
 		&i.StorageKeyID,
 		&i.CreatedByIdentityID,
 		&i.UpdatedAt,
+		&i.RetiredAt,
 	)
 	return i, err
 }

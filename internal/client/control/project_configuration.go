@@ -32,6 +32,12 @@ func (c *Client) ApplyProjectConfiguration(ctx context.Context, project string, 
 	})
 }
 
+func (c *Client) RetireProject(ctx context.Context, project string, body controlv1.RetireProjectJSONRequestBody) (controlv1.AppliedProjectConfiguration, error) {
+	return requestWithAccess[controlv1.AppliedProjectConfiguration](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.RetireProject(ctx, project, body, editors...)
+	})
+}
+
 func (c *Client) ListProjects(ctx context.Context, params controlv1.ListProjectsParams) (controlv1.ProjectPage, error) {
 	return requestWithAccess[controlv1.ProjectPage](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.ListProjects(ctx, &params, editors...)
