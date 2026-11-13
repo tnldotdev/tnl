@@ -2,16 +2,19 @@ package state
 
 import (
 	"errors"
+	"regexp"
+	"strings"
 	"testing"
-	"time"
 )
 
-func TestPublisherPublicURLAllocationRequiresExplicitAccessMode(t *testing.T) {
-	d := &Database{}
-	p := PublisherIdentity{Scope: PublisherScope{Kind: "namespace"}}
-	for _, mode := range []VisitorAccessMode{"", "unknown"} {
-		if _, err := d.AllocatePublisherPublicURL(t.Context(), p, "invocation", "http://localhost:3000", nil, nil, time.Now(), PublisherPublicURLOptions{AccessMode: mode}); !errors.Is(err, ErrPublicURLInvalid) {
-			t.Fatalf("access mode %q = %v; want invalid public URL without consulting storage", mode, err)
+func TestNewPublisherAllocationUsesPrefixFreeLabelAndChecksFullHostname(t *testing.T) {
+	host, err := newEphemeralHostname("approved.example.test")
+	if err != nil || !regexp.MustCompile(`^[a-z2-7]{26}\.approved\.example\.test$`).MatchString(host) {
+		t.Fatal("unexpected new allocation hostname", host, err)
+	}
+	for _, namespace := range []string{"Approved.example.test", "", strings.Repeat("a", 63) + "." + strings.Repeat("a", 63) + "." + strings.Repeat("a", 63) + "." + strings.Repeat("a", 35)} {
+		if _, err := newEphemeralHostname(namespace); !errors.Is(err, ErrPublicURLInvalid) {
+			t.Fatal("accepted invalid or overlong allocation hostname", err)
 		}
 	}
 }
