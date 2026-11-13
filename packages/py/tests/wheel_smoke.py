@@ -13,7 +13,7 @@ import websockets
 from starlette.types import Receive, Scope, Send
 
 import tnl
-from tnl import _asgi
+from tnl import _asgi, models
 from tnl._native import NativeRuntime
 from tnl._protocol import Endpoint
 
@@ -80,6 +80,12 @@ class NativeStub(NativeRuntime):
 
 
 async def main() -> None:
+    # importing generated models and constructing a client starts no native work.
+    tnl.create_client(project="acme/shop", token="private")
+    body = models.CreateDeploymentRequest.model_validate(
+        {"name": "customer", "targets": {"db": {"address": "db:5432"}}}
+    )
+    assert body.model_dump(mode="json")["targets"]["db"]["address"] == "db:5432"
     native = NativeStub()
     _asgi._native = native
 

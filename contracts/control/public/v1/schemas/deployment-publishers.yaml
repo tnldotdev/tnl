@@ -30,17 +30,78 @@ schemas:
         additionalProperties: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
     description: Privately deliver the bounded enrollment key to the publisher. deployment_id is the selected deployment ID. Recovery preserves this secret, captured scope, capacity, and expiration; it never renews or replaces exhausted setup authority.
   DeploymentPublisher:
-    allOf:
-      - { $ref: "../openapi.yaml#/components/schemas/DeploymentPublisherStatus" }
-      - type: object
-        required: [services]
-        properties:
-          services:
-            type: object
-            maxProperties: 128
-            additionalProperties: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
-            description: Captured service/protocol approval, not a claim of current reachability. Services added later are not approved.
-          revoked_at: { type: string, format: date-time }
+    type: object
+    additionalProperties: false
+    required:
+      [
+        team_id,
+        project_key,
+        deployment_id,
+        deployment_name,
+        publisher_identity_id,
+        key_id,
+        observed_revision,
+        current_revision,
+        snapshot_at,
+        healthy,
+        services,
+      ]
+    properties:
+      team_id:
+        {
+          $ref: "../openapi.yaml#/components/schemas/DeploymentPublisherIdentity/properties/team_id",
+        }
+      project_key:
+        {
+          $ref: "../openapi.yaml#/components/schemas/DeploymentPublisherIdentity/properties/project_key",
+        }
+      deployment_id:
+        {
+          $ref: "../openapi.yaml#/components/schemas/DeploymentPublisherIdentity/properties/deployment_id",
+        }
+      deployment_name:
+        {
+          $ref: "../openapi.yaml#/components/schemas/DeploymentPublisherIdentity/properties/deployment_name",
+        }
+      publisher_identity_id:
+        {
+          $ref: "../openapi.yaml#/components/schemas/DeploymentPublisherIdentity/properties/publisher_identity_id",
+        }
+      key_id:
+        {
+          $ref: "../openapi.yaml#/components/schemas/DeploymentPublisherIdentity/properties/key_id",
+        }
+      observed_revision:
+        {
+          $ref: "../openapi.yaml#/components/schemas/DeploymentPublisherStatus/allOf/1/properties/observed_revision",
+        }
+      current_revision:
+        {
+          $ref: "../openapi.yaml#/components/schemas/DeploymentPublisherStatus/allOf/1/properties/current_revision",
+        }
+      snapshot_at:
+        {
+          $ref: "../openapi.yaml#/components/schemas/DeploymentPublisherStatus/allOf/1/properties/snapshot_at",
+        }
+      acknowledged_at:
+        {
+          $ref: "../openapi.yaml#/components/schemas/DeploymentPublisherStatus/allOf/1/properties/acknowledged_at",
+        }
+      healthy:
+        {
+          $ref: "../openapi.yaml#/components/schemas/DeploymentPublisherStatus/allOf/1/properties/healthy",
+        }
+      lease_expires_at:
+        {
+          $ref: "../openapi.yaml#/components/schemas/DeploymentPublisherStatus/allOf/1/properties/lease_expires_at",
+        }
+      runtime: { $ref: "../openapi.yaml#/components/schemas/PublisherRuntimeStatus" }
+      services:
+        type: object
+        maxProperties: 128
+        additionalProperties: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
+        description: Captured service/protocol approval, not a claim of current reachability. Services added later are not approved.
+      revoked_at: { type: string, format: date-time }
     description: One publisher in the selected deployment (deployment_id), including its retained last observation after revocation. No enrollment secret, signing key, access token, or target is returned. Healthy reports configuration acknowledgement and a current lease, not database login or SQL readiness.
   DeploymentPublisherPage:
     type: object

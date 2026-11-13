@@ -18,7 +18,7 @@ export const managementOperations: Readonly<Record<string, readonly [string, str
   revokeDeploymentPublisher: ["publishers", "revoke"],
 };
 
-export async function generateManagementSDK(): Promise<void> {
+export async function managementSource() {
   const graph = await repositoryGraph();
   const document = graph.browserBundle("controlv1", []);
   const operations = operationInventory(document).filter((operation) =>
@@ -36,9 +36,14 @@ export async function generateManagementSDK(): Promise<void> {
     paths[path] ??= item.parameters === undefined ? {} : { parameters: item.parameters };
     paths[path][method] = item[method];
   }
+  return { document: { ...document, paths }, operations };
+}
+
+export async function generateManagementSDK(): Promise<void> {
+  const { document, operations } = await managementSource();
   const output = resolve(root, "packages/ts/src/internal/management");
   const jobs = await createClient({
-    input: { ...document, paths },
+    input: document,
     output: {
       path: output,
       module: { extension: ".js" },
