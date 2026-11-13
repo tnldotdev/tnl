@@ -29,6 +29,7 @@ import (
 type ContextOptions struct {
 	Directory, Workload, Manifest, TeamID, StateDir string
 	Service                                         []string
+	Deployment                                      *connectorruntime.DeploymentRequest
 }
 
 type OwnerStartOptions struct {
@@ -48,6 +49,9 @@ type OwnerServeOptions struct {
 }
 
 func connectionProject(ctx context.Context, options ContextOptions) (projectConfiguration, connectorruntime.Context, error) {
+	if options.Deployment != nil {
+		return connectionDeployment(options)
+	}
 	if options.Manifest != "" {
 		return connectionManifest(options)
 	}
@@ -215,12 +219,16 @@ func (o Operations) ServeOwner(ctx context.Context, options OwnerServeOptions, i
 	if err := connectorruntime.VerifyDirectory(options.OwnerDirectory); err != nil {
 		return err
 	}
+	var request connectorruntime.StartRequest
+	if connectorruntime.ReadJSON(input, &request) != nil || request.Schema != 1 {
+		return connectorruntime.ErrInvalid
+	}
+	options.Deployment = request.Deployment
 	project, scope, err := connectionProject(ctx, options.ContextOptions)
 	if err != nil {
 		return err
 	}
-	var request connectorruntime.StartRequest
-	if connectorruntime.ReadJSON(input, &request) != nil || request.Schema != 1 || !reflect.DeepEqual(request.Context, scope) || (scope.Workload == "") != (request.Assertion == "") {
+	if !reflect.DeepEqual(request.Context, scope) || (scope.Workload == "") != (request.Assertion == "") {
 		return connectorruntime.ErrInvalid
 	}
 	if err := validateGitHubActionsRefresh(options.OwnerStartOptions, project, request); err != nil {
@@ -228,6 +236,12 @@ func (o Operations) ServeOwner(ctx context.Context, options OwnerServeOptions, i
 	}
 	backend := &connectorConnectionBackend{openSession: o.OpenSession, project: project, scope: scope, stateDir: options.StateDir, assertion: request.Assertion, directory: options.OwnerDirectory, runnerTemp: options.RunnerTemp, parentPID: options.ParentPID}
 	backend.telemetry = o.Telemetry
+	if request.Deployment != nil {
+		backend.deployment, err = newDeploymentConnection(*request.Deployment, nil)
+		if err != nil {
+			return err
+		}
+	}
 	if request.Refresh != nil {
 		if scope.Workload == "" || workload.ValidateRefreshSource(*request.Refresh) != nil {
 			return connectorruntime.ErrInvalid

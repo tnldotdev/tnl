@@ -653,6 +653,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, factories
 		return runApply(ctx, flags.Apply, project, stdout, stderr)
 	case "deployment create <name>", "deployment list", "deployment show <deployment>", "deployment update <deployment>", "deployment delete <deployment>":
 		return runDeployment(ctx, parsedCommand, flags, project, stdout, stderr)
+	case "auth credential create <name>":
+		return runAuthCredentialCreate(ctx, flags.Auth.Credential.Create, project, stdout, stderr)
 	case "audit list":
 		return runAuditList(ctx, flags.Audit.List, stdout, stderr)
 	case "telemetry on":

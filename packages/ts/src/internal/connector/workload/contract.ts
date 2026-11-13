@@ -17,6 +17,7 @@ export interface WorkloadRequest {
 }
 
 export interface SelectionOptions {
+  deployment?: { project: string; name: string; token: string; services?: string[] };
   requested_at?: string;
   assertion?: string;
   sdk_workload?: WorkloadRequest;

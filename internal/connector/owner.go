@@ -35,8 +35,9 @@ import (
 )
 
 type connectorConnectionBackend struct {
-	telemetry *clienttelemetry.Collector
-	sdk       *SDKOptions
+	deployment *deploymentConnection
+	telemetry  *clienttelemetry.Collector
+	sdk        *SDKOptions
 	connectorConnectionSession
 	openSession                                            SessionOpener
 	project                                                projectConfiguration
@@ -194,7 +195,16 @@ func (b *connectorConnectionBackend) Start(ctx context.Context) (meta.PublicMeta
 	b.cancel = cancel
 	b.lifetime = lifetime
 	services := map[string]controlv1.Service{}
-	if b.scope.Workload != "" {
+	if b.deployment != nil {
+		b.deadline = b.deployment.source.Credential.Approval.ExpiresAt
+		for _, name := range b.scope.Services {
+			service, err := b.deployment.selectService(ctx, name)
+			if err != nil {
+				continue
+			}
+			services[name] = service
+		}
+	} else if b.scope.Workload != "" {
 		_, key, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
 			return meta.PublicMetadata{}, time.Time{}, err
@@ -404,6 +414,15 @@ func (b *connectorConnectionBackend) refreshService(ctx context.Context, name st
 			return service, connectorruntime.ErrUnauthorized
 		}
 		service = current
+	} else if b.deployment != nil {
+		current, err := b.deployment.selectService(ctx, name)
+		if err != nil {
+			return service, err
+		}
+		if current.Id != approved.Id {
+			return service, connectorruntime.ErrUnauthorized
+		}
+		service = current
 	} else if b.human != nil {
 		var err error
 		service, err = Select(ctx, b.human.authenticated.Control, b.project.Project, name, b.teamID)
@@ -524,6 +543,12 @@ func (b *connectorConnectionBackend) Renew(ctx context.Context) (time.Time, erro
 	}
 	if _, err := b.healthy(); err != nil {
 		return time.Time{}, err
+	}
+	if b.deployment != nil {
+		if _, err := b.deployment.source.Token(ctx); err != nil {
+			return time.Time{}, err
+		}
+		return b.deployment.source.Credential.Approval.ExpiresAt, nil
 	}
 	b.mu.Lock()
 	client := b.workload
