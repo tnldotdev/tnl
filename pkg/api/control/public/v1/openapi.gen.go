@@ -1974,7 +1974,9 @@ type ApplyProjectConfigurationRequest struct {
 	// Configuration Normalized declarative configuration, at most 512 KiB encoded. All local declarations defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its groups.
 	Configuration    ProjectConfiguration `json:"configuration"`
 	ExpectedRevision int64                `json:"expected_revision,string"`
-	ProjectLabel     *string              `json:"project_label,omitempty"`
+
+	// ProjectLabel Initial DNS label. Saved on first apply; later values do not rename the project or existing namespaces. Read project status or discovery for the saved label.
+	ProjectLabel *string `json:"project_label,omitempty"`
 
 	// Source Required on first apply. Omit on updates to retain the saved source binding.
 	Source *GitProjectSource `json:"source,omitempty"`
