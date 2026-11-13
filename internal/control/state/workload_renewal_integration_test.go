@@ -293,18 +293,18 @@ func TestIntegrationWorkloadRenewalSequenceLimit(t *testing.T) {
 func workloadPairRenewalRequest(t *testing.T, d *Database, r ApplyProjectConfigurationRequest, service string, session WorkloadSession, key ed25519.PrivateKey, leases map[string]RelayLease, now time.Time) ConnectorPeerPairRequest {
 	t.Helper()
 	ctx := t.Context()
-	enrollment, err := d.IssuePublisherGroupEnrollment(ctx, r.TeamID, r.ProjectKey, "production", r.ActorID, 1, time.Hour, now)
+	enrollment, err := testDeploymentPublisherEnrollment(d, ctx, r.TeamID, r.ProjectKey, "production", r.ActorID, 1, time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replica := enrollAppliedGroup(t, d, r, enrollment, now)
-	var assignment PublisherGroupServiceAssignment
+	replica := enrollAppliedDeployment(t, d, r, enrollment, now)
+	var assignment DeploymentPublisherServiceAssignment
 	for _, candidate := range replica.assignments.Services {
 		if candidate.ServiceID == service {
 			assignment = candidate
 		}
 	}
-	access := groupAssignmentAccess(t, d, replica, assignment, now)
+	access := deploymentAssignmentAccess(t, d, replica, assignment, now)
 	prepared, err := d.PrepareServiceRun(ctx, service, access.PublisherIdentity, "renewal-wait", now,
 		ServiceMetadata{Protocol: assignment.Configuration.Protocol, PublisherPool: true, TrustRevision: assignment.TrustRevision})
 	if err != nil {

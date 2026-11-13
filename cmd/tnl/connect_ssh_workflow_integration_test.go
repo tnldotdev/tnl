@@ -70,9 +70,9 @@ func TestIntegrationCLIConnectSSHStdio(t *testing.T) {
 		if err := json.Unmarshal(cliCall(t, t.Context(), []string{"--config", configuration, "apply", "--deployment", group, "--state-dir", person, "--output=json"}), &applied); err != nil {
 			t.Fatal(err)
 		}
-		bootstrap := strings.TrimSpace(string(cliCall(t, t.Context(), []string{"--config", configuration, "publisher", "enroll", "--group", group, "--members=1", "--expires-in=1h", "--state-dir", person})))
+		bootstrap := strings.TrimSpace(string(cliCall(t, t.Context(), []string{"--config", configuration, "publisher", "enroll", "--deployment", group, "--members=1", "--expires-in=1h", "--state-dir", person})))
 		ctx, cancel := context.WithCancel(t.Context())
-		f.command(t, ctx, cancel, []string{"--no-config", "publisher", "serve", "--group", group, "--project-key", applied.ProjectKey, "--instance", "one", "--enroll-key", bootstrap, "--server", f.url, "--state-dir", f.state(t, group)})
+		f.command(t, ctx, cancel, []string{"--no-config", "publisher", "serve", "--deployment", group, "--project-key", applied.ProjectKey, "--instance", "one", "--enroll-key", bootstrap, "--server", f.url, "--state-dir", f.state(t, group)})
 	}
 	inspect, err := pgx.Connect(t.Context(), f.databaseURL)
 	if err != nil {

@@ -42,32 +42,38 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 	digest := sha256.Sum256([]byte("tnl-target-tls/v1\x00database.internal\x00"))
 	local := ProjectServiceConfiguration{Name: "database", Protocol: "postgres", Target: "localhost:5432", TargetTLS: &ProjectTargetTLS{Hostname: "database.internal", Digest: hex.EncodeToString(digest[:])}, Access: &ProjectServiceAccess{Team: true}}
 	r.Configuration = ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"db": local}}
-	emptyRemote := projectServiceSelection(r, "production")
-	remoteApplied := applyPrivateOwnershipRevision(t, d, emptyRemote)
-	r = projectServiceSelection(r, "local", "db")
-	r.ExpectedRevision = remoteApplied.Revision
-	initial := applyPrivateOwnershipRevision(t, d, r)
-	assertPrivateOwnershipEntry(t, d, r, initial, "local")
-	var replicas []enrolledGroupReplica
+	remoteRequest := projectServiceSelection(r, "production")
+	if members != 0 {
+		remoteRequest.Configuration.Services["db"] = local
+	}
+	remoteApplied := applyPrivateOwnershipRevision(t, d, remoteRequest)
+	var replicas []enrolledDeploymentReplica
 	enroll := func() {
-		e, err := d.IssuePublisherGroupEnrollment(ctx, r.TeamID, r.ProjectKey, "production", r.ActorID, 2, time.Hour, now)
+		e, err := testDeploymentPublisherEnrollment(d, ctx, r.TeamID, r.ProjectKey, "production", r.ActorID, 2, time.Hour, now)
 		if err != nil {
 			t.Fatal(err)
 		}
 		for range 2 {
-			replicas = append(replicas, enrollAppliedGroup(t, d, r, e, now))
+			replicas = append(replicas, enrollAppliedDeployment(t, d, r, e, now))
 		}
 		public, _, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err = d.RedeemPublisherGroupEnrollment(ctx, e.Key, public, now); !errors.Is(err, ErrPublisherGroup) {
+		if _, err = d.RedeemDeploymentPublisherEnrollment(ctx, e.Key, public, now); !errors.Is(err, ErrDeploymentPublisher) {
 			t.Fatal("ownership transition bypassed enrollment capacity", err)
 		}
 	}
 	if members != 0 {
 		enroll()
+		remoteRequest.ExpectedRevision = remoteApplied.Revision
+		delete(remoteRequest.Configuration.Services, "db")
+		remoteApplied = applyPrivateOwnershipRevision(t, d, remoteRequest)
 	}
+	r = projectServiceSelection(r, "local", "db")
+	r.ExpectedRevision = remoteApplied.Revision
+	initial := applyPrivateOwnershipRevision(t, d, r)
+	assertPrivateOwnershipEntry(t, d, r, initial, "local")
 	assertPrivateOwnershipAssignments(t, d, replicas, initial, now)
 	realize := func() []appliedPrivateResource {
 		var resources []appliedPrivateResource
@@ -125,27 +131,33 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 	if rollback {
 		assertPrivateOwnershipRollback(t, d, r)
 	}
-	group := applyPrivateOwnershipRevision(t, d, r)
-	assertPrivateOwnershipEntry(t, d, r, group, "production")
+	deployment := applyPrivateOwnershipRevision(t, d, r)
+	assertPrivateOwnershipEntry(t, d, r, deployment, "production")
 	for _, resource := range locals {
 		assertAppliedPrivateRetired(t, d, r, resource)
-		if resource.record.ID == group.Services[0].ServiceID {
-			t.Fatal("group adopted a worktree resource")
+		if resource.record.ID == deployment.Services[0].ServiceID {
+			t.Fatal("deployment adopted a worktree resource")
 		}
 	}
 	assertPrivateOwnershipLocalCount(t, d, r, 0)
-	shared := inspectAppliedPrivateResource(t, d, r, group.Services[0].ServiceID, local.Name, true, outsider, extra)
-	assertPrivateOwnershipAssignments(t, d, replicas, group, now)
-	if members == 0 && active {
-		// enrollment after a committed apply must receive the same valid resource.
+	shared := inspectAppliedPrivateResource(t, d, r, deployment.Services[0].ServiceID, local.Name, true, outsider, extra)
+	assertPrivateOwnershipAssignments(t, d, replicas, deployment, now)
+	if members != 0 || active {
+		// a new binding needs explicit approval; earlier publishers stay unapproved.
 		enroll()
 	}
 	for _, replica := range replicas {
-		assignments, err := d.GetPublisherGroupAssignments(ctx, replica.lease.AccessToken, now)
-		if err != nil || len(assignments.Services) != 1 {
-			t.Fatal("group cannot read its private assignment", err)
+		assignments, err := d.GetDeploymentPublisherAssignments(ctx, replica.lease.AccessToken, now)
+		if err != nil {
+			t.Fatal("deployment cannot read its private assignment", err)
 		}
-		access := groupAssignmentAccess(t, d, replica, assignments.Services[0], now)
+		if len(assignments.Services) == 0 {
+			continue
+		}
+		if len(assignments.Services) != 1 {
+			t.Fatal("publisher received bindings outside its approval")
+		}
+		access := deploymentAssignmentAccess(t, d, replica, assignments.Services[0], now)
 		shared.access = append(shared.access, access)
 		approved, err := d.GetServiceForPublisher(ctx, shared.record.ID, access.PublisherIdentity, now)
 		if err != nil || !reflect.DeepEqual(approved, shared.record) {
@@ -155,7 +167,7 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 			shared.runs = append(shared.runs, readyAppliedServiceRun(t, d, access, replica.private, approved, leases, now))
 		}
 	}
-	assertPrivateOwnershipAssignments(t, d, replicas, group, now)
+	assertPrivateOwnershipAssignments(t, d, replicas, deployment, now)
 	assertPrivateOwnershipInventory(t, d, reader.IdentityID, []appliedPrivateResource{shared}, active, now)
 	if extra {
 		assertPrivateOwnershipInventory(t, d, outsider, []appliedPrivateResource{shared}, active, now)
@@ -171,7 +183,7 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 		t.Fatal("private visitor permission authorized public project metadata", err)
 	}
 	applyPrivateOwnershipRevision(t, d, r)
-	r.ExpectedRevision = group.Revision
+	r.ExpectedRevision = deployment.Revision
 	removeRemote := r
 	removeRemote.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{}}
 	if rollback {
@@ -191,7 +203,7 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 	newLocals := realize()
 	for _, resource := range newLocals {
 		if resource.record.ID == shared.record.ID {
-			t.Fatal("local runtime adopted the retired group resource")
+			t.Fatal("local runtime adopted the retired deployment resource")
 		}
 		for _, old := range locals {
 			if resource.record.ID == old.record.ID {
@@ -218,10 +230,9 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 		assertAppliedPrivateRetired(t, d, r, resource)
 	}
 	assertPrivateOwnershipAssignments(t, d, replicas, regrouped, now)
-	if len(replicas) == 0 {
-		enroll()
-		assertPrivateOwnershipAssignments(t, d, replicas, regrouped, now)
-	}
+	// neither the original nor the replacement approval follows a reused name.
+	enroll()
+	assertPrivateOwnershipAssignments(t, d, replicas, regrouped, now)
 }
 
 type appliedPrivateResource struct {
@@ -276,65 +287,72 @@ func assertPrivateOwnershipEntry(t *testing.T, d *Database, r ApplyProjectConfig
 	t.Helper()
 	wantRevision := status.Revision
 	if publisher != "local" {
-		if err := d.pool.QueryRow(t.Context(), `SELECT revision FROM control.project_publisher_groups WHERE team_id=$1 AND project_key=$2 AND name=$3 AND deleted_at IS NULL`, r.TeamID, r.ProjectKey, publisher).Scan(&wantRevision); err != nil {
+		if err := d.pool.QueryRow(t.Context(), `SELECT revision FROM control.deployments WHERE team_id=$1 AND project_key=$2 AND name=$3 AND deleted_at IS NULL`, r.TeamID, r.ProjectKey, publisher).Scan(&wantRevision); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if len(status.Services) != 1 || status.Services[0].Service != "db" || status.Services[0].PublisherGroup != publisher || status.Services[0].DesiredRevision != wantRevision {
+	if len(status.Services) != 1 || status.Services[0].Service != "db" || status.Services[0].Deployment != publisher || status.Services[0].DesiredRevision != wantRevision {
 		t.Fatal("incorrect applied service", status.Services)
 	}
 	s := status.Services[0]
-	var privateID, publicID, groupID, visitorGrant string
-	if err := d.pool.QueryRow(t.Context(), `SELECT COALESCE(service_id,''),COALESCE(public_url_id,''),COALESCE(group_id,''),COALESCE(visitor_grant_id,'') FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2 AND service='db'`, r.TeamID, r.ProjectKey).Scan(&privateID, &publicID, &groupID, &visitorGrant); err != nil {
+	var privateID, publicID, deploymentID, visitorGrant string
+	if err := d.pool.QueryRow(t.Context(), `SELECT COALESCE(service_id,''),COALESCE(public_url_id,''),COALESCE(deployment_id,''),COALESCE(visitor_grant_id,'') FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2 AND service='db'`, r.TeamID, r.ProjectKey).Scan(&privateID, &publicID, &deploymentID, &visitorGrant); err != nil {
 		t.Fatal(err)
 	}
 	if publisher == "local" {
-		if s.Kind != "local" || s.ServiceID != "" || s.TrustRevision != 0 || privateID != "" || publicID != "" || groupID != "" || visitorGrant != "" {
+		if s.Kind != "local" || s.ServiceID != "" || s.TrustRevision != 0 || privateID != "" || publicID != "" || deploymentID != "" || visitorGrant != "" {
 			t.Fatal("local apply must defer resource and grant allocation", s)
 		}
-	} else if s.Kind != "service" || !opaqueid.Valid(s.ServiceID, opaqueid.ServicePrefix) || privateID != s.ServiceID || publicID != "" || groupID == "" || visitorGrant == "" || s.TrustRevision != 1 {
-		t.Fatal("group apply committed an incomplete private resource", s)
+	} else if s.Kind != "service" || !opaqueid.Valid(s.ServiceID, opaqueid.ServicePrefix) || privateID != s.ServiceID || publicID != "" || deploymentID == "" || visitorGrant == "" || s.TrustRevision != 1 {
+		t.Fatal("deployment apply committed an incomplete private resource", s)
 	}
 }
 
-func assertPrivateOwnershipAssignments(t *testing.T, d *Database, replicas []enrolledGroupReplica, status AppliedProjectConfiguration, now time.Time) {
+func assertPrivateOwnershipAssignments(t *testing.T, d *Database, replicas []enrolledDeploymentReplica, status AppliedProjectConfiguration, now time.Time) {
 	t.Helper()
-	want := len(replicas)
-	if status.Services[0].Kind == "local" {
-		want = 0
+	want := 0
+	approved := func(replica enrolledDeploymentReplica) bool {
+		return status.Services[0].Kind != "local" && slices.ContainsFunc(replica.assignments.Services, func(binding DeploymentPublisherServiceAssignment) bool {
+			return binding.ServiceID == status.Services[0].ServiceID
+		})
+	}
+	for _, replica := range replicas {
+		if approved(replica) {
+			want++
+		}
 	}
 	var count int
-	if err := d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.publisher_group_service_grants WHERE team_id=$1 AND project_key=$2`, status.TeamID, status.ProjectKey).Scan(&count); err != nil || count != want {
-		t.Fatal("unexpected exact group grants", count, err)
+	if err := d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.deployment_publisher_service_grants WHERE team_id=$1 AND project_key=$2`, status.TeamID, status.ProjectKey).Scan(&count); err != nil || count != want {
+		t.Fatal("unexpected exact deployment grants", count, err)
 	}
 	for _, replica := range replicas {
 		var revision int64
 		var hash string
-		if err := d.pool.QueryRow(t.Context(), `SELECT revision,configuration_hash FROM control.project_publisher_groups WHERE id=$1`, replica.member.GroupID).Scan(&revision, &hash); err != nil {
+		if err := d.pool.QueryRow(t.Context(), `SELECT revision,configuration_hash FROM control.deployments WHERE id=$1`, replica.member.DeploymentID).Scan(&revision, &hash); err != nil {
 			t.Fatal(err)
 		}
-		assignments, err := d.GetPublisherGroupAssignments(t.Context(), replica.lease.AccessToken, now)
+		assignments, err := d.GetDeploymentPublisherAssignments(t.Context(), replica.lease.AccessToken, now)
 		if err != nil || assignments.Revision != revision || assignments.ConfigurationHash != hash {
-			t.Fatal("group lost current configuration", err)
+			t.Fatal("deployment lost current configuration", err)
 		}
-		if status.Services[0].Kind == "local" {
+		if !approved(replica) {
 			if len(assignments.Services) != 0 {
-				t.Fatal("group retained a local assignment")
+				t.Fatal("publisher retained a local, retired, or unapproved assignment")
 			}
 			continue
 		}
 		if len(assignments.Services) != 1 {
-			t.Fatal("group lost its private assignment")
+			t.Fatal("deployment lost its private assignment")
 		}
 		a := assignments.Services[0]
 		if a.Service != "db" || a.Kind != "service" || a.ServiceID != status.Services[0].ServiceID || a.TrustRevision != status.Services[0].TrustRevision || !reflect.DeepEqual(a.Configuration, status.Configuration.Services["db"]) {
-			t.Fatal("group received wrong private resource or metadata", a)
+			t.Fatal("deployment received wrong private resource or metadata", a)
 		}
 		var exact bool
 		if err = d.pool.QueryRow(t.Context(), `SELECT kind='service' AND service_id=$2 AND public_url_id IS NULL AND revoked_at IS NULL FROM control.publisher_grants WHERE id=$1 AND publisher_identity_id=$3`, a.GrantID, a.ServiceID, replica.member.PublisherIdentityID).Scan(&exact); err != nil || !exact {
-			t.Fatal("group grant is not exact", err)
+			t.Fatal("deployment grant is not exact", err)
 		}
-		if err = d.AcknowledgePublisherGroupConfiguration(t.Context(), replica.lease.AccessToken, assignments.Revision, assignments.ConfigurationHash, true, now); err != nil {
+		if err = d.AcknowledgeDeploymentPublisherConfiguration(t.Context(), replica.lease.AccessToken, assignments.Revision, assignments.ConfigurationHash, true, now); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -439,7 +457,7 @@ func applyPrivateOwnershipRevision(t *testing.T, d *Database, r ApplyProjectConf
 	// remain equal. clone members so this comparison does not alter the result.
 	first, repeated := status, retry
 	first.Members, repeated.Members = slices.Clone(status.Members), slices.Clone(retry.Members)
-	for _, members := range [][]PublisherGroupMemberStatus{first.Members, repeated.Members} {
+	for _, members := range [][]DeploymentPublisherStatus{first.Members, repeated.Members} {
 		for i := range members {
 			if members[i].SnapshotAt.IsZero() {
 				t.Fatal("member status omitted its observation time")
@@ -497,7 +515,7 @@ func assertPrivateOwnershipRollback(t *testing.T, d *Database, r ApplyProjectCon
 func privateOwnershipSnapshot(t *testing.T, d *Database) map[string]string {
 	t.Helper()
 	result := map[string]string{}
-	for _, table := range []string{"applied_projects", "applied_project_services", "local_project_services", "project_publisher_groups", "publisher_group_service_grants", "services", "visitor_grants", "publisher_grants", "service_runs", "publisher_service_connection_slots", "connector_peer_pairs", "service_audit_events"} {
+	for _, table := range []string{"applied_projects", "applied_project_services", "local_project_services", "deployments", "deployment_publisher_service_grants", "services", "visitor_grants", "publisher_grants", "service_runs", "publisher_service_connection_slots", "connector_peer_pairs", "service_audit_events"} {
 		var rows string
 		if err := d.pool.QueryRow(t.Context(), `SELECT COALESCE(jsonb_agg(to_jsonb(r) ORDER BY to_jsonb(r)::text),'[]'::jsonb)::text FROM control.`+table+` r`).Scan(&rows); err != nil {
 			t.Fatal(err)

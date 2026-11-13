@@ -82,7 +82,7 @@ func (d *Database) updateAppliedService(ctx context.Context, tx pgx.Tx, q *contr
 	}
 	changed := !serviceMetadataMatches(saved, metadata) || row.PublisherPool != metadata.PublisherPool
 	if saved.Protocol != s.Protocol || row.NameScope != scope {
-		if _, err = tx.Exec(ctx, `UPDATE control.publisher_group_enrollment_services SET revoked_at=COALESCE(revoked_at,$2) WHERE service_id=$1`, id, now); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE control.deployment_publisher_enrollment_services SET revoked_at=COALESCE(revoked_at,$2) WHERE service_id=$1`, id, now); err != nil {
 			return err
 		}
 	}
@@ -192,7 +192,7 @@ func (d *Database) revokeAppliedServicePublishers(ctx context.Context, tx pgx.Tx
 	if err := d.revokeProjectResourcePublishers(ctx, tx, q, s, now); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `DELETE FROM control.publisher_group_service_grants WHERE team_id=$1 AND project_key=$2 AND service=$3 AND group_id=$4`, s.TeamID, s.ProjectKey, s.Service, s.GroupID)
+	_, err := tx.Exec(ctx, `DELETE FROM control.deployment_publisher_service_grants WHERE team_id=$1 AND project_key=$2 AND service=$3 AND deployment_id=$4`, s.TeamID, s.ProjectKey, s.Service, s.DeploymentID)
 	return err
 }
 
@@ -239,12 +239,12 @@ func (d *Database) removeAppliedService(ctx context.Context, tx pgx.Tx, q *contr
 	if err := d.retireProjectResource(ctx, tx, q, s, now); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `DELETE FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2 AND service=$3 AND group_id IS NOT DISTINCT FROM $4`, s.TeamID, s.ProjectKey, s.Service, s.GroupID)
+	_, err := tx.Exec(ctx, `DELETE FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2 AND service=$3 AND deployment_id IS NOT DISTINCT FROM $4`, s.TeamID, s.ProjectKey, s.Service, s.DeploymentID)
 	return err
 }
 
 func (d *Database) retireProjectResource(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, s controlstatedb.ControlAppliedProjectService, now time.Time) error {
-	if _, err := tx.Exec(ctx, `UPDATE control.publisher_group_enrollment_services SET revoked_at=COALESCE(revoked_at,$3)
+	if _, err := tx.Exec(ctx, `UPDATE control.deployment_publisher_enrollment_services SET revoked_at=COALESCE(revoked_at,$3)
 		WHERE service_id=$1::text OR public_url_id=$2::text`, s.ServiceID, s.PublicURLID, now); err != nil {
 		return err
 	}
@@ -285,14 +285,14 @@ func (d *Database) retireProjectResource(ctx context.Context, tx pgx.Tx, q *cont
 
 func (d *Database) reconcileAppliedVisitorGrant(ctx context.Context, tx pgx.Tx, s controlstatedb.ControlAppliedProjectService, actor string, enabled bool, now time.Time) error {
 	var grant string
-	if err := tx.QueryRow(ctx, `SELECT COALESCE(visitor_grant_id,'') FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2 AND service=$3 AND group_id IS NOT DISTINCT FROM $4`, s.TeamID, s.ProjectKey, s.Service, s.GroupID).Scan(&grant); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(visitor_grant_id,'') FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2 AND service=$3 AND deployment_id IS NOT DISTINCT FROM $4`, s.TeamID, s.ProjectKey, s.Service, s.DeploymentID).Scan(&grant); err != nil {
 		return err
 	}
 	grant, err := reconcileProjectVisitorGrant(ctx, tx, s, actor, grant, enabled, now)
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `UPDATE control.applied_project_services SET visitor_grant_id=$4 WHERE team_id=$1 AND project_key=$2 AND service=$3 AND group_id IS NOT DISTINCT FROM $5`, s.TeamID, s.ProjectKey, s.Service, nullableText(grant), s.GroupID)
+	_, err = tx.Exec(ctx, `UPDATE control.applied_project_services SET visitor_grant_id=$4 WHERE team_id=$1 AND project_key=$2 AND service=$3 AND deployment_id IS NOT DISTINCT FROM $5`, s.TeamID, s.ProjectKey, s.Service, nullableText(grant), s.DeploymentID)
 	return err
 }
 
@@ -334,7 +334,7 @@ func reconcileProjectVisitorGrant(ctx context.Context, tx pgx.Tx, s controlstate
 }
 
 func (d *Database) reconcileAppliedPublisherGrants(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, s controlstatedb.ControlAppliedProjectService, actor string, now time.Time) error {
-	rows, err := tx.Query(ctx, `SELECT m.publisher_identity_id FROM control.publisher_group_members m JOIN control.publisher_identities p ON p.id=m.publisher_identity_id WHERE m.group_id=$1 AND p.revoked_at IS NULL ORDER BY p.id`, s.GroupID)
+	rows, err := tx.Query(ctx, `SELECT m.publisher_identity_id FROM control.deployment_publisher_members m JOIN control.publisher_identities p ON p.id=m.publisher_identity_id WHERE m.deployment_id=$1 AND p.revoked_at IS NULL ORDER BY p.id`, s.DeploymentID)
 	if err != nil {
 		return err
 	}
@@ -353,20 +353,20 @@ func (d *Database) reconcileAppliedPublisherGrants(ctx context.Context, tx pgx.T
 		return err
 	}
 	for _, id := range members {
-		if err = d.ensureGroupServiceGrant(ctx, tx, q, id, s, actor, now); err != nil {
+		if err = d.ensureDeploymentServiceGrant(ctx, tx, q, id, s, actor, now); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (d *Database) ensureGroupServiceGrant(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, publisher string, s controlstatedb.ControlAppliedProjectService, actor string, now time.Time) error {
-	allowed, err := q.PublisherGroupServiceAllowed(ctx, controlstatedb.PublisherGroupServiceAllowedParams{PublisherID: publisher, GroupID: s.GroupID.String, Service: s.Service, ServiceID: s.ServiceID, PublicURLID: s.PublicURLID})
+func (d *Database) ensureDeploymentServiceGrant(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, publisher string, s controlstatedb.ControlAppliedProjectService, actor string, now time.Time) error {
+	allowed, err := q.DeploymentPublisherServiceAllowed(ctx, controlstatedb.DeploymentPublisherServiceAllowedParams{PublisherID: publisher, DeploymentID: s.DeploymentID.String, Service: s.Service, ServiceID: s.ServiceID, PublicURLID: s.PublicURLID})
 	if err != nil || !allowed {
 		return err
 	}
 	var existing string
-	err = tx.QueryRow(ctx, `SELECT assignment.grant_id FROM control.publisher_group_service_grants assignment WHERE assignment.publisher_identity_id=$1 AND assignment.team_id=$2 AND assignment.project_key=$3 AND assignment.service=$4 AND assignment.group_id=$5`, publisher, s.TeamID, s.ProjectKey, s.Service, s.GroupID).Scan(&existing)
+	err = tx.QueryRow(ctx, `SELECT assignment.grant_id FROM control.deployment_publisher_service_grants assignment WHERE assignment.publisher_identity_id=$1 AND assignment.team_id=$2 AND assignment.project_key=$3 AND assignment.service=$4 AND assignment.deployment_id=$5`, publisher, s.TeamID, s.ProjectKey, s.Service, s.DeploymentID).Scan(&existing)
 	if err == nil {
 		return nil
 	}
@@ -378,6 +378,6 @@ func (d *Database) ensureGroupServiceGrant(ctx context.Context, tx pgx.Tx, q *co
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO control.publisher_group_service_grants(publisher_identity_id,team_id,project_key,service,grant_id,group_id) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(publisher_identity_id,team_id,project_key,service) DO UPDATE SET grant_id=EXCLUDED.grant_id`, publisher, s.TeamID, s.ProjectKey, s.Service, g.ID, s.GroupID)
+	_, err = tx.Exec(ctx, `INSERT INTO control.deployment_publisher_service_grants(publisher_identity_id,team_id,project_key,service,grant_id,deployment_id) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(publisher_identity_id,team_id,project_key,service) DO UPDATE SET grant_id=EXCLUDED.grant_id`, publisher, s.TeamID, s.ProjectKey, s.Service, g.ID, s.DeploymentID)
 	return err
 }

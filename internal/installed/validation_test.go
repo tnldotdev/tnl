@@ -37,11 +37,11 @@ func kindFixture(t *testing.T, kind Kind) (Job, authorityv1.PublisherEnrollmentR
 			job.PublisherIdentityID, job.GrantID = "", ""
 			job.IdentityID, job.StateDir = id(opaqueid.IdentityPrefix), t.TempDir()
 		}
-	case KindGroup:
-		job.GroupInstance = "replica-1"
+	case KindDeployment:
+		job.DeploymentInstance = "replica-1"
 		job.PublicURLID, job.GrantID, job.Target, job.Protocol = "", "", "", ""
-		job.GroupMember = &controlv1.PublisherGroupMember{PublisherIdentityId: job.PublisherIdentityID, KeyId: identity.KeyId,
-			TeamId: identity.TeamId, ProjectKey: "project-one", GroupName: "cluster", GroupId: id("pgrp_")}
+		job.DeploymentMember = &controlv1.DeploymentPublisherIdentity{PublisherIdentityId: job.PublisherIdentityID, KeyId: identity.KeyId,
+			TeamId: identity.TeamId, ProjectKey: "project-one", DeploymentName: "cluster", DeploymentId: id("dpl_")}
 	}
 	return job, identity, key
 }
@@ -49,8 +49,8 @@ func kindFixture(t *testing.T, kind Kind) (Job, authorityv1.PublisherEnrollmentR
 func installKind(t *testing.T, registry *Registry, kind Kind, job Job, identity authorityv1.PublisherEnrollmentResult, key ed25519.PrivateKey) error {
 	t.Helper()
 	switch kind {
-	case KindGroup:
-		return registry.InstallGroup(t.Context(), job, *job.GroupMember, key)
+	case KindDeployment:
+		return registry.InstallDeployment(t.Context(), job, *job.DeploymentMember, key)
 	case KindConnector:
 		return registry.InstallConnector(t.Context(), job)
 	default:
@@ -82,7 +82,7 @@ func requireScopeFailure(t *testing.T, err error) {
 }
 
 func TestInstalledJobKindProtocolMatrix(t *testing.T) {
-	for _, kind := range []Kind{KindPublicURL, KindService, KindConnector, KindGroup} {
+	for _, kind := range []Kind{KindPublicURL, KindService, KindConnector, KindDeployment} {
 		name := string(kind)
 		if kind == KindPublicURL {
 			name = "public"
@@ -97,7 +97,7 @@ func TestInstalledJobKindProtocolMatrix(t *testing.T) {
 						job.Target = "http://127.0.0.1:3000"
 					}
 					privateProtocol := protocol == config.ProtocolHTTP || protocol == config.ProtocolTCP || protocol == config.ProtocolMySQL || protocol == config.ProtocolPostgres
-					valid := kind == KindPublicURL && protocol == config.ProtocolHTTP || kind == KindGroup && protocol == "" ||
+					valid := kind == KindPublicURL && protocol == config.ProtocolHTTP || kind == KindDeployment && protocol == "" ||
 						(kind == KindService || kind == KindConnector) && privateProtocol
 					err := installKind(t, registry, kind, job, identity, key)
 					if !valid {
@@ -133,7 +133,7 @@ func TestInstalledPublisherProviderRegions(t *testing.T) {
 		job.PreferredRegions = []string{"sjc"}
 		requireScopeFailure(t, validateJob(&job))
 	}
-	for _, kind := range []Kind{KindConnector, KindGroup} {
+	for _, kind := range []Kind{KindConnector, KindDeployment} {
 		job, _, _ := kindFixture(t, kind)
 		job.PreferredRegions = []string{"fly:sjc"}
 		requireScopeFailure(t, validateJob(&job))
@@ -141,7 +141,7 @@ func TestInstalledPublisherProviderRegions(t *testing.T) {
 }
 
 func TestInstallationRejectsCrossKindMetadata(t *testing.T) {
-	for _, kind := range []Kind{KindPublicURL, KindService, KindConnector, KindGroup} {
+	for _, kind := range []Kind{KindPublicURL, KindService, KindConnector, KindDeployment} {
 		name := string(kind)
 		if kind == KindPublicURL {
 			name = "public"
@@ -153,8 +153,8 @@ func TestInstallationRejectsCrossKindMetadata(t *testing.T) {
 				"unknown kind": func(j *Job) { j.Kind = "unknown" },
 				"server trust": func(j *Job) { j.ServerCAPEM = []byte("not a certificate") },
 			}
-			if kind != KindGroup {
-				mutations["group metadata"] = func(j *Job) { j.GroupMember = &controlv1.PublisherGroupMember{} }
+			if kind != KindDeployment {
+				mutations["group metadata"] = func(j *Job) { j.DeploymentMember = &controlv1.DeploymentPublisherIdentity{} }
 			}
 			if kind != KindConnector {
 				mutations["visitor identity"] = func(j *Job) { j.IdentityID = "visitor" }
@@ -168,7 +168,7 @@ func TestInstallationRejectsCrossKindMetadata(t *testing.T) {
 			if kind != KindPublicURL {
 				mutations["public readiness"] = func(j *Job) { j.ReadinessPath = "/health" }
 			}
-			if kind == KindPublicURL || kind == KindGroup {
+			if kind == KindPublicURL || kind == KindDeployment {
 				mutations["service TLS"] = func(j *Job) { j.Endpoint = &controlv1.ServiceEndpoint{Hostname: "service.example", Port: 443} }
 				mutations["private trust"] = func(j *Job) { j.Trust = &targettrust.Snapshot{} }
 				mutations["private revision"] = func(j *Job) { j.TrustRevision = 1 }
@@ -179,26 +179,26 @@ func TestInstallationRejectsCrossKindMetadata(t *testing.T) {
 				mutations["publisher target TLS"] = func(j *Job) { j.TargetTLSName = "target.example" }
 				mutations["publisher target CA"] = func(j *Job) { j.TargetCAPEM = []byte("unexpected") }
 			}
-			if kind == KindGroup || kind == KindConnector {
+			if kind == KindDeployment || kind == KindConnector {
 				mutations["publisher grant"] = func(j *Job) { j.GrantID = identity.GrantId }
 				mutations["publisher limits"] = func(j *Job) { j.Limits.Concurrency = 10 }
 			} else {
 				mutations["missing publisher"] = func(j *Job) { j.PublisherIdentityID = "" }
 				mutations["missing grant"] = func(j *Job) { j.GrantID = "" }
 			}
-			if kind == KindGroup {
+			if kind == KindDeployment {
 				mutations["public readiness flag"] = func(j *Job) { j.VerifyReadiness = true }
 				mutations["target"] = func(j *Job) { j.Target = "127.0.0.1:5432" }
 				mutations["target trust"] = func(j *Job) { j.TargetTLSName = "target.example" }
 				mutations["group signer"] = func(j *Job) {
-					member := *j.GroupMember
+					member := *j.DeploymentMember
 					member.PublisherIdentityId = "other-publisher"
-					j.GroupMember = &member
+					j.DeploymentMember = &member
 				}
 				mutations["group key"] = func(j *Job) {
-					member := *j.GroupMember
+					member := *j.DeploymentMember
 					member.KeyId = "invalid-key"
-					j.GroupMember = &member
+					j.DeploymentMember = &member
 				}
 			}
 			if kind == KindConnector {
@@ -231,7 +231,7 @@ func TestInstallationRejectsCrossKindMetadata(t *testing.T) {
 }
 
 func TestPublisherInstallCannotAcceptSupervisorOnlyKinds(t *testing.T) {
-	for _, kind := range []Kind{KindGroup, KindConnector} {
+	for _, kind := range []Kind{KindDeployment, KindConnector} {
 		t.Run(string(kind), func(t *testing.T) {
 			registry := userRegistry(t)
 			job, identity, key := kindFixture(t, kind)

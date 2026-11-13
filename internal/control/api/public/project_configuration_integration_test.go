@@ -122,7 +122,7 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 		t.Fatal("project discovery lost its usable selector", page, err)
 	}
 	discovered, err := reader.GetProjectConfiguration(ctx, page.Projects[0].TeamId, page.Projects[0].ProjectKey, group)
-	if err != nil || discovered.Groups == nil || len(*discovered.Groups) != 1 || (*discovered.Groups)[0].Id == "" {
+	if err != nil || discovered.Deployments == nil || len(*discovered.Deployments) != 1 || (*discovered.Deployments)[0].Id == "" {
 		t.Fatal("discovered selector did not resolve group detail", err)
 	}
 	status, err := reader.GetProjectStatus(ctx, project, controlv1.GetProjectStatusParams{TeamId: team})
@@ -252,7 +252,7 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	if err != nil || unknownReply.StatusCode() != 400 || bytes.Contains(unknownReply.Body, []byte(secret)) {
 		t.Fatal("webhook source secret was accepted or exposed", err)
 	}
-	enrollment, err := owner.CreatePublisherGroupEnrollment(ctx, project, group, controlv1.CreatePublisherGroupEnrollmentRequest{TeamId: team, MaxMembers: 2, ExpiresIn: 600})
+	enrollment, err := owner.CreateDeploymentPublisherEnrollment(ctx, team, project, group, "http-contract-enrollment", controlv1.CreateDeploymentPublisherEnrollmentRequest{Services: []string{"web", "public"}, MaxMembers: new(2), ExpiresIn: new(600)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,26 +260,26 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	member, err := anonymous.RedeemPublisherGroupEnrollment(ctx, enrollment.EnrollmentKey, public)
+	member, err := anonymous.RedeemDeploymentPublisherEnrollment(ctx, enrollment.EnrollmentKey, public)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if member.GroupId != enrollment.GroupId || member.GroupName != group {
+	if member.DeploymentId != enrollment.DeploymentId || member.DeploymentName != group {
 		t.Fatal("enrollment changed group scope")
 	}
-	proof, err := publisherproof.Sign(member.PublisherIdentityId, member.KeyId, member.GroupId, server.URL+"/v1/publisher/groups/lease", private, now)
+	proof, err := publisherproof.Sign(member.PublisherIdentityId, member.KeyId, member.DeploymentId, server.URL+"/v1/publisher/deployments/lease", private, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, err := anonymous.AcquirePublisherGroupLease(ctx, controlv1.PublisherGroupLeaseRequest{PublisherIdentityId: member.PublisherIdentityId, GroupId: member.GroupId, Assertion: proof})
+	lease, err := anonymous.AcquireDeploymentPublisherLease(ctx, controlv1.DeploymentPublisherLeaseRequest{PublisherIdentityId: member.PublisherIdentityId, DeploymentId: member.DeploymentId, Assertion: proof})
 	if err != nil {
 		t.Fatal(err)
 	}
-	assignments, err := anonymous.GetPublisherGroupAssignments(ctx, lease.AccessToken)
+	assignments, err := anonymous.GetDeploymentPublisherAssignments(ctx, lease.AccessToken)
 	if err != nil {
 		t.Fatal(err)
 	}
-	byService := map[string]controlv1.PublisherGroupServiceAssignment{}
+	byService := map[string]controlv1.DeploymentPublisherServiceAssignment{}
 	for _, assignment := range assignments.Services {
 		byService[assignment.Service] = assignment
 	}
@@ -341,7 +341,7 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	if pub.Configuration.Target != "192.0.2.5:8443" {
 		t.Fatal("assigned wire configuration lost its target address")
 	}
-	if err = anonymous.AcknowledgePublisherGroupConfiguration(ctx, lease.AccessToken, controlv1.PublisherGroupAcknowledgement{Revision: assignments.Revision, ConfigurationHash: assignments.ConfigurationHash, Healthy: true}); err != nil {
+	if err = anonymous.AcknowledgeDeploymentPublisherConfiguration(ctx, lease.AccessToken, controlv1.DeploymentPublisherAcknowledgement{Revision: assignments.Revision, ConfigurationHash: assignments.ConfigurationHash, Healthy: true}); err != nil {
 		t.Fatal(err)
 	}
 	current, err := owner.GetProjectConfiguration(ctx, team, project, group)
@@ -359,7 +359,7 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 		t.Fatal("remote apply changed local root state", localStatus, err)
 	}
 	// a group lease is not a person's session, and a session is not a group lease.
-	if _, err = anonymous.GetPublisherGroupAssignments(ctx, session.AccessToken.String()); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+	if _, err = anonymous.GetDeploymentPublisherAssignments(ctx, session.AccessToken.String()); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("person session accepted as group lease", err)
 	}
 	groupAsPerson, err := clientcontrol.New(server.URL, server.Client(), credentials.AccessToken(lease.AccessToken))
@@ -372,33 +372,33 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	if _, err = groupAsPerson.SelectServiceRun(ctx, local.ServiceId, device.Id); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("group lease selected a person's native run", err)
 	}
-	if err = groupAsPerson.RevokePublisherGroupMember(ctx, team, project, group, member.PublisherIdentityId); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+	if err = groupAsPerson.RevokeDeploymentPublisher(ctx, team, project, group, member.PublisherIdentityId); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("group lease revoked a member as a person", err)
 	}
-	namespaceRequest := controlv1.RenamePublisherNamespaceRequest{TeamId: team, NamespaceLabel: "live", ExpectedRevision: current.Revision, IdempotencyKey: "namespace-http"}
+	namespaceRequest := controlv1.RenameDeploymentNamespaceRequest{TeamId: team, NamespaceLabel: "live", ExpectedRevision: current.Revision, IdempotencyKey: "namespace-http"}
 	for _, client := range []*clientcontrol.Client{anonymous, groupAsPerson} {
-		if _, err := client.RenamePublisherNamespace(ctx, project, group, namespaceRequest); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+		if _, err := client.RenameDeploymentNamespace(ctx, project, group, namespaceRequest); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 			t.Fatal("namespace mutation accepted non-manager credentials", err)
 		}
 	}
-	renamed, err := owner.RenamePublisherNamespace(ctx, project, group, namespaceRequest)
+	renamed, err := owner.RenameDeploymentNamespace(ctx, project, group, namespaceRequest)
 	if err != nil || renamed.Revision != current.Revision+1 {
 		t.Fatal("namespace POST failed", err)
 	}
-	retry, err := owner.RenamePublisherNamespace(ctx, project, group, namespaceRequest)
+	retry, err := owner.RenameDeploymentNamespace(ctx, project, group, namespaceRequest)
 	a, _ := json.Marshal(renamed)
 	b, _ := json.Marshal(retry)
 	if err != nil || !bytes.Equal(a, b) {
 		t.Fatal("namespace POST reply was not exact", err)
 	}
 	namespaceRequest.NamespaceLabel = "different"
-	if _, err := owner.RenamePublisherNamespace(ctx, project, group, namespaceRequest); !errors.Is(err, clientcontrol.ErrStatusConflict) {
+	if _, err := owner.RenameDeploymentNamespace(ctx, project, group, namespaceRequest); !errors.Is(err, clientcontrol.ErrStatusConflict) {
 		t.Fatal("namespace POST key accepted changed body", err)
 	}
-	if err = owner.RevokePublisherGroupMember(ctx, team, project, group, member.PublisherIdentityId); err != nil {
+	if err = owner.RevokeDeploymentPublisher(ctx, team, project, group, member.PublisherIdentityId); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = anonymous.GetPublisherGroupAssignments(ctx, lease.AccessToken); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+	if _, err = anonymous.GetDeploymentPublisherAssignments(ctx, lease.AccessToken); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("revoked group member retained HTTP lease", err)
 	}
 	retirement := controlv1.RetireProjectJSONRequestBody{TeamId: team, ExpectedRevision: renamed.Revision}

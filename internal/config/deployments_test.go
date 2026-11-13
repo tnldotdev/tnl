@@ -111,7 +111,7 @@ func TestDeploymentConfigurationCapturesWorkloadSelection(t *testing.T) {
 	}
 }
 
-func TestResolvedDeploymentOwnsSettingsAndRejectsGroupSelectors(t *testing.T) {
+func TestResolvedDeploymentOwnsSettingsAndRejectsDeploymentSelectors(t *testing.T) {
 	project := deploymentProjectFixture()
 	description, domain := "production database", "example.test"
 	settings := project.Deployments["production"]

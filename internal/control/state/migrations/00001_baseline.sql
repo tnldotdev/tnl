@@ -2049,7 +2049,7 @@ CREATE TABLE control.project_services (
     PRIMARY KEY (team_id,project_key,name),
     FOREIGN KEY (team_id,project_key) REFERENCES control.applied_projects(team_id,project_key) ON DELETE RESTRICT
 );
-CREATE TABLE control.project_publisher_groups (
+CREATE TABLE control.deployments (
     ownership text NOT NULL DEFAULT 'team' CHECK (ownership='team'),
     id text PRIMARY KEY,
     team_id text NOT NULL,
@@ -2076,8 +2076,8 @@ CREATE TABLE control.project_publisher_groups (
     FOREIGN KEY (team_id, project_key) REFERENCES control.applied_projects(team_id, project_key) ON DELETE RESTRICT,
     UNIQUE (id, team_id, project_key)
 );
-CREATE UNIQUE INDEX project_publisher_groups_active ON control.project_publisher_groups(team_id, project_key, name) WHERE deleted_at IS NULL;
-CREATE UNIQUE INDEX project_publisher_groups_namespace ON control.project_publisher_groups(namespace) WHERE deleted_at IS NULL AND namespace <> '';
+CREATE UNIQUE INDEX deployments_active ON control.deployments(team_id, project_key, name) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX deployments_namespace ON control.deployments(namespace) WHERE deleted_at IS NULL AND namespace <> '';
 -- deployment capabilities share one signed identity, proof, token and deadline.
 -- each capability has its own fixed service allowlist.
 CREATE TABLE control.deployment_management_grants (
@@ -2100,7 +2100,7 @@ CREATE TABLE control.deployment_management_deployments (
     deployment_id text NOT NULL,
     PRIMARY KEY (grant_id,deployment_id),
     FOREIGN KEY (grant_id,team_id,project_key) REFERENCES control.deployment_management_grants(grant_id,team_id,project_key),
-    FOREIGN KEY (deployment_id,team_id,project_key) REFERENCES control.project_publisher_groups(id,team_id,project_key)
+    FOREIGN KEY (deployment_id,team_id,project_key) REFERENCES control.deployments(id,team_id,project_key)
 );
 CREATE TABLE control.deployment_management_services (
     grant_id text NOT NULL,
@@ -2126,11 +2126,11 @@ $$;
 -- +goose StatementEnd
 CREATE TRIGGER retire_deployment_management_service AFTER UPDATE OR DELETE ON control.project_services
 FOR EACH ROW EXECUTE FUNCTION control.retire_deployment_management_service();
--- namespace claims outlive group names and runs. reuse waits for certificate,
+-- namespace claims outlive deployment names and runs. reuse waits for certificate,
 -- DNS and forwarding retirement; a config rename never changes this owner.
 CREATE TABLE control.service_namespace_claims (
     namespace text PRIMARY KEY CHECK (namespace <> ''),
-    group_id text REFERENCES control.project_publisher_groups(id) ON DELETE RESTRICT,
+    deployment_id text REFERENCES control.deployments(id) ON DELETE RESTRICT,
     local_source_key text NOT NULL DEFAULT '',
     membership_id text REFERENCES control.team_memberships(id) ON DELETE RESTRICT,
     domain_id text NOT NULL REFERENCES control.domains(id) ON DELETE RESTRICT,
@@ -2138,13 +2138,13 @@ CREATE TABLE control.service_namespace_claims (
     retired_at timestamptz,
     reusable_after timestamptz,
     CHECK ((retired_at IS NULL) = (reusable_after IS NULL)),
-    CHECK ((group_id IS NOT NULL AND local_source_key='' AND membership_id IS NULL)
-        OR (group_id IS NULL AND local_source_key<>'' AND membership_id IS NOT NULL))
+    CHECK ((deployment_id IS NOT NULL AND local_source_key='' AND membership_id IS NULL)
+        OR (deployment_id IS NULL AND local_source_key<>'' AND membership_id IS NOT NULL))
 );
 CREATE TABLE control.service_endpoints (
     hostname text PRIMARY KEY CHECK (hostname<>''),
     service_id text NOT NULL REFERENCES control.services(id) ON DELETE RESTRICT,
-    group_id text REFERENCES control.project_publisher_groups(id) ON DELETE RESTRICT,
+    deployment_id text REFERENCES control.deployments(id) ON DELETE RESTRICT,
     local_source_key text NOT NULL DEFAULT '',
     domain_id text NOT NULL REFERENCES control.domains(id) ON DELETE RESTRICT,
     namespace text NOT NULL,
@@ -2187,15 +2187,15 @@ CREATE FUNCTION control.service_namespace_reusable(scope text,observed timestamp
           OR EXISTS(SELECT 1 FROM control.acme_authorizations auth WHERE auth.order_id=issuance.id AND(auth.state IN('presenting','presented','validating','valid','cleaning') OR auth.presented_at IS NOT NULL AND auth.cleanup_completed_at IS NULL))));
 $$;
 -- +goose StatementEnd
-CREATE TABLE control.publisher_group_names (
+CREATE TABLE control.deployment_names (
     team_id text NOT NULL,
     project_key text NOT NULL,
     name text NOT NULL,
-    group_id text NOT NULL,
+    deployment_id text NOT NULL,
     PRIMARY KEY (team_id, project_key, name),
-    FOREIGN KEY (group_id, team_id, project_key) REFERENCES control.project_publisher_groups(id, team_id, project_key) ON DELETE RESTRICT
+    FOREIGN KEY (deployment_id, team_id, project_key) REFERENCES control.deployments(id, team_id, project_key) ON DELETE RESTRICT
 );
-CREATE TABLE control.publisher_namespace_renames (
+CREATE TABLE control.deployment_namespace_renames (
     team_id text NOT NULL,
     project_key text NOT NULL,
     idempotency_key text NOT NULL,
@@ -2209,15 +2209,15 @@ CREATE TABLE control.applied_project_services (
     team_id text NOT NULL,
     project_key text NOT NULL,
     service text NOT NULL,
-    group_id text,
+    deployment_id text,
     service_id text UNIQUE REFERENCES control.services(id) ON DELETE RESTRICT,
     public_url_id text UNIQUE REFERENCES control.public_urls(id) ON DELETE RESTRICT,
     visitor_grant_id text,
     desired_revision bigint NOT NULL CHECK (desired_revision >= 1),
-    UNIQUE NULLS NOT DISTINCT (team_id, project_key, group_id, service),
+    UNIQUE NULLS NOT DISTINCT (team_id, project_key, deployment_id, service),
     FOREIGN KEY (team_id, project_key) REFERENCES control.applied_projects(team_id, project_key) ON DELETE RESTRICT,
     FOREIGN KEY (team_id, project_key, service) REFERENCES control.project_services(team_id, project_key, name) ON DELETE RESTRICT,
-    FOREIGN KEY (group_id, team_id, project_key) REFERENCES control.project_publisher_groups(id, team_id, project_key) ON DELETE RESTRICT,
+    FOREIGN KEY (deployment_id, team_id, project_key) REFERENCES control.deployments(id, team_id, project_key) ON DELETE RESTRICT,
     CHECK (service_id IS NULL OR public_url_id IS NULL)
 );
 -- local realization can precede the first apply. provenance never comes from a
@@ -2235,30 +2235,24 @@ CREATE TABLE control.local_project_services (
     PRIMARY KEY (team_id, project_key, service, worktree_key),
     CHECK ((service_id IS NULL) <> (public_url_id IS NULL))
 );
-CREATE TABLE control.publisher_group_enrollments (
+CREATE TABLE control.deployment_publisher_enrollments (
     id text PRIMARY KEY,
-    group_id text NOT NULL REFERENCES control.project_publisher_groups(id) ON DELETE RESTRICT,
+    deployment_id text NOT NULL REFERENCES control.deployments(id) ON DELETE RESTRICT,
     secret_digest bytea NOT NULL CHECK (octet_length(secret_digest)=32),
     max_members integer NOT NULL CHECK (max_members BETWEEN 1 AND 256),
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     expires_at timestamptz NOT NULL,
     revoked_at timestamptz,
-    scoped boolean NOT NULL DEFAULT false,
-    create_principal_id text,
-    idempotency_key text,
-    request_digest bytea,
-    secret_ciphertext bytea,
-    storage_key_id text,
-    CHECK ((idempotency_key IS NULL)=(request_digest IS NULL)),
-    CHECK ((idempotency_key IS NULL)=(secret_ciphertext IS NULL)),
-    CHECK ((secret_ciphertext IS NULL)=(storage_key_id IS NULL)),
-    CHECK (idempotency_key IS NULL OR scoped),
-    CHECK ((idempotency_key IS NULL)=(create_principal_id IS NULL)),
-    UNIQUE (group_id,create_principal_id,idempotency_key)
+    create_principal_id text NOT NULL,
+    idempotency_key text NOT NULL,
+    request_digest bytea NOT NULL,
+    secret_ciphertext bytea NOT NULL,
+    storage_key_id text NOT NULL,
+    UNIQUE (deployment_id,create_principal_id,idempotency_key)
 );
 -- captured bindings survive removal as tombstones; a reused name is not approval.
-CREATE TABLE control.publisher_group_enrollment_services (
-    enrollment_id text NOT NULL REFERENCES control.publisher_group_enrollments(id) ON DELETE RESTRICT,
+CREATE TABLE control.deployment_publisher_enrollment_services (
+    enrollment_id text NOT NULL REFERENCES control.deployment_publisher_enrollments(id) ON DELETE RESTRICT,
     service text NOT NULL,
     protocol text NOT NULL CHECK (protocol IN ('http','tcp','mysql','postgres','kubernetes')),
     service_id text REFERENCES control.services(id) ON DELETE RESTRICT,
@@ -2267,17 +2261,17 @@ CREATE TABLE control.publisher_group_enrollment_services (
     PRIMARY KEY (enrollment_id,service),
     CHECK ((service_id IS NULL)<>(public_url_id IS NULL))
 );
-CREATE TABLE control.publisher_group_members (
+CREATE TABLE control.deployment_publisher_members (
     publisher_identity_id text PRIMARY KEY REFERENCES control.publisher_identities(id) ON DELETE RESTRICT,
-    group_id text NOT NULL REFERENCES control.project_publisher_groups(id) ON DELETE RESTRICT,
-    enrollment_id text NOT NULL REFERENCES control.publisher_group_enrollments(id) ON DELETE RESTRICT,
+    deployment_id text NOT NULL REFERENCES control.deployments(id) ON DELETE RESTRICT,
+    enrollment_id text NOT NULL REFERENCES control.deployment_publisher_enrollments(id) ON DELETE RESTRICT,
     public_key bytea NOT NULL UNIQUE CHECK (octet_length(public_key)=32),
     key_id text NOT NULL,
     observed_revision bigint NOT NULL DEFAULT 0 CHECK (observed_revision >= 0),
     acknowledged_at timestamptz,
     healthy boolean NOT NULL DEFAULT false,
     lease_expires_at timestamptz,
-    UNIQUE (group_id, publisher_identity_id),
+    UNIQUE (deployment_id, publisher_identity_id),
     FOREIGN KEY (key_id, publisher_identity_id) REFERENCES control.publisher_identity_keys(id, publisher_identity_id) ON DELETE RESTRICT
 );
 -- +goose StatementBegin
@@ -2303,7 +2297,7 @@ RETURNS TABLE(public_key bytea,expires_at timestamptz,revision bigint) LANGUAGE 
     JOIN control.applied_projects project ON project.team_id=approval.team_id AND project.project_key=approval.project_key
     JOIN control.deployment_management_services selected ON selected.grant_id=approval.grant_id AND selected.capability='connect' AND selected.revoked_at IS NULL
     JOIN control.applied_project_services binding ON binding.team_id=approval.team_id AND binding.project_key=approval.project_key AND binding.service=selected.service AND binding.service_id=selected_service_id
-    JOIN control.project_publisher_groups deployment ON deployment.id=binding.group_id AND deployment.deleted_at IS NULL
+    JOIN control.deployments deployment ON deployment.id=binding.deployment_id AND deployment.deleted_at IS NULL
     JOIN control.services service ON service.id=binding.service_id AND service.team_id=approval.team_id AND service.protocol=selected.protocol AND service.enabled AND service.deleted_at IS NULL
     WHERE approval.grant_id=approval_id AND control.deployment_credential_available(approval.grant_id)
     AND (approval.all_deployments OR EXISTS(SELECT 1 FROM control.deployment_management_deployments allowed WHERE allowed.grant_id=approval.grant_id AND allowed.deployment_id=deployment.id))
@@ -2311,33 +2305,33 @@ $$;
 -- +goose StatementEnd
 -- +goose StatementBegin
 CREATE FUNCTION control.deployment_management_publisher_allowed(approval text,publisher text) RETURNS boolean LANGUAGE sql STABLE AS $$
-    SELECT EXISTS(SELECT 1 FROM control.publisher_group_members member
-    JOIN control.publisher_group_enrollments enrollment ON enrollment.id=member.enrollment_id AND enrollment.scoped
+    SELECT EXISTS(SELECT 1 FROM control.deployment_publisher_members member
+    JOIN control.deployment_publisher_enrollments enrollment ON enrollment.id=member.enrollment_id
     WHERE member.publisher_identity_id=publisher
-    AND EXISTS(SELECT 1 FROM control.publisher_group_enrollment_services scope WHERE scope.enrollment_id=enrollment.id)
-    AND NOT EXISTS(SELECT 1 FROM control.publisher_group_enrollment_services scope
+    AND EXISTS(SELECT 1 FROM control.deployment_publisher_enrollment_services scope WHERE scope.enrollment_id=enrollment.id)
+    AND NOT EXISTS(SELECT 1 FROM control.deployment_publisher_enrollment_services scope
         WHERE scope.enrollment_id=enrollment.id AND NOT EXISTS(
             SELECT 1 FROM control.deployment_management_services allowed WHERE allowed.grant_id=approval
             AND allowed.capability='manage' AND allowed.service=scope.service AND allowed.protocol=scope.protocol AND allowed.revoked_at IS NULL)))
 $$;
 -- +goose StatementEnd
-CREATE TABLE control.publisher_group_leases (
+CREATE TABLE control.deployment_publisher_leases (
     token_digest bytea PRIMARY KEY CHECK (octet_length(token_digest)=32),
-    publisher_identity_id text NOT NULL REFERENCES control.publisher_group_members(publisher_identity_id) ON DELETE CASCADE,
+    publisher_identity_id text NOT NULL REFERENCES control.deployment_publisher_members(publisher_identity_id) ON DELETE CASCADE,
     key_id text NOT NULL,
     expires_at timestamptz NOT NULL,
     FOREIGN KEY (key_id, publisher_identity_id) REFERENCES control.publisher_identity_keys(id, publisher_identity_id) ON DELETE RESTRICT
 );
-CREATE TABLE control.publisher_group_service_grants (
-    publisher_identity_id text NOT NULL REFERENCES control.publisher_group_members(publisher_identity_id) ON DELETE RESTRICT,
-    group_id text NOT NULL,
+CREATE TABLE control.deployment_publisher_service_grants (
+    publisher_identity_id text NOT NULL REFERENCES control.deployment_publisher_members(publisher_identity_id) ON DELETE RESTRICT,
+    deployment_id text NOT NULL,
     team_id text NOT NULL,
     project_key text NOT NULL,
     service text NOT NULL,
     grant_id text NOT NULL,
     PRIMARY KEY (publisher_identity_id, team_id, project_key, service),
-    FOREIGN KEY (group_id, publisher_identity_id) REFERENCES control.publisher_group_members(group_id, publisher_identity_id) ON DELETE RESTRICT,
-    FOREIGN KEY (team_id, project_key, group_id, service) REFERENCES control.applied_project_services(team_id, project_key, group_id, service) ON DELETE RESTRICT,
+    FOREIGN KEY (deployment_id, publisher_identity_id) REFERENCES control.deployment_publisher_members(deployment_id, publisher_identity_id) ON DELETE RESTRICT,
+    FOREIGN KEY (team_id, project_key, deployment_id, service) REFERENCES control.applied_project_services(team_id, project_key, deployment_id, service) ON DELETE RESTRICT,
     FOREIGN KEY (grant_id, publisher_identity_id) REFERENCES control.publisher_grants(id, publisher_identity_id) ON DELETE RESTRICT
 );
 
@@ -2359,12 +2353,12 @@ CREATE TABLE control.publisher_runtimes (
     lease_expires_at timestamptz NOT NULL,
     stopped_at timestamptz,
     deployment_report jsonb,
-    deployment_group_id text,
+    deployment_id text,
     deployment_first_observed_at timestamptz,
-    FOREIGN KEY (deployment_group_id,publisher_identity_id) REFERENCES control.publisher_group_members(group_id,publisher_identity_id) ON DELETE RESTRICT,
-    CHECK ((deployment_report IS NULL) = (deployment_group_id IS NULL)),
+    FOREIGN KEY (deployment_id,publisher_identity_id) REFERENCES control.deployment_publisher_members(deployment_id,publisher_identity_id) ON DELETE RESTRICT,
+    CHECK ((deployment_report IS NULL) = (deployment_id IS NULL)),
     CHECK ((deployment_report IS NULL) = (deployment_first_observed_at IS NULL)),
-    CHECK (deployment_report IS NULL OR (jsonb_typeof(deployment_report) = 'object' AND octet_length(deployment_report::text) <= 2048 AND deployment_group_id = scope_id)),
+    CHECK (deployment_report IS NULL OR (jsonb_typeof(deployment_report) = 'object' AND octet_length(deployment_report::text) <= 2048 AND deployment_id = scope_id)),
     FOREIGN KEY (publisher_identity_id,team_id) REFERENCES control.publisher_identities(id,team_id) ON DELETE CASCADE,
     FOREIGN KEY (key_id,publisher_identity_id) REFERENCES control.publisher_identity_keys(id,publisher_identity_id) ON DELETE RESTRICT,
     CHECK ((address IS NULL) = (address_family = 'unknown')),
@@ -2375,32 +2369,32 @@ CREATE TABLE control.publisher_runtimes (
 -- one authenticated publisher owns an observed replica slot, including while
 -- stopped or revoked. process replacement reuses that publisher's signing key.
 CREATE UNIQUE INDEX publisher_runtime_deployment_replica ON control.publisher_runtimes
-    (deployment_group_id, (deployment_report->>'deployment_id'), (deployment_report->>'replica_key'))
+    (deployment_id, (deployment_report->>'deployment_id'), (deployment_report->>'replica_key'))
     WHERE deployment_report IS NOT NULL;
 
--- a group identity can never acquire a namespace or an unrelated exact grant,
+-- a deployment identity can never acquire a namespace or an unrelated exact grant,
 -- including through the general publisher-management API.
 -- +goose StatementBegin
-CREATE FUNCTION control.enforce_publisher_group_grant() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE FUNCTION control.enforce_deployment_publisher_grant() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF NEW.revoked_at IS NULL AND EXISTS (
-        SELECT 1 FROM control.publisher_group_members member WHERE member.publisher_identity_id=NEW.publisher_identity_id
+        SELECT 1 FROM control.deployment_publisher_members member WHERE member.publisher_identity_id=NEW.publisher_identity_id
     ) AND NOT EXISTS (
-        SELECT 1 FROM control.publisher_group_members member
-        JOIN control.project_publisher_groups publisher_group ON publisher_group.id=member.group_id AND publisher_group.deleted_at IS NULL
-        JOIN control.applied_project_services service ON service.group_id=publisher_group.id
-            AND service.team_id=publisher_group.team_id AND service.project_key=publisher_group.project_key
+        SELECT 1 FROM control.deployment_publisher_members member
+        JOIN control.deployments deployment ON deployment.id=member.deployment_id AND deployment.deleted_at IS NULL
+        JOIN control.applied_project_services service ON service.deployment_id=deployment.id
+            AND service.team_id=deployment.team_id AND service.project_key=deployment.project_key
         WHERE member.publisher_identity_id=NEW.publisher_identity_id
           AND ((NEW.kind='saved_public_url' AND service.public_url_id=NEW.public_url_id)
             OR (NEW.kind='service' AND service.service_id=NEW.service_id))
     ) THEN
-        RAISE EXCEPTION 'publisher grant is outside its group' USING ERRCODE='23514';
+        RAISE EXCEPTION 'publisher grant is outside its deployment' USING ERRCODE='23514';
     END IF;
     RETURN NEW;
 END;
 $$;
 -- +goose StatementEnd
-CREATE TRIGGER enforce_publisher_group_grant BEFORE INSERT OR UPDATE ON control.publisher_grants FOR EACH ROW EXECUTE FUNCTION control.enforce_publisher_group_grant();
+CREATE TRIGGER enforce_deployment_publisher_grant BEFORE INSERT OR UPDATE ON control.publisher_grants FOR EACH ROW EXECUTE FUNCTION control.enforce_deployment_publisher_grant();
 
 -- exact plan checkpoints outlive certificate-order/run retention and contain no
 -- private material. a replica must retain every submitted plan's local keys.
@@ -2449,7 +2443,7 @@ CREATE TABLE control.service_audit_events (
     service_kind text NOT NULL CHECK (service_kind IN ('public_url','service')),
     event_type text NOT NULL CHECK (event_type IN ('public_url.create','public_url.update','public_url.delete','publish_run.create','certificate_issuance.create',
         'service.create','service.update','service.delete','grant.create','grant.revoke','invitation.create','invitation.accept','invitation.revoke',
-        'trust.update','device.enroll','device.revoke','publisher.join','publisher.revoke','run.prepare','run.start','run.close','apply','group.update','certificate.issue','certificate.install','certificate.client.issue',
+        'trust.update','device.enroll','device.revoke','publisher.join','publisher.revoke','run.prepare','run.start','run.close','apply','deployment.update','certificate.issue','certificate.install','certificate.client.issue',
         'connection.open','connection.close','http.decision')),
     occurred_at timestamptz NOT NULL,
     received_at timestamptz NOT NULL DEFAULT now(),

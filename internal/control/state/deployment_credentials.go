@@ -76,7 +76,7 @@ func (d *Database) RegisterDeploymentCredential(ctx context.Context, r RegisterD
 	r.DeploymentIDs = slices.Clone(r.DeploymentIDs)
 	slices.Sort(r.DeploymentIDs)
 	for i, id := range r.DeploymentIDs {
-		if !opaqueid.Valid(id, "pgrp_") || i > 0 && id == r.DeploymentIDs[i-1] {
+		if !opaqueid.Valid(id, "dpl_") || i > 0 && id == r.DeploymentIDs[i-1] {
 			return result, ErrProjectConfigurationInvalid
 		}
 	}
@@ -285,7 +285,7 @@ func (a deploymentAccess) setAuditActor(ctx context.Context, tx pgx.Tx) error {
 
 func (a deploymentAccess) recordUpdate(ctx context.Context, tx pgx.Tx, id, request string, now time.Time) error {
 	person, publisher := a.auditActor()
-	return recordPublisherGroupUpdate(ctx, tx, id, person, publisher, request, now)
+	return recordDeploymentPublisherUpdate(ctx, tx, id, person, publisher, request, now)
 }
 
 // take identity locks after publication parents, but before any audit/routing

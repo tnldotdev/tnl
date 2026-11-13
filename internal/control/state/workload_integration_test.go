@@ -320,18 +320,18 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := d.IssuePublisherGroupEnrollment(ctx, r.TeamID, r.ProjectKey, "production", r.ActorID, 1, time.Hour, now)
+	e, err := testDeploymentPublisherEnrollment(d, ctx, r.TeamID, r.ProjectKey, "production", r.ActorID, 1, time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replica := enrollAppliedGroup(t, d, r, e, now)
-	var a PublisherGroupServiceAssignment
+	replica := enrollAppliedDeployment(t, d, r, e, now)
+	var a DeploymentPublisherServiceAssignment
 	for _, candidate := range replica.assignments.Services {
 		if candidate.Configuration.Protocol == "postgres" {
 			a = candidate
 		}
 	}
-	access := groupAssignmentAccess(t, d, replica, a, now)
+	access := deploymentAssignmentAccess(t, d, replica, a, now)
 	service, err := d.GetServiceForPublisher(ctx, a.ServiceID, access.PublisherIdentity, now)
 	if err != nil {
 		t.Fatal(err)

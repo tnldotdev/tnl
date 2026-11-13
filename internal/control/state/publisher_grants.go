@@ -53,7 +53,7 @@ func (d *Database) CreatePublisherGrant(ctx context.Context, r CreatePublisherGr
 			return "", ErrPublisherIdentity
 		}
 	}
-	if err = rejectPublisherGroupGrantMutation(ctx, tx, i.ID); err != nil {
+	if err = rejectDeploymentPublisherGrantMutation(ctx, tx, i.ID); err != nil {
 		return "", err
 	}
 	g, err := insertPublisherGrant(ctx, q, i.ID, r.EditorID, resolved, r.ExpiresAt, r.Now)
@@ -92,7 +92,7 @@ func (d *Database) RevokePublisherIdentity(ctx context.Context, team, id, editor
 }
 
 // callers authorize under the team guard and lock all publication parents first.
-// group and general management share the same retirement and audit operation.
+// deployment and general management share the same retirement and audit operation.
 func revokePublisherIdentity(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, team, id, editor string, now time.Time) error {
 	rows, err := tx.Query(ctx, `SELECT DISTINCT service_id FROM control.publisher_grants
 		WHERE publisher_identity_id=$1 AND kind='service' AND service_id IS NOT NULL
@@ -129,13 +129,13 @@ func revokePublisherIdentity(ctx context.Context, tx pgx.Tx, q *controlstatedb.Q
 	if n != 1 {
 		return ErrPublisherIdentity
 	}
-	if err = recordPublisherGroupMemberRevocation(ctx, tx, id, editor, now); err != nil {
+	if err = recordDeploymentPublisherIdentityRevocation(ctx, tx, id, editor, now); err != nil {
 		return err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE control.publisher_grants SET revoked_at=COALESCE(revoked_at,$2) WHERE publisher_identity_id=$1`, id, now); err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `DELETE FROM control.publisher_group_leases WHERE publisher_identity_id=$1`, id)
+	_, err = tx.Exec(ctx, `DELETE FROM control.deployment_publisher_leases WHERE publisher_identity_id=$1`, id)
 	return err
 }
 func (d *Database) RevokePublisherGrant(ctx context.Context, team, id, grant, editor string, now time.Time) (retErr error) {

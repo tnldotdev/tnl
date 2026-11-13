@@ -21,7 +21,7 @@ func TestPublisherDeploymentInvalidMetadataFailsBeforeIdentityState(t *testing.T
 	t.Setenv(publisherprovenance.DeploymentIDEnv, "must-not-appear-in-diagnostics")
 	state := filepath.Join(t.TempDir(), "state")
 	var output, diagnostics bytes.Buffer
-	err := run(t.Context(), []string{"--no-config", "publisher", "serve", "--group", "production", "--instance", "replica-1", "--state-dir", state}, &output, &diagnostics)
+	err := run(t.Context(), []string{"--no-config", "publisher", "serve", "--deployment", "production", "--instance", "replica-1", "--state-dir", state}, &output, &diagnostics)
 	if reason, _ := failure.ReasonOf(err); reason != failure.PublisherDeploymentMetadataInvalid {
 		t.Fatal("wrong deployment validation boundary", err)
 	}
@@ -100,7 +100,7 @@ func TestDeploymentPublisherSetupBounds(t *testing.T) {
 }
 
 func TestDeploymentPublisherEnrollmentKeepsSecretOutOfHumanOutput(t *testing.T) {
-	enrollment := controlv1.DeploymentPublisherEnrollment{EnrollmentId: "pen_aaaaaaaaaaaaaaaaaaaaaa", EnrollmentKey: "pen_aaaaaaaaaaaaaaaaaaaaaa.private-secret", GroupId: "pgrp_bbbbbbbbbbbbbbbbbbbbbb", MaxMembers: 1, ExpiresAt: time.Now().Add(time.Minute), Services: map[string]controlv1.ServiceProtocol{"db": controlv1.Postgres}}
+	enrollment := controlv1.DeploymentPublisherEnrollment{EnrollmentId: "pen_aaaaaaaaaaaaaaaaaaaaaa", EnrollmentKey: "pen_aaaaaaaaaaaaaaaaaaaaaa.private-secret", DeploymentId: "dpl_bbbbbbbbbbbbbbbbbbbbbb", MaxMembers: 1, ExpiresAt: time.Now().Add(time.Minute), Services: map[string]controlv1.ServiceProtocol{"db": controlv1.Postgres}}
 	var output, diagnostics bytes.Buffer
 	if err := writeDeploymentPublisherEnrollment(&output, &diagnostics, statusOutputHuman, enrollment); err != nil {
 		t.Fatal(err)
@@ -124,19 +124,19 @@ func TestDeploymentPublisherEnrollmentKeepsSecretOutOfHumanOutput(t *testing.T) 
 
 func TestDeploymentPublisherEnrollmentRejectsBroadenedApproval(t *testing.T) {
 	now := time.Now()
-	enrollment := controlv1.DeploymentPublisherEnrollment{EnrollmentId: "pen_aaaaaaaaaaaaaaaaaaaaaa", EnrollmentKey: "pen_aaaaaaaaaaaaaaaaaaaaaa.private-secret", GroupId: "pgrp_bbbbbbbbbbbbbbbbbbbbbb", MaxMembers: 1, ExpiresAt: now.Add(time.Minute), Services: map[string]controlv1.ServiceProtocol{"db": controlv1.Postgres}}
-	if err := validateDeploymentPublisherEnrollment(enrollment, enrollment.GroupId, 1, enrollment.Services, now); err != nil {
+	enrollment := controlv1.DeploymentPublisherEnrollment{EnrollmentId: "pen_aaaaaaaaaaaaaaaaaaaaaa", EnrollmentKey: "pen_aaaaaaaaaaaaaaaaaaaaaa.private-secret", DeploymentId: "dpl_bbbbbbbbbbbbbbbbbbbbbb", MaxMembers: 1, ExpiresAt: now.Add(time.Minute), Services: map[string]controlv1.ServiceProtocol{"db": controlv1.Postgres}}
+	if err := validateDeploymentPublisherEnrollment(enrollment, enrollment.DeploymentId, 1, enrollment.Services, now); err != nil {
 		t.Fatal(err)
 	}
 	for _, mutate := range []func(*controlv1.DeploymentPublisherEnrollment){
-		func(e *controlv1.DeploymentPublisherEnrollment) { e.GroupId = "other" }, func(e *controlv1.DeploymentPublisherEnrollment) { e.MaxMembers = 2 },
+		func(e *controlv1.DeploymentPublisherEnrollment) { e.DeploymentId = "other" }, func(e *controlv1.DeploymentPublisherEnrollment) { e.MaxMembers = 2 },
 		func(e *controlv1.DeploymentPublisherEnrollment) { e.ExpiresAt = now }, func(e *controlv1.DeploymentPublisherEnrollment) { e.Services["cache"] = controlv1.Tcp },
 		func(e *controlv1.DeploymentPublisherEnrollment) { e.Services["db"] = controlv1.Mysql }, func(e *controlv1.DeploymentPublisherEnrollment) { e.EnrollmentKey += "\n" },
 	} {
 		changed := enrollment
 		changed.Services = maps.Clone(enrollment.Services)
 		mutate(&changed)
-		err := validateDeploymentPublisherEnrollment(changed, enrollment.GroupId, 1, enrollment.Services, now)
+		err := validateDeploymentPublisherEnrollment(changed, enrollment.DeploymentId, 1, enrollment.Services, now)
 		if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ServerResponseInvalid || strings.Contains(err.Error(), "private-secret") {
 			t.Fatal("invalid enrollment scope escaped or exposed its secret", err)
 		}
@@ -148,13 +148,13 @@ type failingDeploymentWriter struct{ err error }
 func (w failingDeploymentWriter) Write([]byte) (int, error) { return 0, w.err }
 
 func TestDeploymentPublisherObservationScope(t *testing.T) {
-	deployment := controlv1.Deployment{Id: "pgrp_aaaaaaaaaaaaaaaaaaaaaa", TeamId: "team-selected", ProjectKey: "shop"}
-	publisher := controlv1.DeploymentPublisher{GroupId: deployment.Id, TeamId: deployment.TeamId, ProjectKey: deployment.ProjectKey, PublisherIdentityId: "pub_bbbbbbbbbbbbbbbbbbbbbb", SnapshotAt: time.Now(), Services: map[string]controlv1.ServiceProtocol{"db": controlv1.Postgres}}
+	deployment := controlv1.Deployment{Id: "dpl_aaaaaaaaaaaaaaaaaaaaaa", TeamId: "team-selected", ProjectKey: "shop"}
+	publisher := controlv1.DeploymentPublisher{DeploymentId: deployment.Id, TeamId: deployment.TeamId, ProjectKey: deployment.ProjectKey, PublisherIdentityId: "pub_bbbbbbbbbbbbbbbbbbbbbb", SnapshotAt: time.Now(), Services: map[string]controlv1.ServiceProtocol{"db": controlv1.Postgres}}
 	if err := validateDeploymentPublisher(publisher, deployment); err != nil {
 		t.Fatal(err)
 	}
 	for _, mutate := range []func(*controlv1.DeploymentPublisher){
-		func(p *controlv1.DeploymentPublisher) { p.GroupId = "pgrp_other" }, func(p *controlv1.DeploymentPublisher) { p.TeamId = "other" },
+		func(p *controlv1.DeploymentPublisher) { p.DeploymentId = "dpl_other" }, func(p *controlv1.DeploymentPublisher) { p.TeamId = "other" },
 		func(p *controlv1.DeploymentPublisher) { p.ProjectKey = "other" }, func(p *controlv1.DeploymentPublisher) { p.Services["db"] = "unknown" },
 	} {
 		changed := publisher

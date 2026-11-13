@@ -43,9 +43,9 @@ const listProjectPublications = `-- name: ListProjectPublications :many
 WITH resources AS (
     SELECT applied.service,COALESCE(deployment.name,'local')::text AS deployment,''::text AS worktree_key,applied.service_id,applied.public_url_id
     FROM control.applied_project_services applied
-    LEFT JOIN control.project_publisher_groups deployment ON deployment.id=applied.group_id
+    LEFT JOIN control.deployments deployment ON deployment.id=applied.deployment_id
     WHERE applied.team_id=$2 AND applied.project_key=$3
-       AND (applied.group_id IS NOT NULL OR applied.service_id IS NOT NULL OR applied.public_url_id IS NOT NULL OR NOT EXISTS (
+       AND (applied.deployment_id IS NOT NULL OR applied.service_id IS NOT NULL OR applied.public_url_id IS NOT NULL OR NOT EXISTS (
           SELECT 1 FROM control.local_project_services local
           WHERE local.team_id=applied.team_id AND local.project_key=applied.project_key AND local.service=applied.service))
     UNION ALL

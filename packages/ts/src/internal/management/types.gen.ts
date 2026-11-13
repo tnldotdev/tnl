@@ -22,21 +22,25 @@ export type CreateDeploymentPublisherEnrollmentRequest = {
 };
 
 /**
- * Privately deliver the bounded enrollment key to the publisher. group_id is the selected deployment ID. Recovery preserves this secret, captured scope, capacity, and expiration; it never renews or replaces exhausted setup authority.
+ * Privately deliver the bounded enrollment key to the publisher. deployment_id is the selected deployment ID. Recovery preserves this secret, captured scope, capacity, and expiration; it never renews or replaces exhausted setup authority.
  */
-export type DeploymentPublisherEnrollment = PublisherGroupEnrollment & {
+export type DeploymentPublisherEnrollment = {
   enrollment_id: string;
+  enrollment_key: string;
+  deployment_id: string;
+  expires_at: string;
+  max_members: number;
   services: {
     [key: string]: ServiceProtocol;
   };
 };
 
 /**
- * One publisher in the selected deployment (group_id), including its retained last observation after revocation. No enrollment secret, signing key, access token, or target is returned. Healthy reports configuration acknowledgement and a current lease, not database login or SQL readiness.
+ * One publisher in the selected deployment (deployment_id), including its retained last observation after revocation. No enrollment secret, signing key, access token, or target is returned. Healthy reports configuration acknowledgement and a current lease, not database login or SQL readiness.
  */
-export type DeploymentPublisher = PublisherGroupMemberStatus & {
+export type DeploymentPublisher = DeploymentPublisherStatus & {
   /**
-   * Captured service/protocol approval for scoped setup, not a claim of current reachability. Legacy whole-group publishers report their current group bindings.
+   * Captured service/protocol approval, not a claim of current reachability. Services added later are not approved.
    */
   services: {
     [key: string]: ServiceProtocol;
@@ -122,23 +126,16 @@ export type ProjectTargetDiscovery = {
   endpoint?: "writer" | "reader";
 };
 
-export type PublisherGroupEnrollment = {
-  enrollment_key: string;
-  group_id: string;
-  expires_at: string;
-  max_members: number;
-};
-
-export type PublisherGroupMember = {
+export type DeploymentPublisherIdentity = {
   team_id: string;
   project_key: string;
-  group_id: string;
-  group_name: string;
+  deployment_id: string;
+  deployment_name: string;
   publisher_identity_id: string;
   key_id: string;
 };
 
-export type PublisherGroupMemberStatus = PublisherGroupMember & {
+export type DeploymentPublisherStatus = DeploymentPublisherIdentity & {
   observed_revision: string;
   current_revision: string;
   snapshot_at: string;
@@ -149,7 +146,7 @@ export type PublisherGroupMemberStatus = PublisherGroupMember & {
 };
 
 /**
- * Deployment metadata reported by a group publisher and covered by its signed runtime assertion. It is not cloud attestation or permission. Values cannot change within a process run; deployment, provider, replica, and instance remain bound to the publisher identity across restarts.
+ * Deployment metadata reported by a deployment publisher and covered by its signed runtime assertion. It is not cloud attestation or permission. Values cannot change within a process run; deployment, provider, replica, and instance remain bound to the publisher identity across restarts.
  */
 export type PublisherDeploymentReport = {
   deployment_id: string;
@@ -166,11 +163,11 @@ export type PublisherDeploymentReport = {
 };
 
 /**
- * An accepted publisher deployment report, with control receipt times and a control-derived group_id. It does not prove cloud state, image identity, or target health. The group/deployment/replica combination belongs to this publisher identity.
+ * An accepted publisher deployment report, with control receipt times and a control-derived deployment_id. It does not prove cloud state, image identity, or target health. The deployment/deployment/replica combination belongs to this publisher identity.
  */
 export type PublisherDeploymentObservation = {
   report: PublisherDeploymentReport;
-  group_id: string;
+  deployment_id: string;
   evidence: "publisher_reported";
   first_observed_at: string;
   observed_at: string;

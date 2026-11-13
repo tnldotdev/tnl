@@ -190,7 +190,7 @@ export class publishers {
   /**
    * Approve scoped publisher enrollment
    *
-   * Approve bounded publisher setup for selected existing services. Requires a current team manager or management approval for this deployment and every selected service. Setup cannot outlive the management grant. The original request key is scoped to the acting person or machine and recovers the same secret only while current authority, captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
+   * Approve bounded publisher setup for selected existing services. Requires a current team manager or management approval for this deployment and every selected service. Setup cannot outlive the management grant. The original request key is scoped to the acting person or machine and recovers the same secret only while current authority, captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing deployment-publisher enrollment exchange.
    */
   public static createEnrollment<ThrowOnError extends boolean = false>(
     options: Options<CreateDeploymentPublisherEnrollmentData, ThrowOnError>,
@@ -225,7 +225,7 @@ export class publishers {
   /**
    * List a deployment's publishers
    *
-   * List authorized publishers in this deployment, including revoked identities and retained observations. A management credential sees only scoped publishers whose entire captured service/protocol approval it covers; filtering precedes pagination. Legacy whole-group publishers require a current manager. No enrollment secrets or targets are returned.
+   * List authorized publishers in this deployment, including revoked identities and retained observations. A management credential sees only scoped publishers whose entire captured service/protocol approval it covers; filtering precedes pagination. Legacy whole-deployment publishers require a current manager. No enrollment secrets or targets are returned.
    */
   public static list<ThrowOnError extends boolean = false>(
     options: Options<ListDeploymentPublishersData, ThrowOnError>,
@@ -256,7 +256,7 @@ export class publishers {
   /**
    * Revoke one deployment publisher
    *
-   * Revoke exactly this publisher identity, its grants, leases, and current publications. Requires a current manager or management approval covering this deployment and the publisher's entire captured service/protocol scope. Legacy whole-group publishers require a manager. Repetition is safe; the last observation is retained. Siblings and shared enrollment capacity are unchanged. Apply and enrollment replay cannot restore the revoked identity.
+   * Revoke exactly this publisher identity, its grants, leases, and current publications. Requires a current manager or management approval covering this deployment and the publisher's entire captured service/protocol scope. Legacy whole-deployment publishers require a manager. Repetition is safe; the last observation is retained. Siblings and shared enrollment capacity are unchanged. Apply and enrollment replay cannot restore the revoked identity.
    */
   public static revoke<ThrowOnError extends boolean = false>(
     options: Options<RevokeDeploymentPublisherData, ThrowOnError>,
@@ -287,7 +287,7 @@ export class publishers {
   /**
    * Read one deployment publisher
    *
-   * Read one publisher's captured scope and observation with exact deployment ownership. Requires a current manager or management approval covering this deployment and the publisher's entire captured service/protocol scope. Legacy whole-group publishers require a manager.
+   * Read one publisher's captured scope and observation with exact deployment ownership. Requires a current manager or management approval covering this deployment and the publisher's entire captured service/protocol scope. Legacy whole-deployment publishers require a manager.
    */
   public static get<ThrowOnError extends boolean = false>(
     options: Options<GetDeploymentPublisherData, ThrowOnError>,

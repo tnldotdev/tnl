@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestManagedGroupUsesExistingNamespace(t *testing.T) {
+func TestManagedDeploymentUsesExistingNamespace(t *testing.T) {
 	for _, owner := range []string{"chase.studio.example.com", "studio.example.com", "ecstatic-penguin.tnl.dev"} {
 		namespace, err := DeploymentNamespace("production", "storefront", owner)
 		if err != nil || namespace != "production.storefront."+owner || PublicURLWildcard("orders."+namespace, owner) != "*."+namespace {

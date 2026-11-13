@@ -25,10 +25,10 @@ schemas:
     type: object
     additionalProperties: false
     required:
-      [service, publisher_group, service_kind, hostname, ready, reason, ready_publisher_connections]
+      [service, deployment, service_kind, hostname, ready, reason, ready_publisher_connections]
     properties:
       service: { type: string }
-      publisher_group: { type: string }
+      deployment: { type: string }
       service_kind: { type: string, enum: [local, service, public_url] }
       worktree_key: { type: string, description: "Opaque worktree selector, not a checkout path." }
       service_id: { type: string }

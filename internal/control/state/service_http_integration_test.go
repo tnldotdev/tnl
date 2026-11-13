@@ -36,15 +36,15 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrollment, err := d.IssuePublisherGroupEnrollment(t.Context(), r.TeamID, r.ProjectKey, "production", r.ActorID, 2, time.Hour, now)
+	enrollment, err := testDeploymentPublisherEnrollment(d, t.Context(), r.TeamID, r.ProjectKey, "production", r.ActorID, 2, time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replica := enrollAppliedGroup(t, d, r, enrollment, now)
+	replica := enrollAppliedDeployment(t, d, r, enrollment, now)
 	start := func(index int, key string) ServiceHTTPRun {
 		t.Helper()
 		a := replica.assignments.Services[index]
-		access := groupAssignmentAccess(t, d, replica, a, now)
+		access := deploymentAssignmentAccess(t, d, replica, a, now)
 		prep, err := d.PrepareServiceRun(t.Context(), a.ServiceID, access.PublisherIdentity, key, now, ServiceMetadata{Protocol: "http", TrustRevision: a.TrustRevision})
 		if err != nil {
 			t.Fatal(err)
@@ -187,7 +187,7 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 	if _, err = d.RedeemServiceBrowserHandoff(t.Context(), b, handoff.Token, now); err == nil {
 		t.Fatal("other service redeemed handoff")
 	}
-	replica = enrollAppliedGroup(t, d, r, enrollment, now)
+	replica = enrollAppliedDeployment(t, d, r, enrollment, now)
 	later := start(0, "later")
 	if _, err = d.RedeemServiceBrowserHandoff(t.Context(), later, handoff.Token, now); err == nil {
 		t.Fatal("later run redeemed handoff")

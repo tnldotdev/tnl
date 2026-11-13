@@ -99,10 +99,10 @@ func TestIntegrationProjectStatusKeepsSameNamedDeploymentBindings(t *testing.T) 
 	}
 	seen := map[string]bool{}
 	for _, publication := range status.Publications {
-		if publication.Service != "db" || seen[publication.PublisherGroup] {
+		if publication.Service != "db" || seen[publication.Deployment] {
 			t.Fatal("status mixed deployment selectors", publication)
 		}
-		seen[publication.PublisherGroup] = true
+		seen[publication.Deployment] = true
 	}
 	if !seen["local"] || !seen["staging"] || !seen["customer"] {
 		t.Fatal("status borrowed another deployment's selector", seen)

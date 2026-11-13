@@ -46,9 +46,9 @@ var (
 type OpenOptions struct {
 	Root string
 	User bool
-	// StandaloneGroups permits identity-only group jobs under the current uid,
+	// StandaloneDeployments permits identity-only deployment jobs under the current uid,
 	// independently of user-session connector support.
-	StandaloneGroups bool
+	StandaloneDeployments bool
 	// tests must explicitly select their uid for isolated system state.
 	TestOwnerUID *int
 }
@@ -56,39 +56,39 @@ type OpenOptions struct {
 type Kind string
 
 const (
-	KindPublicURL Kind = "public_url"
-	KindService   Kind = "service"
-	KindConnector Kind = "connector"
-	KindGroup     Kind = "group"
+	KindPublicURL  Kind = "public_url"
+	KindService    Kind = "service"
+	KindConnector  Kind = "connector"
+	KindDeployment Kind = "deployment"
 )
 
 type Job struct {
-	TelemetryDisabled   bool                            `json:"telemetry_disabled,omitempty"`
-	PreferredRegions    []string                        `json:"preferred_regions,omitempty"`
-	GroupMember         *controlv1.PublisherGroupMember `json:"group_member,omitempty"`
-	GroupInstance       string                          `json:"group_instance,omitempty"`
-	IdentityDir         string                          `json:"identity_dir,omitempty"`
-	Kind                Kind                            `json:"kind,omitempty"`
-	ServiceID           string                          `json:"service_id,omitempty"`
-	TrustRevision       int64                           `json:"trust_revision,omitempty"`
-	PublisherPool       bool                            `json:"publisher_pool,omitempty"`
-	IdentityID          string                          `json:"identity_id,omitempty"`
-	StateDir            string                          `json:"state_dir,omitempty"`
-	Project             *clientproject.Project          `json:"project,omitempty"`
-	ProjectService      string                          `json:"project_service,omitempty"`
-	Trust               *targettrust.Snapshot           `json:"trust,omitempty"`
-	Endpoint            *controlv1.ServiceEndpoint      `json:"endpoint,omitempty"`
-	ID                  string                          `json:"job_id"`
-	Name                string                          `json:"name,omitempty"`
-	Server              string                          `json:"server"`
-	PublisherIdentityID string                          `json:"publisher_identity_id"`
-	GrantID             string                          `json:"grant_id"`
-	PublicURLID         string                          `json:"public_url_id"`
-	Target              string                          `json:"target"`
-	Protocol            config.ProtocolName             `json:"protocol"`
-	TargetTLSName       string                          `json:"target_tls_name,omitempty"`
-	VerifyReadiness     bool                            `json:"verify_readiness,omitempty"`
-	ReadinessPath       string                          `json:"readiness_path,omitempty"`
+	TelemetryDisabled   bool                                   `json:"telemetry_disabled,omitempty"`
+	PreferredRegions    []string                               `json:"preferred_regions,omitempty"`
+	DeploymentMember    *controlv1.DeploymentPublisherIdentity `json:"deployment_member,omitempty"`
+	DeploymentInstance  string                                 `json:"deployment_instance,omitempty"`
+	IdentityDir         string                                 `json:"identity_dir,omitempty"`
+	Kind                Kind                                   `json:"kind,omitempty"`
+	ServiceID           string                                 `json:"service_id,omitempty"`
+	TrustRevision       int64                                  `json:"trust_revision,omitempty"`
+	PublisherPool       bool                                   `json:"publisher_pool,omitempty"`
+	IdentityID          string                                 `json:"identity_id,omitempty"`
+	StateDir            string                                 `json:"state_dir,omitempty"`
+	Project             *clientproject.Project                 `json:"project,omitempty"`
+	ProjectService      string                                 `json:"project_service,omitempty"`
+	Trust               *targettrust.Snapshot                  `json:"trust,omitempty"`
+	Endpoint            *controlv1.ServiceEndpoint             `json:"endpoint,omitempty"`
+	ID                  string                                 `json:"job_id"`
+	Name                string                                 `json:"name,omitempty"`
+	Server              string                                 `json:"server"`
+	PublisherIdentityID string                                 `json:"publisher_identity_id"`
+	GrantID             string                                 `json:"grant_id"`
+	PublicURLID         string                                 `json:"public_url_id"`
+	Target              string                                 `json:"target"`
+	Protocol            config.ProtocolName                    `json:"protocol"`
+	TargetTLSName       string                                 `json:"target_tls_name,omitempty"`
+	VerifyReadiness     bool                                   `json:"verify_readiness,omitempty"`
+	ReadinessPath       string                                 `json:"readiness_path,omitempty"`
 	// trust is captured at install time, so boot never depends on a user's files.
 	TargetCAPEM []byte                   `json:"target_ca_pem,omitempty"`
 	ServerCAPEM []byte                   `json:"server_ca_pem,omitempty"`
@@ -142,20 +142,20 @@ func (s JobState) Valid() bool {
 }
 
 type Registry struct {
-	mu       sync.Mutex
-	database *clientstate.Database
-	root     string
-	owner    int
-	user     bool
-	groups   bool
-	pins     map[string]os.FileInfo
-	key      []byte
+	mu          sync.Mutex
+	database    *clientstate.Database
+	root        string
+	owner       int
+	user        bool
+	deployments bool
+	pins        map[string]os.FileInfo
+	key         []byte
 }
 
 // Open uses a standalone database and file wrapping key, including on macOS.
 func Open(ctx context.Context, options OpenOptions) (*Registry, error) {
 	owner := 0
-	if options.User || options.StandaloneGroups {
+	if options.User || options.StandaloneDeployments {
 		owner = os.Getuid()
 	}
 	if options.TestOwnerUID != nil {
@@ -187,7 +187,7 @@ func Open(ctx context.Context, options OpenOptions) (*Registry, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := &Registry{database: db, root: db.Root(), owner: owner, user: options.User, groups: options.User || options.StandaloneGroups, pins: map[string]os.FileInfo{}}
+	r := &Registry{database: db, root: db.Root(), owner: owner, user: options.User, deployments: options.User || options.StandaloneDeployments, pins: map[string]os.FileInfo{}}
 	// pin the registry lock before any reader or writer can use it.
 	lock, err := filelock.AcquireContext(ctx, filepath.Join(r.root, "jobs.lock"), owner)
 	if err == nil {
@@ -262,7 +262,7 @@ func (r *Registry) Install(ctx context.Context, job Job, identity authorityv1.Pu
 				return ErrJobExists
 			}
 			// independently supervised jobs need independent runtime identities.
-			// one group job may publish many services with its one replica identity.
+			// one deployment job may publish many services with its one replica identity.
 			if existing.Server == job.Server && existing.PublisherIdentityID == job.PublisherIdentityID {
 				return ErrJobExists
 			}
@@ -296,6 +296,9 @@ func JobKey(server, kind, resourceID string) string {
 		server = canonical
 	}
 	digest := sha256.Sum256([]byte(server + "\x00" + kind + "\x00" + resourceID))
+	if kind == "deployment" {
+		kind = "dpl"
+	}
 	return kind + "-" + hex.EncodeToString(digest[:12])
 }
 
@@ -318,20 +321,20 @@ func (r *Registry) Remove(ctx context.Context, id string) error {
 			if job.Enabled || job.Status.State != JobStopped {
 				return ErrScope
 			}
-			if job.Kind == KindGroup {
-				member, private, profile, err := r.GroupIdentity(ctx, job)
+			if job.Kind == KindDeployment {
+				member, private, profile, err := r.DeploymentIdentity(ctx, job)
 				if err != nil {
 					return err
 				}
-				value, err := credentialfile.NewGroup(job.Server, job.GroupInstance, member, private)
+				value, err := credentialfile.NewDeployment(job.Server, job.DeploymentInstance, member, private)
 				if err != nil {
 					return err
 				}
-				if err := credentialfile.RetireGroup(ctx, profile, value); err != nil {
+				if err := credentialfile.RetireDeployment(ctx, profile, value); err != nil {
 					return err
 				}
 			}
-			if job.Kind != KindConnector && job.Kind != KindGroup {
+			if job.Kind != KindConnector && job.Kind != KindDeployment {
 				profile, err := r.database.Server(ctx, job.Server)
 				if err != nil {
 					return err
@@ -550,27 +553,27 @@ func validateJob(job *Job) error {
 	if !naming.ValidServiceName(job.ID) || len(job.Name) > 128 || strings.TrimSpace(job.Name) != job.Name || strings.ContainsAny(job.Name, "\x00\r\n") || job.Server == "" {
 		return ErrScope
 	}
-	if job.Kind != KindGroup && job.GroupMember != nil ||
-		job.Kind != KindGroup && job.GroupInstance != "" ||
-		job.Kind != KindGroup && job.IdentityDir != "" ||
+	if job.Kind != KindDeployment && job.DeploymentMember != nil ||
+		job.Kind != KindDeployment && job.DeploymentInstance != "" ||
+		job.Kind != KindDeployment && job.IdentityDir != "" ||
 		job.Kind != KindConnector && (job.IdentityID != "" || job.StateDir != "") ||
 		job.Kind != KindService && job.Kind != KindConnector && job.Endpoint != nil ||
 		job.Kind != KindService && (job.Project != nil || job.ProjectService != "" || job.PublisherPool) ||
-		(job.Kind == KindPublicURL || job.Kind == KindGroup) && (job.Trust != nil || job.TrustRevision != 0) {
+		(job.Kind == KindPublicURL || job.Kind == KindDeployment) && (job.Trust != nil || job.TrustRevision != 0) {
 		return ErrScope
 	}
 	switch job.Kind {
-	case KindGroup:
-		if !naming.ValidServiceName(job.GroupInstance) {
+	case KindDeployment:
+		if !naming.ValidServiceName(job.DeploymentInstance) {
 			return ErrScope
 		}
 		if job.IdentityDir != "" && (!filepath.IsAbs(job.IdentityDir) || filepath.Clean(job.IdentityDir) != job.IdentityDir) {
 			return ErrScope
 		}
-		if job.GroupMember == nil || job.GroupMember.PublisherIdentityId != job.PublisherIdentityID ||
-			job.GroupMember.GroupName == "local" || !naming.ValidServiceName(job.GroupMember.GroupName) ||
-			!opaqueid.Valid(job.PublisherIdentityID, opaqueid.PublisherIdentityPrefix) || !opaqueid.Valid(job.GroupMember.KeyId, opaqueid.PublisherIdentityKeyPrefix) ||
-			job.GroupMember.TeamId == "" || job.GroupMember.GroupId == "" || job.GroupMember.ProjectKey == "" ||
+		if job.DeploymentMember == nil || job.DeploymentMember.PublisherIdentityId != job.PublisherIdentityID ||
+			job.DeploymentMember.DeploymentName == "local" || !naming.ValidServiceName(job.DeploymentMember.DeploymentName) ||
+			!opaqueid.Valid(job.PublisherIdentityID, opaqueid.PublisherIdentityPrefix) || !opaqueid.Valid(job.DeploymentMember.KeyId, opaqueid.PublisherIdentityKeyPrefix) ||
+			job.DeploymentMember.TeamId == "" || job.DeploymentMember.DeploymentId == "" || job.DeploymentMember.ProjectKey == "" ||
 			job.ServiceID != "" || job.PublicURLID != "" || job.Target != "" || job.GrantID != "" || job.Protocol != "" ||
 			job.VerifyReadiness ||
 			job.TargetTLSName != "" || len(job.TargetCAPEM) != 0 || job.Limits != (applicationlimits.Limits{}) {
@@ -604,7 +607,7 @@ func validateJob(job *Job) error {
 	if err := ValidateTrust(job.ServerCAPEM); err != nil {
 		return err
 	}
-	if job.Kind == KindGroup {
+	if job.Kind == KindDeployment {
 		return nil
 	}
 	if err := job.Limits.Validate(); err != nil {

@@ -22,7 +22,7 @@ import (
 	controlProxy "github.com/tnldotdev/tnl/internal/control/proxy"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming"
-	publishergroup "github.com/tnldotdev/tnl/internal/publisher/group"
+	publisherdeployment "github.com/tnldotdev/tnl/internal/publisher/deployment"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	processidentity "github.com/tnldotdev/tnl/internal/publisher/processidentity"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -125,7 +125,7 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := owner.CreatePublisherGroupEnrollment(ctx, "egress", group, controlv1.CreatePublisherGroupEnrollmentRequest{TeamId: m.TeamID, MaxMembers: 2, ExpiresIn: 600})
+	e, err := owner.CreateDeploymentPublisherEnrollment(ctx, m.TeamID, "egress", group, "runtime-enrollment", controlv1.CreateDeploymentPublisherEnrollmentRequest{Services: []string{"api", "db"}, MaxMembers: new(2), ExpiresIn: new(600)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	member, err := client.RedeemPublisherGroupEnrollment(ctx, e.EnrollmentKey, public)
+	member, err := client.RedeemDeploymentPublisherEnrollment(ctx, e.EnrollmentKey, public)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	if read(member.PublisherIdentityId) != nil {
 		t.Fatal("enrollment recorded operator egress")
 	}
-	runtime, err := processidentity.New(client, server, member.PublisherIdentityId, member.KeyId, member.GroupId, key)
+	runtime, err := processidentity.New(client, server, member.PublisherIdentityId, member.KeyId, member.DeploymentId, key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 		t.Fatalf("proxy source: %+v", first)
 	}
 	transport.set(proxy, "10.0.0.2:1234", "8.8.4.4")
-	groupClient, err := publishergroup.NewClient(server, httpClient)
+	groupClient, err := publisherdeployment.NewClient(server, httpClient)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	if !reflect.DeepEqual(read(member.PublisherIdentityId), first) {
 		t.Fatal("operator verification/preflight overwrote replica")
 	}
-	if _, err = owner.RenamePublisherGroup(ctx, "egress", group, controlv1.RenamePublisherGroupRequest{TeamId: m.TeamID, Name: "live", ExpectedRevision: applied.Revision}); err != nil {
+	if _, err = owner.RenameDeployment(ctx, "egress", group, controlv1.RenameDeploymentRequest{TeamId: m.TeamID, Name: "live", ExpectedRevision: applied.Revision}); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(read(member.PublisherIdentityId), first) {
@@ -240,8 +240,8 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 		t.Fatal("runtime leaked into project metadata")
 	}
 	// a publication proof cannot start or replace a runtime, even for this identity.
-	proof, _ := publisherproof.Sign(member.PublisherIdentityId, member.KeyId, member.GroupId, server+"/v1/publisher/groups/verify", key, time.Now())
-	if _, err = client.PublisherRuntime(ctx, controlv1.PublisherRuntimeRequest{PublisherIdentityId: member.PublisherIdentityId, ScopeId: member.GroupId, ProcessRunId: strings.Repeat("e", 32), ExpectedEpoch: 1, Action: controlv1.RuntimeStart, Assertion: proof}); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+	proof, _ := publisherproof.Sign(member.PublisherIdentityId, member.KeyId, member.DeploymentId, server+"/v1/publisher/deployments/verify", key, time.Now())
+	if _, err = client.PublisherRuntime(ctx, controlv1.PublisherRuntimeRequest{PublisherIdentityId: member.PublisherIdentityId, ScopeId: member.DeploymentId, ProcessRunId: strings.Repeat("e", 32), ExpectedEpoch: 1, Action: controlv1.RuntimeStart, Assertion: proof}); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("verification proof started runtime", err)
 	}
 	if err = runtime.Stop(ctx); err != nil {
@@ -257,13 +257,13 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	observed := make(chan struct{}, 1)
 	done := make(chan error, 1)
 	go func() {
-		done <- (publishergroup.Runtime{Control: groupClient, Member: member, Private: key, PollInterval: time.Second, Observe: func(int64, bool) error {
+		done <- (publisherdeployment.Runtime{Control: groupClient, Member: member, Private: key, PollInterval: time.Second, Observe: func(int64, bool) error {
 			select {
 			case observed <- struct{}{}:
 			default:
 			}
 			return nil
-		}, Publish: func(ctx context.Context, _ controlv1.PublisherGroupServiceAssignment, health func(bool)) error {
+		}, Publish: func(ctx context.Context, _ controlv1.DeploymentPublisherServiceAssignment, health func(bool)) error {
 			started <- struct{}{}
 			health(true)
 			<-ctx.Done()

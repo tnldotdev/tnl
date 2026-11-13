@@ -13,7 +13,7 @@ paths:
             schema: { $ref: "../openapi.yaml#/components/schemas/PublisherRuntimeRequest" }
       responses:
         "200":
-          description: Current runtime epoch and optional group lease
+          description: Current runtime epoch and optional deployment lease
           content:
             application/json:
               schema: { $ref: "../openapi.yaml#/components/schemas/PublisherRuntimeResponse" }
@@ -28,7 +28,7 @@ paths:
       tags: [publisher-runtime]
       summary: Start a publisher runtime
       security: []
-      description: "Start a process run if the inspected epoch still matches. Send a one-use signed assertion for this endpoint in the body, with matching publisher identity and action. After an uncertain response, keep the same process run and expected epoch but use a fresh assertion. Group runtimes also receive a group lease."
+      description: "Start a process run if the inspected epoch still matches. Send a one-use signed assertion for this endpoint in the body, with matching publisher identity and action. After an uncertain response, keep the same process run and expected epoch but use a fresh assertion. Deployment runtimes also receive a deployment lease."
       requestBody:
         required: true
         content:
@@ -36,7 +36,7 @@ paths:
             schema: { $ref: "../openapi.yaml#/components/schemas/PublisherRuntimeRequest" }
       responses:
         "200":
-          description: Started runtime epoch and optional group lease
+          description: Started runtime epoch and optional deployment lease
           content:
             application/json:
               schema: { $ref: "../openapi.yaml#/components/schemas/PublisherRuntimeResponse" }
@@ -49,7 +49,7 @@ paths:
       tags: [publisher-runtime]
       summary: Renew a publisher runtime
       security: []
-      description: "Renew the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route. Group runtimes also receive a group lease."
+      description: "Renew the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route. Deployment runtimes also receive a deployment lease."
       requestBody:
         required: true
         content:
@@ -57,7 +57,7 @@ paths:
             schema: { $ref: "../openapi.yaml#/components/schemas/PublisherRuntimeRequest" }
       responses:
         "200":
-          description: Current runtime epoch and optional group lease
+          description: Current runtime epoch and optional deployment lease
           content:
             application/json:
               schema: { $ref: "../openapi.yaml#/components/schemas/PublisherRuntimeResponse" }

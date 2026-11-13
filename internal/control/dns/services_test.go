@@ -60,7 +60,7 @@ func TestServiceEndpointDNSUsesOwnedExactRecords(t *testing.T) {
 		{"remove-public", true, controlstate.PublicURLDNSRemoving, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			store := &managedDNSStoreStub{work: controlstate.ServiceEndpointDNSWork{Hostname: "api.production.storefront.tunnels.example.test", ServiceID: "svc_0123456789ABCDEFGHIJKL", OwnerID: "pgrp_0123456789ABCDEFGHIJKL", DomainID: "domain", PoolID: controlstate.PrimaryIngressPoolID, Public: test.public, State: test.state, Revision: 1, Epoch: 1, Attempts: 1, Worker: "dns-worker", ExpiresAt: now.Add(time.Minute), AvailableAt: now}}
+			store := &managedDNSStoreStub{work: controlstate.ServiceEndpointDNSWork{Hostname: "api.production.storefront.tunnels.example.test", ServiceID: "svc_0123456789ABCDEFGHIJKL", OwnerID: "dpl_0123456789ABCDEFGHIJKL", DomainID: "domain", PoolID: controlstate.PrimaryIngressPoolID, Public: test.public, State: test.state, Revision: 1, Epoch: 1, Attempts: 1, Worker: "dns-worker", ExpiresAt: now.Add(time.Minute), AvailableAt: now}}
 			provider := &providerStub{}
 			verifier := &verifierStub{publicURLVerified: test.propagated}
 			worker, err := New(store, provider, verifier, Config{WorkerID: "dns-worker", ManagedDomain: "tunnels.example.test", ManagedZoneID: "Z123", IngressIPv4Addresses: []string{"192.0.2.10"}, IngressIPv6Addresses: []string{"2001:db8::10"}})

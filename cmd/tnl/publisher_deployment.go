@@ -105,7 +105,7 @@ func runDeploymentPublisherSetup(ctx context.Context, flags publisherSetupComman
 }
 
 func validateDeploymentPublisherEnrollment(enrollment controlv1.DeploymentPublisherEnrollment, deployment string, members int, services map[string]controlv1.ServiceProtocol, now time.Time) error {
-	if enrollment.GroupId != deployment || !opaqueid.Valid(enrollment.EnrollmentId, opaqueid.PublisherEnrollmentPrefix) || !strings.HasPrefix(enrollment.EnrollmentKey, enrollment.EnrollmentId+".") || len(enrollment.EnrollmentKey) <= len(enrollment.EnrollmentId)+1 || strings.ContainsAny(enrollment.EnrollmentKey, "\x00\r\n") || enrollment.MaxMembers != members || !enrollment.ExpiresAt.After(now) || !maps.Equal(enrollment.Services, services) {
+	if enrollment.DeploymentId != deployment || !opaqueid.Valid(enrollment.EnrollmentId, opaqueid.PublisherEnrollmentPrefix) || !strings.HasPrefix(enrollment.EnrollmentKey, enrollment.EnrollmentId+".") || len(enrollment.EnrollmentKey) <= len(enrollment.EnrollmentId)+1 || strings.ContainsAny(enrollment.EnrollmentKey, "\x00\r\n") || enrollment.MaxMembers != members || !enrollment.ExpiresAt.After(now) || !maps.Equal(enrollment.Services, services) {
 		return failure.Wrap("read deployment enrollment", failure.ServerResponseInvalid, errors.New("control returned a different or invalid publisher approval"))
 	}
 	return nil
@@ -115,7 +115,7 @@ func writeDeploymentPublisherEnrollment(output, diagnostics io.Writer, mode stat
 	if mode == statusOutputJSON {
 		return failure.Wrap("write deployment enrollment", failure.OutputUnavailable, json.NewEncoder(output).Encode(enrollment))
 	}
-	fields := []clioutput.Field{{Label: "deployment", Value: enrollment.GroupId}, {Label: "enrollment", Value: enrollment.EnrollmentId}, {Label: "expires", Value: enrollment.ExpiresAt.UTC().Format(time.RFC3339)}, {Label: "publishers", Value: strconv.Itoa(enrollment.MaxMembers)}}
+	fields := []clioutput.Field{{Label: "deployment", Value: enrollment.DeploymentId}, {Label: "enrollment", Value: enrollment.EnrollmentId}, {Label: "expires", Value: enrollment.ExpiresAt.UTC().Format(time.RFC3339)}, {Label: "publishers", Value: strconv.Itoa(enrollment.MaxMembers)}}
 	for _, name := range slices.Sorted(maps.Keys(enrollment.Services)) {
 		fields = append(fields, clioutput.Field{Label: name, Value: string(enrollment.Services[name])})
 	}
@@ -161,7 +161,7 @@ func runDeploymentPublisherList(ctx context.Context, flags publisherListCommand,
 }
 
 func validateDeploymentPublisher(publisher controlv1.DeploymentPublisher, deployment controlv1.Deployment) error {
-	invalid := publisher.GroupId != deployment.Id || publisher.TeamId != deployment.TeamId || publisher.ProjectKey != deployment.ProjectKey || !opaqueid.Valid(publisher.PublisherIdentityId, opaqueid.PublisherIdentityPrefix) || publisher.SnapshotAt.IsZero() || len(publisher.Services) > 128
+	invalid := publisher.DeploymentId != deployment.Id || publisher.TeamId != deployment.TeamId || publisher.ProjectKey != deployment.ProjectKey || !opaqueid.Valid(publisher.PublisherIdentityId, opaqueid.PublisherIdentityPrefix) || publisher.SnapshotAt.IsZero() || len(publisher.Services) > 128
 	for name, protocol := range publisher.Services {
 		invalid = invalid || !naming.ValidServiceName(name) || !protocol.Valid()
 	}
@@ -179,7 +179,7 @@ func deploymentPublisherBlock(publisher controlv1.DeploymentPublisher) clioutput
 	if publisher.RevokedAt != nil {
 		state = "revoked"
 	}
-	fields := []clioutput.Field{{Label: "deployment", Value: publisher.GroupId}, {Label: "state", Value: state}, {Label: "current revision", Value: strconv.FormatInt(publisher.CurrentRevision, 10)}, {Label: "observed revision", Value: strconv.FormatInt(publisher.ObservedRevision, 10)}, {Label: "snapshot", Value: publisher.SnapshotAt.UTC().Format(time.RFC3339)}}
+	fields := []clioutput.Field{{Label: "deployment", Value: publisher.DeploymentId}, {Label: "state", Value: state}, {Label: "current revision", Value: strconv.FormatInt(publisher.CurrentRevision, 10)}, {Label: "observed revision", Value: strconv.FormatInt(publisher.ObservedRevision, 10)}, {Label: "snapshot", Value: publisher.SnapshotAt.UTC().Format(time.RFC3339)}}
 	if publisher.AcknowledgedAt != nil {
 		fields = append(fields, clioutput.Field{Label: "acknowledged at", Value: publisher.AcknowledgedAt.UTC().Format(time.RFC3339)})
 	}

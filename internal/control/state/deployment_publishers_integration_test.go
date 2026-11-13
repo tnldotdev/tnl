@@ -48,7 +48,7 @@ func TestIntegrationDeploymentPublisherScopeRecoveryAndRevocation(t *testing.T) 
 	if err != nil || !reflect.DeepEqual(enrollment.Services, map[string]string{"db": "postgres"}) {
 		t.Fatal("scoped setup did not capture the selected protocol", err)
 	}
-	request.Selector = enrollment.GroupID
+	request.Selector = enrollment.DeploymentID
 	recovered, err := d.CreateDeploymentPublisherEnrollment(ctx, request)
 	if err != nil || !reflect.DeepEqual(recovered, enrollment) {
 		t.Fatal("lost setup reply changed its secret, scope, or fixed deadline", err)
@@ -67,20 +67,20 @@ func TestIntegrationDeploymentPublisherScopeRecoveryAndRevocation(t *testing.T) 
 			t.Fatal("invalid or foreign binding admitted", names, err)
 		}
 	}
-	a := enrollAppliedGroup(t, d, r, enrollment.PublisherGroupEnrollment, now)
-	b := enrollAppliedGroup(t, d, r, enrollment.PublisherGroupEnrollment, now)
+	a := enrollAppliedDeployment(t, d, r, enrollment, now)
+	b := enrollAppliedDeployment(t, d, r, enrollment, now)
 	if len(a.assignments.Services) != 1 || a.assignments.Services[0].Service != "db" || len(b.assignments.Services) != 1 {
 		t.Fatal("scoped enrollment granted unrelated targets")
 	}
 	// replay with a new key cannot recover a member from another enrollment in
-	// the same group, nor turn its original installation key into wider authority.
+	// the same deployment, nor turn its original installation key into wider authority.
 	wider := request
 	wider.IdempotencyKey, wider.Services = "wider", []string{"db", "web"}
 	widerEnrollment, err := d.CreateDeploymentPublisherEnrollment(ctx, wider)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.RedeemPublisherGroupEnrollment(ctx, widerEnrollment.Key, a.private.Public().(ed25519.PublicKey), now); !errors.Is(err, ErrPublisherGroup) {
+	if _, err = d.RedeemDeploymentPublisherEnrollment(ctx, widerEnrollment.Key, a.private.Public().(ed25519.PublicKey), now); !errors.Is(err, ErrDeploymentPublisher) {
 		t.Fatal("same public key recovered through another enrollment", err)
 	}
 	if _, err = d.CreateDeploymentPublisherEnrollment(ctx, request); !errors.Is(err, ErrPublisherEnrollment) {
@@ -97,12 +97,12 @@ func TestIntegrationDeploymentPublisherScopeRecoveryAndRevocation(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	assignments, err := d.GetPublisherGroupAssignments(ctx, a.lease.AccessToken, now)
+	assignments, err := d.GetDeploymentPublisherAssignments(ctx, a.lease.AccessToken, now)
 	if err != nil || len(assignments.Services) != 1 || assignments.Services[0].Service != "db" || assignments.Services[0].Configuration.Target != db.Target {
 		t.Fatal("apply expanded setup scope or lost its approved target update", err)
 	}
 	assignment := assignments.Services[0]
-	access := groupAssignmentAccess(t, d, a, assignment, now)
+	access := deploymentAssignmentAccess(t, d, a, assignment, now)
 	prepared, err := d.PrepareServiceRun(ctx, assignment.ServiceID, access.PublisherIdentity, "scoped", now, ServiceMetadata{Protocol: "postgres", PublisherPool: true, TrustRevision: assignment.TrustRevision})
 	if err != nil {
 		t.Fatal(err)
@@ -111,16 +111,16 @@ func TestIntegrationDeploymentPublisherScopeRecoveryAndRevocation(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime := PublisherRuntimeRequest{PublisherIdentityID: a.member.PublisherIdentityID, ScopeID: a.member.GroupID, ProcessRunID: strings.Repeat("a", 32), Action: "start", Audience: "https://control.example/v1/publisher-runtime", SourceIP: "8.8.8.8", Now: now}
+	runtime := PublisherRuntimeRequest{PublisherIdentityID: a.member.PublisherIdentityID, ScopeID: a.member.DeploymentID, ProcessRunID: strings.Repeat("a", 32), Action: "start", Audience: "https://control.example/v1/publisher-runtime", SourceIP: "8.8.8.8", Now: now}
 	runtime.Assertion, err = publisherproof.Sign(a.member.PublisherIdentityID, a.member.KeyID, publisherproof.RuntimeScope(runtime.ScopeID, runtime.Action, runtime.ProcessRunID, 0, ""), runtime.Audience, a.private, now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	started, err := d.PublisherRuntime(ctx, runtime)
-	if err != nil || started.GroupLease == nil {
+	if err != nil || started.DeploymentLease == nil {
 		t.Fatal("scoped publisher could not report its runtime", err)
 	}
-	if err = d.AcknowledgePublisherGroupConfiguration(ctx, started.GroupLease.AccessToken, assignments.Revision, assignments.ConfigurationHash, true, now); err != nil {
+	if err = d.AcknowledgeDeploymentPublisherConfiguration(ctx, started.DeploymentLease.AccessToken, assignments.Revision, assignments.ConfigurationHash, true, now); err != nil {
 		t.Fatal(err)
 	}
 	status, err := d.GetDeploymentPublisher(ctx, request.DeploymentScope, "production", a.member.PublisherIdentityID)
@@ -131,7 +131,7 @@ func TestIntegrationDeploymentPublisherScopeRecoveryAndRevocation(t *testing.T) 
 	if err != nil || len(page) != 1 {
 		t.Fatal("publisher page unavailable", err)
 	}
-	next, err := d.ListDeploymentPublishers(ctx, request.DeploymentScope, enrollment.GroupID, page[0].PublisherIdentityID, 1)
+	next, err := d.ListDeploymentPublishers(ctx, request.DeploymentScope, enrollment.DeploymentID, page[0].PublisherIdentityID, 1)
 	if err != nil || len(next) != 1 || next[0].PublisherIdentityID == page[0].PublisherIdentityID {
 		t.Fatal("publisher pagination repeated or lost an identity", err)
 	}
@@ -142,12 +142,12 @@ func TestIntegrationDeploymentPublisherScopeRecoveryAndRevocation(t *testing.T) 
 		t.Fatal("publisher revocation crossed deployments", err)
 	}
 	for range 2 {
-		if err = d.RevokeDeploymentPublisher(ctx, request.DeploymentScope, enrollment.GroupID, a.member.PublisherIdentityID, now); err != nil {
+		if err = d.RevokeDeploymentPublisher(ctx, request.DeploymentScope, enrollment.DeploymentID, a.member.PublisherIdentityID, now); err != nil {
 			t.Fatal("exact publisher revocation was not repeatable", err)
 		}
 	}
-	if _, err = d.GetPublisherGroupAssignments(ctx, started.GroupLease.AccessToken, now); !errors.Is(err, ErrPublisherGroup) {
-		t.Fatal("revocation retained the group lease", err)
+	if _, err = d.GetDeploymentPublisherAssignments(ctx, started.DeploymentLease.AccessToken, now); !errors.Is(err, ErrDeploymentPublisher) {
+		t.Fatal("revocation retained the deployment lease", err)
 	}
 	if _, err = d.AuthenticatePublisherAccess(ctx, access.Token, "", now); !errors.Is(err, ErrPublisherIdentity) {
 		t.Fatal("revocation retained exact-service access", err)
@@ -156,7 +156,7 @@ func TestIntegrationDeploymentPublisherScopeRecoveryAndRevocation(t *testing.T) 
 	if err = d.pool.QueryRow(ctx, `SELECT closed_at IS NOT NULL FROM control.service_runs WHERE id=$1`, run.RunID).Scan(&closed); err != nil || !closed {
 		t.Fatal("revocation left the publisher's run open", err)
 	}
-	if _, err = d.GetPublisherGroupAssignments(ctx, b.lease.AccessToken, now); err != nil {
+	if _, err = d.GetDeploymentPublisherAssignments(ctx, b.lease.AccessToken, now); err != nil {
 		t.Fatal("revoking one publisher disturbed its sibling", err)
 	}
 	status, err = d.GetDeploymentPublisher(ctx, request.DeploymentScope, "production", a.member.PublisherIdentityID)
@@ -173,7 +173,7 @@ func TestIntegrationDeploymentPublisherScopeRecoveryAndRevocation(t *testing.T) 
 	if _, err = d.ApplyProjectConfiguration(ctx, r); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.RedeemPublisherGroupEnrollment(ctx, enrollment.Key, a.private.Public().(ed25519.PublicKey), now); !errors.Is(err, ErrPublisherGroup) {
+	if _, err = d.RedeemDeploymentPublisherEnrollment(ctx, enrollment.Key, a.private.Public().(ed25519.PublicKey), now); !errors.Is(err, ErrDeploymentPublisher) {
 		t.Fatal("apply or enrollment replay restored a revoked identity", err)
 	}
 }
@@ -187,7 +187,7 @@ func TestIntegrationDeploymentPublisherApprovalCannotFollowReusedBindings(t *tes
 			if err != nil {
 				t.Fatal(err)
 			}
-			replica := enrollAppliedGroup(t, d, r, enrollment.PublisherGroupEnrollment, now)
+			replica := enrollAppliedDeployment(t, d, r, enrollment, now)
 			db := r.Configuration.Services["db"]
 			if mutation == "protocol" {
 				changed := db
@@ -210,12 +210,12 @@ func TestIntegrationDeploymentPublisherApprovalCannotFollowReusedBindings(t *tes
 			if _, err = d.ApplyProjectConfiguration(t.Context(), r); err != nil {
 				t.Fatal(err)
 			}
-			assignments, err := d.GetPublisherGroupAssignments(t.Context(), replica.lease.AccessToken, now)
+			assignments, err := d.GetDeploymentPublisherAssignments(t.Context(), replica.lease.AccessToken, now)
 			if err != nil || len(assignments.Services) != 0 {
 				t.Fatal("rollback or a reused name restored retired approval", err)
 			}
 			public, _, _ := ed25519.GenerateKey(rand.Reader)
-			if _, err = d.RedeemPublisherGroupEnrollment(t.Context(), enrollment.Key, public, now); !errors.Is(err, ErrPublisherGroup) {
+			if _, err = d.RedeemDeploymentPublisherEnrollment(t.Context(), enrollment.Key, public, now); !errors.Is(err, ErrDeploymentPublisher) {
 				t.Fatal("old enrollment admitted a new publisher after binding reuse", err)
 			}
 			request.IdempotencyKey = "new-approval"
@@ -234,7 +234,7 @@ func TestIntegrationDeploymentPublisherRecoverySurvivesStorageRotation(t *testin
 		t.Fatal(err)
 	}
 	var sealed []byte
-	if err = d.pool.QueryRow(t.Context(), `SELECT secret_ciphertext FROM control.publisher_group_enrollments WHERE id=$1`, original.ID).Scan(&sealed); err != nil || len(sealed) == 0 || bytes.Contains(sealed, []byte(original.Key)) {
+	if err = d.pool.QueryRow(t.Context(), `SELECT secret_ciphertext FROM control.deployment_publisher_enrollments WHERE id=$1`, original.ID).Scan(&sealed); err != nil || len(sealed) == 0 || bytes.Contains(sealed, []byte(original.Key)) {
 		t.Fatal("recoverable setup secret was not encrypted", err)
 	}
 	key := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{9}, 32))
@@ -266,7 +266,7 @@ func TestIntegrationDeploymentPublisherManagerRevocationDuringLockWait(t *testin
 			if err != nil {
 				t.Fatal(err)
 			}
-			replica := enrollAppliedGroup(t, d, r, enrollment.PublisherGroupEnrollment, now)
+			replica := enrollAppliedDeployment(t, d, r, enrollment, now)
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			workers := newIntegrationWorkers(t, cancel)
 			defer workers.stop()
@@ -275,7 +275,7 @@ func TestIntegrationDeploymentPublisherManagerRevocationDuringLockWait(t *testin
 				t.Fatal(err)
 			}
 			defer rollbackTestTransaction(t, gate)
-			if _, err = controlstatedb.New(gate).LockProjectPublisherGroup(ctx, enrollment.GroupID); err != nil {
+			if _, err = controlstatedb.New(gate).LockDeploymentByID(ctx, enrollment.DeploymentID); err != nil {
 				t.Fatal(err)
 			}
 			if operation == "create" {
@@ -288,11 +288,11 @@ func TestIntegrationDeploymentPublisherManagerRevocationDuringLockWait(t *testin
 				case "create", "recover":
 					_, err = d.CreateDeploymentPublisherEnrollment(ctx, request)
 				case "get":
-					_, err = d.GetDeploymentPublisher(ctx, request.DeploymentScope, enrollment.GroupID, replica.member.PublisherIdentityID)
+					_, err = d.GetDeploymentPublisher(ctx, request.DeploymentScope, enrollment.DeploymentID, replica.member.PublisherIdentityID)
 				case "list":
-					_, err = d.ListDeploymentPublishers(ctx, request.DeploymentScope, enrollment.GroupID, "", 100)
+					_, err = d.ListDeploymentPublishers(ctx, request.DeploymentScope, enrollment.DeploymentID, "", 100)
 				case "revoke":
-					err = d.RevokeDeploymentPublisher(ctx, request.DeploymentScope, enrollment.GroupID, replica.member.PublisherIdentityID, now)
+					err = d.RevokeDeploymentPublisher(ctx, request.DeploymentScope, enrollment.DeploymentID, replica.member.PublisherIdentityID, now)
 				}
 				done <- err
 			})
@@ -308,7 +308,7 @@ func TestIntegrationDeploymentPublisherManagerRevocationDuringLockWait(t *testin
 			}
 			var count int
 			var revoked bool
-			if err = d.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM control.publisher_group_enrollments WHERE group_id=$1),revoked_at IS NOT NULL FROM control.publisher_identities WHERE id=$2`, enrollment.GroupID, replica.member.PublisherIdentityID).Scan(&count, &revoked); err != nil || count != 1 || revoked {
+			if err = d.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM control.deployment_publisher_enrollments WHERE deployment_id=$1),revoked_at IS NOT NULL FROM control.publisher_identities WHERE id=$2`, enrollment.DeploymentID, replica.member.PublisherIdentityID).Scan(&count, &revoked); err != nil || count != 1 || revoked {
 				t.Fatal("denied publisher management committed state", count, revoked, err)
 			}
 		})
@@ -332,7 +332,7 @@ func TestIntegrationDeploymentPublisherEnrollmentExpiryDuringLockWait(t *testing
 				t.Fatal(err)
 			}
 			defer rollbackTestTransaction(t, gate)
-			if _, err = controlstatedb.New(gate).LockPublisherGroupEnrollment(ctx, enrollment.ID); err != nil {
+			if _, err = controlstatedb.New(gate).LockDeploymentPublisherEnrollment(ctx, enrollment.ID); err != nil {
 				t.Fatal(err)
 			}
 			public, _, _ := ed25519.GenerateKey(rand.Reader)
@@ -344,7 +344,7 @@ func TestIntegrationDeploymentPublisherEnrollmentExpiryDuringLockWait(t *testing
 				if operation == "recover" {
 					_, err = d.CreateDeploymentPublisherEnrollment(ctx, request)
 				} else {
-					_, err = d.RedeemPublisherGroupEnrollment(ctx, enrollment.Key, public, request.Now)
+					_, err = d.RedeemDeploymentPublisherEnrollment(ctx, enrollment.Key, public, request.Now)
 				}
 				done <- err
 			})
@@ -363,13 +363,13 @@ func TestIntegrationDeploymentPublisherEnrollmentExpiryDuringLockWait(t *testing
 			err = awaitIntegrationResult(t, ctx, done)
 			want := ErrPublisherEnrollment
 			if operation == "redeem" {
-				want = ErrPublisherGroup
+				want = ErrDeploymentPublisher
 			}
 			if !errors.Is(err, want) {
 				t.Fatal("lock wait renewed or admitted expired setup authority", err)
 			}
 			var members int
-			if err = d.pool.QueryRow(ctx, `SELECT count(*) FROM control.publisher_group_members WHERE enrollment_id=$1`, enrollment.ID).Scan(&members); err != nil || members != 0 {
+			if err = d.pool.QueryRow(ctx, `SELECT count(*) FROM control.deployment_publisher_members WHERE enrollment_id=$1`, enrollment.ID).Scan(&members); err != nil || members != 0 {
 				t.Fatal("expired enrollment committed a publisher", members, err)
 			}
 		})

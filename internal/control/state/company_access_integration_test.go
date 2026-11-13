@@ -576,7 +576,7 @@ func TestIntegrationCompanyOffboardingClosesMemberPublicAndServiceRuns(t *testin
 	if _, err = d.ApplyProjectConfiguration(t.Context(), groupRequest); err != nil {
 		t.Fatal(err)
 	}
-	groupEnrollment, err := d.IssuePublisherGroupEnrollment(t.Context(), team, groupRequest.ProjectKey, "production", f.member.IdentityID, 1, time.Hour, now)
+	groupEnrollment, err := testDeploymentPublisherEnrollment(d, t.Context(), team, groupRequest.ProjectKey, "production", f.member.IdentityID, 1, time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -631,7 +631,7 @@ func TestIntegrationCompanyOffboardingClosesMemberPublicAndServiceRuns(t *testin
 	if _, err = d.HeartbeatServiceRun(t.Context(), service.ID, serviceRun.RunID, serviceRun.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64}); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("offboarded member private run renewed", err)
 	}
-	replica := enrollAppliedGroup(t, d, groupRequest, groupEnrollment, now)
+	replica := enrollAppliedDeployment(t, d, groupRequest, groupEnrollment, now)
 	var groupOwnership string
 	if err = d.pool.QueryRow(t.Context(), `SELECT ownership FROM control.publisher_identities WHERE id=$1`, replica.member.PublisherIdentityID).Scan(&groupOwnership); err != nil || groupOwnership != "team" {
 		t.Fatal("group creator remained runtime owner", groupOwnership, err)

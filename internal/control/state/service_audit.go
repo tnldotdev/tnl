@@ -55,7 +55,7 @@ func RecordServiceAudit(ctx context.Context, tx pgx.Tx, event serviceaudit.Event
 		return serviceaudit.ErrInvalid
 	}
 	switch event.EventType {
-	case "service.create", "service.update", "service.delete", "grant.create", "grant.revoke", "invitation.create", "invitation.accept", "invitation.revoke", "trust.update", "device.enroll", "device.revoke", "publisher.join", "publisher.revoke", "run.prepare", "run.start", "run.close", "apply", "group.update", "certificate.issue", "certificate.install", "certificate.client.issue":
+	case "service.create", "service.update", "service.delete", "grant.create", "grant.revoke", "invitation.create", "invitation.accept", "invitation.revoke", "trust.update", "device.enroll", "device.revoke", "publisher.join", "publisher.revoke", "run.prepare", "run.start", "run.close", "apply", "deployment.update", "certificate.issue", "certificate.install", "certificate.client.issue":
 	default:
 		return serviceaudit.ErrInvalid
 	}

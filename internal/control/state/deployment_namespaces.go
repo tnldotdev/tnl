@@ -19,7 +19,7 @@ func resolveDeploymentDomain(ctx context.Context, tx pgx.Tx, team, project, name
 	}
 	q := controlstatedb.New(tx)
 	if c.Settings.DomainID == "" {
-		if err := tx.QueryRow(ctx, `SELECT COALESCE((SELECT domain_id FROM control.project_publisher_groups WHERE team_id=$1 AND project_key=$2 AND name=$3 AND deleted_at IS NULL),default_domain_id) FROM control.teams WHERE id=$1 AND deleted_at IS NULL`, team, project, name).Scan(&c.Settings.DomainID); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT COALESCE((SELECT domain_id FROM control.deployments WHERE team_id=$1 AND project_key=$2 AND name=$3 AND deleted_at IS NULL),default_domain_id) FROM control.teams WHERE id=$1 AND deleted_at IS NULL`, team, project, name).Scan(&c.Settings.DomainID); err != nil {
 			return c, publisherLookupError(err, ErrProjectConfigurationInvalid)
 		}
 	}
@@ -31,7 +31,7 @@ func resolveDeploymentDomain(ctx context.Context, tx pgx.Tx, team, project, name
 
 func (d *Database) ensureDeploymentNamespace(ctx context.Context, tx pgx.Tx, r ApplyProjectConfigurationRequest, deploymentID, name string, settings DeploymentSettings, namespaceLabel string) error {
 	var namespace, domainID, projectLabel string
-	if err := tx.QueryRow(ctx, `SELECT g.namespace,COALESCE(g.domain_id,''),p.project_label FROM control.project_publisher_groups g JOIN control.applied_projects p USING(team_id,project_key) WHERE g.id=$1 FOR UPDATE OF g`, deploymentID).Scan(&namespace, &domainID, &projectLabel); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT g.namespace,COALESCE(g.domain_id,''),p.project_label FROM control.deployments g JOIN control.applied_projects p USING(team_id,project_key) WHERE g.id=$1 FOR UPDATE OF g`, deploymentID).Scan(&namespace, &domainID, &projectLabel); err != nil {
 		return err
 	}
 	if namespace != "" {
@@ -69,9 +69,9 @@ func (d *Database) ensureDeploymentNamespace(ctx context.Context, tx pgx.Tx, r A
 		// released claims may be reused only after their old authority has fully
 		// retired. the claim itself, rather than a friendly name, owns this scope.
 		var claimed string
-		err = tx.QueryRow(ctx, `INSERT INTO control.service_namespace_claims(namespace,group_id,domain_id,created_at) VALUES($1,$2,$3,$4)
-		    ON CONFLICT(namespace) DO UPDATE SET group_id=EXCLUDED.group_id,domain_id=EXCLUDED.domain_id,created_at=EXCLUDED.created_at,retired_at=NULL,reusable_after=NULL
-		    WHERE control.service_namespace_claims.group_id=EXCLUDED.group_id AND control.service_namespace_claims.retired_at IS NULL
+		err = tx.QueryRow(ctx, `INSERT INTO control.service_namespace_claims(namespace,deployment_id,domain_id,created_at) VALUES($1,$2,$3,$4)
+		    ON CONFLICT(namespace) DO UPDATE SET deployment_id=EXCLUDED.deployment_id,domain_id=EXCLUDED.domain_id,created_at=EXCLUDED.created_at,retired_at=NULL,reusable_after=NULL
+		    WHERE control.service_namespace_claims.deployment_id=EXCLUDED.deployment_id AND control.service_namespace_claims.retired_at IS NULL
 		      OR control.service_namespace_reusable(control.service_namespace_claims.namespace,$4)
 		    RETURNING namespace`, namespace, deploymentID, settings.DomainID, r.Now).Scan(&claimed)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -81,7 +81,7 @@ func (d *Database) ensureDeploymentNamespace(ctx context.Context, tx pgx.Tx, r A
 			return err
 		}
 	}
-	_, err := tx.Exec(ctx, `UPDATE control.project_publisher_groups SET namespace=$2,domain_id=$3,public=$4 WHERE id=$1`, deploymentID, namespace, settings.DomainID, settings.Public)
+	_, err := tx.Exec(ctx, `UPDATE control.deployments SET namespace=$2,domain_id=$3,public=$4 WHERE id=$1`, deploymentID, namespace, settings.DomainID, settings.Public)
 	if err != nil {
 		return err
 	}
@@ -90,16 +90,16 @@ func (d *Database) ensureDeploymentNamespace(ctx context.Context, tx pgx.Tx, r A
 
 func claimDeploymentName(ctx context.Context, tx pgx.Tx, team, project, name, deploymentID string, now time.Time) error {
 	var owner string
-	err := tx.QueryRow(ctx, `INSERT INTO control.publisher_group_names(team_id,project_key,name,group_id) VALUES($1,$2,$3,$4) ON CONFLICT(team_id,project_key,name) DO UPDATE SET group_id=EXCLUDED.group_id
-	    WHERE control.publisher_group_names.group_id=EXCLUDED.group_id RETURNING group_id`, team, project, name, deploymentID).Scan(&owner)
+	err := tx.QueryRow(ctx, `INSERT INTO control.deployment_names(team_id,project_key,name,deployment_id) VALUES($1,$2,$3,$4) ON CONFLICT(team_id,project_key,name) DO UPDATE SET deployment_id=EXCLUDED.deployment_id
+	    WHERE control.deployment_names.deployment_id=EXCLUDED.deployment_id RETURNING deployment_id`, team, project, name, deploymentID).Scan(&owner)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrServiceConflict
 	}
 	return err
 }
 
-func retireServiceNamespace(ctx context.Context, tx pgx.Tx, group string, now time.Time) error {
-	_, err := tx.Exec(ctx, `UPDATE control.service_namespace_claims claim SET retired_at=$2::timestamptz,reusable_after=GREATEST($2::timestamptz+interval '7 days',COALESCE((SELECT max(not_after) FROM control.acme_orders WHERE certificate_scope=claim.namespace),$2::timestamptz)) WHERE group_id=$1 AND retired_at IS NULL`, group, now)
+func retireServiceNamespace(ctx context.Context, tx pgx.Tx, deployment string, now time.Time) error {
+	_, err := tx.Exec(ctx, `UPDATE control.service_namespace_claims claim SET retired_at=$2::timestamptz,reusable_after=GREATEST($2::timestamptz+interval '7 days',COALESCE((SELECT max(not_after) FROM control.acme_orders WHERE certificate_scope=claim.namespace),$2::timestamptz)) WHERE deployment_id=$1 AND retired_at IS NULL`, deployment, now)
 	return err
 }
 

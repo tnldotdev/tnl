@@ -10,7 +10,6 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"time"
 
 	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/buildinfo"
@@ -35,7 +34,7 @@ type cli struct {
 	NoConfig    bool              `name:"no-config" help:"Skip project configuration; put this flag before the command."`
 	NoTelemetry bool              `name:"no-telemetry" env:"TNL_NO_TELEMETRY" help:"Disable pseudonymous usage telemetry."`
 	Init        initCommand       `cmd:"" help:"Set up tnl for the current project." group:"start"`
-	Apply       applyCommand      `cmd:"" help:"Reconcile this project's declared services and publisher groups with control." group:"manage"`
+	Apply       applyCommand      `cmd:"" help:"Reconcile this project's declared services and deployments with control." group:"manage"`
 	Deployment  deploymentCommand `cmd:"" help:"Manage saved deployments and selected target bindings." group:"manage"`
 	Generate    generateCommand   `cmd:"" help:"Generate portable project types and declared publisher infrastructure offline." group:"manage"`
 	Check       struct{}          `cmd:"" help:"Validate project configuration and show its selected path." group:"manage"`
@@ -452,7 +451,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, factories
 	if parsedCommand == "publisher serve" {
 		serve := &flags.Publisher.Serve
 		if serve.fixedList() {
-			return runFixedPublisherGroups(ctx, *serve, stderr)
+			return runFixedDeploymentRuntime(ctx, *serve, stderr)
 		}
 		if err := validatePublisherServe(*serve); err != nil {
 			return err
@@ -472,10 +471,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, factories
 			}
 			// the owning child consumes the injected secret before loading project
 			// configuration; clear the launching process's copy after handoff too.
-			defer os.Unsetenv("TNL_GROUP_IDENTITY")
+			defer os.Unsetenv("TNL_DEPLOYMENT_IDENTITY")
 			return detachPublish(ctx, args, serve.StateDir, stdout, "tnl publisher serve")
 		}
-		if err := preparePublisherGroupIdentity(serve); err != nil {
+		if err := prepareDeploymentIdentity(serve); err != nil {
 			return err
 		}
 		if serve.DetachedChild != "" {
@@ -694,12 +693,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, factories
 	case "connect remove <name>":
 		return runConnectJobs(ctx, flags.Connect.Remove.connectListCommand, flags.Connect.Remove.Name, "remove", stdout)
 	case "publisher enroll <public-url-id>", "publisher enroll":
-		if flags.Publisher.Enroll.Group != "" {
-			return runPublisherGroupEnrollment(ctx, flags.Publisher.Enroll, project, stdout, stderr)
-		}
-		if flags.Publisher.Enroll.ProjectKey != "" || flags.Publisher.Enroll.Members != 1 || flags.Publisher.Enroll.ExpiresIn != 10*time.Minute {
-			return publisherCLIError("--project-key, --members, and --expires-in require --group")
-		}
 		return runPublisherEnroll(ctx, flags.Publisher.Enroll, stdout, stderr)
 	case "publisher current":
 		return runPublisherCurrent(ctx, flags.Publisher.Current, stdout)
@@ -707,10 +700,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, factories
 		return runPublisherSetup(ctx, flags.Publisher.Setup, project, stdout, stderr)
 	case "publisher serve":
 		return runPublisherServe(ctx, flags.Publisher.Serve, project, stdout, stderr)
-	case "publisher rename <group> <name>":
-		return runPublisherGroupRename(ctx, flags.Publisher.Rename, project, stdout, stderr)
-	case "publisher namespace rename <group> <label>":
-		return runPublisherNamespaceRename(ctx, flags.Publisher.Namespace.Rename, project, stdout, stderr)
+	case "deployment rename <deployment> <name>":
+		return runDeploymentRename(ctx, flags.Deployment.Rename, project, stdout, stderr)
+	case "deployment namespace rename <deployment> <label>":
+		return runDeploymentNamespaceRename(ctx, flags.Deployment.Namespace.Rename, project, stdout, stderr)
 	case "publisher provision":
 		return runPublisherProvision(ctx, flags.Publisher.Provision, project, stdout, stderr)
 	case "publisher list":

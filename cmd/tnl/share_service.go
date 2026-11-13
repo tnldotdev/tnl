@@ -115,7 +115,7 @@ func (f serviceShareDeadline) deadline(now time.Time, maximum time.Duration) (ti
 }
 
 // only configuration keys and immutable IDs select service access. saved names,
-// public URL hostnames, and publisher group names are not fallback selectors.
+// public URL hostnames, and deployment names are not fallback selectors.
 func serviceShareKey(project projectConfiguration, name string) (string, error) {
 	if opaqueid.Valid(name, opaqueid.ServicePrefix) {
 		return "", nil

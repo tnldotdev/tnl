@@ -34,8 +34,8 @@ func (d *Database) GetProjectService(ctx context.Context, r GetProjectServiceReq
 	}
 	var id string
 	err = tx.QueryRow(ctx, `SELECT service.service_id FROM control.applied_project_services service JOIN control.applied_projects project USING(team_id,project_key)
-	    JOIN control.project_publisher_groups publisher_group ON publisher_group.id=service.group_id AND publisher_group.deleted_at IS NULL
-	    WHERE project.team_id=$1 AND project.project_key=$2 AND project.source_fingerprint=$3 AND service.service=$4 AND service.service_id IS NOT NULL AND publisher_group.name=$5`, r.TeamID, r.ProjectKey, r.SourceFingerprint, r.Service, r.Deployment).Scan(&id)
+	    JOIN control.deployments deployment ON deployment.id=service.deployment_id AND deployment.deleted_at IS NULL
+	    WHERE project.team_id=$1 AND project.project_key=$2 AND project.source_fingerprint=$3 AND service.service=$4 AND service.service_id IS NOT NULL AND deployment.name=$5`, r.TeamID, r.ProjectKey, r.SourceFingerprint, r.Service, r.Deployment).Scan(&id)
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}

@@ -29,7 +29,7 @@ type Stores struct {
 	GuestPublishers           GuestPublisherStore
 	PublisherRuns             PublisherRunStore
 	PublisherIdentities       PublisherIdentityStore
-	PublisherGroups           GroupStore
+	DeploymentRuntime         DeploymentRuntimeStore
 	PublisherRuntime          PublisherRuntimeStore
 	ProjectConfiguration      ProjectConfigurationStore
 	Deployments               DeploymentStore
@@ -59,12 +59,6 @@ type GuestStore interface {
 	GuestSourceMatches(controlstate.GuestTrial, string) (bool, error)
 	AllocateGuestDemoNumber(context.Context, string, time.Time) (int64, error)
 	GuestIssuanceAllowed(context.Context, netip.Addr, time.Time) error
-}
-
-type GroupStore interface {
-	PublisherGroupStore
-	RenamePublisherNamespace(context.Context, controlstate.RenamePublisherNamespaceRequest) (controlstate.AppliedProjectConfiguration, error)
-	RenamePublisherGroup(context.Context, string, string, string, string, string, int64, time.Time) (controlstate.AppliedProjectConfiguration, error)
 }
 
 type PublisherRuntimeStore interface {
@@ -134,7 +128,7 @@ func DatabaseStores(database *controlstate.Database) Stores {
 		Visitors: database, Previews: database, PreviewTeamAccess: database,
 		BrowserAccess: database, Shares: database, ShareAccess: database, Feedback: database,
 		Guests: database, GuestAuthorization: database, GuestPublishers: database,
-		PublisherRuns: database, PublisherIdentities: database, PublisherGroups: database,
+		PublisherRuns: database, PublisherIdentities: database, DeploymentRuntime: database,
 		PublisherRuntime: database, ProjectConfiguration: database, ProjectServices: database, Deployments: database, DeploymentPublishers: database, DeploymentCredentials: database, DeploymentConnect: database,
 		LocalProjects: database, Services: database, ServiceRuns: database,
 		ServiceCertificates: database, ServiceClientCertificates: database, ServiceHTTP: database,
