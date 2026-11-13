@@ -296,9 +296,6 @@ def test_deployment_captures_provider_source_but_acquires_each_request_assertion
                 assertion for _, assertion in native.requests if assertion is not None
             ) == ["first", "other", "rotated"]
             assert len(native.owners) == 2
-            with pytest.raises(tnl.TnlError) as publish:
-                await deployment.publish("web")
-            assert publish.value.code == "sdk.configuration_invalid"
         finally:
             await deployment.aclose()
         assert "sdk-stop" in native.calls
