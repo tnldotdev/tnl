@@ -617,16 +617,24 @@ func TestIntegrationAppliedProjectHTTPSettingsAndTargetTrust(t *testing.T) {
 	s.PublicURL = nil
 	period := config.Duration(time.Second)
 	s.HTTP.Limits.Rate = &config.Rate{Per: &period}
-	bad.Configuration.Services["web"] = s
-	encoded, err := json.Marshal(bad.Configuration)
+	deployment, err := controlstatedb.New(d.pool).LockProjectPublisherGroup(t.Context(), replica.member.GroupID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	encrypted, err := d.storageKey.Seal(appliedProjectContext(r.TeamID, r.ProjectKey), encoded)
+	snapshot, err := d.openDeploymentConfiguration(deployment)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.pool.Exec(t.Context(), `UPDATE control.applied_projects SET configuration_ciphertext=$3,storage_key_id=$4 WHERE team_id=$1 AND project_key=$2`, r.TeamID, r.ProjectKey, encrypted, d.storageKey.CurrentID()); err != nil {
+	snapshot.Services["web"] = s
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encrypted, err := d.storageKey.Seal(deploymentConfigurationContext(deployment.ID), encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = d.pool.Exec(t.Context(), `UPDATE control.project_publisher_groups SET configuration_ciphertext=$2,storage_key_id=$3 WHERE id=$1`, deployment.ID, encrypted, d.storageKey.CurrentID()); err != nil {
 		t.Fatal(err)
 	}
 	if err = d.serviceHTTPSourceAllowed(t.Context(), controlstatedb.New(d.pool), id, netip.MustParseAddr("203.0.113.10")); !errors.Is(err, ErrServiceAccess) {
