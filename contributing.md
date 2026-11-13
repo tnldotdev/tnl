@@ -103,16 +103,15 @@ Zod resolvers keep closed request objects strict and JSON counters numeric; serv
 authorization and validation remain authoritative. The generator uses a pinned
 TypeScript 6 compiler API without changing the TypeScript 7 application checks.
 
-The deployment replacement uses schema version `1` and baseline identity
-`deployments-v1`. Initialize a fresh PostgreSQL database with `tnld migrate`,
-then start matching server, publisher, and connector binaries. Earlier databases
-are rejected; do not relabel or import them. Replacing an existing deployment
-requires a coordinated stop/start of all server roles.
+The deployment schema stays in `00001_baseline.sql`, with schema version `1`
+and baseline identity `v1`. Initialize a fresh PostgreSQL database with
+`tnld migrate`, then start matching server, publisher, and connector binaries.
+Do not rename the baseline identity for feature work or relabel an existing
+database. Replacing server builds requires a coordinated stop/start of all roles.
 
 `tnld migrate` accepts only `TNLD_DATABASE_DIRECT_URL`; serving roles use pooled
 `TNLD_DATABASE_URL` and require the exact schema version and baseline identity.
-Use one coordinated cutover for the completed deployment changes, not a sequence
-of feature-specific baseline identities.
+Use matching schema and binaries; the baseline identity is not a feature version.
 A publisher restart does not restore its application sockets.
 
 The client telemetry baseline also requires a fresh client state directory. Use

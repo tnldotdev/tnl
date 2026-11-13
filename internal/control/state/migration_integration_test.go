@@ -120,8 +120,8 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 		t.Fatalf("schema version = %d, %v", version, err)
 	}
 	var identity string
-	if err := database.pool.QueryRow(ctx, `SELECT baseline_id FROM control.schema_identity WHERE id=1`).Scan(&identity); err != nil || identity != "deployments-v1" {
-		t.Fatalf("baseline identity = %q, %v; want deployments-v1", identity, err)
+	if err := database.pool.QueryRow(ctx, `SELECT baseline_id FROM control.schema_identity WHERE id=1`).Scan(&identity); err != nil || identity != "v1" {
+		t.Fatalf("baseline identity = %q, %v; want v1", identity, err)
 	}
 	// serving roles require the exact coordinated baseline and version.
 	if _, err := database.pool.Exec(ctx, `ALTER TABLE control.public_urls ADD COLUMN future_note text`); err != nil {
@@ -221,7 +221,7 @@ func TestIntegrationMigrationRejectsSiblingWorkloadBaselines(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, previous := range []string{
-		"v1",
+		"deployments-v1",
 		"tnl-control-fresh-v1-selected-deployments",
 		"tnl-control-fresh-v1-deployment-connect",
 		"tnl-control-fresh-v1-deployment-management",
