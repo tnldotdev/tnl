@@ -408,6 +408,10 @@ Here's how `tnl` compares to Tailscale, Cloudflare, and ngrok.
 | Run the server infrastructure yourself        | Yes                     | w/ Headscale           | No                           | No                      |
 | Route a whole subnet                          | No, individual services | Yes                    | Yes                          | No, individual services |
 
+## contributing
+
+External pull requests are not accepted. Please open an issue to report a bug or suggest a change.
+
 ## license
 
 This project is [BSD-3-Clause licensed](LICENSE).
