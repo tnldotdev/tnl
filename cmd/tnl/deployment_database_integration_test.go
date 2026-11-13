@@ -9,6 +9,7 @@ import (
 	"flag"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -19,6 +20,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -125,7 +128,7 @@ func TestDeploymentDatabaseWorkflow(t *testing.T) {
 	address := listener.Addr().String()
 	_ = listener.Close()
 	connectCtx, stopConnector := context.WithCancel(t.Context())
-	connectorReady, connectorJoined := f.command(t, connectCtx, stopConnector, []string{"--no-config", "connect", customer.Services["db"].Id, "--server", f.url, "--team", team, "--state-dir", person, "--listen", address}, clientcontrol.ErrNotFound)
+	connectorReady, connectorJoined := f.commandWithStop(t, connectCtx, stopConnector, []string{"--no-config", "connect", customer.Services["db"].Id, "--server", f.url, "--team", team, "--state-dir", person, "--listen", address}, deploymentDatabaseConnectorStop)
 	select {
 	case <-connectorReady:
 	case <-connectorJoined:
@@ -192,5 +195,60 @@ func TestDeploymentDatabaseWorkflow(t *testing.T) {
 		case <-time.After(15 * time.Second):
 			t.Fatal("database workflow owner did not join")
 		}
+	}
+}
+
+// revocation can retire the run before selection or deny its established pair.
+// accept only those leaves, never an independent joined cleanup failure.
+func deploymentDatabaseConnectorStop(err error) bool {
+	if err == nil {
+		return true
+	}
+	if _, cleanup := err.(*connectorstream.CleanupError); cleanup {
+		return false
+	}
+	if err == context.Canceled || err == clientcontrol.ErrNotFound || err == connectorstream.ErrServiceConnection {
+		return true
+	}
+	switch wrapped := err.(type) {
+	case interface{ Unwrap() []error }:
+		for _, child := range wrapped.Unwrap() {
+			if !deploymentDatabaseConnectorStop(child) {
+				return false
+			}
+		}
+		return true
+	case interface{ Unwrap() error }:
+		return deploymentDatabaseConnectorStop(wrapped.Unwrap())
+	}
+	if problem, ok := err.(*clientcontrol.ProblemError); ok {
+		return problem.Status == http.StatusForbidden && problem.Problem.Code == controlv1.Forbidden
+	}
+	return false
+}
+
+func TestDeploymentDatabaseConnectorStopPreservesFailures(t *testing.T) {
+	denied := &clientcontrol.ProblemError{Status: http.StatusForbidden, Problem: controlv1.Problem{Code: controlv1.Forbidden}}
+	revoked := failure.Wrap("authorize service connection", failure.ConnectAccessRequired,
+		errors.Join(connectorstream.ErrServiceConnection, failure.Wrap("request control API", failure.ServerDenied, denied)))
+	unrelated := errors.New("independent cleanup failure")
+	for _, test := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"revoked", revoked, true},
+		{"cancelled", context.Canceled, true},
+		{"missing run", clientcontrol.ErrNotFound, true},
+		{"joined failure", errors.Join(revoked, unrelated), false},
+		{"cancelled failure", errors.Join(context.Canceled, unrelated), false},
+		{"cleanup denial", errors.Join(revoked, &connectorstream.CleanupError{Err: denied}), false},
+		{"different denial", &clientcontrol.ProblemError{Status: http.StatusUnauthorized, Problem: controlv1.Problem{Code: controlv1.Forbidden}}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := deploymentDatabaseConnectorStop(test.err); got != test.want {
+				t.Fatalf("accepted stop=%t, want %t: %v", got, test.want, test.err)
+			}
+		})
 	}
 }
