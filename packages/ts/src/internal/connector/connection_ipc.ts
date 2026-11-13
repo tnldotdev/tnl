@@ -11,10 +11,20 @@ import type { SelectionOptions, WorkloadRequest } from "./workload/contract.js";
 
 export interface OwnerIPC {
   readonly expiresAt: number;
-  prepare(service: string, assertion?: string, selection?: SelectionOptions): Promise<unknown>;
+  prepare(
+    service: string,
+    assertion?: string,
+    selection?: SelectionOptions,
+    expected?: ProjectDeploymentSelection,
+  ): Promise<unknown>;
   workload(service: string, request: WorkloadRequest): Promise<unknown>;
   close(): void;
 }
+
+type ProjectDeploymentSelection = Pick<
+  NonNullable<SelectionOptions["deployment"]>,
+  "project" | "name"
+>;
 
 const { external } = context;
 function retire(filename: string, entry: CachedIPC): void {
@@ -174,6 +184,7 @@ export async function ownerIPC(filename: string): Promise<OwnerIPC> {
       service: string,
       assertion?: string,
       selection?: SelectionOptions,
+      expected?: ProjectDeploymentSelection,
     ): Promise<unknown> => {
       return operation("sdk.native.request", async () => {
         if (closed || pending >= 64) throw new TnlError("sdk.connection_unavailable");
@@ -186,6 +197,7 @@ export async function ownerIPC(filename: string): Promise<OwnerIPC> {
               service,
               ...(assertion === undefined ? {} : { assertion }),
               ...selection,
+              ...(expected === undefined ? {} : { selection: expected }),
             });
             const req = request(
               new URL(`/v1/connections/${operationName}`, endpoint),
@@ -243,8 +255,19 @@ export async function ownerIPC(filename: string): Promise<OwnerIPC> {
       get expiresAt() {
         return expires;
       },
-      prepare: (service: string, assertion?: string, selection?: SelectionOptions) =>
-        send(selection === undefined ? "prepare" : "sdk-prepare", service, assertion, selection),
+      prepare: (
+        service: string,
+        assertion?: string,
+        selection?: SelectionOptions,
+        expected?: ProjectDeploymentSelection,
+      ) =>
+        send(
+          selection === undefined ? "prepare" : "sdk-prepare",
+          service,
+          assertion,
+          selection,
+          expected,
+        ),
       workload: (service: string, request: WorkloadRequest) =>
         send("sdk-workload", service, undefined, { sdk_workload: request }),
       close,

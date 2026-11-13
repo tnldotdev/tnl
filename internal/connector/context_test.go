@@ -38,6 +38,9 @@ func TestConnectionContextAppliedTeamNameWithoutHumanState(t *testing.T) {
 	if !slices.Equal(local.Services, []string{"database"}) {
 		t.Fatal("requested preparation included unrelated services", local.Services)
 	}
+	if local.Deployment != "local" || local.TeamName != "acme" {
+		t.Fatal("local selection lost its deployment or team name")
+	}
 	all := options
 	all.Service = nil
 	_, implicit, err := connectionProject(t.Context(), all)
@@ -62,6 +65,9 @@ func TestConnectionContextAppliedTeamNameWithoutHumanState(t *testing.T) {
 	}
 	if scope.TeamID != team || scope.Audience != "https://control.example" || scope.ProjectKey != local.ProjectKey {
 		t.Fatal("context selected another applied scope")
+	}
+	if scope.Deployment != "production" || !scope.MatchesSelection(&connectorruntime.ProjectDeploymentSelection{Project: "acme/" + scope.ProjectKey, Name: "production"}) {
+		t.Fatal("workload selection lost its captured deployment or team")
 	}
 	if _, err := os.Stat(options.StateDir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("context opened human state", err)
