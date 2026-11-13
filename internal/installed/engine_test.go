@@ -153,7 +153,7 @@ func (c *jobControl) PublisherRuntime(_ context.Context, r controlv1.PublisherRu
 	if err != nil {
 		return controlv1.PublisherRuntimeResponse{}, err
 	}
-	if _, err = publisherproof.Verify(r.Assertion, r.PublisherIdentityId, kid, publisherproof.RuntimeScope(r.ScopeId, string(r.Action), r.ProcessRunId, r.ExpectedEpoch, ""), "https://control.example/v1/publisher-runtime", c.public, time.Now()); err != nil {
+	if _, err = publisherproof.Verify(r.Assertion, r.PublisherIdentityId, kid, publisherproof.RuntimeScope(r.ScopeId, string(r.Action), r.ProcessRunId, r.ExpectedEpoch, ""), "https://control.example/v1/publisher/runtimes/"+r.PublisherIdentityId+"/"+string(r.Action), c.public, time.Now()); err != nil {
 		return controlv1.PublisherRuntimeResponse{}, err
 	}
 	epoch := r.ExpectedEpoch

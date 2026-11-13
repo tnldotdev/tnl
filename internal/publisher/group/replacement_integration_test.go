@@ -77,7 +77,7 @@ func TestIntegrationPublisherIdentitySurvivesTaskStateDeletion(t *testing.T) {
 	}
 	var enrollmentRequests atomic.Int64
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v1/publisher-groups/enroll" {
+		if r.URL.Path == "/v1/publisher/groups/enroll" {
 			enrollmentRequests.Add(1)
 		}
 		handler.ServeHTTP(w, r)

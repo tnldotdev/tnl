@@ -36,7 +36,7 @@ func TestInstalledGroupRuntimeConflictBlocksWithoutReclaim(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
-		case "/v1/publisher-runtime":
+		case "/v1/publisher/runtimes/" + member.PublisherIdentityId + "/inspect", "/v1/publisher/runtimes/" + member.PublisherIdentityId + "/start", "/v1/publisher/runtimes/" + member.PublisherIdentityId + "/renew", "/v1/publisher/runtimes/" + member.PublisherIdentityId + "/stop":
 			var body controlv1.PublisherRuntimeRequest
 			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 				t.Error(err)
@@ -56,9 +56,9 @@ func TestInstalledGroupRuntimeConflictBlocksWithoutReclaim(t *testing.T) {
 			}
 			until := time.Now().Add(100 * time.Millisecond)
 			_ = json.NewEncoder(w).Encode(controlv1.PublisherRuntimeResponse{Epoch: 1, LeaseExpiresAt: &until, GroupLease: &controlv1.PublisherGroupLease{AccessToken: "pgl_fixture", ExpiresAt: until}})
-		case "/v1/publisher-groups/assignments":
+		case "/v1/publisher/groups/assignments":
 			_ = json.NewEncoder(w).Encode(controlv1.PublisherGroupAssignments{Member: member, Revision: 1, ConfigurationHash: strings.Repeat("a", 64), Services: []controlv1.PublisherGroupServiceAssignment{}})
-		case "/v1/publisher-groups/ack":
+		case "/v1/publisher/groups/configuration-acknowledgements":
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			t.Errorf("unexpected request: %s", request.URL.Path)

@@ -389,7 +389,7 @@ func (h *handler) CreatePublishRun(
 	}))
 }
 
-func (h *handler) HeartbeatPublishRun(response http.ResponseWriter, request *http.Request, publishRunID controlv1.PublishRunID) {
+func (h *handler) RenewPublishRun(response http.ResponseWriter, request *http.Request, publishRunID controlv1.PublishRunID) {
 	var body controlv1.PublishRunVersionRequest
 	if err := decodeJSON(response, request, &body); err != nil || body.PublishRunNumber <= 0 {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")

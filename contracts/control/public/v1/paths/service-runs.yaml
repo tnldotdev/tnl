@@ -255,9 +255,9 @@ paths:
               },
           }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/services/{service_id}/runs/{service_run_id}:
+  /v1/services/{service_id}/runs/{service_run_id}/renew:
     post:
-      operationId: heartbeatServiceRun
+      operationId: renewServiceRun
       tags: [service-runs]
       summary: Renew a service run and report publisher health and capacity
       requestBody:
@@ -280,6 +280,7 @@ paths:
             application/json:
               schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunState" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/services/{service_id}/runs/{service_run_id}:
     delete:
       operationId: closeServiceRun
       tags: [service-runs]

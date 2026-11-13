@@ -42,10 +42,10 @@ func TestServiceHeartbeatPreservesExplicitHealthAndStreamCounts(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		r := httptest.NewRequest(http.MethodPost, "/v1/services/service/runs/run", bytes.NewReader(body))
+		r := httptest.NewRequest(http.MethodPost, "/v1/services/service/runs/run/renew", bytes.NewReader(body))
 		r.Header.Set("Authorization", "Bearer run-token")
 		w := httptest.NewRecorder()
-		h.HeartbeatServiceRun(w, r, "service", "run")
+		h.RenewServiceRun(w, r, "service", "run")
 		want := controlstate.ServiceRunHealth{Healthy: health.Healthy, StreamCapacity: health.StreamCapacity, ActiveStreams: health.ActiveStreams}
 		if w.Code != 200 || store.calls != 1 || store.service != "service" || store.run != "run" || store.token != "run-token" || store.health != want {
 			t.Fatalf("heartbeat changed its authenticated scope or report: status=%d calls=%d health=%+v", w.Code, store.calls, store.health)

@@ -34,7 +34,7 @@ func (c *Client) PublisherRuntime(ctx context.Context, request controlv1.Publish
 }
 
 func (c *Client) Lease(ctx context.Context, member controlv1.PublisherGroupMember, private ed25519.PrivateKey) (controlv1.PublisherGroupLease, error) {
-	assertion, err := publisherproof.Sign(member.PublisherIdentityId, member.KeyId, member.GroupId, c.server+"/v1/publisher-groups/lease", private, time.Now())
+	assertion, err := publisherproof.Sign(member.PublisherIdentityId, member.KeyId, member.GroupId, c.server+"/v1/publisher/groups/lease", private, time.Now())
 	if err != nil {
 		return controlv1.PublisherGroupLease{}, err
 	}
@@ -42,7 +42,7 @@ func (c *Client) Lease(ctx context.Context, member controlv1.PublisherGroupMembe
 }
 
 func (c *Client) Verify(ctx context.Context, member controlv1.PublisherGroupMember, private ed25519.PrivateKey) (controlv1.PublisherGroupVerification, error) {
-	assertion, err := publisherproof.Sign(member.PublisherIdentityId, member.KeyId, member.GroupId, c.server+"/v1/publisher-groups/verify", private, time.Now())
+	assertion, err := publisherproof.Sign(member.PublisherIdentityId, member.KeyId, member.GroupId, c.server+"/v1/publisher/groups/verify", private, time.Now())
 	if err != nil {
 		return controlv1.PublisherGroupVerification{}, err
 	}

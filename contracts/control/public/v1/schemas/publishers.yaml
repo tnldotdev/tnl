@@ -2,6 +2,7 @@ schemas:
   PublisherRuntimeRequest:
     type: object
     additionalProperties: false
+    description: Signed runtime command. The publisher identity and action must match the endpoint; the one-use proof binds both, the remaining fields, and the full endpoint audience.
     required: [publisher_identity_id, scope_id, process_run_id, expected_epoch, action, assertion]
     properties:
       publisher_identity_id: { type: string }

@@ -158,7 +158,7 @@ func (h *handler) AcquirePublisherGroupLease(w http.ResponseWriter, r *http.Requ
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid publisher group assertion")
 		return
 	}
-	result, err := store.AcquirePublisherGroupLease(r.Context(), body.PublisherIdentityId, body.GroupId, body.Assertion, h.config.ControlURL+"/v1/publisher-groups/lease", time.Now())
+	result, err := store.AcquirePublisherGroupLease(r.Context(), body.PublisherIdentityId, body.GroupId, body.Assertion, h.config.ControlURL+"/v1/publisher/groups/lease", time.Now())
 	if err != nil {
 		projectConfigurationProblem(r.Context(), w, "acquire publisher group lease", err)
 		return
@@ -180,7 +180,7 @@ func (h *handler) VerifyPublisherGroupIdentity(w http.ResponseWriter, r *http.Re
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid publisher group assertion")
 		return
 	}
-	result, err := store.VerifyPublisherGroupIdentity(r.Context(), body.PublisherIdentityId, body.GroupId, body.Assertion, h.config.ControlURL+"/v1/publisher-groups/verify", time.Now())
+	result, err := store.VerifyPublisherGroupIdentity(r.Context(), body.PublisherIdentityId, body.GroupId, body.Assertion, h.config.ControlURL+"/v1/publisher/groups/verify", time.Now())
 	if err != nil {
 		projectConfigurationProblem(r.Context(), w, "verify publisher group identity", err)
 		return

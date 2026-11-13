@@ -385,7 +385,7 @@ func (f *Fixture) forward(w http.ResponseWriter, r *http.Request) {
 		writeStatus(w, response.StatusCode, setup)
 		return
 	}
-	if r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/heartbeat") && response.StatusCode < 300 {
+	if r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/renew") && response.StatusCode < 300 {
 		var heartbeat controlv1.PublishRunHeartbeat
 		if json.NewDecoder(response.Body).Decode(&heartbeat) != nil {
 			w.WriteHeader(502)

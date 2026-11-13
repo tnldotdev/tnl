@@ -50,7 +50,7 @@ func (g *Group) leaseToken(ctx context.Context) (string, error) {
 	if g.lease.ExpiresAt.After(time.Now().Add(20 * time.Second)) {
 		return g.lease.AccessToken, nil
 	}
-	assertion, err := publisherproof.Sign(g.member.PublisherIdentityId, g.member.KeyId, g.member.GroupId, g.server+"/v1/publisher-groups/lease", g.private, time.Now())
+	assertion, err := publisherproof.Sign(g.member.PublisherIdentityId, g.member.KeyId, g.member.GroupId, g.server+"/v1/publisher/groups/lease", g.private, time.Now())
 	if err != nil {
 		return "", err
 	}

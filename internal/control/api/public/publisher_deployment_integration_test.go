@@ -82,7 +82,7 @@ func TestIntegrationPublisherRuntimeDeployment(t *testing.T) {
 	request := func(m controlv1.PublisherGroupMember, key ed25519.PrivateKey, action controlv1.PublisherRuntimeRequestAction, run string, epoch int64, report *controlv1.PublisherDeploymentReport) controlv1.PublisherRuntimeRequest {
 		t.Helper()
 		scope := publisherproof.RuntimeScope(m.GroupId, string(action), run, epoch, publisherprovenance.Digest(report))
-		proof, err := publisherproof.Sign(m.PublisherIdentityId, m.KeyId, scope, server+"/v1/publisher-runtime", key, time.Now())
+		proof, err := publisherproof.Sign(m.PublisherIdentityId, m.KeyId, scope, server+"/v1/publisher/runtimes/"+m.PublisherIdentityId+"/"+string(action), key, time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -131,7 +131,7 @@ func TestIntegrationPublisherRuntimeDeployment(t *testing.T) {
 		}
 		body["deployment"].(map[string]any)[field] = "private-foreign-tenant"
 		data, _ = json.Marshal(body)
-		response, err := httpClient.Post(server+"/v1/publisher-runtime", "application/json", bytes.NewReader(data))
+		response, err := httpClient.Post(server+"/v1/publisher/runtimes/"+member.PublisherIdentityId+"/start", "application/json", bytes.NewReader(data))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -141,6 +141,36 @@ func TestIntegrationPublisherRuntimeDeployment(t *testing.T) {
 		}
 	}
 	firstRequest := request(member, key, controlv1.RuntimeStart, runA, 0, &report)
+	// route identity/action cannot be substituted for the signed command.
+	data, _ := json.Marshal(firstRequest)
+	for _, path := range []string{
+		"/v1/publisher/runtimes/" + member.PublisherIdentityId + "/renew",
+		"/v1/publisher/runtimes/" + other.PublisherIdentityId + "/start",
+	} {
+		response, err := httpClient.Post(server+path, "application/json", bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusBadRequest {
+			t.Fatal("route/body mismatch accepted", path, response.StatusCode)
+		}
+	}
+	wrongAction := firstRequest
+	wrongAction.Action = controlv1.RuntimeRenew
+	if _, err := client.PublisherRuntime(ctx, wrongAction); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+		t.Fatal("start proof accepted at renew endpoint", err)
+	}
+	for _, path := range []string{"/v1/publisher-runtime", "/v1/publisher-groups/lease"} {
+		response, err := httpClient.Post(server+path, "application/json", bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusNotFound {
+			t.Fatal("retired endpoint remains", path, response.StatusCode)
+		}
+	}
 	if _, err := client.PublisherRuntime(ctx, firstRequest); err != nil {
 		t.Fatal(err)
 	}

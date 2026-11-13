@@ -192,7 +192,7 @@ func NewPublishingFixture(t *testing.T, hooks PublishingHooks) *PublishingFixtur
 		defer mu.Unlock()
 		return sessions[r.PathValue("session")]
 	}
-	mux.HandleFunc("POST /v1/publish-runs/{session}/heartbeat", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /v1/publish-runs/{session}/renew", func(w http.ResponseWriter, r *http.Request) {
 		setup := lookup(r)
 		writeJSON(w, controlv1.PublishRunHeartbeat{PublishRun: setup.PublishRun, PublisherConnections: setup.PublisherConnections})
 	})

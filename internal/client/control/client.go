@@ -335,7 +335,7 @@ func (c *Client) MarkPublishRunReady(ctx context.Context, publishRunID string, p
 func (c *Client) HeartbeatPublishRun(ctx context.Context, publishRunID string, publishRunNumber uint64, token credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error) {
 	body := controlv1.PublishRunVersionRequest{PublishRunNumber: int64(publishRunNumber)}
 	return request[controlv1.PublishRunHeartbeat](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.HeartbeatPublishRun(ctx, publishRunID, body, editors...)
+		return c.api.RenewPublishRun(ctx, publishRunID, body, editors...)
 	})
 }
 
