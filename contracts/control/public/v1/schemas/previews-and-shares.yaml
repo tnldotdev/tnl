@@ -150,9 +150,12 @@ schemas:
       preview_id:
         $ref: "../openapi.yaml#/components/schemas/PreviewID"
       publish_run_number:
-        type: integer
-        format: int64
-        minimum: 1
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "publish_run_number,string" },
+        }
       page_path:
         type: string
       cursor:

@@ -457,7 +457,7 @@ func TestSessionDecoderPreservesSDKWireAssertions(t *testing.T) {
 	check(t, controlv1.WorkloadGitHub, func(w map[string]any) { delete(w, "renewal_sequence") })
 	check(t, controlv1.WorkloadGitHub, func(w map[string]any) { delete(w, "identity_expires_at") })
 	check(t, controlv1.WorkloadGitHub, func(w map[string]any) { w["identity_expires_at"] = nil })
-	for _, value := range []any{nil, -1, "0", 0.5, json.Number("9223372036854775808")} {
+	for _, value := range []any{nil, "-1", 0, 0.5, "9223372036854775808", json.Number("9223372036854775808")} {
 		check(t, controlv1.WorkloadGitHub, func(w map[string]any) { w["renewal_sequence"] = value })
 	}
 }

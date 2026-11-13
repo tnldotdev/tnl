@@ -58,7 +58,13 @@ schemas:
     additionalProperties: false
     required: [sequence, signature]
     properties:
-      sequence: { type: integer, format: int64, minimum: 1 }
+      sequence:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "sequence,string" },
+        }
       signature:
         type: string
         description: Unpadded base64url Ed25519 signature over SHA-256 of compact JSON ["tnl-workload-renew/v1", session_id, sequence]. Retrying the current sequence does not extend the lease again.
@@ -123,7 +129,13 @@ schemas:
       renew_after: { type: string, format: date-time }
       service_ids: { type: array, maxItems: 32, items: { type: string } }
       binding: { type: string, pattern: "^[0-9a-f]{64}$" }
-      renewal_sequence: { type: integer, format: int64, minimum: 0 }
+      renewal_sequence:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "renewal_sequence,string" },
+        }
       identity_expires_at:
         type: string
         format: date-time

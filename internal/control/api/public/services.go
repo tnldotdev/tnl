@@ -77,13 +77,13 @@ func targetTLSInput(t *controlv1.ServiceTargetTLS) *controlstate.ServiceTargetTL
 
 func (h *handler) ConfigureService(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID) {
 	var body struct {
-		ExpectedTrustRevision int64                     `json:"expected_trust_revision"`
+		ExpectedTrustRevision int64                     `json:"expected_trust_revision,string"`
 		Protocol              controlv1.ServiceProtocol `json:"protocol"`
 		PublisherPool         *bool                     `json:"publisher_pool"`
 		TargetTLS             json.RawMessage           `json:"target_tls"`
 	}
 	if decodeJSONLimited(w, r, &body, 2<<20) != nil ||
-		body.ExpectedTrustRevision < 1 || body.ExpectedTrustRevision > 9007199254740991 ||
+		body.ExpectedTrustRevision < 1 ||
 		!body.Protocol.Valid() || body.PublisherPool == nil {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid service update")
 		return

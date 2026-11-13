@@ -48,7 +48,13 @@ paths:
               additionalProperties: false
               required: [expected_revision]
               properties:
-                expected_revision: { type: integer, format: int64, minimum: 1 }
+                expected_revision:
+                  {
+                    type: string,
+                    pattern: "^[0-9]+$",
+                    x-go-type: int64,
+                    x-oapi-codegen-extra-tags: { json: "expected_revision,string" },
+                  }
       responses:
         "204": { description: Connection revision advanced and old source work fenced }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
@@ -69,7 +75,13 @@ paths:
               additionalProperties: false
               required: [expected_revision, setup_token, provisioning_token]
               properties:
-                expected_revision: { type: integer, format: int64, minimum: 1 }
+                expected_revision:
+                  {
+                    type: string,
+                    pattern: "^[0-9]+$",
+                    x-go-type: int64,
+                    x-oapi-codegen-extra-tags: { json: "expected_revision,string" },
+                  }
                 setup_token: { type: string }
                 provisioning_token:
                   type: string
@@ -101,7 +113,13 @@ paths:
               additionalProperties: false
               required: [expected_revision]
               properties:
-                expected_revision: { type: integer, format: int64 }
+                expected_revision:
+                  {
+                    type: string,
+                    pattern: "^[0-9]+$",
+                    x-go-type: int64,
+                    x-oapi-codegen-extra-tags: { json: "expected_revision,string" },
+                  }
       responses:
         "200":
           description: Old provisioning credential revoked
@@ -205,7 +223,13 @@ paths:
               additionalProperties: false
               required: [connection_revision, decision]
               properties:
-                connection_revision: { type: integer, format: int64 }
+                connection_revision:
+                  {
+                    type: string,
+                    pattern: "^[0-9]+$",
+                    x-go-type: int64,
+                    x-oapi-codegen-extra-tags: { json: "connection_revision,string" },
+                  }
                 decision:
                   {
                     type: string,
@@ -230,7 +254,13 @@ paths:
               properties:
                 team_id: { type: string }
                 identity_connection_id: { type: string }
-                connection_revision: { type: integer, format: int64 }
+                connection_revision:
+                  {
+                    type: string,
+                    pattern: "^[0-9]+$",
+                    x-go-type: int64,
+                    x-oapi-codegen-extra-tags: { json: "connection_revision,string" },
+                  }
                 member_slug: { type: string }
       responses:
         "200":

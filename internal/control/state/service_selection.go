@@ -33,8 +33,8 @@ type ServiceRelay struct {
 	RelayID                      string    `json:"relay_id"`
 	RelayRunID                   string    `json:"relay_run_id"`
 	InternalRelayAddress         string    `json:"internal_relay_address"`
-	RelayLeaseRevision           int64     `json:"relay_lease_revision"`
-	ConnectionAssignmentRevision int64     `json:"connection_assignment_revision"`
+	RelayLeaseRevision           int64     `json:"relay_lease_revision,string"`
+	ConnectionAssignmentRevision int64     `json:"connection_assignment_revision,string"`
 	LeaseExpiresAt               time.Time `json:"lease_expires_at"`
 }
 

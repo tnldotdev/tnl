@@ -29,7 +29,7 @@ func TestFeedbackInputsExcludeOutputOnlyAndReviewerUpdateEvents(t *testing.T) {
 		t.Fatal("owner accepted an output-only event")
 	}
 	reviewer := httptest.NewRecorder()
-	h.AppendReviewerFeedbackEvent(reviewer, httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"publish_run_number":1,"type":"update","access":{}}`)), "pr_example", "fb_example", controlv1.AppendReviewerFeedbackEventParams{})
+	h.AppendReviewerFeedbackEvent(reviewer, httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"publish_run_number":"1","type":"update","access":{}}`)), "pr_example", "fb_example", controlv1.AppendReviewerFeedbackEventParams{})
 	if reviewer.Code != http.StatusBadRequest {
 		t.Fatal("reviewer accepted an implementer update")
 	}
@@ -104,7 +104,7 @@ func TestReviewerFeedbackReadCannotCrossPublicURL(t *testing.T) {
 		PublishRunID: "pr_other", PublicURLID: "url_other", PublishRunNumber: 1,
 	}}}
 	request := httptest.NewRequest(http.MethodPost, "/v1/publish-runs/pr_other/feedback/"+thread.ID+"/query",
-		strings.NewReader(`{"publish_run_number":1,"preview_id":"pv_0123456789abcdefghijkl","access":{"visit_allowed":true}}`))
+		strings.NewReader(`{"publish_run_number":"1","preview_id":"pv_0123456789abcdefghijkl","access":{"visit_allowed":true}}`))
 	request.Header.Set("Authorization", "Bearer publisher-token")
 	response := httptest.NewRecorder()
 	h.GetReviewerFeedbackThread(response, request, "pr_other", thread.ID)

@@ -44,7 +44,7 @@ func HTTPReporter(client *http.Client, destination func(context.Context) (Destin
 		if d.PublishRunNumber > 0 {
 			payload = struct {
 				Events           []Observation `json:"events"`
-				PublishRunNumber int64         `json:"publish_run_number"`
+				PublishRunNumber int64         `json:"publish_run_number,string"`
 			}{batch.Events, d.PublishRunNumber}
 		}
 		encoded, err := json.Marshal(payload)

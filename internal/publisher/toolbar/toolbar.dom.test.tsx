@@ -13,15 +13,15 @@ const report: Thread = {
   schema_version: 1,
   id,
   state: "open",
-  message_count: 1,
-  latest_event_cursor: 1,
+  message_count: "1",
+  latest_event_cursor: "1",
   scope: { page_path: "/" },
   report: { text: "Please use a clearer label", created_at: "2026-10-05T00:00:00Z" },
   evidence: { schema_version: 1, actions: [], failed_requests: [] },
 };
 const created: FeedbackEvent = {
   schema_version: 1,
-  cursor: 1,
+  cursor: "1",
   feedback_id: id,
   type: "thread.created",
   actor: "reviewer",
@@ -31,18 +31,18 @@ function fixture(threads: Summary[] = []): FeedbackAPI {
   return {
     list: vi
       .fn<FeedbackAPI["list"]>()
-      .mockResolvedValue({ schema_version: 1, threads, event_cursor: 1 }),
+      .mockResolvedValue({ schema_version: 1, threads, event_cursor: "1" }),
     inspect: vi.fn<FeedbackAPI["inspect"]>().mockResolvedValue(report),
     events: vi
       .fn<FeedbackAPI["events"]>()
-      .mockResolvedValue({ schema_version: 1, events: [created], event_cursor: 1 }),
+      .mockResolvedValue({ schema_version: 1, events: [created], event_cursor: "1" }),
     evidence: vi
       .fn<FeedbackAPI["evidence"]>()
       .mockResolvedValue([{ method: "POST", path: "/api", status: 500, duration_ms: 25 }]),
     report: vi.fn<FeedbackAPI["report"]>().mockResolvedValue(report),
     append: vi.fn<FeedbackAPI["append"]>().mockImplementation(async (_, type, text) => ({
       ...created,
-      cursor: 2,
+      cursor: "2",
       type,
       ...(text ? { text } : {}),
     })),
@@ -210,14 +210,14 @@ test("reply, resolve, and reopen share the same conversation and preserve histor
   );
   vi.mocked(api.append).mockImplementationOnce(async () => {
     vi.mocked(api.inspect).mockResolvedValue({ ...report, state: "resolved" });
-    return { ...created, cursor: 3, type: "thread.resolved" };
+    return { ...created, cursor: "3", type: "thread.resolved" };
   });
   await user.click(screen.getByRole("button", { name: "Resolve", exact: true }));
   await screen.findByRole("button", { name: "Reopen", exact: true });
   expect(screen.queryByRole("button", { name: "Send reply" })).toBeNull();
   vi.mocked(api.append).mockImplementationOnce(async () => {
     vi.mocked(api.inspect).mockResolvedValue(report);
-    return { ...created, cursor: 4, type: "thread.reopened" };
+    return { ...created, cursor: "4", type: "thread.reopened" };
   });
   await user.click(screen.getByRole("button", { name: "Reopen", exact: true }));
   await screen.findByRole("button", { name: "Send reply" });
@@ -283,8 +283,8 @@ test("polling updates replies and status without a refresh control or lost draft
   await user.type(textarea, "Draft");
   vi.mocked(api.events).mockResolvedValueOnce({
     schema_version: 1,
-    events: [{ ...created, cursor: 2, type: "reply", text: "Remote reply" }],
-    event_cursor: 2,
+    events: [{ ...created, cursor: "2", type: "reply", text: "Remote reply" }],
+    event_cursor: "2",
   });
   vi.mocked(api.inspect).mockResolvedValueOnce({ ...report, state: "resolved" });
   await waitFor(() => expect(screen.getByText("Remote reply")).toBeTruthy(), { timeout: 4000 });

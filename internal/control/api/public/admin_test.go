@@ -58,7 +58,7 @@ func TestAdminHandlersExposeDurableState(t *testing.T) {
 		t.Fatalf("relay page = %d, cursor %q: %s", relays.Code, store.relayCursor, relays.Body.String())
 	}
 
-	drainBody := `{"relay_run_id":"run_1","relay_lease_revision":7,"deadline":"` + deadline.Format(time.RFC3339) + `"}`
+	drainBody := `{"relay_run_id":"run_1","relay_lease_revision":"7","deadline":"` + deadline.Format(time.RFC3339) + `"}`
 	drain := serveAdminRequest(handler, http.MethodPost, "/v1/admin/relays/relay_1/drain", drainBody)
 	if drain.Code != http.StatusOK || store.drainIdentity.RelayID != "relay_1" ||
 		store.drainIdentity.RelayRunID != "run_1" || store.drainActor != "identity_admin" || store.drainRequestID == "" {

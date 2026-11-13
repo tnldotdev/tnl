@@ -84,7 +84,7 @@ func TestIntegrationManagementMutations(t *testing.T) {
 		t.Fatalf("stale service edit was accepted: %v", err)
 	}
 	request := httptest.NewRequest(http.MethodPut, "/v1/services/"+service.ID,
-		strings.NewReader(`{"protocol":"tcp","publisher_pool":false,"expected_trust_revision":2,"endpoint":{"hostname":"ignored.example","port":1234,"public":true}}`))
+		strings.NewReader(`{"protocol":"tcp","publisher_pool":false,"expected_trust_revision":"2","endpoint":{"hostname":"ignored.example","port":1234,"public":true}}`))
 	request.Header.Set("Authorization", "Bearer "+session.AccessToken)
 	response := httptest.NewRecorder()
 	h.ServeHTTP(response, request)

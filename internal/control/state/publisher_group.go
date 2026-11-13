@@ -40,8 +40,8 @@ type PublisherGroupMember struct {
 type PublisherGroupMemberStatus struct {
 	PublisherGroupMember
 	Runtime          *PublisherRuntimeStatus `json:"runtime,omitempty"`
-	ObservedRevision int64                   `json:"observed_revision"`
-	CurrentRevision  int64                   `json:"current_revision"`
+	ObservedRevision int64                   `json:"observed_revision,string"`
+	CurrentRevision  int64                   `json:"current_revision,string"`
 	SnapshotAt       time.Time               `json:"snapshot_at"`
 	AcknowledgedAt   *time.Time              `json:"acknowledged_at,omitempty"`
 	Healthy          bool                    `json:"healthy"`
@@ -61,12 +61,12 @@ type PublisherGroupServiceAssignment struct {
 	Kind          string                      `json:"service_kind"`
 	GrantID       string                      `json:"grant_id"`
 	Hostname      string                      `json:"hostname,omitempty"`
-	TrustRevision int64                       `json:"trust_revision"`
+	TrustRevision int64                       `json:"trust_revision,string"`
 	Configuration ProjectServiceConfiguration `json:"configuration"`
 }
 type PublisherGroupAssignments struct {
 	Member                PublisherGroupMember              `json:"member"`
-	Revision              int64                             `json:"revision"`
+	Revision              int64                             `json:"revision,string"`
 	ConfigurationHash     string                            `json:"configuration_hash"`
 	Services              []PublisherGroupServiceAssignment `json:"services"`
 	CertificateStatePlans []CertificatePlan                 `json:"certificate_state_plans"`

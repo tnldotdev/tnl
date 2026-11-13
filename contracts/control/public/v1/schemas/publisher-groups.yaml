@@ -6,7 +6,13 @@ schemas:
     properties:
       team_id: { type: string }
       namespace_label: { type: string, pattern: "^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$" }
-      expected_revision: { type: integer, format: int64, minimum: 1 }
+      expected_revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "expected_revision,string" },
+        }
       idempotency_key: { type: string, minLength: 1, maxLength: 256 }
   RenamePublisherGroupRequest:
     type: object
@@ -15,7 +21,13 @@ schemas:
     properties:
       team_id: { type: string }
       name: { type: string, pattern: "^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$" }
-      expected_revision: { type: integer, format: int64, minimum: 1 }
+      expected_revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "expected_revision,string" },
+        }
   CreatePublisherGroupEnrollmentRequest:
     type: object
     additionalProperties: false
@@ -55,8 +67,20 @@ schemas:
       - type: object
         required: [observed_revision, current_revision, snapshot_at, healthy]
         properties:
-          observed_revision: { type: integer, format: int64 }
-          current_revision: { type: integer, format: int64 }
+          observed_revision:
+            {
+              type: string,
+              pattern: "^[0-9]+$",
+              x-go-type: int64,
+              x-oapi-codegen-extra-tags: { json: "observed_revision,string" },
+            }
+          current_revision:
+            {
+              type: string,
+              pattern: "^[0-9]+$",
+              x-go-type: int64,
+              x-oapi-codegen-extra-tags: { json: "current_revision,string" },
+            }
           snapshot_at: { type: string, format: date-time }
           acknowledged_at: { type: string, format: date-time }
           healthy: { type: boolean }
@@ -96,7 +120,13 @@ schemas:
         description: Every certificate plan submitted by this publisher identity. Restore each plan's private material; unrelated or older plans cannot satisfy this list.
         items: { $ref: "../openapi.yaml#/components/schemas/CertificatePlan" }
       member: { $ref: "../openapi.yaml#/components/schemas/PublisherGroupMember" }
-      revision: { type: integer, format: int64 }
+      revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "revision,string" },
+        }
       configuration_hash: { type: string }
       services:
         {
@@ -113,13 +143,25 @@ schemas:
       service_kind: { type: string, enum: [public_url, service] }
       grant_id: { type: string }
       hostname: { type: string }
-      trust_revision: { type: integer, format: int64 }
+      trust_revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "trust_revision,omitempty,string" },
+        }
       configuration: { $ref: "../openapi.yaml#/components/schemas/ProjectServiceConfiguration" }
   PublisherGroupAcknowledgement:
     type: object
     additionalProperties: false
     required: [revision, configuration_hash, healthy]
     properties:
-      revision: { type: integer, format: int64, minimum: 1 }
+      revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "revision,string" },
+        }
       configuration_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
       healthy: { type: boolean }

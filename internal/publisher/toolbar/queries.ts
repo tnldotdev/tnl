@@ -32,17 +32,21 @@ export function usePageFeedback(
   });
 }
 
-function mergeEvents(before: FeedbackEvent[], added: FeedbackEvent[]): FeedbackEvent[] {
+export function mergeEvents(before: FeedbackEvent[], added: FeedbackEvent[]): FeedbackEvent[] {
   return [...new Map([...before, ...added].map((event) => [event.cursor, event])).values()].sort(
-    (left, right) => left.cursor - right.cursor,
+    (left, right) => (BigInt(left.cursor) < BigInt(right.cursor) ? -1 : 1),
   );
+}
+
+function latestCursor(...values: string[]): string {
+  return values.reduce((latest, value) => (BigInt(value) > BigInt(latest) ? value : latest), "0");
 }
 
 type Conversation = {
   thread: Thread;
   events: FeedbackEvent[];
-  after: number;
-  olderCursor: number | undefined;
+  after: string;
+  olderCursor: string | undefined;
 };
 
 export function useConversation(api: FeedbackAPI, id: string) {
@@ -63,7 +67,7 @@ export function useConversation(api: FeedbackAPI, id: string) {
         events: mergeEvents(cached?.events ?? [], page.events),
         after: cached
           ? (page.next_cursor ??
-            Math.max(page.event_cursor, ...page.events.map((event) => event.cursor)))
+            latestCursor(page.event_cursor, ...page.events.map((event) => event.cursor)))
           : page.event_cursor,
         olderCursor: cached ? cached.olderCursor : page.next_cursor,
       };
@@ -88,20 +92,24 @@ export function useConversation(api: FeedbackAPI, id: string) {
               thread: {
                 ...previous.thread,
                 state:
-                  event.cursor <= previous.thread.latest_event_cursor
+                  BigInt(event.cursor) <= BigInt(previous.thread.latest_event_cursor)
                     ? previous.thread.state
                     : event.type === "thread.resolved"
                       ? "resolved"
                       : event.type === "thread.reopened"
                         ? "open"
                         : previous.thread.state,
-                message_count:
-                  previous.thread.message_count +
-                  (event.cursor > previous.thread.latest_event_cursor &&
+                message_count: (
+                  BigInt(previous.thread.message_count) +
+                  (BigInt(event.cursor) > BigInt(previous.thread.latest_event_cursor) &&
                   (event.type === "reply" || event.type === "update")
-                    ? 1
-                    : 0),
-                latest_event_cursor: Math.max(previous.thread.latest_event_cursor, event.cursor),
+                    ? 1n
+                    : 0n)
+                ).toString(),
+                latest_event_cursor: latestCursor(
+                  previous.thread.latest_event_cursor,
+                  event.cursor,
+                ),
               },
               events: mergeEvents(previous.events, [event]),
             }
@@ -113,7 +121,7 @@ export function useConversation(api: FeedbackAPI, id: string) {
   });
   const history = useMutation({
     onMutate: () => client.cancelQueries({ queryKey: key }),
-    mutationFn: (cursor: number) => api.events(id, cursor, signal),
+    mutationFn: (cursor: string) => api.events(id, cursor, signal),
     onSuccess: (page) =>
       client.setQueryData<Conversation>(key, (previous) =>
         previous

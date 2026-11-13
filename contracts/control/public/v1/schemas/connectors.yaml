@@ -7,7 +7,13 @@ schemas:
       relay_service_id: { type: string, minLength: 1 }
       relay_id: { type: string, minLength: 1 }
       relay_run_id: { type: string, minLength: 1 }
-      relay_lease_revision: { type: integer, format: int64, minimum: 1 }
+      relay_lease_revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "relay_lease_revision,string" },
+        }
   ConnectorPeerPairRelay:
     type: object
     additionalProperties: false
@@ -15,7 +21,13 @@ schemas:
       [publisher_connection_id, assignment_revision, relay_lease, relay_address, tls_server_name]
     properties:
       publisher_connection_id: { type: string, minLength: 1 }
-      assignment_revision: { type: integer, format: int64, minimum: 1 }
+      assignment_revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "assignment_revision,string" },
+        }
       relay_lease: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerRelayLease" }
       relay_address: { type: string, minLength: 1 }
       tls_server_name: { type: string, minLength: 1 }
@@ -50,7 +62,13 @@ schemas:
       ]
     properties:
       service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
-      run_number: { type: integer, format: int64, minimum: 1 }
+      run_number:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "run_number,string" },
+        }
       publisher_identity_id: { type: string, minLength: 1 }
       subject: { $ref: "../openapi.yaml#/components/schemas/VisitorSubject" }
       source:
@@ -65,7 +83,13 @@ schemas:
         format: date-time
         description: Retain this timestamp on an uncertain reply retry. A successful fresh renewal supersedes earlier create or replace reply proofs; those proofs cannot recover the later renewal's bound.
       previous_pair_id: { type: string, pattern: "^cpp_[A-Za-z0-9]{22}$" }
-      previous_generation: { type: integer, format: int64, minimum: 1 }
+      previous_generation:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "previous_generation,omitempty,string" },
+        }
       expected_relays:
         type: array
         minItems: 2
@@ -98,7 +122,13 @@ schemas:
       pair_id: { type: string, pattern: "^cpp_[A-Za-z0-9]{22}$" }
       service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
       service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
-      run_number: { type: integer, format: int64, minimum: 1 }
+      run_number:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "run_number,string" },
+        }
       publisher_identity_id: { type: string, minLength: 1 }
       subject: { $ref: "../openapi.yaml#/components/schemas/VisitorSubject" }
       delivery_id:
@@ -108,10 +138,13 @@ schemas:
           description: Canonical unpadded base64url of the nonzero 16-byte delivery header identifier; not an access grant.,
         }
       delivery_generation:
-        type: integer
-        format: int64
-        minimum: 1
-        description: Current network binding revision; aborted revisions are never reused.
+        {
+          type: string,
+          description: "Current network binding revision; aborted revisions are never reused.",
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "delivery_generation,string" },
+        }
       key:
         {
           type: string,
@@ -122,10 +155,13 @@ schemas:
         x-go-type-skip-optional-pointer: true
         description: Stable endpoint frame key, returned only to the authorized connector and publisher, never a relay.
       trust_revision:
-        type: integer
-        format: int64
-        minimum: 1
-        x-go-type-skip-optional-pointer: true
+        {
+          type: string,
+          x-go-type-skip-optional-pointer: true,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "trust_revision,omitempty,string" },
+        }
       operation_id:
         type: string
         x-go-type-skip-optional-pointer: true
@@ -168,7 +204,13 @@ schemas:
       pair: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPair" }
       run_valid_until: { type: string, format: date-time }
       protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
-      trust_revision: { type: integer, format: int64, minimum: 1 }
+      trust_revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "trust_revision,string" },
+        }
       endpoint: { $ref: "../openapi.yaml#/components/schemas/ServiceEndpoint" }
       visitor_permission: { $ref: "../openapi.yaml#/components/schemas/VisitorTokenResponse" }
   ConnectorPeerPairRebindPhase:
@@ -246,15 +288,30 @@ schemas:
         maxLength: 25
         description: Empty for inspect; otherwise an ik_ opaque id retained across all phases of one operation.
       expected_generation:
-        type: integer
-        format: int64
-        minimum: 1
-        description: Known high-water for inspect, exact high-water CAS for prepare, exact pending revision for activate or abort.
+        {
+          type: string,
+          description: "Known high-water for inspect, exact high-water CAS for prepare, exact pending revision for activate or abort.",
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "expected_generation,string" },
+        }
       requested_at: { type: string, format: date-time }
       service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
-      run_number: { type: integer, format: int64, minimum: 1 }
+      run_number:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "run_number,string" },
+        }
       publisher_identity_id: { type: string, pattern: "^pub_[A-Za-z0-9]{22}$" }
-      trust_revision: { type: integer, format: int64, minimum: 1 }
+      trust_revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "trust_revision,string" },
+        }
       subject: { $ref: "../openapi.yaml#/components/schemas/VisitorSubject" }
       source:
         x-go-type: json.RawMessage
@@ -282,7 +339,13 @@ schemas:
     required: [operation_id, delivery_generation, status]
     properties:
       operation_id: { type: string, pattern: "^ik_[A-Za-z0-9]{22}$" }
-      delivery_generation: { type: integer, format: int64, minimum: 1 }
+      delivery_generation:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "delivery_generation,string" },
+        }
       status: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairRebindOperationStatus" }
   ConnectorPeerPairRebindState:
     type: object
@@ -292,7 +355,13 @@ schemas:
     properties:
       active: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPair" }
       pending: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPair" }
-      high_water_generation: { type: integer, format: int64, minimum: 1 }
+      high_water_generation:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "high_water_generation,string" },
+        }
       pending_until:
         type: string
         format: date-time

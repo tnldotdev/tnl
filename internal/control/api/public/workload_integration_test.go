@@ -166,14 +166,14 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 			status int
 		}{
 			{"", 400}, {"null", 400}, {"{}", 400},
-			{`{"sequence":0,"signature":"` + proof.Signature + `"}`, 400},
-			{`{"sequence":9223372036854775808,"signature":"` + proof.Signature + `"}`, 400},
-			{`{"sequence":2,"signature":"invalid"}`, 400},
+			{`{"sequence":"0","signature":"` + proof.Signature + `"}`, 400},
+			{`{"sequence":"9223372036854775808","signature":"` + proof.Signature + `"}`, 400},
+			{`{"sequence":"2","signature":"invalid"}`, 400},
 			{string(encoded) + ` {}`, 400},
 			{strings.Repeat(" ", 65<<10) + string(encoded), 400},
 			{string(wrongBody), 403},
-			{`{"sequence":3,"signature":"` + proof.Signature + `"}`, 403},
-			{`{"sequence":2,"signature":"` + base64.RawURLEncoding.EncodeToString(job.Sign(workloadproof.Renew("other", sequence))) + `"}`, 403},
+			{`{"sequence":"3","signature":"` + proof.Signature + `"}`, 403},
+			{`{"sequence":"2","signature":"` + base64.RawURLEncoding.EncodeToString(job.Sign(workloadproof.Renew("other", sequence))) + `"}`, 403},
 			{string(encoded), 200}, {string(encoded), 200},
 		} {
 			request, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/v1/workload-sessions/"+current.Id+"/renew", strings.NewReader(test.body))
@@ -274,7 +274,7 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 			t.Helper()
 			var body io.Reader
 			if strings.HasSuffix(path, "/renew") {
-				body = strings.NewReader(`{"sequence":1,"signature":"` + base64.RawURLEncoding.EncodeToString(make([]byte, ed25519.SignatureSize)) + `"}`)
+				body = strings.NewReader(`{"sequence":"1","signature":"` + base64.RawURLEncoding.EncodeToString(make([]byte, ed25519.SignatureSize)) + `"}`)
 			}
 			req, err := http.NewRequestWithContext(ctx, method, server.URL+path, body)
 			if err != nil {

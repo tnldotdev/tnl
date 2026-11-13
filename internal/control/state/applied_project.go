@@ -111,8 +111,8 @@ type AppliedProjectService struct {
 	Kind            string `json:"service_kind"`
 	ServiceID       string `json:"service_id,omitempty"`
 	Hostname        string `json:"hostname,omitempty"`
-	DesiredRevision int64  `json:"desired_revision"`
-	TrustRevision   int64  `json:"trust_revision"`
+	DesiredRevision int64  `json:"desired_revision,string"`
+	TrustRevision   int64  `json:"trust_revision,string"`
 	Port            int    `json:"port,omitempty"`
 	Public          bool   `json:"public,omitempty"`
 }
@@ -128,7 +128,7 @@ type AppliedProjectConfiguration struct {
 	TeamID            string                       `json:"team_id"`
 	ProjectKey        string                       `json:"project_key"`
 	SourceFingerprint string                       `json:"source_fingerprint"`
-	Revision          int64                        `json:"revision"`
+	Revision          int64                        `json:"revision,string"`
 	ConfigurationHash string                       `json:"configuration_hash"`
 	Configuration     ProjectConfiguration         `json:"configuration"`
 	Services          []AppliedProjectService      `json:"services"`

@@ -103,9 +103,9 @@ parameters:
     in: query
     required: false
     schema:
-      type: integer
-      format: int64
-      minimum: 0
+      type: string
+      pattern: "^[0-9]+$"
+      x-go-type: int64
   PublishRunID:
     name: publish_run_id
     in: path
@@ -317,9 +317,12 @@ schemas:
       publisher_connection_id:
         $ref: "../openapi.yaml#/components/schemas/PublisherConnectionID"
       connection_assignment_revision:
-        type: integer
-        format: int64
-        minimum: 1
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "connection_assignment_revision,string" },
+        }
       relay_service_id:
         $ref: "../openapi.yaml#/components/schemas/RelayServiceID"
       relay_address:

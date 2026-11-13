@@ -520,7 +520,7 @@ type CompanyAdmissionPage struct {
 
 // CompanyAdmissionRequest defines model for CompanyAdmissionRequest.
 type CompanyAdmissionRequest struct {
-	ConnectionRevision   int64     `json:"connection_revision"`
+	ConnectionRevision   int64     `json:"connection_revision,string"`
 	CreatedAt            time.Time `json:"created_at"`
 	IdentityConnectionId string    `json:"identity_connection_id"`
 	IdentityId           string    `json:"identity_id"`
@@ -541,11 +541,11 @@ type CompanyConnections struct {
 type CompanyEligibilityRequest struct {
 	// AccountSubject Website OIDC sub under the configured issuer; never a directory subject or email
 	AccountSubject       string    `json:"account_subject"`
-	ConnectionRevision   int64     `json:"connection_revision"`
+	ConnectionRevision   int64     `json:"connection_revision,string"`
 	Eligible             bool      `json:"eligible"`
 	IdentityConnectionId string    `json:"identity_connection_id"`
 	MemberSlug           string    `json:"member_slug"`
-	Revision             int64     `json:"revision"`
+	Revision             int64     `json:"revision,string"`
 	Subject              string    `json:"subject"`
 	TeamId               string    `json:"team_id"`
 	ValidUntil           time.Time `json:"valid_until"`
@@ -560,7 +560,7 @@ type CompanyIntentCredential struct {
 type CompanyLoginIntent struct {
 	BindingToken         *string   `json:"binding_token,omitempty"`
 	ClientId             string    `json:"client_id"`
-	ConnectionRevision   int64     `json:"connection_revision"`
+	ConnectionRevision   int64     `json:"connection_revision,string"`
 	ExpiresAt            time.Time `json:"expires_at"`
 	IdentityConnectionId string    `json:"identity_connection_id"`
 	IntentId             string    `json:"intent_id"`
@@ -587,7 +587,7 @@ type ControlSessionResponse struct {
 // CreateIdentityConnectionRequest defines model for CreateIdentityConnectionRequest.
 type CreateIdentityConnectionRequest struct {
 	Admission        CreateIdentityConnectionRequestAdmission `json:"admission"`
-	ExpectedRevision *int64                                   `json:"expected_revision,omitempty"`
+	ExpectedRevision *int64                                   `json:"expected_revision,omitempty,string"`
 	ReplaceId        *string                                  `json:"replace_id,omitempty"`
 
 	// SourceId Opaque immutable source fingerprint; provider configuration stays at the issuer
@@ -649,7 +649,7 @@ type DeviceLoginResultStatus string
 
 // Domain defines model for Domain.
 type Domain struct {
-	AuthorityRevision int64             `json:"authority_revision"`
+	AuthorityRevision int64             `json:"authority_revision,string"`
 	CanonicalDomain   CanonicalHostname `json:"canonical_domain"`
 	CreatedAt         time.Time         `json:"created_at"`
 	Id                DomainID          `json:"id"`
@@ -702,7 +702,7 @@ type IdentityConnection struct {
 	Admission            IdentityConnectionAdmission `json:"admission"`
 	IdentityConnectionId string                      `json:"identity_connection_id"`
 	Issuer               string                      `json:"issuer"`
-	Revision             int64                       `json:"revision"`
+	Revision             int64                       `json:"revision,string"`
 	SourceId             string                      `json:"source_id"`
 	State                IdentityConnectionState     `json:"state"`
 	TeamId               string                      `json:"team_id"`
@@ -722,7 +722,7 @@ type IdentityConnectionSecret struct {
 
 	// ProvisioningToken One-time scoped provisioning credential; control stores only its digest
 	ProvisioningToken string                        `json:"provisioning_token"`
-	Revision          int64                         `json:"revision"`
+	Revision          int64                         `json:"revision,string"`
 	SourceId          string                        `json:"source_id"`
 	State             IdentityConnectionSecretState `json:"state"`
 	TeamId            string                        `json:"team_id"`
@@ -740,7 +740,7 @@ type IdentityConnectionSetup struct {
 	ExpiresAt            time.Time `json:"expires_at"`
 	IdentityConnectionId string    `json:"identity_connection_id"`
 	Issuer               string    `json:"issuer"`
-	Revision             int64     `json:"revision"`
+	Revision             int64     `json:"revision,string"`
 	SetupToken           string    `json:"setup_token"`
 	SourceId             string    `json:"source_id"`
 	State                string    `json:"state"`
@@ -812,7 +812,7 @@ type Membership struct {
 	ManualSuspendedAt        *time.Time     `json:"manual_suspended_at,omitempty"`
 	MemberSlug               CanonicalLabel `json:"member_slug"`
 	PersonalAccountException *bool          `json:"personal_account_exception,omitempty"`
-	PolicyRevision           int64          `json:"policy_revision"`
+	PolicyRevision           int64          `json:"policy_revision,string"`
 	Role                     TeamRole       `json:"role"`
 	TeamDisplayName          CanonicalLabel `json:"team_display_name"`
 	TeamId                   TeamID         `json:"team_id"`
@@ -964,7 +964,7 @@ type Team struct {
 	Id              TeamID         `json:"id"`
 	Kind            TeamKind       `json:"kind"`
 	ManagedLabel    CanonicalLabel `json:"managed_label"`
-	PolicyRevision  int64          `json:"policy_revision"`
+	PolicyRevision  int64          `json:"policy_revision,string"`
 	UpdatedAt       time.Time      `json:"updated_at"`
 }
 
@@ -1064,7 +1064,7 @@ type WorkloadIdentityRequest struct {
 
 // WorkloadRenewal defines model for WorkloadRenewal.
 type WorkloadRenewal struct {
-	Sequence int64 `json:"sequence"`
+	Sequence int64 `json:"sequence,string"`
 
 	// Signature Unpadded base64url Ed25519 signature over SHA-256 of compact JSON ["tnl-workload-renew/v1", session_id, sequence]. Retrying the current sequence does not extend the lease again.
 	Signature string `json:"signature"`
@@ -1093,7 +1093,7 @@ type WorkloadSessionFields struct {
 	ProjectKey        string                        `json:"project_key"`
 	Provider          externalRef0.WorkloadProvider `json:"provider"`
 	RenewAfter        time.Time                     `json:"renew_after"`
-	RenewalSequence   int64                         `json:"renewal_sequence"`
+	RenewalSequence   int64                         `json:"renewal_sequence,string"`
 	ServiceIds        []string                      `json:"service_ids"`
 
 	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
@@ -1122,7 +1122,7 @@ type IssueControlBrowserHandoffJSONBody struct {
 
 // RequestCompanyAdmissionJSONBody defines parameters for RequestCompanyAdmission.
 type RequestCompanyAdmissionJSONBody struct {
-	ConnectionRevision   int64  `json:"connection_revision"`
+	ConnectionRevision   int64  `json:"connection_revision,string"`
 	IdentityConnectionId string `json:"identity_connection_id"`
 	MemberSlug           string `json:"member_slug"`
 	TeamId               string `json:"team_id"`
@@ -1245,7 +1245,7 @@ type ListCompanyAdmissionsParams struct {
 
 // DecideCompanyAdmissionJSONBody defines parameters for DecideCompanyAdmission.
 type DecideCompanyAdmissionJSONBody struct {
-	ConnectionRevision int64                                  `json:"connection_revision"`
+	ConnectionRevision int64                                  `json:"connection_revision,string"`
 	Decision           DecideCompanyAdmissionJSONBodyDecision `json:"decision"`
 }
 
@@ -1272,7 +1272,7 @@ type BeginIdentityConnectionSetupParams struct {
 
 // DisconnectIdentityConnectionJSONBody defines parameters for DisconnectIdentityConnection.
 type DisconnectIdentityConnectionJSONBody struct {
-	ExpectedRevision int64 `json:"expected_revision"`
+	ExpectedRevision int64 `json:"expected_revision,string"`
 }
 
 // DisconnectIdentityConnectionParams defines parameters for DisconnectIdentityConnection.
@@ -1283,7 +1283,7 @@ type DisconnectIdentityConnectionParams struct {
 
 // ActivateIdentityConnectionJSONBody defines parameters for ActivateIdentityConnection.
 type ActivateIdentityConnectionJSONBody struct {
-	ExpectedRevision int64 `json:"expected_revision"`
+	ExpectedRevision int64 `json:"expected_revision,string"`
 
 	// ProvisioningToken Random 256-bit credential durably chosen by the owner before activation. Exact retries return this credential only while its digest remains current; they never rotate it. Requires the same setup capability and fresh current owner/source authorization.
 	ProvisioningToken string `json:"provisioning_token"`
@@ -1298,7 +1298,7 @@ type ActivateIdentityConnectionParams struct {
 
 // RotateCompanyProvisioningTokenJSONBody defines parameters for RotateCompanyProvisioningToken.
 type RotateCompanyProvisioningTokenJSONBody struct {
-	ExpectedRevision int64 `json:"expected_revision"`
+	ExpectedRevision int64 `json:"expected_revision,string"`
 }
 
 // RotateCompanyProvisioningTokenParams defines parameters for RotateCompanyProvisioningToken.

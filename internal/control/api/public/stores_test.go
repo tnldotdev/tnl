@@ -19,7 +19,7 @@ func TestOptionalStoreMustBeExplicitlyWired(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			body := `{"resource":{"kind":"public_url","id":"url_` + strings.Repeat("A", 22) + `"},"run_id":"run","run_number":1,"after_revision":0}`
+			body := `{"resource":{"kind":"public_url","id":"url_` + strings.Repeat("A", 22) + `"},"run_id":"run","run_number":"1","after_revision":"0"}`
 			request := httptest.NewRequest(http.MethodPost, "/v1/visitor-policy", strings.NewReader(body))
 			request.Header.Set("Authorization", "Bearer fixture-run-secret")
 			response := httptest.NewRecorder()

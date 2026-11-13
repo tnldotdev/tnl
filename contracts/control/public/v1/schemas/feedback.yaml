@@ -23,9 +23,12 @@ schemas:
       publish_run_id:
         $ref: "../openapi.yaml#/components/schemas/PublishRunID"
       publish_run_number:
-        type: integer
-        format: int64
-        minimum: 1
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "publish_run_number,string" },
+        }
       page_path:
         type: string
         minLength: 1
@@ -257,13 +260,19 @@ schemas:
       ]
     properties:
       message_count:
-        type: integer
-        format: int64
-        minimum: 1
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "message_count,string" },
+        }
       latest_event_cursor:
-        type: integer
-        format: int64
-        minimum: 0
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "latest_event_cursor,string" },
+        }
       schema_version:
         $ref: "../openapi.yaml#/components/schemas/ReviewSchemaVersion"
       id:
@@ -286,13 +295,19 @@ schemas:
     required: [schema_version, id, state, scope, report, message_count, latest_event_cursor]
     properties:
       message_count:
-        type: integer
-        format: int64
-        minimum: 1
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "message_count,string" },
+        }
       latest_event_cursor:
-        type: integer
-        format: int64
-        minimum: 0
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "latest_event_cursor,string" },
+        }
       schema_version:
         $ref: "../openapi.yaml#/components/schemas/ReviewSchemaVersion"
       id:
@@ -320,9 +335,12 @@ schemas:
       next_cursor:
         $ref: "../openapi.yaml#/components/schemas/FeedbackID"
       event_cursor:
-        type: integer
-        format: int64
-        minimum: 0
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "event_cursor,string" },
+        }
   FeedbackEvent:
     type: object
     additionalProperties: false
@@ -331,9 +349,12 @@ schemas:
       schema_version:
         $ref: "../openapi.yaml#/components/schemas/ReviewSchemaVersion"
       cursor:
-        type: integer
-        format: int64
-        minimum: 1
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "cursor,string" },
+        }
       feedback_id:
         $ref: "../openapi.yaml#/components/schemas/FeedbackID"
       type:
@@ -367,13 +388,19 @@ schemas:
         items:
           $ref: "../openapi.yaml#/components/schemas/FeedbackEvent"
       next_cursor:
-        type: integer
-        format: int64
-        minimum: 1
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "next_cursor,omitempty,string" },
+        }
       event_cursor:
-        type: integer
-        format: int64
-        minimum: 0
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "event_cursor,string" },
+        }
   FeedbackReviewerAccess:
     type: object
     additionalProperties: false
@@ -413,9 +440,12 @@ schemas:
       preview_id:
         $ref: "../openapi.yaml#/components/schemas/PreviewID"
       publish_run_number:
-        type: integer
-        format: int64
-        minimum: 1
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "publish_run_number,string" },
+        }
       service:
         type: string
       page_path:
@@ -459,9 +489,12 @@ schemas:
     required: [publish_run_number, type, access]
     properties:
       publish_run_number:
-        type: integer
-        format: int64
-        minimum: 1
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "publish_run_number,string" },
+        }
       type:
         $ref: "../openapi.yaml#/components/schemas/ReviewerFeedbackEventInputType"
       text:
@@ -488,14 +521,20 @@ schemas:
     required: [publish_run_number, preview_id, access]
     properties:
       publish_run_number:
-        type: integer
-        format: int64
-        minimum: 1
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "publish_run_number,string" },
+        }
       preview_id:
         $ref: "../openapi.yaml#/components/schemas/PreviewID"
       after_cursor:
-        type: integer
-        format: int64
-        minimum: 0
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "after_cursor,omitempty,string" },
+        }
       access:
         $ref: "../openapi.yaml#/components/schemas/FeedbackReviewerAccess"

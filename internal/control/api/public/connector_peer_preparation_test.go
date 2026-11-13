@@ -35,7 +35,7 @@ func TestConnectorPeerPreparationRequiresExplicitPhase(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			store := &connectorPreparationTestStore{}
 			handler := testHandler(t, Config{}, nil, nil, nil, Stores{ConnectorPeerPairs: store})
-			request := httptest.NewRequest(http.MethodPost, "/v1/services/svc_1234567890123456789012/runs/srun_1234567890123456789012/connector-peer-pairs/cpp_1234567890123456789012/prepared", strings.NewReader(`{`+test.field+`"delivery_id":"AQEBAQEBAQEBAQEBAQEBAQ","delivery_generation":1,"binding_expires_at":"2026-11-11T12:00:00Z"}`))
+			request := httptest.NewRequest(http.MethodPost, "/v1/services/svc_1234567890123456789012/runs/srun_1234567890123456789012/connector-peer-pairs/cpp_1234567890123456789012/prepared", strings.NewReader(`{`+test.field+`"delivery_id":"AQEBAQEBAQEBAQEBAQEBAQ","delivery_generation":"1","binding_expires_at":"2026-11-11T12:00:00Z"}`))
 			request.Header.Set("Authorization", "Bearer run-token")
 			response := httptest.NewRecorder()
 			handler.ServeHTTP(response, request)

@@ -21,7 +21,13 @@ schemas:
       source_id: { type: string }
       admission: { type: string }
       state: { type: string }
-      revision: { type: integer, format: int64 }
+      revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "revision,string" },
+        }
       setup_token: { type: string }
       expires_at: { type: string, format: date-time }
   IdentityConnection:
@@ -45,7 +51,13 @@ schemas:
           enum: [pending, active, retired],
           x-enum-varnames: [ConnectionViewPending, ConnectionViewActive, ConnectionViewRetired],
         }
-      revision: { type: integer, format: int64 }
+      revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "revision,string" },
+        }
   CreateIdentityConnectionRequest:
     type: object
     additionalProperties: false
@@ -65,7 +77,13 @@ schemas:
           x-enum-varnames: [CreateConnectionApproval, CreateConnectionManaged],
         }
       replace_id: { type: string }
-      expected_revision: { type: integer, format: int64, minimum: 1 }
+      expected_revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "expected_revision,omitempty,string" },
+        }
   IdentityConnectionSecret:
     type: object
     additionalProperties: false
@@ -92,7 +110,13 @@ schemas:
           x-enum-varnames: [ConnectionAdmissionApproval, ConnectionAdmissionManaged],
         }
       state: { type: string, enum: [active], x-enum-varnames: [ConnectionActive] }
-      revision: { type: integer, format: int64 }
+      revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "revision,string" },
+        }
       provisioning_token:
         {
           type: string,
@@ -133,7 +157,13 @@ schemas:
       request_id: { type: string }
       team_id: { type: string }
       identity_connection_id: { type: string }
-      connection_revision: { type: integer, format: int64 }
+      connection_revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "connection_revision,string" },
+        }
       identity_id: { type: string }
       subject: { type: string }
       member_slug: { type: string }
@@ -165,7 +195,13 @@ schemas:
       intent_id: { type: string }
       team_id: { type: string }
       identity_connection_id: { type: string }
-      connection_revision: { type: integer, format: int64 }
+      connection_revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "connection_revision,string" },
+        }
       source_id: { type: string }
       issuer: { type: string }
       client_id: { type: string }
@@ -191,14 +227,26 @@ schemas:
     properties:
       team_id: { type: string }
       identity_connection_id: { type: string }
-      connection_revision: { type: integer, format: int64, minimum: 1 }
+      connection_revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "connection_revision,string" },
+        }
       account_subject:
         {
           type: string,
           description: Website OIDC sub under the configured issuer; never a directory subject or email,
         }
       subject: { type: string, maxLength: 256 }
-      revision: { type: integer, format: int64, minimum: 1 }
+      revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "revision,string" },
+        }
       eligible: { type: boolean }
       valid_until: { type: string, format: date-time }
       member_slug: { type: string }

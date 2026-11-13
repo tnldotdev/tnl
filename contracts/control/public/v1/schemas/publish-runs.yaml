@@ -4,7 +4,13 @@ schemas:
     additionalProperties: false
     required: [publish_run_number, events]
     properties:
-      publish_run_number: { type: integer, format: int64, minimum: 1 }
+      publish_run_number:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "publish_run_number,string" },
+        }
       events:
         {
           type: array,
@@ -121,13 +127,19 @@ schemas:
       membership_id:
         $ref: "../openapi.yaml#/components/schemas/MembershipID"
       publish_run_number:
-        type: integer
-        format: int64
-        minimum: 1
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "publish_run_number,string" },
+        }
       policy_revision:
-        type: integer
-        format: int64
-        minimum: 1
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "policy_revision,string" },
+        }
       state:
         $ref: "../openapi.yaml#/components/schemas/PublishRunState"
       ready_publisher_connections:
@@ -178,18 +190,24 @@ schemas:
     required: [publish_run_number]
     properties:
       publish_run_number:
-        type: integer
-        format: int64
-        minimum: 1
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "publish_run_number,string" },
+        }
   EnableShareAccessRequest:
     type: object
     additionalProperties: false
     required: [publish_run_number]
     properties:
       publish_run_number:
-        type: integer
-        format: int64
-        minimum: 1
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "publish_run_number,string" },
+        }
       preview_id:
         $ref: "../openapi.yaml#/components/schemas/PreviewID"
   RedeemShareRequest:
@@ -198,9 +216,12 @@ schemas:
     required: [publish_run_number]
     properties:
       publish_run_number:
-        type: integer
-        format: int64
-        minimum: 1
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "publish_run_number,string" },
+        }
       share_id:
         $ref: "../openapi.yaml#/components/schemas/ShareID"
       secret:
@@ -233,9 +254,12 @@ schemas:
     required: [publish_run_number, issuance_id, not_after]
     properties:
       publish_run_number:
-        type: integer
-        format: int64
-        minimum: 1
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "publish_run_number,string" },
+        }
       issuance_id:
         $ref: "../openapi.yaml#/components/schemas/IssuanceID"
       not_after:
@@ -247,9 +271,12 @@ schemas:
     required: [publish_run_number, csr]
     properties:
       publish_run_number:
-        type: integer
-        format: int64
-        minimum: 1
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "publish_run_number,string" },
+        }
       csr:
         type: string
         format: byte
@@ -290,9 +317,12 @@ schemas:
       public_url_id:
         $ref: "../openapi.yaml#/components/schemas/PublicURLID"
       publish_run_number:
-        type: integer
-        format: int64
-        minimum: 1
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "publish_run_number,string" },
+        }
       certificate_plan:
         $ref: "../openapi.yaml#/components/schemas/CertificatePlan"
       state:

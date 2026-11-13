@@ -6,19 +6,38 @@ schemas:
     properties:
       resource: { $ref: "../openapi.yaml#/components/schemas/VisitorResourceScope" }
       run_id: { type: string, maxLength: 64 }
-      run_number: { type: integer, format: int64, minimum: 1 }
-      after_revision: { type: integer, format: int64, minimum: 0 }
+      run_number:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "run_number,string" },
+        }
+      after_revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "after_revision,string" },
+        }
   VisitorPolicyUpdate:
     type: object
     additionalProperties: false
     required: [policy, after_revision, revisions, snapshot_required]
     properties:
       policy: { $ref: "../openapi.yaml#/components/schemas/VisitorPolicySnapshot" }
-      after_revision: { type: integer, format: int64, minimum: 0 }
+      after_revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "after_revision,string" },
+        }
       revisions:
         type: array
+        x-go-type: RevisionList
         maxItems: 256
-        items: { type: integer, format: int64, minimum: 1 }
+        items: { type: string, pattern: "^[0-9]+$" }
       snapshot_required: { type: boolean }
       visitor_source_key:
         type: string
@@ -54,13 +73,28 @@ schemas:
       hostname: { type: string, maxLength: 253 }
       port: { type: integer, minimum: 1, maximum: 65535 }
       issuer: { type: string, format: uri, maxLength: 256 }
-      visitor_policy_revision: { type: integer, format: int64, minimum: 1 }
+      visitor_policy_revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "visitor_policy_revision,string" },
+        }
       metadata_revision:
-        type: integer
-        format: int64
-        minimum: 0
-        description: current service trust revision; zero for public URLs.
-      key_revision: { type: integer, format: int64, minimum: 1 }
+        {
+          type: string,
+          description: "current service trust revision; zero for public URLs.",
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "metadata_revision,string" },
+        }
+      key_revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "key_revision,string" },
+        }
       observed_at: { type: string, format: date-time }
       valid_until: { type: string, format: date-time }
       connection_deadline:

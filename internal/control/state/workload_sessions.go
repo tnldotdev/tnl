@@ -26,7 +26,7 @@ const WorkloadLease = 90 * time.Second
 const WorkloadRenewAfter = 30 * time.Second
 
 type WorkloadSession struct {
-	RenewalSequence    int64                    `json:"renewal_sequence"`
+	RenewalSequence    int64                    `json:"renewal_sequence,string"`
 	ID                 string                   `json:"id"`
 	Credential         string                   `json:"credential"`
 	TeamID             string                   `json:"team_id"`
@@ -332,7 +332,7 @@ type WorkloadServiceAuthorization struct {
 	Subject        VisitorSubject `json:"subject"`
 	ServiceID      string         `json:"service_id"`
 	ValidUntil     time.Time      `json:"valid_until"`
-	PolicyRevision int64          `json:"policy_revision"`
+	PolicyRevision int64          `json:"policy_revision,string"`
 }
 
 // VisitorSubjectAccess is shared by human and workload data-plane adapters.

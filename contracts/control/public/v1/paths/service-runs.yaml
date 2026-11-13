@@ -73,7 +73,13 @@ paths:
               additionalProperties: false
               required: [delivery_generation]
               properties:
-                delivery_generation: { type: integer, format: int64, minimum: 1 }
+                delivery_generation:
+                  {
+                    type: string,
+                    pattern: "^[0-9]+$",
+                    x-go-type: int64,
+                    x-oapi-codegen-extra-tags: { json: "delivery_generation,string" },
+                  }
       responses:
         "200":
           description: Existing delivery bound to the exact active publisher run and two ready relay legs
@@ -105,7 +111,13 @@ paths:
               additionalProperties: false
               required: [run_number]
               properties:
-                run_number: { type: integer, format: int64, minimum: 1 }
+                run_number:
+                  {
+                    type: string,
+                    pattern: "^[0-9]+$",
+                    x-go-type: int64,
+                    x-oapi-codegen-extra-tags: { json: "run_number,string" },
+                  }
       responses:
         "200":
           description: Run token and two independent relay assignments

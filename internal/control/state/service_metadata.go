@@ -25,7 +25,7 @@ type ServiceMetadata struct {
 	Protocol      string            `json:"protocol"`
 	TLS           *ServiceTargetTLS `json:"target_tls,omitempty"`
 	PublisherPool bool              `json:"publisher_pool"`
-	TrustRevision int64             `json:"trust_revision"`
+	TrustRevision int64             `json:"trust_revision,string"`
 	Endpoint      *ServiceEndpoint  `json:"endpoint,omitempty"`
 }
 

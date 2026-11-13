@@ -15,7 +15,7 @@ type CompanyAdmissionRequest struct {
 	ID                   string    `json:"request_id"`
 	TeamID               string    `json:"team_id"`
 	IdentityConnectionID string    `json:"identity_connection_id"`
-	ConnectionRevision   int64     `json:"connection_revision"`
+	ConnectionRevision   int64     `json:"connection_revision,string"`
 	IdentityID           string    `json:"identity_id"`
 	Subject              string    `json:"subject"`
 	MemberSlug           string    `json:"member_slug"`

@@ -170,7 +170,7 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	if err != nil || missingReply.StatusCode() != 400 {
 		t.Fatal("content replay accepted a missing expected_revision", err)
 	}
-	missing["expected_revision"] = 0
+	missing["expected_revision"] = "0"
 	missing["source_fingerprint"] = resolved.SourceFingerprint
 	legacyBytes, err := json.Marshal(missing)
 	if err != nil {

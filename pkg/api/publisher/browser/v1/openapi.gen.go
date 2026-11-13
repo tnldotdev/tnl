@@ -88,7 +88,7 @@ type BrowserAccessStatus struct {
 	ExpiresAt        *time.Time                       `json:"expires_at,omitempty"`
 	PreviewId        externalRef0.PreviewID           `json:"preview_id"`
 	PublicUrlId      externalRef0.PublicURLID         `json:"public_url_id"`
-	PublishRunNumber int64                            `json:"publish_run_number"`
+	PublishRunNumber int64                            `json:"publish_run_number,string"`
 	Reason           *BrowserAccessStatusReason       `json:"reason,omitempty"`
 
 	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.

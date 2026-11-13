@@ -6,7 +6,13 @@ schemas:
     required: [pair_id, delivery_generation]
     properties:
       pair_id: { type: string, pattern: "^cpp_[A-Za-z0-9]{22}$" }
-      delivery_generation: { type: integer, format: int64, minimum: 1 }
+      delivery_generation:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "delivery_generation,string" },
+        }
       owner_authority:
         $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairOwnerAuthority"
   ConnectorPeerPairOwnerAuthority:
@@ -47,7 +53,13 @@ schemas:
         x-go-type-skip-optional-pointer: true
         items: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairPathProof" }
       delivery_id: { type: string, pattern: "^[A-Za-z0-9_-]{21}[AQgw]$" }
-      delivery_generation: { type: integer, format: int64, minimum: 1 }
+      delivery_generation:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "delivery_generation,string" },
+        }
       binding_expires_at:
         type: string
         format: date-time
@@ -81,18 +93,36 @@ schemas:
       pair_id: { type: string, pattern: "^cpp_[A-Za-z0-9]{22}$" }
       service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
       service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
-      run_number: { type: integer, format: int64, minimum: 1 }
+      run_number:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "run_number,string" },
+        }
       publisher_identity_id: { type: string, pattern: "^pub_[A-Za-z0-9]{22}$" }
       subject: { $ref: "../openapi.yaml#/components/schemas/VisitorSubject" }
       delivery_id: { type: string, pattern: "^[A-Za-z0-9_-]{21}[AQgw]$" }
-      delivery_generation: { type: integer, format: int64, minimum: 1 }
+      delivery_generation:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "delivery_generation,string" },
+        }
       key: { type: string, description: Per-binding delivery credential; do not log or persist. }
       session_key:
         type: string
         x-go-type-skip-optional-pointer: true
         description: Stable retained endpoint frame key; never returned by the private relay claim API.
       trust_revision:
-        { type: integer, format: int64, minimum: 1, x-go-type-skip-optional-pointer: true }
+        {
+          type: string,
+          x-go-type-skip-optional-pointer: true,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "trust_revision,omitempty,string" },
+        }
       operation_id: { type: string, maxLength: 25, x-go-type-skip-optional-pointer: true }
       binding_challenge: { type: string, maxLength: 43, x-go-type-skip-optional-pointer: true }
       binding_state:
@@ -120,7 +150,13 @@ schemas:
     additionalProperties: false
     required: [run_number, visitor_connection_id, source_ip, certificate]
     properties:
-      run_number: { type: integer, format: int64, minimum: 1 }
+      run_number:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "run_number,string" },
+        }
       visitor_connection_id: { $ref: "../openapi.yaml#/components/schemas/VisitorConnectionID" }
       source_ip: { type: string, maxLength: 64 }
       certificate: { type: string, format: byte, maxLength: 21848 }
@@ -129,14 +165,26 @@ schemas:
     additionalProperties: false
     required: [run_number, csr]
     properties:
-      run_number: { type: integer, format: int64, minimum: 1 }
+      run_number:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "run_number,string" },
+        }
       csr: { type: string, format: byte, maxLength: 87384 }
   ServiceCertificateInstalledRequest:
     type: object
     additionalProperties: false
     required: [run_number, issuance_id, not_after]
     properties:
-      run_number: { type: integer, format: int64, minimum: 1 }
+      run_number:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "run_number,string" },
+        }
       issuance_id: { $ref: "../openapi.yaml#/components/schemas/IssuanceID" }
       not_after: { type: string, format: date-time }
   ServiceCertificateIssuance:
@@ -148,7 +196,13 @@ schemas:
       id: { $ref: "../openapi.yaml#/components/schemas/IssuanceID" }
       service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
       service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
-      run_number: { type: integer, format: int64, minimum: 1 }
+      run_number:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "run_number,string" },
+        }
       certificate_plan: { $ref: "../openapi.yaml#/components/schemas/CertificatePlan" }
       publisher_identity_id: { type: string, pattern: "^pub_[A-Za-z0-9]{22}$" }
       state: { $ref: "../openapi.yaml#/components/schemas/CertificateIssuanceState" }

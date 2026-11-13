@@ -238,7 +238,7 @@ func (f *Fixture) serve(w http.ResponseWriter, r *http.Request) {
 		setup, found := f.setups[id]
 		f.mu.Unlock()
 		var body struct {
-			PublishRunNumber int64 `json:"publish_run_number"`
+			PublishRunNumber int64 `json:"publish_run_number,string"`
 		}
 		if !found || json.NewDecoder(r.Body).Decode(&body) != nil || body.PublishRunNumber != setup.PublishRun.PublishRunNumber || r.Header.Get("Authorization") != "Bearer "+setup.PublishRunToken {
 			denied(w)
