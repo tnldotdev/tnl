@@ -163,7 +163,7 @@ jobs:
         uses: ./.github/actions/setup # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
         with:
           tools: >-
-            go node pnpm task
+            go node pnpm python uv task
             go:github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
             go:github.com/sqlc-dev/sqlc/cmd/sqlc
             go:golang.org/x/tools/cmd/goimports
