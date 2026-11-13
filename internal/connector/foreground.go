@@ -148,9 +148,6 @@ func (o Operations) Start(ctx context.Context, flags StartOptions, input *os.Fil
 		return runConnectStdio(observability.Independent(ctx), session, service, input, output, o.Telemetry)
 	}
 	flags.Protocol = string(service.Protocol)
-	if flags.Listen == "" && service.Endpoint != nil {
-		flags.Listen = net.JoinHostPort("127.0.0.1", strconv.Itoa(service.Endpoint.Port))
-	}
 	identity := session.identity.Identity.Id
 	jobID := installedjobs.JobKey(session.authenticated.ServerEndpoint, "connect", identity+":"+service.Id)
 	var registry *installedjobs.Registry
@@ -186,11 +183,7 @@ func (o Operations) Start(ctx context.Context, flags StartOptions, input *os.Fil
 			return err
 		}
 	} else if listenAddress == "" {
-		if flags.Listen == "" {
-			listener, err = session.store.ListenService(ctx, identity, service.Id, portProtocol)
-		} else {
-			listener, err = session.store.ListenServiceAt(ctx, identity, service.Id, flags.Listen)
-		}
+		listener, err = listenConnector(ctx, session.store, identity, service, flags.Listen)
 		if err != nil {
 			return err
 		}
