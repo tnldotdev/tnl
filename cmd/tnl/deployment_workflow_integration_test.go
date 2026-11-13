@@ -850,6 +850,17 @@ func cliCall(t *testing.T, ctx context.Context, args []string) []byte {
 
 func (f *cliWorkflow) command(t *testing.T, ctx context.Context, cancel context.CancelFunc, args []string, expectedStop ...error) (<-chan struct{}, <-chan struct{}) {
 	t.Helper()
+	return f.commandWithStop(t, ctx, cancel, args, func(err error) bool {
+		expected := errors.Is(err, context.Canceled)
+		for _, allowed := range expectedStop {
+			expected = expected || errors.Is(err, allowed)
+		}
+		return expected
+	})
+}
+
+func (f *cliWorkflow) commandWithStop(t *testing.T, ctx context.Context, cancel context.CancelFunc, args []string, expectedStop func(error) bool) (<-chan struct{}, <-chan struct{}) {
+	t.Helper()
 	done := make(chan error, 1)
 	joined := make(chan struct{})
 	ready := make(chan struct{})
@@ -862,11 +873,7 @@ func (f *cliWorkflow) command(t *testing.T, ctx context.Context, cancel context.
 		cancel()
 		select {
 		case err := <-done:
-			expected := errors.Is(err, context.Canceled)
-			for _, allowed := range expectedStop {
-				expected = expected || errors.Is(err, allowed)
-			}
-			if err != nil && !expected {
+			if err != nil && !expectedStop(err) {
 				t.Errorf("joined CLI lifecycle: %v", err)
 			}
 		case <-time.After(40 * time.Second):

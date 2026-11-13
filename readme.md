@@ -140,11 +140,9 @@ import { defineConfig } from "@tnldotdev/tnl/config";
 
 export default defineConfig({
   feedback: true,
-  services: {
-    app: {
-      publicURL: {},
-      target: { type: "app" },
-    },
+  services: { app: {} },
+  deployments: {
+    local: { targets: { app: { publicURL: {} } } },
   },
 });
 ```
