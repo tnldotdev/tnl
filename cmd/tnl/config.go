@@ -366,7 +366,7 @@ func runCheck(loaded projectConfiguration, stdout io.Writer) error {
 }
 
 func projectSensitiveCommand(command string) bool {
-	return command == "apply" || command == "audit list" || strings.HasPrefix(command, "auth ") || strings.HasPrefix(command, "admin ") ||
+	return command == "apply" || command == "audit list" || strings.HasPrefix(command, "deployment ") || strings.HasPrefix(command, "auth ") || strings.HasPrefix(command, "admin ") ||
 		command == "connect available" ||
 		strings.HasPrefix(command, "publisher ") ||
 		strings.HasPrefix(command, "team ") || strings.HasPrefix(command, "domain ") || strings.HasPrefix(command, "url ") || strings.HasPrefix(command, "share ") || strings.HasPrefix(command, "feedback ") || strings.HasPrefix(command, "webhook ") || strings.HasPrefix(command, "alias ")
@@ -382,6 +382,10 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		if contextErr == nil && useTeam {
 			remote.ProjectTeam, contextErr = resolve.TeamForServer(remote.ServerURL, project.Config.Server, project.Config.Team)
 		}
+	}
+	if deployment := selectedDeploymentFlags(command, flags); deployment != nil {
+		apply(&deployment.remoteFlags, true)
+		return contextErr
 	}
 	switch command {
 	case "apply":

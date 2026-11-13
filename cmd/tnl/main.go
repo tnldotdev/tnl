@@ -31,36 +31,37 @@ import (
 )
 
 type cli struct {
-	ConfigPath  string           `name:"config" help:"Use a project configuration file; put this flag before the command." type:"path"`
-	NoConfig    bool             `name:"no-config" help:"Skip project configuration; put this flag before the command."`
-	NoTelemetry bool             `name:"no-telemetry" env:"TNL_NO_TELEMETRY" help:"Disable pseudonymous usage telemetry."`
-	Init        initCommand      `cmd:"" help:"Set up tnl for the current project." group:"start"`
-	Apply       applyCommand     `cmd:"" help:"Reconcile this project's declared services and publisher groups with control." group:"manage"`
-	Generate    generateCommand  `cmd:"" help:"Generate portable project types and declared publisher infrastructure offline." group:"manage"`
-	Check       struct{}         `cmd:"" help:"Validate project configuration and show its selected path." group:"manage"`
-	Audit       auditCommand     `cmd:"" help:"Read team service audit history." group:"manage"`
-	Runtime     runtimeCommand   `cmd:"" hidden:""`
-	Wait        waitCommand      `cmd:"" help:"Wait for fresh public readiness checks of configured services." group:"start"`
-	Watch       watchCommand     `cmd:"" help:"Follow local app and TCP publication events." group:"start"`
-	Publish     publishCommand   `cmd:"" help:"Publish a local service or try the built-in demo." group:"start"`
-	Connect     connectCommand   `cmd:"" help:"Make an approved service available locally using the current identity." group:"start"`
-	Publisher   publisherCommand `cmd:"" help:"Enroll publishers and manage their scoped grants." group:"manage"`
-	Service     serviceCommand   `cmd:"" help:"Manage installed publications." group:"operate"`
-	Detached    detachedCommand  `cmd:"" help:"Inspect and stop detached publications." group:"operate"`
-	Status      statusCommand    `cmd:"" help:"Show local snapshots and fresh signed-in server facts; --all includes other projects." group:"start"`
-	Ping        pingCommand      `cmd:"" help:"Check a public URL from this machine as an unauthenticated visitor." group:"start"`
-	Inspect     inspectCommand   `cmd:"" help:"Inspect recent local HTTP activity." group:"manage"`
-	Telemetry   telemetryCommand `cmd:"" help:"Manage the saved usage telemetry choice." group:"manage"`
-	Auth        authCommand      `cmd:"" help:"Inspect credentials and explicitly log in or out." group:"manage"`
-	Team        teamCommand      `cmd:"" help:"Manage teams and memberships." group:"manage"`
-	Domain      domainCommand    `cmd:"" help:"Manage team domains." group:"manage"`
-	URL         publicURLCommand `cmd:"" name:"url" help:"Manage public URLs." group:"manage"`
-	Share       shareCommand     `cmd:"" help:"Manage public URL shares and exact-service access." group:"manage"`
-	Feedback    feedbackCommand  `cmd:"" help:"Read and follow up on preview feedback." group:"manage"`
-	Webhook     webhookCommand   `cmd:"" help:"Choose a receiver for a selected webhook." group:"manage"`
-	Alias       aliasCommand     `cmd:"" help:"Choose which worktree serves a project alias." group:"manage"`
-	Admin       adminCommand     `cmd:"" help:"Administer a self-hosted tnl server." group:"operate"`
-	Version     struct{}         `cmd:"" help:"Print release version information." group:"operate"`
+	ConfigPath  string            `name:"config" help:"Use a project configuration file; put this flag before the command." type:"path"`
+	NoConfig    bool              `name:"no-config" help:"Skip project configuration; put this flag before the command."`
+	NoTelemetry bool              `name:"no-telemetry" env:"TNL_NO_TELEMETRY" help:"Disable pseudonymous usage telemetry."`
+	Init        initCommand       `cmd:"" help:"Set up tnl for the current project." group:"start"`
+	Apply       applyCommand      `cmd:"" help:"Reconcile this project's declared services and publisher groups with control." group:"manage"`
+	Deployment  deploymentCommand `cmd:"" help:"Manage saved deployments and selected target bindings." group:"manage"`
+	Generate    generateCommand   `cmd:"" help:"Generate portable project types and declared publisher infrastructure offline." group:"manage"`
+	Check       struct{}          `cmd:"" help:"Validate project configuration and show its selected path." group:"manage"`
+	Audit       auditCommand      `cmd:"" help:"Read team service audit history." group:"manage"`
+	Runtime     runtimeCommand    `cmd:"" hidden:""`
+	Wait        waitCommand       `cmd:"" help:"Wait for fresh public readiness checks of configured services." group:"start"`
+	Watch       watchCommand      `cmd:"" help:"Follow local app and TCP publication events." group:"start"`
+	Publish     publishCommand    `cmd:"" help:"Publish a local service or try the built-in demo." group:"start"`
+	Connect     connectCommand    `cmd:"" help:"Make an approved service available locally using the current identity." group:"start"`
+	Publisher   publisherCommand  `cmd:"" help:"Enroll publishers and manage their scoped grants." group:"manage"`
+	Service     serviceCommand    `cmd:"" help:"Manage installed publications." group:"operate"`
+	Detached    detachedCommand   `cmd:"" help:"Inspect and stop detached publications." group:"operate"`
+	Status      statusCommand     `cmd:"" help:"Show local snapshots and fresh signed-in server facts; --all includes other projects." group:"start"`
+	Ping        pingCommand       `cmd:"" help:"Check a public URL from this machine as an unauthenticated visitor." group:"start"`
+	Inspect     inspectCommand    `cmd:"" help:"Inspect recent local HTTP activity." group:"manage"`
+	Telemetry   telemetryCommand  `cmd:"" help:"Manage the saved usage telemetry choice." group:"manage"`
+	Auth        authCommand       `cmd:"" help:"Inspect credentials and explicitly log in or out." group:"manage"`
+	Team        teamCommand       `cmd:"" help:"Manage teams and memberships." group:"manage"`
+	Domain      domainCommand     `cmd:"" help:"Manage team domains." group:"manage"`
+	URL         publicURLCommand  `cmd:"" name:"url" help:"Manage public URLs." group:"manage"`
+	Share       shareCommand      `cmd:"" help:"Manage public URL shares and exact-service access." group:"manage"`
+	Feedback    feedbackCommand   `cmd:"" help:"Read and follow up on preview feedback." group:"manage"`
+	Webhook     webhookCommand    `cmd:"" help:"Choose a receiver for a selected webhook." group:"manage"`
+	Alias       aliasCommand      `cmd:"" help:"Choose which worktree serves a project alias." group:"manage"`
+	Admin       adminCommand      `cmd:"" help:"Administer a self-hosted tnl server." group:"operate"`
+	Version     struct{}          `cmd:"" help:"Print release version information." group:"operate"`
 }
 
 type openOptions struct {
@@ -651,6 +652,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, factories
 		return runInit(ctx, flags.Init, stdout, stderr)
 	case "apply":
 		return runApply(ctx, flags.Apply, project, stdout, stderr)
+	case "deployment create <name>", "deployment list", "deployment show <deployment>", "deployment update <deployment>", "deployment delete <deployment>":
+		return runDeployment(ctx, parsedCommand, flags, project, stdout, stderr)
 	case "audit list":
 		return runAuditList(ctx, flags.Audit.List, stdout, stderr)
 	case "telemetry on":
@@ -934,6 +937,8 @@ func commandFailureReason(command string) failure.Reason {
 	case strings.HasPrefix(command, "tnl domain "):
 		return failure.DomainUnavailable
 	case strings.HasPrefix(command, "tnl url "):
+		return failure.ServerConflict
+	case strings.HasPrefix(command, "tnl deployment "):
 		return failure.ServerConflict
 	case strings.HasPrefix(command, "tnl share "), strings.HasPrefix(command, "tnl feedback "):
 		return failure.ServerConflict
