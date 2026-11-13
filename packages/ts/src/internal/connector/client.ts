@@ -7,15 +7,25 @@ import type {
   TnlClientOptions,
   TnlFetch,
   TnlNativeTLSOptions,
+  TnlConnectionRegistry,
 } from "../../project.js";
 import { clientFactory } from "./client_factory.js";
 import type { ConnectionSnapshot } from "./snapshot.js";
 import { resolveNativeBinary } from "../native/launcher.js";
 import { protocolSchema, serviceNameSchema } from "../values.js";
 import type { ServiceProtocol } from "../project/runtime.js";
+import { deploymentConnector } from "./connection.js";
+import { boundManagement } from "./management.js";
 
 export type ServiceFacts = Readonly<Record<string, Readonly<{ protocol: ServiceProtocol }>>>;
-type ServiceNames<Services extends ServiceFacts> = Extract<keyof Services, string>;
+type Names<Services extends ServiceFacts> = Extract<keyof Services, string>;
+type Connection<
+  Services extends ServiceFacts,
+  Name extends Names<Services>,
+  Local extends boolean,
+> = (Local extends true ? LocalConnectionRegistry : TnlConnectionRegistry)[
+  Services[Name]["protocol"]
+];
 
 export interface LocalPostgresConnection {
   readonly host: string;
@@ -39,16 +49,13 @@ export type LocalConnectionRegistry = {
     context: string;
   }>;
 };
-type ConnectionFor<
-  Services extends ServiceFacts,
-  Name extends ServiceNames<Services>,
-> = LocalConnectionRegistry[Services[Name]["protocol"]];
+export type LocalDeployment<Services extends ServiceFacts> = Deployment<Services, true>;
 
-export interface LocalDeployment<Services extends ServiceFacts> {
-  connect<Name extends ServiceNames<Services>>(name: Name): Promise<ConnectionFor<Services, Name>>;
-  client<Name extends ServiceNames<Services>, Client>(
+export interface Deployment<Services extends ServiceFacts, Local extends boolean = false> {
+  connect<Name extends Names<Services>>(name: Name): Promise<Connection<Services, Name, Local>>;
+  client<Name extends Names<Services>, Client>(
     name: Name,
-    options: TnlClientOptions<ConnectionFor<Services, Name>, Client>,
+    options: TnlClientOptions<Connection<Services, Name, Local>, Client>,
   ): TnlClientFactory<Client>;
   close(): Promise<void>;
 }
@@ -161,24 +168,57 @@ async function localConnection(
 }
 
 /** construct explicit deployment handles from portable service names and protocols. */
-export function createClient<const Services extends ServiceFacts>(options: { services: Services }) {
+export function createClient<const Services extends ServiceFacts = Record<never, never>>(options: {
+  project?: string;
+  services?: Services;
+  token?: string;
+}) {
   const parsed = z
     .strictObject({
+      project: z
+        .string()
+        .regex(/^[^/]+\/[^/]+$/)
+        .exactOptional(),
+      token: z
+        .string()
+        .min(1)
+        .max(32 << 10)
+        .exactOptional(),
       services: z
         .record(serviceNameSchema, z.strictObject({ protocol: protocolSchema }))
-        .refine((value) => Object.keys(value).length <= 32),
+        .refine((value) => Object.keys(value).length <= 32)
+        .exactOptional(),
     })
+    .refine((value) => value.services !== undefined || value.project !== undefined)
     .safeParse(options);
   if (!parsed.success) throw new TnlError("sdk.configuration_invalid");
   const protocols = new Map(
-    Object.entries(parsed.data.services).map(([name, service]) => [name, service.protocol]),
+    Object.entries(parsed.data.services ?? {}).map(([name, service]) => [name, service.protocol]),
   );
+  const project = parsed.data.project;
+  const token = parsed.data.token ?? process.env.TNL_TOKEN;
+  const management = boundManagement(project, token);
   return Object.freeze({
-    deployment(name: "local"): LocalDeployment<Services> {
-      if (name !== "local") throw new TnlError("sdk.configuration_invalid");
+    ...management,
+    deployment<Selected extends string>(
+      name: Selected,
+    ): Deployment<Services, Selected extends "local" ? true : false> {
+      if (!serviceNameSchema.safeParse(name).success && !/^pgrp_[a-z0-9]{22}$/.test(name))
+        throw new TnlError("sdk.configuration_invalid");
+      if (name !== "local" && (project === undefined || token === undefined))
+        throw new TnlError("sdk.configuration_invalid");
       const directory = process.cwd();
       const binary = resolveNativeBinary();
       const environment = { ...process.env };
+      const connector =
+        name === "local"
+          ? undefined
+          : deploymentConnector({
+              project: project ?? "",
+              token: token ?? "",
+              name,
+              services: [...protocols.keys()],
+            });
       const closedError = new TnlError("sdk.client_closed");
       const pending = new Set<Promise<unknown>>();
       const factories = new Set<{ close(): Promise<void> }>();
@@ -278,18 +318,31 @@ export function createClient<const Services extends ServiceFacts>(options: { ser
           }
         }
       };
-      const acquire = <Name extends ServiceNames<Services>>(service: Name) => {
+      const acquire = <Name extends Names<Services>>(service: Name) => {
         const protocol = validate(service);
         if (pending.size >= 64) throw new TnlError("sdk.connection_unavailable");
-        const work = localConnection(binary, directory, service, protocol, environment).then(
-          (value) => {
-            if (closed) throw closedError;
-            return {
-              key: value.key,
-              connection: connectionSettings(value.snapshot) as ConnectionFor<Services, Name>,
-            };
-          },
-        );
+        const work = (
+          connector === undefined
+            ? localConnection(binary, directory, service, protocol, environment).then((value) => ({
+                key: value.key,
+                connection: connectionSettings(value.snapshot),
+              }))
+            : connector.acquire(service).then((value) => {
+                if (value.protocol !== protocols.get(service))
+                  throw new TnlError("sdk.response_invalid");
+                return value;
+              })
+        ).then((value): { key: string; connection: Connection<Services, Name, Selected extends "local" ? true : false> } => {
+          if (closed) throw closedError;
+          return {
+            key: value.key,
+            connection: value.connection as Connection<
+              Services,
+              Name,
+              Selected extends "local" ? true : false
+            >,
+          };
+        });
         pending.add(work);
         void work.then(
           () => pending.delete(work),
@@ -298,16 +351,22 @@ export function createClient<const Services extends ServiceFacts>(options: { ser
         return work;
       };
       return Object.freeze({
-        async connect<Name extends ServiceNames<Services>>(service: Name) {
+        async connect<Name extends Names<Services>>(service: Name) {
           return (await acquire(service)).connection;
         },
-        client<Name extends ServiceNames<Services>, Client>(
+        client<Name extends Names<Services>, Client>(
           service: Name,
-          driver: TnlClientOptions<ConnectionFor<Services, Name>, Client>,
+          driver: TnlClientOptions<
+            Connection<Services, Name, Selected extends "local" ? true : false>,
+            Client
+          >,
         ) {
           validate(service);
           if (factories.size >= 64) throw new TnlError("sdk.client_capacity");
-          const factory = clientFactory(() => acquire(service), driver);
+          const factory = clientFactory(async () => {
+            const value = await acquire(service);
+            return { key: value.key, connection: value.connection };
+          }, driver);
           const close = factory.close.bind(factory);
           factory.close = async () => {
             await close();
@@ -340,6 +399,11 @@ export function createClient<const Services extends ServiceFacts>(options: { ser
                 ),
               ),
             ];
+            try {
+              await connector?.close();
+            } catch (error) {
+              errors.push(error);
+            }
             if (errors.length === 1) throw errors[0];
             if (errors.length > 1) throw new AggregateError(errors, "deployment cleanup failed");
           })().finally(() => {
@@ -347,7 +411,7 @@ export function createClient<const Services extends ServiceFacts>(options: { ser
           });
           return closing;
         },
-      });
+      }) as Deployment<Services, Selected extends "local" ? true : false>;
     },
   });
 }

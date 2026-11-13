@@ -3,6 +3,7 @@
 from ._app import PreparedService, Server, prepare, run
 from ._asgi import AccessPolicy, Limits, RateLimit, Tunnel, open
 from ._client import ClientFactory, client
+from ._deployments import Client, Deployment, LocalPostgresConnection, create_client
 from ._connections import (
     Connection,
     ConnectionHandle,
@@ -33,6 +34,10 @@ __all__ = [
     "Connection",
     "ConnectionHandle",
     "ClientFactory",
+    "Client",
+    "Deployment",
+    "LocalPostgresConnection",
+    "create_client",
     "HTTPConnection",
     "HTTPConnectionHandle",
     "KubernetesConnection",

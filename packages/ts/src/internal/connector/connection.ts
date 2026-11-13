@@ -75,7 +75,7 @@ function machineError(cause: unknown, operation?: string): TnlError {
 }
 
 function machine(
-  scope: NativeScope,
+  scope: Pick<NativeScope, "binary" | "environment">,
   args: string[],
   signal?: AbortSignal,
   input?: unknown,
@@ -84,7 +84,7 @@ function machine(
 }
 
 async function machineUntraced(
-  scope: NativeScope,
+  scope: Pick<NativeScope, "binary" | "environment">,
   args: string[],
   signal?: AbortSignal,
   input?: unknown,
@@ -148,15 +148,18 @@ function readArgs(file: string, name: string): string[] {
   return ["read", "--handle", file, "--service", name];
 }
 
-function nativeScope(key: string): Promise<NativeScope> {
-  const binary = resolveNativeBinary();
-  const directory = process.cwd();
+function nativeScope(
+  key: string,
+  captured?: { binary: string; directory: string; environment: NativeScope["environment"] },
+): Promise<NativeScope> {
+  const binary = captured?.binary ?? resolveNativeBinary();
+  const directory = captured?.directory ?? process.cwd();
   const nativeKey = JSON.stringify([key, binary]);
   let loading = scopes.get(nativeKey);
   if (loading === undefined) {
     if (scopes.size >= 32) throw new TnlError("sdk.connection_unavailable");
     // pin the cache key's selection before yielding, not provider inputs or traces.
-    const environment = {
+    const environment = captured?.environment ?? {
       TNL_STATE_DIR: process.env.TNL_STATE_DIR,
       TNL_SERVER: process.env.TNL_SERVER,
       TNL_CONNECTION_HANDLE: process.env.TNL_CONNECTION_HANDLE,
@@ -183,9 +186,14 @@ function nativeScope(key: string): Promise<NativeScope> {
         ]);
         if (scope.entry !== undefined) (await scope.entry.ipc).close();
       });
-      process.once("beforeExit", () => {
+      const beforeExit = () => {
         void cleanup().catch(() => {});
-      });
+      };
+      scope.close = async () => {
+        await cleanup();
+        process.removeListener("beforeExit", beforeExit);
+      };
+      process.once("beforeExit", beforeExit);
       let selected = selectedScopes.get(key);
       if (selected === undefined) {
         selected = new Map();
@@ -546,9 +554,13 @@ export function managedFetch(
   return Object.assign(run, {
     async close() {
       closed = true;
-      await Promise.all(
-        [...retired, ...(pool === undefined ? [] : [pool])].map((value) => value.close()),
+      const results = await Promise.allSettled(
+        [...retired, ...(pool === undefined ? [] : [pool])].map((value) => value.destroy()),
       );
+      const failures = results.flatMap((result) =>
+        result.status === "rejected" ? [result.reason as unknown] : [],
+      );
+      if (failures.length) throw new AggregateError(failures, "HTTP transport cleanup failed");
     },
   });
 }
@@ -563,11 +575,17 @@ function responseIdentity(response: Response, url: string, type: string): Respon
   return response;
 }
 
-function settings(name: string, snapshot: ConnectionSnapshot, externalFile?: string): Settings {
+function settings(
+  name: string,
+  snapshot: ConnectionSnapshot,
+  externalFile?: string,
+  boundFetch?: TnlFetch,
+): Settings {
   switch (snapshot.protocol) {
     case "tcp":
       return Object.freeze({ host: snapshot.host, port: snapshot.port });
     case "http": {
+      if (boundFetch !== undefined) return Object.freeze({ url: snapshot.url, fetch: boundFetch });
       const key = JSON.stringify([
         contextKey(),
         externalFile === undefined ? resolveNativeBinary() : undefined,
@@ -675,4 +693,155 @@ export function connectionClient<Client>(
       connection: settings(name, prepared.snapshot, externalFile),
     };
   }, options);
+}
+
+const credentialAccessSchema = z.strictObject({
+  schema: z.literal(1),
+  server: z.url(),
+  team_id: z.string().min(1),
+  project_key: z.string().min(1),
+  token: z.string().startsWith("pta_"),
+  expires_at: z.iso.datetime({ offset: true }).transform(Date.parse),
+});
+
+export async function deploymentAccess(project: string, token: string) {
+  const result = await machine(
+    {
+      binary: resolveNativeBinary(),
+      environment: {
+        TNL_STATE_DIR: undefined,
+        TNL_SERVER: undefined,
+        TNL_CONNECTION_HANDLE: undefined,
+      },
+    },
+    ["credential"],
+    undefined,
+    { schema: 1, project, token },
+  );
+  return parseValue(credentialAccessSchema, result, "sdk.response_invalid");
+}
+
+// one registry per explicit deployment handle. existing native selection, IPC,
+// transport adapters and stop acknowledgements retain their owning lifetimes.
+export function deploymentConnector(selection: NonNullable<SelectionOptions["deployment"]>) {
+  const key = `deployment:${randomUUID()}`;
+  const captured = {
+    binary: resolveNativeBinary(),
+    directory: process.cwd(),
+    environment: {
+      TNL_STATE_DIR: process.env.TNL_STATE_DIR,
+      TNL_SERVER: process.env.TNL_SERVER,
+      TNL_CONNECTION_HANDLE: undefined,
+    },
+  };
+  let loading: Promise<NativeScope> | undefined;
+  let closed = false;
+  let closing: Promise<void> | undefined;
+  const closedError = new TnlError("sdk.client_closed");
+  const pending = new Set<Promise<unknown>>();
+  const http = new Map<string, ReturnType<typeof managedFetch>>();
+  const prepareRemoteWork = async (name: string) => {
+    if (closed) throw closedError;
+    const scope = await (loading ??= nativeScope(key, captured));
+    const requested_at = new Date().toISOString();
+    const options: SelectionOptions = { requested_at, deployment: selection };
+    const args = [
+      "sdk-prepare",
+      "--directory",
+      scope.directory,
+      "--registry",
+      scope.registry,
+      "--parent-pid",
+      String(process.pid),
+      "--requested-at",
+      requested_at,
+      "--selected-service",
+      name,
+    ];
+    const raw = await scope.select(
+      args,
+      { schema: 1, deployment: selection },
+      name,
+      undefined,
+      options,
+    );
+    const value = parseValue(sdkPreparationSchema, raw, "sdk.response_invalid");
+    if ("reason" in value) throw machineError({ stderr: JSON.stringify(value) }, "sdk-prepare");
+    if (value.owner.executable !== scope.binary) throw new TnlError("sdk.response_invalid");
+    const prepared = parsePrepared(value.prepared, name, value.owner.connection_handle);
+    if (scope.entry === undefined)
+      scope.entry = { file: prepared.file, ipc: scope.open(prepared.file) };
+    if (closed) throw closedError;
+    return prepared;
+  };
+  const prepareRemote = (name: string) => {
+    const work = prepareRemoteWork(name);
+    pending.add(work);
+    void work.then(
+      () => pending.delete(work),
+      () => pending.delete(work),
+    );
+    return work;
+  };
+  return {
+    acquire(name: string) {
+      if (closed) throw closedError;
+      if (pending.size >= 64) throw new TnlError("sdk.connection_unavailable");
+      const work = prepareRemote(name).then((prepared) => {
+        let fetch: TnlFetch | undefined;
+        if (prepared.snapshot.protocol === "http") {
+          const url = prepared.snapshot.url;
+          let transport = http.get(url);
+          if (transport === undefined) {
+            transport = managedFetch(
+              url,
+              async (signal) => (await waitForPreparation(prepareRemote(name), signal)).snapshot,
+            );
+            http.set(url, transport);
+          }
+          fetch = transport;
+        }
+        const { expires: _expires, ...binding } = prepared.snapshot;
+        return {
+          key: JSON.stringify([prepared.file, binding]),
+          connection: settings(name, prepared.snapshot, prepared.file, fetch),
+          protocol: prepared.snapshot.protocol,
+        };
+      });
+      pending.add(work);
+      void work.then(
+        () => pending.delete(work),
+        () => pending.delete(work),
+      );
+      return work;
+    },
+    close(): Promise<void> {
+      closed = true;
+      closing ??= (async () => {
+        const operations = await Promise.allSettled([...pending]);
+        const cleanup = async () => {
+          if (loading !== undefined) {
+            const scope = await loading;
+            if (scope.close === undefined) throw new TnlError("sdk.response_invalid");
+            await scope.close();
+            scopes.delete(JSON.stringify([key, scope.binary]));
+            selectedScopes.delete(key);
+          }
+        };
+        const results = await Promise.allSettled(
+          [...http.values()].map((value) => value.close()).concat(cleanup()),
+        );
+        const failures = [...operations, ...results].flatMap((result) =>
+          result.status === "rejected" && result.reason !== closedError
+            ? [result.reason as unknown]
+            : [],
+        );
+        if (failures.length)
+          throw new AggregateError(failures, "deployment connection cleanup failed");
+      })().finally(() => {
+        closing = undefined;
+      });
+      return closing;
+    },
+  };
 }

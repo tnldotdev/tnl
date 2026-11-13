@@ -3,7 +3,7 @@ import { createServer as createSecureServer } from "node:https";
 import { connect as connectTCP, createServer as createTCPServer } from "node:net";
 import { createSecureContext } from "node:tls";
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { createClient } from "../../src/internal/connector/local_client.js";
+import { createClient } from "../../src/internal/connector/client.js";
 import { cert, key } from "../fixtures/local-tls.js";
 
 const native = vi.hoisted(() => ({

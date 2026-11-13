@@ -36,10 +36,11 @@ export { TnlError, type TnlErrorCode } from "./errors.js";
 export {
   createClient,
   type ServiceFacts,
+  type Deployment,
   type LocalDeployment,
   type LocalPostgresConnection,
   type LocalConnectionRegistry,
-} from "./internal/connector/local_client.js";
+} from "./internal/connector/client.js";
 
 /** extended by the portable `.tnl/generated/project.d.ts` declaration. */
 export interface TnlProjectConfig {}

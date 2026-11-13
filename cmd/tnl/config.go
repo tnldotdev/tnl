@@ -388,6 +388,8 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		return contextErr
 	}
 	switch command {
+	case "auth credential create <name>":
+		apply(&flags.Auth.Credential.Create.remoteFlags, true)
 	case "apply":
 		apply(&flags.Apply.remoteFlags, true)
 	case "audit list":

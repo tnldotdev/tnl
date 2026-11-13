@@ -167,11 +167,13 @@ func (o sdkOperations) prepareSDK(ctx context.Context, options SDKOptions, input
 		Workload       *connectorruntime.SDKWorkloadRequest `json:"sdk_workload,omitempty"`
 		WorkloadPolicy string                               `json:"sdk_workload_policy,omitempty"`
 		Environment    *connectorruntime.SDKEnvironment     `json:"sdk_environment,omitempty"`
+		Deployment     *connectorruntime.DeploymentRequest  `json:"deployment,omitempty"`
 	}
 	if connectorruntime.ReadJSON(input, &request) != nil || request.Schema != 1 {
 		return connectorruntime.SDKPrepared{}, connectorruntime.ErrInvalid
 	}
 	options.WorkloadSelection, options.WorkloadPolicy, options.Environment = request.Workload, request.WorkloadPolicy, request.Environment
+	options.Deployment = request.Deployment
 	return o.selectSDK(ctx, options, request.Assertion)
 }
 
@@ -452,7 +454,7 @@ func (o sdkOperations) sdkOwner(ctx context.Context, options SDKOptions, scope c
 		return bindSDKRequest(options, key, filepath.Join(directory, "handle.json"))
 	}
 	closed := false
-	if err := o.start(ctx, start, connectorruntime.StartRequest{Schema: 1, Context: scope, Assertion: assertion, Refresh: options.refresh}, func(status connectorruntime.Status) error {
+	if err := o.start(ctx, start, connectorruntime.StartRequest{Schema: 1, Context: scope, Assertion: assertion, Refresh: options.refresh, Deployment: options.Deployment}, func(status connectorruntime.Status) error {
 		owner = status
 		if err := bindSDKRequest(options, key, status.ConnectionHandle); err != nil {
 			return err
@@ -495,13 +497,14 @@ func (b *connectorConnectionBackend) SDKPrepare(ctx context.Context, request con
 	defer finish()
 	options := *b.sdk
 	options.Workload, options.Manifest = request.Workload, request.Manifest
+	options.Deployment = request.Deployment
 	options.WorkloadSelection, options.WorkloadPolicy, options.Environment = request.SDKWorkload, request.SDKWorkloadPolicy, request.SDKEnvironment
 	options.Service = request.Service
 	options.RequestedAt = request.RequestedAt
 	options.RequestHandle = request.SDKRequestHandle
 	options.ContextOptions.Service = nil
 	operations := nativeSDKOperations()
-	if request.Workload == "" && request.SDKWorkload == nil && b.scope.Workload == "" {
+	if request.Deployment == nil && b.deployment == nil && request.Workload == "" && request.SDKWorkload == nil && b.scope.Workload == "" {
 		operations.resolve = func(context.Context, ContextOptions) (connectorruntime.Context, error) { return b.scope, nil }
 	}
 	remote := operations.prepare
