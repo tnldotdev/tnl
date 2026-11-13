@@ -22,7 +22,7 @@ import type { ConnectionSnapshot } from "./snapshot.js";
 import * as z from "zod";
 import { parseValue } from "../validation.js";
 import { sdkPreparationSchema, preparedConnectionSchema } from "./contract.js";
-import { usesWorkload, selectWorkload } from "./workload/provider.js";
+import { usesWorkload, selectWorkload, type WorkloadSource } from "./workload/provider.js";
 import type { SelectionOptions, WorkloadRequest } from "./workload/contract.js";
 export { configureWorkload } from "./workload/provider.js";
 import { resolveNativeBinary } from "../native/launcher.js";
@@ -728,6 +728,7 @@ export function deploymentConnector(
   selection: Omit<NonNullable<SelectionOptions["deployment"]>, "token"> & {
     readonly token?: string;
     readonly handle?: string;
+    readonly workload?: WorkloadSource;
   },
 ) {
   const key = `deployment:${randomUUID()}`;
@@ -749,9 +750,8 @@ export function deploymentConnector(
   const http = new Map<string, ReturnType<typeof managedFetch>>();
   const prepareRemoteWork = async (name: string) => {
     if (closed) throw closedError;
-    if (selection.token === undefined) {
+    if (selection.token === undefined && selection.handle !== undefined) {
       const file = selection.handle;
-      if (file === undefined) throw new TnlError("sdk.configuration_invalid");
       const ipc = await (borrowed ??= ownerIPC(file));
       const prepared = parsePrepared(
         await ipc.prepare(name, undefined, undefined, {
@@ -766,13 +766,31 @@ export function deploymentConnector(
     }
     const scope = await (loading ??= nativeScope(key, captured));
     const requested_at = new Date().toISOString();
-    const deployment = {
-      project: selection.project,
-      name: selection.name,
-      token: selection.token,
-      ...(selection.services === undefined ? {} : { services: selection.services }),
+    const deployment =
+      selection.token === undefined
+        ? undefined
+        : {
+            project: selection.project,
+            name: selection.name,
+            token: selection.token,
+            ...(selection.services === undefined ? {} : { services: selection.services }),
+          };
+    if (deployment === undefined && selection.workload === undefined)
+      throw new TnlError("sdk.configuration_invalid");
+    const options: SelectionOptions = {
+      ...(deployment === undefined
+        ? await selectWorkload(
+            (request) => scope.workload(name, request),
+            undefined,
+            selection.workload,
+            {
+              project: selection.project,
+              name: selection.name,
+            },
+          )
+        : { deployment }),
+      requested_at,
     };
-    const options: SelectionOptions = { requested_at, deployment };
     const args = [
       "sdk-prepare",
       "--directory",
@@ -786,7 +804,14 @@ export function deploymentConnector(
       "--selected-service",
       name,
     ];
-    const raw = await scope.select(args, { schema: 1, deployment }, name, undefined, options);
+    const { requested_at: _requestedAt, ...privateInput } = options;
+    const raw = await scope.select(
+      args,
+      { schema: 1, ...privateInput },
+      name,
+      options.assertion,
+      options,
+    );
     const value = parseValue(sdkPreparationSchema, raw, "sdk.response_invalid");
     if ("reason" in value) throw machineError({ stderr: JSON.stringify(value) }, "sdk-prepare");
     if (value.owner.executable !== scope.binary) throw new TnlError("sdk.response_invalid");
