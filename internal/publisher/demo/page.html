@@ -24,12 +24,13 @@
           U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
       }
       :root {
-        color-scheme: light;
-        --paper: #fff;
-        --ink: #111;
-        --muted: #666;
-        --rule: #b8b8b8;
-        --subtle: #f5f5f5;
+        color-scheme: dark;
+        --paper: #0d1117;
+        --ink: #c9d1d9;
+        --muted: #8b949e;
+        --rule: #30363d;
+        --subtle: #161b22;
+        --primary: #7ee787;
       }
       * {
         box-sizing: border-box;
@@ -54,7 +55,7 @@
       }
       a:focus-visible,
       button:focus-visible {
-        outline: 1px dashed var(--ink);
+        outline: 1px dashed var(--primary);
         outline-offset: 4px;
       }
       .site {
@@ -77,16 +78,17 @@
       }
       header .brand {
         display: inline-flex;
-        width: 44px;
+        width: 64px;
         height: 44px;
         align-items: center;
         justify-content: center;
         padding: 0;
+        color: var(--primary);
       }
       header .brand svg {
         display: block;
-        width: 26px;
-        height: 18px;
+        width: 56px;
+        height: 36px;
       }
       main {
         padding: 64px 0 80px;
