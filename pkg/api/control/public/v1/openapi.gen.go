@@ -357,6 +357,21 @@ func (e CreateVisitorCredentialRequestKind) Valid() bool {
 	}
 }
 
+// Defines values for DeploymentTargetStatusApp.
+const (
+	DeploymentTargetStatusAppTrue DeploymentTargetStatusApp = true
+)
+
+// Valid indicates whether the value is a known member of the DeploymentTargetStatusApp enum.
+func (e DeploymentTargetStatusApp) Valid() bool {
+	switch e {
+	case DeploymentTargetStatusAppTrue:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for FeedbackEventActor.
 const (
 	Implementer FeedbackEventActor = "implementer"
@@ -2542,10 +2557,15 @@ type DeploymentPublisherPage struct {
 // DeploymentService defines model for DeploymentService.
 type DeploymentService struct {
 	// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
-	Endpoint      *ServiceEndpoint `json:"endpoint,omitempty"`
-	Id            ServiceID        `json:"id"`
-	Protocol      ServiceProtocol  `json:"protocol"`
-	TrustRevision int64            `json:"trust_revision"`
+	Endpoint *ServiceEndpoint `json:"endpoint,omitempty"`
+
+	// Id The bound saved service or public URL ID.
+	Id       ResourceID      `json:"id"`
+	Protocol ServiceProtocol `json:"protocol"`
+
+	// PublicUrl The saved HTTP public URL
+	PublicUrl     *string `json:"public_url,omitempty"`
+	TrustRevision int64   `json:"trust_revision"`
 }
 
 // DeploymentTarget defines model for DeploymentTarget.
@@ -2561,12 +2581,18 @@ type DeploymentTarget struct {
 type DeploymentTargetStatus struct {
 	Address *string `json:"address,omitempty"`
 
+	// App The application supplies its bound HTTP listener at publication time.
+	App *DeploymentTargetStatusApp `json:"app,omitempty"`
+
 	// Discovery Exact provider selector resolved by the assigned publisher with its own AWS credentials. Control does not discover targets or credentials. EKS requires kubernetes; RDS requires postgres or mysql, verified against provider metadata.
 	Discovery *ProjectTargetDiscovery `json:"discovery,omitempty"`
 
 	// Tls Verified publisher-to-target TLS. CA is system (the default), aws-rds, or PEM-encoded CA certificates; never a path or URL. aws-rds selects only the supplied endpoint's regional roots offline and requires its hostname for verification. Reads return captured CA material, not a discovery credential.
 	Tls *DeploymentTargetTLS `json:"tls,omitempty"`
 }
+
+// DeploymentTargetStatusApp The application supplies its bound HTTP listener at publication time.
+type DeploymentTargetStatusApp bool
 
 // DeploymentTargetTLS Verified publisher-to-target TLS. CA is system (the default), aws-rds, or PEM-encoded CA certificates; never a path or URL. aws-rds selects only the supplied endpoint's regional roots offline and requires its hostname for verification. Reads return captured CA material, not a discovery credential.
 type DeploymentTargetTLS struct {
@@ -2993,11 +3019,11 @@ type ProjectServiceConfiguration struct {
 	Name     *string             `json:"name,omitempty"`
 	Protocol *ServiceProtocol    `json:"protocol,omitempty"`
 
-	// PublicUrl Enables a local service's public URL. Named publisher groups use http settings and reject this block.
+	// PublicUrl Enables an HTTP public URL. Local URLs belong to the developer preview; remote saved URLs belong to the team/project/deployment and retain their own visitor policy. Remote declarations cannot mark a named URL ephemeral; unnamed application publication allocates temporary URLs separately.
 	PublicUrl      *ProjectServicePublicURL `json:"public_url,omitempty"`
 	PublisherGroup *string                  `json:"publisher_group,omitempty"`
 
-	// Target Public URL targets are HTTP/HTTPS origins with an explicit port and no trailing slash. Service targets normalize to host:port with separate target_tls trust. Only local declarations may use deferred app, compose:SERVICE:PORT, or docker:CONTAINER:PORT descriptors; control does not discover targets.
+	// Target Public URL targets are HTTP/HTTPS origins with an explicit port and no trailing slash. Service targets normalize to host:port with separate target_tls trust. The app descriptor defers an HTTP public URL listener to its application owner in any deployment. Only local declarations may use compose:SERVICE:PORT or docker:CONTAINER:PORT descriptors; control does not discover targets.
 	Target string `json:"target"`
 
 	// TargetDiscovery Exact provider selector resolved by the assigned publisher with its own AWS credentials. Control does not discover targets or credentials. EKS requires kubernetes; RDS requires postgres or mysql, verified against provider metadata.
@@ -3024,7 +3050,7 @@ type ProjectServiceHTTP struct {
 	} `json:"readiness,omitempty"`
 }
 
-// ProjectServicePublicURL Enables a local service's public URL. Named publisher groups use http settings and reject this block.
+// ProjectServicePublicURL Enables an HTTP public URL. Local URLs belong to the developer preview; remote saved URLs belong to the team/project/deployment and retain their own visitor policy. Remote declarations cannot mark a named URL ephemeral; unnamed application publication allocates temporary URLs separately.
 type ProjectServicePublicURL struct {
 	Access   *ProjectPublicAccess `json:"access,omitempty"`
 	DomainId *string              `json:"domain_id,omitempty"`

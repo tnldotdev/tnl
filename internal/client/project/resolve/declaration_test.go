@@ -109,3 +109,18 @@ func TestProjectDeclarationLocalDiscoveryNeedsNoRunningTarget(t *testing.T) {
 		}
 	}
 }
+
+func TestDeploymentDeclarationCapturesSavedURLWithoutLocalListenerFacts(t *testing.T) {
+	group := "production"
+	project := clientproject.Project{Root: t.TempDir(), Config: config.TNL{PublisherGroups: map[string]config.PublisherGroup{group: {}}, Services: config.Services{
+		"web": {PublisherGroup: &group, Target: &config.ServiceTarget{Type: "app"}, Tunnel: &config.Tunnel{PublicURL: new("https://web.example.test"), Domain: new("tnl.dev"), Access: &config.Access{Mode: "anonymous"}}},
+	}}}
+	value, err := Declaration(t.Context(), project, appliedTestContext(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	web := value.Services["web"]
+	if web.Target != "app" || web.PublicUrl == nil || web.PublicUrl.Hostname == nil || *web.PublicUrl.Hostname != "web.example.test" || web.PublicUrl.DomainId == nil || *web.PublicUrl.DomainId != "domain_1" || web.Http != nil {
+		t.Fatal("declaration lost exact saved URL settings or invented group HTTP defaults")
+	}
+}

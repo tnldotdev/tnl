@@ -20,6 +20,7 @@ type DeploymentTargetTLS struct {
 // reads preserve publisher-side discovery for deployments declared by apply;
 // runtime writes still accept only the narrower explicit-address input above.
 type DeploymentTargetStatus struct {
+	App       bool                    `json:"app,omitempty"`
 	Address   string                  `json:"address,omitempty"`
 	TLS       *DeploymentTargetTLS    `json:"tls,omitempty"`
 	Discovery *ProjectTargetDiscovery `json:"discovery,omitempty"`
@@ -63,6 +64,9 @@ func normalizeDeploymentTarget(ctx context.Context, name, protocol, group string
 
 func deploymentTarget(s ProjectServiceConfiguration) DeploymentTargetStatus {
 	result := DeploymentTargetStatus{Address: s.Target, Discovery: s.TargetDiscovery}
+	if s.Target == "app" {
+		result.Address, result.App = "", true
+	}
 	if s.TargetTLS != nil {
 		ca := s.TargetTLS.CAPEM
 		if ca == "" {

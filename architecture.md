@@ -264,6 +264,12 @@ device nor a provider workload is substituted for the registered key. Language
 bindings give each explicit deployment handle an independent native registry and
 join its driver factories and native cleanup without stopping sibling handles.
 
+Manager apply records remote HTTP public URLs in the existing deployment binding,
+separately from private service endpoints. Their namespace belongs to the
+team/project/deployment, not the creator's membership. Installed explicit targets
+use the existing public URL run owner; an `app` target waits for its application's
+bound-listener owner rather than inventing an address for an installed worker.
+
 For shared behavior, define a small interface where it is used and have the
 caller supply the implementation. Do not copy permission checks or run-management
 code to avoid an import, or leave forwarding wrappers after moving code.

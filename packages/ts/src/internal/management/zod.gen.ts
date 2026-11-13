@@ -53,6 +53,7 @@ export const projectTargetDiscoverySchema = z.strictObject({
  * One saved explicit address/TLS binding or a publisher-side discovery declaration saved by manager apply. Runtime mutations accept explicit addresses only and never evaluate these discovery declarations on control.
  */
 export const deploymentTargetStatusSchema = z.strictObject({
+  app: z.literal(true).optional(),
   address: z.string().min(1).max(8192).optional(),
   tls: deploymentTargetTlsSchema.optional(),
   discovery: projectTargetDiscoverySchema.optional(),
@@ -124,8 +125,6 @@ export const publisherRuntimeStatusSchema = z.strictObject({
   deployment: publisherDeploymentObservationSchema.optional(),
 });
 
-export const serviceIdSchema = z.string().regex(/^svc_[A-Za-z0-9]{22}$/);
-
 export const serviceProtocolSchema = z.enum(["http", "tcp", "mysql", "postgres", "kubernetes"]);
 
 /**
@@ -175,18 +174,19 @@ export const serviceEndpointSchema = z.strictObject({
   public: z.boolean(),
 });
 
-export const deploymentServiceSchema = z.strictObject({
-  id: serviceIdSchema,
-  protocol: serviceProtocolSchema,
-  trust_revision: z.int().gte(1),
-  endpoint: serviceEndpointSchema.optional(),
-});
-
 export const resourceIdSchema = z
   .string()
   .min(1)
   .max(256)
   .regex(/^\S(?:.*\S)?$/);
+
+export const deploymentServiceSchema = z.strictObject({
+  id: resourceIdSchema,
+  protocol: serviceProtocolSchema,
+  trust_revision: z.int().gte(1),
+  endpoint: serviceEndpointSchema.optional(),
+  public_url: z.url().optional(),
+});
 
 export const deploymentSchema = z.strictObject({
   id: z.string(),

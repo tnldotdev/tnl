@@ -27,6 +27,12 @@ func resolveManagedGroupDomains(ctx context.Context, tx pgx.Tx, team, project st
 		}
 		c.PublisherGroups[name] = group
 	}
+	for name, service := range c.Services {
+		if service.PublicURL != nil && service.PublisherGroup != "local" && service.PublicURL.DomainID == "" {
+			service.PublicURL.DomainID = c.PublisherGroups[service.PublisherGroup].DomainID
+			c.Services[name] = service
+		}
+	}
 	return c, nil
 }
 
@@ -45,9 +51,18 @@ func (d *Database) ensureGroupNamespace(ctx context.Context, tx pgx.Tx, r ApplyP
 		if err != nil {
 			return publisherLookupError(err, ErrProjectConfigurationInvalid)
 		}
-		var label, teamName string
-		if err = tx.QueryRow(ctx, `SELECT managed_label,display_name FROM control.teams WHERE id=$1`, r.TeamID).Scan(&label, &teamName); err != nil {
+		var label, teamName, teamKind string
+		if err = tx.QueryRow(ctx, `SELECT managed_label,display_name,kind FROM control.teams WHERE id=$1`, r.TeamID).Scan(&label, &teamName, &teamKind); err != nil {
 			return err
+		}
+		if domain.Kind == "custom" || domain.Kind == "managed" && teamKind == "organization" && d.managedURLMode == naming.ManagedURLModeSimple {
+			reserved, err := q.TeamMemberSlugReserved(ctx, controlstatedb.TeamMemberSlugReservedParams{TeamID: r.TeamID, Label: projectLabel})
+			if err != nil {
+				return err
+			}
+			if reserved {
+				return ErrServiceConflict
+			}
 		}
 		owner := domain.CanonicalDomain
 		if domain.Kind == "managed" {

@@ -82,6 +82,10 @@ export type DeploymentTargets = {
  * One saved explicit address/TLS binding or a publisher-side discovery declaration saved by manager apply. Runtime mutations accept explicit addresses only and never evaluate these discovery declarations on control.
  */
 export type DeploymentTargetStatus = {
+  /**
+   * The application supplies its bound HTTP listener at publication time.
+   */
+  app?: true;
   address?: string;
   tls?: DeploymentTargetTls;
   discovery?: ProjectTargetDiscovery;
@@ -103,10 +107,17 @@ export type UpdateDeploymentRequest = {
 };
 
 export type DeploymentService = {
-  id: ServiceId;
+  /**
+   * The bound saved service or public URL ID.
+   */
+  id: ResourceId;
   protocol: ServiceProtocol;
   trust_revision: number;
   endpoint?: ServiceEndpoint;
+  /**
+   * The saved HTTP public URL
+   */
+  public_url?: string;
 };
 
 export type Deployment = {
@@ -189,8 +200,6 @@ export type PublisherRuntimeStatus = {
   active: boolean;
   deployment?: PublisherDeploymentObservation;
 };
-
-export type ServiceId = string;
 
 export type ServiceProtocol = "http" | "tcp" | "mysql" | "postgres" | "kubernetes";
 

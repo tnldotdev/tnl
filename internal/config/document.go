@@ -65,7 +65,7 @@ type Service struct {
 	PublisherGroup *string        `json:"publisher_group,omitempty" yaml:"publisher_group,omitempty" jsonschema_description:"Assigned publisher group; defaults to the built-in local publisher."`
 	Access         *ServiceAccess `json:"access,omitempty" yaml:"access,omitempty" jsonschema_description:"Declare team access for this service or public URL."`
 	Inspection     *Inspection    `json:"inspection,omitempty" yaml:"inspection,omitempty" jsonschema_description:"Override local inspection capture and retention for this service."`
-	Tunnel         *Tunnel        `json:"public_url,omitempty" yaml:"public_url,omitempty" jsonschema_description:"Enable a local HTTP service's public URL. Named groups use http settings on their service endpoint."`
+	Tunnel         *Tunnel        `json:"public_url,omitempty" yaml:"public_url,omitempty" jsonschema_description:"Enable an HTTP public URL. Local URLs belong to the developer preview; remote saved URLs belong to the selected deployment."`
 	Protocol       *string        `json:"protocol,omitempty" yaml:"protocol,omitempty" jsonschema:"enum=http,enum=tcp,enum=mysql,enum=postgres,enum=kubernetes" jsonschema_description:"Defaults to http. Protocol selects native client guidance, never public exposure or target TLS."`
 	Target         *ServiceTarget `json:"target,omitempty" yaml:"target,omitempty"`
 	HTTP           *HTTPService   `json:"http,omitempty" yaml:"http,omitempty"`

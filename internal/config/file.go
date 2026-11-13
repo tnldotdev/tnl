@@ -229,11 +229,11 @@ func ValidateTNL(config TNL) error {
 			if _, found := config.PublisherGroups[group]; !found {
 				return fmt.Errorf("services.%s.publisher_group: group %q is not configured", name, group)
 			}
-			if kind := TargetType(service); kind != "address" && kind != "eks" && kind != "rds" {
-				return fmt.Errorf("services.%s: remote publishers require an address, eks, or rds target", name)
+			if kind := TargetType(service); kind != "address" && kind != "eks" && kind != "rds" && !(kind == "app" && IsPublicService(service)) {
+				return fmt.Errorf("services.%s: remote publishers require an address, eks, rds, or public HTTP app target", name)
 			}
-			if service.Tunnel != nil {
-				return fmt.Errorf("services.%s.public_url: named groups use http settings and the group's reachability", name)
+			if service.Tunnel != nil && (service.Tunnel.Ephemeral != nil && *service.Tunnel.Ephemeral || service.HTTP != nil && (service.HTTP.Access != nil || service.HTTP.Limits != nil)) {
+				return fmt.Errorf("services.%s.public_url: save visitor policy here, omit http access/limits, and publish unnamed apps for temporary URLs", name)
 			}
 			if _, err := ResolveGroupHTTP(config.Tunnel, service.HTTP); err != nil {
 				return fmt.Errorf("services.%s.http: %w", name, err)

@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-selected-deployments')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-deployment-public-urls')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-selected-deployments');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-deployment-public-urls');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -2180,6 +2180,12 @@ $$;
 CREATE FUNCTION control.service_namespace_reusable(scope text,observed timestamptz) RETURNS boolean LANGUAGE sql STABLE AS $$
     SELECT EXISTS(SELECT 1 FROM control.service_namespace_claims claim WHERE claim.namespace=scope AND claim.retired_at IS NOT NULL AND claim.reusable_after<=observed)
       AND NOT EXISTS(SELECT 1 FROM control.service_endpoints endpoint WHERE endpoint.namespace=scope AND(endpoint.retired_at IS NULL OR endpoint.dns_state<>'removed'))
+      AND NOT EXISTS(SELECT 1 FROM control.public_urls url WHERE url.namespace=scope
+          AND (url.lifecycle_state<>'deleted' OR url.dns_state NOT IN('unmanaged','removed')
+              OR EXISTS(SELECT 1 FROM control.publish_runs run WHERE run.public_url_id=url.id AND(run.certificate_not_after>observed OR run.closed_at IS NULL AND run.publisher_expires_at>observed))
+              OR EXISTS(SELECT 1 FROM control.acme_orders issuance WHERE issuance.public_url_id=url.id
+                  AND(issuance.not_after>observed OR issuance.state NOT IN('failed','canceled','installed','waiting_for_install') OR issuance.finalization_possible AND issuance.not_after IS NULL
+                      OR EXISTS(SELECT 1 FROM control.acme_authorizations auth WHERE auth.order_id=issuance.id AND(auth.state IN('presenting','presented','validating','valid','cleaning') OR auth.presented_at IS NOT NULL AND auth.cleanup_completed_at IS NULL))))))
       AND NOT EXISTS(SELECT 1 FROM control.service_runs run WHERE run.certificate_scope=scope AND(run.certificate_expires_at>observed OR run.closed_at IS NULL AND run.publisher_expires_at>observed))
       AND NOT EXISTS(SELECT 1 FROM control.acme_orders issuance WHERE issuance.certificate_scope=scope
         AND(issuance.not_after>observed OR issuance.state NOT IN('failed','canceled','installed','waiting_for_install') OR issuance.finalization_possible AND issuance.not_after IS NULL

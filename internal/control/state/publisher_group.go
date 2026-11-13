@@ -395,6 +395,15 @@ func (d *Database) GetPublisherGroupAssignments(ctx context.Context, token strin
 		return result, err
 	}
 	for _, s := range services {
+		configuration, ok := c.Services[s.Service]
+		if !ok || configuration.PublisherGroup != row.Name {
+			return result, ErrPublisherGroup
+		}
+		// app-owned listeners publish through their SDK owner, never an installed
+		// group worker that would have no application listener to dial.
+		if configuration.Target == "app" {
+			continue
+		}
 		allowed, err := q.PublisherGroupServiceAllowed(ctx, controlstatedb.PublisherGroupServiceAllowedParams{PublisherID: m.PublisherIdentityID, GroupID: m.GroupID, Service: s.Service, ServiceID: s.ServiceID, PublicURLID: s.PublicURLID})
 		if err != nil {
 			return result, err
@@ -409,10 +418,6 @@ func (d *Database) GetPublisherGroupAssignments(ctx context.Context, token strin
 			}
 			return result, publisherLookupError(err, ErrPublisherGroup)
 		}
-		configuration, ok := c.Services[s.Service]
-		if !ok || configuration.PublisherGroup != row.Name {
-			return result, ErrPublisherGroup
-		}
 		a := PublisherGroupServiceAssignment{Service: s.Service, ServiceID: s.PublicURLID.String, Kind: "public_url", GrantID: grant, Configuration: configuration}
 		if s.ServiceID.Valid {
 			a.ServiceID, a.Kind = s.ServiceID.String, "service"
@@ -420,7 +425,9 @@ func (d *Database) GetPublisherGroupAssignments(ctx context.Context, token strin
 				return result, err
 			}
 		} else {
-			a.Hostname = a.Configuration.PublicURL.Hostname
+			if err = tx.QueryRow(ctx, `SELECT canonical_hostname,mutation_revision FROM control.public_urls WHERE id=$1 AND lifecycle_state='enabled'`, s.PublicURLID.String).Scan(&a.Hostname, &a.TrustRevision); err != nil {
+				return result, err
+			}
 		}
 		result.Services = append(result.Services, a)
 	}

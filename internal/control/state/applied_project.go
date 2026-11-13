@@ -499,11 +499,21 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 			}
 			// local resources are created by the normal per-worktree runtime.
 			if s.PublisherGroup != "local" {
-				id, e := d.createAppliedService(ctx, tx, q, r, key, entry.GroupID.String, s)
+				var id string
+				var e error
+				if s.PublicURL != nil {
+					id, e = d.createDeploymentPublicURL(ctx, tx, r, entry.GroupID.String, key, s)
+				} else {
+					id, e = d.createAppliedService(ctx, tx, q, r, key, entry.GroupID.String, s)
+				}
 				if e != nil {
 					return result, e
 				}
-				entry.ServiceID = text(id)
+				if s.PublicURL != nil {
+					entry.PublicURLID = text(id)
+				} else {
+					entry.ServiceID = text(id)
+				}
 			}
 			_, err = tx.Exec(ctx, `INSERT INTO control.applied_project_services(team_id,project_key,service,group_id,service_id,public_url_id,desired_revision) VALUES($1,$2,$3,$4,$5,$6,$7)`, r.TeamID, r.ProjectKey, key, entry.GroupID, entry.ServiceID, entry.PublicURLID, next)
 			if err != nil {
@@ -514,6 +524,11 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 			entry.GroupID = nullableText(groupIDs[s.PublisherGroup])
 			if entry.ServiceID.Valid && changed {
 				if err = d.updateAppliedService(ctx, tx, q, entry.ServiceID.String, entry.GroupID.String, s, r.Now); err != nil {
+					return result, err
+				}
+			}
+			if entry.PublicURLID.Valid && changed {
+				if err = updateDeploymentPublicURLTarget(ctx, tx, entry.PublicURLID.String, s, r.Now); err != nil {
 					return result, err
 				}
 			}
@@ -629,7 +644,7 @@ func sortedProjectKeys[V any](m map[string]V) []string {
 
 func sameAppliedResource(a, b ProjectServiceConfiguration) bool {
 	// local resources belong to individual worktrees; named groups share one ID.
-	if a.PublisherGroup != "local" && b.PublisherGroup != "local" {
+	if a.PublisherGroup != "local" && b.PublisherGroup != "local" && a.PublicURL == nil && b.PublicURL == nil {
 		return true
 	}
 	if (a.PublisherGroup == "local") != (b.PublisherGroup == "local") || (a.PublicURL == nil) != (b.PublicURL == nil) {
@@ -638,7 +653,7 @@ func sameAppliedResource(a, b ProjectServiceConfiguration) bool {
 	if a.PublicURL == nil {
 		return true
 	}
-	return a.PublicURL.DomainID == b.PublicURL.DomainID && a.PublicURL.Hostname == b.PublicURL.Hostname
+	return a.Name == b.Name && a.PublicURL.DomainID == b.PublicURL.DomainID && a.PublicURL.Hostname == b.PublicURL.Hostname
 }
 
 func projectConstraintError(err error) error {
@@ -721,7 +736,7 @@ func (d *Database) appliedProjectStatus(ctx context.Context, tx pgx.Tx, row cont
 			}
 		} else if s.PublicURLID.Valid {
 			v.Kind, v.ServiceID = "public_url", s.PublicURLID.String
-			if err = tx.QueryRow(ctx, `SELECT hostname FROM control.public_urls WHERE id=$1`, s.PublicURLID.String).Scan(&v.Hostname); err != nil {
+			if err = tx.QueryRow(ctx, `SELECT canonical_hostname,mutation_revision FROM control.public_urls WHERE id=$1`, s.PublicURLID.String).Scan(&v.Hostname, &v.TrustRevision); err != nil {
 				return result, err
 			}
 		}

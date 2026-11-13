@@ -181,13 +181,34 @@ func (d *Database) reconcileAppliedPublicSettings(ctx context.Context, tx pgx.Tx
 }
 
 func (d *Database) appliedProjectTraffic(ctx context.Context, tx pgx.Tx, url string, fallback *trafficlimits.Selection) (*trafficlimits.Selection, error) {
-	var team, project, service string
-	err := tx.QueryRow(ctx, `SELECT team_id,project_key,service FROM control.applied_project_services WHERE public_url_id=$1`, url).Scan(&team, &project, &service)
+	var team, project, service, group string
+	err := tx.QueryRow(ctx, `SELECT team_id,project_key,service,COALESCE(group_id,'') FROM control.applied_project_services WHERE public_url_id=$1`, url).Scan(&team, &project, &service, &group)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return fallback, nil
 	}
 	if err != nil {
 		return nil, err
+	}
+	if group != "" {
+		// the team guard stabilizes this snapshot; never acquire a deployment
+		// parent after the caller has already locked its public URL.
+		row := controlstatedb.ControlProjectPublisherGroup{ID: group}
+		err := tx.QueryRow(ctx, `SELECT revision,configuration_ciphertext,storage_key_id FROM control.project_publisher_groups WHERE id=$1 AND deleted_at IS NULL`, group).Scan(&row.Revision, &row.ConfigurationCiphertext, &row.StorageKeyID)
+		if err != nil {
+			return nil, err
+		}
+		snapshot, err := d.openDeploymentConfiguration(row)
+		if err != nil {
+			return nil, err
+		}
+		s, found := snapshot.Services[service]
+		if !found || s.PublicURL == nil {
+			return nil, ErrProjectConfigurationStale
+		}
+		if s.PublicURL.Limits == nil {
+			return nil, nil
+		}
+		return s.PublicURL.Limits.Traffic, nil
 	}
 	// the caller holds the team guard and URL lock. do not reverse the apply
 	// project's lock order by locking its project row after that URL.

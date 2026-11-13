@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 )
 
 var (
@@ -25,6 +27,7 @@ type DeploymentService struct {
 	Protocol      string           `json:"protocol"`
 	TrustRevision int64            `json:"trust_revision"`
 	Endpoint      *ServiceEndpoint `json:"endpoint,omitempty"`
+	PublicURL     string           `json:"public_url,omitempty"`
 }
 
 type Deployment struct {
@@ -270,8 +273,20 @@ func (d *Database) UpdateDeployment(ctx context.Context, r UpdateDeploymentReque
 		byName[binding.Service] = binding
 	}
 	for name := range requested.Services {
-		if _, ok := snapshot.Services[name]; !ok || !byName[name].ServiceID.Valid {
+		if _, ok := snapshot.Services[name]; !ok || !byName[name].ServiceID.Valid && (!byName[name].PublicURLID.Valid || snapshot.Services[name].Target == "app") {
 			return result, ErrProjectConfigurationInvalid
+		}
+		if byName[name].PublicURLID.Valid {
+			next := requested.Services[name]
+			address := r.Targets[name].Address
+			if next.TargetTLS != nil && !strings.Contains(address, "://") {
+				address = "https://" + address
+			}
+			next.Target, err = targetsyntax.NormalizeTarget(address)
+			if err != nil {
+				return result, ErrProjectConfigurationInvalid
+			}
+			requested.Services[name] = next
 		}
 	}
 	if err = access.setAuditActor(ctx, tx); err != nil {
@@ -294,7 +309,12 @@ func (d *Database) UpdateDeployment(ctx context.Context, r UpdateDeploymentReque
 		if err = d.revokeAppliedServicePublishers(ctx, tx, q, binding, r.Now); err != nil {
 			return result, err
 		}
-		if err = d.updateAppliedService(ctx, tx, q, binding.ServiceID.String, row.ID, previous, r.Now); err != nil {
+		if binding.PublicURLID.Valid {
+			err = updateDeploymentPublicURLTarget(ctx, tx, binding.PublicURLID.String, previous, r.Now)
+		} else {
+			err = d.updateAppliedService(ctx, tx, q, binding.ServiceID.String, row.ID, previous, r.Now)
+		}
+		if err != nil {
 			return result, err
 		}
 		if err = d.reconcileAppliedPublisherGrants(ctx, tx, q, binding, r.ActorID, r.Now); err != nil {
@@ -451,8 +471,17 @@ func (d *Database) deploymentStatus(ctx context.Context, tx pgx.Tx, row controls
 			continue
 		}
 		service, ok := snapshot.Services[binding.Service]
-		if !ok || !binding.ServiceID.Valid {
+		if !ok || !binding.ServiceID.Valid && !binding.PublicURLID.Valid {
 			return result, ErrProjectConfigurationStale
+		}
+		result.Targets[binding.Service] = deploymentTarget(service)
+		if binding.PublicURLID.Valid {
+			u, err := controlstatedb.New(tx).LockPublicURLForRun(ctx, binding.PublicURLID.String)
+			if err != nil {
+				return result, err
+			}
+			result.Services[binding.Service] = DeploymentService{ID: u.ID, Protocol: "http", TrustRevision: u.MutationRevision, PublicURL: "https://" + u.CanonicalHostname}
+			continue
 		}
 		saved, err := controlstatedb.New(tx).GetService(ctx, binding.ServiceID.String)
 		if err != nil {
