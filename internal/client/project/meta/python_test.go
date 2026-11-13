@@ -32,50 +32,53 @@ func TestPythonFacadePortableSourceShapeAndStrictMypy(t *testing.T) {
 			path := "tnl.yml"
 			usage := `from typing import Literal, assert_type
 import tnl as native
-from tnl_project import tnl
+from tnl_project import create_client, deployment, services
 
-handle = tnl.connect("database")
-assert_type(handle, native.PostgresConnectionHandle)
-assert_type(handle.protocol, Literal["postgres"])
-assert_type(handle.server_hostname, str)
-assert_type(handle.snapshot().protocol, Literal["postgres"])
-assert_type(tnl.connect("web").url, str)
-assert_type(tnl.connect("web").snapshot().url, str)
-assert_type(tnl.connect("stream").snapshot().protocol, Literal["tcp"])
-tnl.connect("stream").snapshot().ssl  # type: ignore[attr-defined]
-tnl.connect("stream").ssl  # type: ignore[misc]
-assert_type(tnl.connect("mysql").snapshot().protocol, Literal["mysql"])
-assert_type(tnl.connect("cluster").context, str)
-assert_type(tnl.connect("cluster").snapshot().protocol, Literal["kubernetes"])
-tnl.connect("missing")  # type: ignore[call-overload]
-handle.url  # type: ignore[attr-defined]
-handle.snapshot().url  # type: ignore[attr-defined]
+assert services["database"]["protocol"] == "postgres"
+client = create_client(project="team/project")
+assert_type(client, native.Client)
+production = deployment(client, "production")
 
 async def use() -> None:
-    result = await handle
-    assert_type(result, native.PostgresConnection)
-    assert_type(result.protocol, Literal["postgres"])
+    result = await production.connect("database")
+    assert_type(result, native.PostgresConnection | native.LocalPostgresConnection)
+    assert_type((await production.connect("web")).url, str)
+    assert_type((await production.connect("stream")).protocol, Literal["tcp"])
+    (await production.connect("stream")).ssl  # type: ignore[union-attr]
+    assert_type((await production.connect("mysql")).protocol, Literal["mysql"])
+    assert_type((await production.connect("cluster")).context, str)
+    await production.connect("missing")  # type: ignore[call-overload]
+    result.url  # type: ignore[union-attr]
     await result  # type: ignore[misc]
+    await production.aclose()
 `
 			if scenario == "single" {
 				configuration.Services = map[string]config.ServiceDeclaration{"database": {Protocol: &postgres}}
 				usage = `from typing import assert_type
 import tnl as native
-from tnl_project import tnl
-assert_type(tnl.connect("database").snapshot(), native.PostgresConnection)
-tnl.connect("missing")  # type: ignore[arg-type]
+from tnl_project import create_client, deployment, services
+assert services["database"]["protocol"] == "postgres"
+assert_type(create_client(project="team/project"), native.Client)
+production = deployment(create_client(project="team/project"), "production")
+async def use() -> None:
+    assert_type(await production.connect("database"), native.PostgresConnection | native.LocalPostgresConnection)
+    await production.connect("missing")  # type: ignore[arg-type]
 `
 			}
 			if scenario == "empty" {
 				configuration.Services = map[string]config.ServiceDeclaration{}
-				usage = "from tnl_project import tnl\ntnl.connect(\"missing\")  # type: ignore[arg-type]\n"
+				usage = "from tnl_project import create_client, deployment, services\nassert not services\nproduction = deployment(create_client(project=\"team/project\"), \"production\")\nasync def use() -> None:\n    await production.connect(\"missing\")  # type: ignore[arg-type]\n"
 			}
 			if scenario == "factory" {
 				path = "tnl.config.ts"
 				usage = `from typing import assert_type
 import tnl as native
-from tnl_project import tnl
-assert_type(tnl.connect("only-in-another-worktree").snapshot(), native.Connection)
+from tnl_project import create_client, deployment
+assert_type(create_client(project="team/project", services={"database": {"protocol": "postgres"}}), native.Client)
+create_client(project="team/project")  # type: ignore[call-arg]
+async def use() -> None:
+    selected = deployment(create_client(project="team/project", services={"database": {"protocol": "postgres"}}), "production")
+    assert_type(await selected.connect("only-in-another-worktree"), native.Connection | native.LocalConnection)
 `
 			}
 			if scenario == "static" || scenario == "single" {
@@ -84,19 +87,19 @@ class DatabaseClient:
     def query(self) -> int:
         return 42
 
-def create_database(connection: native.PostgresConnection) -> DatabaseClient:
+def create_database(connection: native.Connection | native.LocalPostgresConnection) -> DatabaseClient:
     assert_type(connection.port, int)
     return DatabaseClient()
 
-async def create_async_database(connection: native.PostgresConnection) -> DatabaseClient:
+async def create_async_database(connection: native.Connection | native.LocalPostgresConnection) -> DatabaseClient:
     return create_database(connection)
 
 async def close_database(client: DatabaseClient) -> None:
     assert_type(client.query(), int)
 
-get_database = tnl.client("database", create=create_database, close=close_database)
+get_database = deployment(create_client(project="team/project"), "production").client("database", create=create_database, close=close_database)
 assert_type(get_database, native.ClientFactory[DatabaseClient])
-get_async_database = tnl.client("database", create=create_async_database, close=close_database)
+get_async_database = deployment(create_client(project="team/project"), "production").client("database", create=create_async_database, close=close_database)
 assert_type(get_async_database, native.ClientFactory[DatabaseClient])
 
 async def use_clients() -> None:
@@ -192,7 +195,7 @@ func TestPythonFacadeContainsNamesAndProtocolsOnly(t *testing.T) {
 			}
 		}
 	}
-	if !strings.Contains(string(files["python/tnl_project/__init__.py"]), `Literal["database"]`) {
-		t.Fatal("static service literal missing")
+	if !strings.Contains(string(files["python/tnl_project/__init__.py"]), `"database": {"protocol": "postgres"}`) {
+		t.Fatal("static service facts missing")
 	}
 }

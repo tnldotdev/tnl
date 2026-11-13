@@ -4,14 +4,13 @@ import asyncio
 import sys
 from pathlib import Path
 
-import tnl
 from tnl import _connections
 
 _connections.native_binary = lambda: Path(sys.argv[1])
 
 
 async def main() -> None:
-    handle = tnl.connect("api")
+    handle = _connections.connect("api")
     try:
         first = await handle
         print("cold", flush=True)

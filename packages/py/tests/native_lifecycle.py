@@ -14,25 +14,25 @@ def released(port: int) -> None:
         listener.bind(("127.0.0.1", port))
 
 
-async def run(handle: tnl.ConnectionHandle[tnl.Connection], first: tnl.Connection) -> None:
+async def run(handle: _connections.ConnectionHandle[tnl.Connection], first: tnl.Connection) -> None:
     assert await asyncio.to_thread(input) == "lifecycle"
     owner = handle._session.handle
     assert owner is not None
     os.environ["TNL_CONNECTION_HANDLE"] = owner
     try:
-        borrowed = tnl.connect("api")
+        borrowed = _connections.connect("api")
         assert (await borrowed).port == first.port
         await borrowed.aclose()
     finally:
         del os.environ["TNL_CONNECTION_HANDLE"]
     assert Path(owner).exists() and (await handle).port == first.port
-    alias = tnl.connect("api")
+    alias = _connections.connect("api")
     await alias
     await asyncio.gather(handle.aclose(), alias.aclose(), handle.aclose())
     assert not Path(owner).exists()
     released(first.port)
 
-    replacement = tnl.connect("api")
+    replacement = _connections.connect("api")
     current = await replacement
     new_owner = replacement._session.handle
     assert new_owner is not None and new_owner != owner
@@ -56,9 +56,9 @@ async def run(handle: tnl.ConnectionHandle[tnl.Connection], first: tnl.Connectio
     print("joined", flush=True)
 
     assert await asyncio.to_thread(input) == "startup"
-    starting = tnl.connect("api")
+    starting = _connections.connect("api")
 
-    async def prepare(selected: tnl.ConnectionHandle[tnl.Connection]) -> tnl.Connection:
+    async def prepare(selected: _connections.ConnectionHandle[tnl.Connection]) -> tnl.Connection:
         return await selected
 
     pending = asyncio.create_task(prepare(starting))
@@ -82,7 +82,7 @@ async def run(handle: tnl.ConnectionHandle[tnl.Connection], first: tnl.Connectio
     print("startup-joined", flush=True)
 
     assert await asyncio.to_thread(input) == "failure"
-    failed = tnl.connect("api")
+    failed = _connections.connect("api")
     errors = await asyncio.gather(*(prepare(failed) for _ in range(8)), return_exceptions=True)
     original = errors[0]
     assert isinstance(original, tnl.TnlError)
@@ -100,7 +100,7 @@ async def run(handle: tnl.ConnectionHandle[tnl.Connection], first: tnl.Connectio
     print("retained", flush=True)
     assert await asyncio.to_thread(input) == "retry"
     await failed.aclose()
-    healthy = tnl.connect("api")
+    healthy = _connections.connect("api")
     snapshot = await healthy
     await failed.aclose()
     assert (await healthy).port == snapshot.port

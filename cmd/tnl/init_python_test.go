@@ -32,8 +32,8 @@ func TestInitPythonFacadeIsProjectLocalAndNoInstallPreservesProject(t *testing.T
 		if data, err := os.ReadFile(filepath.Join(project, "pyproject.toml")); err != nil || string(data) != pyproject {
 			t.Fatal("no-install edited the Python project", err)
 		}
-		if data, err := os.ReadFile(filepath.Join(project, ".tnl/generated/python/tnl_project/__init__.py")); err != nil || !bytes.Contains(data, []byte(`Literal["database"]`)) {
-			t.Fatal("exact project facade missing", err)
+		if data, err := os.ReadFile(filepath.Join(project, ".tnl/generated/python/tnl_project/__init__.py")); err != nil || !bytes.Contains(data, []byte(`"database": {"protocol": "postgres"}`)) {
+			t.Fatal("project service facts missing", err)
 		}
 	}
 	if _, err := os.Stat(filepath.Join(root, ".tnl")); !os.IsNotExist(err) {

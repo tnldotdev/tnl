@@ -39,7 +39,7 @@ def _error(code: str) -> TnlError:
     messages = {
         "invalid": "the connector connection response is invalid; update the tnl wheel",
         "input": "select a declared service name and an existing project directory",
-        "not_prepared": "prepare connections first or await tnl.connect(service)",
+        "not_prepared": "await the deployment connection before reading its settings",
         "unavailable": "connector connection failed; check the prepared handle and tnl sign-in",
         "expired": "the connection snapshot or owner expired; await the handle for fresh settings",
         "closed": "the connection handle is closed; create a new handle",

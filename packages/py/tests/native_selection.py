@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 import tnl
-from tnl import _connections
+from tnl import _client, _connections
 
 # supply the built binary in place of the wheel's packaged binary only.
 _connections.native_binary = lambda: Path(sys.argv[1])
@@ -23,7 +23,7 @@ elif not native_provider:
 
 
 async def main() -> None:
-    handle = tnl.connect("api")
+    handle = _connections.connect("api")
     get_client: tnl.ClientFactory[ssl.SSLSocket] | None = None
     try:
 
@@ -76,7 +76,7 @@ async def main() -> None:
                 closed += 1
                 client.close()
 
-            get_client = tnl.client("api", create=create_socket, close=close_socket)
+            get_client = _client.client("api", create=create_socket, close=close_socket)
             stream = await get_client()
             for _ in range(3):
                 assert await get_client() is stream

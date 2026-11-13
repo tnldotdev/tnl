@@ -45,7 +45,7 @@ def test_close_before_first_handle_joins_native_and_retains_failed_stop(
         return {"schema": 1, "state": "stopped"}
 
     monkeypatch.setattr(_connections, "_command", command)
-    handle = tnl.connect("database", directory=tmp_path)
+    handle = _connections.connect("database", directory=tmp_path)
 
     async def prepare() -> tnl.Connection:
         return await handle
@@ -114,7 +114,7 @@ def test_known_owner_is_retained_if_opening_its_ipc_client_fails(
     monkeypatch.setattr(_connections, "_command", command)
 
     async def scenario() -> None:
-        handle = tnl.connect("database", directory=tmp_path)
+        handle = _connections.connect("database", directory=tmp_path)
         with pytest.raises(tnl.TnlError) as caught:
             await handle
         assert caught.value is failure

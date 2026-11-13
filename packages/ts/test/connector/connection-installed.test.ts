@@ -10,7 +10,7 @@ import { key, cert } from "../fixtures/workload_tls.js";
 
 const run = promisify(execFile);
 
-test("installed ESM and CommonJS connections use verified owned HTTP transport on Node and actual Bun", async () => {
+test("installed deployment clients use verified HTTP transport on Node and Bun", async () => {
   const directory = await realpath(await mkdtemp(path.join(tmpdir(), "tnl-installed-transport-")));
   const privateDirectory = path.join(directory, "private");
   await mkdir(privateDirectory, { mode: 0o700 });
@@ -128,8 +128,8 @@ test("installed ESM and CommonJS connections use verified owned HTTP transport o
     const script = `
       import assert from 'node:assert/strict';
       import {createRequire} from 'node:module';
-      import {tnl as esm} from '@tnldotdev/tnl';
-      const {tnl: cjs} = createRequire(import.meta.url)('@tnldotdev/tnl');
+       import * as esm from '@tnldotdev/tnl';
+       const cjs = createRequire(import.meta.url)('@tnldotdev/tnl');
       const sdkRequire = createRequire(createRequire(import.meta.url).resolve('@tnldotdev/tnl'));
       const {Agent} = sdkRequire('undici/index.js');
       let probes = 0;
@@ -137,21 +137,20 @@ test("installed ESM and CommonJS connections use verified owned HTTP transport o
       await assert.rejects(globalThis.fetch('https://127.0.0.1:${address.port}/', {dispatcher, signal:AbortSignal.timeout(1000)}));
       assert.equal(probes, 'Bun' in globalThis ? 0 : 1);
       await dispatcher.destroy();
-      for (const tnl of [esm, cjs]) {
-        const handle = tnl.connect('api');
-        assert.equal(Object.getOwnPropertyDescriptor(handle, 'then').enumerable, false);
-        const settings = await handle;
-        assert.equal(settings.then, undefined);
-        assert.equal(tnl.services.api.namespace, 'team.example');
-        assert.equal(tnl.services.worker?.hostname, undefined);
-        assert.equal(JSON.parse(JSON.stringify(tnl.services)).api.hostname, 'localhost');
-        const response = await settings.fetch('/echo', {method:'POST', body:new ReadableStream({start(c){c.enqueue(new TextEncoder().encode('once')); c.close()}})});
+       for (const sdk of [esm, cjs]) {
+         const deployment = sdk.createClient({project:'team/project', services:{api:{protocol:'http'}}}).deployment('production');
+         try {
+         const settings = await deployment.connect('api');
+         assert.equal(settings.then, undefined);
+         assert.equal(settings.url, 'https://localhost:8443');
+         const response = await settings.fetch('/echo', {method:'POST', body:new ReadableStream({start(c){c.enqueue(new TextEncoder().encode('once')); c.close()}})});
         assert.equal(response.url, 'https://localhost:8443/echo');
         assert.equal(await response.text(), 'once');
         const redirect = await settings.fetch('/redirect', {redirect:'follow'});
         assert.equal(redirect.status, 302);
-        await redirect.body?.cancel();
-        await assert.rejects(settings.fetch('/drop', {method:'POST', body:'drop-once'}));
+         await redirect.body?.cancel();
+         await assert.rejects(settings.fetch('/drop', {method:'POST', body:'drop-once'}));
+         } finally { await deployment.close(); }
       }
       console.log('verified owned transport');
     `;
