@@ -201,9 +201,7 @@ You can leave inline feedback in your app for your agent to review. Or, send som
 pnpm exec tnl share --expires-in 7d
 ```
 
-The link includes this checkout's current HTTP public URLs, expires after a week,
-and can be revoked early. Use `--service app` to share only one service. Similar
-to how Vercel comments work, reviewers can leave inline feedback:
+The link expires after a week and can be revoked early. Similar to how Vercel comments work, reviewers can leave inline feedback:
 
 ```text
 share link -> your app -> click an element -> leave feedback
