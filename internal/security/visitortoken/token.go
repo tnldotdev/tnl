@@ -142,6 +142,7 @@ type View struct {
 	keys                  map[string]ed25519.PublicKey
 	ControlTime           time.Time
 	workloads             map[string]WorkloadLease
+	registeredKeys        map[string]RegisteredKeyLease
 }
 
 // WithVerificationKeys publishes independent key bytes. snapshots may share
@@ -181,6 +182,21 @@ func (v View) ValidVerificationKeys() bool {
 type WorkloadLease struct {
 	KeySHA256 string
 	ExpiresAt time.Time
+}
+
+type RegisteredKeyLease struct {
+	KeySHA256 string
+	ExpiresAt time.Time
+}
+
+func (v View) WithRegisteredKeyLeases(leases map[string]RegisteredKeyLease) View {
+	v.registeredKeys = maps.Clone(leases)
+	return v
+}
+
+func (v View) RegisteredKey(id string) (RegisteredKeyLease, bool) {
+	lease, found := v.registeredKeys[id]
+	return lease, found
 }
 
 // AuthorityTime uses elapsed local time from the policy request's start. it
@@ -287,6 +303,12 @@ func checkCurrent(permission Permission, view View, now time.Time) error {
 	if workload, ok := subject.(Workload); ok {
 		parent, found := view.Workload(workload.SessionID)
 		if !found || parent.KeySHA256 != workload.KeySHA256 || !parent.ExpiresAt.After(view.AuthorityTime(now)) {
+			return ErrBinding
+		}
+	}
+	if key, ok := subject.(RegisteredKey); ok {
+		parent, found := view.registeredKeys[key.AuthorityID()]
+		if !found || parent.KeySHA256 != key.KeySHA256 || !parent.ExpiresAt.After(view.AuthorityTime(now)) {
 			return ErrBinding
 		}
 	}

@@ -21,19 +21,22 @@ func VisitorSourceAuthenticates(ctx context.Context) bool {
 // source credentials stay in the request body; they never become control bearer
 // credentials or application headers.
 func (c *Client) IssueVisitorToken(ctx context.Context, body controlv1.VisitorTokenRequest) (controlv1.VisitorTokenResponse, error) {
+	return visitorSourceRequest[controlv1.VisitorTokenResponse](ctx, c, body.Source, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.IssueVisitorToken(ctx, body, editors...)
+	})
+}
+
+func visitorSourceRequest[T any](ctx context.Context, c *Client, raw json.RawMessage, call func(context.Context, ...controlv1.RequestEditorFn) (*http.Response, error)) (T, error) {
 	var source struct {
 		Kind string `json:"kind"`
 	}
-	if err := json.Unmarshal(body.Source, &source); err != nil {
-		return controlv1.VisitorTokenResponse{}, err
+	if err := json.Unmarshal(raw, &source); err != nil {
+		var zero T
+		return zero, err
 	}
 	if source.Kind == "control_session" || source.Kind == "device" {
-		return requestWithAccess[controlv1.VisitorTokenResponse](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-			return c.api.IssueVisitorToken(ctx, body, editors...)
-		})
+		return requestWithAccess[T](ctx, c, call)
 	}
 	ctx = context.WithValue(ctx, visitorSourceAuthenticationKey{}, true)
-	return request[controlv1.VisitorTokenResponse](ctx, c, "", func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.IssueVisitorToken(ctx, body, editors...)
-	})
+	return request[T](ctx, c, "", call)
 }

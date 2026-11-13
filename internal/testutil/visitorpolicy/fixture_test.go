@@ -36,7 +36,7 @@ func TestMaximumPolicyWireBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const accounted = (16 << 10) + 64*(1<<10) + 4096*192 + 2048*128
+	const accounted = (16 << 10) + 64*(1<<10) + 4096*192 + 4096*224 + 2048*128
 	if accounted > 2<<20 || len(raw) > accounted {
 		t.Fatal("valid combined fixture exceeds the existing response accounting")
 	}

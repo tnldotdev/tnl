@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"crypto/ed25519"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -36,6 +37,12 @@ func connectorPeerPairSubjectKey(ctx context.Context, tx pgx.Tx, pair controlsta
 		ctx = WithControlPrincipal(ctx, ControlPrincipal{IdentityID: subject.IdentityID, SessionID: parent.ID})
 	case tunnelv1.VisitorWorkloadSession:
 		subject.WorkloadSessionID = pair.SubjectID
+	case tunnelv1.VisitorRegisteredKey:
+		var ok bool
+		subject.GrantID, subject.KeyID, ok = strings.Cut(pair.SubjectID, ".")
+		if !ok || subject.Validate() != nil {
+			return VisitorSubject{}, nil, time.Time{}, ErrServiceAccess
+		}
 	default:
 		return VisitorSubject{}, nil, time.Time{}, ErrServiceAccess
 	}

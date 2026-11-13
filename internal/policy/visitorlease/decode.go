@@ -2,17 +2,20 @@ package visitorlease
 
 import (
 	"crypto/ed25519"
+	"encoding/base64"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func Decode(body controlv1.VisitorPolicyUpdate) (Update, error) {
 	policy := body.Policy
 	scope := visitorscope.Scope{Kind: visitorscope.Kind(policy.Resource.Kind), ID: policy.Resource.Id}
-	if !scope.Valid() || policy.Port < 1 || policy.Port > 65535 || policy.MetadataRevision < 0 || len(policy.VerificationKeys) > 64 || len(policy.WorkloadLeases) > 4096 || len(body.Revisions) > 256 {
+	if !scope.Valid() || policy.Port < 1 || policy.Port > 65535 || policy.MetadataRevision < 0 || len(policy.VerificationKeys) > 64 || len(policy.WorkloadLeases) > 4096 || len(policy.RegisteredKeyLeases) > 4096 || len(body.Revisions) > 256 {
 		return Update{}, ErrUpdate
 	}
 	update := Update{View: visitortoken.View{Scope: scope, Issuer: policy.Issuer, Hostname: policy.Hostname, Port: uint16(policy.Port), VisitorPolicyRevision: policy.VisitorPolicyRevision,
@@ -42,6 +45,20 @@ func Decode(body controlv1.VisitorPolicyUpdate) (Update, error) {
 		workloads[parent.SessionId] = visitortoken.WorkloadLease{KeySHA256: parent.KeySha256, ExpiresAt: parent.ExpiresAt}
 	}
 	update.View = update.View.WithVerificationKeys(keys).WithWorkloadLeases(workloads)
+	registered := make(map[string]visitortoken.RegisteredKeyLease, len(policy.RegisteredKeyLeases))
+	for _, parent := range policy.RegisteredKeyLeases {
+		subject := tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorRegisteredKey, GrantID: parent.GrantId, KeyID: parent.KeyId}
+		digest, err := base64.RawURLEncoding.Strict().DecodeString(parent.KeySha256)
+		id := (visitortoken.RegisteredKey{GrantID: parent.GrantId, KeyID: parent.KeyId}).AuthorityID()
+		if scope.Kind != visitorscope.Service || subject.Validate() != nil || err != nil || len(digest) != 32 || !parent.ExpiresAt.After(policy.ObservedAt) || parent.ExpiresAt.After(policy.ObservedAt.Add(90*time.Second)) {
+			return Update{}, ErrUpdate
+		}
+		if _, found := registered[id]; found {
+			return Update{}, ErrUpdate
+		}
+		registered[id] = visitortoken.RegisteredKeyLease{KeySHA256: parent.KeySha256, ExpiresAt: parent.ExpiresAt}
+	}
+	update.View = update.View.WithRegisteredKeyLeases(registered)
 	if policy.Ip != nil {
 		if len(policy.Ip.Key) != 32 || len(policy.Ip.Prefixes) > 2048 {
 			return Update{}, ErrUpdate

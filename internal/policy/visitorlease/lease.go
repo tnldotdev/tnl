@@ -272,6 +272,10 @@ func (g *Guard) resetLocked() {
 		parent, _ := view.Workload(workload.SessionID)
 		until = earlier(until, view.LocalDeadline(parent.ExpiresAt))
 	}
+	if key, ok := subject.(visitortoken.RegisteredKey); ok {
+		parent, _ := view.RegisteredKey(key.AuthorityID())
+		until = earlier(until, view.LocalDeadline(parent.ExpiresAt))
+	}
 	delay := max(0, until.Sub(g.lease.now()))
 	if g.timer == nil {
 		g.timer = time.AfterFunc(delay, g.expire)

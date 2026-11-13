@@ -93,18 +93,24 @@ func (h *handler) connectorPairSource(w http.ResponseWriter, r *http.Request, bo
 		request.Source = device
 		return r.Context(), true
 	}
-	workload, ok := source.(controlstate.WorkloadTokenSource)
-	if !ok || request.Subject.Kind != tunnelv1.VisitorWorkloadSession || len(r.Header.Values("Authorization")) != 0 {
+	matched := false
+	switch source.(type) {
+	case controlstate.WorkloadTokenSource:
+		matched = request.Subject.Kind == tunnelv1.VisitorWorkloadSession
+	case controlstate.RegisteredKeyTokenSource:
+		matched = request.Subject.Kind == tunnelv1.VisitorRegisteredKey
+	}
+	if !matched || len(r.Header.Values("Authorization")) != 0 {
 		writeProblem(w, 403, controlv1.Forbidden, "select one connector peer pair source")
 		return nil, false
 	}
-	request.Source = workload
+	request.Source = source
 	return r.Context(), true
 }
 
 func connectorPairProblem(ctx context.Context, w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, controlstate.ErrServiceAccess), errors.Is(err, controlstate.ErrVisitorPermission), errors.Is(err, controlstate.ErrWorkloadDenied):
+	case errors.Is(err, controlstate.ErrServiceAccess), errors.Is(err, controlstate.ErrVisitorPermission), errors.Is(err, controlstate.ErrPublisherIdentity), errors.Is(err, controlstate.ErrWorkloadDenied):
 		writeProblem(w, 403, controlv1.Forbidden, "connector peer pair source or run is no longer authorized")
 	case errors.Is(err, controlstate.ErrConnectorPeerBindingStale):
 		writeProblem(w, 409, controlv1.StaleNetworkBinding, "connector network binding changed; inspect the retained owner")

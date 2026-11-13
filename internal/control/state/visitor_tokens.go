@@ -44,6 +44,12 @@ func (WorkloadTokenSource) visitorTokenSource() {}
 func (WorkloadTokenSource) String() string      { return "workload visitor token source" }
 func (WorkloadTokenSource) GoString() string    { return "workload visitor token source" }
 
+type RegisteredKeyTokenSource struct{ Credential string }
+
+func (RegisteredKeyTokenSource) visitorTokenSource() {}
+func (RegisteredKeyTokenSource) String() string      { return "registered key visitor token source" }
+func (RegisteredKeyTokenSource) GoString() string    { return "registered key visitor token source" }
+
 type ShareTokenSource struct{ ShareID, Secret string }
 
 func (ShareTokenSource) visitorTokenSource() {}
@@ -184,6 +190,17 @@ func (d *Database) issueVisitorTokenTransaction(ctx context.Context, issuer stri
 	if err != nil {
 		return IssuedVisitorToken{}, err
 	}
+	if _, registered := source.(RegisteredKeyTokenSource); registered {
+		commit, stop := context.WithDeadline(ctx, clock.started.Add(result.Permission.ExpiresAt.Sub(clock.entered)))
+		defer stop()
+		if err = tx.Commit(commit); err != nil {
+			return IssuedVisitorToken{}, err
+		}
+		if !result.Permission.ExpiresAt.After(clock.current()) {
+			return IssuedVisitorToken{}, ErrVisitorPermission
+		}
+		return result, nil
+	}
 	return result, tx.Commit(ctx)
 }
 
@@ -202,6 +219,9 @@ func (d *Database) issueVisitorToken(ctx context.Context, tx pgx.Tx, issuer stri
 	}
 	token, err := d.signVisitorPermission(ctx, tx, issuer, permission, clock.entered)
 	if err != nil {
+		return result, err
+	}
+	if err = d.lockRegisteredVisitorAuthority(ctx, tx, source, permission, clock); err != nil {
 		return result, err
 	}
 	result.Token, result.Permission = token, permission
@@ -331,6 +351,34 @@ func (d *Database) visitorAuthorityForSource(ctx context.Context, tx pgx.Tx, sco
 		subject = visitortoken.Workload{SessionID: workloadSource.ID, KeySHA256: digest}
 		result.PublicKey = ed25519.PublicKey(workloadSource.PublicKey)
 		result.ConnectorUntil = minTime(until, now.Add(WorkloadLease))
+	case RegisteredKeyTokenSource:
+		if scope.Kind != visitorscope.Service {
+			return result, ErrVisitorPermission
+		}
+		identity, err := d.authenticatePublisherAccess(ctx, q, supplied.Credential, "", clock.current(), false)
+		if err != nil {
+			return result, err
+		}
+		if identity.Scope.TeamID != resource.TeamID || identity.Scope.Kind != DeploymentCredentialGrant {
+			return result, ErrVisitorPermission
+		}
+		facts, err := deploymentConnectAuthority(ctx, tx, identity.GrantID, identity.KeyID, scope.ID, clock.current())
+		if err != nil {
+			return result, publisherLookupError(err, ErrVisitorPermission)
+		}
+		digest, err := visitortoken.KeyDigest(ed25519.PublicKey(facts.PublicKey))
+		if err != nil {
+			return result, err
+		}
+		accessDigest := sha256.Sum256([]byte(supplied.Credential))
+		access, err := q.GetPublisherAccess(ctx, accessDigest[:])
+		if err != nil {
+			return result, err
+		}
+		until = minTime(facts.ExpiresAt, access.ExpiresAt.Time)
+		subject = visitortoken.RegisteredKey{GrantID: identity.GrantID, KeyID: identity.KeyID, KeySHA256: digest}
+		result.PublicKey = ed25519.PublicKey(facts.PublicKey)
+		result.ConnectorUntil = minTime(until, now.Add(90*time.Second))
 	case ShareTokenSource, ShareSessionTokenSource:
 		var shareID, sourceSecret string
 		var session bool

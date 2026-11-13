@@ -176,7 +176,10 @@ func AuthenticateVisitorSubjectKey(ctx context.Context, tx pgx.Tx, subject Visit
 		return nil, until, err
 	}
 	var key []byte
-	if subject.WorkloadSessionID != "" {
+	if subject.GrantID != "" {
+		facts, lookupErr := deploymentConnectAuthority(ctx, tx, subject.GrantID, subject.KeyID, service, now)
+		return facts.PublicKey, minTime(until, facts.ExpiresAt), lookupErr
+	} else if subject.WorkloadSessionID != "" {
 		err = tx.QueryRow(ctx, `SELECT public_key FROM control.workload_sessions WHERE id=$1`, subject.WorkloadSessionID).Scan(&key)
 	} else {
 		err = tx.QueryRow(ctx, `SELECT public_key FROM control.visitor_devices WHERE id=$1 AND identity_id=$2 AND revoked_at IS NULL`, subject.DeviceID, subject.IdentityID).Scan(&key)

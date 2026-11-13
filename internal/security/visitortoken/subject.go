@@ -64,6 +64,21 @@ type Workload struct {
 	KeySHA256 string `json:"key_sha256"`
 }
 
+type RegisteredKey struct {
+	GrantID   string `json:"grant_id"`
+	KeyID     string `json:"key_id"`
+	KeySHA256 string `json:"key_sha256"`
+}
+
+func (RegisteredKey) visitorSubject() string { return "registered_key" }
+func (s RegisteredKey) valid() bool {
+	return opaqueid.Valid(s.GrantID, opaqueid.PublisherGrantPrefix) && opaqueid.Valid(s.KeyID, opaqueid.PublisherIdentityKeyPrefix) && validKeyDigest(s.KeySHA256)
+}
+
+// AuthorityID includes both the grant and exact key; rotation cannot transfer an
+// existing connector owner or signed permission to a different key.
+func (s RegisteredKey) AuthorityID() string { return s.GrantID + "." + s.KeyID }
+
 func (Workload) visitorSubject() string { return "workload" }
 func (s Workload) valid() bool {
 	return opaqueid.Valid(s.SessionID, "wls_") && validKeyDigest(s.KeySHA256)
@@ -126,7 +141,7 @@ type subjectEnvelope struct {
 
 func encodeSubject(subject Subject) (json.RawMessage, error) {
 	switch subject.(type) {
-	case Browser, Share, Grant, Device, Workload, Certificate:
+	case Browser, Share, Grant, Device, Workload, RegisteredKey, Certificate:
 	default:
 		return nil, ErrToken
 	}
@@ -173,6 +188,12 @@ func decodeSubject(data json.RawMessage) (Subject, error) {
 		subject = value
 	case "workload":
 		var value Workload
+		if decode(envelope.Value, &value) != nil {
+			return nil, ErrToken
+		}
+		subject = value
+	case "registered_key":
+		var value RegisteredKey
 		if decode(envelope.Value, &value) != nil {
 			return nil, ErrToken
 		}
