@@ -819,7 +819,7 @@ export function deploymentConnector(selection: NonNullable<SelectionOptions["dep
     close(): Promise<void> {
       closed = true;
       closing ??= (async () => {
-        const operations = await Promise.allSettled([...pending]);
+        const operations = await Promise.allSettled(pending);
         const cleanup = async () => {
           if (loading !== undefined) {
             const scope = await loading;
