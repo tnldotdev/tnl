@@ -86,17 +86,17 @@ func TestProjectManagedAndCustomDefaultURLShapes(t *testing.T) {
 	for _, test := range []struct {
 		name, mode, teamKind, domainKind, teamName, domain, want, scope string
 	}{
-		{"personal_managed", "simple", "personal", "managed", "alex", "routes.example.test", "app.alex.routes.example.test", "member"},
-		{"organization_managed", "simple", "organization", "managed", "studio", "routes.example.test", "app.alex.studio.routes.example.test", "member"},
-		{"personal_custom", "simple", "personal", "custom", "alex", "dev.example.test", "app.dev.example.test", "shared"},
-		{"organization_custom", "simple", "organization", "custom", "studio", "studio.example.test", "app.alex.studio.example.test", "member"},
+		{"personal_managed", "simple", "personal", "managed", "chase", "routes.example.test", "app.chase.routes.example.test", "member"},
+		{"organization_managed", "simple", "organization", "managed", "studio", "routes.example.test", "app.chase.studio.routes.example.test", "member"},
+		{"personal_custom", "simple", "personal", "custom", "chase", "dev.example.test", "app.dev.example.test", "shared"},
+		{"organization_custom", "simple", "organization", "custom", "studio", "studio.example.test", "app.chase.studio.example.test", "member"},
 		{"hosted_generated", "generated", "organization", "managed", "studio", "tnl.dev", "app.ecstatic-penguin.tnl.dev", "member"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			current := team.NewContext(
 				authorityv1.Team{Id: "team", Kind: authorityv1.TeamKind(test.teamKind), DisplayName: test.teamName, DefaultDomainId: "domain"},
 				authorityv1.Membership{Id: "member", TeamId: "team", Role: authorityv1.TeamRoleOwner,
-					MemberSlug: "alex", ManagedLabel: "ecstatic-penguin"},
+					MemberSlug: "chase", ManagedLabel: "ecstatic-penguin"},
 				[]authorityv1.Domain{{Id: "domain", Kind: authorityv1.DomainKind(test.domainKind),
 					CanonicalDomain: test.domain, State: authorityv1.DomainStateReady}},
 				naming.ManagedURLMode(test.mode),

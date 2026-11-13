@@ -186,8 +186,8 @@ func TestRoute53ProviderChecksFullWildcardNamespace(t *testing.T) {
 	_, provider := route53TestProvider(t, "routes.example.test")
 	record := AddressRecord{
 		ZoneID: "Z123", ZoneDomain: "routes.example.test", Owner: PublicURLOwner("public_url_one"),
-		CanonicalHostname: "app.alex.studio.routes.example.test", Namespace: "alex.studio.routes.example.test",
-		WildcardHostname: "*.alex.studio.routes.example.test", IngressIPv4Addresses: []string{"192.0.2.10"},
+		CanonicalHostname: "app.chase.studio.routes.example.test", Namespace: "chase.studio.routes.example.test",
+		WildcardHostname: "*.chase.studio.routes.example.test", IngressIPv4Addresses: []string{"192.0.2.10"},
 	}
 	if _, err := provider.PublishAddress(t.Context(), record); err != nil {
 		t.Fatal(err)

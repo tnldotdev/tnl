@@ -189,8 +189,8 @@ func TestWorkerUsesAuthorizedManagedWildcardRoots(t *testing.T) {
 	worker.config.ManagedDomain, worker.config.ManagedZoneID = "routes.example.test", "ZMANAGED"
 	for _, test := range []struct{ hostname, namespace, wildcard string }{
 		{"app.routes.example.test", "routes.example.test", "*.routes.example.test"},
-		{"app.alex.studio.routes.example.test", "alex.studio.routes.example.test", "*.alex.studio.routes.example.test"},
-		{"api.preview.alex.studio.routes.example.test", "alex.studio.routes.example.test", "*.preview.alex.studio.routes.example.test"},
+		{"app.chase.studio.routes.example.test", "chase.studio.routes.example.test", "*.chase.studio.routes.example.test"},
+		{"api.preview.chase.studio.routes.example.test", "chase.studio.routes.example.test", "*.preview.chase.studio.routes.example.test"},
 	} {
 		record, _, ready, err := worker.publicURLRecord(t.Context(), controlstate.DNSPublicURLWork{
 			PublicURLID: "url_test", IngressPoolID: "ingress-a", DomainID: "managed", CanonicalHostname: test.hostname, Namespace: test.namespace,
@@ -234,7 +234,7 @@ func TestWorkerUsesOrganizationNamespaceOnCustomDomain(t *testing.T) {
 	authority.State, authority.ProviderZoneID = controlstate.DNSAuthorityReady, "ZCLAIMED"
 	worker := testDNSWorker(t, &dnsStoreStub{authority: authority}, &providerStub{}, &verifierStub{}, now)
 	work := claimedRouteWork(now)
-	work.Namespace = "alex.studio.claimed.example.test"
+	work.Namespace = "chase.studio.claimed.example.test"
 	work.CanonicalHostname = "app." + work.Namespace
 	record, _, ready, err := worker.publicURLRecord(t.Context(), work)
 	if err != nil || !ready || record.WildcardHostname != "*."+work.Namespace || !record.CustomZone {

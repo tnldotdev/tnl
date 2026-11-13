@@ -8,7 +8,7 @@ import (
 )
 
 func TestPublicURLCertificatePlanDoesNotCrossNamespaceOrScope(t *testing.T) {
-	const namespace = "alex.studio.example.com"
+	const namespace = "chase.studio.example.com"
 	first := PublicURLCertificatePlan("web."+namespace, namespace, false, true)
 	second := PublicURLCertificatePlan("api."+namespace, namespace, false, true)
 	if first.CacheKey != namespace || second.CacheKey != namespace ||

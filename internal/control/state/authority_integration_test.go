@@ -88,14 +88,14 @@ func TestIntegrationSimpleModeOnlyReservesReadableLabels(t *testing.T) {
 	if err != nil || len(creator) != 1 || creator[0].ManagedLabel != "studio" {
 		t.Fatalf("creator label = %#v, %v", creator, err)
 	}
-	member := addAuthorityMember(t, database, now, owner, team.ID, "alex", TeamRoleMember)
-	if member.ManagedLabel != "alex-studio" {
+	member := addAuthorityMember(t, database, now, owner, team.ID, "chase", TeamRoleMember)
+	if member.ManagedLabel != "chase-studio" {
 		t.Fatalf("invited member label = %q", member.ManagedLabel)
 	}
-	identity := OIDCIdentity{Issuer: "https://issuer.example", Subject: "alex", DisplayName: "Alex",
-		AssertionDigest: sha256.Sum256([]byte("alex assertion")), AssertionExpiry: now.Add(time.Hour)}
+	identity := OIDCIdentity{Issuer: "https://issuer.example", Subject: "chase", DisplayName: "Chase",
+		AssertionDigest: sha256.Sum256([]byte("chase assertion")), AssertionExpiry: now.Add(time.Hour)}
 	personal, err := database.CreateOIDCControlSession(t.Context(), "tunnels.example.test", identity, time.Hour, 24*time.Hour, now)
-	if err != nil || len(personal.Identity.Memberships) != 1 || personal.Identity.Memberships[0].ManagedLabel != "alex" {
+	if err != nil || len(personal.Identity.Memberships) != 1 || personal.Identity.Memberships[0].ManagedLabel != "chase" {
 		t.Fatalf("personal label = %#v, %v", personal.Identity, err)
 	}
 	var count int

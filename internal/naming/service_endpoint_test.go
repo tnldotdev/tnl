@@ -6,7 +6,7 @@ import (
 )
 
 func TestManagedGroupUsesExistingNamespace(t *testing.T) {
-	for _, owner := range []string{"alex.studio.example.com", "studio.example.com", "ecstatic-penguin.tnl.dev"} {
+	for _, owner := range []string{"chase.studio.example.com", "studio.example.com", "ecstatic-penguin.tnl.dev"} {
 		namespace, err := GroupNamespace("production", "storefront", owner)
 		if err != nil || namespace != "production.storefront."+owner || PublicURLWildcard("orders."+namespace, owner) != "*."+namespace {
 			t.Fatalf("namespace = %q, %v", namespace, err)
@@ -31,7 +31,7 @@ func TestProjectDNSLabelFitsLongMonorepoNamespace(t *testing.T) {
 	if label == "" || len(label) > 63 {
 		t.Fatalf("generated project label exceeds DNS bounds: %q", label)
 	}
-	if _, err := GroupNamespace("production", label, "alex.example.test"); err != nil {
+	if _, err := GroupNamespace("production", label, "chase.example.test"); err != nil {
 		t.Fatalf("automatic namespace rejected: %v", err)
 	}
 	if label != ProjectDNSLabel("company-monorepo", directory) || label == ProjectDNSLabel("company-monorepo", directory+"-other") {

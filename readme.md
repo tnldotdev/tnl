@@ -6,7 +6,7 @@
   <br/>
   by <a href="https://github.com/0xcadams">@0xcadams</a>
   <br/><br/>
-  <i><code>tnl</code> is in private beta. <a href="mailto:beta@tnl.dev?subject=tnl.dev%20beta%20access&amp;body=I'd%20like%20to%20try%20https%3A%2F%2Ftnl.dev.%20My%20email%20is%3A">email beta@tnl.dev for access</a>.</i>
+  <i><code>tnl</code> is in private beta. <a href="mailto:chase@tnl.dev?subject=tnl.dev%20beta%20access&amp;body=I'd%20like%20to%20try%20https%3A%2F%2Ftnl.dev.%20My%20email%20is%3A">email chase@tnl.dev for access</a>.</i>
 </p>
 <br/>
 
@@ -364,7 +364,7 @@ See [GitHub Actions setup](https://tnl.dev/docs/workloads#connect-a-github-actio
 
 ## custom domains or self-hosting
 
-You can also add a subdomain you own, for URLs like `https://app.alex.dev.example.com`.
+You can also add a subdomain you own, for URLs like `https://app.chase.dev.example.com`.
 
 Use `tnl domain claim` to get the DNS records to add; once verified, `tnl` manages its public URL DNS and certificates.
 See [setting up a custom domain](https://tnl.dev/docs/domains).
