@@ -75,7 +75,7 @@ func TestIntegrationCLIGroupDetachedHistoricalIdentity(t *testing.T) {
 			if err != nil || state != "ready" {
 				return false
 			}
-			status, err := control.GetProjectConfiguration(t.Context(), team, "detached", "production")
+			status, err := control.GetProjectConfiguration(t.Context(), team, "detached", "live")
 			return err == nil && len(status.Members) == 1 && status.Members[0].Healthy && status.Members[0].GroupName == "live" && status.Members[0].ObservedRevision == renamed.Revision
 		})
 		service, err := control.GetService(t.Context(), *applied.Services[0].ServiceId)

@@ -29,6 +29,11 @@ func projectOptions(flags cli) resolve.Options {
 	if flags.Status.Deployment != "" {
 		deployment = flags.Status.Deployment
 	}
+	for _, selection := range []serviceShareSelection{flags.Share.Service.Invite.Create.serviceShareSelection, flags.Share.Service.List.serviceShareSelection, flags.Share.Service.Revoke.serviceShareSelection, flags.Share.Service.Link.Create.serviceShareSelection, flags.Share.Service.Token.Create.serviceShareSelection} {
+		if selection.Deployment != "" {
+			deployment = selection.Deployment
+		}
+	}
 	return resolve.Options{ConfigPath: flags.ConfigPath, EnvironmentPath: os.Getenv("TNL_CONFIG"), NoConfig: flags.NoConfig, Deployment: deployment}
 }
 

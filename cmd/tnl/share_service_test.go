@@ -138,6 +138,12 @@ func TestServiceShareSelectionUsesSourceBindingAndManagerRead(t *testing.T) {
 					return
 				}
 				switch r.URL.Path {
+				case "/v1/projects/" + source.Key + "/deployments/production":
+					lookups++
+					if selector != "remote" || r.URL.Query().Get("team_id") != shareTestTeam {
+						t.Error("deployment lookup lost its exact scope")
+					}
+					_ = json.NewEncoder(w).Encode(controlv1.Deployment{TeamId: shareTestTeam, ProjectKey: source.Key, Services: map[string]controlv1.DeploymentService{"remote": {Id: shareTestService}}})
 				case "/v1/services":
 					lookups++
 					if r.URL.Query().Get("team_id") != shareTestTeam {
@@ -162,7 +168,14 @@ func TestServiceShareSelectionUsesSourceBindingAndManagerRead(t *testing.T) {
 			service, err := selectServiceShare(t.Context(), s, project, selector)
 			valid := selector == "orders" || selector == "remote" || selector == shareTestService
 			if valid {
-				if err != nil || service.Id != shareTestService || reads != 1 || selector != shareTestService && lookups != 2 || selector == shareTestService && lookups != 0 {
+				wantLookups := 0
+				if selector == "orders" {
+					wantLookups = 2
+				}
+				if selector == "remote" {
+					wantLookups = 1
+				}
+				if err != nil || service.Id != shareTestService || reads != 1 || lookups != wantLookups {
 					t.Fatalf("exact service selection = %+v, %v; lookups=%d reads=%d", service, err, lookups, reads)
 				}
 			} else if err == nil || lookups != 0 || reads != 0 {
@@ -265,6 +278,30 @@ func TestServiceShareSelectionUsesSourceBindingAndManagerRead(t *testing.T) {
 	flags.Share.Service.List.ServerURL = "https://other.example.test"
 	if err := applyProjectCommandContext("share service list <name>", project, &flags); err != nil || flags.Share.Service.List.ProjectTeam != "" {
 		t.Fatal("explicit server retained another server's project team", err)
+	}
+}
+
+func TestServiceShareCommandsSelectTheirExactDeployment(t *testing.T) {
+	for _, args := range [][]string{
+		{"invite", "create", "db", "--email=reviewer@example.test", "--expires-in=1h"},
+		{"list", "db"},
+		{"revoke", "db", shareTestGrant},
+		{"link", "create", "db", "--expires-in=1h"},
+		{"token", "create", "db", "--expires-in=1h"},
+	} {
+		var flags cli
+		parser, err := kong.New(&flags)
+		if err != nil {
+			t.Fatal(err)
+		}
+		command := append([]string{"share", "service"}, args...)
+		command = append(command, "--deployment", "staging")
+		if _, err := parser.Parse(command); err != nil {
+			t.Fatal(err)
+		}
+		if projectOptions(flags).Deployment != "staging" {
+			t.Fatal("share command borrowed the default deployment", args)
+		}
 	}
 }
 

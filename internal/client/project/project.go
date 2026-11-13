@@ -57,6 +57,7 @@ func Resolve(ctx context.Context, selection Selection, cwd string, salt [32]byte
 			return Project{}, errors.New("selected deployment or workload requires project configuration")
 		}
 		project.Deployment = "local"
+		project.Selection.Deployment = "local"
 		return project, nil
 	}
 
@@ -102,6 +103,7 @@ func (project Project) SelectDeployment(name string) (Project, error) {
 		return Project{}, err
 	}
 	project.Deployment = name
+	project.Selection.Deployment = name
 	project.Config.Services = maps.Clone(project.Config.Services)
 
 	names := make([]string, 0, len(project.Config.Services))

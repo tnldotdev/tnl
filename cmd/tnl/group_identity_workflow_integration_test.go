@@ -173,7 +173,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 			// an OLD task keeps polling while a manager renames and re-exports its
 			// exact member. verification must not replace that task's lease/run.
 			cliCall(t, t.Context(), []string{"--config", configuration, "publisher", "rename", "production", "live", "--state-dir", person})
-			applied, err = control.GetProjectConfiguration(t.Context(), team, applied.ProjectKey, "production")
+			applied, err = control.GetProjectConfiguration(t.Context(), team, applied.ProjectKey, "live")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -189,7 +189,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 				}
 			}
 			workflowWait(t, 12*time.Second, func() bool {
-				status, err := control.GetProjectConfiguration(t.Context(), team, applied.ProjectKey, "production")
+				status, err := control.GetProjectConfiguration(t.Context(), team, applied.ProjectKey, "live")
 				return err == nil && len(status.Members) == 1 && status.Members[0].ObservedRevision == applied.Revision
 			})
 			var keptRun string
@@ -203,7 +203,21 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 			if kept := assertWorkflowPublisherRuntime(t, control, team, value.Member.PublisherIdentityId, 1, true); kept.ProcessRunId != runtime.ProcessRunId {
 				t.Fatal("provision replaced running task observation")
 			}
-			statusOutput := cliCall(t, t.Context(), []string{"--config", configuration, "status", "--scope", "server", "--state-dir", person})
+			var document map[string]any
+			if err := json.Unmarshal(data, &document); err != nil {
+				t.Fatal(err)
+			}
+			deployments := document["tnl"].(map[string]any)["deployments"].(map[string]any)
+			deployments["live"] = deployments["production"]
+			delete(deployments, "production")
+			updated, err := json.Marshal(document)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(configuration, updated, 0600); err != nil {
+				t.Fatal(err)
+			}
+			statusOutput := cliCall(t, t.Context(), []string{"--config", configuration, "status", "--deployment", "live", "--scope", "server", "--state-dir", person})
 			if !strings.Contains(string(statusOutput), "live") {
 				t.Fatal("status retained the old selector")
 			}
@@ -282,7 +296,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 			body, _ := io.ReadAll(response.Body)
 			return response.StatusCode == http.StatusOK && string(body) == "portable group worker"
 		})
-		status, err := control.GetProjectConfiguration(t.Context(), team, applied.ProjectKey, "production")
+		status, err := control.GetProjectConfiguration(t.Context(), team, applied.ProjectKey, "live")
 		if err != nil || len(status.Members) != 1 || status.Members[0].PublisherIdentityId != value.Member.PublisherIdentityId || !status.Members[0].Healthy || status.Members[0].ObservedRevision != applied.Revision {
 			t.Fatal("replacement changed membership or did not acknowledge its assignment", err)
 		}
@@ -316,7 +330,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 			joinConnector()
 			oldHostname := service.Endpoint.Hostname
 			cliCall(t, t.Context(), []string{"--config", configuration, "publisher", "namespace", "rename", "production", "new-dns", "--expected-revision", strconv.FormatInt(applied.Revision, 10), "--request-id", "dns-move", "--state-dir", person})
-			project, err := loadProjectConfiguration(t.Context(), cli{ConfigPath: configuration, Connect: connectCommand{Start: connectStartCommand{Deployment: "production"}}}, person)
+			project, err := loadProjectConfiguration(t.Context(), cli{ConfigPath: configuration, Connect: connectCommand{Start: connectStartCommand{Deployment: "live"}}}, person)
 			if err != nil {
 				t.Fatal(err)
 			}

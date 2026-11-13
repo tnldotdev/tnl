@@ -39,6 +39,7 @@ type serviceShareInviteCommand struct {
 type serviceShareSelection struct {
 	scopedTeamFlags `embed:""`
 	Name            string `arg:"" name:"name" help:"Configured service key or exact service ID (svc_)."`
+	Deployment      string `name:"deployment" help:"Configured deployment for a logical service key; defaults to local."`
 }
 
 type serviceShareDeadline struct {
@@ -172,31 +173,45 @@ func selectServiceShare(ctx context.Context, s *clientteam.Session, project proj
 				return controlv1.Service{}, failure.Wrap("identify service access project", failure.ProjectConfigInvalid, err)
 			}
 			expectedSource.ProjectKey, expectedSource.SourceFingerprint = source.Key, source.Fingerprint
+			deployment, err := s.Authenticated().Control.GetDeployment(ctx, team, source.Key, config.PublisherGroupName(project.Config.Services[key]))
+			if err != nil {
+				return controlv1.Service{}, err
+			}
+			if deployment.TeamId != team || deployment.ProjectKey != source.Key {
+				return controlv1.Service{}, serviceShareResponse()
+			}
+			selected, found := deployment.Services[key]
+			if !found {
+				return controlv1.Service{}, clientcontrol.ErrNotFound
+			}
+			id = selected.Id
 		}
 		// management inventory carries authoritative source bindings without
 		// requiring a visitor grant for either local or applied services.
-		services, err := s.Authenticated().Control.ListServices(ctx, team)
-		if err != nil {
-			return controlv1.Service{}, err
-		}
-		id = ""
-		for _, service := range services {
-			if service.TeamId != team {
-				return controlv1.Service{}, serviceShareResponse()
+		if expectedSource.WorktreeKey != "" {
+			services, err := s.Authenticated().Control.ListServices(ctx, team)
+			if err != nil {
+				return controlv1.Service{}, err
 			}
-			if service.Source == nil || *service.Source != *expectedSource {
-				continue
+			id = ""
+			for _, service := range services {
+				if service.TeamId != team {
+					return controlv1.Service{}, serviceShareResponse()
+				}
+				if service.Source == nil || *service.Source != *expectedSource {
+					continue
+				}
+				if !opaqueid.Valid(service.Id, opaqueid.ServicePrefix) {
+					return controlv1.Service{}, serviceShareResponse()
+				}
+				if id != "" {
+					return controlv1.Service{}, serviceShareInput("service source binding is ambiguous; use an exact service ID")
+				}
+				id = service.Id
 			}
-			if !opaqueid.Valid(service.Id, opaqueid.ServicePrefix) {
-				return controlv1.Service{}, serviceShareResponse()
+			if id == "" {
+				return controlv1.Service{}, clientcontrol.ErrNotFound
 			}
-			if id != "" {
-				return controlv1.Service{}, serviceShareInput("service source binding is ambiguous; use an exact service ID")
-			}
-			id = service.Id
-		}
-		if id == "" {
-			return controlv1.Service{}, clientcontrol.ErrNotFound
 		}
 	}
 	if !opaqueid.Valid(id, opaqueid.ServicePrefix) {
