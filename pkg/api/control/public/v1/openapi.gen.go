@@ -623,13 +623,13 @@ func (e ProblemCode) Valid() bool {
 
 // Defines values for ProjectServiceAccessTeam.
 const (
-	True ProjectServiceAccessTeam = true
+	ProjectServiceAccessTeamTrue ProjectServiceAccessTeam = true
 )
 
 // Valid indicates whether the value is a known member of the ProjectServiceAccessTeam enum.
 func (e ProjectServiceAccessTeam) Valid() bool {
 	switch e {
-	case True:
+	case ProjectServiceAccessTeamTrue:
 		return true
 	default:
 		return false
@@ -857,14 +857,17 @@ func (e PublisherEnrollmentKind) Valid() bool {
 
 // Defines values for PublisherGrantKind.
 const (
-	PublisherGrantKindNamespace      PublisherGrantKind = "namespace"
-	PublisherGrantKindSavedPublicUrl PublisherGrantKind = "saved_public_url"
-	PublisherGrantKindService        PublisherGrantKind = "service"
+	PublisherGrantKindDeploymentManagement PublisherGrantKind = "deployment_management"
+	PublisherGrantKindNamespace            PublisherGrantKind = "namespace"
+	PublisherGrantKindSavedPublicUrl       PublisherGrantKind = "saved_public_url"
+	PublisherGrantKindService              PublisherGrantKind = "service"
 )
 
 // Valid indicates whether the value is a known member of the PublisherGrantKind enum.
 func (e PublisherGrantKind) Valid() bool {
 	switch e {
+	case PublisherGrantKindDeploymentManagement:
+		return true
 	case PublisherGrantKindNamespace:
 		return true
 	case PublisherGrantKindSavedPublicUrl:
@@ -1101,6 +1104,21 @@ func (e ReadinessResponseStatus) Valid() bool {
 	case ReadinessResponseStatusNotReady:
 		return true
 	case ReadinessResponseStatusReady:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RegisterDeploymentManagementRequestAllDeployments.
+const (
+	RegisterDeploymentManagementRequestAllDeploymentsTrue RegisterDeploymentManagementRequestAllDeployments = true
+)
+
+// Valid indicates whether the value is a known member of the RegisterDeploymentManagementRequestAllDeployments enum.
+func (e RegisterDeploymentManagementRequestAllDeployments) Valid() bool {
+	switch e {
+	case RegisterDeploymentManagementRequestAllDeploymentsTrue:
 		return true
 	default:
 		return false
@@ -2432,6 +2450,19 @@ type Deployment struct {
 	TeamId     TeamID                            `json:"team_id"`
 }
 
+// DeploymentManagementCredential Public registration facts for a team-owned management grant. Use the existing signed /v1/publisher-token exchange. No connect, publish, general credential administration, or project-definition authority is granted. Revoke with the existing publisher identity/grant administration endpoints; revocation does not revoke separately enrolled publishers.
+type DeploymentManagementCredential struct {
+	AllDeployments bool                       `json:"all_deployments"`
+	ClientId       string                     `json:"client_id"`
+	DeploymentIds  []string                   `json:"deployment_ids"`
+	ExpiresAt      time.Time                  `json:"expires_at"`
+	GrantId        string                     `json:"grant_id"`
+	KeyId          string                     `json:"key_id"`
+	ProjectKey     string                     `json:"project_key"`
+	Services       map[string]ServiceProtocol `json:"services"`
+	TeamId         string                     `json:"team_id"`
+}
+
 // DeploymentPage defines model for DeploymentPage.
 type DeploymentPage struct {
 	Deployments []Deployment `json:"deployments"`
@@ -3479,6 +3510,35 @@ type RedeemShareRequest struct {
 	ShareId          *ShareID `json:"share_id,omitempty"`
 }
 
+// RegisterDeploymentManagementRequest defines model for RegisterDeploymentManagementRequest.
+type RegisterDeploymentManagementRequest struct {
+	// AllDeployments Explicitly approve all current and future deployments in this project. Required for runtime deployment creation. Does not approve future service names.
+	AllDeployments *RegisterDeploymentManagementRequestAllDeployments `json:"all_deployments,omitempty"`
+
+	// DeploymentIds Exact existing deployment IDs, never names. Select this or all_deployments, not both.
+	DeploymentIds *[]string `json:"deployment_ids,omitempty"`
+
+	// ExpiresIn Fixed lifetime in seconds
+	ExpiresIn int    `json:"expires_in"`
+	Name      string `json:"name"`
+
+	// PublicKey Unpadded base64url Ed25519 public key. The caller keeps the private key.
+	PublicKey string `json:"public_key"`
+
+	// Services Existing project declarations. Control captures their protocols; removal or a protocol change permanently retires this approval, even after rollback.
+	Services []string `json:"services"`
+	union    json.RawMessage
+}
+
+// RegisterDeploymentManagementRequestAllDeployments Explicitly approve all current and future deployments in this project. Required for runtime deployment creation. Does not approve future service names.
+type RegisterDeploymentManagementRequestAllDeployments bool
+
+// RegisterDeploymentManagementRequest0 defines model for RegisterDeploymentManagementRequest.0.
+type RegisterDeploymentManagementRequest0 = interface{}
+
+// RegisterDeploymentManagementRequest1 defines model for RegisterDeploymentManagementRequest.1.
+type RegisterDeploymentManagementRequest1 = interface{}
+
 // RelayID defines model for RelayID.
 type RelayID = ResourceID
 
@@ -4380,6 +4440,12 @@ type GetProjectConfigurationParams struct {
 	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
 }
 
+// RegisterDeploymentManagementParams defines parameters for RegisterDeploymentManagement.
+type RegisterDeploymentManagementParams struct {
+	TeamId         TeamIDQuery `form:"team_id" json:"team_id"`
+	IdempotencyKey string      `json:"Idempotency-Key"`
+}
+
 // ListDeploymentsParams defines parameters for ListDeployments.
 type ListDeploymentsParams struct {
 	After  *string     `form:"after,omitempty" json:"after,omitempty"`
@@ -4660,6 +4726,9 @@ type SetPreviewTeamAccessJSONRequestBody = SetPreviewTeamAccessRequest
 // ApplyProjectConfigurationJSONRequestBody defines body for ApplyProjectConfiguration for application/json ContentType.
 type ApplyProjectConfigurationJSONRequestBody = ApplyProjectConfigurationRequest
 
+// RegisterDeploymentManagementJSONRequestBody defines body for RegisterDeploymentManagement for application/json ContentType.
+type RegisterDeploymentManagementJSONRequestBody = RegisterDeploymentManagementRequest
+
 // CreateDeploymentJSONRequestBody defines body for CreateDeployment for application/json ContentType.
 type CreateDeploymentJSONRequestBody = CreateDeploymentRequest
 
@@ -4860,6 +4929,166 @@ type IssueVisitorTokenJSONRequestBody = VisitorTokenRequest
 
 // IssueWorkloadServiceClientCertificateJSONRequestBody defines body for IssueWorkloadServiceClientCertificate for application/json ContentType.
 type IssueWorkloadServiceClientCertificateJSONRequestBody IssueWorkloadServiceClientCertificateJSONBody
+
+// AsRegisterDeploymentManagementRequest0 returns the union data inside the RegisterDeploymentManagementRequest as a RegisterDeploymentManagementRequest0
+func (t RegisterDeploymentManagementRequest) AsRegisterDeploymentManagementRequest0() (RegisterDeploymentManagementRequest0, error) {
+	var body RegisterDeploymentManagementRequest0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromRegisterDeploymentManagementRequest0 overwrites any union data inside the RegisterDeploymentManagementRequest as the provided RegisterDeploymentManagementRequest0
+func (t *RegisterDeploymentManagementRequest) FromRegisterDeploymentManagementRequest0(v RegisterDeploymentManagementRequest0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeRegisterDeploymentManagementRequest0 performs a merge with any union data inside the RegisterDeploymentManagementRequest, using the provided RegisterDeploymentManagementRequest0
+func (t *RegisterDeploymentManagementRequest) MergeRegisterDeploymentManagementRequest0(v RegisterDeploymentManagementRequest0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsRegisterDeploymentManagementRequest1 returns the union data inside the RegisterDeploymentManagementRequest as a RegisterDeploymentManagementRequest1
+func (t RegisterDeploymentManagementRequest) AsRegisterDeploymentManagementRequest1() (RegisterDeploymentManagementRequest1, error) {
+	var body RegisterDeploymentManagementRequest1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromRegisterDeploymentManagementRequest1 overwrites any union data inside the RegisterDeploymentManagementRequest as the provided RegisterDeploymentManagementRequest1
+func (t *RegisterDeploymentManagementRequest) FromRegisterDeploymentManagementRequest1(v RegisterDeploymentManagementRequest1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeRegisterDeploymentManagementRequest1 performs a merge with any union data inside the RegisterDeploymentManagementRequest, using the provided RegisterDeploymentManagementRequest1
+func (t *RegisterDeploymentManagementRequest) MergeRegisterDeploymentManagementRequest1(v RegisterDeploymentManagementRequest1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t RegisterDeploymentManagementRequest) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	if err != nil {
+		return nil, err
+	}
+	object := make(map[string]json.RawMessage)
+	if t.union != nil {
+		err = json.Unmarshal(b, &object)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if t.AllDeployments != nil {
+		object["all_deployments"], err = json.Marshal(t.AllDeployments)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'all_deployments': %w", err)
+		}
+	}
+
+	if t.DeploymentIds != nil {
+		object["deployment_ids"], err = json.Marshal(t.DeploymentIds)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'deployment_ids': %w", err)
+		}
+	}
+
+	object["expires_in"], err = json.Marshal(t.ExpiresIn)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'expires_in': %w", err)
+	}
+
+	object["name"], err = json.Marshal(t.Name)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'name': %w", err)
+	}
+
+	object["public_key"], err = json.Marshal(t.PublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'public_key': %w", err)
+	}
+
+	if t.Services != nil {
+		object["services"], err = json.Marshal(t.Services)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'services': %w", err)
+		}
+	}
+	b, err = json.Marshal(object)
+	return b, err
+}
+
+func (t *RegisterDeploymentManagementRequest) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	if err != nil {
+		return err
+	}
+	object := make(map[string]json.RawMessage)
+	err = json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["all_deployments"]; found {
+		err = json.Unmarshal(raw, &t.AllDeployments)
+		if err != nil {
+			return fmt.Errorf("error reading 'all_deployments': %w", err)
+		}
+	}
+
+	if raw, found := object["deployment_ids"]; found {
+		err = json.Unmarshal(raw, &t.DeploymentIds)
+		if err != nil {
+			return fmt.Errorf("error reading 'deployment_ids': %w", err)
+		}
+	}
+
+	if raw, found := object["expires_in"]; found {
+		err = json.Unmarshal(raw, &t.ExpiresIn)
+		if err != nil {
+			return fmt.Errorf("error reading 'expires_in': %w", err)
+		}
+	}
+
+	if raw, found := object["name"]; found {
+		err = json.Unmarshal(raw, &t.Name)
+		if err != nil {
+			return fmt.Errorf("error reading 'name': %w", err)
+		}
+	}
+
+	if raw, found := object["public_key"]; found {
+		err = json.Unmarshal(raw, &t.PublicKey)
+		if err != nil {
+			return fmt.Errorf("error reading 'public_key': %w", err)
+		}
+	}
+
+	if raw, found := object["services"]; found {
+		err = json.Unmarshal(raw, &t.Services)
+		if err != nil {
+			return fmt.Errorf("error reading 'services': %w", err)
+		}
+	}
+
+	return err
+}
 
 // AsWebhookProviderSourceResponseSource0 returns the union data inside the WebhookProviderSourceResponse_Source as a WebhookProviderSourceResponseSource0
 func (t WebhookProviderSourceResponse_Source) AsWebhookProviderSourceResponseSource0() (WebhookProviderSourceResponseSource0, error) {
@@ -5208,70 +5437,82 @@ type ClientInterface interface {
 	// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
 	ApplyProjectConfiguration(ctx context.Context, projectKey string, body ApplyProjectConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// RegisterDeploymentManagementWithBody performs a POST /v1/projects/{project_key}/deployment-management-credentials (the `RegisterDeploymentManagement` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// A current team manager registers a public signing key and fixed deployment-management approval. Runtime credentials cannot invoke this operation. Retrying the original request key and intent recovers the same identity/grant/deadline only while they remain current. A changed key, scope, retired declaration, revoked identity/grant, or expired approval is never renewed by recovery. This administration operation is not part of the public runtime SDK operation allowlist.
+	RegisterDeploymentManagementWithBody(ctx context.Context, projectKey string, params *RegisterDeploymentManagementParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RegisterDeploymentManagement performs a POST /v1/projects/{project_key}/deployment-management-credentials (the `RegisterDeploymentManagement` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// A current team manager registers a public signing key and fixed deployment-management approval. Runtime credentials cannot invoke this operation. Retrying the original request key and intent recovers the same identity/grant/deadline only while they remain current. A changed key, scope, retired declaration, revoked identity/grant, or expired approval is never renewed by recovery. This administration operation is not part of the public runtime SDK operation allowlist.
+	RegisterDeploymentManagement(ctx context.Context, projectKey string, params *RegisterDeploymentManagementParams, body RegisterDeploymentManagementJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListDeployments performs a GET /v1/projects/{project_key}/deployments (the `ListDeployments` operationId) request.
 	//
-	// List this project's saved deployments and targets for a current team manager, in bytewise ID order. No publisher credentials or enrollment secrets are returned.
+	// List authorized deployments in bytewise ID order. Current managers see this project's deployments. Management credentials see only approved deployments containing approved services, with other targets/services omitted; filtering precedes pagination. No publisher credentials or enrollment secrets are returned.
 	ListDeployments(ctx context.Context, projectKey string, params *ListDeploymentsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateDeploymentWithBody performs a POST /v1/projects/{project_key}/deployments (the `CreateDeployment` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Create a deployment using existing logical project declarations. Requires current team manager authority. The original Idempotency-Key recovers the same committed deployment; a deleted deployment is never recreated by replay. Does not grant connect or publish capabilities to a credential.
+	// Create a deployment using existing logical project declarations. Requires a current team manager or a deployment-management credential explicitly approving all current/future deployments and every submitted service. The original Idempotency-Key is scoped to the acting person or machine identity and recovers the same committed deployment; a deleted deployment is never recreated by replay. Does not grant connect or publish capabilities.
 	CreateDeploymentWithBody(ctx context.Context, projectKey string, params *CreateDeploymentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateDeployment performs a POST /v1/projects/{project_key}/deployments (the `CreateDeployment` operationId) request.
 	// Takes a body of the `application/json` content type.
 	//
-	// Create a deployment using existing logical project declarations. Requires current team manager authority. The original Idempotency-Key recovers the same committed deployment; a deleted deployment is never recreated by replay. Does not grant connect or publish capabilities to a credential.
+	// Create a deployment using existing logical project declarations. Requires a current team manager or a deployment-management credential explicitly approving all current/future deployments and every submitted service. The original Idempotency-Key is scoped to the acting person or machine identity and recovers the same committed deployment; a deleted deployment is never recreated by replay. Does not grant connect or publish capabilities.
 	CreateDeployment(ctx context.Context, projectKey string, params *CreateDeploymentParams, body CreateDeploymentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DeleteDeployment performs a DELETE /v1/projects/{project_key}/deployments/{deployment} (the `DeleteDeployment` operationId) request.
 	//
-	// Retire this deployment's saved services, enrollments, and publishers. Requires a current manager and the latest strong ETag. Sibling deployments and logical declarations are preserved.
+	// Retire this deployment's saved services, enrollments, and publishers. Requires a current manager or management approval for the deployment and every binding it removes, plus the latest strong ETag. A filtered read is not permission to delete unapproved services. Sibling deployments and logical declarations are preserved.
 	DeleteDeployment(ctx context.Context, projectKey string, deployment string, params *DeleteDeploymentParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetDeployment performs a GET /v1/projects/{project_key}/deployments/{deployment} (the `GetDeployment` operationId) request.
 	//
-	// Read a saved deployment and its targets with current team manager authority.
+	// Read a saved deployment with current manager or scoped deployment-management authority. Management credentials see only approved services/targets and cannot read unrelated deployments. The ETag still represents the whole deployment.
 	GetDeployment(ctx context.Context, projectKey string, deployment string, params *GetDeploymentParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UpdateDeploymentWithBody performs a PATCH /v1/projects/{project_key}/deployments/{deployment} (the `UpdateDeployment` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Update selected existing targets/TLS on the same records used by manager apply. Requires a current manager and the strong ETag returned by the latest read. Stale conditions fail with 412; a missing condition fails with 428.
+	// Update selected existing targets/TLS on the same records used by manager apply. Requires a current manager or management approval for this deployment and every submitted service, plus the latest strong ETag. Omitted targets and policies remain unchanged. Stale conditions fail with 412; a missing condition fails with 428.
 	UpdateDeploymentWithBody(ctx context.Context, projectKey string, deployment string, params *UpdateDeploymentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UpdateDeployment performs a PATCH /v1/projects/{project_key}/deployments/{deployment} (the `UpdateDeployment` operationId) request.
 	// Takes a body of the `application/json` content type.
 	//
-	// Update selected existing targets/TLS on the same records used by manager apply. Requires a current manager and the strong ETag returned by the latest read. Stale conditions fail with 412; a missing condition fails with 428.
+	// Update selected existing targets/TLS on the same records used by manager apply. Requires a current manager or management approval for this deployment and every submitted service, plus the latest strong ETag. Omitted targets and policies remain unchanged. Stale conditions fail with 412; a missing condition fails with 428.
 	UpdateDeployment(ctx context.Context, projectKey string, deployment string, params *UpdateDeploymentParams, body UpdateDeploymentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateDeploymentPublisherEnrollmentWithBody performs a POST /v1/projects/{project_key}/deployments/{deployment}/publisher-enrollments (the `CreateDeploymentPublisherEnrollment` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Approve bounded publisher setup for selected existing services. Requires a current team manager's control session. The original request key recovers the same secret only while its captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
+	// Approve bounded publisher setup for selected existing services. Requires a current team manager or management approval for this deployment and every selected service. Setup cannot outlive the management grant. The original request key is scoped to the acting person or machine and recovers the same secret only while current authority, captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
 	CreateDeploymentPublisherEnrollmentWithBody(ctx context.Context, projectKey string, deployment string, params *CreateDeploymentPublisherEnrollmentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateDeploymentPublisherEnrollment performs a POST /v1/projects/{project_key}/deployments/{deployment}/publisher-enrollments (the `CreateDeploymentPublisherEnrollment` operationId) request.
 	// Takes a body of the `application/json` content type.
 	//
-	// Approve bounded publisher setup for selected existing services. Requires a current team manager's control session. The original request key recovers the same secret only while its captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
+	// Approve bounded publisher setup for selected existing services. Requires a current team manager or management approval for this deployment and every selected service. Setup cannot outlive the management grant. The original request key is scoped to the acting person or machine and recovers the same secret only while current authority, captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
 	CreateDeploymentPublisherEnrollment(ctx context.Context, projectKey string, deployment string, params *CreateDeploymentPublisherEnrollmentParams, body CreateDeploymentPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListDeploymentPublishers performs a GET /v1/projects/{project_key}/deployments/{deployment}/publishers (the `ListDeploymentPublishers` operationId) request.
 	//
-	// List only this deployment's publishers, including revoked identities and their retained observations. Requires current team manager authority; no enrollment secrets or unrelated targets are returned.
+	// List authorized publishers in this deployment, including revoked identities and retained observations. A management credential sees only scoped publishers whose entire captured service/protocol approval it covers; filtering precedes pagination. Legacy whole-group publishers require a current manager. No enrollment secrets or targets are returned.
 	ListDeploymentPublishers(ctx context.Context, projectKey string, deployment string, params *ListDeploymentPublishersParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RevokeDeploymentPublisher performs a DELETE /v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher} (the `RevokeDeploymentPublisher` operationId) request.
 	//
-	// Revoke exactly this publisher identity, its grants, leases, and current publications. Requires a current team manager. Repetition is safe; the last observation is retained. Other publishers, deployments, and shared enrollment capacity are not changed. Apply and enrollment replay cannot restore the revoked identity.
+	// Revoke exactly this publisher identity, its grants, leases, and current publications. Requires a current manager or management approval covering this deployment and the publisher's entire captured service/protocol scope. Legacy whole-group publishers require a manager. Repetition is safe; the last observation is retained. Siblings and shared enrollment capacity are unchanged. Apply and enrollment replay cannot restore the revoked identity.
 	RevokeDeploymentPublisher(ctx context.Context, projectKey string, deployment string, publisher string, params *RevokeDeploymentPublisherParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetDeploymentPublisher performs a GET /v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher} (the `GetDeploymentPublisher` operationId) request.
 	//
-	// Read one publisher's captured scope and observation, with current team manager authority and exact deployment ownership.
+	// Read one publisher's captured scope and observation with exact deployment ownership. Requires a current manager or management approval covering this deployment and the publisher's entire captured service/protocol scope. Legacy whole-group publishers require a manager.
 	GetDeploymentPublisher(ctx context.Context, projectKey string, deployment string, publisher string, params *GetDeploymentPublisherParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetLocalProjectService performs a GET /v1/projects/{project_key}/local-services/{service} (the `GetLocalProjectService` operationId) request.
@@ -6785,9 +7026,41 @@ func (c *Client) ApplyProjectConfiguration(ctx context.Context, projectKey strin
 	return c.Client.Do(req)
 }
 
+// RegisterDeploymentManagementWithBody performs a POST /v1/projects/{project_key}/deployment-management-credentials (the `RegisterDeploymentManagement` operationId) request,
+// with any type of body and a specified content type.
+//
+// A current team manager registers a public signing key and fixed deployment-management approval. Runtime credentials cannot invoke this operation. Retrying the original request key and intent recovers the same identity/grant/deadline only while they remain current. A changed key, scope, retired declaration, revoked identity/grant, or expired approval is never renewed by recovery. This administration operation is not part of the public runtime SDK operation allowlist.
+func (c *Client) RegisterDeploymentManagementWithBody(ctx context.Context, projectKey string, params *RegisterDeploymentManagementParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterDeploymentManagementRequestWithBody(c.Server, projectKey, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RegisterDeploymentManagement performs a POST /v1/projects/{project_key}/deployment-management-credentials (the `RegisterDeploymentManagement` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// A current team manager registers a public signing key and fixed deployment-management approval. Runtime credentials cannot invoke this operation. Retrying the original request key and intent recovers the same identity/grant/deadline only while they remain current. A changed key, scope, retired declaration, revoked identity/grant, or expired approval is never renewed by recovery. This administration operation is not part of the public runtime SDK operation allowlist.
+func (c *Client) RegisterDeploymentManagement(ctx context.Context, projectKey string, params *RegisterDeploymentManagementParams, body RegisterDeploymentManagementJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterDeploymentManagementRequest(c.Server, projectKey, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListDeployments performs a GET /v1/projects/{project_key}/deployments (the `ListDeployments` operationId) request.
 //
-// List this project's saved deployments and targets for a current team manager, in bytewise ID order. No publisher credentials or enrollment secrets are returned.
+// List authorized deployments in bytewise ID order. Current managers see this project's deployments. Management credentials see only approved deployments containing approved services, with other targets/services omitted; filtering precedes pagination. No publisher credentials or enrollment secrets are returned.
 func (c *Client) ListDeployments(ctx context.Context, projectKey string, params *ListDeploymentsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListDeploymentsRequest(c.Server, projectKey, params)
 	if err != nil {
@@ -6803,7 +7076,7 @@ func (c *Client) ListDeployments(ctx context.Context, projectKey string, params 
 // CreateDeploymentWithBody performs a POST /v1/projects/{project_key}/deployments (the `CreateDeployment` operationId) request,
 // with any type of body and a specified content type.
 //
-// Create a deployment using existing logical project declarations. Requires current team manager authority. The original Idempotency-Key recovers the same committed deployment; a deleted deployment is never recreated by replay. Does not grant connect or publish capabilities to a credential.
+// Create a deployment using existing logical project declarations. Requires a current team manager or a deployment-management credential explicitly approving all current/future deployments and every submitted service. The original Idempotency-Key is scoped to the acting person or machine identity and recovers the same committed deployment; a deleted deployment is never recreated by replay. Does not grant connect or publish capabilities.
 func (c *Client) CreateDeploymentWithBody(ctx context.Context, projectKey string, params *CreateDeploymentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateDeploymentRequestWithBody(c.Server, projectKey, params, contentType, body)
 	if err != nil {
@@ -6819,7 +7092,7 @@ func (c *Client) CreateDeploymentWithBody(ctx context.Context, projectKey string
 // CreateDeployment performs a POST /v1/projects/{project_key}/deployments (the `CreateDeployment` operationId) request.
 // Takes a body of the `application/json` content type.
 //
-// Create a deployment using existing logical project declarations. Requires current team manager authority. The original Idempotency-Key recovers the same committed deployment; a deleted deployment is never recreated by replay. Does not grant connect or publish capabilities to a credential.
+// Create a deployment using existing logical project declarations. Requires a current team manager or a deployment-management credential explicitly approving all current/future deployments and every submitted service. The original Idempotency-Key is scoped to the acting person or machine identity and recovers the same committed deployment; a deleted deployment is never recreated by replay. Does not grant connect or publish capabilities.
 func (c *Client) CreateDeployment(ctx context.Context, projectKey string, params *CreateDeploymentParams, body CreateDeploymentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateDeploymentRequest(c.Server, projectKey, params, body)
 	if err != nil {
@@ -6834,7 +7107,7 @@ func (c *Client) CreateDeployment(ctx context.Context, projectKey string, params
 
 // DeleteDeployment performs a DELETE /v1/projects/{project_key}/deployments/{deployment} (the `DeleteDeployment` operationId) request.
 //
-// Retire this deployment's saved services, enrollments, and publishers. Requires a current manager and the latest strong ETag. Sibling deployments and logical declarations are preserved.
+// Retire this deployment's saved services, enrollments, and publishers. Requires a current manager or management approval for the deployment and every binding it removes, plus the latest strong ETag. A filtered read is not permission to delete unapproved services. Sibling deployments and logical declarations are preserved.
 func (c *Client) DeleteDeployment(ctx context.Context, projectKey string, deployment string, params *DeleteDeploymentParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteDeploymentRequest(c.Server, projectKey, deployment, params)
 	if err != nil {
@@ -6849,7 +7122,7 @@ func (c *Client) DeleteDeployment(ctx context.Context, projectKey string, deploy
 
 // GetDeployment performs a GET /v1/projects/{project_key}/deployments/{deployment} (the `GetDeployment` operationId) request.
 //
-// Read a saved deployment and its targets with current team manager authority.
+// Read a saved deployment with current manager or scoped deployment-management authority. Management credentials see only approved services/targets and cannot read unrelated deployments. The ETag still represents the whole deployment.
 func (c *Client) GetDeployment(ctx context.Context, projectKey string, deployment string, params *GetDeploymentParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetDeploymentRequest(c.Server, projectKey, deployment, params)
 	if err != nil {
@@ -6865,7 +7138,7 @@ func (c *Client) GetDeployment(ctx context.Context, projectKey string, deploymen
 // UpdateDeploymentWithBody performs a PATCH /v1/projects/{project_key}/deployments/{deployment} (the `UpdateDeployment` operationId) request,
 // with any type of body and a specified content type.
 //
-// Update selected existing targets/TLS on the same records used by manager apply. Requires a current manager and the strong ETag returned by the latest read. Stale conditions fail with 412; a missing condition fails with 428.
+// Update selected existing targets/TLS on the same records used by manager apply. Requires a current manager or management approval for this deployment and every submitted service, plus the latest strong ETag. Omitted targets and policies remain unchanged. Stale conditions fail with 412; a missing condition fails with 428.
 func (c *Client) UpdateDeploymentWithBody(ctx context.Context, projectKey string, deployment string, params *UpdateDeploymentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateDeploymentRequestWithBody(c.Server, projectKey, deployment, params, contentType, body)
 	if err != nil {
@@ -6881,7 +7154,7 @@ func (c *Client) UpdateDeploymentWithBody(ctx context.Context, projectKey string
 // UpdateDeployment performs a PATCH /v1/projects/{project_key}/deployments/{deployment} (the `UpdateDeployment` operationId) request.
 // Takes a body of the `application/json` content type.
 //
-// Update selected existing targets/TLS on the same records used by manager apply. Requires a current manager and the strong ETag returned by the latest read. Stale conditions fail with 412; a missing condition fails with 428.
+// Update selected existing targets/TLS on the same records used by manager apply. Requires a current manager or management approval for this deployment and every submitted service, plus the latest strong ETag. Omitted targets and policies remain unchanged. Stale conditions fail with 412; a missing condition fails with 428.
 func (c *Client) UpdateDeployment(ctx context.Context, projectKey string, deployment string, params *UpdateDeploymentParams, body UpdateDeploymentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateDeploymentRequest(c.Server, projectKey, deployment, params, body)
 	if err != nil {
@@ -6897,7 +7170,7 @@ func (c *Client) UpdateDeployment(ctx context.Context, projectKey string, deploy
 // CreateDeploymentPublisherEnrollmentWithBody performs a POST /v1/projects/{project_key}/deployments/{deployment}/publisher-enrollments (the `CreateDeploymentPublisherEnrollment` operationId) request,
 // with any type of body and a specified content type.
 //
-// Approve bounded publisher setup for selected existing services. Requires a current team manager's control session. The original request key recovers the same secret only while its captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
+// Approve bounded publisher setup for selected existing services. Requires a current team manager or management approval for this deployment and every selected service. Setup cannot outlive the management grant. The original request key is scoped to the acting person or machine and recovers the same secret only while current authority, captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
 func (c *Client) CreateDeploymentPublisherEnrollmentWithBody(ctx context.Context, projectKey string, deployment string, params *CreateDeploymentPublisherEnrollmentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateDeploymentPublisherEnrollmentRequestWithBody(c.Server, projectKey, deployment, params, contentType, body)
 	if err != nil {
@@ -6913,7 +7186,7 @@ func (c *Client) CreateDeploymentPublisherEnrollmentWithBody(ctx context.Context
 // CreateDeploymentPublisherEnrollment performs a POST /v1/projects/{project_key}/deployments/{deployment}/publisher-enrollments (the `CreateDeploymentPublisherEnrollment` operationId) request.
 // Takes a body of the `application/json` content type.
 //
-// Approve bounded publisher setup for selected existing services. Requires a current team manager's control session. The original request key recovers the same secret only while its captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
+// Approve bounded publisher setup for selected existing services. Requires a current team manager or management approval for this deployment and every selected service. Setup cannot outlive the management grant. The original request key is scoped to the acting person or machine and recovers the same secret only while current authority, captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
 func (c *Client) CreateDeploymentPublisherEnrollment(ctx context.Context, projectKey string, deployment string, params *CreateDeploymentPublisherEnrollmentParams, body CreateDeploymentPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateDeploymentPublisherEnrollmentRequest(c.Server, projectKey, deployment, params, body)
 	if err != nil {
@@ -6928,7 +7201,7 @@ func (c *Client) CreateDeploymentPublisherEnrollment(ctx context.Context, projec
 
 // ListDeploymentPublishers performs a GET /v1/projects/{project_key}/deployments/{deployment}/publishers (the `ListDeploymentPublishers` operationId) request.
 //
-// List only this deployment's publishers, including revoked identities and their retained observations. Requires current team manager authority; no enrollment secrets or unrelated targets are returned.
+// List authorized publishers in this deployment, including revoked identities and retained observations. A management credential sees only scoped publishers whose entire captured service/protocol approval it covers; filtering precedes pagination. Legacy whole-group publishers require a current manager. No enrollment secrets or targets are returned.
 func (c *Client) ListDeploymentPublishers(ctx context.Context, projectKey string, deployment string, params *ListDeploymentPublishersParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListDeploymentPublishersRequest(c.Server, projectKey, deployment, params)
 	if err != nil {
@@ -6943,7 +7216,7 @@ func (c *Client) ListDeploymentPublishers(ctx context.Context, projectKey string
 
 // RevokeDeploymentPublisher performs a DELETE /v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher} (the `RevokeDeploymentPublisher` operationId) request.
 //
-// Revoke exactly this publisher identity, its grants, leases, and current publications. Requires a current team manager. Repetition is safe; the last observation is retained. Other publishers, deployments, and shared enrollment capacity are not changed. Apply and enrollment replay cannot restore the revoked identity.
+// Revoke exactly this publisher identity, its grants, leases, and current publications. Requires a current manager or management approval covering this deployment and the publisher's entire captured service/protocol scope. Legacy whole-group publishers require a manager. Repetition is safe; the last observation is retained. Siblings and shared enrollment capacity are unchanged. Apply and enrollment replay cannot restore the revoked identity.
 func (c *Client) RevokeDeploymentPublisher(ctx context.Context, projectKey string, deployment string, publisher string, params *RevokeDeploymentPublisherParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeDeploymentPublisherRequest(c.Server, projectKey, deployment, publisher, params)
 	if err != nil {
@@ -6958,7 +7231,7 @@ func (c *Client) RevokeDeploymentPublisher(ctx context.Context, projectKey strin
 
 // GetDeploymentPublisher performs a GET /v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher} (the `GetDeploymentPublisher` operationId) request.
 //
-// Read one publisher's captured scope and observation, with current team manager authority and exact deployment ownership.
+// Read one publisher's captured scope and observation with exact deployment ownership. Requires a current manager or management approval covering this deployment and the publisher's entire captured service/protocol scope. Legacy whole-group publishers require a manager.
 func (c *Client) GetDeploymentPublisher(ctx context.Context, projectKey string, deployment string, publisher string, params *GetDeploymentPublisherParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetDeploymentPublisherRequest(c.Server, projectKey, deployment, publisher, params)
 	if err != nil {
@@ -10912,6 +11185,89 @@ func NewApplyProjectConfigurationRequestWithBody(server string, projectKey strin
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRegisterDeploymentManagementRequest calls the generic RegisterDeploymentManagement builder with application/json body
+func NewRegisterDeploymentManagementRequest(server string, projectKey string, params *RegisterDeploymentManagementParams, body RegisterDeploymentManagementJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRegisterDeploymentManagementRequestWithBody(server, projectKey, params, "application/json", bodyReader)
+}
+
+// NewRegisterDeploymentManagementRequestWithBody constructs an http.Request for the RegisterDeploymentManagement method, with any body, and a specified content type
+func NewRegisterDeploymentManagementRequestWithBody(server string, projectKey string, params *RegisterDeploymentManagementParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/deployment-management-credentials", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
 
 	return req, nil
 }
@@ -17199,9 +17555,23 @@ type ClientWithResponsesInterface interface {
 	// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
 	ApplyProjectConfigurationWithResponse(ctx context.Context, projectKey string, body ApplyProjectConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*ApplyProjectConfigurationResponse, error)
 
+	// RegisterDeploymentManagementWithBodyWithResponse performs a POST /v1/projects/{project_key}/deployment-management-credentials (the `RegisterDeploymentManagement` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// A current team manager registers a public signing key and fixed deployment-management approval. Runtime credentials cannot invoke this operation. Retrying the original request key and intent recovers the same identity/grant/deadline only while they remain current. A changed key, scope, retired declaration, revoked identity/grant, or expired approval is never renewed by recovery. This administration operation is not part of the public runtime SDK operation allowlist.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RegisterDeploymentManagementWithBodyWithResponse(ctx context.Context, projectKey string, params *RegisterDeploymentManagementParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterDeploymentManagementResponse, error)
+
+	// RegisterDeploymentManagementWithResponse performs a POST /v1/projects/{project_key}/deployment-management-credentials (the `RegisterDeploymentManagement` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// A current team manager registers a public signing key and fixed deployment-management approval. Runtime credentials cannot invoke this operation. Retrying the original request key and intent recovers the same identity/grant/deadline only while they remain current. A changed key, scope, retired declaration, revoked identity/grant, or expired approval is never renewed by recovery. This administration operation is not part of the public runtime SDK operation allowlist.
+	RegisterDeploymentManagementWithResponse(ctx context.Context, projectKey string, params *RegisterDeploymentManagementParams, body RegisterDeploymentManagementJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterDeploymentManagementResponse, error)
+
 	// ListDeploymentsWithResponse performs a GET /v1/projects/{project_key}/deployments (the `ListDeployments` operationId) request.
 	//
-	// List this project's saved deployments and targets for a current team manager, in bytewise ID order. No publisher credentials or enrollment secrets are returned.
+	// List authorized deployments in bytewise ID order. Current managers see this project's deployments. Management credentials see only approved deployments containing approved services, with other targets/services omitted; filtering precedes pagination. No publisher credentials or enrollment secrets are returned.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	ListDeploymentsWithResponse(ctx context.Context, projectKey string, params *ListDeploymentsParams, reqEditors ...RequestEditorFn) (*ListDeploymentsResponse, error)
@@ -17209,7 +17579,7 @@ type ClientWithResponsesInterface interface {
 	// CreateDeploymentWithBodyWithResponse performs a POST /v1/projects/{project_key}/deployments (the `CreateDeployment` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Create a deployment using existing logical project declarations. Requires current team manager authority. The original Idempotency-Key recovers the same committed deployment; a deleted deployment is never recreated by replay. Does not grant connect or publish capabilities to a credential.
+	// Create a deployment using existing logical project declarations. Requires a current team manager or a deployment-management credential explicitly approving all current/future deployments and every submitted service. The original Idempotency-Key is scoped to the acting person or machine identity and recovers the same committed deployment; a deleted deployment is never recreated by replay. Does not grant connect or publish capabilities.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	CreateDeploymentWithBodyWithResponse(ctx context.Context, projectKey string, params *CreateDeploymentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDeploymentResponse, error)
@@ -17217,19 +17587,19 @@ type ClientWithResponsesInterface interface {
 	// CreateDeploymentWithResponse performs a POST /v1/projects/{project_key}/deployments (the `CreateDeployment` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Create a deployment using existing logical project declarations. Requires current team manager authority. The original Idempotency-Key recovers the same committed deployment; a deleted deployment is never recreated by replay. Does not grant connect or publish capabilities to a credential.
+	// Create a deployment using existing logical project declarations. Requires a current team manager or a deployment-management credential explicitly approving all current/future deployments and every submitted service. The original Idempotency-Key is scoped to the acting person or machine identity and recovers the same committed deployment; a deleted deployment is never recreated by replay. Does not grant connect or publish capabilities.
 	CreateDeploymentWithResponse(ctx context.Context, projectKey string, params *CreateDeploymentParams, body CreateDeploymentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDeploymentResponse, error)
 
 	// DeleteDeploymentWithResponse performs a DELETE /v1/projects/{project_key}/deployments/{deployment} (the `DeleteDeployment` operationId) request.
 	//
-	// Retire this deployment's saved services, enrollments, and publishers. Requires a current manager and the latest strong ETag. Sibling deployments and logical declarations are preserved.
+	// Retire this deployment's saved services, enrollments, and publishers. Requires a current manager or management approval for the deployment and every binding it removes, plus the latest strong ETag. A filtered read is not permission to delete unapproved services. Sibling deployments and logical declarations are preserved.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	DeleteDeploymentWithResponse(ctx context.Context, projectKey string, deployment string, params *DeleteDeploymentParams, reqEditors ...RequestEditorFn) (*DeleteDeploymentResponse, error)
 
 	// GetDeploymentWithResponse performs a GET /v1/projects/{project_key}/deployments/{deployment} (the `GetDeployment` operationId) request.
 	//
-	// Read a saved deployment and its targets with current team manager authority.
+	// Read a saved deployment with current manager or scoped deployment-management authority. Management credentials see only approved services/targets and cannot read unrelated deployments. The ETag still represents the whole deployment.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	GetDeploymentWithResponse(ctx context.Context, projectKey string, deployment string, params *GetDeploymentParams, reqEditors ...RequestEditorFn) (*GetDeploymentResponse, error)
@@ -17237,7 +17607,7 @@ type ClientWithResponsesInterface interface {
 	// UpdateDeploymentWithBodyWithResponse performs a PATCH /v1/projects/{project_key}/deployments/{deployment} (the `UpdateDeployment` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Update selected existing targets/TLS on the same records used by manager apply. Requires a current manager and the strong ETag returned by the latest read. Stale conditions fail with 412; a missing condition fails with 428.
+	// Update selected existing targets/TLS on the same records used by manager apply. Requires a current manager or management approval for this deployment and every submitted service, plus the latest strong ETag. Omitted targets and policies remain unchanged. Stale conditions fail with 412; a missing condition fails with 428.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	UpdateDeploymentWithBodyWithResponse(ctx context.Context, projectKey string, deployment string, params *UpdateDeploymentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateDeploymentResponse, error)
@@ -17245,13 +17615,13 @@ type ClientWithResponsesInterface interface {
 	// UpdateDeploymentWithResponse performs a PATCH /v1/projects/{project_key}/deployments/{deployment} (the `UpdateDeployment` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Update selected existing targets/TLS on the same records used by manager apply. Requires a current manager and the strong ETag returned by the latest read. Stale conditions fail with 412; a missing condition fails with 428.
+	// Update selected existing targets/TLS on the same records used by manager apply. Requires a current manager or management approval for this deployment and every submitted service, plus the latest strong ETag. Omitted targets and policies remain unchanged. Stale conditions fail with 412; a missing condition fails with 428.
 	UpdateDeploymentWithResponse(ctx context.Context, projectKey string, deployment string, params *UpdateDeploymentParams, body UpdateDeploymentJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateDeploymentResponse, error)
 
 	// CreateDeploymentPublisherEnrollmentWithBodyWithResponse performs a POST /v1/projects/{project_key}/deployments/{deployment}/publisher-enrollments (the `CreateDeploymentPublisherEnrollment` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Approve bounded publisher setup for selected existing services. Requires a current team manager's control session. The original request key recovers the same secret only while its captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
+	// Approve bounded publisher setup for selected existing services. Requires a current team manager or management approval for this deployment and every selected service. Setup cannot outlive the management grant. The original request key is scoped to the acting person or machine and recovers the same secret only while current authority, captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	CreateDeploymentPublisherEnrollmentWithBodyWithResponse(ctx context.Context, projectKey string, deployment string, params *CreateDeploymentPublisherEnrollmentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDeploymentPublisherEnrollmentResponse, error)
@@ -17259,26 +17629,26 @@ type ClientWithResponsesInterface interface {
 	// CreateDeploymentPublisherEnrollmentWithResponse performs a POST /v1/projects/{project_key}/deployments/{deployment}/publisher-enrollments (the `CreateDeploymentPublisherEnrollment` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Approve bounded publisher setup for selected existing services. Requires a current team manager's control session. The original request key recovers the same secret only while its captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
+	// Approve bounded publisher setup for selected existing services. Requires a current team manager or management approval for this deployment and every selected service. Setup cannot outlive the management grant. The original request key is scoped to the acting person or machine and recovers the same secret only while current authority, captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
 	CreateDeploymentPublisherEnrollmentWithResponse(ctx context.Context, projectKey string, deployment string, params *CreateDeploymentPublisherEnrollmentParams, body CreateDeploymentPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDeploymentPublisherEnrollmentResponse, error)
 
 	// ListDeploymentPublishersWithResponse performs a GET /v1/projects/{project_key}/deployments/{deployment}/publishers (the `ListDeploymentPublishers` operationId) request.
 	//
-	// List only this deployment's publishers, including revoked identities and their retained observations. Requires current team manager authority; no enrollment secrets or unrelated targets are returned.
+	// List authorized publishers in this deployment, including revoked identities and retained observations. A management credential sees only scoped publishers whose entire captured service/protocol approval it covers; filtering precedes pagination. Legacy whole-group publishers require a current manager. No enrollment secrets or targets are returned.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	ListDeploymentPublishersWithResponse(ctx context.Context, projectKey string, deployment string, params *ListDeploymentPublishersParams, reqEditors ...RequestEditorFn) (*ListDeploymentPublishersResponse, error)
 
 	// RevokeDeploymentPublisherWithResponse performs a DELETE /v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher} (the `RevokeDeploymentPublisher` operationId) request.
 	//
-	// Revoke exactly this publisher identity, its grants, leases, and current publications. Requires a current team manager. Repetition is safe; the last observation is retained. Other publishers, deployments, and shared enrollment capacity are not changed. Apply and enrollment replay cannot restore the revoked identity.
+	// Revoke exactly this publisher identity, its grants, leases, and current publications. Requires a current manager or management approval covering this deployment and the publisher's entire captured service/protocol scope. Legacy whole-group publishers require a manager. Repetition is safe; the last observation is retained. Siblings and shared enrollment capacity are unchanged. Apply and enrollment replay cannot restore the revoked identity.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	RevokeDeploymentPublisherWithResponse(ctx context.Context, projectKey string, deployment string, publisher string, params *RevokeDeploymentPublisherParams, reqEditors ...RequestEditorFn) (*RevokeDeploymentPublisherResponse, error)
 
 	// GetDeploymentPublisherWithResponse performs a GET /v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher} (the `GetDeploymentPublisher` operationId) request.
 	//
-	// Read one publisher's captured scope and observation, with current team manager authority and exact deployment ownership.
+	// Read one publisher's captured scope and observation with exact deployment ownership. Requires a current manager or management approval covering this deployment and the publisher's entire captured service/protocol scope. Legacy whole-group publishers require a manager.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	GetDeploymentPublisherWithResponse(ctx context.Context, projectKey string, deployment string, publisher string, params *GetDeploymentPublisherParams, reqEditors ...RequestEditorFn) (*GetDeploymentPublisherResponse, error)
@@ -19698,6 +20068,54 @@ func (r ApplyProjectConfigurationResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ApplyProjectConfigurationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RegisterDeploymentManagementResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *DeploymentManagementCredential
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r RegisterDeploymentManagementResponse) GetJSON201() *DeploymentManagementCredential {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RegisterDeploymentManagementResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RegisterDeploymentManagementResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RegisterDeploymentManagementResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RegisterDeploymentManagementResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RegisterDeploymentManagementResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -25636,9 +26054,35 @@ func (c *ClientWithResponses) ApplyProjectConfigurationWithResponse(ctx context.
 	return ParseApplyProjectConfigurationResponse(rsp)
 }
 
+// RegisterDeploymentManagementWithBodyWithResponse performs a POST /v1/projects/{project_key}/deployment-management-credentials (the `RegisterDeploymentManagement` operationId) request,
+// with any type of body and a specified content type.
+//
+// A current team manager registers a public signing key and fixed deployment-management approval. Runtime credentials cannot invoke this operation. Retrying the original request key and intent recovers the same identity/grant/deadline only while they remain current. A changed key, scope, retired declaration, revoked identity/grant, or expired approval is never renewed by recovery. This administration operation is not part of the public runtime SDK operation allowlist.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RegisterDeploymentManagementWithBodyWithResponse(ctx context.Context, projectKey string, params *RegisterDeploymentManagementParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterDeploymentManagementResponse, error) {
+	rsp, err := c.RegisterDeploymentManagementWithBody(ctx, projectKey, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegisterDeploymentManagementResponse(rsp)
+}
+
+// RegisterDeploymentManagementWithResponse performs a POST /v1/projects/{project_key}/deployment-management-credentials (the `RegisterDeploymentManagement` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// A current team manager registers a public signing key and fixed deployment-management approval. Runtime credentials cannot invoke this operation. Retrying the original request key and intent recovers the same identity/grant/deadline only while they remain current. A changed key, scope, retired declaration, revoked identity/grant, or expired approval is never renewed by recovery. This administration operation is not part of the public runtime SDK operation allowlist.
+func (c *ClientWithResponses) RegisterDeploymentManagementWithResponse(ctx context.Context, projectKey string, params *RegisterDeploymentManagementParams, body RegisterDeploymentManagementJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterDeploymentManagementResponse, error) {
+	rsp, err := c.RegisterDeploymentManagement(ctx, projectKey, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegisterDeploymentManagementResponse(rsp)
+}
+
 // ListDeploymentsWithResponse performs a GET /v1/projects/{project_key}/deployments (the `ListDeployments` operationId) request.
 //
-// List this project's saved deployments and targets for a current team manager, in bytewise ID order. No publisher credentials or enrollment secrets are returned.
+// List authorized deployments in bytewise ID order. Current managers see this project's deployments. Management credentials see only approved deployments containing approved services, with other targets/services omitted; filtering precedes pagination. No publisher credentials or enrollment secrets are returned.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) ListDeploymentsWithResponse(ctx context.Context, projectKey string, params *ListDeploymentsParams, reqEditors ...RequestEditorFn) (*ListDeploymentsResponse, error) {
@@ -25652,7 +26096,7 @@ func (c *ClientWithResponses) ListDeploymentsWithResponse(ctx context.Context, p
 // CreateDeploymentWithBodyWithResponse performs a POST /v1/projects/{project_key}/deployments (the `CreateDeployment` operationId) request,
 // with any type of body and a specified content type.
 //
-// Create a deployment using existing logical project declarations. Requires current team manager authority. The original Idempotency-Key recovers the same committed deployment; a deleted deployment is never recreated by replay. Does not grant connect or publish capabilities to a credential.
+// Create a deployment using existing logical project declarations. Requires a current team manager or a deployment-management credential explicitly approving all current/future deployments and every submitted service. The original Idempotency-Key is scoped to the acting person or machine identity and recovers the same committed deployment; a deleted deployment is never recreated by replay. Does not grant connect or publish capabilities.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) CreateDeploymentWithBodyWithResponse(ctx context.Context, projectKey string, params *CreateDeploymentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDeploymentResponse, error) {
@@ -25666,7 +26110,7 @@ func (c *ClientWithResponses) CreateDeploymentWithBodyWithResponse(ctx context.C
 // CreateDeploymentWithResponse performs a POST /v1/projects/{project_key}/deployments (the `CreateDeployment` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Create a deployment using existing logical project declarations. Requires current team manager authority. The original Idempotency-Key recovers the same committed deployment; a deleted deployment is never recreated by replay. Does not grant connect or publish capabilities to a credential.
+// Create a deployment using existing logical project declarations. Requires a current team manager or a deployment-management credential explicitly approving all current/future deployments and every submitted service. The original Idempotency-Key is scoped to the acting person or machine identity and recovers the same committed deployment; a deleted deployment is never recreated by replay. Does not grant connect or publish capabilities.
 func (c *ClientWithResponses) CreateDeploymentWithResponse(ctx context.Context, projectKey string, params *CreateDeploymentParams, body CreateDeploymentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDeploymentResponse, error) {
 	rsp, err := c.CreateDeployment(ctx, projectKey, params, body, reqEditors...)
 	if err != nil {
@@ -25677,7 +26121,7 @@ func (c *ClientWithResponses) CreateDeploymentWithResponse(ctx context.Context, 
 
 // DeleteDeploymentWithResponse performs a DELETE /v1/projects/{project_key}/deployments/{deployment} (the `DeleteDeployment` operationId) request.
 //
-// Retire this deployment's saved services, enrollments, and publishers. Requires a current manager and the latest strong ETag. Sibling deployments and logical declarations are preserved.
+// Retire this deployment's saved services, enrollments, and publishers. Requires a current manager or management approval for the deployment and every binding it removes, plus the latest strong ETag. A filtered read is not permission to delete unapproved services. Sibling deployments and logical declarations are preserved.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) DeleteDeploymentWithResponse(ctx context.Context, projectKey string, deployment string, params *DeleteDeploymentParams, reqEditors ...RequestEditorFn) (*DeleteDeploymentResponse, error) {
@@ -25690,7 +26134,7 @@ func (c *ClientWithResponses) DeleteDeploymentWithResponse(ctx context.Context, 
 
 // GetDeploymentWithResponse performs a GET /v1/projects/{project_key}/deployments/{deployment} (the `GetDeployment` operationId) request.
 //
-// Read a saved deployment and its targets with current team manager authority.
+// Read a saved deployment with current manager or scoped deployment-management authority. Management credentials see only approved services/targets and cannot read unrelated deployments. The ETag still represents the whole deployment.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) GetDeploymentWithResponse(ctx context.Context, projectKey string, deployment string, params *GetDeploymentParams, reqEditors ...RequestEditorFn) (*GetDeploymentResponse, error) {
@@ -25704,7 +26148,7 @@ func (c *ClientWithResponses) GetDeploymentWithResponse(ctx context.Context, pro
 // UpdateDeploymentWithBodyWithResponse performs a PATCH /v1/projects/{project_key}/deployments/{deployment} (the `UpdateDeployment` operationId) request,
 // with any type of body and a specified content type.
 //
-// Update selected existing targets/TLS on the same records used by manager apply. Requires a current manager and the strong ETag returned by the latest read. Stale conditions fail with 412; a missing condition fails with 428.
+// Update selected existing targets/TLS on the same records used by manager apply. Requires a current manager or management approval for this deployment and every submitted service, plus the latest strong ETag. Omitted targets and policies remain unchanged. Stale conditions fail with 412; a missing condition fails with 428.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) UpdateDeploymentWithBodyWithResponse(ctx context.Context, projectKey string, deployment string, params *UpdateDeploymentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateDeploymentResponse, error) {
@@ -25718,7 +26162,7 @@ func (c *ClientWithResponses) UpdateDeploymentWithBodyWithResponse(ctx context.C
 // UpdateDeploymentWithResponse performs a PATCH /v1/projects/{project_key}/deployments/{deployment} (the `UpdateDeployment` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Update selected existing targets/TLS on the same records used by manager apply. Requires a current manager and the strong ETag returned by the latest read. Stale conditions fail with 412; a missing condition fails with 428.
+// Update selected existing targets/TLS on the same records used by manager apply. Requires a current manager or management approval for this deployment and every submitted service, plus the latest strong ETag. Omitted targets and policies remain unchanged. Stale conditions fail with 412; a missing condition fails with 428.
 func (c *ClientWithResponses) UpdateDeploymentWithResponse(ctx context.Context, projectKey string, deployment string, params *UpdateDeploymentParams, body UpdateDeploymentJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateDeploymentResponse, error) {
 	rsp, err := c.UpdateDeployment(ctx, projectKey, deployment, params, body, reqEditors...)
 	if err != nil {
@@ -25730,7 +26174,7 @@ func (c *ClientWithResponses) UpdateDeploymentWithResponse(ctx context.Context, 
 // CreateDeploymentPublisherEnrollmentWithBodyWithResponse performs a POST /v1/projects/{project_key}/deployments/{deployment}/publisher-enrollments (the `CreateDeploymentPublisherEnrollment` operationId) request,
 // with any type of body and a specified content type.
 //
-// Approve bounded publisher setup for selected existing services. Requires a current team manager's control session. The original request key recovers the same secret only while its captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
+// Approve bounded publisher setup for selected existing services. Requires a current team manager or management approval for this deployment and every selected service. Setup cannot outlive the management grant. The original request key is scoped to the acting person or machine and recovers the same secret only while current authority, captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) CreateDeploymentPublisherEnrollmentWithBodyWithResponse(ctx context.Context, projectKey string, deployment string, params *CreateDeploymentPublisherEnrollmentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDeploymentPublisherEnrollmentResponse, error) {
@@ -25744,7 +26188,7 @@ func (c *ClientWithResponses) CreateDeploymentPublisherEnrollmentWithBodyWithRes
 // CreateDeploymentPublisherEnrollmentWithResponse performs a POST /v1/projects/{project_key}/deployments/{deployment}/publisher-enrollments (the `CreateDeploymentPublisherEnrollment` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Approve bounded publisher setup for selected existing services. Requires a current team manager's control session. The original request key recovers the same secret only while its captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
+// Approve bounded publisher setup for selected existing services. Requires a current team manager or management approval for this deployment and every selected service. Setup cannot outlive the management grant. The original request key is scoped to the acting person or machine and recovers the same secret only while current authority, captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
 func (c *ClientWithResponses) CreateDeploymentPublisherEnrollmentWithResponse(ctx context.Context, projectKey string, deployment string, params *CreateDeploymentPublisherEnrollmentParams, body CreateDeploymentPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDeploymentPublisherEnrollmentResponse, error) {
 	rsp, err := c.CreateDeploymentPublisherEnrollment(ctx, projectKey, deployment, params, body, reqEditors...)
 	if err != nil {
@@ -25755,7 +26199,7 @@ func (c *ClientWithResponses) CreateDeploymentPublisherEnrollmentWithResponse(ct
 
 // ListDeploymentPublishersWithResponse performs a GET /v1/projects/{project_key}/deployments/{deployment}/publishers (the `ListDeploymentPublishers` operationId) request.
 //
-// List only this deployment's publishers, including revoked identities and their retained observations. Requires current team manager authority; no enrollment secrets or unrelated targets are returned.
+// List authorized publishers in this deployment, including revoked identities and retained observations. A management credential sees only scoped publishers whose entire captured service/protocol approval it covers; filtering precedes pagination. Legacy whole-group publishers require a current manager. No enrollment secrets or targets are returned.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) ListDeploymentPublishersWithResponse(ctx context.Context, projectKey string, deployment string, params *ListDeploymentPublishersParams, reqEditors ...RequestEditorFn) (*ListDeploymentPublishersResponse, error) {
@@ -25768,7 +26212,7 @@ func (c *ClientWithResponses) ListDeploymentPublishersWithResponse(ctx context.C
 
 // RevokeDeploymentPublisherWithResponse performs a DELETE /v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher} (the `RevokeDeploymentPublisher` operationId) request.
 //
-// Revoke exactly this publisher identity, its grants, leases, and current publications. Requires a current team manager. Repetition is safe; the last observation is retained. Other publishers, deployments, and shared enrollment capacity are not changed. Apply and enrollment replay cannot restore the revoked identity.
+// Revoke exactly this publisher identity, its grants, leases, and current publications. Requires a current manager or management approval covering this deployment and the publisher's entire captured service/protocol scope. Legacy whole-group publishers require a manager. Repetition is safe; the last observation is retained. Siblings and shared enrollment capacity are unchanged. Apply and enrollment replay cannot restore the revoked identity.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) RevokeDeploymentPublisherWithResponse(ctx context.Context, projectKey string, deployment string, publisher string, params *RevokeDeploymentPublisherParams, reqEditors ...RequestEditorFn) (*RevokeDeploymentPublisherResponse, error) {
@@ -25781,7 +26225,7 @@ func (c *ClientWithResponses) RevokeDeploymentPublisherWithResponse(ctx context.
 
 // GetDeploymentPublisherWithResponse performs a GET /v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher} (the `GetDeploymentPublisher` operationId) request.
 //
-// Read one publisher's captured scope and observation, with current team manager authority and exact deployment ownership.
+// Read one publisher's captured scope and observation with exact deployment ownership. Requires a current manager or management approval covering this deployment and the publisher's entire captured service/protocol scope. Legacy whole-group publishers require a manager.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) GetDeploymentPublisherWithResponse(ctx context.Context, projectKey string, deployment string, publisher string, params *GetDeploymentPublisherParams, reqEditors ...RequestEditorFn) (*GetDeploymentPublisherResponse, error) {
@@ -28814,6 +29258,39 @@ func ParseApplyProjectConfigurationResponse(rsp *http.Response) (*ApplyProjectCo
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRegisterDeploymentManagementResponse parses an HTTP response from a RegisterDeploymentManagementWithResponse call
+func ParseRegisterDeploymentManagementResponse(rsp *http.Response) (*RegisterDeploymentManagementResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RegisterDeploymentManagementResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest DeploymentManagementCredential
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -32730,6 +33207,9 @@ type ServerInterface interface {
 	// (PUT /v1/projects/{project_key}/configuration)
 	ApplyProjectConfiguration(w http.ResponseWriter, r *http.Request, projectKey string)
 
+	// (POST /v1/projects/{project_key}/deployment-management-credentials)
+	RegisterDeploymentManagement(w http.ResponseWriter, r *http.Request, projectKey string, params RegisterDeploymentManagementParams)
+
 	// (GET /v1/projects/{project_key}/deployments)
 	ListDeployments(w http.ResponseWriter, r *http.Request, projectKey string, params ListDeploymentsParams)
 
@@ -33980,6 +34460,73 @@ func (siw *ServerInterfaceWrapper) ApplyProjectConfiguration(w http.ResponseWrit
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ApplyProjectConfiguration(w, r, projectKey)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RegisterDeploymentManagement operation middleware
+func (siw *ServerInterfaceWrapper) RegisterDeploymentManagement(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params RegisterDeploymentManagementParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RegisterDeploymentManagement(w, r, projectKey, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -38373,6 +38920,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/deployment-management-credentials", wrapper.RegisterDeploymentManagement)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/deployments/{deployment}/publisher-enrollments", wrapper.CreateDeploymentPublisherEnrollment)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/deployments/{deployment}/publishers", wrapper.ListDeploymentPublishers)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher}", wrapper.RevokeDeploymentPublisher)

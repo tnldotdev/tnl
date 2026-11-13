@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-deployment-publishers')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-deployment-management')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-deployment-publishers');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-deployment-management');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -1576,7 +1576,7 @@ CREATE UNIQUE INDEX publisher_identity_keys_current ON control.publisher_identit
 CREATE TABLE control.publisher_grants (
     id text PRIMARY KEY CHECK (id <> ''), publisher_identity_id text NOT NULL REFERENCES control.publisher_identities(id) ON DELETE CASCADE,
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
-    kind text NOT NULL CHECK (kind IN ('saved_public_url', 'namespace', 'service')),
+    kind text NOT NULL CHECK (kind IN ('saved_public_url', 'namespace', 'service', 'deployment_management')),
     public_url_id text REFERENCES control.public_urls(id) ON DELETE CASCADE,
     service_id text,
     domain_id text REFERENCES control.domains(id) ON DELETE RESTRICT, namespace text,
@@ -1586,7 +1586,8 @@ CREATE TABLE control.publisher_grants (
     CHECK (expires_at IS NULL OR expires_at > created_at),
     CHECK ((kind = 'saved_public_url' AND public_url_id IS NOT NULL AND service_id IS NULL AND domain_id IS NULL AND namespace IS NULL AND public_url_scope IS NULL AND membership_id IS NULL)
         OR (kind = 'namespace' AND public_url_id IS NULL AND service_id IS NULL AND domain_id IS NOT NULL AND namespace IS NOT NULL AND namespace <> '' AND public_url_scope IS NOT NULL AND (public_url_scope = 'member') = (membership_id IS NOT NULL))
-        OR (kind = 'service' AND service_id IS NOT NULL AND public_url_id IS NULL AND domain_id IS NULL AND namespace IS NULL AND public_url_scope IS NULL AND membership_id IS NULL))
+        OR (kind = 'service' AND service_id IS NOT NULL AND public_url_id IS NULL AND domain_id IS NULL AND namespace IS NULL AND public_url_scope IS NULL AND membership_id IS NULL)
+        OR (kind = 'deployment_management' AND service_id IS NULL AND public_url_id IS NULL AND domain_id IS NULL AND namespace IS NULL AND public_url_scope IS NULL AND membership_id IS NULL AND expires_at IS NOT NULL))
 );
 CREATE UNIQUE INDEX publisher_grants_active_url ON control.publisher_grants(publisher_identity_id, public_url_id) WHERE revoked_at IS NULL AND kind = 'saved_public_url';
 CREATE UNIQUE INDEX publisher_grants_active_namespace ON control.publisher_grants(publisher_identity_id, domain_id, namespace) WHERE revoked_at IS NULL AND kind = 'namespace';
@@ -2061,21 +2062,68 @@ CREATE TABLE control.project_publisher_groups (
     configuration_hash text NOT NULL DEFAULT '',
     configuration_ciphertext bytea,
     storage_key_id text,
-    create_actor_id text REFERENCES control.identities(id) ON DELETE RESTRICT,
+    create_principal_id text,
     create_idempotency_key text,
     create_request_digest bytea,
     deleted_at timestamptz,
     CHECK ((revision=0)=(configuration_ciphertext IS NULL)),
     CHECK ((revision=0)=(configuration_hash='')),
     CHECK ((configuration_ciphertext IS NULL)=(storage_key_id IS NULL)),
-    CHECK ((create_actor_id IS NULL)=(create_idempotency_key IS NULL)),
-    CHECK ((create_actor_id IS NULL)=(create_request_digest IS NULL)),
-    UNIQUE (team_id,project_key,create_actor_id,create_idempotency_key),
+    CHECK ((create_principal_id IS NULL)=(create_idempotency_key IS NULL)),
+    CHECK ((create_principal_id IS NULL)=(create_request_digest IS NULL)),
+    UNIQUE (team_id,project_key,create_principal_id,create_idempotency_key),
     FOREIGN KEY (team_id, project_key) REFERENCES control.applied_projects(team_id, project_key) ON DELETE RESTRICT,
     UNIQUE (id, team_id, project_key)
 );
 CREATE UNIQUE INDEX project_publisher_groups_active ON control.project_publisher_groups(team_id, project_key, name) WHERE deleted_at IS NULL;
 CREATE UNIQUE INDEX project_publisher_groups_namespace ON control.project_publisher_groups(namespace) WHERE deleted_at IS NULL AND namespace <> '';
+-- management uses the existing signed identity, proof, token, and revocation
+-- lifecycle. these rows approve operations, never publication or visitor access.
+CREATE TABLE control.deployment_management_grants (
+    grant_id text PRIMARY KEY REFERENCES control.publisher_grants(id) ON DELETE RESTRICT,
+    team_id text NOT NULL,
+    project_key text NOT NULL,
+    all_deployments boolean NOT NULL,
+    created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
+    idempotency_key text NOT NULL,
+    request_digest bytea NOT NULL CHECK (octet_length(request_digest)=32),
+    initial_key_id text NOT NULL REFERENCES control.publisher_identity_keys(id) ON DELETE RESTRICT,
+    FOREIGN KEY (team_id,project_key) REFERENCES control.applied_projects(team_id,project_key),
+    UNIQUE (grant_id,team_id,project_key),
+    UNIQUE (team_id,project_key,created_by_identity_id,idempotency_key)
+);
+CREATE TABLE control.deployment_management_deployments (
+    grant_id text NOT NULL,
+    team_id text NOT NULL,
+    project_key text NOT NULL,
+    deployment_id text NOT NULL,
+    PRIMARY KEY (grant_id,deployment_id),
+    FOREIGN KEY (grant_id,team_id,project_key) REFERENCES control.deployment_management_grants(grant_id,team_id,project_key),
+    FOREIGN KEY (deployment_id,team_id,project_key) REFERENCES control.project_publisher_groups(id,team_id,project_key)
+);
+CREATE TABLE control.deployment_management_services (
+    grant_id text NOT NULL,
+    team_id text NOT NULL,
+    project_key text NOT NULL,
+    service text NOT NULL,
+    protocol text NOT NULL CHECK (protocol IN ('http','tcp','mysql','postgres','kubernetes')),
+    revoked_at timestamptz,
+    PRIMARY KEY (grant_id,service),
+    FOREIGN KEY (grant_id,team_id,project_key) REFERENCES control.deployment_management_grants(grant_id,team_id,project_key)
+);
+-- +goose StatementBegin
+CREATE FUNCTION control.retire_deployment_management_service() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP='DELETE' OR NEW.protocol IS DISTINCT FROM OLD.protocol THEN
+        UPDATE control.deployment_management_services SET revoked_at=COALESCE(revoked_at,clock_timestamp())
+        WHERE team_id=OLD.team_id AND project_key=OLD.project_key AND service=OLD.name;
+    END IF;
+    RETURN OLD;
+END;
+$$;
+-- +goose StatementEnd
+CREATE TRIGGER retire_deployment_management_service AFTER UPDATE OR DELETE ON control.project_services
+FOR EACH ROW EXECUTE FUNCTION control.retire_deployment_management_service();
 -- namespace claims outlive group names and runs. reuse waits for certificate,
 -- DNS and forwarding retirement; a config rename never changes this owner.
 CREATE TABLE control.service_namespace_claims (
@@ -2194,6 +2242,7 @@ CREATE TABLE control.publisher_group_enrollments (
     expires_at timestamptz NOT NULL,
     revoked_at timestamptz,
     scoped boolean NOT NULL DEFAULT false,
+    create_principal_id text,
     idempotency_key text,
     request_digest bytea,
     secret_ciphertext bytea,
@@ -2202,7 +2251,8 @@ CREATE TABLE control.publisher_group_enrollments (
     CHECK ((idempotency_key IS NULL)=(secret_ciphertext IS NULL)),
     CHECK ((secret_ciphertext IS NULL)=(storage_key_id IS NULL)),
     CHECK (idempotency_key IS NULL OR scoped),
-    UNIQUE (group_id,created_by_identity_id,idempotency_key)
+    CHECK ((idempotency_key IS NULL)=(create_principal_id IS NULL)),
+    UNIQUE (group_id,create_principal_id,idempotency_key)
 );
 -- captured bindings survive removal as tombstones; a reused name is not approval.
 CREATE TABLE control.publisher_group_enrollment_services (
@@ -2228,6 +2278,18 @@ CREATE TABLE control.publisher_group_members (
     UNIQUE (group_id, publisher_identity_id),
     FOREIGN KEY (key_id, publisher_identity_id) REFERENCES control.publisher_identity_keys(id, publisher_identity_id) ON DELETE RESTRICT
 );
+-- +goose StatementBegin
+CREATE FUNCTION control.deployment_management_publisher_allowed(approval text,publisher text) RETURNS boolean LANGUAGE sql STABLE AS $$
+    SELECT EXISTS(SELECT 1 FROM control.publisher_group_members member
+    JOIN control.publisher_group_enrollments enrollment ON enrollment.id=member.enrollment_id AND enrollment.scoped
+    WHERE member.publisher_identity_id=publisher
+    AND EXISTS(SELECT 1 FROM control.publisher_group_enrollment_services scope WHERE scope.enrollment_id=enrollment.id)
+    AND NOT EXISTS(SELECT 1 FROM control.publisher_group_enrollment_services scope
+        WHERE scope.enrollment_id=enrollment.id AND NOT EXISTS(
+            SELECT 1 FROM control.deployment_management_services allowed WHERE allowed.grant_id=approval
+            AND allowed.service=scope.service AND allowed.protocol=scope.protocol AND allowed.revoked_at IS NULL)))
+$$;
+-- +goose StatementEnd
 CREATE TABLE control.publisher_group_leases (
     token_digest bytea PRIMARY KEY CHECK (octet_length(token_digest)=32),
     publisher_identity_id text NOT NULL REFERENCES control.publisher_group_members(publisher_identity_id) ON DELETE CASCADE,

@@ -141,7 +141,7 @@ schemas:
         $ref: "../openapi.yaml#/components/schemas/ResourceID"
       kind:
         type: string
-        enum: [saved_public_url, namespace, service]
+        enum: [saved_public_url, namespace, service, deployment_management]
       public_url_id:
         $ref: "../openapi.yaml#/components/schemas/PublicURLID"
       service_id:

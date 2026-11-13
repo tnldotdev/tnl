@@ -110,8 +110,8 @@ require the exact schema version and baseline identity. Connector session
 rebinding and the post-quantum public URL policy are part of the version 1
 baseline, including provider-qualified ingress and relay regions and saved run
 preferences. Logical project declarations, deployment-scoped bindings, and
-encrypted serving snapshots, and captured publisher setup approvals also require
-this fresh baseline.
+encrypted serving snapshots, captured publisher setup approvals, and scoped
+deployment-management grants also require this fresh baseline.
 Use a fresh database, run `tnld migrate`, and start matching server,
 publisher, and connector binaries. Databases from previous baselines are rejected.
 A publisher restart does not restore its application sockets.

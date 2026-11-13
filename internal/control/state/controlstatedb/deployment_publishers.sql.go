@@ -11,20 +11,36 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const deploymentManagementPublisherAllowed = `-- name: DeploymentManagementPublisherAllowed :one
+SELECT control.deployment_management_publisher_allowed($1::text,$2::text)::boolean
+`
+
+type DeploymentManagementPublisherAllowedParams struct {
+	GrantID     string
+	PublisherID string
+}
+
+func (q *Queries) DeploymentManagementPublisherAllowed(ctx context.Context, arg DeploymentManagementPublisherAllowedParams) (bool, error) {
+	row := q.db.QueryRow(ctx, deploymentManagementPublisherAllowed, arg.GrantID, arg.PublisherID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const findPublisherGroupEnrollmentRequest = `-- name: FindPublisherGroupEnrollmentRequest :one
-SELECT id, group_id, secret_digest, max_members, created_by_identity_id, expires_at, revoked_at, scoped, idempotency_key, request_digest, secret_ciphertext, storage_key_id FROM control.publisher_group_enrollments
-WHERE group_id=$1 AND created_by_identity_id=$2
+SELECT id, group_id, secret_digest, max_members, created_by_identity_id, expires_at, revoked_at, scoped, create_principal_id, idempotency_key, request_digest, secret_ciphertext, storage_key_id FROM control.publisher_group_enrollments
+WHERE group_id=$1 AND create_principal_id=$2::text
 AND idempotency_key=$3::text FOR UPDATE
 `
 
 type FindPublisherGroupEnrollmentRequestParams struct {
 	GroupID        string
-	ActorID        string
+	PrincipalID    string
 	IdempotencyKey string
 }
 
 func (q *Queries) FindPublisherGroupEnrollmentRequest(ctx context.Context, arg FindPublisherGroupEnrollmentRequestParams) (ControlPublisherGroupEnrollment, error) {
-	row := q.db.QueryRow(ctx, findPublisherGroupEnrollmentRequest, arg.GroupID, arg.ActorID, arg.IdempotencyKey)
+	row := q.db.QueryRow(ctx, findPublisherGroupEnrollmentRequest, arg.GroupID, arg.PrincipalID, arg.IdempotencyKey)
 	var i ControlPublisherGroupEnrollment
 	err := row.Scan(
 		&i.ID,
@@ -35,6 +51,7 @@ func (q *Queries) FindPublisherGroupEnrollmentRequest(ctx context.Context, arg F
 		&i.ExpiresAt,
 		&i.RevokedAt,
 		&i.Scoped,
+		&i.CreatePrincipalID,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.SecretCiphertext,
@@ -94,17 +111,24 @@ func (q *Queries) GetDeploymentPublisherStatus(ctx context.Context, arg GetDeplo
 const listDeploymentPublisherIDs = `-- name: ListDeploymentPublisherIDs :many
 SELECT member.publisher_identity_id FROM control.publisher_group_members member
 WHERE member.group_id=$1 AND member.publisher_identity_id COLLATE "C">$2::text COLLATE "C"
-ORDER BY member.publisher_identity_id COLLATE "C" LIMIT $3
+AND ($3::text='' OR control.deployment_management_publisher_allowed($3,member.publisher_identity_id))
+ORDER BY member.publisher_identity_id COLLATE "C" LIMIT $4
 `
 
 type ListDeploymentPublisherIDsParams struct {
-	GroupID   string
-	AfterID   string
-	PageLimit int32
+	GroupID         string
+	AfterID         string
+	ManagementGrant string
+	PageLimit       int32
 }
 
 func (q *Queries) ListDeploymentPublisherIDs(ctx context.Context, arg ListDeploymentPublisherIDsParams) ([]string, error) {
-	rows, err := q.db.Query(ctx, listDeploymentPublisherIDs, arg.GroupID, arg.AfterID, arg.PageLimit)
+	rows, err := q.db.Query(ctx, listDeploymentPublisherIDs,
+		arg.GroupID,
+		arg.AfterID,
+		arg.ManagementGrant,
+		arg.PageLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +179,7 @@ func (q *Queries) ListPublisherGroupEnrollmentServices(ctx context.Context, enro
 }
 
 const lockPublisherGroupEnrollment = `-- name: LockPublisherGroupEnrollment :one
-SELECT id, group_id, secret_digest, max_members, created_by_identity_id, expires_at, revoked_at, scoped, idempotency_key, request_digest, secret_ciphertext, storage_key_id FROM control.publisher_group_enrollments WHERE id=$1 FOR UPDATE
+SELECT id, group_id, secret_digest, max_members, created_by_identity_id, expires_at, revoked_at, scoped, create_principal_id, idempotency_key, request_digest, secret_ciphertext, storage_key_id FROM control.publisher_group_enrollments WHERE id=$1 FOR UPDATE
 `
 
 func (q *Queries) LockPublisherGroupEnrollment(ctx context.Context, id string) (ControlPublisherGroupEnrollment, error) {
@@ -170,6 +194,7 @@ func (q *Queries) LockPublisherGroupEnrollment(ctx context.Context, id string) (
 		&i.ExpiresAt,
 		&i.RevokedAt,
 		&i.Scoped,
+		&i.CreatePrincipalID,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.SecretCiphertext,

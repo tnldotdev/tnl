@@ -23,8 +23,7 @@ func (h *handler) deploymentPublisherManager(w http.ResponseWriter, r *http.Requ
 		writeProblem(w, 503, controlv1.Unavailable, "deployment publisher management is unavailable")
 		return controlstate.DeploymentScope{}, false
 	}
-	actor, ok := h.projectManager(w, r, team)
-	return controlstate.DeploymentScope{TeamID: team, ProjectKey: project, ActorID: actor}, ok
+	return h.deploymentPrincipal(w, r, team, project)
 }
 
 func deploymentPublisherProblem(ctx context.Context, w http.ResponseWriter, operation string, err error) {

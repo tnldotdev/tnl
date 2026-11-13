@@ -94,7 +94,7 @@ func (d *Database) IssuePublisherGroupEnrollment(ctx context.Context, team, proj
 	if err = tx.QueryRow(ctx, `SELECT g.id FROM control.project_publisher_groups g JOIN control.publisher_group_names alias ON alias.group_id=g.id WHERE alias.team_id=$1 AND alias.project_key=$2 AND alias.name=$3 AND g.deleted_at IS NULL FOR UPDATE OF g`, team, project, group).Scan(&gid); err != nil {
 		return result, publisherLookupError(err, ErrPublisherGroup)
 	}
-	issued, err := d.issuePublisherGroupEnrollment(ctx, tx, gid, actor, maxMembers, now.Add(lifetime), "", nil, nil, clock.current())
+	issued, err := d.issuePublisherGroupEnrollment(ctx, tx, gid, actor, "", maxMembers, now.Add(lifetime), "", nil, nil, clock.current())
 	if err != nil {
 		return result, err
 	}

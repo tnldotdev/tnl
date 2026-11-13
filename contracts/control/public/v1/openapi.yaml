@@ -9,6 +9,8 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example.com
 paths:
+  /v1/projects/{project_key}/deployment-management-credentials:
+    $ref: "./paths/deployment-management.yaml#/paths/~1v1~1projects~1{project_key}~1deployment-management-credentials"
   /v1/projects/{project_key}/deployments/{deployment}/publisher-enrollments:
     $ref: "./paths/deployment-publishers.yaml#/paths/~1v1~1projects~1{project_key}~1deployments~1{deployment}~1publisher-enrollments"
   /v1/projects/{project_key}/deployments/{deployment}/publishers:
@@ -380,6 +382,10 @@ components:
       $ref: "./schemas/projects.yaml#/schemas/ApplyProjectConfigurationRequest"
     DeploymentTargetTLS:
       $ref: "./schemas/deployments.yaml#/schemas/DeploymentTargetTLS"
+    RegisterDeploymentManagementRequest:
+      $ref: "./schemas/deployment-management.yaml#/schemas/RegisterDeploymentManagementRequest"
+    DeploymentManagementCredential:
+      $ref: "./schemas/deployment-management.yaml#/schemas/DeploymentManagementCredential"
     CreateDeploymentPublisherEnrollmentRequest:
       $ref: "./schemas/deployment-publishers.yaml#/schemas/CreateDeploymentPublisherEnrollmentRequest"
     DeploymentPublisherEnrollment:

@@ -6,7 +6,7 @@ paths:
     post:
       operationId: createDeployment
       security: [{ bearerAuth: [] }]
-      description: Create a deployment using existing logical project declarations. Requires current team manager authority. The original Idempotency-Key recovers the same committed deployment; a deleted deployment is never recreated by replay. Does not grant connect or publish capabilities to a credential.
+      description: Create a deployment using existing logical project declarations. Requires a current team manager or a deployment-management credential explicitly approving all current/future deployments and every submitted service. The original Idempotency-Key is scoped to the acting person or machine identity and recovers the same committed deployment; a deleted deployment is never recreated by replay. Does not grant connect or publish capabilities.
       parameters:
         - {
             name: Idempotency-Key,
@@ -35,7 +35,7 @@ paths:
     get:
       operationId: listDeployments
       security: [{ bearerAuth: [] }]
-      description: List this project's saved deployments and targets for a current team manager, in bytewise ID order. No publisher credentials or enrollment secrets are returned.
+      description: List authorized deployments in bytewise ID order. Current managers see this project's deployments. Management credentials see only approved deployments containing approved services, with other targets/services omitted; filtering precedes pagination. No publisher credentials or enrollment secrets are returned.
       parameters:
         - { name: after, in: query, schema: { type: string } }
         - {
@@ -64,7 +64,7 @@ paths:
     get:
       operationId: getDeployment
       security: [{ bearerAuth: [] }]
-      description: Read a saved deployment and its targets with current team manager authority.
+      description: Read a saved deployment with current manager or scoped deployment-management authority. Management credentials see only approved services/targets and cannot read unrelated deployments. The ETag still represents the whole deployment.
       responses:
         "200":
           description: Saved deployment
@@ -81,7 +81,7 @@ paths:
     patch:
       operationId: updateDeployment
       security: [{ bearerAuth: [] }]
-      description: Update selected existing targets/TLS on the same records used by manager apply. Requires a current manager and the strong ETag returned by the latest read. Stale conditions fail with 412; a missing condition fails with 428.
+      description: Update selected existing targets/TLS on the same records used by manager apply. Requires a current manager or management approval for this deployment and every submitted service, plus the latest strong ETag. Omitted targets and policies remain unchanged. Stale conditions fail with 412; a missing condition fails with 428.
       parameters:
         - {
             name: If-Match,
@@ -106,7 +106,7 @@ paths:
     delete:
       operationId: deleteDeployment
       security: [{ bearerAuth: [] }]
-      description: Retire this deployment's saved services, enrollments, and publishers. Requires a current manager and the latest strong ETag. Sibling deployments and logical declarations are preserved.
+      description: Retire this deployment's saved services, enrollments, and publishers. Requires a current manager or management approval for the deployment and every binding it removes, plus the latest strong ETag. A filtered read is not permission to delete unapproved services. Sibling deployments and logical declarations are preserved.
       parameters:
         - {
             name: If-Match,

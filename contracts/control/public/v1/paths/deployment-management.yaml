@@ -1,0 +1,29 @@
+paths:
+  /v1/projects/{project_key}/deployment-management-credentials:
+    parameters:
+      - { name: project_key, in: path, required: true, schema: { type: string } }
+      - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
+    post:
+      operationId: registerDeploymentManagement
+      security: [{ bearerAuth: [] }]
+      description: A current team manager registers a public signing key and fixed deployment-management approval. Runtime credentials cannot invoke this operation. Retrying the original request key and intent recovers the same identity/grant/deadline only while they remain current. A changed key, scope, retired declaration, revoked identity/grant, or expired approval is never renewed by recovery. This administration operation is not part of the public runtime SDK operation allowlist.
+      parameters:
+        - {
+            name: Idempotency-Key,
+            in: header,
+            required: true,
+            schema: { type: string, minLength: 1, maxLength: 128 },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              { $ref: "../openapi.yaml#/components/schemas/RegisterDeploymentManagementRequest" }
+      responses:
+        "201":
+          description: New or recovered public credential registration
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/DeploymentManagementCredential" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

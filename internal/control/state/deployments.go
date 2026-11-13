@@ -39,6 +39,7 @@ type Deployment struct {
 
 type DeploymentScope struct {
 	TeamID, ProjectKey, ActorID string
+	AccessToken                 string `json:"-"`
 }
 
 type CreateDeploymentRequest struct {
@@ -61,6 +62,9 @@ type UpdateDeploymentRequest struct {
 // authority. a name, request key, or previous successful read is not permission.
 func lockDeploymentManager(ctx context.Context, tx pgx.Tx, scope DeploymentScope) (controlstatedb.ControlAppliedProject, error) {
 	q := controlstatedb.New(tx)
+	if scope.AccessToken != "" {
+		return controlstatedb.ControlAppliedProject{}, ErrDeploymentAccess
+	}
 	// website service-access proofs are not project-management credentials.
 	if _, signed := serviceActor(ctx); signed {
 		return controlstatedb.ControlAppliedProject{}, ErrServiceAccess
@@ -103,16 +107,23 @@ func (d *Database) CreateDeployment(ctx context.Context, r CreateDeploymentReque
 		return result, err
 	}
 	defer rollback(ctx, tx, "create deployment", &retErr)()
-	project, err := lockDeploymentManager(ctx, tx, r.DeploymentScope)
+	access, project, err := d.lockDeploymentAccess(ctx, tx, r.DeploymentScope, r.Now)
 	if err != nil {
+		return result, err
+	}
+	r.ActorID = access.actorID
+	if access.grantID != "" && !access.allDeployments {
+		return result, ErrDeploymentAccess
+	}
+	if err = access.servicesAllowed(sortedProjectKeys(r.Targets)); err != nil {
 		return result, err
 	}
 	var id string
 	var savedDigest []byte
 	var deleted bool
 	err = tx.QueryRow(ctx, `SELECT id,create_request_digest,deleted_at IS NOT NULL FROM control.project_publisher_groups
-		WHERE team_id=$1 AND project_key=$2 AND create_actor_id=$3 AND create_idempotency_key=$4`,
-		r.TeamID, r.ProjectKey, r.ActorID, r.IdempotencyKey).Scan(&id, &savedDigest, &deleted)
+		WHERE team_id=$1 AND project_key=$2 AND create_principal_id=$3 AND create_idempotency_key=$4`,
+		r.TeamID, r.ProjectKey, access.principalID, r.IdempotencyKey).Scan(&id, &savedDigest, &deleted)
 	if err == nil {
 		if deleted || !bytes.Equal(digest[:], savedDigest) {
 			return result, ErrServiceConflict
@@ -121,13 +132,16 @@ func (d *Database) CreateDeployment(ctx context.Context, r CreateDeploymentReque
 		if err != nil {
 			return result, err
 		}
-		result, err = d.deploymentStatus(ctx, tx, row)
+		result, err = d.deploymentStatus(ctx, tx, row, access)
 		if err != nil {
 			return result, err
 		}
-		return result, commitDeployment(ctx, tx, r.DeploymentScope)
+		return result, d.commitDeploymentAccess(ctx, tx, access)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
+		return result, err
+	}
+	if err = d.lockDeploymentMutation(ctx, tx, access); err != nil {
 		return result, err
 	}
 	q := controlstatedb.New(tx)
@@ -144,11 +158,11 @@ func (d *Database) CreateDeployment(ctx context.Context, r CreateDeploymentReque
 	if err != nil {
 		return result, err
 	}
-	if err = SetServiceAuditActor(ctx, tx, r.ActorID); err != nil {
+	if err = access.setAuditActor(ctx, tx); err != nil {
 		return result, err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO control.project_publisher_groups(id,team_id,project_key,name,create_actor_id,create_idempotency_key,create_request_digest)
-		VALUES($1,$2,$3,$4,$5,$6,$7)`, id, r.TeamID, r.ProjectKey, r.Name, r.ActorID, r.IdempotencyKey, digest[:])
+	_, err = tx.Exec(ctx, `INSERT INTO control.project_publisher_groups(id,team_id,project_key,name,create_principal_id,create_idempotency_key,create_request_digest)
+		VALUES($1,$2,$3,$4,$5,$6,$7)`, id, r.TeamID, r.ProjectKey, r.Name, access.principalID, r.IdempotencyKey, digest[:])
 	if err != nil {
 		return result, projectConstraintError(err)
 	}
@@ -171,18 +185,18 @@ func (d *Database) CreateDeployment(ctx context.Context, r CreateDeploymentReque
 	if err = d.saveDeploymentConfiguration(ctx, tx, id, r.Name, c); err != nil {
 		return result, err
 	}
-	if err = recordPublisherGroupUpdate(ctx, tx, id, r.ActorID, "", "deployment/create/"+id, r.Now); err != nil {
+	if err = access.recordUpdate(ctx, tx, id, "deployment/create/"+id, r.Now); err != nil {
 		return result, err
 	}
 	row, err := q.LockProjectPublisherGroup(ctx, id)
 	if err != nil {
 		return result, err
 	}
-	result, err = d.deploymentStatus(ctx, tx, row)
+	result, err = d.deploymentStatus(ctx, tx, row, access)
 	if err != nil {
 		return result, err
 	}
-	return result, commitDeployment(ctx, tx, r.DeploymentScope)
+	return result, d.commitDeploymentAccess(ctx, tx, access)
 }
 
 func deploymentTargets(ctx context.Context, q *controlstatedb.Queries, scope DeploymentScope, group string, targets map[string]DeploymentTarget) (deploymentConfiguration, error) {
@@ -220,13 +234,21 @@ func (d *Database) UpdateDeployment(ctx context.Context, r UpdateDeploymentReque
 		return result, err
 	}
 	defer rollback(ctx, tx, "update deployment", &retErr)()
-	if _, err = lockDeploymentManager(ctx, tx, r.DeploymentScope); err != nil {
+	access, _, err := d.lockDeploymentAccess(ctx, tx, r.DeploymentScope, r.Now)
+	if err != nil {
+		return result, err
+	}
+	r.ActorID = access.actorID
+	if err = access.servicesAllowed(sortedProjectKeys(r.Targets)); err != nil {
 		return result, err
 	}
 	q := controlstatedb.New(tx)
 	row, err := q.LockDeployment(ctx, controlstatedb.LockDeploymentParams{TeamID: r.TeamID, ProjectKey: r.ProjectKey, Selector: r.Selector})
 	if err != nil {
 		return result, publisherLookupError(err, ErrDeploymentNotFound)
+	}
+	if !access.deploymentAllowed(row.ID) {
+		return result, ErrDeploymentNotFound
 	}
 	if row.Revision != r.ExpectedRevision {
 		return result, ErrDeploymentStale
@@ -252,10 +274,13 @@ func (d *Database) UpdateDeployment(ctx context.Context, r UpdateDeploymentReque
 			return result, ErrProjectConfigurationInvalid
 		}
 	}
-	if err = SetServiceAuditActor(ctx, tx, r.ActorID); err != nil {
+	if err = access.setAuditActor(ctx, tx); err != nil {
 		return result, err
 	}
 	if err = lockAppliedProjectPublications(ctx, tx, r.TeamID, r.ProjectKey); err != nil {
+		return result, err
+	}
+	if err = d.lockDeploymentMutation(ctx, tx, access); err != nil {
 		return result, err
 	}
 	for _, name := range sortedProjectKeys(requested.Services) {
@@ -285,15 +310,15 @@ func (d *Database) UpdateDeployment(ctx context.Context, r UpdateDeploymentReque
 		return result, err
 	}
 	if row.Revision != r.ExpectedRevision {
-		if err = recordPublisherGroupUpdate(ctx, tx, row.ID, r.ActorID, "", "deployment/update/"+row.ConfigurationHash, r.Now); err != nil {
+		if err = access.recordUpdate(ctx, tx, row.ID, "deployment/update/"+row.ConfigurationHash, r.Now); err != nil {
 			return result, err
 		}
 	}
-	result, err = d.deploymentStatus(ctx, tx, row)
+	result, err = d.deploymentStatus(ctx, tx, row, access)
 	if err != nil {
 		return result, err
 	}
-	return result, commitDeployment(ctx, tx, r.DeploymentScope)
+	return result, d.commitDeploymentAccess(ctx, tx, access)
 }
 
 func (d *Database) GetDeployment(ctx context.Context, scope DeploymentScope, selector string) (result Deployment, retErr error) {
@@ -302,18 +327,22 @@ func (d *Database) GetDeployment(ctx context.Context, scope DeploymentScope, sel
 		return result, err
 	}
 	defer rollback(ctx, tx, "get deployment", &retErr)()
-	if _, err = lockDeploymentManager(ctx, tx, scope); err != nil {
+	access, _, err := d.lockDeploymentAccess(ctx, tx, scope, time.Now())
+	if err != nil {
 		return result, err
 	}
 	row, err := controlstatedb.New(tx).LockDeployment(ctx, controlstatedb.LockDeploymentParams{TeamID: scope.TeamID, ProjectKey: scope.ProjectKey, Selector: selector})
 	if err != nil {
 		return result, publisherLookupError(err, ErrDeploymentNotFound)
 	}
-	result, err = d.deploymentStatus(ctx, tx, row)
+	if !access.deploymentAllowed(row.ID) {
+		return result, ErrDeploymentNotFound
+	}
+	result, err = d.deploymentStatus(ctx, tx, row, access)
 	if err != nil {
 		return result, err
 	}
-	return result, commitDeployment(ctx, tx, scope)
+	return result, d.commitDeploymentAccess(ctx, tx, access)
 }
 
 func (d *Database) ListDeployments(ctx context.Context, scope DeploymentScope, after string, limit int) (result []Deployment, retErr error) {
@@ -325,22 +354,29 @@ func (d *Database) ListDeployments(ctx context.Context, scope DeploymentScope, a
 		return nil, err
 	}
 	defer rollback(ctx, tx, "list deployments", &retErr)()
-	if _, err = lockDeploymentManager(ctx, tx, scope); err != nil {
+	access, _, err := d.lockDeploymentAccess(ctx, tx, scope, time.Now())
+	if err != nil {
 		return nil, err
 	}
-	rows, err := controlstatedb.New(tx).ListDeployments(ctx, controlstatedb.ListDeploymentsParams{TeamID: scope.TeamID, ProjectKey: scope.ProjectKey, AfterID: after, PageLimit: int32(limit)})
+	q := controlstatedb.New(tx)
+	var rows []controlstatedb.ControlProjectPublisherGroup
+	if access.grantID == "" {
+		rows, err = q.ListDeployments(ctx, controlstatedb.ListDeploymentsParams{TeamID: scope.TeamID, ProjectKey: scope.ProjectKey, AfterID: after, PageLimit: int32(limit)})
+	} else {
+		rows, err = q.ListAuthorizedDeployments(ctx, controlstatedb.ListAuthorizedDeploymentsParams{GrantID: access.grantID, AfterID: after, PageLimit: int32(limit)})
+	}
 	if err != nil {
 		return nil, err
 	}
 	result = []Deployment{}
 	for _, row := range rows {
-		deployment, err := d.deploymentStatus(ctx, tx, row)
+		deployment, err := d.deploymentStatus(ctx, tx, row, access)
 		if err != nil {
 			return nil, err
 		}
 		result = append(result, deployment)
 	}
-	return result, commitDeployment(ctx, tx, scope)
+	return result, d.commitDeploymentAccess(ctx, tx, access)
 }
 
 func (d *Database) DeleteDeployment(ctx context.Context, scope DeploymentScope, selector string, expected int64, now time.Time) (retErr error) {
@@ -352,28 +388,41 @@ func (d *Database) DeleteDeployment(ctx context.Context, scope DeploymentScope, 
 		return err
 	}
 	defer rollback(ctx, tx, "delete deployment", &retErr)()
-	if _, err = lockDeploymentManager(ctx, tx, scope); err != nil {
+	access, _, err := d.lockDeploymentAccess(ctx, tx, scope, now)
+	if err != nil {
 		return err
 	}
+	scope.ActorID = access.actorID
 	q := controlstatedb.New(tx)
 	row, err := q.LockDeployment(ctx, controlstatedb.LockDeploymentParams{TeamID: scope.TeamID, ProjectKey: scope.ProjectKey, Selector: selector})
 	if err != nil {
 		return publisherLookupError(err, ErrDeploymentNotFound)
 	}
+	if !access.deploymentAllowed(row.ID) {
+		return ErrDeploymentNotFound
+	}
 	if row.Revision != expected {
 		return ErrDeploymentStale
 	}
-	if err = SetServiceAuditActor(ctx, tx, scope.ActorID); err != nil {
+	bindings, err := q.ListPublisherGroupServices(ctx, row.ID)
+	if err != nil {
+		return err
+	}
+	for _, binding := range bindings {
+		if err = access.servicesAllowed([]string{binding.Service}); err != nil {
+			return err
+		}
+	}
+	if err = access.setAuditActor(ctx, tx); err != nil {
 		return err
 	}
 	if err = lockAppliedProjectPublications(ctx, tx, scope.TeamID, scope.ProjectKey); err != nil {
 		return err
 	}
-	if err = recordPublisherGroupUpdate(ctx, tx, row.ID, scope.ActorID, "", "deployment/delete/"+row.ID, now); err != nil {
+	if err = d.lockDeploymentMutation(ctx, tx, access); err != nil {
 		return err
 	}
-	bindings, err := q.ListPublisherGroupServices(ctx, row.ID)
-	if err != nil {
+	if err = access.recordUpdate(ctx, tx, row.ID, "deployment/delete/"+row.ID, now); err != nil {
 		return err
 	}
 	for _, binding := range bindings {
@@ -384,10 +433,10 @@ func (d *Database) DeleteDeployment(ctx context.Context, scope DeploymentScope, 
 	if err = d.removePublisherGroup(ctx, tx, q, row.ID, now); err != nil {
 		return err
 	}
-	return commitDeployment(ctx, tx, scope)
+	return d.commitDeploymentAccess(ctx, tx, access)
 }
 
-func (d *Database) deploymentStatus(ctx context.Context, tx pgx.Tx, row controlstatedb.ControlProjectPublisherGroup) (Deployment, error) {
+func (d *Database) deploymentStatus(ctx context.Context, tx pgx.Tx, row controlstatedb.ControlProjectPublisherGroup, access deploymentAccess) (Deployment, error) {
 	result := Deployment{ID: row.ID, TeamID: row.TeamID, ProjectKey: row.ProjectKey, Name: row.Name, Revision: row.Revision, Targets: map[string]DeploymentTargetStatus{}, Services: map[string]DeploymentService{}}
 	snapshot, err := d.openDeploymentConfiguration(row)
 	if err != nil {
@@ -398,6 +447,9 @@ func (d *Database) deploymentStatus(ctx context.Context, tx pgx.Tx, row controls
 		return result, err
 	}
 	for _, binding := range bindings {
+		if access.servicesAllowed([]string{binding.Service}) != nil {
+			continue
+		}
 		service, ok := snapshot.Services[binding.Service]
 		if !ok || !binding.ServiceID.Valid {
 			return result, ErrProjectConfigurationStale
@@ -412,6 +464,9 @@ func (d *Database) deploymentStatus(ctx context.Context, tx pgx.Tx, row controls
 		}
 		result.Targets[binding.Service] = deploymentTarget(service)
 		result.Services[binding.Service] = DeploymentService{ID: saved.ID, Protocol: metadata.Protocol, TrustRevision: metadata.TrustRevision, Endpoint: metadata.Endpoint}
+	}
+	if access.grantID != "" && len(result.Services) == 0 {
+		return Deployment{}, ErrDeploymentNotFound
 	}
 	return result, nil
 }

@@ -3,7 +3,7 @@ SELECT * FROM control.publisher_group_enrollments WHERE id=sqlc.arg(id) FOR UPDA
 
 -- name: FindPublisherGroupEnrollmentRequest :one
 SELECT * FROM control.publisher_group_enrollments
-WHERE group_id=sqlc.arg(group_id) AND created_by_identity_id=sqlc.arg(actor_id)
+WHERE group_id=sqlc.arg(group_id) AND create_principal_id=sqlc.arg(principal_id)::text
 AND idempotency_key=sqlc.arg(idempotency_key)::text FOR UPDATE;
 
 -- name: ListPublisherGroupEnrollmentServices :many
@@ -22,7 +22,11 @@ AND (NOT enrollment.scoped OR EXISTS(SELECT 1 FROM control.publisher_group_enrol
 -- name: ListDeploymentPublisherIDs :many
 SELECT member.publisher_identity_id FROM control.publisher_group_members member
 WHERE member.group_id=sqlc.arg(group_id) AND member.publisher_identity_id COLLATE "C">sqlc.arg(after_id)::text COLLATE "C"
+AND (sqlc.arg(management_grant)::text='' OR control.deployment_management_publisher_allowed(sqlc.arg(management_grant),member.publisher_identity_id))
 ORDER BY member.publisher_identity_id COLLATE "C" LIMIT sqlc.arg(page_limit);
+
+-- name: DeploymentManagementPublisherAllowed :one
+SELECT control.deployment_management_publisher_allowed(sqlc.arg(grant_id)::text,sqlc.arg(publisher_id)::text)::boolean;
 
 -- name: GetDeploymentPublisherStatus :one
 SELECT sqlc.embed(member), publisher.revoked_at, enrollment.scoped,
