@@ -133,7 +133,7 @@ func (d *deploymentConnection) selectService(ctx context.Context, name string) (
 	if err != nil {
 		return controlv1.Service{}, err
 	}
-	return controlv1.Service{Id: run.ServiceId, Name: name, TeamId: d.source.Credential.Approval.TeamId, Protocol: run.Protocol, Enabled: true, Endpoint: run.Endpoint}, nil
+	return controlv1.Service{Id: run.ServiceId, Name: name, TeamId: d.source.Credential.Approval.TeamId, Protocol: run.Protocol, Enabled: true, Endpoint: run.Endpoint, KubernetesAuth: run.KubernetesAuth}, nil
 }
 
 func (d *deploymentConnection) controlFor(name, service string) (connectorstream.Control, error) {

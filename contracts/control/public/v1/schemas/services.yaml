@@ -20,6 +20,7 @@ schemas:
       trust_revision: { type: integer, format: int64, minimum: 1 }
       endpoint: { $ref: "../openapi.yaml#/components/schemas/ServiceEndpoint" }
       pair_ready: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairReady" }
+      kubernetes_auth: { $ref: "../openapi.yaml#/components/schemas/KubernetesAuth" }
   ServiceID:
     type: string
     pattern: "^svc_[A-Za-z0-9]{22}$"

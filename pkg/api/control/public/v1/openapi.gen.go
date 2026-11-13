@@ -3942,6 +3942,9 @@ type ServiceSelection struct {
 	Endpoint  *ServiceEndpoint `json:"endpoint,omitempty"`
 	ExpiresAt time.Time        `json:"expires_at"`
 
+	// KubernetesAuth Approved nonsecret native client authentication hint. Contains no publisher target address, CA, or credentials.
+	KubernetesAuth *KubernetesAuth `json:"kubernetes_auth,omitempty"`
+
 	// PairReady A short-lived, credential-free snapshot for signing an exact pair request. It never grants a relay claim.
 	PairReady    *ConnectorPeerPairReady `json:"pair_ready,omitempty"`
 	Protocol     ServiceProtocol         `json:"protocol"`

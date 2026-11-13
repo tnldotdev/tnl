@@ -1,0 +1,41 @@
+"""generated management inputs and results; importing these starts no native work."""
+
+from ._management.pydantic_gen import (
+    CreateDeploymentPublisherEnrollmentRequest,
+    CreateDeploymentRequest,
+    Deployment,
+    DeploymentPage,
+    DeploymentPublisher,
+    DeploymentPublisherEnrollment,
+    DeploymentPublisherPage,
+    DeploymentService,
+    DeploymentTarget,
+    DeploymentTargets,
+    DeploymentTargetStatus,
+    DeploymentTargetTls,
+    Problem,
+    ProblemCode,
+    ServiceEndpoint,
+    ServiceProtocol,
+    UpdateDeploymentRequest,
+)
+
+__all__ = [
+    "CreateDeploymentPublisherEnrollmentRequest",
+    "CreateDeploymentRequest",
+    "Deployment",
+    "DeploymentPage",
+    "DeploymentPublisher",
+    "DeploymentPublisherEnrollment",
+    "DeploymentPublisherPage",
+    "DeploymentTarget",
+    "DeploymentTargetTls",
+    "Problem",
+    "UpdateDeploymentRequest",
+    "DeploymentService",
+    "DeploymentTargets",
+    "DeploymentTargetStatus",
+    "ProblemCode",
+    "ServiceEndpoint",
+    "ServiceProtocol",
+]

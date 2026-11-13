@@ -113,6 +113,17 @@ helpers are excluded from authored-code lint rules; generated operations,
 validators, and models remain linted, except the stock validator's escaped
 regex delimiters. Do not patch the generated runtime.
 
+`scripts/generate/python-management-sdk.ts` generates Pydantic models for the
+same nine operations and formats them with the locked Ruff version. Python's
+bound management calls use native's existing generated Go client; Hey API Python
+0.0.24 emits grouped HTTP methods without path, body, or header inputs, so those
+methods are not shipped. Keep models generated, preserve original response JSON
+for strict inbound validation, and do not add another HTTP engine to work around
+generator limits. Generated-only lint exceptions cover long schema descriptions
+and stock annotation style, not typing or validation. The generator dependencies
+live in the private `scripts/generate` workspace to keep their TypeScript 6
+compiler API separate from application checks.
+
 The control baseline requires a fresh PostgreSQL database and a coordinated
 stop/start of all server roles. `tnld migrate` accepts only
 `TNLD_DATABASE_DIRECT_URL`; serving roles use pooled `TNLD_DATABASE_URL` and
@@ -181,6 +192,6 @@ that data; `local:reset` removes the data, containers, volumes, and local trust.
 Explain what changes, why, and which checks you ran. Use a title such as
 `fix: reconnect after a relay restart`. Keep tests beside the code they check.
 
-Add notices for new runtime dependencies to `NOTICE`. Release archives, native
+Add new dependency licenses only to `THIRD_PARTY_LICENSES.txt`. Release archives, native
 npm packages, and Python wheels include `LICENSE`, `NOTICE`, and
 `THIRD_PARTY_LICENSES.txt`.

@@ -397,6 +397,14 @@ func requestWithTimeout[T any](ctx context.Context, client *Client, timeout time
 	return requestWithTimeoutAndLimit[T](ctx, client, timeout, token, maxResponseBytes, call)
 }
 
+// a scoped operation may retain the original successful JSON and headers for a
+// language binding. the ordinary generated request and decode path stays shared.
+type controlResponseKey struct{}
+type controlResponse struct {
+	payload json.RawMessage
+	header  http.Header
+}
+
 func requestWithTimeoutAndLimit[T any](ctx context.Context, client *Client, timeout time.Duration, token string, responseLimit int64, call controlRequest) (T, error) {
 	var zero T
 	requestCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -439,6 +447,9 @@ func requestWithTimeoutAndLimit[T any](ctx context.Context, client *Client, time
 	if err != nil {
 		return zero, failure.Wrap("decode control response", failure.ServerResponseInvalid, err)
 	}
+	if captured, ok := ctx.Value(controlResponseKey{}).(*controlResponse); ok {
+		captured.payload, captured.header = payload, response.Header.Clone()
+	}
 	return result, nil
 }
 
@@ -449,11 +460,17 @@ func unavailableError(ctx context.Context, err error) error {
 	return fmt.Errorf("%w: %w", ErrUnavailable, err)
 }
 
-func responseError(status int, header http.Header, payload []byte) error {
+func responseError(status int, header http.Header, payload []byte) (result error) {
 	var problem controlv1.Problem
 	if json.Unmarshal(payload, &problem) != nil {
 		return failure.Wrap("request control API", failure.ServerResponseInvalid, fmt.Errorf("controlclient: HTTP %d", status))
 	}
+	defer func() {
+		var existing *ProblemError
+		if !errors.As(result, &existing) {
+			result = errors.Join(result, &ProblemError{Status: status, Problem: problem})
+		}
+	}()
 	switch problem.Code {
 	case controlv1.ProjectManaged:
 		return fmt.Errorf("%w: %w", ErrProjectManaged, &ProblemError{Status: status, Problem: problem})

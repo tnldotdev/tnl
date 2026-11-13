@@ -14,30 +14,93 @@ schemas:
       max_members: { type: integer, minimum: 1, maximum: 256, default: 1 }
       expires_in: { type: integer, minimum: 60, maximum: 86400, default: 600 }
   DeploymentPublisherEnrollment:
-    allOf:
-      - { $ref: "../openapi.yaml#/components/schemas/PublisherGroupEnrollment" }
-      - type: object
-        required: [enrollment_id, services]
-        properties:
-          enrollment_id: { type: string }
-          services:
-            type: object
-            minProperties: 1
-            maxProperties: 128
-            additionalProperties: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
+    type: object
+    additionalProperties: false
+    required: [enrollment_key, group_id, expires_at, max_members, enrollment_id, services]
+    properties:
+      enrollment_key:
+        {
+          $ref: "../openapi.yaml#/components/schemas/PublisherGroupEnrollment/properties/enrollment_key",
+        }
+      group_id:
+        { $ref: "../openapi.yaml#/components/schemas/PublisherGroupEnrollment/properties/group_id" }
+      expires_at:
+        {
+          $ref: "../openapi.yaml#/components/schemas/PublisherGroupEnrollment/properties/expires_at",
+        }
+      max_members:
+        {
+          $ref: "../openapi.yaml#/components/schemas/PublisherGroupEnrollment/properties/max_members",
+        }
+      enrollment_id: { type: string }
+      services:
+        type: object
+        minProperties: 1
+        maxProperties: 128
+        additionalProperties: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
     description: Privately deliver the bounded enrollment key to the publisher. group_id is the selected deployment ID. Recovery preserves this secret, captured scope, capacity, and expiration; it never renews or replaces exhausted setup authority.
   DeploymentPublisher:
-    allOf:
-      - { $ref: "../openapi.yaml#/components/schemas/PublisherGroupMemberStatus" }
-      - type: object
-        required: [services]
-        properties:
-          services:
-            type: object
-            maxProperties: 128
-            additionalProperties: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
-            description: Captured service/protocol approval for scoped setup, not a claim of current reachability. Legacy whole-group publishers report their current group bindings.
-          revoked_at: { type: string, format: date-time }
+    type: object
+    additionalProperties: false
+    required:
+      [
+        team_id,
+        project_key,
+        group_id,
+        group_name,
+        publisher_identity_id,
+        key_id,
+        observed_revision,
+        current_revision,
+        snapshot_at,
+        healthy,
+        services,
+      ]
+    properties:
+      team_id:
+        { $ref: "../openapi.yaml#/components/schemas/PublisherGroupMember/properties/team_id" }
+      project_key:
+        { $ref: "../openapi.yaml#/components/schemas/PublisherGroupMember/properties/project_key" }
+      group_id:
+        { $ref: "../openapi.yaml#/components/schemas/PublisherGroupMember/properties/group_id" }
+      group_name:
+        { $ref: "../openapi.yaml#/components/schemas/PublisherGroupMember/properties/group_name" }
+      publisher_identity_id:
+        {
+          $ref: "../openapi.yaml#/components/schemas/PublisherGroupMember/properties/publisher_identity_id",
+        }
+      key_id: { $ref: "../openapi.yaml#/components/schemas/PublisherGroupMember/properties/key_id" }
+      observed_revision:
+        {
+          $ref: "../openapi.yaml#/components/schemas/PublisherGroupMemberStatus/allOf/1/properties/observed_revision",
+        }
+      current_revision:
+        {
+          $ref: "../openapi.yaml#/components/schemas/PublisherGroupMemberStatus/allOf/1/properties/current_revision",
+        }
+      snapshot_at:
+        {
+          $ref: "../openapi.yaml#/components/schemas/PublisherGroupMemberStatus/allOf/1/properties/snapshot_at",
+        }
+      acknowledged_at:
+        {
+          $ref: "../openapi.yaml#/components/schemas/PublisherGroupMemberStatus/allOf/1/properties/acknowledged_at",
+        }
+      healthy:
+        {
+          $ref: "../openapi.yaml#/components/schemas/PublisherGroupMemberStatus/allOf/1/properties/healthy",
+        }
+      lease_expires_at:
+        {
+          $ref: "../openapi.yaml#/components/schemas/PublisherGroupMemberStatus/allOf/1/properties/lease_expires_at",
+        }
+      runtime: { $ref: "../openapi.yaml#/components/schemas/PublisherRuntimeStatus" }
+      services:
+        type: object
+        maxProperties: 128
+        additionalProperties: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
+        description: Captured service/protocol approval for scoped setup, not a claim of current reachability. Legacy whole-group publishers report their current group bindings.
+      revoked_at: { type: string, format: date-time }
     description: One publisher in the selected deployment (group_id), including its retained last observation after revocation. No enrollment secret, signing key, access token, or target is returned. Healthy reports configuration acknowledgement and a current lease, not database login or SQL readiness.
   DeploymentPublisherPage:
     type: object

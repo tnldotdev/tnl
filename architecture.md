@@ -169,6 +169,11 @@ deploy/                deployment templates
 
 ## how packages fit together
 
+`scripts/generate` has its own private tooling workspace so Hey API resolves the
+TypeScript 6 compiler API it executes. Application and SDK checks stay on
+TypeScript 7. Generated source still belongs to its serving/runtime owner; the
+tooling workspace owns no product runtime or alternate schema authority.
+
 Commands handle arguments, prompts, and output. Reusable operations live below
 them. The packages running processes, runs, or streams start and stop their own
 work:

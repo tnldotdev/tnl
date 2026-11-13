@@ -8,10 +8,12 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/auth"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/connector"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
 )
 
 type connectionsCommand struct {
@@ -21,6 +23,7 @@ type connectionsCommand struct {
 	Context        connectionsContextOptions     `cmd:""`
 	Local          connectionsLocalOptions       `cmd:"" hidden:""`
 	Credential     struct{}                      `cmd:"" hidden:""`
+	Management     struct{}                      `cmd:"" hidden:""`
 	Start          connectionsStartOptions       `cmd:""`
 	Identity       connectionsContextOptions     `cmd:"" hidden:""`
 	Attach         connectionsHandleOptions      `cmd:"" hidden:""`
@@ -126,6 +129,36 @@ func runConnections(ctx context.Context, command string, flags connectionsComman
 	}
 	stopped := func(err error) error { return write(map[string]any{"schema": 1, "state": "stopped"}, err) }
 	switch command {
+	case "runtime connections management":
+		var request struct {
+			Schema  int    `json:"schema"`
+			Project string `json:"project"`
+			Token   string `json:"token"`
+			clientcontrol.DeploymentManagementRequest
+		}
+		if connectorruntime.ReadJSON(os.Stdin, &request) != nil || request.Schema != 1 {
+			return connectorruntime.ErrInvalid
+		}
+		credential, err := auth.ParseDeploymentCredential(request.Token)
+		if err != nil {
+			return err
+		}
+		if err := credential.SelectProject(request.Project); err != nil {
+			return err
+		}
+		source, err := auth.NewDeploymentTokenSource(credential, nil)
+		if err != nil {
+			return err
+		}
+		token, err := source.Token(ctx)
+		if err != nil {
+			return err
+		}
+		control, err := clientcontrol.New(credential.ControlURL, nil, credentials.AccessToken(token))
+		if err != nil {
+			return err
+		}
+		return write(control.ManageDeployment(ctx, credential.Approval.TeamId, credential.Approval.ProjectKey, request.DeploymentManagementRequest))
 	case "runtime connections credential":
 		var request struct {
 			Schema  int    `json:"schema"`

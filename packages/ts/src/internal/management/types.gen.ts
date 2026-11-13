@@ -24,7 +24,11 @@ export type CreateDeploymentPublisherEnrollmentRequest = {
 /**
  * Privately deliver the bounded enrollment key to the publisher. group_id is the selected deployment ID. Recovery preserves this secret, captured scope, capacity, and expiration; it never renews or replaces exhausted setup authority.
  */
-export type DeploymentPublisherEnrollment = PublisherGroupEnrollment & {
+export type DeploymentPublisherEnrollment = {
+  enrollment_key: string;
+  group_id: string;
+  expires_at: string;
+  max_members: number;
   enrollment_id: string;
   services: {
     [key: string]: ServiceProtocol;
@@ -34,7 +38,20 @@ export type DeploymentPublisherEnrollment = PublisherGroupEnrollment & {
 /**
  * One publisher in the selected deployment (group_id), including its retained last observation after revocation. No enrollment secret, signing key, access token, or target is returned. Healthy reports configuration acknowledgement and a current lease, not database login or SQL readiness.
  */
-export type DeploymentPublisher = PublisherGroupMemberStatus & {
+export type DeploymentPublisher = {
+  team_id: string;
+  project_key: string;
+  group_id: string;
+  group_name: string;
+  publisher_identity_id: string;
+  key_id: string;
+  observed_revision: number;
+  current_revision: number;
+  snapshot_at: string;
+  acknowledged_at?: string;
+  healthy: boolean;
+  lease_expires_at?: string;
+  runtime?: PublisherRuntimeStatus;
   /**
    * Captured service/protocol approval for scoped setup, not a claim of current reachability. Legacy whole-group publishers report their current group bindings.
    */
@@ -120,32 +137,6 @@ export type ProjectTargetDiscovery = {
   cluster?: string;
   instance?: string;
   endpoint?: "writer" | "reader";
-};
-
-export type PublisherGroupEnrollment = {
-  enrollment_key: string;
-  group_id: string;
-  expires_at: string;
-  max_members: number;
-};
-
-export type PublisherGroupMember = {
-  team_id: string;
-  project_key: string;
-  group_id: string;
-  group_name: string;
-  publisher_identity_id: string;
-  key_id: string;
-};
-
-export type PublisherGroupMemberStatus = PublisherGroupMember & {
-  observed_revision: number;
-  current_revision: number;
-  snapshot_at: string;
-  acknowledged_at?: string;
-  healthy: boolean;
-  lease_expires_at?: string;
-  runtime?: PublisherRuntimeStatus;
 };
 
 /**
