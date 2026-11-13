@@ -48,9 +48,9 @@ func TestIntegrationGeneratedManagementHTTP(t *testing.T) {
 	_, err = d.ApplyProjectConfiguration(ctx, controlstate.ApplyProjectConfigurationRequest{
 		Deployment: "production", ServiceDeclarations: map[string]string{"db": "postgres", "web": "http"},
 		TeamID: team, ActorID: session.Identity.Identity.ID, ProjectKey: "example", SourceFingerprint: strings.Repeat("a", 64), Now: now,
-		Configuration: controlstate.ProjectConfiguration{PublisherGroups: map[string]controlstate.ProjectPublisherGroup{"production": {}}, Services: map[string]controlstate.ProjectServiceConfiguration{
-			"db":  {PublisherGroup: "production", Protocol: "postgres", Target: "db.internal:5432"},
-			"web": {PublisherGroup: "production", Target: "web.internal:3000"},
+		Configuration: controlstate.ProjectConfiguration{Settings: &controlstate.DeploymentSettings{}, Services: map[string]controlstate.ProjectServiceConfiguration{
+			"db":  {Protocol: "postgres", Target: "db.internal:5432"},
+			"web": {Target: "web.internal:3000"},
 		}},
 	})
 	if err != nil {
