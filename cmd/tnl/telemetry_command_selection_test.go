@@ -22,6 +22,8 @@ func TestTelemetryCommandsUseOnlyParsedCommandNodes(t *testing.T) {
 		{[]string{"auth", "logout"}, "logout", "", true},
 		{[]string{"team", "invite", "revoke", "ivt_secret"}, "team", "revoke", true},
 		{[]string{"feedback", "inspect", "fb_secret"}, "feedback", "inspect", true},
+		{[]string{"share"}, "share", "create", true},
+		{[]string{"share", "--service", "web"}, "share", "create", true},
 		{[]string{"version"}, "", "", false},
 		{[]string{"telemetry", "on"}, "", "", false},
 	} {

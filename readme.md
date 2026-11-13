@@ -198,8 +198,7 @@ Vite and Next.js can choose another port when the preferred one is taken, and `t
 You can leave inline feedback in your app for your agent to review. Or, send someone on your team a link:
 
 ```bash
-pnpm exec tnl share link create app-demo.example.com \
-  --expires-in 7d
+pnpm exec tnl share --expires-in 7d
 ```
 
 The link expires after a week and can be revoked early. Similar to how Vercel comments work, reviewers can leave inline feedback:

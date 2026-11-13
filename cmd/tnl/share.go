@@ -7,16 +7,13 @@ import (
 	"fmt"
 	"io"
 	"net/url"
-	"os"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
-	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
@@ -27,13 +24,37 @@ import (
 )
 
 type shareCommand struct {
-	Service serviceShareCommand `cmd:"" help:"Manage access to one configured service or exact service ID."`
-	Invite  shareInviteCommand  `cmd:"" help:"Invite a verified-email visitor without team membership."`
-	Link    linkShareCommand    `cmd:"" help:"Create a browser share link."`
-	Token   tokenShareCommand   `cmd:"" help:"Create a share token for an HTTP client."`
-	Team    teamShareCommand    `cmd:"" help:"Share the preview with its team."`
-	List    shareListCommand    `cmd:"" help:"List access for the selected team."`
-	Revoke  shareRevokeCommand  `cmd:"" help:"Revoke a share by ID."`
+	Create  shareCheckoutCommand `cmd:"" default:"withargs" help:"Print a browser link for this checkout's HTTP public URLs; create is optional."`
+	Service serviceShareCommand  `cmd:"" help:"Manage access to one configured service or exact service ID."`
+	Invite  shareInviteCommand   `cmd:"" help:"Invite a verified-email visitor without team membership."`
+	Link    linkShareCommand     `cmd:"" help:"Create a browser share link."`
+	Token   tokenShareCommand    `cmd:"" help:"Create a share token for an HTTP client."`
+	Team    teamShareCommand     `cmd:"" help:"Share the preview with its team."`
+	List    shareListCommand     `cmd:"" help:"List access for the selected team."`
+	Revoke  shareRevokeCommand   `cmd:"" help:"Revoke a share by ID."`
+}
+
+type shareLinkOptions struct {
+	scopedTeamFlags `embed:""`
+	Name            string           `name:"name" help:"Optional label shown when listing this share."`
+	ExpiresIn       string           `name:"expires-in" default:"24h" help:"Share lifetime (for example, 24h or 7d; at most 30d)."`
+	Output          statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
+}
+
+type shareCheckoutCommand struct {
+	shareLinkOptions `embed:""`
+	Service          string `name:"service" help:"Share only this configured HTTP public service instead of the whole checkout."`
+}
+
+func (shareCommand) Help() string {
+	return `Run tnl share without a subcommand to print a browser link for this
+checkout's current HTTP public URLs. Use --service to share only one service.
+
+  tnl share --expires-in 7d
+  tnl share --service web --expires-in 7d
+
+Links expire after 24 hours by default. Other worktrees and private services
+are not included. Use tnl share create --help for all link creation flags.`
 }
 
 type teamShareCommand struct {
@@ -59,12 +80,11 @@ type linkShareCommand struct {
 }
 
 type shareCreateCommand struct {
-	scopedTeamFlags `embed:""`
-	URL             string           `arg:"" name:"url" optional:"" help:"Public URL ID, hostname, or HTTPS origin to open."`
-	Preview         bool             `name:"preview" help:"Include every current HTTP public URL in this project preview."`
-	Name            string           `name:"name" help:"Optional label shown when listing this share."`
-	ExpiresIn       string           `name:"expires-in" default:"24h" help:"Share lifetime (for example, 24h or 7d; at most 30d)."`
-	Output          statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
+	shareLinkOptions `embed:""`
+	URL              string `arg:"" name:"url" optional:"" help:"Public URL ID, hostname, or HTTPS origin to open."`
+	Preview          bool   `name:"preview" help:"Include every current HTTP public URL in this project preview."`
+	checkout         bool
+	service          string
 }
 
 type tokenShareCommand struct {
@@ -157,7 +177,7 @@ func selectSharePublicURL(selector string, routes []controlv1.PublicURL) (contro
 	return controlv1.PublicURL{}, clientcontrol.ErrNotFound
 }
 
-func previewShares(ctx context.Context, flags remoteFlags, project projectConfiguration, command string, diagnostics io.Writer, services map[string]shareServiceResult) (*clientteam.Session, controlv1.Preview, []controlv1.PublicURL, error) {
+func previewShares(ctx context.Context, flags remoteFlags, project projectConfiguration, command, service string, diagnostics io.Writer, services map[string]shareServiceResult) (*clientteam.Session, controlv1.Preview, []controlv1.PublicURL, error) {
 	if !project.Found() || len(project.Config.Services) == 0 {
 		return nil, controlv1.Preview{}, nil, failure.Wrap("select share project", failure.PreviewNotSaved, errors.New("select a project with configured services, then start your app"))
 	}
@@ -165,7 +185,7 @@ func previewShares(ctx context.Context, flags remoteFlags, project projectConfig
 	if err != nil {
 		return nil, controlv1.Preview{}, nil, err
 	}
-	current, err := session.Current(ctx)
+	current, err := session.CurrentWithDomains(ctx)
 	if err != nil {
 		session.Close()
 		return nil, controlv1.Preview{}, nil, err
@@ -186,24 +206,31 @@ func previewShares(ctx context.Context, flags remoteFlags, project projectConfig
 		}
 		return nil, controlv1.Preview{}, nil, failure.Wrap("read share preview", failure.ServerResponseInvalid, errors.New("server returned a preview for another team"))
 	}
-	resolver := resolve.NewMetadataResolver(session.Database(), project.Project, func(ctx context.Context, state *clientstate.Database, server string) (*auth.Client, error) {
-		return projectAuthentication(ctx, state, server, command, os.Stdin, diagnostics)
-	})
-	resolver.Seed(session.Authenticated().ServerEndpoint, session.Authenticated())
-	metadata, err := resolver.Generate(ctx)
-	if err != nil {
-		session.Close()
-		return nil, controlv1.Preview{}, nil, err
-	}
-	names := make([]string, 0, len(metadata.Services))
-	for name := range metadata.Services {
+	names := make([]string, 0, len(project.Config.Services))
+	for name, definition := range project.Config.Services {
+		if service != "" && name != service {
+			continue
+		}
+		if !config.IsPublicService(definition) {
+			continue
+		}
 		names = append(names, name)
 	}
 	slices.Sort(names)
 	routes := make([]controlv1.PublicURL, 0, len(names))
 	hostnames := make(map[string]string, len(names))
 	for _, name := range names {
-		publicURL, routeErr := session.Authenticated().Control.GetPublicURLByHostname(ctx, current.Team().Id, metadata.Services[name].Hostname)
+		effective, err := project.EffectiveService(name)
+		if err != nil {
+			session.Close()
+			return nil, controlv1.Preview{}, nil, err
+		}
+		metadata, err := resolve.ConfiguredService(name, project.Worktree, effective, current)
+		if err != nil {
+			session.Close()
+			return nil, controlv1.Preview{}, nil, err
+		}
+		publicURL, routeErr := session.Authenticated().Control.GetPublicURLByHostname(ctx, current.Team().Id, metadata.Hostname)
 		if routeErr == nil && publicURL.ServiceProtocol != controlv1.Http {
 			continue
 		}
@@ -215,12 +242,50 @@ func previewShares(ctx context.Context, flags remoteFlags, project projectConfig
 			return nil, controlv1.Preview{}, nil, failure.Wrap("resolve preview services", failure.PreviewStateConflict, fmt.Errorf("service %q is not yet in this preview; start it with its tnl integration", name))
 		}
 		routes = append(routes, publicURL)
-		hostnames[name] = metadata.Services[name].Hostname
+		hostnames[name] = metadata.Hostname
 	}
 	for name, service := range shareServiceURLs(project, routes, hostnames) {
 		services[name] = service
 	}
 	return session, preview, routes, nil
+}
+
+func runShareCheckout(ctx context.Context, flags shareCheckoutCommand, project projectConfiguration, output, diagnostics io.Writer) error {
+	if flags.Service != "" {
+		service, found := project.Config.Services[flags.Service]
+		if !found || !config.IsPublicService(service) || config.Protocol(service) != "http" {
+			return failure.Wrap("select share service", failure.ShareInputInvalid, errors.New("--service must select a configured HTTP public service"))
+		}
+	}
+	return createShare(ctx, shareCreateCommand{
+		shareLinkOptions: flags.shareLinkOptions,
+		Preview:          flags.Service == "",
+		checkout:         true,
+		service:          flags.Service,
+	}, project, false, output, diagnostics)
+}
+
+func checkoutShareEntry(service string, services map[string]shareServiceResult) (string, error) {
+	if service != "" {
+		if selected, found := services[service]; found {
+			return selected.PublicURLID, nil
+		}
+		return "", failure.Wrap("select share service", failure.PreviewNotSaved, errors.New("the selected service has no saved HTTP public URL; start it with its tnl integration"))
+	}
+	for _, name := range []string{"app", "web"} {
+		if selected, found := services[name]; found {
+			return selected.PublicURLID, nil
+		}
+	}
+	names := make([]string, 0, len(services))
+	for name := range services {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	if len(names) == 0 {
+		return "", failure.Wrap("select share public URLs", failure.PreviewNotSaved, errors.New("this checkout has no saved HTTP public URLs; start a configured public app service first"))
+	}
+	return services[names[0]].PublicURLID, nil
 }
 
 func runShareCreate(ctx context.Context, flags shareCreateCommand, project projectConfiguration, output, diagnostics io.Writer) error {
@@ -246,7 +311,9 @@ func createShare(ctx context.Context, flags shareCreateCommand, project projectC
 		return failure.Wrap("name share", failure.ShareInputInvalid, errors.New("share name must be at most 128 characters"))
 	}
 	command := "tnl share link create"
-	if token {
+	if flags.checkout {
+		command = "tnl share"
+	} else if token {
 		command = "tnl share token create"
 	}
 	var session *clientteam.Session
@@ -254,7 +321,7 @@ func createShare(ctx context.Context, flags shareCreateCommand, project projectC
 	var routes []controlv1.PublicURL
 	services := make(map[string]shareServiceResult)
 	if flags.Preview || flags.URL == "" {
-		session, preview, routes, err = previewShares(ctx, flags.selection(), project, command, diagnostics, services)
+		session, preview, routes, err = previewShares(ctx, flags.selection(), project, command, flags.service, diagnostics, services)
 	} else {
 		session, err = openTeamSession(ctx, flags.selection(), command, diagnostics)
 		if err == nil {
@@ -273,6 +340,12 @@ func createShare(ctx context.Context, flags shareCreateCommand, project projectC
 		return err
 	}
 	defer session.Close()
+	if flags.checkout {
+		flags.URL, err = checkoutShareEntry(flags.service, services)
+		if err != nil {
+			return err
+		}
+	}
 	selected, err := selectSharePublicURL(flags.URL, routes)
 	if err != nil {
 		return err
@@ -521,7 +594,7 @@ func runShareTeamCreate(ctx context.Context, flags teamShareCreateCommand, proje
 		return failure.Wrap("select expiring team grant", failure.ShareInputInvalid, errors.New("an expiring team grant requires an exact public URL"))
 	}
 	services := make(map[string]shareServiceResult)
-	session, preview, routes, err := previewShares(ctx, flags.selection(), project, "tnl share team create", diagnostics, services)
+	session, preview, routes, err := previewShares(ctx, flags.selection(), project, "tnl share team create", "", diagnostics, services)
 	if err != nil {
 		return err
 	}
