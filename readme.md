@@ -149,7 +149,7 @@ export default defineConfig({
 });
 ```
 
-Start your app (for example, `vite dev`). It runs locally without a `tnl` account. You can also [connect to local dependencies](https://tnl.dev/docs/private-services) without signing in or opening a tunnel.
+Start your app (for example, `vite dev`). It runs locally without a `tnl` account - you can [connect to local dependencies](https://tnl.dev/docs/private-services) without opening a tunnel.
 
 To get a public URL, sign in:
 
@@ -157,9 +157,7 @@ To get a public URL, sign in:
 pnpm exec tnl auth login
 ```
 
-Then restart your app. By default, visitors need a sign-in, share link, or token.
-
-Hot reloading, WebSockets, SSE, and streaming responses are all supported.
+By default, visitors need a sign-in, share link, or token. Hot reloading, WebSockets, SSE, and streaming responses are all supported.
 
 _Already have an app listening on port 3000? Run `pnpm exec tnl publish 3000`._
 
@@ -407,6 +405,10 @@ Here's how `tnl` compares to Tailscale, Cloudflare, and ngrok.
 | Built-in web firewall (WAF)                   | No                      | No                     | Yes                          | Yes                     |
 | Run the server infrastructure yourself        | Yes                     | w/ Headscale           | No                           | No                      |
 | Route a whole subnet                          | No, individual services | Yes                    | Yes                          | No, individual services |
+
+## contributing
+
+External pull requests are not accepted. Please open an issue to report a bug or suggest a change.
 
 ## license
 
