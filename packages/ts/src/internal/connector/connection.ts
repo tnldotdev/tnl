@@ -366,16 +366,28 @@ function parsePrepared(value: unknown, name: string, file: string) {
   });
 }
 
+type LocalHTTPTransport = Readonly<{
+  protocol: "http";
+  host: string;
+  port: number;
+  url: `http://${string}`;
+  ssl: false;
+  expires: number;
+  transportID: string;
+}>;
+
 export function managedFetch(
-  url: `https://${string}`,
-  current: (signal?: AbortSignal) => Promise<ConnectionSnapshot>,
-): TnlFetch {
+  url: `${"http" | "https"}://${string}`,
+  current: (signal?: AbortSignal) => Promise<ConnectionSnapshot | LocalHTTPTransport>,
+): TnlFetch & { close(): Promise<void> } {
   let active = 0;
+  let closed = false;
   let pool: Pool | undefined;
   let dispatcher: Dispatcher | undefined;
   let poolKey: string | undefined;
   const retired = new Set<Pool>();
-  return async (input, init) => {
+  const run: TnlFetch = async (input, init) => {
+    if (closed) throw new TnlError("sdk.client_closed");
     const running = [...retired, ...(pool === undefined ? [] : [pool])].reduce(
       (sum, p) => sum + p.stats.running + p.stats.pending,
       0,
@@ -399,6 +411,7 @@ export function managedFetch(
       lifetime.throwIfAborted();
       const snapshot = await cancellable(lifetime, () => current(lifetime));
       lifetime.throwIfAborted();
+      if (closed) throw new TnlError("sdk.client_closed");
       if (
         (snapshot.protocol !== "http" && snapshot.protocol !== "kubernetes") ||
         snapshot.url !== url ||
@@ -421,26 +434,34 @@ export function managedFetch(
             .catch(() => {})
             .finally(() => retired.delete(previous));
         }
-        const connect = buildConnector(snapshot.ssl);
-        pool = new Pool(url, {
+        const options = {
           connections: 8,
           pipelining: 1,
           headersTimeout: 0,
           bodyTimeout: 0,
-          connect(options, callback) {
-            if (options.protocol !== "https:" || options.hostname !== snapshot.ssl.servername)
-              return callback(new TnlError("sdk.configuration_invalid"), null);
-            return connect(
-              {
-                ...options,
-                hostname: snapshot.host,
-                port: String(snapshot.port),
-                servername: snapshot.ssl.servername,
-              },
-              callback,
-            );
-          },
-        });
+        };
+        if (snapshot.ssl === false) {
+          // the origin was validated as a loopback HTTP address by local selection.
+          pool = new Pool(url, options);
+        } else {
+          const connect = buildConnector(snapshot.ssl);
+          pool = new Pool(url, {
+            ...options,
+            connect(options, callback) {
+              if (options.protocol !== "https:" || options.hostname !== snapshot.ssl.servername)
+                return callback(new TnlError("sdk.configuration_invalid"), null);
+              return connect(
+                {
+                  ...options,
+                  hostname: snapshot.host,
+                  port: String(snapshot.port),
+                  servername: snapshot.ssl.servername,
+                },
+                callback,
+              );
+            },
+          });
+        }
         dispatcher = pool.compose(
           (dispatch) => (options, handler) => dispatch({ ...options, idempotent: false }, handler),
         );
@@ -522,6 +543,14 @@ export function managedFetch(
       active--;
     }
   };
+  return Object.assign(run, {
+    async close() {
+      closed = true;
+      await Promise.all(
+        [...retired, ...(pool === undefined ? [] : [pool])].map((value) => value.close()),
+      );
+    },
+  });
 }
 
 function responseIdentity(response: Response, url: string, type: string): Response {

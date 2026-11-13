@@ -1,5 +1,10 @@
+import { createServer } from "node:http";
+import { createServer as createSecureServer } from "node:https";
+import { connect as connectTCP, createServer as createTCPServer } from "node:net";
+import { createSecureContext } from "node:tls";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { createClient } from "../../src/internal/connector/local_client.js";
+import { cert, key } from "../fixtures/local-tls.js";
 
 const native = vi.hoisted(() => ({
   reply: {
@@ -31,7 +36,13 @@ vi.mock("../../src/internal/native/launcher.js", () => ({
   resolveNativeBinary: () => "/fixture/tnl",
 }));
 
-const services = { db: { protocol: "postgres" }, app: { protocol: "http" } } as const;
+const services = {
+  db: { protocol: "postgres" },
+  app: { protocol: "http" },
+  mysql: { protocol: "mysql" },
+  cache: { protocol: "tcp" },
+  cluster: { protocol: "kubernetes" },
+} as const;
 beforeEach(() => {
   native.calls = [];
   native.error = null;
@@ -88,6 +99,145 @@ describe("explicit local deployment", () => {
     expect(Object.isFrozen(connection)).toBe(true);
     expect(Object.isFrozen(connection.ssl)).toBe(true);
     await local.close();
+  });
+
+  test("returns protocol-specific settings without authenticating or starting a connector", async () => {
+    const local = createClient({ services }).deployment("local");
+    native.reply.protocol = "tcp";
+    const tcp = await local.connect("cache");
+    expect(tcp).toEqual({ host: "127.0.0.1", port: 15432 });
+    native.reply.protocol = "mysql";
+    native.reply.ssl = { servername: "mysql.local", rejectUnauthorized: true };
+    const mysql = await local.connect("mysql");
+    expect(mysql).toMatchObject({
+      host: "mysql.local",
+      port: 15432,
+      ssl: { servername: "mysql.local", rejectUnauthorized: true, verifyIdentity: true },
+    });
+    expect(mysql.stream).toBeTypeOf("function");
+    native.reply.protocol = "kubernetes";
+    native.reply.ssl = { servername: "cluster.local", rejectUnauthorized: true };
+    native.reply.server = "https://127.0.0.1:15432";
+    native.reply.kubeconfig = "/home/user/.kube/config";
+    native.reply.context = "local-cluster";
+    expect(await local.connect("cluster")).toEqual({
+      server: "https://127.0.0.1:15432",
+      kubeconfig: "/home/user/.kube/config",
+      context: "local-cluster",
+    });
+    expect(native.calls.map((call) => call.at(-1))).toEqual(["tcp", "mysql", "kubernetes"]);
+    await local.close();
+  });
+
+  test("HTTP uses only the resolved loopback origin and never follows remote redirects", async () => {
+    const listener = createServer((request, response) => {
+      if (request.url === "/redirect") {
+        response.writeHead(302, { location: "https://remote.invalid/" }).end();
+      } else {
+        response.end("local");
+      }
+    });
+    await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = listener.address();
+      if (address === null || typeof address === "string") throw new Error("missing listener");
+      native.reply.protocol = "http";
+      native.reply.port = address.port;
+      native.reply.url = `http://127.0.0.1:${address.port}`;
+      const local = createClient({ services }).deployment("local");
+      const app = await local.connect("app");
+      expect(app.url).toBe(native.reply.url);
+      expect(await (await app.fetch("/")).text()).toBe("local");
+      const redirect = await app.fetch("/redirect", { redirect: "follow" });
+      expect(redirect.status).toBe(302);
+      await expect(app.fetch("https://remote.invalid/")).rejects.toMatchObject({
+        code: "sdk.configuration_invalid",
+      });
+      await local.close();
+      await expect(app.fetch("/")).rejects.toMatchObject({ code: "sdk.client_closed" });
+    } finally {
+      await new Promise<void>((resolve) => listener.close(() => resolve()));
+    }
+  });
+
+  test("HTTPS verifies the configured hostname and CA while dialing only loopback", async () => {
+    const sni: string[] = [];
+    const listener = createSecureServer(
+      {
+        key,
+        cert,
+        SNICallback(hostname, callback) {
+          sni.push(hostname);
+          callback(null, createSecureContext({ key, cert }));
+        },
+      },
+      (_request, response) => response.end("verified local"),
+    );
+    await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = listener.address();
+      if (address === null || typeof address === "string") throw new Error("missing listener");
+      native.reply.protocol = "http";
+      native.reply.port = address.port;
+      native.reply.url = `https://api.tnl.invalid:${address.port}`;
+      native.reply.ssl = {
+        servername: "api.tnl.invalid",
+        rejectUnauthorized: true,
+        ca: cert,
+      };
+      const local = createClient({ services }).deployment("local");
+      const app = await local.connect("app");
+      expect(await (await app.fetch("/")).text()).toBe("verified local");
+      expect(sni).toEqual(["api.tnl.invalid"]);
+      await local.close();
+      await expect(app.fetch("/")).rejects.toMatchObject({ code: "sdk.client_closed" });
+
+      native.reply.ssl = { servername: "api.tnl.invalid", rejectUnauthorized: true };
+      const untrusted = createClient({ services }).deployment("local");
+      const settings = await untrusted.connect("app");
+      await expect(settings.fetch("/")).rejects.toThrow();
+      await untrusted.close();
+      expect(sni).toHaveLength(2);
+    } finally {
+      const stopped = new Promise<void>((resolve) => listener.close(() => resolve()));
+      listener.closeAllConnections();
+      await stopped;
+    }
+  });
+
+  test("TCP and MySQL stream settings dial the selected listener directly", async () => {
+    const listener = createTCPServer((socket) => socket.end("local tcp"));
+    await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = listener.address();
+      if (address === null || typeof address === "string") throw new Error("missing listener");
+      native.reply.protocol = "tcp";
+      native.reply.port = address.port;
+      const local = createClient({ services }).deployment("local");
+      const settings = await local.connect("cache");
+      const text = await new Promise<string>((resolve, reject) => {
+        const socket = connectTCP(settings.port, settings.host);
+        const chunks: Buffer[] = [];
+        socket.on("data", (chunk: Buffer) => chunks.push(chunk));
+        socket.once("end", () => resolve(Buffer.concat(chunks).toString()));
+        socket.once("error", reject);
+      });
+      expect(text).toBe("local tcp");
+      native.reply.protocol = "mysql";
+      native.reply.ssl = { servername: "mysql.local", rejectUnauthorized: true };
+      const mysql = await local.connect("mysql");
+      const greeting = await new Promise<string>((resolve, reject) => {
+        const socket = mysql.stream();
+        const chunks: Buffer[] = [];
+        socket.on("data", (chunk: Buffer) => chunks.push(chunk));
+        socket.once("end", () => resolve(Buffer.concat(chunks).toString()));
+        socket.once("error", reject);
+      });
+      expect(greeting).toBe("local tcp");
+      await local.close();
+    } finally {
+      await new Promise<void>((resolve) => listener.close(() => resolve()));
+    }
   });
 
   test("caches ordinary driver clients by native binding and closes only its own clients", async () => {
@@ -203,6 +353,22 @@ describe("explicit local deployment", () => {
     Object.assign(native.reply, change);
     const local = createClient({ services }).deployment("local");
     await expect(local.connect("db")).rejects.toMatchObject({ code: "sdk.response_invalid" });
+    await local.close();
+  });
+
+  test("rejects native HTTP and Kubernetes settings that could leave loopback", async () => {
+    const local = createClient({ services }).deployment("local");
+    native.reply.protocol = "http";
+    native.reply.url = "http://remote.invalid:15432";
+    await expect(local.connect("app")).rejects.toMatchObject({ code: "sdk.response_invalid" });
+    native.reply.protocol = "kubernetes";
+    native.reply.ssl = { servername: "cluster.local", rejectUnauthorized: true };
+    native.reply.server = "https://remote.invalid:15432";
+    native.reply.kubeconfig = "/home/user/.kube/config";
+    native.reply.context = "local";
+    await expect(local.connect("cluster")).rejects.toMatchObject({
+      code: "sdk.response_invalid",
+    });
     await local.close();
   });
 });

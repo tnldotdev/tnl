@@ -38,6 +38,7 @@ export {
   type ServiceFacts,
   type LocalDeployment,
   type LocalPostgresConnection,
+  type LocalConnectionRegistry,
 } from "./internal/connector/local_client.js";
 
 /** extended by the portable `.tnl/generated/project.d.ts` declaration. */

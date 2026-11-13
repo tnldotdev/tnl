@@ -10,6 +10,7 @@ export type {
   ServiceFacts,
   LocalDeployment,
   LocalPostgresConnection,
+  LocalConnectionRegistry,
 } from "./internal/connector/local_client.js";
 
 export const createClient: typeof import("./internal/connector/local_client.js").createClient =

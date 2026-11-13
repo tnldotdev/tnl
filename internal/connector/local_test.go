@@ -2,13 +2,21 @@ package connector
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
+	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 )
 
 type localResolverFunc func(context.Context, clientproject.Project, string) (string, string, error)
@@ -73,6 +81,109 @@ func TestConnectLocalKeepsConfiguredTargetTLS(t *testing.T) {
 	}
 }
 
+func TestConnectLocalProtocolTargets(t *testing.T) {
+	for _, test := range []struct {
+		name, service, protocol, url string
+		tls                          bool
+	}{
+		{"http address", `{"protocol":"http","target":{"type":"address","address":"127.0.0.1:3000"}}`, "http", "http://127.0.0.1:3000", false},
+		{"http compose tls", `{"protocol":"http","target":{"type":"compose","service":"web","port":443,"tls":{"server_name":"web.local"}}}`, "http", "https://web.local:15443", true},
+		{"tcp address", `{"protocol":"tcp","target":{"type":"address","address":6379}}`, "tcp", "", false},
+		{"tcp tls", `{"protocol":"tcp","target":{"type":"address","address":"127.0.0.1:6379","tls":{"server_name":"redis.local"}}}`, "tcp", "", true},
+		{"mysql docker", `{"protocol":"mysql","target":{"type":"docker","container":"db","port":3306}}`, "mysql", "", false},
+		{"mysql tls", `{"protocol":"mysql","target":{"type":"address","address":"localhost:3306","tls":{}}}`, "mysql", "", true},
+		{"postgres compose", `{"protocol":"postgres","target":{"type":"compose","service":"db","port":5432}}`, "postgres", "", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := localProject(t, test.service)
+			canonicalRoot, err := filepath.EvalSymlinks(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resolver := localResolverFunc(func(_ context.Context, project clientproject.Project, name string) (string, string, error) {
+				if name != "db" || project.Root != canonicalRoot {
+					t.Fatal("lost exact project selection")
+				}
+				return "127.0.0.1:15443", "container-in-this-worktree", nil
+			})
+			connection, err := ConnectLocal(t.Context(), root, "db", test.protocol, resolver)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if connection.Protocol != test.protocol || connection.URL != test.url || (connection.SSL != nil) != test.tls || len(connection.Binding) != 64 {
+				t.Fatalf("local %s: %+v", test.protocol, connection)
+			}
+			if test.protocol == "mysql" && test.name == "mysql docker" && connection.Port != 15443 {
+				t.Fatal("lost discovered container port")
+			}
+		})
+	}
+}
+
+func TestConnectLocalKubernetesRequiresMatchingKubeconfig(t *testing.T) {
+	root := localProject(t, `{"protocol":"kubernetes","target":{"type":"address","address":"https://127.0.0.1:6443","tls":{"server_name":"cluster.local"}}}`)
+	file := filepath.Join(t.TempDir(), "kubeconfig")
+	t.Setenv("KUBECONFIG", file)
+	write := func(server, tlsName string) {
+		t.Helper()
+		content := "apiVersion: v1\nkind: Config\ncurrent-context: local\nclusters:\n- name: local\n  cluster:\n    server: " + server + "\n    tls-server-name: " + tlsName + "\ncontexts:\n- name: local\n  context:\n    cluster: local\n    user: my-credentials\nusers:\n- name: my-credentials\n  user:\n    token: customer-owned\n"
+		if err := os.WriteFile(file, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("https://127.0.0.1:6443", "cluster.local")
+	connection, err := ConnectLocal(t.Context(), root, "db", "kubernetes", nil)
+	if err != nil || connection.Server != "https://127.0.0.1:6443" || connection.Kubeconfig != file || connection.Context != "local" || connection.SSL.ServerName != "cluster.local" {
+		t.Fatalf("local kubeconfig: %+v %v", connection, err)
+	}
+	for _, mismatch := range []struct{ server, tlsName string }{
+		{"https://192.0.2.1:6443", "cluster.local"},
+		{"https://127.0.0.1:6443", "wrong.local"},
+	} {
+		write(mismatch.server, mismatch.tlsName)
+		if _, err := ConnectLocal(t.Context(), root, "db", "kubernetes", nil); err == nil {
+			t.Fatal("accepted unrelated kubeconfig context", mismatch)
+		}
+	}
+}
+
+func TestLocalKubeconfigAcceptsMatchingCAFile(t *testing.T) {
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificate := &x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "local cluster root"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, certificate, certificate, public, private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ca := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	root := t.TempDir()
+	caFile := filepath.Join(root, "cluster-ca.pem")
+	if err := os.WriteFile(caFile, ca, 0600); err != nil {
+		t.Fatal(err)
+	}
+	configFile := filepath.Join(root, "config")
+	t.Setenv("KUBECONFIG", configFile)
+	content := "apiVersion: v1\nkind: Config\ncurrent-context: local\nclusters:\n- name: local\n  cluster:\n    server: https://127.0.0.1:6443\n    tls-server-name: cluster.local\n    certificate-authority: cluster-ca.pem\ncontexts:\n- name: local\n  context:\n    cluster: local\n    user: my-credentials\nusers:\n- name: my-credentials\n  user:\n    token: customer-owned\n"
+	if err := os.WriteFile(configFile, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	trust := &connectorruntime.TLSOptions{ServerName: "cluster.local", RejectUnauthorized: true, CA: string(ca)}
+	file, contextName, err := localKubeconfig("https://127.0.0.1:6443", trust)
+	if err != nil || file != configFile || contextName != "local" {
+		t.Fatalf("matching CA file: %q %q %v", file, contextName, err)
+	}
+	trust.CA = "another CA"
+	if _, _, err := localKubeconfig("https://127.0.0.1:6443", trust); err == nil {
+		t.Fatal("accepted a different target CA")
+	}
+}
+
 func TestConnectLocalNormalizesConfiguredBarePort(t *testing.T) {
 	for _, address := range []string{"5432", `5432`} {
 		t.Run(address, func(t *testing.T) {
@@ -125,12 +236,21 @@ func TestConnectLocalRejectsRemoteAndProtocolSelections(t *testing.T) {
 	for _, service := range []string{
 		`{"protocol":"postgres","target":{"type":"rds","region":"us-east-1","instance":"orders"}}`,
 		`{"protocol":"postgres","target":{"type":"address","address":"db.internal:5432"}}`,
-		`{"protocol":"mysql","target":{"type":"address","address":"127.0.0.1:3306"}}`,
+		`{"protocol":"mysql","target":{"type":"address","address":"192.0.2.1:3306"}}`,
+		`{"protocol":"tcp","target":{"type":"address","address":"0.0.0.0:6379"}}`,
+		`{"protocol":"http","target":{"type":"address","address":"https://remote.invalid:3000","tls":{}}}`,
+		`{"protocol":"kubernetes","target":{"type":"address","address":"https://remote.invalid:6443","tls":{}}}`,
 		`{"protocol":"http","target":{"type":"app"},"public_url":{}}`,
 	} {
 		root := localProject(t, service)
 		if _, err := ConnectLocal(t.Context(), root, "db", "postgres", nil); err == nil {
 			t.Fatal("local selection accepted", service)
+		}
+	}
+	for _, protocol := range []string{"mysql", "tcp", "http", "kubernetes", "invalid"} {
+		root := localProject(t, `{"protocol":"postgres","target":{"type":"address","address":"127.0.0.1:5432"}}`)
+		if _, err := ConnectLocal(t.Context(), root, "db", protocol, nil); err == nil {
+			t.Fatal("accepted mismatched protocol", protocol)
 		}
 	}
 	root := localProject(t, `{"protocol":"postgres","target":{"type":"address","address":"127.0.0.1:5432"}}`)

@@ -40,7 +40,7 @@ type connectionsCapabilities struct {
 type connectionsLocalOptions struct {
 	Directory string `name:"directory" required:"" type:"path"`
 	Service   string `name:"service" required:""`
-	Protocol  string `name:"protocol" enum:"postgres" required:""`
+	Protocol  string `name:"protocol" enum:"http,postgres,mysql,tcp,kubernetes" required:""`
 }
 type connectionsContextOptions struct {
 	Directory string   `name:"directory" required:"" type:"path"`
