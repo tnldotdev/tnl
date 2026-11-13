@@ -19,7 +19,6 @@ const schedulingLinks = createContextKey("tnl scheduling links");
 type Operation =
   | "sdk.prepare"
   | "sdk.connect"
-  | "sdk.connect.read"
   | "sdk.open"
   | "sdk.app.register"
   | "sdk.app.renew"
@@ -83,24 +82,6 @@ export async function operation<T>(name: Operation, work: () => Promise<T>): Pro
   return runContext(trace.setSpan(parent, span), async () => {
     try {
       const result = await work();
-      span.setAttribute("tnl.outcome", "success");
-      return result;
-    } catch (cause) {
-      span.setAttribute("tnl.outcome", "error");
-      span.setStatus({ code: SpanStatusCode.ERROR, message: "error" });
-      throw cause;
-    } finally {
-      span.end();
-    }
-  });
-}
-
-export function operationSync<T>(name: Operation, work: () => T): T {
-  const parent = active();
-  const span = tracer.startSpan(name, options(name, parent), parent);
-  return runContext(trace.setSpan(parent, span), () => {
-    try {
-      const result = work();
       span.setAttribute("tnl.outcome", "success");
       return result;
     } catch (cause) {

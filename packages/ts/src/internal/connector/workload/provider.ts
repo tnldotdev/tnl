@@ -115,12 +115,12 @@ export async function selectWorkload(
     sdk_environment: {
       github_actions: environment.GITHUB_ACTIONS ?? "",
       github_request_url: environment.ACTIONS_ID_TOKEN_REQUEST_URL ?? "",
-      github_request_token: environment.ACTIONS_ID_TOKEN_REQUEST_TOKEN ?? "",
+      github_request_token: process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN ?? "",
       vercel_token_file: environment.VERCEL_OIDC_TOKEN_FILE ?? "",
-      vercel_token: environment.VERCEL_OIDC_TOKEN ?? "",
+      vercel_token: process.env.VERCEL_OIDC_TOKEN ?? "",
       ...(selection.token_env === undefined
         ? {}
-        : { token_env: selection.token_env, token_value: environment[selection.token_env] ?? "" }),
+        : { token_env: selection.token_env, token_value: process.env[selection.token_env] ?? "" }),
     },
     ...(assertion === undefined ? {} : { assertion }),
   };

@@ -1,4 +1,4 @@
-"""native process bounds, sync/async lifecycle, and verified Python TLS snapshots."""
+"""native acquisition bounds, joined cleanup, and verified Python TLS snapshots."""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ import ssl
 import subprocess
 import sys
 import threading
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -58,7 +57,6 @@ def prepared(**changes: object) -> dict[str, object]:
 
 @pytest.fixture(autouse=True)
 def isolated_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(_connections, "_sessions", {})
     monkeypatch.delenv("TNL_CONNECTION_HANDLE", raising=False)
     for key in ("TNL_WORKLOAD", "GITHUB_ACTIONS", "VERCEL", "FLY_APP_NAME"):
         monkeypatch.delenv(key, raising=False)
@@ -92,21 +90,21 @@ def isolated_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_connections, "OwnerIPC", IPC)
 
 
-def test_sync_properties_require_preparation_without_discovery(
+def test_acquisition_construction_does_not_discover_native_or_expose_settings(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def unavailable() -> Path:
-        pytest.fail("a sync read started native discovery")
+        pytest.fail("constructing an acquisition started native discovery")
 
     monkeypatch.setattr(_connections, "native_binary", unavailable)
-    db = _connections.connect("database", directory=tmp_path)
-    with pytest.raises(tnl.TnlError, match="await the deployment connection") as caught:
-        _ = db.port
-    assert caught.value.code == "sdk.connection_not_prepared"
+    scope = _connections._Scope(str(tmp_path), None)
+    db = _connections.ConnectionAcquisition(scope, "database")
+    assert scope.registry is None
+    assert not hasattr(db, "port")
     assert "database" not in repr(db)
 
 
-def test_sync_sibling_read_never_dispatches_prepare(
+def test_constructing_a_sibling_acquisition_does_not_prepare_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(_connections, "native_binary", lambda: Path(sys.executable))
@@ -123,21 +121,20 @@ def test_sync_sibling_read_never_dispatches_prepare(
         calls.append(args[0])
         if args[0] == "sdk-close":
             return {"schema": 1, "state": "stopped"}
-        if args[0] == "read" and args[-1] == "sibling":
-            raise tnl.TnlError("sdk.connection_not_prepared", "service not prepared")
         assert args[0] == "sdk-request"
         return prepared()
 
     monkeypatch.setattr(_connections, "_command", command)
 
     async def scenario() -> None:
-        db = _connections.connect("database", directory=tmp_path)
-        await db
+        scope = _connections._Scope(str(tmp_path), None)
+        db = _connections.ConnectionAcquisition(scope, "database")
+        await db.prepare()
         before = calls.count("prepare")
-        with pytest.raises(tnl.TnlError):
-            _ = _connections.connect("sibling", directory=tmp_path).port
+        sibling = _connections.ConnectionAcquisition(scope, "sibling")
+        assert not hasattr(sibling, "port")
         assert calls.count("prepare") == before
-        assert calls == ["start", "prepare", "read"]
+        assert calls == ["start", "prepare"]
         await db.aclose()
 
     asyncio.run(scenario())
@@ -170,7 +167,7 @@ def test_import_has_no_process_environment_or_client_state_side_effects(tmp_path
     assert not (tmp_path / "unused-state").exists()
 
 
-def test_mounted_sync_reads_are_fresh_and_await_is_a_coherent_nonawaitable_snapshot(
+def test_borrowed_preparation_returns_immutable_verified_settings_and_leaves_owner_running(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     mounted = str(tmp_path / "private-handle.json")
@@ -180,7 +177,7 @@ def test_mounted_sync_reads_are_fresh_and_await_is_a_coherent_nonawaitable_snaps
 
     def command(binary: Path, *args: str) -> object:
         assert binary == Path(sys.executable).resolve()
-        assert args[0] in {"read", "prepare"} and args[1:] == (
+        assert args[0] == "prepare" and args[1:] == (
             "--handle",
             mounted,
             "--service",
@@ -190,17 +187,13 @@ def test_mounted_sync_reads_are_fresh_and_await_is_a_coherent_nonawaitable_snaps
         return prepared(port=34566 + len(calls))
 
     monkeypatch.setattr(_connections, "_command", command)
-    handle = _connections.connect("database", directory=tmp_path)
-    assert handle.port == 34567
-    assert handle.port == 34568
+    scope = _connections._Scope(str(tmp_path), mounted)
+    handle = _connections.ConnectionAcquisition(scope, "database")
 
     async def scenario() -> None:
-        # sync CLI reads can run in an active event loop; no loop nesting or
-        # Python async IPC is involved.
-        assert handle.host == "127.0.0.1"
-        connection = await handle
+        connection = await handle.prepare()
         assert isinstance(connection, tnl.PostgresConnection)
-        assert connection.port == 34570
+        assert connection.port == 34567
         assert not inspect.isawaitable(connection)
         assert connection.ssl.check_hostname
         assert connection.ssl.verify_mode == ssl.CERT_REQUIRED
@@ -212,10 +205,10 @@ def test_mounted_sync_reads_are_fresh_and_await_is_a_coherent_nonawaitable_snaps
         await handle.aclose()
 
     asyncio.run(scenario())
-    assert len(calls) == 4  # close does not stop an externally prepared owner.
+    assert len(calls) == 1  # close does not stop an externally prepared owner.
 
 
-def test_concurrent_threads_and_awaiters_share_one_lazy_native_owner(
+def test_concurrent_acquisitions_share_native_startup_without_canceling_another_waiter(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(_connections, "native_binary", lambda: Path(sys.executable))
@@ -239,28 +232,25 @@ def test_concurrent_threads_and_awaiters_share_one_lazy_native_owner(
         calls.append(args[0])
         if args[0] == "sdk-close":
             return {"schema": 1, "state": "stopped"}
-        assert args[0] in {"read", "sdk-request"} and args[1:] == (
+        assert args[0] == "sdk-request" and args[1:] == (
             "--handle",
             mounted,
             "--service",
             "database",
         )
-        return (
-            prepared()
-            if args[0] == "read"
-            else {
-                "schema": 1,
-                "owner": ready(binary, Path(mounted), datetime.now(UTC) + timedelta(minutes=5)),
-                "prepared": prepared(),
-            }
-        )
+        return {
+            "schema": 1,
+            "owner": ready(binary, Path(mounted), datetime.now(UTC) + timedelta(minutes=5)),
+            "prepared": prepared(),
+        }
 
     monkeypatch.setattr(_connections, "_command", command)
-    first = _connections.connect("database", directory=tmp_path)
-    second = _connections.connect("database", directory=tmp_path)
+    scope = _connections._Scope(str(tmp_path), None)
+    first = _connections.ConnectionAcquisition(scope, "database")
+    second = _connections.ConnectionAcquisition(scope, "database")
 
     async def one() -> tnl.Connection:
-        return await second
+        return await second.prepare()
 
     async def scenario() -> None:
         task = asyncio.create_task(one())
@@ -270,14 +260,9 @@ def test_concurrent_threads_and_awaiters_share_one_lazy_native_owner(
         canceled.cancel()
         with pytest.raises(asyncio.CancelledError):
             await canceled
-        with ThreadPoolExecutor() as pool:
-            sync = pool.submit(lambda: first.port)
-            with pytest.raises(tnl.TnlError) as unprepared:
-                sync.result(timeout=1)
-            assert unprepared.value.code == "sdk.connection_not_prepared"
-            release.set()
-            result = await task
-            assert result.port == first.port == 34567
+        release.set()
+        result = await task
+        assert result.port == 34567
         results = await asyncio.gather(*(one() for _ in range(8)))
         assert len(results) == 8
         await second.aclose()
@@ -286,7 +271,7 @@ def test_concurrent_threads_and_awaiters_share_one_lazy_native_owner(
     asyncio.run(scenario())
     assert calls.count("start") == calls.count("sdk-close") == 1
     with pytest.raises(tnl.TnlError, match="closed"):
-        first.snapshot()
+        asyncio.run(first.prepare())
 
 
 def test_native_retained_failure_preserves_exception_identity_and_private_causes(
@@ -306,17 +291,18 @@ def test_native_retained_failure_preserves_exception_identity_and_private_causes
     )
     binary.chmod(0o700)
     monkeypatch.setattr(_connections, "native_binary", lambda: binary)
-    handle = _connections.connect("database", directory=tmp_path)
+    scope = _connections._Scope(str(tmp_path), None)
+    handle = _connections.ConnectionAcquisition(scope, "database")
 
     async def one() -> tnl.Connection:
-        return await handle
+        return await handle.prepare()
 
     async def scenario() -> None:
         failures = await asyncio.gather(*(one() for _ in range(8)), return_exceptions=True)
         assert all(isinstance(error, tnl.TnlError) for error in failures)
         assert all(error is failures[0] for error in failures)
         with pytest.raises(tnl.TnlError) as repeated:
-            await handle
+            await handle.prepare()
         assert repeated.value is failures[0]
         assert "private-credential" not in str(repeated.value)
         assert "private-credential" not in json.dumps(vars(repeated.value))
@@ -354,7 +340,8 @@ def test_failed_initial_service_snapshot_retains_the_shared_native_owner(
 
     async def scenario() -> None:
         with pytest.raises(tnl.TnlError) as caught:
-            await _connections.connect("database", directory=tmp_path)
+            scope = _connections._Scope(str(tmp_path), None)
+            await _connections.ConnectionAcquisition(scope, "database").prepare()
         assert caught.value.code == "sdk.connection_expired"
 
     asyncio.run(scenario())
@@ -409,25 +396,24 @@ def test_known_owned_expiry_requires_await_and_coalesces_joined_replacement(
         return prepared(expires_at=deadline.isoformat())
 
     monkeypatch.setattr(_connections, "_command", command)
-    handle = _connections.connect("database", directory=tmp_path)
-    replacements: list[_connections.ConnectionHandle[tnl.Connection]] = []
+    scope = _connections._Scope(str(tmp_path), None)
+    handle = _connections.ConnectionAcquisition(scope, "database")
+    replacements: list[_connections.ConnectionAcquisition] = []
 
     async def one() -> tnl.Connection:
-        replacement = _connections.connect("database", directory=tmp_path)
+        replacement = _connections.ConnectionAcquisition(scope, "database")
         replacements.append(replacement)
-        return await replacement
+        return await replacement.prepare()
 
     async def scenario() -> None:
         nonlocal expired
-        first = await handle
+        first = await handle.prepare()
         original_deadline = first.expires_at
         assert handle._session.expires_at == deadline
         handle._session.expires_at = datetime.now(UTC) - timedelta(seconds=1)
         expired = True
         before = list(calls)
-        with pytest.raises(tnl.TnlError) as caught:
-            handle.snapshot()
-        assert caught.value.code == "sdk.connection_expired"
+        assert first.expires_at == original_deadline
         assert calls == before
         pending = [asyncio.create_task(one()) for _ in range(8)]
         assert await asyncio.to_thread(stopping.wait, 5)
@@ -443,9 +429,9 @@ def test_known_owned_expiry_requires_await_and_coalesces_joined_replacement(
         assert first.expires_at == original_deadline
         assert calls.count("start") == 2 and calls.count("stop") == 1
         assert calls.index("stop") < len(calls) - 1 - calls[::-1].index("start")
-        assert handle.snapshot().port == first.port
+        assert first.port == results[0].port
         await handle.aclose()
-        assert replacements[0].snapshot().port == first.port
+        assert (await replacements[0].prepare()).port == first.port
         await replacements[0].aclose()
 
     asyncio.run(scenario())
@@ -480,22 +466,22 @@ def test_expiry_cleanup_must_acknowledge_join_before_replacement(
         return prepared()
 
     monkeypatch.setattr(_connections, "_command", command)
-    handle = _connections.connect("database", directory=tmp_path)
+    scope = _connections._Scope(str(tmp_path), None)
+    handle = _connections.ConnectionAcquisition(scope, "database")
 
     async def scenario() -> None:
         nonlocal joined, expired
-        await handle
+        await handle.prepare()
         handle._session.expires_at = datetime.now(UTC) - timedelta(seconds=1)
         expired = True
         with pytest.raises(tnl.TnlError) as caught:
-            await handle
+            await handle.prepare()
         assert caught.value.code == "sdk.connection_invalid"
         assert calls == ["start", "prepare", "stop"]
-        with pytest.raises(tnl.TnlError) as expired_snapshot:
-            handle.snapshot()
-        assert expired_snapshot.value.code == "sdk.connection_expired"
+        assert handle._session.expires_at is not None
+        assert handle._session.expires_at < datetime.now(UTC)
         joined = True
-        await handle
+        await handle.prepare()
         assert calls == ["start", "prepare", "stop", "stop", "start", "prepare"]
         await handle.aclose()
 
@@ -536,14 +522,15 @@ def test_expiry_restart_preserves_native_retained_denial_identity(
         return prepared()
 
     monkeypatch.setattr(_connections, "_command", command)
-    handle = _connections.connect("database", directory=tmp_path)
+    scope = _connections._Scope(str(tmp_path), None)
+    handle = _connections.ConnectionAcquisition(scope, "database")
 
     async def one() -> tnl.Connection:
-        return await handle
+        return await handle.prepare()
 
     async def scenario() -> None:
         nonlocal allowed, expired
-        await handle
+        await handle.prepare()
         handle._session.expires_at = datetime.now(UTC) - timedelta(seconds=1)
         allowed = False
         expired = True
@@ -553,7 +540,7 @@ def test_expiry_restart_preserves_native_retained_denial_identity(
         assert all(error is denied for error in failures)
         assert calls == ["start", "prepare", "stop", "start"]
         with pytest.raises(tnl.TnlError) as caught:
-            await handle
+            await handle.prepare()
         assert caught.value is denied
         assert calls == ["start", "prepare", "stop", "start"]
         await handle.aclose()
@@ -573,18 +560,17 @@ def test_expired_external_snapshots_never_stop_or_replace_the_owner(
         return prepared(expires_at="2020-01-01T00:00:00Z")
 
     monkeypatch.setattr(_connections, "_command", command)
-    handle = _connections.connect("database", directory=tmp_path)
+    scope = _connections._Scope(str(tmp_path), str(tmp_path / "caller-owned"))
+    handle = _connections.ConnectionAcquisition(scope, "database")
 
     async def scenario() -> None:
         with pytest.raises(tnl.TnlError) as caught:
-            await handle
+            await handle.prepare()
         assert caught.value.code == "sdk.connection_expired"
 
     asyncio.run(scenario())
-    with pytest.raises(tnl.TnlError):
-        handle.snapshot()
     handle.close()
-    assert calls == ["prepare", "read"]
+    assert calls == ["prepare"]
 
 
 def test_snapshot_expiry_and_transient_reads_do_not_replace_a_live_owned_session(
@@ -618,17 +604,18 @@ def test_snapshot_expiry_and_transient_reads_do_not_replace_a_live_owned_session
         return prepared()
 
     monkeypatch.setattr(_connections, "_command", command)
-    handle = _connections.connect("database", directory=tmp_path)
+    scope = _connections._Scope(str(tmp_path), None)
+    handle = _connections.ConnectionAcquisition(scope, "database")
 
     async def scenario() -> None:
         nonlocal fail
-        await handle
+        await handle.prepare()
         for failure in ("expired", "unavailable"):
             fail = failure
             with pytest.raises(tnl.TnlError):
-                await handle
+                await handle.prepare()
         fail = None
-        await handle
+        await handle.prepare()
         assert calls == ["start", "prepare", "prepare", "recover", "prepare", "recover", "prepare"]
         await handle.aclose()
 
@@ -638,8 +625,8 @@ def test_snapshot_expiry_and_transient_reads_do_not_replace_a_live_owned_session
 @pytest.mark.parametrize("service", ["", "Database", "../secret", "db;env", "a" * 33])
 def test_invalid_names_fail_before_native(service: str, tmp_path: Path) -> None:
     with pytest.raises(tnl.TnlError) as caught:
-        _connections.connect(service, directory=tmp_path)
-    assert caught.value.code == "sdk.connection_input"
+        _connections.ConnectionAcquisition(_connections._Scope(str(tmp_path), None), service)
+    assert caught.value.code == "sdk.response_invalid"
     assert service not in str(caught.value) or service == ""
 
 

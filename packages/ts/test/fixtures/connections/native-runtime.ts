@@ -1,27 +1,24 @@
 import assert from "node:assert/strict";
 import { request } from "node:https";
 import { readFile } from "node:fs/promises";
-import { connectionHandle } from "../../../dist/internal/connector/connection.js";
-import type { ProjectRuntime } from "../../../dist/internal/project/runtime.js";
+import { createClient } from "@tnldotdev/tnl";
 
 const protocol = process.argv[2];
 const name = protocol === "kubernetes" ? "cluster" : "api";
-let project: ProjectRuntime | undefined;
-const handle = connectionHandle(name, (value) => {
-  project = value;
-});
-const synchronous = { ...handle };
-const [first, second] = await Promise.all([handle, Promise.resolve(handle)]);
-assert.deepEqual(Object.keys(first), Object.keys(synchronous));
-assert.deepEqual(Object.keys(second), Object.keys(synchronous));
+const project = process.argv[3],
+  hostname = process.argv[4];
+assert(project && hostname);
+const deployment = createClient({
+  project,
+  services: { api: { protocol: "http" }, cluster: { protocol: "kubernetes" } },
+}).deployment("remote");
+const [first, second] = await Promise.all([deployment.connect(name), deployment.connect(name)]);
+assert.deepEqual(Object.keys(first), Object.keys(second));
 assert.equal(Reflect.get(first, "then"), undefined);
 assert(Object.isFrozen(first));
-const metadata = project?.services[name];
-assert(metadata && metadata.protocol === protocol);
-if ("fetch" in first && "fetch" in synchronous && "url" in metadata) {
-  assert.equal(first.url, metadata.url);
-  assert.equal(synchronous.url, metadata.url);
-  for (const connection of [synchronous, first]) {
+if ("fetch" in first) {
+  for (const connection of [first, second]) {
+    assert("fetch" in connection);
     const response = await connection.fetch("/echo", {
       method: "POST",
       headers: { authorization: "Bearer application-only" },
@@ -30,13 +27,12 @@ if ("fetch" in first && "fetch" in synchronous && "url" in metadata) {
     assert.equal(response.status, 201);
     assert.equal(await response.text(), "streamed-body");
   }
-} else if ("server" in first && "server" in synchronous && "url" in metadata) {
-  assert.equal(first.server, `https://127.0.0.1:${metadata.port}`);
-  assert.equal(synchronous.server, first.server);
-  assert.notEqual(first.server, metadata.url);
+} else if ("server" in first && "server" in second) {
+  assert.equal(first.server, second.server);
+  assert(first.server.startsWith("https://127.0.0.1:"));
   const config = await readFile(first.kubeconfig, "utf8");
   assert(config.includes(first.server));
-  assert(config.includes(`tls-server-name: ${metadata.hostname}`));
+  assert(config.includes(`tls-server-name: ${hostname}`));
   assert(config.includes(first.context));
   const result = await new Promise<{ status: number | undefined; body: string }>(
     (resolve, reject) => {
@@ -44,7 +40,7 @@ if ("fetch" in first && "fetch" in synchronous && "url" in metadata) {
         `${first.server}/echo`,
         {
           method: "POST",
-          servername: metadata.hostname,
+          servername: hostname,
           rejectUnauthorized: true,
           headers: { authorization: "Bearer application-only" },
         },
@@ -64,3 +60,4 @@ if ("fetch" in first && "fetch" in synchronous && "url" in metadata) {
   assert.equal(result.status, 201);
   assert.equal(result.body, "streamed-body");
 } else assert.fail("the native fixture returned the wrong protocol settings");
+await deployment.close();

@@ -2,10 +2,12 @@
 
 import asyncio
 import ssl
+import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from test_workload_connections import NativeFixture
 
 import tnl
 from tnl import _connections, _deployments
@@ -69,7 +71,10 @@ def test_remote_connection_rejects_unknown_names_and_protocol_drift(
     monkeypatch.setattr(_connections._Scope, "stop", lambda _self: None)
 
     def prepare(
-        scope: _connections._Scope, _service: str, _selection: object = None
+        scope: _connections._Scope,
+        _service: str,
+        _selection: object = None,
+        _requester: _connections._Session | None = None,
     ) -> tuple[_connections.Connection, _connections._Session]:
         return (
             _connections.HTTPConnection(
@@ -82,7 +87,7 @@ def test_remote_connection_rejects_unknown_names_and_protocol_drift(
                 "https://database.example.test:15443",
                 _transport_id="ctg_" + "a" * 22,
             ),
-            _connections._Session(scope, "/fixture/handle.json"),
+            _connections._Session(scope),
         )
 
     monkeypatch.setattr(_connections._Scope, "prepare", prepare)
@@ -239,7 +244,10 @@ def test_remote_selections_are_independent_and_do_not_read_provider_configuratio
     monkeypatch.setattr(_connections._Scope, "stop", lambda scope: stopped.append(scope))
 
     def prepare(
-        scope: _connections._Scope, service: str, selection: object = None
+        scope: _connections._Scope,
+        service: str,
+        selection: object = None,
+        _requester: _connections._Session | None = None,
     ) -> tuple[_connections.Connection, _connections._Session]:
         selected.append(scope.deployment)
         assert selection is None
@@ -249,7 +257,7 @@ def test_remote_selections_are_independent_and_do_not_read_provider_configuratio
             12345,
             datetime.now(UTC) + timedelta(minutes=1),
             _transport_id="ctg_" + "a" * 22,
-        ), _connections._Session(scope, "/fixture/handle.json")
+        ), _connections._Session(scope)
 
     monkeypatch.setattr(_connections._Scope, "prepare", prepare)
 
@@ -274,3 +282,121 @@ def test_remote_selections_are_independent_and_do_not_read_provider_configuratio
         assert failure.value.code == "sdk.connection_closed"
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_deployment_close_joins_canceled_getters_without_creating_late_drivers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failed: bool
+) -> None:
+    native = NativeFixture(tmp_path, monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    tnl.configure_workload("job", token=lambda: "first")
+    deployment = tnl.create_client(
+        project="team/project", services={"db": {"protocol": "postgres"}}
+    ).deployment("production")
+    native.pause = True
+    if failed:
+        native.fail_start.add("first")
+    created: list[object] = []
+    factory = deployment.client(
+        "db", create=lambda value: created.append(value), close=lambda _: None
+    )
+
+    async def scenario() -> None:
+        pending = asyncio.create_task(factory())
+        assert await asyncio.to_thread(native.identifying.wait, 5)
+        pending.cancel("only this getter")
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+        first = asyncio.create_task(deployment.aclose())
+        second = asyncio.create_task(deployment.aclose())
+        await asyncio.sleep(0)
+        assert not first.done() and not second.done()
+        native.release.set()
+        results = await asyncio.gather(first, second, return_exceptions=True)
+        if failed:
+            assert all(isinstance(result, BaseExceptionGroup) for result in results)
+            assert results[0] is results[1]
+        else:
+            assert results == [None, None]
+        assert not created and not native.retained
+        assert deployment._scope.pending == 0 and not deployment._scope.requests
+        assert set(native.closed) == set(native.owners.values())
+
+    asyncio.run(scenario())
+
+
+def test_deployment_cleanup_retry_preserves_its_error_and_joins_exact_failed_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    native = NativeFixture(tmp_path, monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    tnl.configure_workload("job", token=lambda: "first")
+    deployment = tnl.create_client(
+        project="team/project", services={"db": {"protocol": "postgres"}}
+    ).deployment("production")
+    native.fail_start.add("first")
+    entered, release = threading.Event(), threading.Event()
+    command = native.command
+    failures: list[tnl.TnlError] = []
+
+    def stop(binary: Path, *args: str, input_value: object = None) -> object:
+        if args[0] in {"sdk-close", "sdk-stop"}:
+            entered.set()
+            assert release.wait(5)
+        try:
+            return command(binary, *args, input_value=input_value)
+        except tnl.TnlError as error:
+            failures.append(error)
+            raise
+
+    monkeypatch.setattr(_connections, "_command", stop)
+
+    async def scenario() -> None:
+        with pytest.raises(tnl.TnlError) as original:
+            await deployment.connect("db")
+        native.fail_close = True
+        closing = asyncio.create_task(deployment.aclose())
+        assert await asyncio.to_thread(entered.wait, 5)
+        closing.cancel("stop waiting, not cleanup")
+        with pytest.raises(asyncio.CancelledError):
+            await closing
+        joined = asyncio.create_task(deployment.aclose())
+        release.set()
+        with pytest.raises(BaseExceptionGroup) as caught:
+            await joined
+        assert all(error in caught.value.exceptions for error in failures)
+        assert original.value.__cause__ is None and native.retained
+        native.fail_close = False
+        await deployment.aclose()
+        assert not native.retained
+
+    asyncio.run(scenario())
+
+
+def test_repeated_native_failure_retains_one_cleanup_capability(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    native = NativeFixture(tmp_path, monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    tnl.configure_workload("job", token=lambda: "first")
+    native.fail_start.add("first")
+    deployment = tnl.create_client(
+        project="team/project", services={"db": {"protocol": "postgres"}}
+    ).deployment("production")
+
+    async def scenario() -> None:
+        failure: tnl.TnlError | None = None
+        for _ in range(80):
+            with pytest.raises(tnl.TnlError) as caught:
+                await deployment.connect("db")
+            if failure is None:
+                failure = caught.value
+            assert caught.value is failure
+        lifetime = deployment._acquisitions["db"]._lifetime
+        assert not lifetime.preparations and len(lifetime.failed) == 1
+        assert len(deployment._scope.failure_handles) == 1
+        await deployment.aclose()
+        assert native.calls.count("sdk-close") == 1 and not native.retained
+
+    asyncio.run(scenario())

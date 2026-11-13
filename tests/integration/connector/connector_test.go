@@ -298,6 +298,21 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 	ownerKeys := map[string]*workloadSession{}
 	var authorityMu sync.Mutex
 	controlCalls := map[string]int{}
+	selectionCalls := func() map[string]int {
+		authorityMu.Lock()
+		defer authorityMu.Unlock()
+		calls := maps.Clone(controlCalls)
+		// scheduled renewals can overlap warm preparation. count acquisition
+		// separately; the refresh suites assert the real renewal lifecycle.
+		for endpoint := range calls {
+			if strings.HasSuffix(endpoint, "/renew") &&
+				(strings.HasPrefix(endpoint, "POST /v1/workload-sessions/") ||
+					strings.HasPrefix(endpoint, "POST /v1/services/{service}/connector-peer-pairs/")) {
+				delete(calls, endpoint)
+			}
+		}
+		return calls
+	}
 	googleConfig := strings.HasPrefix(startup, "config-google-")
 	var issuer *githubtest.Issuer
 	if googleConfig {
@@ -926,9 +941,7 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 		if err != nil {
 			t.Fatal(err)
 		}
-		authorityMu.Lock()
-		cold := maps.Clone(controlCalls)
-		authorityMu.Unlock()
+		cold := selectionCalls()
 		_, _ = io.WriteString(input, "warm\n")
 		if !lines.Scan() || lines.Text() != "warm" {
 			t.Fatal("SDK did not complete warm selection")
@@ -937,9 +950,7 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 		if owner != nextOwner || first.TransportID != next.TransportID || !first.ExpiresAt.Equal(next.ExpiresAt) || first.Port != next.Port {
 			t.Fatal("warm SDK selection replaced the owner, transport, port, or fixed expiry")
 		}
-		authorityMu.Lock()
-		warm := maps.Clone(controlCalls)
-		authorityMu.Unlock()
+		warm := selectionCalls()
 		if !maps.Equal(cold, warm) {
 			t.Fatalf("%s warm SDK preparation made control RPCs: cold=%v after=%v", startup, cold, warm)
 		}
@@ -1048,7 +1059,7 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 				t.Fatal("retained failure retried native authentication", deniedSDKExchanges.Load())
 			}
 			phase("retry", "recovered")
-			t.Log("real Python lifecycle: borrowed close, concurrent joined close, stale alias, cleanup retry, close during startup, retained denial identity, and explicit retry passed")
+			t.Log("real Python lifecycle: borrowed close, concurrent joined close, closed-handle isolation, cleanup retry, close during startup, retained denial identity, and explicit retry passed")
 		}
 		_, _ = io.WriteString(input, "stop\n")
 		t.Logf("%s SDK decoded cold and ten warm native responses with stable transport and expiry; cold=%v warm=0", startup, cold)
@@ -1142,9 +1153,7 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 			}
 			operation, privateRequest.Workload = "sdk-prepare", "test"
 		}
-		authorityMu.Lock()
-		cold := maps.Clone(controlCalls)
-		authorityMu.Unlock()
+		cold := selectionCalls()
 		client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 25 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 		defer client.CloseIdleConnections()
 		for range 10 {
@@ -1184,9 +1193,7 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 				t.Fatal(err)
 			}
 		}
-		authorityMu.Lock()
-		warm := maps.Clone(controlCalls)
-		authorityMu.Unlock()
+		warm := selectionCalls()
 		if !maps.Equal(cold, warm) {
 			t.Fatalf("warm SDK preparation made control RPCs: cold=%v after=%v", cold, warm)
 		}
@@ -1200,7 +1207,7 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 		if total != 12 {
 			t.Fatalf("SDK cold RPC budget=%d, want 12 including one lost-exchange retry: %v", total, cold)
 		}
-		t.Logf("%s control RPCs: cold=%d warm(10 requests)=0; includes two identity calls and one injected lost-exchange retry; by endpoint=%v", startup, total, cold)
+		t.Logf("%s acquisition RPCs excluding scheduled renewals: cold=%d warm(10 requests)=0; includes two identity calls and one injected lost-exchange retry; by endpoint=%v", startup, total, cold)
 		return cold
 	}
 	if err := json.Unmarshal(call(request, startArgs...), &state); err != nil {
@@ -1228,13 +1235,13 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 		defer cancel()
 		for _, language := range []string{"javascript", "python"} {
 			fixture, _ := filepath.Abs("../../../packages/ts/test/fixtures/connections/borrowed-expiry.ts")
-			child := exec.CommandContext(ctx, "node", fixture)
+			child := exec.CommandContext(ctx, "node", fixture, scope.TeamID+"/"+scope.ProjectKey)
 			child.Env = append(slices.Clone(env), "TNL_CONNECTION_HANDLE="+state.ConnectionHandle)
 			if language == "python" {
 				python, _ := filepath.Abs("../../../packages/py/.venv/bin/python")
 				fixture, _ := filepath.Abs("../../../packages/py/tests/native_borrowed_expiry.py")
 				source, _ := filepath.Abs("../../../packages/py/src")
-				child = exec.CommandContext(ctx, python, fixture, binary)
+				child = exec.CommandContext(ctx, python, fixture, binary, scope.TeamID+"/"+scope.ProjectKey)
 				child.Env = append(slices.Clone(env), "TNL_CONNECTION_HANDLE="+state.ConnectionHandle, "PYTHONPATH="+source)
 			}
 			child.Dir = root
@@ -1471,7 +1478,7 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 		if err != nil {
 			t.Fatal(err)
 		}
-		node := exec.CommandContext(t.Context(), "node", fixture, protocol)
+		node := exec.CommandContext(t.Context(), "node", fixture, protocol, scope.TeamID+"/"+scope.ProjectKey, managedHostname)
 		node.Dir, node.Env = root, append(slices.Clone(env), "TNL_CONNECTION_HANDLE="+state.ConnectionHandle)
 		if output, err := node.CombinedOutput(); err != nil {
 			t.Fatalf("native SDK runtime: %v %s", err, output)
