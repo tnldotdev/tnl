@@ -3,10 +3,10 @@ package naming
 import "testing"
 
 func TestMemberNamespaceUsesTheDomainOwnershipLabel(t *testing.T) {
-	if got := MemberNamespace("routes.example.com", true, "generated-label", "alex"); got != "generated-label.routes.example.com" {
+	if got := MemberNamespace("routes.example.com", true, "generated-label", "chase"); got != "generated-label.routes.example.com" {
 		t.Fatalf("managed namespace = %q", got)
 	}
-	if got := MemberNamespace("studio.example.com", false, "generated-label", "alex"); got != "alex.studio.example.com" {
+	if got := MemberNamespace("studio.example.com", false, "generated-label", "chase"); got != "chase.studio.example.com" {
 		t.Fatalf("custom namespace = %q", got)
 	}
 }
@@ -17,15 +17,15 @@ func TestPublicURLNamespaceOwnership(t *testing.T) {
 		managed, personal, shared bool
 		mode                      ManagedURLMode
 	}{
-		{"oidc_personal", "routes.example.com", "alex", "alex.routes.example.com", true, true, false, ManagedURLModeSimple},
-		{"organization", "routes.example.com", "studio", "alex.studio.routes.example.com", true, false, false, ManagedURLModeSimple},
-		{"personal_custom", "dev.example.com", "alex", "dev.example.com", false, true, true, ManagedURLModeSimple},
-		{"organization_custom", "studio.example.com", "studio", "alex.studio.example.com", false, false, false, ManagedURLModeSimple},
+		{"oidc_personal", "routes.example.com", "chase", "chase.routes.example.com", true, true, false, ManagedURLModeSimple},
+		{"organization", "routes.example.com", "studio", "chase.studio.routes.example.com", true, false, false, ManagedURLModeSimple},
+		{"personal_custom", "dev.example.com", "chase", "dev.example.com", false, true, true, ManagedURLModeSimple},
+		{"organization_custom", "studio.example.com", "studio", "chase.studio.example.com", false, false, false, ManagedURLModeSimple},
 		{"hosted_managed", "tnl.dev", "studio", "ecstatic-penguin.tnl.dev", true, false, false, ManagedURLModeGenerated},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got, shared := PublicURLNamespace(NamespaceFacts{Domain: test.domain, Managed: test.managed,
-				Mode: test.mode, TeamName: test.team, MemberSlug: "alex", ManagedLabel: "ecstatic-penguin",
+				Mode: test.mode, TeamName: test.team, MemberSlug: "chase", ManagedLabel: "ecstatic-penguin",
 				Personal: test.personal})
 			if got != test.want || shared != test.shared {
 				t.Fatalf("suffix = %q, shared = %t; want %q, %t", got, shared, test.want, test.shared)
@@ -35,7 +35,7 @@ func TestPublicURLNamespaceOwnership(t *testing.T) {
 }
 
 func TestPublicURLWildcardStaysUnderTheAuthorizedNamespace(t *testing.T) {
-	const namespace = "alex.studio.routes.example.com"
+	const namespace = "chase.studio.routes.example.com"
 	for _, test := range []struct{ hostname, want string }{
 		{"app." + namespace, "*." + namespace},
 		{"api.preview." + namespace, "*.preview." + namespace},

@@ -37,10 +37,10 @@ func (s localAuthorizationStoreStub) AuthorizeTeamSession(_ context.Context, p c
 
 func TestSimpleManagedOrganizationUsesFullMemberNamespace(t *testing.T) {
 	store := localAuthorizationStoreStub{
-		principal: controlstate.ControlPrincipal{IdentityID: "alex"},
+		principal: controlstate.ControlPrincipal{IdentityID: "chase"},
 		identity: controlstate.IdentityContext{Memberships: []controlstate.Membership{{
 			ID: "membership", TeamID: "studio", TeamKind: controlstate.TeamKindOrganization,
-			TeamDisplayName: "studio", MemberSlug: "alex", ManagedLabel: "generated-name", Role: controlstate.TeamRoleMember,
+			TeamDisplayName: "studio", MemberSlug: "chase", ManagedLabel: "generated-name", Role: controlstate.TeamRoleMember,
 			PolicyRevision: 1,
 		}}},
 		domains: []controlstate.Domain{{ID: "managed", Kind: controlstate.DomainKindManaged,
@@ -49,11 +49,11 @@ func TestSimpleManagedOrganizationUsesFullMemberNamespace(t *testing.T) {
 	authorizer := localAuthorizer{store: store, managedURLMode: naming.ManagedURLModeSimple}
 	request := authorization.Request{Operation: authorization.OperationPublicURLCreate, TeamID: "studio",
 		DomainID: "managed", PublicURLScope: authorization.PublicURLScopeMember,
-		CanonicalHostname: "app.alex.studio.routes.example.com"}
+		CanonicalHostname: "app.chase.studio.routes.example.com"}
 	if _, err := authorizer.Authorize(t.Context(), request); err != nil {
 		t.Fatal(err)
 	}
-	for _, hostname := range []string{"alex.studio.routes.example.com", "app.generated-name.routes.example.com", "app.bob.studio.routes.example.com"} {
+	for _, hostname := range []string{"chase.studio.routes.example.com", "app.generated-name.routes.example.com", "app.bob.studio.routes.example.com"} {
 		request.CanonicalHostname = hostname
 		if _, err := authorizer.Authorize(t.Context(), request); !errors.Is(err, authorization.ErrForbidden) {
 			t.Errorf("authorized %q: %v", hostname, err)

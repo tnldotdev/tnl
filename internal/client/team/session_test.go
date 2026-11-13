@@ -195,7 +195,7 @@ func TestTeamSessionOpenAndLifetime(t *testing.T) {
 		case "/v1/identity":
 			identityReads.Add(1)
 			identity := authorityv1.IdentityContext{PersonalTeamId: "personal", Memberships: []authorityv1.Membership{
-				{TeamId: "personal"}, {TeamId: "project", MemberSlug: "alex"},
+				{TeamId: "personal"}, {TeamId: "project", MemberSlug: "chase"},
 			}}
 			if teamCreated.Load() {
 				identity.Memberships = append(identity.Memberships, authorityv1.Membership{
@@ -248,7 +248,7 @@ func TestTeamSessionOpenAndLifetime(t *testing.T) {
 	if err != nil || len(current.Domains()) != 1 || domainReads != 1 {
 		t.Fatalf("team domains: %+v, %v; domain reads %d", current, err, domainReads)
 	}
-	if namespace, _ := current.Namespace(current.Domains()[0]); namespace != "alex.studio.example.test" {
+	if namespace, _ := current.Namespace(current.Domains()[0]); namespace != "chase.studio.example.test" {
 		t.Fatalf("discovery mode was lost: %q", namespace)
 	}
 	borrowed := NewSession(nil, session.Store(), session.Authenticated(), session.Identity(), Options{SelectedTeam: "project"})
