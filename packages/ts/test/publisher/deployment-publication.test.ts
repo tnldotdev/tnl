@@ -116,7 +116,7 @@ function fixture() {
           },
         },
       };
-    if (operation === "ad-hoc/register" || operation === "register") {
+    if (operation === "publications/register" || operation === "register") {
       session.body = payloadSchema.parse(body);
       return {
         version: 1,
@@ -169,7 +169,7 @@ test("named and unnamed handles capture remote selection without facts and prese
   const server = await listener();
   const named = await production.publish("web", server);
   const temporary = await sibling.publish(server);
-  const registered = calls.filter((call) => call.operation === "ad-hoc/register");
+  const registered = calls.filter((call) => call.operation === "publications/register");
   expect(registered[0]?.body).toMatchObject({
     deployment: {
       project: "acme/shop",
@@ -219,7 +219,7 @@ test("local named publication uses framework prepare/register and strict saved p
   expect(publication.url).toBe("https://web.example.test");
   expect(calls.map((call) => call.operation)).toContain("prepare");
   expect(calls.map((call) => call.operation)).toContain("register");
-  expect(calls.map((call) => call.operation)).not.toContain("ad-hoc/register");
+  expect(calls.map((call) => call.operation)).not.toContain("publications/register");
   expect([...sessions.values()][0]?.selection).not.toHaveProperty("publications");
   await local.close();
   expect(server.listening).toBe(true);
@@ -251,7 +251,7 @@ test("Fetch publication waits for routability and closes its owned adapter", asy
   routable.resolve();
   const publication = await publishing;
   const target = payloadSchema.parse(
-    calls.find((call) => call.operation === "ad-hoc/register")?.body,
+    calls.find((call) => call.operation === "publications/register")?.body,
   ).target;
   expect(await visit(target, publication.url)).toBe("fetch app");
   await publication.close();
@@ -267,7 +267,7 @@ test("deployment close joins a registration that committed before cancellation",
   const drained = Promise.withResolvers<void>();
   native.request.mockImplementation(async (endpoint, operation, body) => {
     const result = await request(endpoint, operation, body);
-    if (operation === "ad-hoc/register") {
+    if (operation === "publications/register") {
       committed.resolve();
       await reply.promise;
     }
@@ -302,7 +302,7 @@ test("lost initial acknowledgement recovers exact invocation before cleanup", as
   let lost = false;
   native.request.mockImplementation(async (endpoint, operation, body) => {
     const result = await request(endpoint, operation, body);
-    if (operation === "ad-hoc/register" && !lost) {
+    if (operation === "publications/register" && !lost) {
       lost = true;
       throw new TnlError("sdk.dev_unavailable");
     }
@@ -314,7 +314,7 @@ test("lost initial acknowledgement recovers exact invocation before cleanup", as
   await expect(deployment.publish(await listener())).rejects.toMatchObject({
     code: "sdk.dev_unavailable",
   });
-  const registered = calls.filter((call) => call.operation === "ad-hoc/register");
+  const registered = calls.filter((call) => call.operation === "publications/register");
   expect(registered).toHaveLength(2);
   expect(registered[0]?.body).toEqual(registered[1]?.body);
   expect(calls.at(-1)?.operation).toBe("unregister");
@@ -352,7 +352,7 @@ test("failed native cleanup retains the Fetch listener for a joined retry", asyn
   );
   const publication = await deployment.publish(() => new Response("still serving"));
   const target = payloadSchema.parse(
-    calls.find((call) => call.operation === "ad-hoc/register")?.body,
+    calls.find((call) => call.operation === "publications/register")?.body,
   ).target;
   await expect(deployment.close()).rejects.toThrow();
   expect(await visit(target, publication.url)).toBe("still serving");

@@ -148,7 +148,7 @@ class NativeRuntime:
             "renew",
             "unregister",
             "status",
-            "ad-hoc/register",
+            "publications/register",
         }:
             raise InvalidResponse()
         data = None if payload is None else json.dumps(payload).encode()
@@ -188,7 +188,7 @@ class NativeRuntime:
                     ):
                         raise RegistrationLost()
                     if response.status_code == 204:
-                        if body or operation in {"prepare", "status", "ad-hoc/register"}:
+                        if body or operation in {"prepare", "status", "publications/register"}:
                             raise InvalidResponse()
                         return None
                     if (
@@ -198,7 +198,7 @@ class NativeRuntime:
                         raise InvalidResponse()
                     value: object = json.loads(body)
                     if response.status_code == 200:
-                        if operation not in {"prepare", "status", "ad-hoc/register"}:
+                        if operation not in {"prepare", "status", "publications/register"}:
                             raise InvalidResponse()
                         return value
                     if (

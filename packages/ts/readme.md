@@ -26,8 +26,9 @@ Declare an app service in `tnl.config.ts`:
 import { defineConfig } from "@tnldotdev/tnl/config";
 
 export default defineConfig({
-  services: {
-    api: { publicURL: {}, target: { type: "app" } },
+  services: { api: { protocol: "http" } },
+  deployments: {
+    local: { targets: { api: { type: "app", publicURL: {} } } },
   },
 });
 ```
@@ -54,16 +55,21 @@ For a temporary URL without project configuration, first run
 `npx tnl publisher setup --namespace` after signing in:
 
 ```ts
-import { tnl } from "@tnldotdev/tnl";
+import { createClient } from "@tnldotdev/tnl";
 
-const tunnel = await tnl.open(() => new Response("hello"));
-console.log(tunnel.url);
-await tunnel.wait();
+const local = createClient({ project: "acme/shop" }).deployment("local");
+const publication = await local.publish(() => new Response("hello"));
+console.log(publication.url);
+await publication.wait();
 ```
 
-`open` waits until the public URL can receive visitors. Keep the tunnel open
-while using it; call `await tunnel.close()` during shutdown to remove the URL.
+`publish` waits until the public URL can receive visitors. Keep the publication
+open while using it; call `await local.close()` during shutdown to remove the URL.
 By default, visitors need a current sign-in, share link, or token.
+For staging or production, select the remote deployment with an approved
+`TNL_TOKEN`. `deployment.publish("web", server)` serves its saved URL, while
+`deployment.publish(server)` allocates a temporary URL. See
+[application publication](https://tnl.dev/docs/api#approve-application-publication).
 
 ## connect to local postgres
 
@@ -81,11 +87,12 @@ const connection = await local.connect("database");
 await local.close();
 ```
 
-This initial explicit-deployment API supports only local PostgreSQL. It does not
+Local selection supports direct PostgreSQL access. It does not
 start Docker or publish a tunnel, and it never falls back to a remote service.
 See the [local database recipe](https://tnl.dev/docs/private-services#connect-to-local-postgres-without-sign-in)
-for Compose port mappings, driver pools, and cleanup. Remote connections still use
-the API below.
+for Compose port mappings, driver pools, and cleanup. Remote deployments support
+HTTP, PostgreSQL, MySQL, TCP, and Kubernetes; see
+[remote connection setup](https://tnl.dev/docs/private-services#connect-to-a-saved-deployment-from-your-backend).
 
 ## connect to a service
 

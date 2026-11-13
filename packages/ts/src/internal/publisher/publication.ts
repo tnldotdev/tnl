@@ -24,21 +24,21 @@ import { parseStatus } from "./status.js";
 import { parseAssignment } from "./app.js";
 import type { TnlRatePeriod } from "../../config.gen.js";
 
-export type PublisherCredentialFile = {
+type PublisherCredentialFile = {
   readonly publisherCredentialFile: string;
   readonly publisherIdentityID?: never;
 };
-export type PublisherIdentityID = {
+type PublisherIdentityID = {
   readonly publisherIdentityID: string;
   readonly publisherCredentialFile?: never;
 };
-export type OpenOptions = OpenSettings &
+type InvocationOptions = InvocationSettings &
   (
     | PublisherCredentialFile
     | PublisherIdentityID
     | { readonly publisherCredentialFile?: never; readonly publisherIdentityID?: never }
   );
-interface OpenSettings {
+interface InvocationSettings {
   readonly telemetry?: boolean;
   readonly server?: string;
   readonly directory?: string;
@@ -59,9 +59,12 @@ interface OpenSettings {
   readonly signal?: AbortSignal;
 }
 
-export type NamedPublicationOptions = Pick<OpenSettings, "targetHostname" | "signal" | "telemetry">;
+export type NamedPublicationOptions = Pick<
+  InvocationSettings,
+  "targetHostname" | "signal" | "telemetry"
+>;
 export type TemporaryPublicationOptions = NamedPublicationOptions &
-  Pick<OpenSettings, "requirePostQuantum" | "access" | "limits">;
+  Pick<InvocationSettings, "requirePostQuantum" | "access" | "limits">;
 
 export function validatePublicationOptions(
   options: TemporaryPublicationOptions,
@@ -116,18 +119,20 @@ const dependencies: Dependencies = {
 };
 
 // registration acknowledges a listener; filtered status identifies its exact run.
-export function openServer(
+export function publishServer(
   server: LocalHTTPServer,
-  options: OpenOptions = {},
+  options: InvocationOptions = {},
   runtime: Dependencies = dependencies,
   publication?: PublicationSelection,
 ): Promise<Publication> {
-  return operation("sdk.publish", () => openServerUntraced(server, options, runtime, publication));
+  return operation("sdk.publish", () =>
+    publishServerUntraced(server, options, runtime, publication),
+  );
 }
 
-async function openServerUntraced(
+async function publishServerUntraced(
   server: LocalHTTPServer,
-  options: OpenOptions,
+  options: InvocationOptions,
   runtime: Dependencies,
   publication?: PublicationSelection,
 ): Promise<Publication> {
@@ -212,7 +217,7 @@ async function openServerUntraced(
     try {
       if (localService === undefined) {
         registration = parseRegistration(
-          await runtime.request(endpoint, "ad-hoc/register", request),
+          await runtime.request(endpoint, "publications/register", request),
           owner,
           target,
         );
@@ -496,7 +501,7 @@ const networkSchema = z
     );
   });
 const accessModeSchema = z.enum(["restricted", "anonymous"]);
-const openOptionsSchema = z
+const invocationOptionsSchema = z
   .strictObject({
     publisherCredentialFile: credentialFileSchema.optional(),
     publisherIdentityID: z
@@ -527,8 +532,8 @@ const openOptionsSchema = z
       options.publisherCredentialFile === undefined || options.publisherIdentityID === undefined,
   );
 
-function validateOptions(options: OpenOptions): void {
-  parseValue(openOptionsSchema, options, "sdk.configuration_invalid");
+function validateOptions(options: InvocationOptions): void {
+  parseValue(invocationOptionsSchema, options, "sdk.configuration_invalid");
 }
 function validPublisherCredentialFile(value: unknown): value is string {
   return credentialFileSchema.safeParse(value).success;
@@ -539,9 +544,9 @@ function aborted(): DOMException {
 }
 
 // inline Fetch handlers own their Node listener; a supplied server is never closed.
-export async function openFetch(
+export async function publishFetch(
   handler: FetchHandler,
-  options: OpenOptions = {},
+  options: InvocationOptions = {},
   runtime: Dependencies = dependencies,
   publication?: PublicationSelection,
 ): Promise<Publication> {
@@ -550,7 +555,7 @@ export async function openFetch(
   const server = await createFetchServer(handler);
   let base: Publication;
   try {
-    base = await openServer(server, options, runtime, publication);
+    base = await publishServer(server, options, runtime, publication);
   } catch (cause) {
     try {
       await closeServer(server);

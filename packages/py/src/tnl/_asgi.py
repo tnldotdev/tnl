@@ -7,8 +7,7 @@ import os
 import re
 import secrets
 import socket
-from collections.abc import AsyncIterator, Callable, Mapping
-from contextlib import asynccontextmanager
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -304,7 +303,7 @@ class Publication:
                 self._registration_uncertain = False
                 return
             self._registration = parse_registration(
-                await self._native.request(self._endpoint, "ad-hoc/register", self._payload),
+                await self._native.request(self._endpoint, "publications/register", self._payload),
                 self._owner,
                 self._target,
             )
@@ -646,47 +645,3 @@ async def start_publication(
                 "ASGI operation and cleanup failed", [primary, cleanup]
             ) from None
         raise
-
-
-@asynccontextmanager
-async def open(
-    app: ASGIApp,
-    *,
-    publisher_credential_file: str | Path | None = None,
-    publisher_identity_id: str | None = None,
-    server: str | None = None,
-    directory: str | Path | None = None,
-    state_dir: str | Path | None = None,
-    access: Literal["restricted", "anonymous"] | AccessPolicy | None = None,
-    limits: Limits | None = None,
-    require_post_quantum: bool = False,
-    telemetry: bool = True,
-) -> AsyncIterator[Publication]:
-    publication = await start_publication(
-        app,
-        publisher_credential_file=publisher_credential_file,
-        publisher_identity_id=publisher_identity_id,
-        server=server,
-        directory=directory,
-        state_dir=state_dir,
-        access=access,
-        limits=limits,
-        require_post_quantum=require_post_quantum,
-        telemetry=telemetry,
-    )
-    try:
-        yield publication
-    except BaseException as primary:
-        try:
-            await publication.aclose()
-        except BaseException as cleanup:
-            if isinstance(primary, asyncio.CancelledError) and isinstance(
-                cleanup, asyncio.CancelledError
-            ):
-                raise primary from None
-            raise BaseExceptionGroup(
-                "ASGI operation and cleanup failed", [primary, cleanup]
-            ) from None
-        raise
-    else:
-        await publication.aclose()

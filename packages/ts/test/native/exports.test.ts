@@ -20,6 +20,8 @@ test("import and require share errors, workload configuration, and lazy handles"
     const cjs = require('@tnldotdev/tnl');
     assert.equal(cjs.tnl, esm.tnl);
     assert.equal(cjs.TnlError, esm.TnlError);
+    assert.equal(cjs.createClient, esm.createClient);
+    assert.equal('open' in esm.tnl, false);
     assert.equal(esm.tnl.port, 3000);
     assert.equal(esm.tnl.dev, false);
     assert.throws(() => esm.tnl.services, e => e instanceof esm.TnlError && e.code === 'sdk.service_unprepared');
@@ -53,6 +55,7 @@ test("browser exports reject connections without loading native or provider modu
     import * as esm from '@tnldotdev/tnl';
     const cjs = createRequire(import.meta.url)('@tnldotdev/tnl');
     assert.equal(cjs.tnl, esm.tnl);
+    assert.equal('open' in esm.tnl, false);
     const handle = esm.tnl.connect('database');
     assert.throws(() => ({...handle}), e => e instanceof esm.TnlError && e.code === 'sdk.connection_server_only');
     await assert.rejects(Promise.resolve(handle), e => e instanceof esm.TnlError && e.code === 'sdk.connection_server_only');

@@ -1,30 +1,23 @@
-import {
-  tnl,
-  type PublisherCredentialFile,
-  type PublisherIdentityID,
-  type OpenOptions,
-} from "@tnldotdev/tnl";
+import { tnl, createClient } from "@tnldotdev/tnl";
 import { assertType, test } from "vitest";
 
-test("publication accepts either prepared identity and keeps app options separate", () => {
-  const file: PublisherCredentialFile = { publisherCredentialFile: "/private/publisher.json" };
-  const stored: PublisherIdentityID = { publisherIdentityID: `pub_${"A".repeat(22)}` };
+test("publication belongs to a captured deployment and keeps framework options separate", () => {
+  const deployment = createClient({ project: "acme/shop", token: "private" }).deployment(
+    "production",
+  );
   const handler = () => new Response("app");
-  assertType<Promise<import("@tnldotdev/tnl").Publication>>(tnl.open(handler));
-  void tnl.open(handler, file);
-  void tnl.open(handler, { ...stored, stateDir: "/private/client", access: { ip: ["127.0.0.1"] } });
+  assertType<Promise<import("@tnldotdev/tnl").Publication>>(deployment.publish(handler));
+  void deployment.publish(handler, { access: { ip: ["127.0.0.1"] } });
   void tnl.prepare({ service: "web", directory: "/project", stateDir: "/private/client" });
 
-  // @ts-expect-error a publisher file and stored publisher ID are separate choices.
-  const both: OpenOptions = {
-    publisherCredentialFile: "/private/publisher.json",
-    publisherIdentityID: "id",
-  };
-  void both;
+  // @ts-expect-error publication has no unscoped compatibility facade.
+  tnl.open(handler);
+  // @ts-expect-error authority belongs to the captured deployment, not a second identity.
+  deployment.publish(handler, { publisherCredentialFile: "/private/publisher.json" });
   // @ts-expect-error enrollment is an explicit native setup operation.
-  void tnl.open(handler, { enrollmentKey: "key" });
+  void deployment.publish(handler, { enrollmentKey: "key" });
   // @ts-expect-error publication credentials were removed.
-  void tnl.open(handler, { credential: "old" });
+  void deployment.publish(handler, { credential: "old" });
   // @ts-expect-error use access.ip for visitor IP settings.
-  void tnl.open(handler, { allowIP: ["127.0.0.1"] });
+  void deployment.publish(handler, { allowIP: ["127.0.0.1"] });
 });

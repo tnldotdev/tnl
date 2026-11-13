@@ -44,7 +44,7 @@ class NativeStub(NativeRuntime):
     async def request(
         self, endpoint: Endpoint, operation: str, payload: dict[str, object] | None = None
     ) -> object:
-        if operation == "ad-hoc/register":
+        if operation == "publications/register":
             assert payload is not None
             self.events.append("register")
             self.target = str(payload["target"])
@@ -114,7 +114,9 @@ async def main() -> None:
             await send({"type": "websocket.send", "text": str(message["text"])})
             await send({"type": "websocket.close", "code": 1000})
 
-    async with tnl.open(app) as tunnel:
+    assert not hasattr(tnl, "open")
+    local = tnl.create_client(project="fixture/project").deployment("local")
+    async with await local.publish(app) as tunnel:
         assert tunnel.url == "https://eph-aaaaaaaaaaaaaaaaaaaaaaaaaa.example.test"
         async with httpx.AsyncClient() as client:
             response = await client.get(native.target + "/")
@@ -123,6 +125,7 @@ async def main() -> None:
             await ws.send("wheel websocket")
             assert await ws.recv() == "wheel websocket"
     await tunnel.wait()
+    await local.aclose()
     assert native.events == ["startup", "register", "unregister", "shutdown"]
 
 

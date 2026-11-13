@@ -96,7 +96,7 @@ func TestDeploymentApplicationCarriesVisitorTrafficAndJoinsCleanup(t *testing.T)
 	}
 	body := map[string]any{"version": 1, "invocation_id": invocation, "owner": "0123456789abcdef0123456789abcdef", "pid": os.Getpid(), "target": app.URL, "deployment": map[string]string{"project": "acme/shop", "name": "production", "service": "web", "credential": token}}
 	var registered publisherprotocol.Registration
-	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/ad-hoc/register", body, &registered); err != nil {
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/publications/register", body, &registered); err != nil {
 		t.Fatal(err)
 	}
 	waitInvocation(t, a, func(snapshot publisherapp.Snapshot) bool {

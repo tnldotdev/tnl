@@ -20,7 +20,7 @@ import type {
   NamedPublicationOptions,
   TemporaryPublicationOptions,
   PublicationSelection,
-} from "../publisher/open.js";
+} from "../publisher/publication.js";
 
 export type ServiceFacts = Readonly<Record<string, Readonly<{ protocol: ServiceProtocol }>>>;
 type Names<Services extends ServiceFacts> = Extract<keyof Services, string>;
@@ -229,8 +229,8 @@ export function createClient<const Services extends ServiceFacts = Record<never,
           )
             throw new TnlError("sdk.configuration_invalid");
           const work = (async () => {
-            const { openServer, openFetch, validatePublicationOptions } =
-              await import("../publisher/open.js");
+            const { publishServer, publishFetch, validatePublicationOptions } =
+              await import("../publisher/publication.js");
             if (closed) throw closedError;
             validatePublicationOptions(options, service !== undefined);
             const selection: PublicationSelection =
@@ -257,8 +257,8 @@ export function createClient<const Services extends ServiceFacts = Record<never,
                 : { stateDir: environment.TNL_STATE_DIR }),
             };
             const base = await (typeof server === "function"
-              ? openFetch(server, captured, undefined, selection)
-              : openServer(server, captured, undefined, selection));
+              ? publishFetch(server, captured, undefined, selection)
+              : publishServer(server, captured, undefined, selection));
             if (closed) {
               await base.close();
               throw closedError;

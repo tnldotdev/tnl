@@ -155,7 +155,7 @@ func TestAdHocRegisterAcceptsDefaultOrOneExplicitPublisher(t *testing.T) {
 		{"relative/publisher.json", "", "runtime.publisher_credential_file_invalid"},
 	} {
 		request.PublisherCredentialFile, request.PublisherIdentityId = test.file, test.id
-		err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/ad-hoc/register", request, nil)
+		err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/publications/register", request, nil)
 		if test.code == "" && err != nil {
 			t.Fatalf("file=%q id=%q: %v", test.file, test.id, err)
 		}
@@ -174,7 +174,10 @@ func TestAdHocRegisterAcceptsDefaultOrOneExplicitPublisher(t *testing.T) {
 	}
 	legacy := map[string]any{"version": 1, "invocation_id": id, "owner": request.Owner, "pid": 1, "target": request.Target, "enrollment_key": "old-secret"}
 	var response *publisherprotocol.ResponseError
-	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/ad-hoc/register", legacy, nil); !errors.As(err, &response) || response.Code != "runtime.request_invalid" || calls.Load() != 4 {
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/publications/register", legacy, nil); !errors.As(err, &response) || response.Code != "runtime.request_invalid" || calls.Load() != 4 {
 		t.Fatalf("legacy enrollment key reached the native publisher: %v", err)
+	}
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/ad-hoc/register", request, nil); !errors.As(err, &response) || response.Status != http.StatusNotFound || calls.Load() != 4 {
+		t.Fatalf("retired publication endpoint remained available: %v", err)
 	}
 }

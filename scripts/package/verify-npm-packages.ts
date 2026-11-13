@@ -66,16 +66,18 @@ for (const manager of ["npm", "pnpm"]) {
         `
       import assert from 'node:assert/strict';
       import {createRequire} from 'node:module';
-      import {tnl, TnlError} from '@tnldotdev/tnl';
+       import {tnl, createClient, TnlError} from '@tnldotdev/tnl';
       import {defineConfig} from '@tnldotdev/tnl/config';
       import {withTnl} from '@tnldotdev/tnl/next';
       import vite from '@tnldotdev/tnl/vite';
        import {configureWorkload} from '@tnldotdev/tnl/workload';
        import {createClient as createHttpClient, deployments, publishers} from '@tnldotdev/tnl/http';
       const cjs = createRequire(import.meta.url)('@tnldotdev/tnl');
-      assert.equal(cjs.tnl, tnl);
+       assert.equal(cjs.tnl, tnl);
+       assert.equal(cjs.createClient, createClient);
       assert.equal(typeof TnlError, 'function');
-       for (const value of [tnl.prepare, tnl.open, tnl.connect, tnl.client, defineConfig, withTnl, vite, configureWorkload]) assert.equal(typeof value, 'function');
+        for (const value of [tnl.prepare, tnl.connect, tnl.client, defineConfig, withTnl, vite, configureWorkload]) assert.equal(typeof value, 'function');
+        assert.equal('open' in tnl, false);
        assert.equal(typeof createHttpClient, 'function');
        for (const value of [deployments.create, deployments.list, deployments.get, deployments.update, deployments.delete, publishers.createEnrollment, publishers.list, publishers.get, publishers.revoke]) assert.equal(typeof value, 'function');
       for (const root of [{tnl, TnlError}, cjs]) {

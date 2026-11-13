@@ -168,9 +168,15 @@ function runtimeRequestUntraced(
       : { invocationID: endpoint.invocation_id },
   );
   if (
-    !["health", "status", "prepare", "register", "renew", "unregister", "ad-hoc/register"].includes(
-      operation,
-    )
+    ![
+      "health",
+      "status",
+      "prepare",
+      "register",
+      "renew",
+      "unregister",
+      "publications/register",
+    ].includes(operation)
   )
     throw new TnlError("sdk.configuration_invalid");
   const get = operation === "health" || operation === "status";
@@ -214,7 +220,10 @@ function runtimeRequestUntraced(
             )
               throw new TnlError("sdk.registration_stale");
             if (response.statusCode === 204) {
-              if (length !== 0 || ["prepare", "status", "ad-hoc/register"].includes(operation))
+              if (
+                length !== 0 ||
+                ["prepare", "status", "publications/register"].includes(operation)
+              )
                 throw new TnlError("sdk.response_invalid");
               resolve(undefined);
               return;
@@ -241,7 +250,7 @@ function runtimeRequestUntraced(
                             : "sdk.request_rejected",
               );
             }
-            if (!["prepare", "status", "ad-hoc/register"].includes(operation))
+            if (!["prepare", "status", "publications/register"].includes(operation))
               throw new TnlError("sdk.response_invalid");
             resolve(value);
           } catch (cause) {

@@ -17,6 +17,11 @@ from tnl._native import NativeRuntime
 from tnl._protocol import Endpoint, NativeUnavailable
 
 
+def test_publication_has_no_unscoped_compatibility_facade() -> None:
+    assert not hasattr(tnl, "open")
+    assert not hasattr(tnl, "Tunnel")
+
+
 @dataclass
 class Session:
     endpoint: Endpoint
@@ -101,7 +106,7 @@ class Native(NativeRuntime):
                     },
                 },
             }
-        if operation in {"ad-hoc/register", "register"}:
+        if operation in {"publications/register", "register"}:
             assert payload is not None
             session.payloads.append(dict(payload))
             session.registration = {
@@ -225,7 +230,7 @@ def test_local_named_publication_uses_framework_registration_and_saved_policy(
         assert not session.publications and session.endpoint.scope == "app"
         assert publication.url == session.url
         assert "prepare" in native.operations and "register" in native.operations
-        assert "ad-hoc/register" not in native.operations
+        assert "publications/register" not in native.operations
         await local.aclose()
         assert session.stopped
 

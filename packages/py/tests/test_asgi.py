@@ -51,7 +51,7 @@ class FakeNative(NativeRuntime):
     async def request(
         self, endpoint: Endpoint, operation: str, payload: dict[str, object] | None = None
     ) -> object:
-        if operation == "ad-hoc/register":
+        if operation == "publications/register":
             assert payload is not None
             self.events.append("register")
             self.target = str(payload["target"])
@@ -155,12 +155,12 @@ def test_default_selection_omits_credentials_and_explicit_file_is_sent_only_to_n
         async def endpoint(request: Request) -> PlainTextResponse:
             return PlainTextResponse("published")
 
-        async with tnl.open(tnl.handler(endpoint)) as tunnel:
+        async with await _asgi.start_publication(tnl.handler(endpoint)) as tunnel:
             assert tunnel.url == _public_url
             assert "require_post_quantum" not in tunnel._payload
             assert "publisher_credential_file" not in tunnel._payload
             assert "publisher_identity_id" not in tunnel._payload
-        async with tnl.open(
+        async with await _asgi.start_publication(
             tnl.handler(endpoint),
             publisher_credential_file="/private/publisher.json",
             require_post_quantum=True,
@@ -173,10 +173,12 @@ def test_default_selection_omits_credentials_and_explicit_file_is_sent_only_to_n
             assert "/private/publisher.json" not in repr(tunnel)
             assert "/private/publisher.json" not in repr(native.snapshot())
         monkeypatch.setenv("TNL_PUBLISHER_CREDENTIAL_FILE", "/private/deployed.json")
-        async with tnl.open(tnl.handler(endpoint)) as tunnel:
+        async with await _asgi.start_publication(tnl.handler(endpoint)) as tunnel:
             assert tunnel._payload["publisher_credential_file"] == "/private/deployed.json"
             assert "publisher_credential_file" not in repr(native.snapshot())
-        async with tnl.open(tnl.handler(endpoint), publisher_identity_id=_publisher) as tunnel:
+        async with await _asgi.start_publication(
+            tnl.handler(endpoint), publisher_identity_id=_publisher
+        ) as tunnel:
             assert tunnel._payload["publisher_identity_id"] == _publisher
             assert "publisher_credential_file" not in tunnel._payload
 
@@ -195,10 +197,12 @@ def test_invalid_explicit_selection_never_starts_native(monkeypatch: pytest.Monk
         with pytest.raises(
             tnl.TnlError, match="publisher_credential_file must be an absolute path"
         ):
-            async with tnl.open(app, publisher_credential_file="relative/file"):
+            async with await _asgi.start_publication(
+                app, publisher_credential_file="relative/file"
+            ):
                 pytest.fail("invalid file was accepted")
         with pytest.raises(tnl.TnlError, match="select a publisher file or publisher ID"):
-            async with tnl.open(
+            async with await _asgi.start_publication(
                 app, publisher_credential_file="/private/file", publisher_identity_id=_publisher
             ):
                 pytest.fail("conflicting selectors were accepted")
@@ -236,7 +240,7 @@ def test_lifespan_precedes_registration_and_close_joins_websockets(
                 await send({"type": "websocket.send", "text": "hello websocket"})
                 await receive()
 
-        async with tnl.open(
+        async with await _asgi.start_publication(
             app, publisher_identity_id=_publisher, access="anonymous", limits=tnl.Limits(requests=2)
         ) as tunnel:
             assert tunnel.url == _public_url
@@ -272,7 +276,7 @@ def test_invocation_reconnects_if_native_owner_is_replaced(
                         await send({"type": "lifespan.shutdown.complete"})
                         return
 
-        async with tnl.open(app, publisher_identity_id=_publisher) as tunnel:
+        async with await _asgi.start_publication(app, publisher_identity_id=_publisher) as tunnel:
             native.fail_status = True
             async with asyncio.timeout(2):
                 while native.starts < 2:
@@ -295,7 +299,7 @@ def test_close_joins_an_inflight_replacement_acknowledgement(
             async def request(
                 self, endpoint: Endpoint, operation: str, payload: dict[str, object] | None = None
             ) -> object:
-                if operation == "ad-hoc/register" and self.starts == 2:
+                if operation == "publications/register" and self.starts == 2:
                     registering.set()
                     await acknowledge.wait()
                 return await super().request(endpoint, operation, payload)
@@ -306,7 +310,9 @@ def test_close_joins_an_inflight_replacement_acknowledgement(
         async def endpoint(request: Request) -> PlainTextResponse:
             return PlainTextResponse("app")
 
-        async with tnl.open(tnl.handler(endpoint), publisher_identity_id=_publisher) as tunnel:
+        async with await _asgi.start_publication(
+            tnl.handler(endpoint), publisher_identity_id=_publisher
+        ) as tunnel:
             native.fail_status = True
             await asyncio.wait_for(registering.wait(), 2)
             closing = asyncio.create_task(tunnel.aclose())
@@ -335,7 +341,7 @@ def test_listener_exit_stops_reporting_a_routable_app(monkeypatch: pytest.Monkey
                         await send({"type": "lifespan.shutdown.complete"})
                         return
 
-        async with tnl.open(app, publisher_identity_id=_publisher) as tunnel:
+        async with await _asgi.start_publication(app, publisher_identity_id=_publisher) as tunnel:
             tunnel._server.should_exit = True
             await asyncio.wait_for(tunnel._serve_task, 2)
             with pytest.raises(tnl.TnlError, match="ASGI listener stopped") as caught:
@@ -392,7 +398,7 @@ def test_asgi_setup_preserves_publication_and_cleanup_failures(
 
     async def scenario() -> None:
         with pytest.raises(ExceptionGroup) as caught:
-            async with tnl.open(app, publisher_identity_id=_publisher):
+            async with await _asgi.start_publication(app, publisher_identity_id=_publisher):
                 pytest.fail("publication failure was accepted")
         codes = [error.code for error in caught.value.exceptions if isinstance(error, tnl.TnlError)]
         assert codes == ["sdk.publication_failed", "sdk.request_rejected"]

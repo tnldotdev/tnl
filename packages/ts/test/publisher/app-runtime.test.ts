@@ -447,7 +447,7 @@ test("native publisher selection errors are authored without copying private det
           scope: "invocation",
           invocation_id: invocationIDSchema.parse(`ivk_${"A".repeat(22)}`),
         },
-        "ad-hoc/register",
+        "publications/register",
         {},
       ),
     ).rejects.toMatchObject({

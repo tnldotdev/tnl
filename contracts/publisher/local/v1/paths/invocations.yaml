@@ -15,7 +15,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "../openapi.yaml#/components/schemas/Registration" }
-  /v1/ad-hoc/register:
+  /v1/publications/register:
     post:
       operationId: registerInvocation
       description: Invocation capability only. Publish a bound HTTP listener using either a captured deployment credential or a local namespace publisher. A deployment service selects its saved URL and limits; omitting it allocates a temporary URL. Local namespace publication allocates a temporary URL. Registration acknowledges its bound target before asynchronous provisioning. Renewal and unregister share the application's registration lifetime. Credentials stay private and are not stored in snapshots or metadata.

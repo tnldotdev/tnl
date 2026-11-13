@@ -24,9 +24,11 @@ from myapp import app
 
 
 async def main():
-    async with tnl.open(app) as tunnel:
-        print(tunnel.url)
-        await tunnel.wait()
+    client = tnl.create_client(project="acme/shop")
+    async with client.deployment("local") as local:
+        async with await local.publish(app) as publication:
+            print(publication.url)
+            await publication.wait()
 
 
 asyncio.run(main())
@@ -36,9 +38,12 @@ Run `uv run python preview.py`. tnl starts the app and waits until its temporary
 public URL can receive visitors. Press Ctrl+C to remove the URL and stop the
 app. By default, visitors need a current sign-in, share link, or token.
 
-To use a provisioned publisher credential instead of local setup, pass
-`publisher_credential_file="/absolute/private/publisher.json"` to `tnl.open`, or
-set `TNL_PUBLISHER_CREDENTIAL_FILE`.
+For local namespace setup from a provisioned publisher, set
+`TNL_PUBLISHER_CREDENTIAL_FILE`. For staging or production, configure an approved
+`TNL_TOKEN` and select `client.deployment("production")`.
+`await deployment.publish("web", app)` serves its saved URL;
+`await deployment.publish(app)` allocates a temporary one. See
+[application publication](https://tnl.dev/docs/api#approve-application-publication).
 
 ## use a configured app
 
@@ -48,10 +53,11 @@ Declare an app service in `tnl.yml`:
 version: 1
 tnl:
   services:
-    api:
-      public_url: {}
-      target:
-        type: app
+    api: { protocol: http }
+  deployments:
+    local:
+      targets:
+        api: { type: app, public_url: {} }
 ```
 
 Then start it with Uvicorn through tnl:
