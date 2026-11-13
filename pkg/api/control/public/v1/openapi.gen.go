@@ -2246,6 +2246,15 @@ type CreateCertificateIssuanceRequest struct {
 	PublishRunNumber int64  `json:"publish_run_number"`
 }
 
+// CreateDeploymentPublisherEnrollmentRequest defines model for CreateDeploymentPublisherEnrollmentRequest.
+type CreateDeploymentPublisherEnrollmentRequest struct {
+	ExpiresIn  *int `json:"expires_in,omitempty"`
+	MaxMembers *int `json:"max_members,omitempty"`
+
+	// Services Exact existing bindings to approve. Control captures their saved IDs and protocols; future names, reused names, and protocol changes never expand approval.
+	Services []string `json:"services"`
+}
+
 // CreateDeploymentRequest defines model for CreateDeploymentRequest.
 type CreateDeploymentRequest struct {
 	// Name Project-unique name; local is reserved for client-side selection.
@@ -2427,6 +2436,45 @@ type Deployment struct {
 type DeploymentPage struct {
 	Deployments []Deployment `json:"deployments"`
 	NextCursor  *string      `json:"next_cursor,omitempty"`
+}
+
+// DeploymentPublisher One publisher in the selected deployment (group_id), including its retained last observation after revocation. No enrollment secret, signing key, access token, or target is returned. Healthy reports configuration acknowledgement and a current lease, not database login or SQL readiness.
+type DeploymentPublisher struct {
+	AcknowledgedAt      *time.Time `json:"acknowledged_at,omitempty"`
+	CurrentRevision     int64      `json:"current_revision"`
+	GroupId             string     `json:"group_id"`
+	GroupName           string     `json:"group_name"`
+	Healthy             bool       `json:"healthy"`
+	KeyId               string     `json:"key_id"`
+	LeaseExpiresAt      *time.Time `json:"lease_expires_at,omitempty"`
+	ObservedRevision    int64      `json:"observed_revision"`
+	ProjectKey          string     `json:"project_key"`
+	PublisherIdentityId string     `json:"publisher_identity_id"`
+	RevokedAt           *time.Time `json:"revoked_at,omitempty"`
+
+	// Runtime Latest explicitly started runtime for this immutable publisher identity. A single bounded record survives stop and lease expiry. Active describes the runtime lease, not target reachability or a permanent static IP. Control egress may differ from database-target routing, address family, or NAT. This evidence never grants access or configures an allowlist.
+	Runtime *PublisherRuntimeStatus `json:"runtime,omitempty"`
+
+	// Services Captured service/protocol approval for scoped setup, not a claim of current reachability. Legacy whole-group publishers report their current group bindings.
+	Services   map[string]ServiceProtocol `json:"services"`
+	SnapshotAt time.Time                  `json:"snapshot_at"`
+	TeamId     string                     `json:"team_id"`
+}
+
+// DeploymentPublisherEnrollment Privately deliver the bounded enrollment key to the publisher. group_id is the selected deployment ID. Recovery preserves this secret, captured scope, capacity, and expiration; it never renews or replaces exhausted setup authority.
+type DeploymentPublisherEnrollment struct {
+	EnrollmentId  string                     `json:"enrollment_id"`
+	EnrollmentKey string                     `json:"enrollment_key"`
+	ExpiresAt     time.Time                  `json:"expires_at"`
+	GroupId       string                     `json:"group_id"`
+	MaxMembers    int                        `json:"max_members"`
+	Services      map[string]ServiceProtocol `json:"services"`
+}
+
+// DeploymentPublisherPage defines model for DeploymentPublisherPage.
+type DeploymentPublisherPage struct {
+	NextCursor *string               `json:"next_cursor,omitempty"`
+	Publishers []DeploymentPublisher `json:"publishers"`
 }
 
 // DeploymentService defines model for DeploymentService.
@@ -4366,6 +4414,29 @@ type UpdateDeploymentParams struct {
 	IfMatch *string `json:"If-Match,omitempty"`
 }
 
+// CreateDeploymentPublisherEnrollmentParams defines parameters for CreateDeploymentPublisherEnrollment.
+type CreateDeploymentPublisherEnrollmentParams struct {
+	TeamId         TeamIDQuery `form:"team_id" json:"team_id"`
+	IdempotencyKey string      `json:"Idempotency-Key"`
+}
+
+// ListDeploymentPublishersParams defines parameters for ListDeploymentPublishers.
+type ListDeploymentPublishersParams struct {
+	After  *string     `form:"after,omitempty" json:"after,omitempty"`
+	Limit  *int        `form:"limit,omitempty" json:"limit,omitempty"`
+	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
+}
+
+// RevokeDeploymentPublisherParams defines parameters for RevokeDeploymentPublisher.
+type RevokeDeploymentPublisherParams struct {
+	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
+}
+
+// GetDeploymentPublisherParams defines parameters for GetDeploymentPublisher.
+type GetDeploymentPublisherParams struct {
+	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
+}
+
 // GetLocalProjectServiceParams defines parameters for GetLocalProjectService.
 type GetLocalProjectServiceParams struct {
 	TeamId            TeamIDQuery `form:"team_id" json:"team_id"`
@@ -4594,6 +4665,9 @@ type CreateDeploymentJSONRequestBody = CreateDeploymentRequest
 
 // UpdateDeploymentJSONRequestBody defines body for UpdateDeployment for application/json ContentType.
 type UpdateDeploymentJSONRequestBody = UpdateDeploymentRequest
+
+// CreateDeploymentPublisherEnrollmentJSONRequestBody defines body for CreateDeploymentPublisherEnrollment for application/json ContentType.
+type CreateDeploymentPublisherEnrollmentJSONRequestBody = CreateDeploymentPublisherEnrollmentRequest
 
 // RealizeLocalProjectServiceJSONRequestBody defines body for RealizeLocalProjectService for application/json ContentType.
 type RealizeLocalProjectServiceJSONRequestBody = RealizeLocalProjectServiceRequest
@@ -5172,6 +5246,33 @@ type ClientInterface interface {
 	//
 	// Update selected existing targets/TLS on the same records used by manager apply. Requires a current manager and the strong ETag returned by the latest read. Stale conditions fail with 412; a missing condition fails with 428.
 	UpdateDeployment(ctx context.Context, projectKey string, deployment string, params *UpdateDeploymentParams, body UpdateDeploymentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateDeploymentPublisherEnrollmentWithBody performs a POST /v1/projects/{project_key}/deployments/{deployment}/publisher-enrollments (the `CreateDeploymentPublisherEnrollment` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Approve bounded publisher setup for selected existing services. Requires a current team manager's control session. The original request key recovers the same secret only while its captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
+	CreateDeploymentPublisherEnrollmentWithBody(ctx context.Context, projectKey string, deployment string, params *CreateDeploymentPublisherEnrollmentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateDeploymentPublisherEnrollment performs a POST /v1/projects/{project_key}/deployments/{deployment}/publisher-enrollments (the `CreateDeploymentPublisherEnrollment` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Approve bounded publisher setup for selected existing services. Requires a current team manager's control session. The original request key recovers the same secret only while its captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
+	CreateDeploymentPublisherEnrollment(ctx context.Context, projectKey string, deployment string, params *CreateDeploymentPublisherEnrollmentParams, body CreateDeploymentPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListDeploymentPublishers performs a GET /v1/projects/{project_key}/deployments/{deployment}/publishers (the `ListDeploymentPublishers` operationId) request.
+	//
+	// List only this deployment's publishers, including revoked identities and their retained observations. Requires current team manager authority; no enrollment secrets or unrelated targets are returned.
+	ListDeploymentPublishers(ctx context.Context, projectKey string, deployment string, params *ListDeploymentPublishersParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeDeploymentPublisher performs a DELETE /v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher} (the `RevokeDeploymentPublisher` operationId) request.
+	//
+	// Revoke exactly this publisher identity, its grants, leases, and current publications. Requires a current team manager. Repetition is safe; the last observation is retained. Other publishers, deployments, and shared enrollment capacity are not changed. Apply and enrollment replay cannot restore the revoked identity.
+	RevokeDeploymentPublisher(ctx context.Context, projectKey string, deployment string, publisher string, params *RevokeDeploymentPublisherParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetDeploymentPublisher performs a GET /v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher} (the `GetDeploymentPublisher` operationId) request.
+	//
+	// Read one publisher's captured scope and observation, with current team manager authority and exact deployment ownership.
+	GetDeploymentPublisher(ctx context.Context, projectKey string, deployment string, publisher string, params *GetDeploymentPublisherParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetLocalProjectService performs a GET /v1/projects/{project_key}/local-services/{service} (the `GetLocalProjectService` operationId) request.
 	//
@@ -6783,6 +6884,83 @@ func (c *Client) UpdateDeploymentWithBody(ctx context.Context, projectKey string
 // Update selected existing targets/TLS on the same records used by manager apply. Requires a current manager and the strong ETag returned by the latest read. Stale conditions fail with 412; a missing condition fails with 428.
 func (c *Client) UpdateDeployment(ctx context.Context, projectKey string, deployment string, params *UpdateDeploymentParams, body UpdateDeploymentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateDeploymentRequest(c.Server, projectKey, deployment, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateDeploymentPublisherEnrollmentWithBody performs a POST /v1/projects/{project_key}/deployments/{deployment}/publisher-enrollments (the `CreateDeploymentPublisherEnrollment` operationId) request,
+// with any type of body and a specified content type.
+//
+// Approve bounded publisher setup for selected existing services. Requires a current team manager's control session. The original request key recovers the same secret only while its captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
+func (c *Client) CreateDeploymentPublisherEnrollmentWithBody(ctx context.Context, projectKey string, deployment string, params *CreateDeploymentPublisherEnrollmentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateDeploymentPublisherEnrollmentRequestWithBody(c.Server, projectKey, deployment, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateDeploymentPublisherEnrollment performs a POST /v1/projects/{project_key}/deployments/{deployment}/publisher-enrollments (the `CreateDeploymentPublisherEnrollment` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Approve bounded publisher setup for selected existing services. Requires a current team manager's control session. The original request key recovers the same secret only while its captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
+func (c *Client) CreateDeploymentPublisherEnrollment(ctx context.Context, projectKey string, deployment string, params *CreateDeploymentPublisherEnrollmentParams, body CreateDeploymentPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateDeploymentPublisherEnrollmentRequest(c.Server, projectKey, deployment, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListDeploymentPublishers performs a GET /v1/projects/{project_key}/deployments/{deployment}/publishers (the `ListDeploymentPublishers` operationId) request.
+//
+// List only this deployment's publishers, including revoked identities and their retained observations. Requires current team manager authority; no enrollment secrets or unrelated targets are returned.
+func (c *Client) ListDeploymentPublishers(ctx context.Context, projectKey string, deployment string, params *ListDeploymentPublishersParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListDeploymentPublishersRequest(c.Server, projectKey, deployment, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeDeploymentPublisher performs a DELETE /v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher} (the `RevokeDeploymentPublisher` operationId) request.
+//
+// Revoke exactly this publisher identity, its grants, leases, and current publications. Requires a current team manager. Repetition is safe; the last observation is retained. Other publishers, deployments, and shared enrollment capacity are not changed. Apply and enrollment replay cannot restore the revoked identity.
+func (c *Client) RevokeDeploymentPublisher(ctx context.Context, projectKey string, deployment string, publisher string, params *RevokeDeploymentPublisherParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeDeploymentPublisherRequest(c.Server, projectKey, deployment, publisher, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetDeploymentPublisher performs a GET /v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher} (the `GetDeploymentPublisher` operationId) request.
+//
+// Read one publisher's captured scope and observation, with current team manager authority and exact deployment ownership.
+func (c *Client) GetDeploymentPublisher(ctx context.Context, projectKey string, deployment string, publisher string, params *GetDeploymentPublisherParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetDeploymentPublisherRequest(c.Server, projectKey, deployment, publisher, params)
 	if err != nil {
 		return nil, err
 	}
@@ -11132,6 +11310,326 @@ func NewUpdateDeploymentRequestWithBody(server string, projectKey string, deploy
 			req.Header.Set("If-Match", headerParam0)
 		}
 
+	}
+
+	return req, nil
+}
+
+// NewCreateDeploymentPublisherEnrollmentRequest calls the generic CreateDeploymentPublisherEnrollment builder with application/json body
+func NewCreateDeploymentPublisherEnrollmentRequest(server string, projectKey string, deployment string, params *CreateDeploymentPublisherEnrollmentParams, body CreateDeploymentPublisherEnrollmentJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateDeploymentPublisherEnrollmentRequestWithBody(server, projectKey, deployment, params, "application/json", bodyReader)
+}
+
+// NewCreateDeploymentPublisherEnrollmentRequestWithBody constructs an http.Request for the CreateDeploymentPublisherEnrollment method, with any body, and a specified content type
+func NewCreateDeploymentPublisherEnrollmentRequestWithBody(server string, projectKey string, deployment string, params *CreateDeploymentPublisherEnrollmentParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "deployment", deployment, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/deployments/%s/publisher-enrollments", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewListDeploymentPublishersRequest constructs an http.Request for the ListDeploymentPublishers method
+func NewListDeploymentPublishersRequest(server string, projectKey string, deployment string, params *ListDeploymentPublishersParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "deployment", deployment, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/deployments/%s/publishers", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.After != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "after", *params.After, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRevokeDeploymentPublisherRequest constructs an http.Request for the RevokeDeploymentPublisher method
+func NewRevokeDeploymentPublisherRequest(server string, projectKey string, deployment string, publisher string, params *RevokeDeploymentPublisherParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "deployment", deployment, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "publisher", publisher, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/deployments/%s/publishers/%s", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetDeploymentPublisherRequest constructs an http.Request for the GetDeploymentPublisher method
+func NewGetDeploymentPublisherRequest(server string, projectKey string, deployment string, publisher string, params *GetDeploymentPublisherParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "deployment", deployment, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "publisher", publisher, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/deployments/%s/publishers/%s", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
 	}
 
 	return req, nil
@@ -16750,6 +17248,41 @@ type ClientWithResponsesInterface interface {
 	// Update selected existing targets/TLS on the same records used by manager apply. Requires a current manager and the strong ETag returned by the latest read. Stale conditions fail with 412; a missing condition fails with 428.
 	UpdateDeploymentWithResponse(ctx context.Context, projectKey string, deployment string, params *UpdateDeploymentParams, body UpdateDeploymentJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateDeploymentResponse, error)
 
+	// CreateDeploymentPublisherEnrollmentWithBodyWithResponse performs a POST /v1/projects/{project_key}/deployments/{deployment}/publisher-enrollments (the `CreateDeploymentPublisherEnrollment` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Approve bounded publisher setup for selected existing services. Requires a current team manager's control session. The original request key recovers the same secret only while its captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CreateDeploymentPublisherEnrollmentWithBodyWithResponse(ctx context.Context, projectKey string, deployment string, params *CreateDeploymentPublisherEnrollmentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDeploymentPublisherEnrollmentResponse, error)
+
+	// CreateDeploymentPublisherEnrollmentWithResponse performs a POST /v1/projects/{project_key}/deployments/{deployment}/publisher-enrollments (the `CreateDeploymentPublisherEnrollment` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Approve bounded publisher setup for selected existing services. Requires a current team manager's control session. The original request key recovers the same secret only while its captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
+	CreateDeploymentPublisherEnrollmentWithResponse(ctx context.Context, projectKey string, deployment string, params *CreateDeploymentPublisherEnrollmentParams, body CreateDeploymentPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDeploymentPublisherEnrollmentResponse, error)
+
+	// ListDeploymentPublishersWithResponse performs a GET /v1/projects/{project_key}/deployments/{deployment}/publishers (the `ListDeploymentPublishers` operationId) request.
+	//
+	// List only this deployment's publishers, including revoked identities and their retained observations. Requires current team manager authority; no enrollment secrets or unrelated targets are returned.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ListDeploymentPublishersWithResponse(ctx context.Context, projectKey string, deployment string, params *ListDeploymentPublishersParams, reqEditors ...RequestEditorFn) (*ListDeploymentPublishersResponse, error)
+
+	// RevokeDeploymentPublisherWithResponse performs a DELETE /v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher} (the `RevokeDeploymentPublisher` operationId) request.
+	//
+	// Revoke exactly this publisher identity, its grants, leases, and current publications. Requires a current team manager. Repetition is safe; the last observation is retained. Other publishers, deployments, and shared enrollment capacity are not changed. Apply and enrollment replay cannot restore the revoked identity.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RevokeDeploymentPublisherWithResponse(ctx context.Context, projectKey string, deployment string, publisher string, params *RevokeDeploymentPublisherParams, reqEditors ...RequestEditorFn) (*RevokeDeploymentPublisherResponse, error)
+
+	// GetDeploymentPublisherWithResponse performs a GET /v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher} (the `GetDeploymentPublisher` operationId) request.
+	//
+	// Read one publisher's captured scope and observation, with current team manager authority and exact deployment ownership.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	GetDeploymentPublisherWithResponse(ctx context.Context, projectKey string, deployment string, publisher string, params *GetDeploymentPublisherParams, reqEditors ...RequestEditorFn) (*GetDeploymentPublisherResponse, error)
+
 	// GetLocalProjectServiceWithResponse performs a GET /v1/projects/{project_key}/local-services/{service} (the `GetLocalProjectService` operationId) request.
 	//
 	// Read the exact service previously realized for this team, project source, service key, and worktree. Requires current ordinary private visitor access, not project management access. Returns only immutable identity and approved visitor protocol/TLS metadata, never configuration, targets, or credentials. Does not realize or adopt a service. Missing or unauthorized bindings return not found; an authorized binding with another source fingerprint returns conflict. No other team, project, worktree, or saved name is searched.
@@ -19419,6 +19952,191 @@ func (r UpdateDeploymentResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r UpdateDeploymentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateDeploymentPublisherEnrollmentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *DeploymentPublisherEnrollment
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateDeploymentPublisherEnrollmentResponse) GetJSON201() *DeploymentPublisherEnrollment {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateDeploymentPublisherEnrollmentResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateDeploymentPublisherEnrollmentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateDeploymentPublisherEnrollmentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateDeploymentPublisherEnrollmentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateDeploymentPublisherEnrollmentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListDeploymentPublishersResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DeploymentPublisherPage
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListDeploymentPublishersResponse) GetJSON200() *DeploymentPublisherPage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListDeploymentPublishersResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListDeploymentPublishersResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListDeploymentPublishersResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListDeploymentPublishersResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListDeploymentPublishersResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RevokeDeploymentPublisherResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokeDeploymentPublisherResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokeDeploymentPublisherResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeDeploymentPublisherResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeDeploymentPublisherResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokeDeploymentPublisherResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetDeploymentPublisherResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DeploymentPublisher
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetDeploymentPublisherResponse) GetJSON200() *DeploymentPublisher {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetDeploymentPublisherResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetDeploymentPublisherResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetDeploymentPublisherResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetDeploymentPublisherResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetDeploymentPublisherResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -25009,6 +25727,71 @@ func (c *ClientWithResponses) UpdateDeploymentWithResponse(ctx context.Context, 
 	return ParseUpdateDeploymentResponse(rsp)
 }
 
+// CreateDeploymentPublisherEnrollmentWithBodyWithResponse performs a POST /v1/projects/{project_key}/deployments/{deployment}/publisher-enrollments (the `CreateDeploymentPublisherEnrollment` operationId) request,
+// with any type of body and a specified content type.
+//
+// Approve bounded publisher setup for selected existing services. Requires a current team manager's control session. The original request key recovers the same secret only while its captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreateDeploymentPublisherEnrollmentWithBodyWithResponse(ctx context.Context, projectKey string, deployment string, params *CreateDeploymentPublisherEnrollmentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDeploymentPublisherEnrollmentResponse, error) {
+	rsp, err := c.CreateDeploymentPublisherEnrollmentWithBody(ctx, projectKey, deployment, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateDeploymentPublisherEnrollmentResponse(rsp)
+}
+
+// CreateDeploymentPublisherEnrollmentWithResponse performs a POST /v1/projects/{project_key}/deployments/{deployment}/publisher-enrollments (the `CreateDeploymentPublisherEnrollment` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Approve bounded publisher setup for selected existing services. Requires a current team manager's control session. The original request key recovers the same secret only while its captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing publisher-group enrollment exchange.
+func (c *ClientWithResponses) CreateDeploymentPublisherEnrollmentWithResponse(ctx context.Context, projectKey string, deployment string, params *CreateDeploymentPublisherEnrollmentParams, body CreateDeploymentPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDeploymentPublisherEnrollmentResponse, error) {
+	rsp, err := c.CreateDeploymentPublisherEnrollment(ctx, projectKey, deployment, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateDeploymentPublisherEnrollmentResponse(rsp)
+}
+
+// ListDeploymentPublishersWithResponse performs a GET /v1/projects/{project_key}/deployments/{deployment}/publishers (the `ListDeploymentPublishers` operationId) request.
+//
+// List only this deployment's publishers, including revoked identities and their retained observations. Requires current team manager authority; no enrollment secrets or unrelated targets are returned.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ListDeploymentPublishersWithResponse(ctx context.Context, projectKey string, deployment string, params *ListDeploymentPublishersParams, reqEditors ...RequestEditorFn) (*ListDeploymentPublishersResponse, error) {
+	rsp, err := c.ListDeploymentPublishers(ctx, projectKey, deployment, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListDeploymentPublishersResponse(rsp)
+}
+
+// RevokeDeploymentPublisherWithResponse performs a DELETE /v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher} (the `RevokeDeploymentPublisher` operationId) request.
+//
+// Revoke exactly this publisher identity, its grants, leases, and current publications. Requires a current team manager. Repetition is safe; the last observation is retained. Other publishers, deployments, and shared enrollment capacity are not changed. Apply and enrollment replay cannot restore the revoked identity.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RevokeDeploymentPublisherWithResponse(ctx context.Context, projectKey string, deployment string, publisher string, params *RevokeDeploymentPublisherParams, reqEditors ...RequestEditorFn) (*RevokeDeploymentPublisherResponse, error) {
+	rsp, err := c.RevokeDeploymentPublisher(ctx, projectKey, deployment, publisher, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeDeploymentPublisherResponse(rsp)
+}
+
+// GetDeploymentPublisherWithResponse performs a GET /v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher} (the `GetDeploymentPublisher` operationId) request.
+//
+// Read one publisher's captured scope and observation, with current team manager authority and exact deployment ownership.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) GetDeploymentPublisherWithResponse(ctx context.Context, projectKey string, deployment string, publisher string, params *GetDeploymentPublisherParams, reqEditors ...RequestEditorFn) (*GetDeploymentPublisherResponse, error) {
+	rsp, err := c.GetDeploymentPublisher(ctx, projectKey, deployment, publisher, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetDeploymentPublisherResponse(rsp)
+}
+
 // GetLocalProjectServiceWithResponse performs a GET /v1/projects/{project_key}/local-services/{service} (the `GetLocalProjectService` operationId) request.
 //
 // Read the exact service previously realized for this team, project source, service key, and worktree. Requires current ordinary private visitor access, not project management access. Returns only immutable identity and approved visitor protocol/TLS metadata, never configuration, targets, or credentials. Does not realize or adopt a service. Missing or unauthorized bindings return not found; an authorized binding with another source fingerprint returns conflict. No other team, project, worktree, or saved name is searched.
@@ -28239,6 +29022,134 @@ func ParseUpdateDeploymentResponse(rsp *http.Response) (*UpdateDeploymentRespons
 			headers.ETag = &value
 		}
 		response.Headers200 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseCreateDeploymentPublisherEnrollmentResponse parses an HTTP response from a CreateDeploymentPublisherEnrollmentWithResponse call
+func ParseCreateDeploymentPublisherEnrollmentResponse(rsp *http.Response) (*CreateDeploymentPublisherEnrollmentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateDeploymentPublisherEnrollmentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest DeploymentPublisherEnrollment
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListDeploymentPublishersResponse parses an HTTP response from a ListDeploymentPublishersWithResponse call
+func ParseListDeploymentPublishersResponse(rsp *http.Response) (*ListDeploymentPublishersResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListDeploymentPublishersResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DeploymentPublisherPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeDeploymentPublisherResponse parses an HTTP response from a RevokeDeploymentPublisherWithResponse call
+func ParseRevokeDeploymentPublisherResponse(rsp *http.Response) (*RevokeDeploymentPublisherResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeDeploymentPublisherResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetDeploymentPublisherResponse parses an HTTP response from a GetDeploymentPublisherWithResponse call
+func ParseGetDeploymentPublisherResponse(rsp *http.Response) (*GetDeploymentPublisherResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetDeploymentPublisherResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DeploymentPublisher
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -31834,6 +32745,18 @@ type ServerInterface interface {
 	// (PATCH /v1/projects/{project_key}/deployments/{deployment})
 	UpdateDeployment(w http.ResponseWriter, r *http.Request, projectKey string, deployment string, params UpdateDeploymentParams)
 
+	// (POST /v1/projects/{project_key}/deployments/{deployment}/publisher-enrollments)
+	CreateDeploymentPublisherEnrollment(w http.ResponseWriter, r *http.Request, projectKey string, deployment string, params CreateDeploymentPublisherEnrollmentParams)
+
+	// (GET /v1/projects/{project_key}/deployments/{deployment}/publishers)
+	ListDeploymentPublishers(w http.ResponseWriter, r *http.Request, projectKey string, deployment string, params ListDeploymentPublishersParams)
+
+	// (DELETE /v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher})
+	RevokeDeploymentPublisher(w http.ResponseWriter, r *http.Request, projectKey string, deployment string, publisher string, params RevokeDeploymentPublisherParams)
+
+	// (GET /v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher})
+	GetDeploymentPublisher(w http.ResponseWriter, r *http.Request, projectKey string, deployment string, publisher string, params GetDeploymentPublisherParams)
+
 	// (GET /v1/projects/{project_key}/local-services/{service})
 	GetLocalProjectService(w http.ResponseWriter, r *http.Request, projectKey string, service string, params GetLocalProjectServiceParams)
 
@@ -33387,6 +34310,279 @@ func (siw *ServerInterfaceWrapper) UpdateDeployment(w http.ResponseWriter, r *ht
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UpdateDeployment(w, r, projectKey, deployment, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateDeploymentPublisherEnrollment operation middleware
+func (siw *ServerInterfaceWrapper) CreateDeploymentPublisherEnrollment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "deployment" -------------
+	var deployment string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "deployment", r.PathValue("deployment"), &deployment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "deployment", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateDeploymentPublisherEnrollmentParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateDeploymentPublisherEnrollment(w, r, projectKey, deployment, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListDeploymentPublishers operation middleware
+func (siw *ServerInterfaceWrapper) ListDeploymentPublishers(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "deployment" -------------
+	var deployment string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "deployment", r.PathValue("deployment"), &deployment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "deployment", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListDeploymentPublishersParams
+
+	// ------------- Optional query parameter "after" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "after", r.URL.Query(), &params.After, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "after"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "after", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListDeploymentPublishers(w, r, projectKey, deployment, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokeDeploymentPublisher operation middleware
+func (siw *ServerInterfaceWrapper) RevokeDeploymentPublisher(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "deployment" -------------
+	var deployment string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "deployment", r.PathValue("deployment"), &deployment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "deployment", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "publisher" -------------
+	var publisher string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publisher", r.PathValue("publisher"), &publisher, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publisher", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params RevokeDeploymentPublisherParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokeDeploymentPublisher(w, r, projectKey, deployment, publisher, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetDeploymentPublisher operation middleware
+func (siw *ServerInterfaceWrapper) GetDeploymentPublisher(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "deployment" -------------
+	var deployment string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "deployment", r.PathValue("deployment"), &deployment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "deployment", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "publisher" -------------
+	var publisher string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publisher", r.PathValue("publisher"), &publisher, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publisher", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetDeploymentPublisherParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetDeploymentPublisher(w, r, projectKey, deployment, publisher, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -37177,6 +38373,10 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/deployments/{deployment}/publisher-enrollments", wrapper.CreateDeploymentPublisherEnrollment)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/deployments/{deployment}/publishers", wrapper.ListDeploymentPublishers)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher}", wrapper.RevokeDeploymentPublisher)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher}", wrapper.GetDeploymentPublisher)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/deployments", wrapper.ListDeployments)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/deployments", wrapper.CreateDeployment)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/projects/{project_key}/deployments/{deployment}", wrapper.DeleteDeployment)

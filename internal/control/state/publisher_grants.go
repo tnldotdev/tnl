@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 )
 
@@ -84,6 +85,15 @@ func (d *Database) RevokePublisherIdentity(ctx context.Context, team, id, editor
 	if err := authorizePublisherManagement(ctx, q, team, id, editor); err != nil {
 		return err
 	}
+	if err = revokePublisherIdentity(ctx, tx, q, team, id, editor, now); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// callers authorize under the team guard and lock all publication parents first.
+// group and general management share the same retirement and audit operation.
+func revokePublisherIdentity(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, team, id, editor string, now time.Time) error {
 	rows, err := tx.Query(ctx, `SELECT DISTINCT service_id FROM control.publisher_grants
 		WHERE publisher_identity_id=$1 AND kind='service' AND service_id IS NOT NULL
 		ORDER BY service_id`, id)
@@ -122,7 +132,11 @@ func (d *Database) RevokePublisherIdentity(ctx context.Context, team, id, editor
 	if err = recordPublisherGroupMemberRevocation(ctx, tx, id, editor, now); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	if _, err = tx.Exec(ctx, `UPDATE control.publisher_grants SET revoked_at=COALESCE(revoked_at,$2) WHERE publisher_identity_id=$1`, id, now); err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `DELETE FROM control.publisher_group_leases WHERE publisher_identity_id=$1`, id)
+	return err
 }
 func (d *Database) RevokePublisherGrant(ctx context.Context, team, id, grant, editor string, now time.Time) (retErr error) {
 	if !validStateText(editor) {

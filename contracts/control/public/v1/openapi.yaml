@@ -9,6 +9,12 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example.com
 paths:
+  /v1/projects/{project_key}/deployments/{deployment}/publisher-enrollments:
+    $ref: "./paths/deployment-publishers.yaml#/paths/~1v1~1projects~1{project_key}~1deployments~1{deployment}~1publisher-enrollments"
+  /v1/projects/{project_key}/deployments/{deployment}/publishers:
+    $ref: "./paths/deployment-publishers.yaml#/paths/~1v1~1projects~1{project_key}~1deployments~1{deployment}~1publishers"
+  /v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher}:
+    $ref: "./paths/deployment-publishers.yaml#/paths/~1v1~1projects~1{project_key}~1deployments~1{deployment}~1publishers~1{publisher}"
   /v1/projects/{project_key}/deployments:
     $ref: "./paths/deployments.yaml#/paths/~1v1~1projects~1{project_key}~1deployments"
   /v1/projects/{project_key}/deployments/{deployment}:
@@ -374,6 +380,14 @@ components:
       $ref: "./schemas/projects.yaml#/schemas/ApplyProjectConfigurationRequest"
     DeploymentTargetTLS:
       $ref: "./schemas/deployments.yaml#/schemas/DeploymentTargetTLS"
+    CreateDeploymentPublisherEnrollmentRequest:
+      $ref: "./schemas/deployment-publishers.yaml#/schemas/CreateDeploymentPublisherEnrollmentRequest"
+    DeploymentPublisherEnrollment:
+      $ref: "./schemas/deployment-publishers.yaml#/schemas/DeploymentPublisherEnrollment"
+    DeploymentPublisher:
+      $ref: "./schemas/deployment-publishers.yaml#/schemas/DeploymentPublisher"
+    DeploymentPublisherPage:
+      $ref: "./schemas/deployment-publishers.yaml#/schemas/DeploymentPublisherPage"
     DeploymentTarget:
       $ref: "./schemas/deployments.yaml#/schemas/DeploymentTarget"
     DeploymentTargets:

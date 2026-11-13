@@ -162,6 +162,7 @@ type Querier interface {
 	FindInvitationTeamByTokenDigest(ctx context.Context, tokenDigest []byte) (string, error)
 	FindManagedDomain(ctx context.Context) (ControlDomain, error)
 	FindOIDCIdentity(ctx context.Context, arg FindOIDCIdentityParams) (ControlIdentity, error)
+	FindPublisherGroupEnrollmentRequest(ctx context.Context, arg FindPublisherGroupEnrollmentRequestParams) (ControlPublisherGroupEnrollment, error)
 	FindSeedTeam(ctx context.Context, displayName string) (ControlTeam, error)
 	// the caller rechecks current management before recovering metadata, never secrets.
 	FindServiceInvitationRequest(ctx context.Context, arg FindServiceInvitationRequestParams) (ControlServiceInvitation, error)
@@ -192,6 +193,7 @@ type Querier interface {
 	GetDNSChallengeChange(ctx context.Context, arg GetDNSChallengeChangeParams) (GetDNSChallengeChangeRow, error)
 	GetDNSChallengeContext(ctx context.Context, arg GetDNSChallengeContextParams) (GetDNSChallengeContextRow, error)
 	GetDNSChallengeSubject(ctx context.Context, arg GetDNSChallengeSubjectParams) (GetDNSChallengeSubjectRow, error)
+	GetDeploymentPublisherStatus(ctx context.Context, arg GetDeploymentPublisherStatusParams) (GetDeploymentPublisherStatusRow, error)
 	GetDeploymentServiceConfiguration(ctx context.Context, serviceID pgtype.Text) (GetDeploymentServiceConfigurationRow, error)
 	GetFeedbackEventByActorKey(ctx context.Context, arg GetFeedbackEventByActorKeyParams) (ControlFeedbackEvent, error)
 	GetFeedbackPublicURL(ctx context.Context, id string) (ControlPublicUrl, error)
@@ -330,6 +332,7 @@ type Querier interface {
 	ListConnectorPeerPairCandidates(ctx context.Context, arg ListConnectorPeerPairCandidatesParams) ([]ListConnectorPeerPairCandidatesRow, error)
 	ListCurrentDomainNames(ctx context.Context) ([]string, error)
 	ListDNSChallengePresentations(ctx context.Context, baseIdentifier string) ([]ListDNSChallengePresentationsRow, error)
+	ListDeploymentPublisherIDs(ctx context.Context, arg ListDeploymentPublisherIDsParams) ([]string, error)
 	ListDeployments(ctx context.Context, arg ListDeploymentsParams) ([]ControlProjectPublisherGroup, error)
 	ListFeedbackEventsForTeam(ctx context.Context, arg ListFeedbackEventsForTeamParams) ([]ControlFeedbackEvent, error)
 	ListFeedbackEventsForThread(ctx context.Context, arg ListFeedbackEventsForThreadParams) ([]ControlFeedbackEvent, error)
@@ -351,6 +354,7 @@ type Querier interface {
 	ListPublishRunConnections(ctx context.Context, publishRunID string) ([]ControlPublishRunConnectionSlot, error)
 	ListPublisherCertificateCheckpoints(ctx context.Context, publisherIdentityID string) ([][]byte, error)
 	ListPublisherGrants(ctx context.Context, publisherIdentityID string) ([]ControlPublisherGrant, error)
+	ListPublisherGroupEnrollmentServices(ctx context.Context, enrollmentID string) ([]ControlPublisherGroupEnrollmentService, error)
 	ListPublisherGroupMemberStatus(ctx context.Context, arg ListPublisherGroupMemberStatusParams) ([]ListPublisherGroupMemberStatusRow, error)
 	ListPublisherGroupServices(ctx context.Context, groupID string) ([]ControlAppliedProjectService, error)
 	ListPublisherIdentities(ctx context.Context, arg ListPublisherIdentitiesParams) ([]ControlPublisherIdentity, error)
@@ -440,6 +444,7 @@ type Querier interface {
 	LockPublishRun(ctx context.Context, publishRunID string) (ControlPublishRun, error)
 	LockPublishRunCreationControl(ctx context.Context) (bool, error)
 	LockPublisherEnrollment(ctx context.Context, id string) (ControlPublisherEnrollment, error)
+	LockPublisherGroupEnrollment(ctx context.Context, id string) (ControlPublisherGroupEnrollment, error)
 	LockPublisherIdentity(ctx context.Context, id string) (ControlPublisherIdentity, error)
 	LockRelayServiceForCertificate(ctx context.Context, relayServiceID string) (string, error)
 	// callers hold the affected public URL and existing publish run rows, or the
@@ -499,6 +504,7 @@ type Querier interface {
 	PrunePublisherAccess(ctx context.Context, arg PrunePublisherAccessParams) error
 	PrunePublisherAssertions(ctx context.Context, arg PrunePublisherAssertionsParams) error
 	PublishRunServingPrepared(ctx context.Context, arg PublishRunServingPreparedParams) (pgtype.Bool, error)
+	PublisherGroupServiceAllowed(ctx context.Context, arg PublisherGroupServiceAllowedParams) (bool, error)
 	PublisherRuntimeActive(ctx context.Context, arg PublisherRuntimeActiveParams) (bool, error)
 	// this read does not lock resources after identities. URL and service
 	// run transactions lock their own saved resource first and recheck the grant.

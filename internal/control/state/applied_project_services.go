@@ -81,6 +81,11 @@ func (d *Database) updateAppliedService(ctx context.Context, tx pgx.Tx, q *contr
 		return err
 	}
 	changed := !serviceMetadataMatches(saved, metadata) || row.PublisherPool != metadata.PublisherPool
+	if saved.Protocol != s.Protocol || row.NameScope != scope {
+		if _, err = tx.Exec(ctx, `UPDATE control.publisher_group_enrollment_services SET revoked_at=COALESCE(revoked_at,$2) WHERE service_id=$1`, id, now); err != nil {
+			return err
+		}
+	}
 	encoded, err := json.Marshal(trust)
 	if err != nil {
 		return err
@@ -261,6 +266,10 @@ func (d *Database) removeAppliedService(ctx context.Context, tx pgx.Tx, q *contr
 }
 
 func (d *Database) retireProjectResource(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, s controlstatedb.ControlAppliedProjectService, now time.Time) error {
+	if _, err := tx.Exec(ctx, `UPDATE control.publisher_group_enrollment_services SET revoked_at=COALESCE(revoked_at,$3)
+		WHERE service_id=$1::text OR public_url_id=$2::text`, s.ServiceID, s.PublicURLID, now); err != nil {
+		return err
+	}
 	if s.ServiceID.Valid {
 		if _, err := q.LockService(ctx, s.ServiceID.String); err != nil {
 			return err
@@ -374,8 +383,12 @@ func (d *Database) reconcileAppliedPublisherGrants(ctx context.Context, tx pgx.T
 }
 
 func (d *Database) ensureGroupServiceGrant(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, publisher string, s controlstatedb.ControlAppliedProjectService, actor string, now time.Time) error {
+	allowed, err := q.PublisherGroupServiceAllowed(ctx, controlstatedb.PublisherGroupServiceAllowedParams{PublisherID: publisher, GroupID: s.GroupID.String, Service: s.Service, ServiceID: s.ServiceID, PublicURLID: s.PublicURLID})
+	if err != nil || !allowed {
+		return err
+	}
 	var existing string
-	err := tx.QueryRow(ctx, `SELECT assignment.grant_id FROM control.publisher_group_service_grants assignment WHERE assignment.publisher_identity_id=$1 AND assignment.team_id=$2 AND assignment.project_key=$3 AND assignment.service=$4 AND assignment.group_id=$5`, publisher, s.TeamID, s.ProjectKey, s.Service, s.GroupID).Scan(&existing)
+	err = tx.QueryRow(ctx, `SELECT assignment.grant_id FROM control.publisher_group_service_grants assignment WHERE assignment.publisher_identity_id=$1 AND assignment.team_id=$2 AND assignment.project_key=$3 AND assignment.service=$4 AND assignment.group_id=$5`, publisher, s.TeamID, s.ProjectKey, s.Service, s.GroupID).Scan(&existing)
 	if err == nil {
 		return nil
 	}

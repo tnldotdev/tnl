@@ -940,6 +940,20 @@ type ControlPublisherGroupEnrollment struct {
 	CreatedByIdentityID string
 	ExpiresAt           pgtype.Timestamptz
 	RevokedAt           pgtype.Timestamptz
+	Scoped              bool
+	IdempotencyKey      pgtype.Text
+	RequestDigest       []byte
+	SecretCiphertext    []byte
+	StorageKeyID        pgtype.Text
+}
+
+type ControlPublisherGroupEnrollmentService struct {
+	EnrollmentID string
+	Service      string
+	Protocol     string
+	ServiceID    pgtype.Text
+	PublicURLID  pgtype.Text
+	RevokedAt    pgtype.Timestamptz
 }
 
 type ControlPublisherGroupLease struct {

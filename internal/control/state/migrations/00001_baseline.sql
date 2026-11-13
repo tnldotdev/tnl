@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-deployment-configuration')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-deployment-publishers')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-deployment-configuration');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-deployment-publishers');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -2192,7 +2192,28 @@ CREATE TABLE control.publisher_group_enrollments (
     max_members integer NOT NULL CHECK (max_members BETWEEN 1 AND 256),
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     expires_at timestamptz NOT NULL,
-    revoked_at timestamptz
+    revoked_at timestamptz,
+    scoped boolean NOT NULL DEFAULT false,
+    idempotency_key text,
+    request_digest bytea,
+    secret_ciphertext bytea,
+    storage_key_id text,
+    CHECK ((idempotency_key IS NULL)=(request_digest IS NULL)),
+    CHECK ((idempotency_key IS NULL)=(secret_ciphertext IS NULL)),
+    CHECK ((secret_ciphertext IS NULL)=(storage_key_id IS NULL)),
+    CHECK (idempotency_key IS NULL OR scoped),
+    UNIQUE (group_id,created_by_identity_id,idempotency_key)
+);
+-- captured bindings survive removal as tombstones; a reused name is not approval.
+CREATE TABLE control.publisher_group_enrollment_services (
+    enrollment_id text NOT NULL REFERENCES control.publisher_group_enrollments(id) ON DELETE RESTRICT,
+    service text NOT NULL,
+    protocol text NOT NULL CHECK (protocol IN ('http','tcp','mysql','postgres','kubernetes')),
+    service_id text REFERENCES control.services(id) ON DELETE RESTRICT,
+    public_url_id text REFERENCES control.public_urls(id) ON DELETE RESTRICT,
+    revoked_at timestamptz,
+    PRIMARY KEY (enrollment_id,service),
+    CHECK ((service_id IS NULL)<>(public_url_id IS NULL))
 );
 CREATE TABLE control.publisher_group_members (
     publisher_identity_id text PRIMARY KEY REFERENCES control.publisher_identities(id) ON DELETE RESTRICT,
