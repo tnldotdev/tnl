@@ -15,6 +15,7 @@ import (
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/publisher"
@@ -104,11 +105,11 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 			localDemo.SetGuest()
 		}
 		if guest == nil {
-			label := make([]byte, 4)
-			if _, err := rand.Read(label); err != nil {
+			label, err := naming.RandomHostnameLabel()
+			if err != nil {
 				return err
 			}
-			flags.Name = "demo-" + hex.EncodeToString(label)
+			flags.Name = label
 		}
 	}
 	accessToken := flags.AccessToken

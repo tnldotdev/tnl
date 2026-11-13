@@ -2,12 +2,10 @@ package state
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base32"
 	"encoding/json"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -21,11 +19,11 @@ func newEphemeralHostname(namespace string) (string, error) {
 	if err != nil || canonical != namespace {
 		return "", ErrPublicURLInvalid
 	}
-	var entropy [16]byte
-	if _, err := rand.Read(entropy[:]); err != nil {
+	label, err := naming.RandomHostnameLabel()
+	if err != nil {
 		return "", err
 	}
-	host := "eph-" + strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(entropy[:])) + "." + namespace
+	host := label + "." + namespace
 	if len(host) > naming.MaxHostnameBytes {
 		return "", ErrPublicURLInvalid
 	}
