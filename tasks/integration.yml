@@ -118,6 +118,12 @@ tasks:
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/connector -run='^TestIntegration' -count=1 -timeout=3m -args -tnl-test-tier=integration
 
+  local-database:
+    desc: Check the explicit local deployment SDK against disposable PostgreSQL without sign-in
+    deps: [":js:build"]
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./tests/integration/connector -run='^TestPostgresLocalDeployment$' -count=1 -timeout=3m -args -tnl-test-tier=integration
+
   tcp-clients:
     desc: Check both SDKs against disposable PostgreSQL and MySQL with verified TLS
     deps: [":js:build", ":py:sync"]

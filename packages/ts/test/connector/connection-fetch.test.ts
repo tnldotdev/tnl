@@ -3,6 +3,7 @@ import { createSecureContext } from "node:tls";
 import { expect, test, vi } from "vitest";
 import { managedFetch } from "../../src/internal/connector/connection.js";
 import { parseConnectionSnapshot } from "../../src/internal/connector/snapshot.js";
+import { cert, key } from "../fixtures/local-tls.js";
 
 test.each(["failed", "cancelled", "uncooperative"])(
   "upload ownership ends when preparation is %s",
@@ -27,24 +28,6 @@ test.each(["failed", "cancelled", "uncooperative"])(
     expect(cancel).toHaveBeenCalledOnce();
   },
 );
-
-// public, self-signed test material, used only by this loopback fixture.
-const key = `-----BEGIN PRIVATE KEY-----
-MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg38XI2n6ek76hHFMs
-GeDTPzwK3T8Gw0P5SgVUt8jfrF+hRANCAASekR2HaAKCU23j/BdXhQo4hup1vA0R
-oB4CWD3Ol+60Lyy8hR4NzTAqS1NsBSymmmkNMVldHlkw1JWN+wV3tAqB
------END PRIVATE KEY-----`;
-const cert = `-----BEGIN CERTIFICATE-----
-MIIBpjCCAU2gAwIBAgIUYQx8GwbGw/9Rv86i11LkgMDXam4wCgYIKoZIzj0EAwIw
-GjEYMBYGA1UEAwwPYXBpLnRubC5pbnZhbGlkMCAXDTI2MTAyMTAxNDc0M1oYDzIx
-MjYwOTI3MDE0NzQzWjAaMRgwFgYDVQQDDA9hcGkudG5sLmludmFsaWQwWTATBgcq
-hkjOPQIBBggqhkjOPQMBBwNCAASekR2HaAKCU23j/BdXhQo4hup1vA0RoB4CWD3O
-l+60Lyy8hR4NzTAqS1NsBSymmmkNMVldHlkw1JWN+wV3tAqBo28wbTAdBgNVHQ4E
-FgQUPhqn8uDz8+ZrpbDm75xHj7UL1M0wHwYDVR0jBBgwFoAUPhqn8uDz8+ZrpbDm
-75xHj7UL1M0wDwYDVR0TAQH/BAUwAwEB/zAaBgNVHREEEzARgg9hcGkudG5sLmlu
-dmFsaWQwCgYIKoZIzj0EAwIDRwAwRAIgM/qab/WbniJ4oxQ8qLR3qGHdGVcjstFt
-ADmHF4YmHasCIDcHidjHix7QJVQA1k64xv1vRY5j3bsMEB4GydHwvXuc
------END CERTIFICATE-----`;
 
 test("HTTP keeps the managed origin, Host and SNI while dialing verified loopback TLS", async () => {
   const origin = "https://api.tnl.invalid:8443";

@@ -35,6 +35,7 @@ func Generate(ctx context.Context, project clientproject.Project, directory stri
 		return failure.Wrap("declare Python project types", failure.ProjectConfigInvalid, err)
 	}
 	files["project.d.ts"] = declarations
+	files["services.ts"] = serviceFacts(project.Config)
 	if len(project.Config.Workloads) > 0 {
 		source, err := project.SourceIdentity(ctx)
 		if err != nil {

@@ -33,6 +33,13 @@ export type {
 } from "./internal/publisher/open.js";
 export type { FetchHandler } from "./internal/publisher/fetch_types.js";
 export { TnlError, type TnlErrorCode } from "./errors.js";
+export {
+  createClient,
+  type ServiceFacts,
+  type LocalDeployment,
+  type LocalPostgresConnection,
+  type LocalConnectionRegistry,
+} from "./internal/connector/local_client.js";
 
 /** extended by the portable `.tnl/generated/project.d.ts` declaration. */
 export interface TnlProjectConfig {}

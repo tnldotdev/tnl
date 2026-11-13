@@ -149,7 +149,15 @@ export default defineConfig({
 });
 ```
 
-Start your app (e.g. with `vite dev`). It runs locally even without a tnl account or when control is offline. Sign in with `pnpm exec tnl auth login` to get a public URL; by default, visitors need a sign-in or share link.
+Start your app (for example, `vite dev`). It runs locally without a `tnl` account. You can also [connect to local dependencies](https://tnl.dev/docs/private-services) without signing in or opening a tunnel.
+
+To get a public URL, sign in:
+
+```bash
+pnpm exec tnl auth login
+```
+
+Then restart your app. By default, visitors need a sign-in, share link, or token.
 
 Hot reloading, WebSockets, SSE, and streaming responses are all supported.
 
