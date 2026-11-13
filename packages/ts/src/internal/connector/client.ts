@@ -15,6 +15,7 @@ import { resolveNativeBinary } from "../native/launcher.js";
 import { protocolSchema, serviceNameSchema } from "../values.js";
 import type { ServiceProtocol } from "../project/runtime.js";
 import { deploymentConnector } from "./connection.js";
+import { captureWorkload, usesWorkload } from "./workload/provider.js";
 import { boundManagement } from "./management.js";
 
 export type ServiceFacts = Readonly<Record<string, Readonly<{ protocol: ServiceProtocol }>>>;
@@ -209,9 +210,15 @@ export function createClient<const Services extends ServiceFacts = Record<never,
       )
         throw new TnlError("sdk.configuration_invalid");
       const mounted = token === undefined ? process.env.TNL_CONNECTION_HANDLE : undefined;
+      const source = captureWorkload();
+      const workload =
+        token === undefined && mounted === undefined && usesWorkload(undefined, source)
+          ? source
+          : undefined;
       if (
         name !== "local" &&
-        (project === undefined || (token === undefined && mounted === undefined))
+        (project === undefined ||
+          (token === undefined && mounted === undefined && workload === undefined))
       )
         throw new TnlError("sdk.configuration_invalid");
       const directory = process.cwd();
@@ -224,6 +231,7 @@ export function createClient<const Services extends ServiceFacts = Record<never,
               project: project ?? "",
               ...(token === undefined ? {} : { token }),
               ...(mounted === undefined ? {} : { handle: mounted }),
+              ...(workload === undefined ? {} : { workload }),
               name,
               services: [...protocols.keys()],
             });

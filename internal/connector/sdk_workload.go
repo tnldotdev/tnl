@@ -32,6 +32,10 @@ func selectSDKWorkload(directory, service string, request connectorruntime.SDKWo
 	if err != nil {
 		return selected, "", err
 	}
+	scope := connectorruntime.Context{TeamID: selected.Manifest.Team, TeamName: selected.Manifest.Team, ProjectKey: selected.Manifest.ProjectKey, Deployment: selected.Workload.Deployment}
+	if !scope.MatchesSelection(request.Selection) {
+		return selected, "", connectorruntime.ErrUnauthorized
+	}
 	if request.Name == "" && (request.Callback || request.TokenFile != "") || request.Name != "" && request.Callback == (request.TokenFile != "") {
 		return selected, "", workloadmanifest.ErrRequired
 	}
