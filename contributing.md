@@ -112,6 +112,17 @@ database. Replacing server builds requires a coordinated stop/start of all roles
 `tnld migrate` accepts only `TNLD_DATABASE_DIRECT_URL`; serving roles use pooled
 `TNLD_DATABASE_URL` and require the exact schema version and baseline identity.
 Use matching schema and binaries; the baseline identity is not a feature version.
+
+The HTTP management SDK is generated from the nine approved operations by
+`scripts/generate/management-sdk.ts`. Its stock Fetch helpers are built in a
+separate referenced TypeScript project: strict mode stays enabled, with only
+`exactOptionalPropertyTypes` disabled for generated code because Hey API 0.99
+assigns `undefined` to optional helper properties. Handwritten code and public
+consumer tests retain all repository checks. Only the stock `client`/`core`
+helpers are excluded from authored-code lint rules; generated operations,
+validators, and models remain linted, except the stock validator's escaped
+regex delimiters. Do not patch the generated runtime.
+
 A publisher restart does not restore its application sockets.
 
 The client telemetry baseline also requires a fresh client state directory. Use

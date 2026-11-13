@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": true,
+    "exactOptionalPropertyTypes": false,
+    "outDir": "dist/internal/management",
+    "rootDir": "src/internal/management",
+    "tsBuildInfoFile": "node_modules/.cache/management.tsbuildinfo"
+  },
+  "references": [],
+  "include": ["src/internal/management/**/*.ts"],
+  "exclude": []
+}
