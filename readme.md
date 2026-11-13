@@ -6,7 +6,7 @@
   <br/>
   by <a href="https://github.com/0xcadams">@0xcadams</a>
   <br/><br/>
-  <i><code>tnl</code> is not ready yet - first release is coming November 23.</i>
+  <i><code>tnl</code> is in private beta. <a href="mailto:beta@tnl.dev?subject=tnl.dev%20beta%20access&amp;body=I'd%20like%20to%20try%20https%3A%2F%2Ftnl.dev.%20My%20email%20is%3A">email beta@tnl.dev for access</a>.</i>
 </p>
 <br/>
 
@@ -373,7 +373,7 @@ Or, you can even run the whole stack yourself (control, ingress, and relays), fo
 
 ## how much does it cost?
 
-The hosted tnl.dev is free for now. Accounts and teams created while it is free will keep a free plan if paid options arrive.
+tnl.dev is free during private beta. Accounts and teams keep a free plan if paid plans arrive.
 
 ## how does it compare?
 
