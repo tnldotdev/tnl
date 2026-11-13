@@ -29,7 +29,7 @@ func TestPublicationInputsRejectApplicationAuthSettings(t *testing.T) {
 			}
 			path := filepath.Join(root, name)
 			for _, extra := range []string{"", `,"auth":{}`} {
-				source := `{"services":{"api":{"target":{"type":"address","address":"https://api.example","tls":{}` + extra + `}}}}`
+				source := `{"services":{"api":{}},"deployments":{"local":{"targets":{"api":{"address":"https://api.example","tls":{}` + extra + `}}}}}`
 				if extension == "ts" {
 					source = "export default " + source
 				} else {
@@ -105,10 +105,11 @@ func TestProjectConfigurationUsesStateSpecificWorktreeLabelEverywhere(t *testing
 	directory := t.TempDir()
 	configPath := filepath.Join(directory, "tnl.config.ts")
 	source := `export default ({worktree}: any) => ({
-  services: {web: {
+  services: {web: {}},
+  deployments: {local: {targets: {web: {
     publicURL: {hostname: worktree.label.fullLabel + ".example.test"},
-    target: {type: "address", address: 3000},
-  }},
+    address: 3000,
+  }}}},
 });`
 	if err := os.WriteFile(configPath, []byte(source), 0o600); err != nil {
 		t.Fatal(err)
@@ -499,12 +500,12 @@ func TestPublishRejectsProjectSelectedExplicitToken(t *testing.T) {
 
 func TestTargetCAIsBoundToConfiguredTarget(t *testing.T) {
 	target := config.Target("https://api.internal:443")
-	caFile := "certs/target-ca.pem"
+	ca := "system"
 	project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{
-		Services: config.Services{"web": {Tunnel: &config.Tunnel{}, Target: &config.ServiceTarget{Type: "address", Address: &target, TLS: &config.TargetTLS{CAFile: &caFile}}}},
+		Services: config.Services{"web": {Tunnel: &config.Tunnel{}, Target: &config.ServiceTarget{Type: "address", Address: &target, TLS: &config.TargetTLS{CA: &ca}}}},
 	}}}
 	configured := publishCommand{tunnelFlags: tunnelFlags{PublicURL: "https://app.example"}}
-	if err := project.applyPublish(&configured); err != nil || configured.Target != string(target) || configured.TargetCAFile != caFile {
+	if err := project.applyPublish(&configured); err != nil || configured.Target != string(target) || configured.TargetCAFile != "" || *configured.project.Config.Services["web"].Target.TLS.CA != ca {
 		t.Fatalf("configured target trust = %#v, %v", configured, err)
 	}
 	override := publishCommand{Target: "http://other:3000", tunnelFlags: tunnelFlags{PublicURL: "https://app.example"}}
@@ -518,7 +519,7 @@ func TestProjectServiceKeepsTargetTLSInPublisherFlags(t *testing.T) {
 	target := config.Target("db.internal:5432")
 	project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{
 		"web": {}, "orders": {Name: &name,
-			Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target, TLS: &config.TargetTLS{ServerName: &tlsName}}},
+			Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target, TLS: &config.TargetTLS{Hostname: &tlsName}}},
 	}}}}
 	flags := publishCommand{Target: "orders"}
 	if err := project.applyPublish(&flags); err != nil {
@@ -538,10 +539,10 @@ func TestProjectServiceKeepsTargetTLSInPublisherFlags(t *testing.T) {
 }
 
 func TestNamedTargetTrustContradictionsFailBeforePublisherSetup(t *testing.T) {
-	protocol, hostname, ca := "postgres", "db.internal", "certs/root.pem"
+	protocol, hostname, ca := "postgres", "db.internal", "system"
 	address := config.Target("127.0.0.1:5432")
 	project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{
-		"db": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &address, TLS: &config.TargetTLS{ServerName: &hostname, CAFile: &ca}}},
+		"db": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &address, TLS: &config.TargetTLS{Hostname: &hostname, CA: &ca}}},
 	}}}}
 	disabled := false
 	for _, flags := range []publishCommand{

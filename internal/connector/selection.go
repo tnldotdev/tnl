@@ -49,7 +49,7 @@ func Select(ctx context.Context, control ServiceReader, project clientproject.Pr
 			if err != nil {
 				return controlv1.Service{}, failure.Wrap("identify applied project service", failure.ProjectConfigInvalid, err)
 			}
-			return control.GetProjectService(ctx, source.Key, key, controlv1.GetProjectServiceParams{TeamId: team, SourceFingerprint: source.Fingerprint})
+			return control.GetProjectService(ctx, source.Key, key, controlv1.GetProjectServiceParams{TeamId: team, SourceFingerprint: source.Fingerprint, Deployment: config.PublisherGroupName(definition)})
 		}
 	}
 	services, err := control.ListAvailableServices(ctx)

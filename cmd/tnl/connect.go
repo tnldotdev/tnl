@@ -30,6 +30,7 @@ type connectStartCommand struct {
 	telemetryDisabled bool
 	scopedTeamFlags   `embed:""`
 	Name              string           `arg:"" name:"name" help:"Configured service name or exact service ID."`
+	Deployment        string           `name:"deployment" help:"Select this configured deployment; defaults to local."`
 	Listen            string           `name:"listen" help:"Loopback IP and port; defaults to 127.0.0.1 and the allocated service port."`
 	Protocol          string           `name:"protocol" help:"Require an exact match: http, tcp, mysql, postgres, or kubernetes."`
 	Kubeconfig        string           `name:"kubeconfig" type:"path" help:"Kubeconfig to register the owned Kubernetes context; defaults to KUBECONFIG or ~/.kube/config."`

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -42,7 +43,8 @@ func main() {
 		fatal(err)
 	}
 	keys := make(map[string]string)
-	collectTypeScriptKeys(reflect.TypeOf(config.TNL{}), keys)
+	collectTypeScriptKeys(reflect.TypeOf(config.Project{}), keys)
+	// keep the retired field forbidden for inferred TypeScript objects too.
 	keys["publisher_pool"] = "publisherPool"
 	data, err = json.MarshalIndent(keys, "", "  ")
 	if err != nil {
@@ -72,6 +74,13 @@ func repositoryRoot() (string, error) {
 
 func schemaForType(valueType reflect.Type) *jsonschema.Schema {
 	switch valueType {
+	case reflect.TypeOf(config.DeploymentWorkload{}):
+		result := schemaForType(reflect.TypeOf(config.Workload{}))
+		for _, variant := range result.OneOf {
+			variant.Properties.Set("deployment", &jsonschema.Schema{Type: "string", Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`, Not: &jsonschema.Schema{Const: "local"}})
+			variant.Required = append(variant.Required, "deployment")
+		}
+		return result
 	case reflect.TypeOf(config.Target("")):
 		return &jsonschema.Schema{OneOf: []*jsonschema.Schema{
 			{Type: "string", MinLength: integerPointer(1)},
@@ -83,8 +92,12 @@ func schemaForType(valueType reflect.Type) *jsonschema.Schema {
 		return &jsonschema.Schema{Type: "string", Pattern: `^(102[4-9]|10[3-9][0-9]|1[1-9][0-9]{2}|[2-9][0-9]{3}|[1-9][0-9]{4,5}|10[0-3][0-9]{4}|104[0-7][0-9]{3}|1048[0-4][0-9]{2}|10485[0-6][0-9]|104857[0-6])KiB$|^([1-9]|[1-9][0-9]|[1-9][0-9]{2}|10[01][0-9]|102[0-4])MiB$|^1GiB$`}
 	case reflect.TypeOf(config.Tunnel{}):
 		return tunnelSchema()
-	case reflect.TypeOf(config.Services{}):
+	case reflect.TypeOf(map[string]config.ServiceDeclaration{}):
 		return servicesSchema()
+	case reflect.TypeOf(config.DeploymentBinding{}):
+		return deploymentBindingSchema()
+	case reflect.TypeOf(map[string]config.DeploymentBinding{}):
+		return &jsonschema.Schema{Type: "object", MaxProperties: integerPointer(128), PropertyNames: serviceNameSchema(), AdditionalProperties: deploymentBindingSchema()}
 	case reflect.TypeOf(config.Workload{}):
 		type declaration config.Workload
 		base := (&jsonschema.Reflector{Anonymous: true, ExpandedStruct: true, DoNotReference: true, RequiredFromJSONSchemaTags: true, Mapper: schemaForType}).Reflect(declaration{})
@@ -147,15 +160,16 @@ func schemaForType(valueType reflect.Type) *jsonschema.Schema {
 			result.OneOf = append(result.OneOf, &jsonschema.Schema{Type: "object", Properties: props, Required: []string{key}, AdditionalProperties: jsonschema.FalseSchema})
 		}
 		return result
-	case reflect.TypeOf(map[string]config.PublisherGroup{}):
+	case reflect.TypeOf(map[string]config.Deployment{}):
 		properties := jsonschema.NewProperties()
 		properties.Set("description", &jsonschema.Schema{Type: "string", MaxLength: integerPointer(1024)})
 		properties.Set("domain", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), MaxLength: integerPointer(253)})
 		properties.Set("public", &jsonschema.Schema{Type: "boolean", Default: false})
+		properties.Set("targets", schemaForType(reflect.TypeOf(map[string]config.DeploymentBinding{})))
 		// preserve rejection through TypeScript's structural assignment of inferred objects.
 		properties.Set("aws", jsonschema.FalseSchema)
 		return &jsonschema.Schema{Type: "object", MaxProperties: integerPointer(32),
-			PropertyNames:        &jsonschema.Schema{Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`, Not: &jsonschema.Schema{Const: "local"}},
+			PropertyNames:        serviceNameSchema(),
 			AdditionalProperties: &jsonschema.Schema{Type: "object", Properties: properties, AdditionalProperties: jsonschema.FalseSchema}}
 	case reflect.TypeOf(config.Webhook{}):
 		return webhookSchema()
@@ -201,22 +215,24 @@ func workloadRefSchema(base *jsonschema.Schema) *jsonschema.Schema {
 }
 
 func servicesSchema() *jsonschema.Schema {
+	properties := jsonschema.NewProperties()
+	properties.Set("protocol", &jsonschema.Schema{Type: "string", Enum: []any{"http", "tcp", "mysql", "postgres", "kubernetes"}, Default: "http"})
 	return &jsonschema.Schema{
-		Type: "object", MaxProperties: integerPointer(32),
-		PropertyNames: &jsonschema.Schema{Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`},
-		AdditionalProperties: &jsonschema.Schema{OneOf: []*jsonschema.Schema{
-			serviceSchema("http"), privateHTTPServiceSchema(), serviceSchema("tcp"), serviceSchema("mysql"), serviceSchema("postgres"), serviceSchema("kubernetes"),
-		}},
+		Type: "object", MaxProperties: integerPointer(128), PropertyNames: serviceNameSchema(),
+		AdditionalProperties: &jsonschema.Schema{Type: "object", Properties: properties, AdditionalProperties: jsonschema.FalseSchema},
 	}
 }
 
-// serviceSchema keeps the protocol boundary in the generated TypeScript union,
-// where JSON Schema conditionals alone would not constrain the declarations.
-func serviceSchema(protocol string) *jsonschema.Schema {
+func serviceNameSchema() *jsonschema.Schema {
+	return &jsonschema.Schema{Type: "string", Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`}
+}
+
+// bindings have disjoint discovery variants; their protocol comes only from the
+// logical declaration and is checked with the selected deployment at runtime.
+func deploymentBindingSchema() *jsonschema.Schema {
 	properties := jsonschema.NewProperties()
-	properties.Set("name", &jsonschema.Schema{Type: "string", Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`, Description: "Saved name; defaults to the configuration key."})
-	properties.Set("publisher_group", &jsonschema.Schema{Type: "string", Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`, Default: "local", Description: "Assigned publisher group; defaults to the built-in local publisher."})
-	properties.Set("publisher_pool", jsonschema.FalseSchema)
+	properties.Set("name", serviceNameSchema())
+	properties.Set("auth", jsonschema.FalseSchema)
 	access := jsonschema.NewProperties()
 	access.Set("team", &jsonschema.Schema{Type: "boolean", Const: true})
 	properties.Set("access", &jsonschema.Schema{Type: "object", Properties: access, Required: []string{"team"}, AdditionalProperties: jsonschema.FalseSchema})
@@ -224,21 +240,7 @@ func serviceSchema(protocol string) *jsonschema.Schema {
 	tunnel := tunnelSchema()
 	tunnel.Description = "Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present."
 	limits, _ := tunnel.Properties.Get("limits")
-	otherProtocol := "tcp"
-	if protocol != "http" {
-		otherProtocol = "http"
-	}
-	limits.Properties.Set(otherProtocol, jsonschema.FalseSchema)
-	if protocol != "http" {
-		properties.Set("public_url", jsonschema.FalseSchema)
-	} else {
-		properties.Set("public_url", tunnel)
-	}
-	protocols := []any{protocol}
-	target := targetSchema(protocol)
-	properties.Set("protocol", &jsonschema.Schema{Type: "string", Enum: protocols})
-	properties.Set("target", target)
-	properties.Set("tls", jsonschema.FalseSchema)
+	properties.Set("public_url", tunnel)
 	httpProperties := jsonschema.NewProperties()
 	httpProperties.Set("access", accessSchema("restricted"))
 	httpLimits, _ := limits.Properties.Get("http")
@@ -259,52 +261,20 @@ func serviceSchema(protocol string) *jsonschema.Schema {
 		Description: "Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.",
 	})
 	properties.Set("http", &jsonschema.Schema{Type: "object", Properties: httpProperties, AdditionalProperties: jsonschema.FalseSchema})
-	if protocol != "http" {
-		properties.Set("http", jsonschema.FalseSchema)
-	}
-	service := &jsonschema.Schema{
-		Type: "object", Properties: properties, AdditionalProperties: jsonschema.FalseSchema,
-	}
-	if protocol == "http" {
-		service.Required = []string{"public_url"}
+	result := targetSchema("*")
+	for _, variant := range result.OneOf {
+		for pair := properties.Oldest(); pair != nil; pair = pair.Next() {
+			variant.Properties.Set(pair.Key, pair.Value)
+		}
 		conflict := jsonschema.NewProperties()
 		conflict.Set("public_url", &jsonschema.Schema{Required: []string{"hostname"}})
-		service.AllOf = []*jsonschema.Schema{{Not: &jsonschema.Schema{Required: []string{"name", "public_url"}, Properties: conflict}}}
+		variant.AllOf = []*jsonschema.Schema{{Not: &jsonschema.Schema{Required: []string{"name", "public_url"}, Properties: conflict}}}
+		kind, _ := variant.Properties.Get("type")
+		if kind.Const == "address" || kind.Const == "app" {
+			variant.Required = slices.DeleteFunc(variant.Required, func(name string) bool { return name == "type" })
+		}
 	}
-	if protocol != "http" {
-		service.Required = []string{"protocol", "target"}
-	}
-	service.AllOf = append(service.AllOf, remotePublisherRestrictions())
-	return service
-}
-
-func remotePublisherRestrictions() *jsonschema.Schema {
-	selector := jsonschema.NewProperties()
-	selector.Set("publisher_group", &jsonschema.Schema{Not: &jsonschema.Schema{Const: "local"}})
-	restrictions := jsonschema.NewProperties()
-	restrictions.Set("public_url", jsonschema.FalseSchema)
-	http := jsonschema.NewProperties()
-	for _, name := range []string{"readiness", "paths", "open"} {
-		http.Set(name, jsonschema.FalseSchema)
-	}
-	restrictions.Set("http", &jsonschema.Schema{Properties: http})
-	target := jsonschema.NewProperties()
-	target.Set("type", &jsonschema.Schema{Enum: []any{"address", "eks", "rds"}})
-	restrictions.Set("target", &jsonschema.Schema{Properties: target, Required: []string{"type"}})
-	return &jsonschema.Schema{
-		If:   &jsonschema.Schema{Required: []string{"publisher_group"}, Properties: selector},
-		Then: &jsonschema.Schema{Required: []string{"target"}, Properties: restrictions},
-	}
-}
-
-func privateHTTPServiceSchema() *jsonschema.Schema {
-	service := serviceSchema("http")
-	service.Required = nil
-	service.AllOf = []*jsonschema.Schema{remotePublisherRestrictions()}
-	service.Properties.Set("public_url", jsonschema.FalseSchema)
-	http, _ := service.Properties.Get("http")
-	http.Properties.Set("paths", jsonschema.FalseSchema)
-	return service
+	return result
 }
 
 func tunnelSchema() *jsonschema.Schema {
@@ -378,7 +348,7 @@ func rateSchema(count, burst string) *jsonschema.Schema {
 func targetSchema(protocol string) *jsonschema.Schema {
 	variants := []*jsonschema.Schema{}
 	for _, kind := range []string{"app", "address", "compose", "docker", "eks", "rds"} {
-		if kind == "app" && protocol != "http" || kind == "eks" && protocol != "kubernetes" || kind == "rds" && protocol != "postgres" && protocol != "mysql" {
+		if protocol != "*" && (kind == "app" && protocol != "http" || kind == "eks" && protocol != "kubernetes" || kind == "rds" && protocol != "postgres" && protocol != "mysql") {
 			continue
 		}
 		properties := jsonschema.NewProperties()
@@ -413,8 +383,8 @@ func targetSchema(protocol string) *jsonschema.Schema {
 			properties.Set("port", &jsonschema.Schema{Type: "integer", Minimum: "1", Maximum: "65535"})
 		}
 		tls := jsonschema.NewProperties()
-		tls.Set("server_name", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), MaxLength: integerPointer(253), Description: "Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known."})
-		tls.Set("ca_file", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), Description: "Project-relative CA-only PEM file added to system roots; omit for system roots only."})
+		tls.Set("hostname", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), MaxLength: integerPointer(253), Description: "Verified target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known."})
+		tls.Set("ca", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), MaxLength: integerPointer(1 << 20), Description: "system (the default), aws-rds, or CA-only PEM certificates. Never a path or URL. aws-rds selects pinned regional roots offline and verifies the exact database hostname."})
 		properties.Set("tls", &jsonschema.Schema{Type: "object", Properties: tls, AdditionalProperties: jsonschema.FalseSchema, Description: "Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS."})
 		if kind == "eks" || kind == "rds" {
 			properties.Set("tls", jsonschema.FalseSchema)
@@ -539,8 +509,7 @@ func defaultValue(value string, valueType reflect.Type, duration bool) any {
 
 func collectTypeScriptKeys(valueType reflect.Type, result map[string]string) {
 	mappings := clientproject.TypeScriptKeyMappings()
-	for index := 0; index < valueType.NumField(); index++ {
-		field := valueType.Field(index)
+	for _, field := range reflect.VisibleFields(valueType) {
 		staticName, _, _ := strings.Cut(field.Tag.Get("json"), ",")
 		if staticName == "" || staticName == "-" {
 			continue

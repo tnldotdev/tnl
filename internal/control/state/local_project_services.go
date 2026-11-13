@@ -163,11 +163,11 @@ func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLoca
 		if project.SourceFingerprint != r.SourceFingerprint {
 			return result, ErrProjectSourceConflict
 		}
-		applied, e := d.openAppliedProject(project)
-		if e != nil {
+		applied, e := d.openAppliedProject(project, "local")
+		if e != nil && !errors.Is(e, pgx.ErrNoRows) {
 			return result, e
 		}
-		if !reflect.DeepEqual(applied.Services[r.Service], s) {
+		if e == nil && !reflect.DeepEqual(applied.Services[r.Service], s) {
 			return result, ErrProjectConfigurationStale
 		}
 	} else if !errors.Is(err, pgx.ErrNoRows) {

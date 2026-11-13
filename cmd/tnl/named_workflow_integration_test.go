@@ -104,17 +104,21 @@ func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 	t.Cleanup(target.Close)
 	configuration := filepath.Join(root, "development.json")
 	services := map[string]any{
-		"api": map[string]any{"target": map[string]any{"type": "address", "address": target.URL}, "access": map[string]any{"team": true}},
-		"web": map[string]any{"target": map[string]any{"type": "address", "address": target.URL}, "public_url": map[string]any{}, "access": map[string]any{"team": true}, "http": map[string]any{"readiness": map[string]any{"path": "/health"}}},
+		"api": map[string]any{"address": target.URL, "access": map[string]any{"team": true}},
+		"web": map[string]any{"address": target.URL, "public_url": map[string]any{}, "access": map[string]any{"team": true}, "http": map[string]any{"readiness": map[string]any{"path": "/health"}}},
 	}
+	declarations := map[string]any{"api": map[string]any{}, "web": map[string]any{}}
+	deployments := map[string]any{"local": map[string]any{"targets": services}}
 	if !*cliWorkflowNoGit {
-		services["db"] = map[string]any{"publisher_group": "production", "protocol": "tcp", "target": map[string]any{"type": "address", "address": "127.0.0.1:9"}}
+		declarations["db"] = map[string]any{"protocol": "tcp"}
+		deployments["production"] = map[string]any{"targets": map[string]any{"db": map[string]any{"address": "127.0.0.1:9"}}}
 	} else {
+		declarations["sdk"] = map[string]any{}
 		services["sdk"] = map[string]any{"access": map[string]any{"team": true}}
 	}
 	data, err := json.Marshal(map[string]any{"version": 1, "tnl": map[string]any{
-		"server": "https://unselected.example.test", "team": "unselected", "publisher_groups": map[string]any{"production": map[string]any{}},
-		"services": services,
+		"server": "https://unselected.example.test", "team": "unselected",
+		"services": declarations, "deployments": deployments,
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -223,7 +227,7 @@ func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 		stopOwner = startOwner()
 	}
 	firstAPI, firstWeb := start("api"), start("web")
-	if _, err := session.Authenticated().Control.GetProjectConfiguration(t.Context(), team, source.Key); !errors.Is(err, clientcontrol.ErrNotFound) {
+	if _, err := session.Authenticated().Control.GetProjectConfiguration(t.Context(), team, source.Key, "local"); !errors.Is(err, clientcontrol.ErrNotFound) {
 		t.Fatalf("local startup implicitly applied production configuration: %v", err)
 	}
 	assertRealized := func() {

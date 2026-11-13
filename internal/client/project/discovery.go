@@ -16,8 +16,10 @@ var projectConfigNames = [...]string{"tnl.yml", "tnl.yaml", "tnl.json", "tnl.con
 func ConfigNames() []string { return slices.Clone(projectConfigNames[:]) }
 
 type Selection struct {
-	Path     string
-	Explicit bool
+	Path       string
+	Explicit   bool
+	Deployment string
+	Workload   string
 }
 
 // SelectProjectConfig applies explicit selection before nearest-file discovery.

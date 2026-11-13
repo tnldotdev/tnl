@@ -5,9 +5,15 @@ paths:
       tags: [projects]
       summary: Resolve an applied service by project source and key
       security: [{ bearerAuth: [] }]
-      description: Resolve an applied service by its exact Git source and configuration key using current visitor access. Does not return targets or require project-manager permission.
+      description: Resolve a service by its exact Git source, deployment, and logical service key using current visitor access. Does not return targets or require project-manager permission. Never searches another deployment or adopts a same-named service.
       parameters:
         - { name: project_key, in: path, required: true, schema: { type: string } }
+        - {
+            name: deployment,
+            in: query,
+            required: true,
+            schema: { type: string, pattern: "^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$" },
+          }
         - {
             name: service,
             in: path,

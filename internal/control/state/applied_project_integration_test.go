@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/netip"
 	"reflect"
 	"strings"
@@ -27,7 +28,48 @@ import (
 func appliedProjectRequest(t *testing.T, d *Database, now time.Time) ApplyProjectConfigurationRequest {
 	t.Helper()
 	r := oidcRouteRequest(t, d, now)
-	return ApplyProjectConfigurationRequest{TeamID: r.TeamID, ActorID: r.ActingIdentityID, ProjectKey: "example", SourceFingerprint: strings.Repeat("a", 64), Configuration: ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{}, Services: map[string]ProjectServiceConfiguration{"web": {Target: "http://localhost:3000"}}}, Now: now}
+	return ApplyProjectConfigurationRequest{Deployment: "local", ServiceDeclarations: map[string]string{"web": "http"}, TeamID: r.TeamID, ActorID: r.ActingIdentityID, ProjectKey: "example", SourceFingerprint: strings.Repeat("a", 64), Configuration: ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{}, Services: map[string]ProjectServiceConfiguration{"web": {Target: "http://localhost:3000"}}}, Now: now}
+}
+
+// fixture builders keep logical protocols explicit while reusing target and
+// provider setup. this does not select or discard any binding from the input.
+func selectedProjectRequest(r ApplyProjectConfigurationRequest, deployment string) ApplyProjectConfigurationRequest {
+	r.Deployment = deployment
+	r.ServiceDeclarations = map[string]string{}
+	for name, service := range r.Configuration.Services {
+		protocol := service.Protocol
+		if protocol == "" {
+			protocol = "http"
+		}
+		r.ServiceDeclarations[name] = protocol
+	}
+	r.Configuration.Workloads = maps.Clone(r.Configuration.Workloads)
+	for name, policy := range r.Configuration.Workloads {
+		policy.Deployment = deployment
+		r.Configuration.Workloads[name] = policy
+	}
+	return r
+}
+
+func deploymentProjectRequest(r ApplyProjectConfigurationRequest, deployment string) ApplyProjectConfigurationRequest {
+	r = selectedProjectRequest(r, deployment)
+	r.Configuration.Services = maps.Clone(r.Configuration.Services)
+	for name, service := range r.Configuration.Services {
+		group := service.PublisherGroup
+		if group == "" {
+			group = "local"
+		}
+		if group != deployment {
+			delete(r.Configuration.Services, name)
+		}
+	}
+	groups := map[string]ProjectPublisherGroup{}
+	if deployment != "local" {
+		groups[deployment] = r.Configuration.PublisherGroups[deployment]
+		r.Configuration.OAuth, r.Configuration.Webhooks = false, nil
+	}
+	r.Configuration.PublisherGroups = groups
+	return r
 }
 
 func TestIntegrationAppliedProjectConcurrencyRollbackAndSource(t *testing.T) {
@@ -35,6 +77,7 @@ func TestIntegrationAppliedProjectConcurrencyRollbackAndSource(t *testing.T) {
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration.PublisherGroups = map[string]ProjectPublisherGroup{"production": {}}
 	r.Configuration.Services["web"] = ProjectServiceConfiguration{PublisherGroup: "production", Target: "http://localhost:3000"}
+	r = selectedProjectRequest(r, "production")
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	workers := newIntegrationWorkers(t, cancel)
@@ -83,7 +126,7 @@ func TestIntegrationAppliedProjectConcurrencyRollbackAndSource(t *testing.T) {
 	if winners != 1 || conflicts != 1 {
 		t.Fatalf("optimistic concurrency winners=%d conflicts=%d", winners, conflicts)
 	}
-	current, err := d.GetProjectConfiguration(ctx, r.TeamID, r.ProjectKey, r.ActorID)
+	current, err := d.GetProjectConfiguration(ctx, r.TeamID, r.ProjectKey, r.ActorID, "production")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,10 +141,11 @@ func TestIntegrationAppliedProjectConcurrencyRollbackAndSource(t *testing.T) {
 	bad.Configuration = current.Configuration
 	bad.Configuration.Services["a-new"] = ProjectServiceConfiguration{PublisherGroup: "production", Target: "http://localhost:7000"}
 	bad.Configuration.Services["z-conflict"] = ProjectServiceConfiguration{PublisherGroup: "production", Name: "web", Target: "http://localhost:8000"}
+	bad = selectedProjectRequest(bad, "production")
 	if _, err = d.ApplyProjectConfiguration(ctx, bad); !errors.Is(err, ErrServiceConflict) {
 		t.Fatalf("expected atomic name conflict: %v", err)
 	}
-	after, err := d.GetProjectConfiguration(ctx, r.TeamID, r.ProjectKey, r.ActorID)
+	after, err := d.GetProjectConfiguration(ctx, r.TeamID, r.ProjectKey, r.ActorID, "production")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,8 +163,9 @@ func TestIntegrationAppliedProjectConcurrencyRollbackAndSource(t *testing.T) {
 	// a local public declaration is metadata only and cannot merge worktree previews.
 	deferred := r
 	deferred.ExpectedRevision = after.Revision
-	deferred.Configuration = after.Configuration
-	deferred.Configuration.Services["preview"] = ProjectServiceConfiguration{Target: "http://localhost:9000", PublicURL: &ProjectServicePublicURL{}}
+	deferred.Deployment = "local"
+	deferred.ServiceDeclarations = map[string]string{"web": "http", "preview": "http"}
+	deferred.Configuration = ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"preview": {Target: "http://localhost:9000", PublicURL: &ProjectServicePublicURL{}}}}
 	status, err := d.ApplyProjectConfiguration(ctx, deferred)
 	if err != nil {
 		t.Fatal(err)
@@ -193,6 +238,13 @@ func TestIntegrationAppliedProjectGroupAssignmentsRunsAndRevocation(t *testing.T
 		"db":    {PublisherGroup: "production", Protocol: "postgres", Target: "db.internal:5432", Access: &ProjectServiceAccess{Team: true}},
 		"stage": {PublisherGroup: "staging", Target: "http://staging.internal:3000"},
 	}}
+	stageRequest := deploymentProjectRequest(r, "staging")
+	stageApplied, err := d.ApplyProjectConfiguration(t.Context(), stageRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r = deploymentProjectRequest(r, "production")
+	r.ExpectedRevision = stageApplied.Revision
 	status, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
 		t.Fatal(err)
@@ -265,12 +317,16 @@ func TestIntegrationAppliedProjectGroupAssignmentsRunsAndRevocation(t *testing.T
 	if len(serviceRuns) != 4 || serviceRuns[0].Connections[0].PublisherConnectionID == serviceRuns[2].Connections[0].PublisherConnectionID || serviceRuns[0].RunID == serviceRuns[2].RunID {
 		t.Fatal("private replicas share run identity or publisher assignment")
 	}
-	status, err = d.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, r.ActorID)
+	status, err = d.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, r.ActorID, "production")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(status.Members) != 3 || status.Members[0].ObservedRevision != 1 {
+	if len(status.Members) != 2 || status.Members[0].ObservedRevision != 1 {
 		t.Fatal("member acknowledgement was not observed")
+	}
+	stageStatus, err := d.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, r.ActorID, "staging")
+	if err != nil || len(stageStatus.Members) != 1 {
+		t.Fatal("selected status lost or borrowed staging members", stageStatus, err)
 	}
 	if err = d.RevokePublisherGroupMember(t.Context(), r.TeamID, r.ProjectKey, "staging", a.member.PublisherIdentityID, r.ActorID, now); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatal("member revocation crossed group scope", err)
@@ -295,7 +351,7 @@ func TestIntegrationAppliedProjectGroupAssignmentsRunsAndRevocation(t *testing.T
 	}
 	// a trust change keeps the saved service ID, closes old runs, and replaces
 	// exact grants before any replica can acknowledge or run the new revision.
-	r.ExpectedRevision = 1
+	r.ExpectedRevision = status.Revision
 	r.Configuration.PublisherGroups["production"] = ProjectPublisherGroup{Description: "updated production group"}
 	db := r.Configuration.Services["db"]
 	digest := sha256.Sum256([]byte("tnl-target-tls/v1\x00database.internal\x00"))
@@ -345,7 +401,7 @@ func TestIntegrationAppliedProjectGroupAssignmentsRunsAndRevocation(t *testing.T
 			if event.PublisherIdentityID == a.member.PublisherIdentityID && event.ActorIdentityID == r.ActorID {
 				revoked = true
 			}
-			if event.PublisherIdentityID == "" && event.ActorIdentityID == r.ActorID && event.ConfigurationRevision == 2 {
+			if event.PublisherIdentityID == "" && event.ActorIdentityID == r.ActorID && event.ConfigurationRevision == updated.Revision {
 				described = true
 			}
 		}
@@ -353,11 +409,12 @@ func TestIntegrationAppliedProjectGroupAssignmentsRunsAndRevocation(t *testing.T
 	if !enrolled || !revoked || !described {
 		t.Fatalf("missing group audit facts: enrolled=%t revoked=%t description=%t", enrolled, revoked, described)
 	}
-	r.ExpectedRevision = updated.Revision
-	delete(r.Configuration.PublisherGroups, "production")
-	delete(r.Configuration.Services, "web")
-	delete(r.Configuration.Services, "db")
-	if _, err = d.ApplyProjectConfiguration(t.Context(), r); err != nil {
+	scope := DeploymentScope{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID}
+	productionDeployment, err := d.GetDeployment(t.Context(), scope, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = d.DeleteDeployment(t.Context(), scope, "production", productionDeployment.Revision, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = d.GetPublisherGroupAssignments(t.Context(), a.lease.AccessToken, now); !errors.Is(err, ErrPublisherGroup) {
@@ -400,6 +457,13 @@ func TestIntegrationAppliedProjectGroupReassignmentKeepsSavedService(t *testing.
 	service := r.Configuration.Services["api"]
 	service.TargetTLS = &ProjectTargetTLS{Hostname: "api.internal", Digest: hex.EncodeToString(digest[:])}
 	r.Configuration.Services["api"] = service
+	stageRequest := deploymentProjectRequest(r, "staging")
+	stageApplied, err := d.ApplyProjectConfiguration(t.Context(), stageRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r = deploymentProjectRequest(r, "production")
+	r.ExpectedRevision = stageApplied.Revision
 	initial, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
 		t.Fatal(err)
@@ -415,14 +479,22 @@ func TestIntegrationAppliedProjectGroupReassignmentKeepsSavedService(t *testing.
 	old := groupAssignmentAccess(t, d, replicas[0], replicas[0].assignments.Services[0], now)
 	service.PublisherGroup = "staging"
 	service.Access = nil
-	r.Configuration.Services["api"] = service
-	r.ExpectedRevision = 1
+	r.Deployment = "staging"
+	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"staging": {}}, Services: map[string]ProjectServiceConfiguration{"api": service}}
+	r.ExpectedRevision = initial.Revision
 	updated, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.Services[0].ServiceID != initial.Services[0].ServiceID {
-		t.Fatal("moving group replaced the saved service")
+	if updated.Services[0].ServiceID == initial.Services[0].ServiceID {
+		t.Fatal("another deployment adopted the saved service")
+	}
+	retire := r
+	retire.Deployment, retire.ExpectedRevision = "production", updated.Revision
+	retire.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{}}
+	retired, err := d.ApplyProjectConfiguration(t.Context(), retire)
+	if err != nil {
+		t.Fatal(err)
 	}
 	production, err := d.GetPublisherGroupAssignments(t.Context(), replicas[0].lease.AccessToken, now)
 	if err != nil || len(production.Services) != 0 {
@@ -448,7 +520,7 @@ func TestIntegrationAppliedProjectGroupReassignmentKeepsSavedService(t *testing.
 	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.visitor_grants WHERE service_id=$1 AND kind='team' AND revoked_at IS NULL`, a.ServiceID).Scan(&teamGrants); err != nil || teamGrants != 0 {
 		t.Fatal("removed declarative team access survived", err)
 	}
-	r.ExpectedRevision = 2
+	r.ExpectedRevision = retired.Revision
 	delete(r.Configuration.Services, "api")
 	if _, err = d.ApplyProjectConfiguration(t.Context(), r); err != nil {
 		t.Fatal(err)
@@ -463,7 +535,17 @@ func TestIntegrationAppliedProjectStorageRotation(t *testing.T) {
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration.PublisherGroups["remote"] = ProjectPublisherGroup{}
 	r.Configuration.Services["database"] = ProjectServiceConfiguration{PublisherGroup: "remote", Protocol: "postgres", Target: "private.internal:5432"}
-	before, err := d.ApplyProjectConfiguration(t.Context(), r)
+	localRequest := deploymentProjectRequest(r, "local")
+	localApplied, err := d.ApplyProjectConfiguration(t.Context(), localRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remoteRequest := deploymentProjectRequest(r, "remote")
+	remoteRequest.ExpectedRevision = localApplied.Revision
+	if _, err := d.ApplyProjectConfiguration(t.Context(), remoteRequest); err != nil {
+		t.Fatal(err)
+	}
+	before, err := d.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, r.ActorID, "local")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -486,7 +568,7 @@ func TestIntegrationAppliedProjectStorageRotation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reopened.Close()
-	after, err := reopened.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, r.ActorID)
+	after, err := reopened.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, r.ActorID, "local")
 	if err != nil || after.ConfigurationHash != before.ConfigurationHash || after.Configuration.Services["web"].Target != before.Configuration.Services["web"].Target {
 		t.Fatal("applied target cannot be read after dropping the old key", err)
 	}
@@ -505,6 +587,7 @@ func TestIntegrationAppliedProjectLocalDeferredTargets(t *testing.T) {
 		"database": {Protocol: "postgres", Target: "compose:postgres:5432"},
 		"cache":    {Protocol: "tcp", Target: "docker:cache-1:6379"},
 	}}
+	r = selectedProjectRequest(r, "local")
 	status, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
 		t.Fatal(err)
@@ -536,6 +619,7 @@ func TestIntegrationAppliedProjectHTTPSettingsAndTargetTrust(t *testing.T) {
 		PublisherGroup: "production", Name: "application", Target: "https://192.0.2.8:8443", TargetTLS: trust,
 		HTTP: &config.HTTPService{Access: &config.Access{Mode: "restricted", IP: []string{"192.0.2.10"}}, Limits: &config.WorkLimits{Total: &total}},
 	}}}
+	r = selectedProjectRequest(r, "production")
 	status, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
 		t.Fatal(err)

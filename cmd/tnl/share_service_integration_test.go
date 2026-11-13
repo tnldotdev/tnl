@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -23,6 +25,7 @@ import (
 	controlauthority "github.com/tnldotdev/tnl/internal/control/api/authority"
 	controlpublic "github.com/tnldotdev/tnl/internal/control/api/public"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
@@ -138,7 +141,7 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 		}
 	}
 	configFile, state := filepath.Join(root, "tnl.json"), filepath.Join(root, "state")
-	if err := os.WriteFile(configFile, []byte(`{"version":1,"tnl":{"publisher_groups":{"production":{}},"services":{"remote":{"publisher_group":"production","target":{"type":"address","address":"http://app.internal:3000"}},"localdb":{"target":{"type":"app"}}}}}`), 0600); err != nil {
+	if err := os.WriteFile(configFile, []byte(`{"version":1,"tnl":{"services":{"remote":{},"localdb":{}},"deployments":{"production":{"targets":{"remote":{"address":"http://app.internal:3000"}}},"staging":{"targets":{"remote":{"address":"http://staging.internal:3000"}}},"local":{"targets":{"localdb":{}}}}}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	call := func(token, command string, args ...string) ([]byte, error) {
@@ -150,6 +153,14 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 			argv = append(argv, "share", "service", command)
 		}
 		argv = append(argv, args...)
+		if command != "apply" && !slices.Contains(args, "--deployment") {
+			for _, arg := range args {
+				if arg == "remote" {
+					argv = append(argv, "--deployment", "production")
+					break
+				}
+			}
+		}
 		argv = append(argv, "--server", server.URL, "--access-token", token, "--team", team.Id, "--state-dir", state, "--output=json")
 		var output, diagnostics bytes.Buffer
 		err := run(ctx, argv, &output, &diagnostics)
@@ -166,6 +177,12 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 	if err := json.Unmarshal(data, &applied); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := call(owner.AccessToken.String(), "apply", "--deployment", "production"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := call(owner.AccessToken.String(), "apply", "--deployment", "staging"); err != nil {
+		t.Fatal(err)
+	}
 	project, err := loadProjectConfiguration(ctx, cli{ConfigPath: configFile}, state)
 	if err != nil {
 		t.Fatal(err)
@@ -179,7 +196,7 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	remote, err := ownerControl.GetProjectService(ctx, source.Key, "remote", controlv1.GetProjectServiceParams{TeamId: team.Id, SourceFingerprint: source.Fingerprint})
+	remote, err := ownerControl.GetProjectService(ctx, source.Key, "remote", controlv1.GetProjectServiceParams{TeamId: team.Id, SourceFingerprint: source.Fingerprint, Deployment: "production"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,6 +208,32 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 		}
 	}
 	assertNoVisit()
+	t.Run("same logical key selects only its deployment", func(t *testing.T) {
+		staging, err := ownerControl.GetDeployment(ctx, team.Id, source.Key, "staging")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if staging.Services["remote"].Id == remote.Id {
+			t.Fatal("sibling reused production service")
+		}
+		data, err := call(admin.AccessToken.String(), "invite", "create", "remote", "--deployment", "staging", "--email=owner@example.test", "--expires-in=1h")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var invite controlv1.ServiceInvitation
+		if err := json.Unmarshal(data, &invite); err != nil || invite.ServiceId != staging.Services["remote"].Id {
+			t.Fatal("share borrowed a sibling", err)
+		}
+		if _, err := call(admin.AccessToken.String(), "revoke", "remote", invite.Id, "--deployment", "staging"); err != nil {
+			t.Fatal(err)
+		}
+		var output bytes.Buffer
+		err = run(ctx, []string{"--config", configFile, "share", "service", "list", "remote", "--server", server.URL, "--access-token", admin.AccessToken.String(), "--team", team.Id, "--state-dir", state}, &output, io.Discard)
+		if reason, ok := failure.ReasonOf(err); !ok || reason != failure.InvalidCommand {
+			t.Fatal("missing deployment fell back to a remote binding", err)
+		}
+		assertNoVisit()
+	})
 	for _, item := range []struct{ key, id string }{{"localdb", local.ServiceId}, {"remote", remote.Id}} {
 		t.Run(item.key, func(t *testing.T) {
 			before, err := ownerControl.ListServiceGrants(ctx, item.id)
@@ -299,7 +342,12 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, selector := range []string{"localdb", "remote", local.ServiceId, remote.Id} {
-		if _, err := call(admin.AccessToken.String(), "list", selector); !errors.Is(err, clientcontrol.ErrNotFound) {
+		want := failure.ServerResourceNotFound
+		if selector == "remote" {
+			want = failure.ServerDenied
+		}
+		_, err := call(admin.AccessToken.String(), "list", selector)
+		if reason, ok := failure.ReasonOf(err); !ok || reason != want {
 			t.Fatalf("demoted manager retained access to %s: %v", selector, err)
 		}
 	}

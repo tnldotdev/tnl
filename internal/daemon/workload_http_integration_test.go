@@ -80,17 +80,21 @@ func TestIntegrationWorkloadHTTPPublicTLS(t *testing.T) {
 	t.Cleanup(target.Close)
 	targetTrust := serviceHTTPTestTargetTrust(targetHostname, string(targetCA.certificatePEM))
 	group, private, protocol := "public", "private", controlv1.ServiceProtocolHTTP
-	policy := controlv1.ProjectWorkload{Provider: controlv1.WorkloadGitHub, Github: &controlv1.ProjectWorkloadGitHub{Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}}, Services: []string{"api", "other", "private"}, MaxDurationSeconds: 120}
+	policy := controlv1.ProjectWorkload{Deployment: group, Provider: controlv1.WorkloadGitHub, Github: &controlv1.ProjectWorkloadGitHub{Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}}, Services: []string{"api", "other"}, MaxDurationSeconds: 120}
 	policies := map[string]controlv1.ProjectWorkload{"test": policy, "provider": policy, "narrow": policy, "short": policy}
 	short := policy
 	short.MaxDurationSeconds = 8
 	policies["short"] = short
-	configuration := controlv1.ProjectConfiguration{Workloads: &policies, PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {Public: new(true)}, private: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{
-		"api":     {PublisherGroup: &group, Protocol: &protocol, Target: target.URL, TargetTls: &targetTrust},
-		"other":   {PublisherGroup: &group, Protocol: &protocol, Target: target.URL, TargetTls: &targetTrust},
-		"private": {PublisherGroup: &private, Protocol: &protocol, Target: target.URL, TargetTls: &targetTrust},
+	declarations := controlv1.ProjectServiceDeclarations{"api": protocol, "other": protocol, "private": protocol}
+	sibling, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{Deployment: private, ServiceDeclarations: declarations, TeamId: f.identity.teamID, Source: &testProjectSource, Configuration: controlv1.ProjectConfiguration{PublisherGroups: map[string]controlv1.ProjectPublisherGroup{private: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"private": {PublisherGroup: &private, Protocol: &protocol, Target: target.URL, TargetTls: &targetTrust}}, Webhooks: map[string]controlv1.ProjectWebhook{}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	configuration := controlv1.ProjectConfiguration{Workloads: &policies, PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {Public: new(true)}}, Services: map[string]controlv1.ProjectServiceConfiguration{
+		"api":   {PublisherGroup: &group, Protocol: &protocol, Target: target.URL, TargetTls: &targetTrust},
+		"other": {PublisherGroup: &group, Protocol: &protocol, Target: target.URL, TargetTls: &targetTrust},
 	}, Webhooks: map[string]controlv1.ProjectWebhook{}}
-	applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{TeamId: f.identity.teamID, Source: &testProjectSource, Configuration: configuration})
+	applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{Deployment: group, ServiceDeclarations: declarations, ExpectedRevision: sibling.Revision, TeamId: f.identity.teamID, Source: &testProjectSource, Configuration: configuration})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,6 +121,9 @@ func TestIntegrationWorkloadHTTPPublicTLS(t *testing.T) {
 	endpoints := map[string]controlv1.ServiceEndpoint{}
 	for _, s := range inventory.Services {
 		ids[s.Service], endpoints[s.Service] = s.Id, s.Endpoint
+	}
+	if len(ids) != 2 || ids["private"] != "" {
+		t.Fatal("selected workload borrowed a sibling's private service", ids)
 	}
 	endpoint := func(name string) string {
 		e := endpoints[name]
@@ -183,7 +190,7 @@ func TestIntegrationWorkloadHTTPPublicTLS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := httpAsHuman.GetProjectConfiguration(t.Context(), f.identity.teamID, "workload"); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+	if _, err := httpAsHuman.GetProjectConfiguration(t.Context(), f.identity.teamID, "workload", "production"); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("HTTP credential gained management rights", err)
 	}
 	// an application response loss cannot cause arbitrary POST-body replay.
@@ -263,7 +270,7 @@ func TestIntegrationWorkloadHTTPPublicTLS(t *testing.T) {
 	changed.Github.Ref = "refs/heads/other"
 	changed.Github.WorkflowRef = "example/repository/.github/workflows/test.yml@refs/heads/other"
 	policies["provider"] = changed
-	if _, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{TeamId: f.identity.teamID, ExpectedRevision: applied.Revision, Source: &testProjectSource, Configuration: configuration}); err != nil {
+	if _, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{Deployment: group, ServiceDeclarations: declarations, TeamId: f.identity.teamID, ExpectedRevision: applied.Revision, Source: &testProjectSource, Configuration: configuration}); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(30 * time.Second)

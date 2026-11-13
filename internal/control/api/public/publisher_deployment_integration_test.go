@@ -54,7 +54,7 @@ func TestIntegrationPublisherRuntimeDeployment(t *testing.T) {
 		t.Fatal(err)
 	}
 	group := "production"
-	applied, err := owner.ApplyProjectConfiguration(ctx, "deployment", controlv1.ApplyProjectConfigurationRequest{TeamId: team, Source: &testProjectSource, Configuration: controlv1.ProjectConfiguration{PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {PublisherGroup: &group, Target: "api.internal:3000"}}}})
+	applied, err := owner.ApplyProjectConfiguration(ctx, "deployment", controlv1.ApplyProjectConfigurationRequest{Deployment: group, ServiceDeclarations: controlv1.ProjectServiceDeclarations{"api": "http"}, TeamId: team, Source: &testProjectSource, Configuration: controlv1.ProjectConfiguration{PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {PublisherGroup: &group, Target: "api.internal:3000"}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,7 +250,7 @@ func TestIntegrationPublisherRuntimeDeployment(t *testing.T) {
 	if !reflect.DeepEqual(replaced, read(member.PublisherIdentityId)) {
 		t.Fatal("group rename changed observed deployment")
 	}
-	project, err := owner.GetProjectConfiguration(ctx, team, "deployment")
+	project, err := owner.GetProjectConfiguration(ctx, team, "deployment", "live")
 	if err != nil || len(project.Members) != 2 || project.Members[0].Runtime == nil || project.Members[0].Runtime.Deployment == nil {
 		t.Fatal("applied project omitted provenance", err)
 	}
@@ -262,7 +262,7 @@ func TestIntegrationPublisherRuntimeDeployment(t *testing.T) {
 	if bytes.Contains(publicJSON, []byte("publisher_reported")) || bytes.Contains(publicJSON, []byte(report.TemplateSha256)) || bytes.Contains(publicJSON, []byte(report.DeploymentId)) {
 		t.Fatal("deployment report leaked into browser-safe metadata")
 	}
-	if _, err := owner.GetProjectConfiguration(ctx, "team_foreign", "deployment"); !errors.Is(err, clientcontrol.ErrNotFound) {
+	if _, err := owner.GetProjectConfiguration(ctx, "team_foreign", "deployment", group); !errors.Is(err, clientcontrol.ErrNotFound) {
 		t.Fatal("foreign team read deployment", err)
 	}
 	if err := owner.RevokePublisherGroupMember(ctx, team, "deployment", "live", member.PublisherIdentityId); err != nil {

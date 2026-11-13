@@ -34,6 +34,7 @@ func TestIntegrationWorkloadAuthorizationAfterLockWait(t *testing.T) {
 				created := now.Add(-31 * time.Second)
 				r := appliedProjectRequest(t, d, created)
 				r.Configuration = workloadConfiguration()
+				r = selectedProjectRequest(r, "production")
 				applied, err := d.ApplyProjectConfiguration(t.Context(), r)
 				if err != nil {
 					t.Fatal(err)
@@ -160,6 +161,7 @@ func TestIntegrationWorkloadRenewalProofAndIdempotence(t *testing.T) {
 	ctx := t.Context()
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = workloadConfiguration()
+	r = selectedProjectRequest(r, "production")
 	if _, err := d.ApplyProjectConfiguration(ctx, r); err != nil {
 		t.Fatal(err)
 	}
@@ -256,6 +258,7 @@ func TestIntegrationWorkloadRenewalSequenceLimit(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "workload_renewal_limit")
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = workloadConfiguration()
+	r = selectedProjectRequest(r, "production")
 	if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
 		t.Fatal(err)
 	}
@@ -343,6 +346,7 @@ func TestIntegrationWorkloadRenewalOverlapsObservation(t *testing.T) {
 	ctx := t.Context()
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = workloadConfiguration()
+	r = selectedProjectRequest(r, "production")
 	applied, err := d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {
 		t.Fatal(err)

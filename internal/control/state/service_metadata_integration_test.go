@@ -19,11 +19,18 @@ func TestIntegrationServiceMetadataCorruptionRollsBackCallers(t *testing.T) {
 		"orders": {PublisherGroup: "production", Protocol: "tcp", Target: "orders.internal:5432"},
 		"local":  {Protocol: "tcp", Target: "local.internal:5432"},
 	}}
+	localSelection := deploymentProjectRequest(r, "local")
+	localApplied, err := d.ApplyProjectConfiguration(ctx, localSelection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r = deploymentProjectRequest(r, "production")
+	r.ExpectedRevision = localApplied.Revision
 	applied, err := d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {
 		t.Fatal(err)
 	}
-	localRequest := RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Service: "local", WorktreeKey: "checkout", ActorID: r.ActorID, Configuration: applied.Configuration.Services["local"], Now: now}
+	localRequest := RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Service: "local", WorktreeKey: "checkout", ActorID: r.ActorID, Configuration: localApplied.Configuration.Services["local"], Now: now}
 	local, err := d.RealizeLocalProjectService(ctx, localRequest)
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +56,7 @@ func TestIntegrationServiceMetadataCorruptionRollsBackCallers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	projectLookup := GetProjectServiceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Service: "orders", IdentityID: r.ActorID, Now: now}
+	projectLookup := GetProjectServiceRequest{Deployment: "production", TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Service: "orders", IdentityID: r.ActorID, Now: now}
 	next := r
 	next.ExpectedRevision, next.Now = applied.Revision, now.Add(time.Second)
 	next.Configuration = applied.Configuration
@@ -141,7 +148,16 @@ func TestIntegrationServiceMetadataCorruptionRollsBackCallers(t *testing.T) {
 					}
 				}
 				if !tc.valid {
-					_, err := d.ApplyProjectConfiguration(ctx, next)
+					candidate := next
+					if scope.name == "local" {
+						candidate.Deployment = "local"
+						candidate.Configuration = localApplied.Configuration
+						candidate.Configuration.Services = maps.Clone(localApplied.Configuration.Services)
+						service := candidate.Configuration.Services["local"]
+						service.Target = "replacement.internal:5432"
+						candidate.Configuration.Services["local"] = service
+					}
+					_, err := d.ApplyProjectConfiguration(ctx, candidate)
 					check("applied reconciliation", err)
 				}
 				if snapshot(t) != before {

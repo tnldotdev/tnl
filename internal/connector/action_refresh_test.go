@@ -69,7 +69,7 @@ func TestConnectionActionRefreshRequiresSelectedGitHubPolicy(t *testing.T) {
 }
 
 func TestConnectionActionRefreshPinsManifestSelection(t *testing.T) {
-	manifest := workloadmanifest.Manifest{Schema: 1, Server: "https://control.example.test", Team: "team", ProjectKey: "project", ProjectLabel: "app", SourceFingerprint: strings.Repeat("a", 64), Services: map[string]string{"db": "postgres"}, Workloads: map[string]workloadmanifest.Workload{"job": {Provider: "github", Services: []string{"db"}, MaxDurationSeconds: 3600, Acquisition: workloadmanifest.Acquisition{Method: "github-actions", Audience: "https://control.example.test"}}}}
+	manifest := workloadmanifest.Manifest{Schema: 1, Server: "https://control.example.test", Team: "team", ProjectKey: "project", ProjectLabel: "app", SourceFingerprint: strings.Repeat("a", 64), Services: map[string]string{"db": "postgres"}, Workloads: map[string]workloadmanifest.Workload{"job": {Deployment: "production", Provider: "github", Services: []string{"db"}, MaxDurationSeconds: 3600, Acquisition: workloadmanifest.Acquisition{Method: "github-actions", Audience: "https://control.example.test"}}}}
 	file := filepath.Join(t.TempDir(), "workloads.json")
 	write := func() {
 		t.Helper()

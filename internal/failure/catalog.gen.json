@@ -882,7 +882,7 @@
       "slug": "target-tls-rejected",
       "class": "invalid",
       "message": "target TLS could not be verified or negotiated",
-      "action": "check the target protocol, target.tls.server_name, and target.tls.ca_file, then retry"
+      "action": "check the target protocol, tls.hostname, and tls.ca, then retry"
     },
     {
       "code": "TNL_CLIENT_TARGET_UNAVAILABLE",

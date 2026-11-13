@@ -1929,19 +1929,21 @@ type AppendReviewerFeedbackEventRequest struct {
 
 // AppliedProjectConfiguration defines model for AppliedProjectConfiguration.
 type AppliedProjectConfiguration struct {
-	// Configuration Normalized declarative configuration, at most 512 KiB encoded. All local declarations defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its groups.
+	// Configuration Normalized bindings for exactly one selected deployment, at most 512 KiB encoded. Local selection has no publisher groups or workloads; a remote selection contains only its named group and policies. Logical declarations are sent separately. All local bindings defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
 	Configuration     ProjectConfiguration         `json:"configuration"`
 	ConfigurationHash string                       `json:"configuration_hash"`
+	Deployment        string                       `json:"deployment"`
 	Groups            *[]AppliedPublisherGroup     `json:"groups,omitempty"`
 	Members           []PublisherGroupMemberStatus `json:"members"`
 	ProjectKey        string                       `json:"project_key"`
 
 	// RetiredAt Present after retirement. The saved source and revision remain; an apply with this exact current revision reactivates the project.
-	RetiredAt         *time.Time              `json:"retired_at,omitempty"`
-	Revision          int64                   `json:"revision,string"`
-	Services          []AppliedProjectService `json:"services"`
-	SourceFingerprint string                  `json:"source_fingerprint"`
-	TeamId            string                  `json:"team_id"`
+	RetiredAt           *time.Time                 `json:"retired_at,omitempty"`
+	Revision            int64                      `json:"revision,string"`
+	ServiceDeclarations ProjectServiceDeclarations `json:"service_declarations"`
+	Services            []AppliedProjectService    `json:"services"`
+	SourceFingerprint   string                     `json:"source_fingerprint"`
+	TeamId              string                     `json:"team_id"`
 }
 
 // AppliedProjectService defines model for AppliedProjectService.
@@ -1974,12 +1976,14 @@ type AppliedPublisherGroup struct {
 
 // ApplyProjectConfigurationRequest defines model for ApplyProjectConfigurationRequest.
 type ApplyProjectConfigurationRequest struct {
-	// Configuration Normalized declarative configuration, at most 512 KiB encoded. All local declarations defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its groups.
+	// Configuration Normalized bindings for exactly one selected deployment, at most 512 KiB encoded. Local selection has no publisher groups or workloads; a remote selection contains only its named group and policies. Logical declarations are sent separately. All local bindings defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
 	Configuration    ProjectConfiguration `json:"configuration"`
+	Deployment       string               `json:"deployment"`
 	ExpectedRevision int64                `json:"expected_revision,string"`
 
 	// ProjectLabel Initial DNS label. Saved on first apply; later values do not rename the project or existing namespaces. Read project status or discovery for the saved label.
-	ProjectLabel *string `json:"project_label,omitempty"`
+	ProjectLabel        *string                    `json:"project_label,omitempty"`
+	ServiceDeclarations ProjectServiceDeclarations `json:"service_declarations"`
 
 	// Source Required on first apply. Omit on updates to retain the saved source binding.
 	Source *GitProjectSource `json:"source,omitempty"`
@@ -2977,7 +2981,7 @@ type ProjectApplicationRate struct {
 	Per   string `json:"per"`
 }
 
-// ProjectConfiguration Normalized declarative configuration, at most 512 KiB encoded. All local declarations defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its groups.
+// ProjectConfiguration Normalized bindings for exactly one selected deployment, at most 512 KiB encoded. Local selection has no publisher groups or workloads; a remote selection contains only its named group and policies. Logical declarations are sent separately. All local bindings defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
 type ProjectConfiguration struct {
 	// Oauth Desired local app-led OAuth integration URL declaration. Applying it does not provision a handler on a named publisher group.
 	Oauth           bool                                   `json:"oauth"`
@@ -3098,6 +3102,9 @@ type ProjectServiceConfiguration struct {
 	TargetTls *ProjectTargetTLS `json:"target_tls,omitempty"`
 }
 
+// ProjectServiceDeclarations defines model for ProjectServiceDeclarations.
+type ProjectServiceDeclarations map[string]ServiceProtocol
+
 // ProjectServiceHTTP Local readiness and path mounts, or named-group restricted HTTP access and request limits. A group owns its endpoint and reachability.
 type ProjectServiceHTTP struct {
 	Access *ProjectPublicAccess          `json:"access,omitempty"`
@@ -3189,6 +3196,8 @@ type ProjectWebhook struct {
 
 // ProjectWorkload defines model for ProjectWorkload.
 type ProjectWorkload struct {
+	Deployment string `json:"deployment"`
+
 	// Github Immutable repository metadata verified during trusted manager apply; job assertions never establish this binding. Unchanged applies reuse the saved binding.
 	Github *ProjectWorkloadGitHub `json:"github,omitempty"`
 	Gitlab *ProjectWorkloadGitLab `json:"gitlab,omitempty"`
@@ -4626,7 +4635,8 @@ type ListProjectsParams struct {
 
 // GetProjectConfigurationParams defines parameters for GetProjectConfiguration.
 type GetProjectConfigurationParams struct {
-	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
+	TeamId     TeamIDQuery `form:"team_id" json:"team_id"`
+	Deployment string      `form:"deployment" json:"deployment"`
 }
 
 // ListDeploymentsParams defines parameters for ListDeployments.
@@ -4688,6 +4698,7 @@ type RetireProjectJSONBody struct {
 
 // GetProjectServiceParams defines parameters for GetProjectService.
 type GetProjectServiceParams struct {
+	Deployment        string `form:"deployment" json:"deployment"`
 	TeamId            TeamID `form:"team_id" json:"team_id"`
 	SourceFingerprint string `form:"source_fingerprint" json:"source_fingerprint"`
 }
@@ -5560,7 +5571,7 @@ type ClientInterface interface {
 
 	// ApplyProjectConfigurationWithBody Apply a project's desired services and publisher groups
 	//
-	// Save declarations and update their resources together. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers.
+	// Reconcile logical service declarations and one selected deployment's bindings and workload policies. Sibling deployments and local realizations are preserved; declarations cannot contradict retained bindings. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current project revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5569,7 +5580,7 @@ type ClientInterface interface {
 
 	// ApplyProjectConfiguration Apply a project's desired services and publisher groups
 	//
-	// Save declarations and update their resources together. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers.
+	// Reconcile logical service declarations and one selected deployment's bindings and workload policies. Sibling deployments and local realizations are preserved; declarations cannot contradict retained bindings. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current project revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -5746,7 +5757,7 @@ type ClientInterface interface {
 
 	// GetProjectService Resolve an applied service by project source and key
 	//
-	// Resolve an applied service by its exact Git source and configuration key using current visitor access. Does not return targets or require project-manager permission.
+	// Resolve a service by its exact Git source, deployment, and logical service key using current visitor access. Does not return targets or require project-manager permission. Never searches another deployment or adopts a same-named service.
 	//
 	// Corresponds with GET /v1/projects/{project_key}/services/{service} (the `GetProjectService` operationId).
 	GetProjectService(ctx context.Context, projectKey string, service ServiceName, params *GetProjectServiceParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -7877,7 +7888,7 @@ func (c *Client) GetProjectConfiguration(ctx context.Context, projectKey string,
 
 // ApplyProjectConfigurationWithBody Apply a project's desired services and publisher groups
 //
-// Save declarations and update their resources together. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers.
+// Reconcile logical service declarations and one selected deployment's bindings and workload policies. Sibling deployments and local realizations are preserved; declarations cannot contradict retained bindings. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current project revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7896,7 +7907,7 @@ func (c *Client) ApplyProjectConfigurationWithBody(ctx context.Context, projectK
 
 // ApplyProjectConfiguration Apply a project's desired services and publisher groups
 //
-// Save declarations and update their resources together. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers.
+// Reconcile logical service declarations and one selected deployment's bindings and workload policies. Sibling deployments and local realizations are preserved; declarations cannot contradict retained bindings. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current project revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -8283,7 +8294,7 @@ func (c *Client) RetireProject(ctx context.Context, projectKey string, body Reti
 
 // GetProjectService Resolve an applied service by project source and key
 //
-// Resolve an applied service by its exact Git source and configuration key using current visitor access. Does not return targets or require project-manager permission.
+// Resolve a service by its exact Git source, deployment, and logical service key using current visitor access. Does not return targets or require project-manager permission. Never searches another deployment or adopts a same-named service.
 //
 // Corresponds with GET /v1/projects/{project_key}/services/{service} (the `GetProjectService` operationId).
 func (c *Client) GetProjectService(ctx context.Context, projectKey string, service ServiceName, params *GetProjectServiceParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -12791,6 +12802,14 @@ func NewGetProjectConfigurationRequest(server string, projectKey string, params 
 			}
 		}
 
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "deployment", params.Deployment, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
 		if encoded := queryValues.Encode(); encoded != "" {
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
@@ -13763,6 +13782,14 @@ func NewGetProjectServiceRequest(server string, projectKey string, service Servi
 		// styled parameters, preserving literal commas as delimiters
 		// per the OpenAPI spec (e.g. "color=blue,black,brown").
 		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "deployment", params.Deployment, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
 
 		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 			return nil, err
@@ -19179,7 +19206,7 @@ type ClientWithResponsesInterface interface {
 
 	// ApplyProjectConfigurationWithBodyWithResponse Apply a project's desired services and publisher groups
 	//
-	// Save declarations and update their resources together. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers.
+	// Reconcile logical service declarations and one selected deployment's bindings and workload policies. Sibling deployments and local realizations are preserved; declarations cannot contradict retained bindings. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current project revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -19188,7 +19215,7 @@ type ClientWithResponsesInterface interface {
 
 	// ApplyProjectConfigurationWithResponse Apply a project's desired services and publisher groups
 	//
-	// Save declarations and update their resources together. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers.
+	// Reconcile logical service declarations and one selected deployment's bindings and workload policies. Sibling deployments and local realizations are preserved; declarations cannot contradict retained bindings. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current project revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -19377,7 +19404,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetProjectServiceWithResponse Resolve an applied service by project source and key
 	//
-	// Resolve an applied service by its exact Git source and configuration key using current visitor access. Does not return targets or require project-manager permission.
+	// Resolve a service by its exact Git source, deployment, and logical service key using current visitor access. Does not return targets or require project-manager permission. Never searches another deployment or adopts a same-named service.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -28476,7 +28503,7 @@ func (c *ClientWithResponses) GetProjectConfigurationWithResponse(ctx context.Co
 
 // ApplyProjectConfigurationWithBodyWithResponse Apply a project's desired services and publisher groups
 //
-// Save declarations and update their resources together. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers.
+// Reconcile logical service declarations and one selected deployment's bindings and workload policies. Sibling deployments and local realizations are preserved; declarations cannot contradict retained bindings. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current project revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28491,7 +28518,7 @@ func (c *ClientWithResponses) ApplyProjectConfigurationWithBodyWithResponse(ctx 
 
 // ApplyProjectConfigurationWithResponse Apply a project's desired services and publisher groups
 //
-// Save declarations and update their resources together. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers.
+// Reconcile logical service declarations and one selected deployment's bindings and workload policies. Sibling deployments and local realizations are preserved; declarations cannot contradict retained bindings. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current project revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28806,7 +28833,7 @@ func (c *ClientWithResponses) RetireProjectWithResponse(ctx context.Context, pro
 
 // GetProjectServiceWithResponse Resolve an applied service by project source and key
 //
-// Resolve an applied service by its exact Git source and configuration key using current visitor access. Does not return targets or require project-manager permission.
+// Resolve a service by its exact Git source, deployment, and logical service key using current visitor access. Does not return targets or require project-manager permission. Never searches another deployment or adopts a same-named service.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -37631,6 +37658,19 @@ func (siw *ServerInterfaceWrapper) GetProjectConfiguration(w http.ResponseWriter
 		return
 	}
 
+	// ------------- Required query parameter "deployment" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "deployment", r.URL.Query(), &params.Deployment, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "deployment"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "deployment", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetProjectConfiguration(w, r, projectKey, params)
 	}))
@@ -38369,6 +38409,19 @@ func (siw *ServerInterfaceWrapper) GetProjectService(w http.ResponseWriter, r *h
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetProjectServiceParams
+
+	// ------------- Required query parameter "deployment" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "deployment", r.URL.Query(), &params.Deployment, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "deployment"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "deployment", Err: err})
+		}
+		return
+	}
 
 	// ------------- Required query parameter "team_id" -------------
 

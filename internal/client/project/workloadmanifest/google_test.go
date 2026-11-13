@@ -11,7 +11,7 @@ import (
 )
 
 func TestGoogleManifestDefaultsSelectionAndOverrides(t *testing.T) {
-	c := config.TNL{Server: new("https://control.example.test"), Team: new("team"), Services: config.Services{"api": {}}, Workloads: map[string]config.Workload{"app": {Google: &config.WorkloadGoogle{ServiceAccount: "orders@project.iam.gserviceaccount.com"}, Services: []string{"api"}}}}
+	c := config.Project{Server: new("https://control.example.test"), Team: new("team"), Services: map[string]config.ServiceDeclaration{"api": {}}, Workloads: map[string]config.DeploymentWorkload{"app": {Deployment: "production", Workload: config.Workload{Google: &config.WorkloadGoogle{ServiceAccount: "orders@project.iam.gserviceaccount.com"}, Services: []string{"api"}}}}}
 	source := clientproject.SourceIdentity{Key: "project", Fingerprint: strings.Repeat("a", 64), Label: "app"}
 	data, err := Generate(c, source)
 	if err != nil {

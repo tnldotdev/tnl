@@ -22,6 +22,7 @@ func TestIntegrationPublisherDiagnosticsFreshness(t *testing.T) {
 	ctx = observability.WithMetrics(ctx, m)
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"remote": {}}, Services: map[string]ProjectServiceConfiguration{"api": {PublisherGroup: "remote", Target: "localhost:3000"}}}
+	r = selectedProjectRequest(r, "remote")
 	project, err := d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {
 		t.Fatal(err)
@@ -55,7 +56,7 @@ func TestIntegrationPublisherDiagnosticsFreshness(t *testing.T) {
 	}
 	read := func() PublisherGroupMemberStatus {
 		t.Helper()
-		status, err := d.GetProjectConfiguration(ctx, r.TeamID, r.ProjectKey, r.ActorID)
+		status, err := d.GetProjectConfiguration(ctx, r.TeamID, r.ProjectKey, r.ActorID, "remote")
 		if err != nil || len(status.Members) != 1 {
 			t.Fatal(status, err)
 		}

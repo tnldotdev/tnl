@@ -18,6 +18,7 @@ func TestIntegrationWorkloadRenewalMigration(t *testing.T) {
 	ctx := t.Context()
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = workloadConfiguration()
+	r = selectedProjectRequest(r, "production")
 	if _, err := d.ApplyProjectConfiguration(ctx, r); err != nil {
 		t.Fatal(err)
 	}
@@ -119,8 +120,8 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 		t.Fatalf("schema version = %d, %v", version, err)
 	}
 	var identity string
-	if err := database.pool.QueryRow(ctx, `SELECT baseline_id FROM control.schema_identity WHERE id=1`).Scan(&identity); err != nil || identity != "v1" {
-		t.Fatalf("baseline identity = %q, %v; want v1", identity, err)
+	if err := database.pool.QueryRow(ctx, `SELECT baseline_id FROM control.schema_identity WHERE id=1`).Scan(&identity); err != nil || identity != "deployments-v1" {
+		t.Fatalf("baseline identity = %q, %v; want deployments-v1", identity, err)
 	}
 	// serving roles require the exact coordinated baseline and version.
 	if _, err := database.pool.Exec(ctx, `ALTER TABLE control.public_urls ADD COLUMN future_note text`); err != nil {
@@ -220,6 +221,12 @@ func TestIntegrationMigrationRejectsSiblingWorkloadBaselines(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, previous := range []string{
+		"v1",
+		"tnl-control-fresh-v1-selected-deployments",
+		"tnl-control-fresh-v1-deployment-connect",
+		"tnl-control-fresh-v1-deployment-management",
+		"tnl-control-fresh-v1-deployment-publishers",
+		"tnl-control-fresh-v1-deployment-configuration",
 		"tnl-control-fresh-v1-deployments",
 		"tnl-control-fresh-v1-provider-regions",
 		"tnl-control-fresh-v1-workload-gitlab",
@@ -259,6 +266,10 @@ func TestIntegrationMigrationRejectsSiblingWorkloadBaselines(t *testing.T) {
 			if opened, err := Open(ctx, d.pool.Config().ConnString(), testStorageKey, "", naming.ManagedURLModeGenerated); err == nil {
 				opened.Close()
 				t.Fatal("serving accepted a sibling workload baseline")
+			}
+			var preserved string
+			if err := d.pool.QueryRow(ctx, `SELECT baseline_id FROM control.schema_identity WHERE id=1`).Scan(&preserved); err != nil || preserved != previous {
+				t.Fatal("rejected baseline was relabeled", preserved, err)
 			}
 		})
 	}

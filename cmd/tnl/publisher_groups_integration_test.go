@@ -87,11 +87,11 @@ func TestIntegrationFixedGroupsCrossTeamIsolation(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(root, caName), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: target.Certificate().Raw}), 0600); err != nil {
 			t.Fatal(err)
 		}
-		writeJSON(configuration, map[string]any{"version": 1, "tnl": map[string]any{"server": f.url, "team": team, "publisher_groups": map[string]any{"production": map[string]any{}}, "services": map[string]any{
-			"api": map[string]any{"publisher_group": "production", "target": map[string]any{"type": "address", "address": target.URL, "tls": map[string]any{"server_name": "example.com", "ca_file": caName}}, "access": map[string]any{"team": true}},
-		}}})
+		writeJSON(configuration, map[string]any{"version": 1, "tnl": map[string]any{"server": f.url, "team": team, "services": map[string]any{"api": map[string]any{}}, "deployments": map[string]any{"production": map[string]any{"targets": map[string]any{
+			"api": map[string]any{"address": target.URL, "tls": map[string]any{"hostname": "example.com", "ca": string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: target.Certificate().Raw}))}, "access": map[string]any{"team": true}},
+		}}}}})
 		var result controlv1.AppliedProjectConfiguration
-		if err := json.Unmarshal(cliCall(t, t.Context(), []string{"--config", configuration, "apply", "--state-dir", person, "--output", "json"}), &result); err != nil {
+		if err := json.Unmarshal(cliCall(t, t.Context(), []string{"--config", configuration, "apply", "--deployment", "production", "--state-dir", person, "--output", "json"}), &result); err != nil {
 			t.Fatal(err)
 		}
 		applied = append(applied, result)
@@ -275,13 +275,13 @@ func TestIntegrationFixedGroupsCrossTeamIsolation(t *testing.T) {
 	}
 	tnl := document["tnl"].(map[string]any)
 	tnl["team"] = teams[0]
-	service := tnl["services"].(map[string]any)["api"].(map[string]any)
-	service["target"].(map[string]any)["address"] = replacementTarget.URL
-	service["target"].(map[string]any)["tls"].(map[string]any)["ca_file"] = "a.pem"
+	service := tnl["deployments"].(map[string]any)["production"].(map[string]any)["targets"].(map[string]any)["api"].(map[string]any)
+	service["address"] = replacementTarget.URL
+	service["tls"].(map[string]any)["ca"] = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: replacementTarget.Certificate().Raw}))
 	writeJSON(configuration, document)
-	cliCall(t, t.Context(), []string{"--config", configuration, "apply", "--state-dir", person})
+	cliCall(t, t.Context(), []string{"--config", configuration, "apply", "--deployment", "production", "--state-dir", person})
 	workflowWait(t, 35*time.Second, func() bool {
-		status, err := session.Authenticated().Control.GetProjectConfiguration(t.Context(), teams[0], applied[0].ProjectKey)
+		status, err := session.Authenticated().Control.GetProjectConfiguration(t.Context(), teams[0], applied[0].ProjectKey, "production")
 		return err == nil && len(status.Members) == 1 && status.Members[0].Healthy && status.Members[0].ObservedRevision > applied[0].Revision
 	})
 	if current(1) != runs[1] {

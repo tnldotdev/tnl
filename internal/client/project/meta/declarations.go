@@ -15,7 +15,7 @@ const DeclarationsName = "project.d.ts"
 // Declarations derives types from the source contract, never runtime endpoints.
 // typescript factories retain their full return type without running a checker
 // against one checkout's evaluated result. static files have exact declared keys.
-func Declarations(configuration config.TNL, configPath, outputDir string) ([]byte, error) {
+func Declarations(configuration config.Project, configPath, outputDir string) ([]byte, error) {
 	if configPath == "" {
 		return nil, errors.New("project configuration is required for declarations")
 	}
@@ -37,25 +37,30 @@ func Declarations(configuration config.TNL, configPath, outputDir string) ([]byt
 		shape := map[string]any{}
 		services := map[string]any{}
 		for name, service := range configuration.Services {
-			value := map[string]any{"protocol": config.Protocol(service)}
-			if paths := config.ServicePaths(service); len(paths) != 0 {
-				mounts := map[string]any{}
-				for prefix, mount := range paths {
-					mounts[prefix] = map[string]any{"service": mount.Service, "stripPrefix": mount.StripPrefix}
-				}
-				value["http"] = map[string]any{"paths": mounts}
-			}
+			value := map[string]any{"protocol": config.DeclaredProtocol(service)}
 			services[name] = value
 		}
 		shape["services"] = services
-		publishers := map[string]any{}
-		for name := range configuration.PublisherGroups {
-			publishers[name] = map[string]any{}
+		deployments := map[string]any{}
+		for name, deployment := range configuration.Deployments {
+			targets := map[string]any{}
+			for service, binding := range deployment.Targets {
+				value := map[string]any{}
+				if binding.HTTP != nil && len(binding.HTTP.Paths) != 0 {
+					paths := map[string]any{}
+					for prefix, mount := range binding.HTTP.Paths {
+						paths[prefix] = map[string]any{"service": mount.Service, "stripPrefix": mount.StripPrefix}
+					}
+					value["http"] = map[string]any{"paths": paths}
+				}
+				targets[service] = value
+			}
+			deployments[name] = map[string]any{"targets": targets}
 		}
-		shape["publisherGroups"] = publishers
+		shape["deployments"] = deployments
 		policies := map[string]any{}
 		for name, policy := range configuration.Workloads {
-			value := map[string]any{"services": policy.Services}
+			value := map[string]any{"services": policy.Services, "deployment": policy.Deployment}
 			if g := policy.GitLab; g != nil {
 				block := map[string]any{}
 				if g.Project != "" {

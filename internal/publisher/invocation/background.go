@@ -100,11 +100,10 @@ func InstallEnrolled(ctx context.Context, flags BackgroundOptions, selection Enr
 		if err != nil {
 			return err
 		}
-		trust, err := publisherproxy.TargetOptionsForCA(flags.TargetCAFile, flags.ProjectRoot)
+		trust, err := publicTargetOptions(ctx, flags.PublicOptions, target)
 		if err != nil {
 			return err
 		}
-		trust.ServerName = flags.TargetTLSName
 		if err := publisherproxy.PreflightWithOptions(ctx, target, trust); err != nil {
 			return err
 		}
@@ -163,6 +162,13 @@ func InstallBackgroundJob(ctx context.Context, registry *installedjobs.Registry,
 	job.TargetCAPEM, err = setup.ReadTrust(caPath)
 	if err != nil {
 		return err
+	}
+	trust, err := configuredTargetTrust(ctx, flags.Project, flags.Service, flags.Target)
+	if err != nil {
+		return err
+	}
+	if trust != nil {
+		job.TargetCAPEM, job.TargetTLSName = trust.PEM, trust.Hostname
 	}
 	job.ServerCAPEM, err = setup.ReadTrust(background.ServerCAFile)
 	if err != nil {

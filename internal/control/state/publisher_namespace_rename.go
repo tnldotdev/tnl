@@ -77,10 +77,11 @@ func (d *Database) RenamePublisherNamespace(ctx context.Context, r RenamePublish
 	if err != nil {
 		return result, publisherLookupError(err, ErrPublisherGroup)
 	}
-	c, err := d.openAppliedProject(row)
+	record, err := d.openAppliedProjectRecord(row)
 	if err != nil {
 		return result, err
 	}
+	c := record.Deployments[name]
 	deployment, err := q.LockProjectPublisherGroup(ctx, id)
 	if err != nil {
 		return result, err
@@ -137,7 +138,7 @@ func (d *Database) RenamePublisherNamespace(ctx context.Context, r RenamePublish
 	if err = recordPublisherGroupUpdate(ctx, tx, id, r.ActorID, "", "namespace-rename/"+r.IdempotencyKey, r.Now); err != nil {
 		return result, err
 	}
-	result, err = d.appliedProjectStatus(ctx, tx, row, c)
+	result, err = d.appliedProjectStatus(ctx, tx, row, name, c)
 	if err != nil {
 		return result, err
 	}

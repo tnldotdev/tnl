@@ -674,7 +674,7 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 	if protocol == "kubernetes" {
 		targetDefinition = map[string]any{"type": "eks", "cluster": "fixture", "region": "us-east-1"}
 	}
-	workloadPolicy := map[string]any{"github": map[string]any{"workflow": ".github/workflows/test.yml", "branch": "main", "events": []string{"push"}}, "services": []string{serviceName}}
+	workloadPolicy := map[string]any{"deployment": "remote", "github": map[string]any{"workflow": ".github/workflows/test.yml", "branch": "main", "events": []string{"push"}}, "services": []string{serviceName}}
 	if startup == "borrowed-refresh" {
 		workloadPolicy["token"] = map[string]any{"file": "assertion"}
 	}
@@ -687,9 +687,9 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 			workloadPolicy["token"] = map[string]any{"env": "FIXTURE_GOOGLE_ASSERTION"}
 		}
 	}
-	configuration := map[string]any{"version": 1, "tnl": map[string]any{"server": server, "team": team, "publisher_groups": map[string]any{"remote": map[string]any{"public": true}}, "services": map[string]any{serviceName: map[string]any{"publisher_group": "remote", "protocol": protocol, "target": targetDefinition}}, "workloads": map[string]any{"test": workloadPolicy}}}
+	configuration := map[string]any{"version": 1, "tnl": map[string]any{"server": server, "team": team, "services": map[string]any{serviceName: map[string]any{"protocol": protocol}}, "deployments": map[string]any{"remote": map[string]any{"public": true, "targets": map[string]any{serviceName: targetDefinition}}}, "workloads": map[string]any{"test": workloadPolicy}}}
 	if startup == "action-wrong-provider" {
-		configuration["tnl"].(map[string]any)["workloads"] = map[string]any{"test": map[string]any{"fly": map[string]any{"app": "fixture", "org": "example"}, "services": []string{serviceName}}}
+		configuration["tnl"].(map[string]any)["workloads"] = map[string]any{"test": map[string]any{"deployment": "remote", "fly": map[string]any{"app": "fixture", "org": "example"}, "services": []string{serviceName}}}
 	}
 	data, _ := json.Marshal(configuration)
 	if err := os.WriteFile(filepath.Join(root, "tnl.json"), data, 0o600); err != nil {
@@ -809,7 +809,7 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 	}
 	if strings.HasPrefix(startup, "javascript") || strings.HasPrefix(startup, "python") {
 		manifest := workloadmanifest.Manifest{Schema: 1, Server: scope.Server, Team: scope.TeamID, ProjectKey: scope.ProjectKey, SourceFingerprint: scope.SourceID, ProjectLabel: scope.ProjectLabel,
-			Workloads: map[string]workloadmanifest.Workload{"test": {Provider: "github", Services: []string{serviceName}, MaxDurationSeconds: 3600, Acquisition: workloadmanifest.Acquisition{Method: "github-actions", Audience: scope.Server}}}, Services: map[string]string{serviceName: protocol}}
+			Workloads: map[string]workloadmanifest.Workload{"test": {Deployment: "production", Provider: "github", Services: []string{serviceName}, MaxDurationSeconds: 3600, Acquisition: workloadmanifest.Acquisition{Method: "github-actions", Audience: scope.Server}}}, Services: map[string]string{serviceName: protocol}}
 		if strings.HasSuffix(startup, "-refresh") {
 			policy := manifest.Workloads["test"]
 			policy.MaxDurationSeconds = 0

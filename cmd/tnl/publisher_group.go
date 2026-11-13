@@ -85,7 +85,10 @@ func runPublisherGroupEnrollment(ctx context.Context, flags publisherEnrollComma
 			return err
 		}
 		key = source.Key
-		if _, ok := project.Config.PublisherGroups[flags.Group]; !ok {
+		if project.Declared == nil {
+			return publisherCLIError("publisher group is not configured in this project")
+		}
+		if _, ok := project.Declared.Deployments[flags.Group]; !ok {
 			return publisherCLIError("publisher group is not configured in this project")
 		}
 	}

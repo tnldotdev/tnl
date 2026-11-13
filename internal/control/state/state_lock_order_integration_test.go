@@ -211,6 +211,7 @@ func TestIntegrationStateLockOrderApplyExpiration(t *testing.T) {
 		"a": {PublisherGroup: "production", Protocol: "tcp", Target: "localhost:5001"},
 		"b": {PublisherGroup: "production", Protocol: "tcp", Target: "localhost:5002"},
 	}
+	r = selectedProjectRequest(r, "production")
 	applied, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
 		t.Fatal(err)

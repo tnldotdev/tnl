@@ -178,7 +178,7 @@ paths:
       tags: [projects]
       summary: Apply a project's desired services and publisher groups
       security: [{ bearerAuth: [] }]
-      description: "Save declarations and update their resources together. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers."
+      description: "Reconcile logical service declarations and one selected deployment's bindings and workload policies. Sibling deployments and local realizations are preserved; declarations cannot contradict retained bindings. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current project revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers."
       requestBody:
         {
           required: true,
@@ -213,7 +213,14 @@ paths:
       summary: Read a project's applied configuration and publisher status
       description: Read the normalized desired configuration and observed publisher revisions for the selected team and project. Requires current project management permission; the response can include targets and must not be exposed as public project metadata.
       security: [{ bearerAuth: [] }]
-      parameters: [{ $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }]
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
+        - {
+            name: deployment,
+            in: query,
+            required: true,
+            schema: { type: string, pattern: "^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$" },
+          }
       responses:
         "200":
           {

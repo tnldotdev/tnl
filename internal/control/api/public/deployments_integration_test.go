@@ -35,6 +35,7 @@ func TestIntegrationDeploymentHTTPContracts(t *testing.T) {
 	}
 	team := session.Identity.Memberships[0].TeamID
 	_, err = d.ApplyProjectConfiguration(ctx, controlstate.ApplyProjectConfigurationRequest{
+		Deployment: "local", ServiceDeclarations: map[string]string{"db": "postgres"},
 		TeamID: team, ActorID: session.Identity.Identity.ID, ProjectKey: "example", SourceFingerprint: strings.Repeat("a", 64), Now: now,
 		Configuration: controlstate.ProjectConfiguration{Services: map[string]controlstate.ProjectServiceConfiguration{"db": {Protocol: "postgres", Target: "localhost:5432"}}},
 	})

@@ -108,7 +108,7 @@ func ConnectLocal(ctx context.Context, directory, name, protocol string, resolve
 	if err != nil || !endpoint.Addr().IsLoopback() || endpoint.Addr().Zone() != "" || endpoint.Port() == 0 {
 		return nil, errors.New("local connection requires a loopback TCP address")
 	}
-	trust, err := p.CaptureServiceTrust(ctx, nil, name, trustAddress)
+	trust, err := p.CaptureServiceTrust(ctx, name, trustAddress)
 	if err != nil {
 		return nil, err
 	}

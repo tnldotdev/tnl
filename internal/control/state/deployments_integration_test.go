@@ -24,6 +24,7 @@ func TestIntegrationDeploymentCRUDSharesSavedBindingsWithApply(t *testing.T) {
 			Access: &ProjectServiceAccess{Team: true},
 		}},
 	}
+	r = selectedProjectRequest(r, "production")
 	project, err := d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {
 		t.Fatal(err)
@@ -38,7 +39,7 @@ func TestIntegrationDeploymentCRUDSharesSavedBindingsWithApply(t *testing.T) {
 	if customer.Revision != 1 || customer.Services["db"].ID == project.Services[0].ServiceID || customer.Services["db"].Protocol != "postgres" || customer.Targets["db"].TLS == nil || customer.Targets["db"].TLS.Hostname != "orders.abc123.us-east-1.rds.amazonaws.com" {
 		t.Fatal("deployment did not create independent saved services and trust", customer)
 	}
-	legacy, err := d.GetProjectService(ctx, GetProjectServiceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Service: "db", IdentityID: r.ActorID, Now: now})
+	legacy, err := d.GetProjectService(ctx, GetProjectServiceRequest{Deployment: "production", TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Service: "db", IdentityID: r.ActorID, Now: now})
 	if err != nil || legacy.ID != project.Services[0].ServiceID {
 		t.Fatal("legacy name lookup selected a customer binding", err)
 	}
@@ -111,10 +112,12 @@ func TestIntegrationDeploymentCRUDSharesSavedBindingsWithApply(t *testing.T) {
 	db := r.Configuration.Services["db"]
 	db.Protocol = "mysql"
 	r.Configuration.Services["db"] = db
+	r.ServiceDeclarations["db"] = "mysql"
 	if _, err = d.ApplyProjectConfiguration(ctx, r); !errors.Is(err, ErrProjectManaged) {
 		t.Fatal("apply changed a sibling deployment's protocol", err)
 	}
-	r.Configuration = ProjectConfiguration{}
+	r.ServiceDeclarations["db"] = "postgres"
+	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}}
 	if _, err = d.ApplyProjectConfiguration(ctx, r); err != nil {
 		t.Fatal("removing apply-owned services touched a customer declaration", err)
 	}
@@ -163,6 +166,7 @@ func TestIntegrationDeploymentSavedConfigurationConsumers(t *testing.T) {
 			"kube": {PublisherGroup: "production", Protocol: "kubernetes", TargetDiscovery: &ProjectTargetDiscovery{Type: "eks", Region: "us-east-1", Cluster: &cluster}},
 		},
 	}
+	r = selectedProjectRequest(r, "production")
 	project, err := d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {
 		t.Fatal(err)
@@ -224,6 +228,7 @@ func TestIntegrationDeploymentLockWaitRechecksCurrentManager(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
 			r := appliedProjectRequest(t, d, now)
+			r = selectedProjectRequest(r, "local")
 			if _, err := d.ApplyProjectConfiguration(ctx, r); err != nil {
 				t.Fatal(err)
 			}
@@ -291,6 +296,7 @@ func TestIntegrationDeploymentReadsAndRecoveryRequireCurrentManager(t *testing.T
 	d, now := newControlStateIntegrationDatabase(t, "deployment_current_manager")
 	ctx := t.Context()
 	r := appliedProjectRequest(t, d, now)
+	r = selectedProjectRequest(r, "local")
 	if _, err := d.ApplyProjectConfiguration(ctx, r); err != nil {
 		t.Fatal(err)
 	}

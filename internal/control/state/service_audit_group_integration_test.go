@@ -18,6 +18,13 @@ func TestIntegrationServiceAuditActualGroupRemovalAndSafeAdminNormalization(t *t
 		"db":   {PublisherGroup: "production", Protocol: "postgres", Target: "audit-private-db.internal:5432"},
 		"keep": {Target: "http://localhost:4000"},
 	}}
+	localSelection := deploymentProjectRequest(r, "local")
+	localApplied, err := d.ApplyProjectConfiguration(t.Context(), localSelection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r = deploymentProjectRequest(r, "production")
+	r.ExpectedRevision = localApplied.Revision
 	applied, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
 		t.Fatal(err)
@@ -32,12 +39,13 @@ func TestIntegrationServiceAuditActualGroupRemovalAndSafeAdminNormalization(t *t
 	if _, err = d.pool.Exec(t.Context(), `INSERT INTO control.admin_audit_events(actor_identity_id,actor,request_id,operation,target_kind,target_id,details,occurred_at) VALUES($1,$1,'audit-secret-regression','public_url.update','public_url',$2,$3,$4)`, r.ActorID, public, []byte(secret), now); err != nil {
 		t.Fatal(err)
 	}
-	r.ExpectedRevision = applied.Revision
-	delete(r.Configuration.PublisherGroups, "production")
-	delete(r.Configuration.Services, "web")
-	delete(r.Configuration.Services, "db")
-	if _, err = d.ApplyProjectConfiguration(t.Context(), r); err != nil {
+	scope := DeploymentScope{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID}
+	if err = d.DeleteDeployment(t.Context(), scope, "production", applied.Services[0].DesiredRevision, now); err != nil {
 		t.Fatal("actual group removal hit audit trigger ambiguity", err)
+	}
+	kept, err := d.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, r.ActorID, "local")
+	if err != nil || len(kept.Services) != 1 || kept.Services[0].Service != "keep" {
+		t.Fatal("removing a deployment swept local state", kept, err)
 	}
 	var revoked int
 	if err = d.pool.QueryRow(t.Context(), `SELECT count(DISTINCT service_id) FROM control.service_audit_events WHERE publisher_identity_id=$1 AND event_type='publisher.revoke'`, replica.member.PublisherIdentityID).Scan(&revoked); err != nil || revoked != 2 {

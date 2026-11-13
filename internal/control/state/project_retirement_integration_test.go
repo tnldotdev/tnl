@@ -20,7 +20,16 @@ func TestIntegrationProjectRetirement(t *testing.T) {
 	r.ProjectLabel = "storefront"
 	r.Configuration = workloadConfiguration()
 	local := ProjectServiceConfiguration{Protocol: "postgres", Target: "localhost:5432", TargetTLS: &ProjectTargetTLS{Hostname: "cache.internal"}}
-	r.Configuration.Services["cache"] = local
+	localRequest := r
+	localRequest.Configuration = ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"cache": local}}
+	localRequest.ServiceDeclarations = map[string]string{"api": "http", "db": "http", "cache": "postgres"}
+	localApplied, err := d.ApplyProjectConfiguration(ctx, localRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r = selectedProjectRequest(r, "production")
+	r.ServiceDeclarations["cache"] = "postgres"
+	r.ExpectedRevision = localApplied.Revision
 	applied, err := d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {
 		t.Fatal(err)
@@ -108,6 +117,7 @@ func TestIntegrationProjectRetirement(t *testing.T) {
 		t.Fatal("local runtime recreated a retired resource", err)
 	}
 	r.Configuration = ProjectConfiguration{}
+	r.Deployment, r.ServiceDeclarations = "local", map[string]string{}
 	r.ExpectedRevision = applied.Revision
 	if _, err = d.ApplyProjectConfiguration(ctx, r); !errors.Is(err, ErrProjectConfigurationStale) {
 		t.Fatal("stale empty apply reactivated project", err)
@@ -164,7 +174,7 @@ func TestIntegrationProjectRetirementRacesApply(t *testing.T) {
 	if succeeded != 1 || stale != 1 {
 		t.Fatal("concurrent writers did not compare revisions", succeeded, stale)
 	}
-	current, err := d.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, r.ActorID)
+	current, err := d.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, r.ActorID, r.Deployment)
 	if err != nil || current.Revision != applied.Revision+1 {
 		t.Fatal("race advanced the project twice", current, err)
 	}

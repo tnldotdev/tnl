@@ -47,7 +47,7 @@ func TestIntegrationPublisherIdentitySurvivesTaskStateDeletion(t *testing.T) {
 	}
 	team, actor := session.Identity.PersonalTeamID, session.Identity.Identity.ID
 	const project, group, instance = "shop", "production", "replica-1"
-	_, err = database.ApplyProjectConfiguration(ctx, controlstate.ApplyProjectConfigurationRequest{TeamID: team, ActorID: actor, ProjectKey: project, SourceFingerprint: strings.Repeat("a", 64), Now: now, Configuration: controlstate.ProjectConfiguration{
+	_, err = database.ApplyProjectConfiguration(ctx, controlstate.ApplyProjectConfigurationRequest{Deployment: group, ServiceDeclarations: map[string]string{"api": "http"}, TeamID: team, ActorID: actor, ProjectKey: project, SourceFingerprint: strings.Repeat("a", 64), Now: now, Configuration: controlstate.ProjectConfiguration{
 		PublisherGroups: map[string]controlstate.ProjectPublisherGroup{group: {}},
 		Services:        map[string]controlstate.ProjectServiceConfiguration{"api": {PublisherGroup: group, Target: "api.internal:3000"}},
 	}})
@@ -157,7 +157,7 @@ func TestIntegrationPublisherIdentitySurvivesTaskStateDeletion(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	status, err := database.GetProjectConfiguration(ctx, team, project, actor)
+	status, err := database.GetProjectConfiguration(ctx, team, project, actor, "production")
 	if err != nil || len(status.Members) != 1 || status.Members[0].PublisherIdentityID != member.PublisherIdentityID || enrollmentRequests.Load() != 0 {
 		t.Fatal("replacements enrolled another identity or used bootstrap", err)
 	}

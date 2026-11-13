@@ -332,6 +332,7 @@ func TestIntegrationPublisherObservabilityPublicService(t *testing.T) {
 			target := startPrivateEchoTarget(t, f.owner)
 			group, protocol, public := "trace", controlv1.Tcp, true
 			applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{
+				Deployment: group, ServiceDeclarations: controlv1.ProjectServiceDeclarations{"echo": protocol},
 				TeamId: f.identity.teamID, Source: &testProjectSource,
 				Configuration: controlv1.ProjectConfiguration{
 					PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {Public: &public}},

@@ -128,7 +128,7 @@ func (r *MetadataResolver) Generate(ctx context.Context) (meta.Metadata, error) 
 			}
 			// the source-bound visitor lookup provides the current endpoint and
 			// exposure. never infer managed exposure from protocol or local config.
-			assigned, lookupErr := client.Control.GetProjectService(ctx, source.Key, name, controlv1.GetProjectServiceParams{TeamId: serviceContext.Team().Id, SourceFingerprint: source.Fingerprint})
+			assigned, lookupErr := client.Control.GetProjectService(ctx, source.Key, name, controlv1.GetProjectServiceParams{TeamId: serviceContext.Team().Id, SourceFingerprint: source.Fingerprint, Deployment: config.PublisherGroupName(r.project.Config.Services[name])})
 			if errors.Is(lookupErr, clientcontrol.ErrNotFound) {
 				// local startup does not apply remote services. include their
 				// endpoints only after control has a current visitor projection.

@@ -26,7 +26,7 @@ const DocumentVersion = 1
 type Document struct {
 	Schema  string       `json:"$schema,omitempty" yaml:"$schema,omitempty" jsonschema_description:"JSON Schema URL used by editors and validation tools."`
 	Version *int         `json:"version" yaml:"version" jsonschema:"required" jsonschema_description:"Configuration format version. Must be 1."`
-	TNL     *TNL         `json:"tnl,omitempty" yaml:"tnl,omitempty" jsonschema_description:"Project configuration used by the tnl client."`
+	TNL     *Project     `json:"tnl,omitempty" yaml:"tnl,omitempty" jsonschema_description:"Logical services and deployment bindings used by the tnl client."`
 	TNLD    *TNLDSection `json:"tnld,omitempty" yaml:"tnld,omitempty" jsonschema_description:"Process configuration used by tnld."`
 }
 
@@ -88,7 +88,7 @@ func ServiceName(serviceName string, service Service) string {
 // ServiceTarget describes one target discovery mechanism. an omitted
 // target means an app-reported HTTP listener.
 type ServiceTarget struct {
-	Type      string     `json:"type" yaml:"type" jsonschema:"required,enum=app,enum=address,enum=compose,enum=docker,enum=eks,enum=rds"`
+	Type      string     `json:"type,omitempty" yaml:"type,omitempty" jsonschema:"enum=app,enum=address,enum=compose,enum=docker,enum=eks,enum=rds"`
 	Address   *Target    `json:"address,omitempty" yaml:"address,omitempty"`
 	Project   *string    `json:"project,omitempty" yaml:"project,omitempty"`
 	File      *string    `json:"file,omitempty" yaml:"file,omitempty"`
@@ -103,8 +103,8 @@ type ServiceTarget struct {
 }
 
 type TargetTLS struct {
-	ServerName *string `json:"server_name,omitempty" yaml:"server_name,omitempty" jsonschema_description:"Target certificate hostname or IP; defaults to the resolved target host. Independent of the managed visitor TLS identity."`
-	CAFile     *string `json:"ca_file,omitempty" yaml:"ca_file,omitempty" jsonschema_description:"Project-relative CA-only PEM file added to system roots. Omit to use system roots. The publisher verifies target TLS; postgres and mysql use native negotiation, http and tcp use direct TLS. No unverified or plaintext fallback."`
+	Hostname *string `json:"hostname,omitempty" yaml:"hostname,omitempty" jsonschema_description:"Verified target certificate hostname or IP; defaults to the resolved target host. Independent of visitor TLS."`
+	CA       *string `json:"ca,omitempty" yaml:"ca,omitempty" jsonschema_description:"system (the default), aws-rds, or CA-only PEM certificates. Never a path or URL. aws-rds selects pinned regional roots offline and verifies the exact database hostname."`
 }
 
 type HTTPService struct {
@@ -155,7 +155,7 @@ func ServicePublish(service Service) *Publish {
 	}
 	result.Target = service.Target.Address
 	if tls := service.Target.TLS; tls != nil {
-		result.TargetTLSName, result.TargetCAFile = tls.ServerName, tls.CAFile
+		result.TargetTLSName = tls.Hostname
 		enabled := true
 		result.TargetTLS = &enabled
 	}

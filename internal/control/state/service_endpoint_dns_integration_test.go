@@ -12,6 +12,7 @@ func TestIntegrationServiceEndpointDNSRevisions(t *testing.T) {
 	r := appliedProjectRequest(t, d, now)
 	r.DNSAutomation = true
 	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"api": {PublisherGroup: "production", Target: "localhost:3000"}}}
+	r = selectedProjectRequest(r, "production")
 	applied, err := d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {
 		t.Fatal(err)

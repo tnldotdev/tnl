@@ -33,33 +33,33 @@ var loaderSource string
 // loadTypeScript evaluates trusted project-local TypeScript configuration. the
 // returned object is implicitly configuration version 1 and contains only tnl
 // fields.
-func loadTypeScript(ctx context.Context, path, cwd string, worktree Worktree) (config.TNL, error) {
+func loadTypeScript(ctx context.Context, path, cwd string, worktree Worktree) (config.Project, error) {
 	if err := ctx.Err(); err != nil {
-		return config.TNL{}, fmt.Errorf("load TypeScript config: %w", err)
+		return config.Project{}, fmt.Errorf("load TypeScript config: %w", err)
 	}
 	node, err := exec.LookPath("node")
 	if err != nil {
-		return config.TNL{}, errors.New("load TypeScript config: Node.js 22.18 or newer is required")
+		return config.Project{}, errors.New("load TypeScript config: Node.js 22.18 or newer is required")
 	}
 	absolutePath, err := filepath.Abs(path)
 	if err != nil {
-		return config.TNL{}, fmt.Errorf("load TypeScript config: resolve path: %w", err)
+		return config.Project{}, fmt.Errorf("load TypeScript config: resolve path: %w", err)
 	}
 	absoluteCWD, err := filepath.Abs(cwd)
 	if err != nil {
-		return config.TNL{}, fmt.Errorf("load TypeScript config: resolve cwd: %w", err)
+		return config.Project{}, fmt.Errorf("load TypeScript config: resolve cwd: %w", err)
 	}
 	loadCtx, cancel := context.WithTimeout(ctx, loadTimeout)
 	defer cancel()
 	bundledPath, cleanup, err := bundleTypeScript(loadCtx, absolutePath)
 	if err != nil {
 		if contextErr := ctx.Err(); contextErr != nil {
-			return config.TNL{}, fmt.Errorf("load TypeScript config: %w", contextErr)
+			return config.Project{}, fmt.Errorf("load TypeScript config: %w", contextErr)
 		}
 		if loadCtx.Err() != nil {
-			return config.TNL{}, errors.New("load TypeScript config: evaluation timed out")
+			return config.Project{}, errors.New("load TypeScript config: evaluation timed out")
 		}
-		return config.TNL{}, err
+		return config.Project{}, err
 	}
 	defer cleanup()
 	command := exec.CommandContext(loadCtx, node, "--input-type=module", "--eval", loaderSource, bundledPath, absoluteCWD)
@@ -77,7 +77,7 @@ func loadTypeScript(ctx context.Context, path, cwd string, worktree Worktree) (c
 	contextData, err := json.Marshal(loaderContext{CWD: absoluteCWD, Env: contextEnvironment, Worktree: worktree,
 		Project: ProjectContext{RelativeDirectory: filepath.ToSlash(relative)}})
 	if err != nil {
-		return config.TNL{}, fmt.Errorf("load TypeScript config: encode context: %w", err)
+		return config.Project{}, fmt.Errorf("load TypeScript config: encode context: %w", err)
 	}
 	command.Stdin = bytes.NewReader(contextData)
 	output := &boundedOutput{limit: maxResultBytes + 1}
@@ -85,30 +85,30 @@ func loadTypeScript(ctx context.Context, path, cwd string, worktree Worktree) (c
 	command.Stderr = io.Discard
 	waitErr := command.Run()
 	if contextErr := ctx.Err(); contextErr != nil {
-		return config.TNL{}, fmt.Errorf("load TypeScript config: %w", contextErr)
+		return config.Project{}, fmt.Errorf("load TypeScript config: %w", contextErr)
 	}
 	if loadCtx.Err() != nil {
-		return config.TNL{}, errors.New("load TypeScript config: evaluation timed out")
+		return config.Project{}, errors.New("load TypeScript config: evaluation timed out")
 	}
 	if waitErr != nil {
 		if _, ok := waitErr.(*exec.ExitError); !ok {
-			return config.TNL{}, fmt.Errorf("load TypeScript config: start Node.js: %w", waitErr)
+			return config.Project{}, fmt.Errorf("load TypeScript config: start Node.js: %w", waitErr)
 		}
-		return config.TNL{}, fmt.Errorf("load TypeScript config: %s", loaderErrorMessage(output))
+		return config.Project{}, fmt.Errorf("load TypeScript config: %s", loaderErrorMessage(output))
 	}
 	if output.overflow {
-		return config.TNL{}, errors.New("load TypeScript config: result is too large")
+		return config.Project{}, errors.New("load TypeScript config: result is too large")
 	}
 	data := output.Bytes()
 	if len(data) == 0 || data[0] != 'R' || !stdjson.Valid(data[1:]) {
-		return config.TNL{}, errors.New("load TypeScript config: invalid result from loader")
+		return config.Project{}, errors.New("load TypeScript config: invalid result from loader")
 	}
 	value, err := unmarshalTypeScriptTNL(data[1:])
 	if err != nil {
-		return config.TNL{}, fmt.Errorf("load TypeScript config: invalid result: %w", err)
+		return config.Project{}, fmt.Errorf("load TypeScript config: invalid result: %w", err)
 	}
-	if err := config.ValidateTNL(value); err != nil {
-		return config.TNL{}, fmt.Errorf("load TypeScript config: %w", err)
+	if err := config.ValidateProject(value); err != nil {
+		return config.Project{}, fmt.Errorf("load TypeScript config: %w", err)
 	}
 	return value, nil
 }
@@ -258,8 +258,6 @@ type ProjectContext struct {
 
 var typeScriptKeyMappings = map[string]string{
 	"source_ips":           "sourceIPs",
-	"server_name":          "serverName",
-	"ca_file":              "caFile",
 	"max_bytes":            "maxBytes",
 	"rate_per":             "ratePer",
 	"upload_bytes":         "uploadBytes",
@@ -298,32 +296,31 @@ func TypeScriptKeyMappings() map[string]string {
 	return result
 }
 
-func unmarshalTypeScriptTNL(data []byte) (config.TNL, error) {
+func unmarshalTypeScriptTNL(data []byte) (config.Project, error) {
 	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return config.TNL{}, err
+		return config.Project{}, err
 	}
 	if err := config.RejectNullValues(raw); err != nil {
-		return config.TNL{}, err
+		return config.Project{}, err
 	}
-	if err := normalizeTypeScriptObject(raw, reflect.TypeOf(config.TNL{})); err != nil {
-		return config.TNL{}, err
+	if err := normalizeTypeScriptObject(raw, reflect.TypeOf(config.Project{})); err != nil {
+		return config.Project{}, err
 	}
 	encoded, err := json.Marshal(raw)
 	if err != nil {
-		return config.TNL{}, err
+		return config.Project{}, err
 	}
-	var result config.TNL
+	var result config.Project
 	if err := json.Unmarshal(encoded, &result, json.RejectUnknownMembers(true)); err != nil {
-		return config.TNL{}, err
+		return config.Project{}, err
 	}
 	return result, nil
 }
 
 func normalizeTypeScriptObject(object map[string]any, objectType reflect.Type) error {
 	fields := make(map[string]reflect.StructField, objectType.NumField())
-	for index := 0; index < objectType.NumField(); index++ {
-		field := objectType.Field(index)
+	for _, field := range reflect.VisibleFields(objectType) {
 		staticName, _, _ := strings.Cut(field.Tag.Get("json"), ",")
 		if staticName == "" || staticName == "-" {
 			continue

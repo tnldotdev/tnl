@@ -67,6 +67,7 @@ func connectionProject(ctx context.Context, options ContextOptions) (projectConf
 		return projectConfiguration{}, connectorruntime.Context{}, err
 	}
 	// CI source/worktree scope does not depend on a local human state database.
+	selection.Workload = options.Workload
 	project, err := clientproject.Resolve(ctx, selection, directory, [32]byte{})
 	if err != nil {
 		return projectConfiguration{}, connectorruntime.Context{}, err
@@ -204,10 +205,10 @@ func connectionManifest(options ContextOptions) (projectConfiguration, connector
 		configuration.Workloads[options.Workload] = policy
 	}
 	for _, s := range services {
-		configuration.Services[s] = config.Service{Protocol: new(m.Services[s])}
+		configuration.Services[s] = config.Service{Protocol: new(m.Services[s]), PublisherGroup: new(w.Deployment)}
 	}
 	scope := connectorruntime.Context{Schema: 1, Directory: directory, ConfigDigest: hex.EncodeToString(digest[:]), Server: m.Server, Audience: m.Server, TeamID: m.Team, ProjectKey: m.ProjectKey, SourceID: m.SourceFingerprint, WorktreeKey: "deployment", ProjectLabel: m.ProjectLabel, Workload: options.Workload, Services: services}
-	return projectConfiguration{Project: clientproject.Project{Root: directory, Config: configuration}}, scope, scope.Validate()
+	return projectConfiguration{Project: clientproject.Project{Root: directory, Config: configuration, Deployment: w.Deployment}}, scope, scope.Validate()
 }
 
 func (o Operations) ServeOwner(ctx context.Context, options OwnerServeOptions, input io.Reader, output io.Writer) error {
