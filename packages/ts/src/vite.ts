@@ -2,11 +2,15 @@ import { serviceHostnames, serializeRuntimePayload } from "./internal/project/ru
 import { canonicalLoopbackTarget } from "./internal/publisher/target.js";
 import type { Plugin } from "vite";
 import { TnlError, TnlCleanupError, classifyTnlError } from "./errors.js";
+import type { PreparedService } from "./internal/publisher/app.js";
 import {
-  prepareService,
-  type PrepareOptions,
-  type PreparedService,
-} from "./internal/publisher/app.js";
+  closeFramework,
+  frameworkOperation,
+  frameworkOptions,
+  localRuntimePayload,
+  prepareFramework,
+  type FrameworkOptions,
+} from "./internal/publisher/framework.js";
 import { operation } from "./internal/tracing.js";
 import * as z from "zod";
 import { parseValue } from "./internal/validation.js";
@@ -15,8 +19,11 @@ const runtimeDefineName = "process.env.TNL_PROJECT_RUNTIME";
 const allowedHostsSchema = z.union([z.literal(true), z.array(z.string())]).optional();
 
 /** configures a Vite development server to register its listener and add project metadata. */
-export default function tnl(options: PrepareOptions = {}): Plugin {
+export type { FrameworkOptions } from "./internal/publisher/framework.js";
+
+export default function tnl(options: FrameworkOptions = {}): Plugin {
   let assignment: PreparedService | null = null;
+  let preview: ReturnType<typeof frameworkOptions>["preview"] = "auto";
   return {
     name: "tnl",
     enforce: "post",
@@ -26,6 +33,8 @@ export default function tnl(options: PrepareOptions = {}): Plugin {
       if (configEnvironment.command !== "serve" || configEnvironment.isPreview === true) {
         return undefined;
       }
+      preview = frameworkOptions(options).preview;
+      if (preview === false) return runtimeDefine(localRuntimePayload);
 
       const server = userConfig.server ?? {};
       const allowedHosts = parseValue(
@@ -33,7 +42,8 @@ export default function tnl(options: PrepareOptions = {}): Plugin {
         server.allowedHosts,
         "sdk.configuration_invalid",
       );
-      assignment = await operation("vite.prepare", () => prepareService(options, "vite"));
+      assignment = await operation("vite.prepare", () => prepareFramework(options, "vite"));
+      if (assignment === null) return runtimeDefine(localRuntimePayload);
       const result = {
         ...runtimeDefine(serializeRuntimePayload(assignment, true)),
         server: {
@@ -73,7 +83,14 @@ export default function tnl(options: PrepareOptions = {}): Plugin {
               throw new TnlError("sdk.listener_failed");
             }
             canonicalLoopbackTarget(address.address, address.port);
-            await configured.register(listener);
+            await frameworkOperation(preview, async (signal) => {
+              try {
+                await configured.register(listener, signal);
+              } catch (error) {
+                await closeFramework(configured, error);
+                throw error;
+              }
+            });
           } catch (error) {
             return await closeAfterFailure(server.close.bind(server), error);
           }

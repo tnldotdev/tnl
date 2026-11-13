@@ -3,10 +3,11 @@ import { canonicalLoopbackTarget, parseListenerPort } from "./internal/publisher
 import type { NextConfig } from "next";
 import { TnlError } from "./errors.js";
 import {
-  prepareService,
-  reportFrameworkTarget,
-  type PrepareOptions,
-} from "./internal/publisher/app.js";
+  frameworkOptions,
+  localRuntimePayload,
+  prepareFramework,
+  type FrameworkOptions,
+} from "./internal/publisher/framework.js";
 import { operation } from "./internal/tracing.js";
 import * as z from "zod";
 import { parseValue } from "./internal/validation.js";
@@ -27,17 +28,21 @@ export type NextConfigFactory = (
 ) => NextConfig | Promise<NextConfig>;
 
 export type NextConfigInput = NextConfig | Promise<NextConfig> | NextConfigFactory;
+export type { FrameworkOptions } from "./internal/publisher/framework.js";
 
 /** configures a Next.js development server to register its listener and add project metadata. */
 export function withTnl(
   config: NextConfigInput = {},
-  options: PrepareOptions = {},
+  options: FrameworkOptions = {},
 ): NextConfigFactory {
   return async function tnlNextConfig(phase, context) {
     const resolved = typeof config === "function" ? await config(phase, context) : await config;
     const nextConfig = resolved ?? {};
     if (phase !== developmentServerPhase) {
       return nextConfig;
+    }
+    if (frameworkOptions(options).preview === false) {
+      return injectRuntime(nextConfig, localRuntimePayload);
     }
 
     const allowedDevOrigins = parseValue(
@@ -46,13 +51,12 @@ export function withTnl(
       "sdk.configuration_invalid",
     );
     const target = nextTarget(process.env);
-    const assignment = await operation("next.register", async () => {
-      const assignment = await prepareService(options, "next");
-      // supported Next versions set this origin from their bound HTTP listener
-      // before loading configuration. PORT alone is never a registration.
-      await reportFrameworkTarget(assignment, target);
-      return assignment;
-    });
+    // supported Next versions report the bound listener before loading config.
+    // PORT alone is never a registration.
+    const assignment = await operation("next.register", () =>
+      prepareFramework(options, "next", target),
+    );
+    if (assignment === null) return injectRuntime(nextConfig, localRuntimePayload);
 
     return injectRuntime(
       {

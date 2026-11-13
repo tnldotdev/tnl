@@ -2,13 +2,19 @@ import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { onTestFinished } from "vitest";
-import { startTestBootstrap, waitForBootstrapRequest, type TestBootstrap } from "./bootstrap.js";
+import {
+  startTestBootstrap,
+  waitForBootstrapRequest,
+  type BootstrapOptions,
+  type TestBootstrap,
+} from "./bootstrap.js";
 import { errorMessage, startTestProcess, type TestProcess } from "./process.js";
 
 export async function startFrameworkFixture(
   framework: "next" | "vite",
   arguments_: readonly string[] = [],
   environment: Readonly<Record<string, string | undefined>> = {},
+  bootstrapOptions: BootstrapOptions = {},
 ) {
   // stay beneath the package: Node and Turbopack resolve the installed matrix version,
   // React, and tnl's real package exports through the same ancestors as the source fixture.
@@ -30,7 +36,7 @@ export async function startFrameworkFixture(
           source,
         ),
     });
-    const bootstrap = await startTestBootstrap();
+    const bootstrap = await startTestBootstrap(bootstrapOptions);
     await installRuntimeFixture(directory, bootstrap);
     const cli = fileURLToPath(
       new URL(
@@ -50,6 +56,7 @@ export async function startFrameworkFixture(
       directory,
       close,
       output: running.output,
+      requests: bootstrap.requests,
       request: (index = 0) =>
         waitForBootstrapRequest(bootstrap, index, 30_000, running.assertRunning),
       async diagnose<T>(callback: () => Promise<T>): Promise<T> {

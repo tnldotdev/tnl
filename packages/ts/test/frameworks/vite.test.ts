@@ -31,15 +31,22 @@ vi.mock("../../dist/internal/publisher/app.js", async (importOriginal) => {
     prepareService: async (
       options: import("../../dist/internal/publisher/app.js").PrepareOptions,
       framework: Parameters<typeof actual.createPreparedService>[1],
+      signal?: AbortSignal,
     ) => {
-      const prepared = await actual.createPreparedService(options, framework, {
-        start: async () => {
-          if (process.env.APP_TEST_ENDPOINT === undefined)
-            throw new (await import("../../dist/errors.js")).TnlError("sdk.dev_unavailable");
-          return JSON.parse(process.env.APP_TEST_ENDPOINT);
+      const prepared = await actual.createPreparedService(
+        options,
+        framework,
+        {
+          start: async () => {
+            if (process.env.APP_TEST_ENDPOINT === undefined)
+              throw new (await import("../../dist/errors.js")).TnlError("sdk.dev_unavailable");
+            return JSON.parse(process.env.APP_TEST_ENDPOINT);
+          },
+          request: actual.runtimeRequest,
         },
-        request: actual.runtimeRequest,
-      });
+        () => {},
+        signal,
+      );
       onTestFinished(() => prepared.close());
       return prepared;
     },
@@ -78,12 +85,15 @@ describe("tnl", () => {
       });
     });
   });
-  test("accepts explicit service selection and requires a local manager", async () => {
+  test("keeps local development working without a local manager", async () => {
     expect(tnl).toHaveLength(0);
     expect(tnl()).toMatchObject({ apply: "serve", enforce: "post", name: "tnl" });
     const directory = await temporaryDirectory("tnl-vite-empty-");
     await withCurrentDirectory(directory, async () => {
-      await expect(runConfigHook(tnl(), { server: { port: 4173 } })).rejects.toMatchObject({
+      await expect(runConfigHook(tnl(), { server: { port: 4173 } })).resolves.toEqual(
+        localDefine(),
+      );
+      await expect(runConfigHook(tnl({ preview: "required" }), {})).rejects.toMatchObject({
         code: "sdk.dev_unavailable",
       });
     });
@@ -244,6 +254,169 @@ describe("tnl", () => {
     expect(close).not.toHaveBeenCalled();
   });
 });
+
+test.each([
+  [401, "runtime.authentication_required"],
+  [400, "TNL_CLIENT_SERVER_UNAVAILABLE"],
+  [503, "runtime.unavailable"],
+] as const)("keeps Vite local when preparation returns %s/%s", async (status, code) => {
+  const bootstrap = await startTestBootstrap({
+    status,
+    responseBody: JSON.stringify({ code, message: "private diagnostic must not be logged" }),
+  });
+  const warning = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+  await withProcessEnvironment(bootstrap.environment, async () => {
+    expect(await runConfigHook(tnl(), { server: { allowedHosts: ["existing.example"] } })).toEqual(
+      localDefine(),
+    );
+    await expect(runConfigHook(tnl({ preview: "required" }), {})).rejects.toBeInstanceOf(Error);
+  });
+  expect(warning).toHaveBeenCalled();
+  expect(warning.mock.calls.flat().join("")).not.toContain("private diagnostic");
+});
+
+test("disabled Vite preserves hosts and never prepares or wraps the listener", async () => {
+  const bootstrap = await startTestBootstrap();
+  await withProcessEnvironment(bootstrap.environment, async () => {
+    const plugin = tnl({ preview: false });
+    expect(await runConfigHook(plugin, { server: { allowedHosts: ["existing.example"] } })).toEqual(
+      localDefine(),
+    );
+    const server = { listen: vi.fn() };
+    const original = server.listen;
+    if (typeof plugin.configureServer !== "function") throw new Error("missing Vite server hook");
+    plugin.configureServer.call({} as never, server as never);
+    expect(server.listen).toBe(original);
+  });
+  expect(bootstrap.requests).toHaveLength(0);
+});
+
+test("local preview override can disable required publication without an endpoint", async () => {
+  const bootstrap = await startTestBootstrap();
+  await withProcessEnvironment({ ...bootstrap.environment, TNL_PREVIEW: "off" }, async () => {
+    expect(await runConfigHook(tnl({ preview: "required" }), {})).toEqual(localDefine());
+  });
+  expect(bootstrap.requests).toHaveLength(0);
+});
+
+test("invalid preview mode fails before making a publisher request", async () => {
+  const bootstrap = await startTestBootstrap();
+  await withProcessEnvironment({ ...bootstrap.environment, TNL_PREVIEW: "invalid" }, async () => {
+    await expect(runConfigHook(tnl(), {})).rejects.toMatchObject({
+      code: "sdk.configuration_invalid",
+    });
+  });
+  expect(bootstrap.requests).toHaveLength(0);
+});
+
+test(
+  "optional preview has a bounded preparation even if local tnl does not reply",
+  { timeout: 10_000 },
+  async () => {
+    const bootstrap = await startTestBootstrap({ stallPath: "/v1/prepare" });
+    await withProcessEnvironment(bootstrap.environment, async () => {
+      const started = Date.now();
+      expect(await runConfigHook(tnl(), {})).toEqual(localDefine());
+      expect(Date.now() - started).toBeLessThan(5_000);
+    });
+    expect(bootstrap.requests.map(({ path }) => path)).toEqual(["/v1/prepare"]);
+  },
+);
+
+test("optional Vite registration failure does not close a working local listener", async () => {
+  const bootstrap = await startTestBootstrap({
+    status: 503,
+    failurePath: "/v1/register",
+    responseBody: JSON.stringify({ code: "runtime.unavailable", message: "unavailable" }),
+  });
+  const plugin = tnl();
+  await withProcessEnvironment(bootstrap.environment, async () => {
+    await runConfigHook(plugin, {});
+  });
+  const close = vi.fn(async () => {});
+  const server = {
+    close,
+    httpServer: {
+      listening: true,
+      address: () => ({ address: "127.0.0.1", port: 5200 }),
+      once: () => {},
+      off: () => {},
+    },
+    listen: vi.fn(async () => server),
+  };
+  if (typeof plugin.configureServer !== "function") throw new Error("missing Vite server hook");
+  plugin.configureServer.call({} as never, server as never);
+  expect(await server.listen()).toBe(server);
+  expect(close).not.toHaveBeenCalled();
+  expect(bootstrap.requests.at(-1)?.path).toBe("/v1/unregister");
+});
+
+test.each([
+  [
+    "without preview access",
+    {
+      status: 401,
+      responseBody: JSON.stringify({ code: "runtime.authentication_required", message: "sign in" }),
+    },
+  ],
+  [
+    "when control is unavailable",
+    {
+      status: 503,
+      responseBody: JSON.stringify({
+        code: "TNL_CLIENT_SERVER_UNAVAILABLE",
+        message: "control is offline",
+      }),
+    },
+  ],
+] as const)(
+  "runs real Vite %s without publishing",
+  { timeout: 60_000 },
+  async (_case, bootstrapOptions) => {
+    const port = await findAvailableLoopbackPort();
+    const fixture = await startFrameworkFixture(
+      "vite",
+      [],
+      { TNL_FIXTURE_PORT: String(port) },
+      bootstrapOptions,
+    );
+    await fixture.diagnose(async () => {
+      const page = await requestTestServer(port, { host: "localhost" });
+      expect(page.status).toBe(200);
+      expect(page.body).toContain("Vite fixture");
+      const module = await requestTestServer(port, { host: "localhost", path: "/src/main.ts" });
+      expect(module.status).toBe(200);
+      expect(module.body).toContain("Vite fixture");
+      expect(fixture.requests.map(({ path }) => path)).toEqual(["/v1/prepare"]);
+      expect(fixture.output()).toContain("continuing local development");
+      expect(fixture.output()).not.toContain(bootstrapOptions.responseBody);
+    });
+  },
+);
+
+test("runs real Vite with tnl disabled and no login", { timeout: 60_000 }, async () => {
+  const port = await findAvailableLoopbackPort();
+  const fixture = await startFrameworkFixture("vite", [], {
+    TNL_FIXTURE_PORT: String(port),
+    TNL_PREVIEW: "off",
+    TNL_APP_ENDPOINT: undefined,
+  });
+  await fixture.diagnose(async () => {
+    const page = await requestTestServer(port, { host: "localhost" });
+    expect(page.status).toBe(200);
+    expect(fixture.requests).toEqual([]);
+  });
+});
+
+function localDefine() {
+  return {
+    define: {
+      "process.env.TNL_PROJECT_RUNTIME": JSON.stringify(
+        JSON.stringify({ namespace: "", services: {}, dev: true }),
+      ),
+    },
+  };
+}
 
 test(
   "runs Vite with host filtering, a preserved wildcard binding, runtime metadata, and real HMR",

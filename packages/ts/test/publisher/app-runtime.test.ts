@@ -42,6 +42,32 @@ test("publication telemetry opt-out stays on its own preparation", async () => {
   expect(requests[1]).toMatchObject({ telemetry_disabled: false });
 });
 
+test("an optional preparation that finishes after its deadline releases its reservation", async () => {
+  const beforeExitListeners = process.listenerCount("beforeExit");
+  const controller = new AbortController();
+  const request = vi.fn(async (_endpoint: RuntimeEndpoint, name: string) => {
+    if (name === "prepare") {
+      controller.abort(new TnlError("sdk.dev_unavailable"));
+      return assignment();
+    }
+    return undefined;
+  });
+  await expect(
+    createPreparedService(
+      {},
+      "vite",
+      {
+        start: async () => testEndpoint,
+        request,
+      },
+      () => {},
+      controller.signal,
+    ),
+  ).rejects.toMatchObject({ code: "sdk.dev_unavailable" });
+  expect(request.mock.calls.map(([, name]) => name)).toEqual(["prepare", "unregister"]);
+  expect(process.listenerCount("beforeExit")).toBe(beforeExitListeners);
+});
+
 test("independent SDK copies share preparation and framework callbacks through close and reprepare", async () => {
   const first = await import("../../dist/internal/publisher/app.js");
   vi.resetModules();

@@ -24,12 +24,14 @@ export interface TestBootstrap {
   close(): Promise<void>;
 }
 
-interface BootstrapOptions {
+export interface BootstrapOptions {
   readonly capability?: string;
   readonly ownerID?: string;
   readonly registrationID?: string;
   readonly responseBody?: string;
   readonly status?: number;
+  readonly failurePath?: string;
+  readonly stallPath?: string;
 }
 
 export async function startTestBootstrap(options: BootstrapOptions = {}): Promise<TestBootstrap> {
@@ -66,7 +68,11 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
           method: request.method,
           path: request.url,
         });
-        response.statusCode = options.status ?? 200;
+        if (request.url === options.stallPath) return;
+        response.statusCode =
+          options.failurePath === undefined || request.url === options.failurePath
+            ? (options.status ?? 200)
+            : 200;
         if (response.statusCode !== 200) {
           response.setHeader("Content-Type", "application/json");
           response.end(options.responseBody ?? "registration failed");
@@ -87,7 +93,7 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
           }
           appOwner = preparation.owner;
           const assignment =
-            options.responseBody === undefined
+            options.responseBody === undefined || options.failurePath !== undefined
               ? {
                   hostname: "api.member.example",
                   project: testPublicProject(true),
@@ -162,7 +168,9 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
   const address = server.address();
   if (address === null || typeof address === "string") throw new Error("missing listener");
   const service: string =
-    options.responseBody === undefined || options.status !== undefined
+    options.responseBody === undefined ||
+    options.status !== undefined ||
+    options.failurePath !== undefined
       ? "api"
       : JSON.parse(options.responseBody).service;
   const endpoint: RuntimeEndpoint = {

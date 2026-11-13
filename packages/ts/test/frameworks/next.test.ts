@@ -29,15 +29,175 @@ vi.mock("../../dist/internal/publisher/app.js", async (importOriginal) => {
     prepareService: async (
       options: import("../../dist/internal/publisher/app.js").PrepareOptions,
       framework: Parameters<typeof actual.createPreparedService>[1],
+      signal?: AbortSignal,
     ) => {
-      const prepared = await actual.createPreparedService(options, framework, {
-        start: async () => JSON.parse(process.env.APP_TEST_ENDPOINT ?? "null"),
-        request: actual.runtimeRequest,
-      });
+      const prepared = await actual.createPreparedService(
+        options,
+        framework,
+        {
+          start: async () => JSON.parse(process.env.APP_TEST_ENDPOINT ?? "null"),
+          request: actual.runtimeRequest,
+        },
+        () => {},
+        signal,
+      );
       onTestFinished(() => prepared.close());
       return prepared;
     },
   };
+});
+
+test.each([
+  [401, "runtime.authentication_required"],
+  [400, "TNL_CLIENT_SERVER_UNAVAILABLE"],
+  [503, "runtime.unavailable"],
+] as const)("keeps Next local when preparation returns %s/%s", async (status, code) => {
+  const bootstrap = await startTestBootstrap({
+    status,
+    responseBody: JSON.stringify({ code, message: "private diagnostic must not be logged" }),
+  });
+  const config = { reactStrictMode: true, allowedDevOrigins: ["existing.example"] };
+  const warning = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+  await withProcessEnvironment(
+    { ...bootstrap.environment, __NEXT_PRIVATE_ORIGIN: "http://127.0.0.1:3200" },
+    async () => {
+      const result = await withTnl(config)(developmentPhase, context);
+      expect(result).toMatchObject(config);
+      expect(JSON.parse(result.env?.TNL_PROJECT_RUNTIME ?? "null")).toEqual({
+        namespace: "",
+        services: {},
+        dev: true,
+      });
+      await expect(
+        withTnl(config, { preview: "required" })(developmentPhase, context),
+      ).rejects.toBeInstanceOf(Error);
+    },
+  );
+  expect(warning).toHaveBeenCalled();
+  expect(warning.mock.calls.flat().join("")).not.toContain("private diagnostic");
+});
+
+test("disabled Next preserves origins without preparing or requiring a bound target", async () => {
+  const bootstrap = await startTestBootstrap();
+  await withProcessEnvironment(bootstrap.environment, async () => {
+    const result = await withTnl({ allowedDevOrigins: ["existing.example"] }, { preview: false })(
+      developmentPhase,
+      context,
+    );
+    expect(result.allowedDevOrigins).toEqual(["existing.example"]);
+    expect(JSON.parse(result.env?.TNL_PROJECT_RUNTIME ?? "null")).toEqual({
+      namespace: "",
+      services: {},
+      dev: true,
+    });
+  });
+  expect(bootstrap.requests).toHaveLength(0);
+});
+
+test("local preview override can disable required Next publication without a bound target", async () => {
+  const bootstrap = await startTestBootstrap();
+  await withProcessEnvironment({ ...bootstrap.environment, TNL_PREVIEW: "off" }, async () => {
+    const result = await withTnl({}, { preview: "required" })(developmentPhase, context);
+    expect(JSON.parse(result.env?.TNL_PROJECT_RUNTIME ?? "null")).toEqual({
+      namespace: "",
+      services: {},
+      dev: true,
+    });
+  });
+  expect(bootstrap.requests).toHaveLength(0);
+});
+
+test("invalid Next preview mode fails before networking", async () => {
+  const bootstrap = await startTestBootstrap();
+  await withProcessEnvironment({ ...bootstrap.environment, TNL_PREVIEW: "invalid" }, async () => {
+    await expect(withTnl()(developmentPhase, context)).rejects.toMatchObject({
+      code: "sdk.configuration_invalid",
+    });
+  });
+  expect(bootstrap.requests).toHaveLength(0);
+});
+
+test("optional Next registration failure releases preparation and preserves local config", async () => {
+  const bootstrap = await startTestBootstrap({
+    status: 503,
+    failurePath: "/v1/register",
+    responseBody: JSON.stringify({ code: "runtime.unavailable", message: "unavailable" }),
+  });
+  const beforeExitListeners = process.listenerCount("beforeExit");
+  await withProcessEnvironment(
+    { ...bootstrap.environment, __NEXT_PRIVATE_ORIGIN: "http://127.0.0.1:3200" },
+    async () => {
+      const result = await withTnl({ allowedDevOrigins: ["existing.example"] })(
+        developmentPhase,
+        context,
+      );
+      expect(result.allowedDevOrigins).toEqual(["existing.example"]);
+      expect(JSON.parse(result.env?.TNL_PROJECT_RUNTIME ?? "null")).toEqual({
+        namespace: "",
+        services: {},
+        dev: true,
+      });
+    },
+  );
+  expect(bootstrap.requests.at(-1)?.path).toBe("/v1/unregister");
+  expect(process.listenerCount("beforeExit")).toBe(beforeExitListeners);
+});
+
+test.each([
+  [
+    "without preview access",
+    {
+      status: 401,
+      responseBody: JSON.stringify({ code: "runtime.authentication_required", message: "sign in" }),
+    },
+  ],
+  [
+    "when control is unavailable",
+    {
+      status: 503,
+      responseBody: JSON.stringify({
+        code: "TNL_CLIENT_SERVER_UNAVAILABLE",
+        message: "control is offline",
+      }),
+    },
+  ],
+] as const)(
+  "runs real Next %s without publishing",
+  { timeout: 60_000 },
+  async (_case, bootstrapOptions) => {
+    const port = await findAvailableLoopbackPort();
+    const fixture = await startFrameworkFixture(
+      "next",
+      ["dev", "--port", String(port)],
+      {},
+      bootstrapOptions,
+    );
+    await fixture.diagnose(async () => {
+      const page = await requestTestServer(port, { host: "localhost" });
+      expect(page.status).toBe(200);
+      expect(page.body).toContain("Next.js fixture");
+      expect(page.body).toContain("under-dev:true");
+      expect(fixture.requests.length).toBeGreaterThanOrEqual(1);
+      expect(fixture.requests.every(({ path }) => path === "/v1/prepare")).toBe(true);
+      expect(fixture.output()).toContain("continuing local development");
+      expect(fixture.output()).not.toContain(bootstrapOptions.responseBody);
+    });
+  },
+);
+
+test("runs real Next with tnl disabled and no login", { timeout: 60_000 }, async () => {
+  const port = await findAvailableLoopbackPort();
+  const fixture = await startFrameworkFixture("next", ["dev", "--port", String(port)], {
+    TNL_PREVIEW: "off",
+    TNL_APP_ENDPOINT: undefined,
+  });
+  await fixture.diagnose(async () => {
+    const page = await requestTestServer(port, { host: "localhost" });
+    expect(page.status).toBe(200);
+    expect(page.body).toContain("Next.js fixture");
+    expect(page.body).toContain("under-dev:true");
+    expect(fixture.requests).toEqual([]);
+  });
 });
 
 const productionPhase = "phase-production-build";

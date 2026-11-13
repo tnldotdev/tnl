@@ -92,19 +92,32 @@ async function readEndpoint(file: string, selection: EndpointSelection): Promise
 async function waitMountedEndpoint(
   file: string,
   selection: EndpointSelection,
+  signal?: AbortSignal,
 ): Promise<RuntimeEndpoint> {
   const deadline = Date.now() + 30_000;
   for (;;) {
+    signal?.throwIfAborted();
     try {
       const endpoint = await readEndpoint(file, selection);
-      await runtimeRequest(endpoint, "health");
+      await runtimeRequest(endpoint, "health", undefined, signal);
       return endpoint;
     } catch (cause) {
       const missing =
         typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ENOENT";
       if (!missing) throw cause;
       if (Date.now() >= deadline) throw new TnlError("sdk.dev_unavailable");
-      await new Promise<void>((resolve) => setTimeout(resolve, 200));
+      await new Promise<void>((resolve, reject) => {
+        const aborted = () => {
+          clearTimeout(timer);
+          reject(signal?.reason);
+        };
+        const timer = setTimeout(() => {
+          signal?.removeEventListener("abort", aborted);
+          resolve();
+        }, 200);
+        signal?.addEventListener("abort", aborted, { once: true });
+        if (signal?.aborted) aborted();
+      });
     }
   }
 }
@@ -113,12 +126,14 @@ export async function startRuntime(
   directory: string,
   binary?: string,
   selection: EndpointSelection = {},
+  signal?: AbortSignal,
 ): Promise<RuntimeEndpoint> {
   try {
+    signal?.throwIfAborted();
     let endpoint: RuntimeEndpoint;
     const mounted = process.env.TNL_APP_ENDPOINT;
     if (mounted !== undefined) {
-      return await waitMountedEndpoint(mounted, selection);
+      return await waitMountedEndpoint(mounted, selection, signal);
     } else {
       const args = ["--no-telemetry", "runtime", "endpoint", "--directory", directory];
       const stateDir = selection.stateDir ?? process.env.TNL_STATE_DIR;
@@ -131,10 +146,11 @@ export async function startRuntime(
         maxBuffer: 64 * 1024,
         encoding: "utf8",
         env: launchEnvironment(),
+        ...(signal === undefined ? {} : { signal }),
       });
       endpoint = parseEndpoint(JSON.parse(stdout), selection);
     }
-    await runtimeRequest(endpoint, "health");
+    await runtimeRequest(endpoint, "health", undefined, signal);
     return endpoint;
   } catch (cause) {
     if (cause instanceof TnlError) throw cause;
@@ -146,9 +162,10 @@ export function runtimeRequest(
   endpoint: RuntimeEndpoint,
   operation: string,
   body?: unknown,
+  signal?: AbortSignal,
 ): Promise<unknown> {
   return traceOperation("sdk.native.request", () =>
-    runtimeRequestUntraced(endpoint, operation, body),
+    runtimeRequestUntraced(endpoint, operation, body, signal),
   );
 }
 
@@ -156,7 +173,9 @@ function runtimeRequestUntraced(
   endpoint: RuntimeEndpoint,
   operation: string,
   body?: unknown,
+  signal?: AbortSignal,
 ): Promise<unknown> {
+  signal?.throwIfAborted();
   parseEndpoint(
     endpoint,
     endpoint.scope === "app"
@@ -182,6 +201,7 @@ function runtimeRequestUntraced(
       {
         method: get ? "GET" : "POST",
         agent: false,
+        ...(signal === undefined ? {} : { signal }),
         headers: {
           ...traceHeaders(),
           Host: endpoint.url.slice("http://".length),
@@ -226,13 +246,16 @@ function runtimeRequestUntraced(
                   : problem.code === "runtime.registration_stale" ||
                       problem.code === "runtime.unauthorized"
                     ? "sdk.registration_stale"
-                    : problem.code === "runtime.authentication_required"
+                    : problem.code === "runtime.authentication_required" ||
+                        problem.code === "TNL_CLIENT_AUTHENTICATION_REQUIRED" ||
+                        problem.code === "TNL_CLIENT_AUTH_RECOVERY_REQUIRED"
                       ? "sdk.authentication_required"
                       : problem.code === "runtime.publisher_setup_required"
                         ? "sdk.publisher_setup_required"
                         : problem.code === "runtime.publisher_credential_file_invalid"
                           ? "sdk.publisher_credential_file_invalid"
-                          : response.statusCode !== undefined && response.statusCode >= 500
+                          : problem.code === "TNL_CLIENT_SERVER_UNAVAILABLE" ||
+                              (response.statusCode !== undefined && response.statusCode >= 500)
                             ? "sdk.dev_unavailable"
                             : "sdk.request_rejected",
               );
