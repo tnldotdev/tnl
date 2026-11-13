@@ -18,20 +18,25 @@ func (c *Client) RedeemPublisherEnrollment(ctx context.Context, secret string, p
 }
 
 func (c *Client) ExchangePublisherAssertion(ctx context.Context, client, grant, key string, private ed25519.PrivateKey) (string, error) {
+	r, err := c.ExchangePublisherToken(ctx, client, grant, key, private)
+	return r.AccessToken, err
+}
+
+func (c *Client) ExchangePublisherToken(ctx context.Context, client, grant, key string, private ed25519.PrivateKey) (authorityv1.PublisherTokenResponse, error) {
 	assertion, err := publisherproof.Sign(client, key, grant, c.api.Server+"v1/publisher-token", private, time.Now())
 	if err != nil {
-		return "", err
+		return authorityv1.PublisherTokenResponse{}, err
 	}
 	r, err := requestWithToken[authorityv1.PublisherTokenResponse](ctx, c, "", func(ctx context.Context, e ...authorityv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.ExchangePublisherAssertion(ctx, authorityv1.PublisherTokenRequest{ClientId: client, GrantId: grant, GrantType: "client_credentials", ClientAssertionType: publisherproof.AssertionType, ClientAssertion: assertion}, e...)
 	})
 	if err != nil {
-		return "", err
+		return authorityv1.PublisherTokenResponse{}, err
 	}
 	if r.GrantId != grant || r.AccessToken == "" || r.TokenType != "Bearer" || r.ExpiresIn < 1 || r.ExpiresIn > 300 {
-		return "", ErrUnauthenticated
+		return authorityv1.PublisherTokenResponse{}, ErrUnauthenticated
 	}
-	return r.AccessToken, nil
+	return r, nil
 }
 
 func (c *Client) RotatePublisherKey(ctx context.Context, token, client, grant, currentKey, replacement string, currentPrivate, replacementPrivate ed25519.PrivateKey) error {

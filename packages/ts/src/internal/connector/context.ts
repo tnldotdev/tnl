@@ -23,6 +23,7 @@ export interface NativeScope {
     options: SelectionOptions,
   ): Promise<unknown>;
   workload(name: string, request: WorkloadRequest): Promise<unknown>;
+  close?(): Promise<void>;
   entry?: { readonly file: string; readonly ipc: Promise<OwnerIPC> };
   selected?: { readonly file: string; readonly expiresAt: number };
 }

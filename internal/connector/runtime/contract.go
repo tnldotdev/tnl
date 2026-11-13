@@ -45,12 +45,14 @@ type Context struct {
 	WorktreeKey  string   `json:"worktree_key"`
 	ProjectLabel string   `json:"project_label"`
 	Workload     string   `json:"workload,omitempty"`
+	Deployment   string   `json:"deployment,omitempty"`
 	Services     []string `json:"services"`
 }
 
 type StartRequest struct {
-	Schema  int     `json:"schema"`
-	Context Context `json:"context"`
+	Schema     int                `json:"schema"`
+	Context    Context            `json:"context"`
+	Deployment *DeploymentRequest `json:"deployment,omitempty"`
 	// Assertion is accepted on stdin/private IPC only. never persist this request.
 	Assertion string `json:"assertion,omitempty"`
 	// refresh carries only a selected native file or local platform source.
@@ -102,7 +104,19 @@ type Request struct {
 	SDKWorkload       *SDKWorkloadRequest `json:"sdk_workload,omitempty"`
 	SDKWorkloadPolicy string              `json:"sdk_workload_policy,omitempty"`
 	SDKEnvironment    *SDKEnvironment     `json:"sdk_environment,omitempty"`
+	Deployment        *DeploymentRequest  `json:"deployment,omitempty"`
 }
+
+// carried only on private stdin/IPC. context and saved handles contain no token.
+type DeploymentRequest struct {
+	Project  string   `json:"project"`
+	Name     string   `json:"name"`
+	Token    string   `json:"token"`
+	Services []string `json:"services,omitempty"`
+}
+
+func (DeploymentRequest) String() string   { return "private deployment selection" }
+func (DeploymentRequest) GoString() string { return "private deployment selection" }
 
 // SDKWorkloadRequest carries application selection hints, never provider tokens.
 type SDKWorkloadRequest struct {
