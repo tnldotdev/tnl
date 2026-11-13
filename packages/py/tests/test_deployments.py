@@ -63,6 +63,47 @@ def test_local_deployment_requires_no_credential_and_reuses_driver_bindings(
     asyncio.run(run())
 
 
+def test_remote_connection_rejects_unknown_names_and_protocol_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(_connections._Scope, "stop", lambda _self: None)
+
+    def prepare(
+        scope: _connections._Scope, _service: str, _selection: object = None
+    ) -> tuple[_connections.Connection, _connections._Session]:
+        return (
+            _connections.HTTPConnection(
+                "127.0.0.1",
+                15443,
+                datetime.now(UTC) + timedelta(minutes=1),
+                ssl.create_default_context(),
+                "database.example.test",
+                None,
+                "https://database.example.test:15443",
+                _transport_id="ctg_" + "a" * 22,
+            ),
+            _connections._Session(scope, "/fixture/handle.json"),
+        )
+
+    monkeypatch.setattr(_connections._Scope, "prepare", prepare)
+
+    async def run() -> None:
+        deployment = tnl.create_client(
+            project="acme/shop",
+            services={"database": {"protocol": "postgres"}},
+            token="private-credential",
+        ).deployment("production")
+        with pytest.raises(tnl.TnlError) as unknown:
+            await deployment.connect("missing")
+        assert unknown.value.code == "sdk.configuration_invalid"
+        with pytest.raises(tnl.TnlError) as mismatch:
+            await deployment.connect("database")
+        assert mismatch.value.code == "sdk.connection_invalid"
+        await deployment.aclose()
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize(
     ("protocol", "extra", "connection_type"),
     [
