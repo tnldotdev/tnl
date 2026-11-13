@@ -51,7 +51,7 @@ type ProjectSummary struct {
 	TeamID       string    `json:"team_id"`
 	ProjectKey   string    `json:"project_key"`
 	ProjectLabel string    `json:"project_label"`
-	Revision     int64     `json:"revision"`
+	Revision     int64     `json:"revision,string"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 

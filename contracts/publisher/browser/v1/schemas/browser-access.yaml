@@ -11,7 +11,13 @@ schemas:
         $ref: "../../../../control/public/v1/openapi.yaml#/components/schemas/PreviewID"
       public_url_id:
         $ref: "../../../../control/public/v1/openapi.yaml#/components/schemas/PublicURLID"
-      publish_run_number: { type: integer, format: int64, minimum: 1 }
+      publish_run_number:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "publish_run_number,string" },
+        }
       access_method: { type: string, enum: [anonymous, share, team, visitor] }
       expires_at: { type: string, format: date-time }
       reason: { type: string, enum: [TNL_VISITOR_ACCESS_DENIED] }

@@ -40,7 +40,13 @@ schemas:
     additionalProperties: false
     required: [run_number, secret]
     properties:
-      run_number: { type: integer, format: int64, minimum: 1 }
+      run_number:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "run_number,string" },
+        }
       secret: { type: string, maxLength: 256 }
   ReplaceVisitorAccessRequest:
     type: object
@@ -53,7 +59,13 @@ schemas:
         maxItems: 256
         uniqueItems: true
         items: { type: string, minLength: 1, maxLength: 64 }
-      expected_revision: { type: integer, format: int64, minimum: 1 }
+      expected_revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "expected_revision,string" },
+        }
   CreateTeamVisitorGrantRequest:
     type: object
     additionalProperties: false
@@ -131,9 +143,12 @@ schemas:
     required: [publish_run_number, token]
     properties:
       publish_run_number:
-        type: integer
-        format: int64
-        minimum: 1
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "publish_run_number,string" },
+        }
       token:
         type: string
         pattern: "^[A-Za-z0-9_-]{43}$"
@@ -169,9 +184,12 @@ schemas:
     required: [publish_run_number, cookie_secret]
     properties:
       publish_run_number:
-        type: integer
-        format: int64
-        minimum: 1
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "publish_run_number,string" },
+        }
       cookie_secret:
         type: string
         pattern: "^[A-Za-z0-9_-]{43}$"

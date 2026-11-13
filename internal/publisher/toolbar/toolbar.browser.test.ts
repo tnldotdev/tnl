@@ -74,8 +74,8 @@ test("the committed bundle runs in Shadow DOM under CSP and tracks changing pins
     ...report,
     id,
     state: "open",
-    message_count: messageCount,
-    latest_event_cursor: cursor,
+    message_count: String(messageCount),
+    latest_event_cursor: String(cursor),
     anchor: currentAnchor,
     evidence: currentEvidence,
     report: { ...report.report, text: currentText },
@@ -128,13 +128,19 @@ test("the committed bundle runs in Shadow DOM under CSP and tracks changing pins
           response.writeHead(400).end();
         });
       } else if (url.pathname.endsWith("/events"))
-        response.end(JSON.stringify({ schema_version: 1, events: [], event_cursor: cursor }));
+        response.end(
+          JSON.stringify({ schema_version: 1, events: [], event_cursor: String(cursor) }),
+        );
       else if (url.pathname.endsWith(id)) response.end(JSON.stringify(snapshot()));
       else if (url.pathname.endsWith("/evidence"))
         response.end(JSON.stringify({ schema_version: 1, failed_requests: [] }));
       else
         response.end(
-          JSON.stringify({ schema_version: 1, threads: [snapshot()], event_cursor: cursor }),
+          JSON.stringify({
+            schema_version: 1,
+            threads: [snapshot()],
+            event_cursor: String(cursor),
+          }),
         );
       return;
     }

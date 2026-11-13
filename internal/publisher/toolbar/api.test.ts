@@ -47,7 +47,7 @@ test("browser mutations use same-origin cookies, an idempotency key, and an opti
   const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
     Response.json({
       schema_version: 1,
-      cursor: 5,
+      cursor: "5",
       feedback_id: id,
       type: "thread.reopened",
       actor: "reviewer",
@@ -98,5 +98,5 @@ test("shared Go wire fixtures produce a readable report and a bounded browser su
       "fixture-reply",
       new AbortController().signal,
     ),
-  ).toMatchObject({ cursor: 5, type: "reply" });
+  ).toMatchObject({ cursor: "5", type: "reply" });
 });

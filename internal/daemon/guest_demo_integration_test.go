@@ -183,7 +183,7 @@ func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testin
 	allocate.Header.Set("Authorization", "Bearer "+guest.AccessToken)
 	allocated := httptest.NewRecorder()
 	h.ServeHTTP(allocated, allocate)
-	if allocated.Code != http.StatusOK || !strings.Contains(allocated.Body.String(), `"number":1`) {
+	if allocated.Code != http.StatusOK || !strings.Contains(allocated.Body.String(), `"number":"1"`) {
 		t.Fatalf("first demo number = %d, %s", allocated.Code, allocated.Body.String())
 	}
 	hostname := "demo-1." + guest.Namespace

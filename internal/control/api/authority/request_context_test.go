@@ -76,7 +76,7 @@ func TestAuthorityFailuresPreserveRequestContext(t *testing.T) {
 		},
 		{
 			name: "workload renewal handler", title: "internal server error",
-			body: `{"sequence":1,"signature":"` + base64.RawURLEncoding.EncodeToString(make([]byte, ed25519.SignatureSize)) + `"}`,
+			body: `{"sequence":"1","signature":"` + base64.RawURLEncoding.EncodeToString(make([]byte, ed25519.SignatureSize)) + `"}`,
 			handle: func(w http.ResponseWriter, r *http.Request) {
 				h.RenewWorkloadSession(w, r, "workload-session")
 			},

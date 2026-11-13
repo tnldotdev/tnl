@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -65,13 +66,13 @@ func TestIntegrationCompanyWebsiteSetupAdmissionAndRefresh(t *testing.T) {
 		t.Fatal("setup locked out owner", w.Code)
 	}
 	activation := base + "/" + failed.ID + "/activate"
-	if w := ownerCall("POST", activation, ownerSub, nil, map[string]any{"expected_revision": failed.Revision, "setup_token": failed.SetupToken}); w.Code != 400 {
+	if w := ownerCall("POST", activation, ownerSub, nil, map[string]any{"expected_revision": strconv.FormatInt(failed.Revision, 10), "setup_token": failed.SetupToken}); w.Code != 400 {
 		t.Fatal("activation accepted a missing precommitted credential", w.Code, w.Body.String())
 	}
 	if w := ownerCall("POST", activation, ownerSub, nil, f.activationRequest(failed)); w.Code != 403 {
 		t.Fatal("activation without tenant consent", w.Code, w.Body.String())
 	}
-	decode(ownerCall("DELETE", base+"/"+failed.ID, ownerSub, nil, map[string]any{"expected_revision": failed.Revision}), 204, nil)
+	decode(ownerCall("DELETE", base+"/"+failed.ID, ownerSub, nil, map[string]any{"expected_revision": strconv.FormatInt(failed.Revision, 10)}), 204, nil)
 	if w := call("GET", "/v1/teams/"+team.ID, owner.AccessToken, "", nil); w.Code != 200 {
 		t.Fatal("failed consent changed owner access", w.Code)
 	}
@@ -219,7 +220,7 @@ func TestIntegrationCompanyWebsiteSetupAdmissionAndRefresh(t *testing.T) {
 	var admission authorityv1.CompanyAdmissionRequest
 	decode(call("POST", "/v1/auth/company-admissions", companyMember.AccessToken, "", encode(authorityv1.RequestCompanyAdmissionJSONRequestBody{TeamId: team.ID, IdentityConnectionId: active.ID, ConnectionRevision: active.Revision, MemberSlug: "member"})), 200, &admission)
 	decisionPath := "/v1/service/teams/" + team.ID + "/company-admissions/" + admission.RequestId
-	decode(ownerCall("POST", decisionPath, ownerSub, companyProof(active.IdentityConnection, "directory-owner"), map[string]any{"connection_revision": active.Revision, "decision": "approved"}), 204, nil)
+	decode(ownerCall("POST", decisionPath, ownerSub, companyProof(active.IdentityConnection, "directory-owner"), map[string]any{"connection_revision": strconv.FormatInt(active.Revision, 10), "decision": "approved"}), 204, nil)
 	if w := call("GET", "/v1/teams/"+team.ID, companyMember.AccessToken, "", nil); w.Code != 200 {
 		t.Fatal("owner approval did not admit current eligible user", w.Code, w.Body.String())
 	}
@@ -244,7 +245,7 @@ func TestIntegrationCompanyWebsiteSetupAdmissionAndRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	decode(provision(memberSub, "directory-member", active.ProvisioningToken, active.IdentityConnection, 2, true), 204, nil)
-	if w := ownerCall("POST", decisionPath, ownerSub, companyProof(active.IdentityConnection, "directory-owner"), map[string]any{"connection_revision": active.Revision, "decision": "approved"}); w.Code != 409 {
+	if w := ownerCall("POST", decisionPath, ownerSub, companyProof(active.IdentityConnection, "directory-owner"), map[string]any{"connection_revision": strconv.FormatInt(active.Revision, 10), "decision": "approved"}); w.Code != 409 {
 		t.Fatal("owner approval resurrected removal tombstone", w.Code, w.Body.String())
 	}
 	if w := call("POST", "/v1/auth/company-admissions", companyMember.AccessToken, "", encode(authorityv1.RequestCompanyAdmissionJSONRequestBody{TeamId: team.ID, IdentityConnectionId: active.ID, ConnectionRevision: active.Revision, MemberSlug: "member"})); w.Code != 409 {
@@ -259,20 +260,20 @@ func TestIntegrationCompanyWebsiteSetupAdmissionAndRefresh(t *testing.T) {
 	if view.Active == nil || view.Setup == nil || view.Active.IdentityConnectionId != active.ID {
 		t.Fatal("pending replacement discarded active source", view)
 	}
-	decode(ownerCall("DELETE", base+"/"+replacement.ID, ownerSub, companyProof(active.IdentityConnection, "directory-owner"), map[string]any{"expected_revision": replacement.Revision}), 204, nil)
+	decode(ownerCall("DELETE", base+"/"+replacement.ID, ownerSub, companyProof(active.IdentityConnection, "directory-owner"), map[string]any{"expected_revision": strconv.FormatInt(replacement.Revision, 10)}), 204, nil)
 	if w := call("GET", "/v1/teams/"+team.ID, companyOwner.AccessToken, "", nil); w.Code != 200 {
 		t.Fatal("aborted replacement revoked current access", w.Code)
 	}
-	if w := call("PUT", "/v1/teams/"+team.ID+"/identity-connections/"+active.ID, companyOwner.AccessToken, "", encode(map[string]any{"state": "active", "expected_revision": active.Revision})); w.Code != 404 {
+	if w := call("PUT", "/v1/teams/"+team.ID+"/identity-connections/"+active.ID, companyOwner.AccessToken, "", encode(map[string]any{"state": "active", "expected_revision": strconv.FormatInt(active.Revision, 10)})); w.Code != 404 {
 		t.Fatal("superseded state setter retained", w.Code)
 	}
 	var rotated controlstate.IdentityConnectionSecret
-	decode(ownerCall("POST", base+"/"+active.ID+"/provisioning-token", ownerSub, companyProof(active.IdentityConnection, "directory-owner"), map[string]any{"expected_revision": active.Revision}), 200, &rotated)
+	decode(ownerCall("POST", base+"/"+active.ID+"/provisioning-token", ownerSub, companyProof(active.IdentityConnection, "directory-owner"), map[string]any{"expected_revision": strconv.FormatInt(active.Revision, 10)}), 200, &rotated)
 	if w := provision(ownerSub, "directory-owner", active.ProvisioningToken, active.IdentityConnection, 2, true); w.Code != 403 {
 		t.Fatal("old provisioning token survived rotation", w.Code)
 	}
 	decode(provision(ownerSub, "directory-owner", rotated.ProvisioningToken, rotated.IdentityConnection, 2, true), 204, nil)
-	decode(ownerCall("DELETE", base+"/"+active.ID, ownerSub, companyProof(active.IdentityConnection, "directory-owner"), map[string]any{"expected_revision": active.Revision}), 204, nil)
+	decode(ownerCall("DELETE", base+"/"+active.ID, ownerSub, companyProof(active.IdentityConnection, "directory-owner"), map[string]any{"expected_revision": strconv.FormatInt(active.Revision, 10)}), 204, nil)
 	view = authorityv1.CompanyConnections{}
 	decode(ownerCall("GET", base, ownerSub, nil, nil), 200, &view)
 	if view.Active != nil || view.Setup != nil {

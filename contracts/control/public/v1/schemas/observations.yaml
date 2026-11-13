@@ -4,7 +4,13 @@ schemas:
     additionalProperties: false
     required: [run_number, events]
     properties:
-      run_number: { type: integer, format: int64, minimum: 1 }
+      run_number:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "run_number,string" },
+        }
       events:
         type: array
         minItems: 1
@@ -36,10 +42,22 @@ schemas:
           [ObservationConnectionOpen, ObservationConnectionClose, ObservationHTTPDecision]
       occurred_at: { type: string, format: date-time }
       run_id: { type: string }
-      run_number: { type: integer, format: int64, minimum: 0 }
+      run_number:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "run_number,string" },
+        }
       pair_id: { type: string, pattern: "^cpp_[A-Za-z0-9]{22}$" }
       delivery_generation:
-        { type: integer, format: int64, minimum: 1, x-go-type-skip-optional-pointer: true }
+        {
+          type: string,
+          x-go-type-skip-optional-pointer: true,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "delivery_generation,omitempty,string" },
+        }
       visitor_connection_id: { type: string }
       source_ip: { type: string }
       outcome:

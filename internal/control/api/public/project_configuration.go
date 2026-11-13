@@ -109,7 +109,7 @@ func (h *handler) ApplyProjectConfiguration(w http.ResponseWriter, r *http.Reque
 		TeamID           string                             `json:"team_id"`
 		Source           *naming.GitProjectSource           `json:"source"`
 		ProjectLabel     string                             `json:"project_label"`
-		ExpectedRevision *int64                             `json:"expected_revision"`
+		ExpectedRevision *int64                             `json:"expected_revision,string"`
 		Configuration    *controlstate.ProjectConfiguration `json:"configuration"`
 	}
 	if decodeJSONLimited(w, r, &body, 4<<20) != nil || body.ExpectedRevision == nil || body.Configuration == nil {

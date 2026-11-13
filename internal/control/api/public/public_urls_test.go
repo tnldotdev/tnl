@@ -71,7 +71,7 @@ func TestUpdateRouteAuthorizesExactRouteAndCanonicalMutation(t *testing.T) {
 	}}
 	h := &handler{store: store, authorizer: authorizer}
 	request := httptest.NewRequest(http.MethodPatch, "/v1/public-urls/public_url_1", strings.NewReader(`{
-		"expected_mutation_revision":4,
+		"expected_mutation_revision":"4",
 		"require_post_quantum":true,
 		"target":"http://127.0.0.1:4000",
 		"allowed_ip_prefixes":["2001:db8::1/64","192.0.2.9/24"]
@@ -142,14 +142,14 @@ func TestUpdateRouteRejectsMissingRevisionNullAndEmptyChanges(t *testing.T) {
 	for _, test := range []struct{ name, body string }{
 		{"target-only missing revision", `{"target":"http://127.0.0.1:4000"}`},
 		{"IP-only missing revision", `{"allowed_ip_prefixes":[]}`},
-		{"empty change", `{"expected_mutation_revision":4}`},
-		{"unsafe revision", `{"expected_mutation_revision":9007199254740992,"target":"http://127.0.0.1:4000"}`},
-		{"unknown field", `{"expected_mutation_revision":4,"endpoint":{}}`},
-		{"null target", `{"expected_mutation_revision":4,"target":null}`},
-		{"null IP policy", `{"expected_mutation_revision":4,"allowed_ip_prefixes":null}`},
-		{"null requirement", `{"expected_mutation_revision":4,"require_post_quantum":null}`},
-		{"invalid target", `{"expected_mutation_revision":4,"target":"https://127.0.0.1:4000/path","allowed_ip_prefixes":[]}`},
-		{"duplicate canonical prefix", `{"expected_mutation_revision":4,"target":"http://127.0.0.1:4000","allowed_ip_prefixes":["192.0.2.1/24","192.0.2.0/24"]}`},
+		{"empty change", `{"expected_mutation_revision":"4"}`},
+		{"numeric revision", `{"expected_mutation_revision":9007199254740992,"target":"http://127.0.0.1:4000"}`},
+		{"unknown field", `{"expected_mutation_revision":"4","endpoint":{}}`},
+		{"null target", `{"expected_mutation_revision":"4","target":null}`},
+		{"null IP policy", `{"expected_mutation_revision":"4","allowed_ip_prefixes":null}`},
+		{"null requirement", `{"expected_mutation_revision":"4","require_post_quantum":null}`},
+		{"invalid target", `{"expected_mutation_revision":"4","target":"https://127.0.0.1:4000/path","allowed_ip_prefixes":[]}`},
+		{"duplicate canonical prefix", `{"expected_mutation_revision":"4","target":"http://127.0.0.1:4000","allowed_ip_prefixes":["192.0.2.1/24","192.0.2.0/24"]}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &publicURLMutationStoreStub{}
@@ -173,7 +173,7 @@ func TestUpdatePublicURLRejectsInvalidStoredProtocol(t *testing.T) {
 				ServiceProtocol: protocol, Target: "http://127.0.0.1:3000", MutationRevision: 1,
 			}}
 			authorizer := &recordingAuthorizer{principal: testPublicURLReadPrincipal()}
-			request := httptest.NewRequest(http.MethodPatch, "/v1/public-urls/public_url_1", strings.NewReader(`{"expected_mutation_revision":1,"target":"http://127.0.0.1:4000","allowed_ip_prefixes":[]}`))
+			request := httptest.NewRequest(http.MethodPatch, "/v1/public-urls/public_url_1", strings.NewReader(`{"expected_mutation_revision":"1","target":"http://127.0.0.1:4000","allowed_ip_prefixes":[]}`))
 			request.Header.Set("Authorization", "Bearer access-token")
 			response := httptest.NewRecorder()
 			(&handler{store: store, authorizer: authorizer}).UpdatePublicURL(response, request, "public_url_1")
@@ -207,7 +207,7 @@ func TestRouteMutationsAuthenticateBeforeLookup(t *testing.T) {
 			authorizer := &recordingAuthorizer{readErr: authorization.ErrUnauthenticated}
 			h := &handler{store: store, authorizer: authorizer}
 			request := httptest.NewRequest(http.MethodPatch, "/v1/public-urls/public_url_1", strings.NewReader(`{
-			"expected_mutation_revision":4,
+			"expected_mutation_revision":"4",
 			"target":"http://127.0.0.1:4000",
 			"allowed_ip_prefixes":[]
 		}`))
@@ -235,7 +235,7 @@ func TestRouteMutationsDoNotRevealRoutesOutsideCurrentTeams(t *testing.T) {
 		body   string
 		call   func(http.ResponseWriter, *http.Request)
 	}{
-		{http.MethodPatch, `{"expected_mutation_revision":1,"target":"http://127.0.0.1:4000","allowed_ip_prefixes":[]}`, func(response http.ResponseWriter, request *http.Request) {
+		{http.MethodPatch, `{"expected_mutation_revision":"1","target":"http://127.0.0.1:4000","allowed_ip_prefixes":[]}`, func(response http.ResponseWriter, request *http.Request) {
 			h.UpdatePublicURL(response, request, "public_url_1")
 		}},
 		{http.MethodDelete, "", func(response http.ResponseWriter, request *http.Request) {
@@ -478,7 +478,7 @@ func TestRouteMutationRejectionDoesNotReachStore(t *testing.T) {
 			store := &publicURLMutationStoreStub{publicURL: controlstate.PublicURL{ID: "public_url_1", TeamID: "team_1", Purpose: controlstate.PublicURLPurposeApp, ServiceProtocol: controlstate.PublicURLServiceHTTP, MutationRevision: 7}}
 			authorizer := &recordingAuthorizer{principal: testPublicURLReadPrincipal(), mutationErr: authorization.ErrForbidden}
 			h := &handler{store: store, authorizer: authorizer}
-			request := httptest.NewRequest(http.MethodPost, "/v1/public-urls/public_url_1", strings.NewReader(`{"expected_mutation_revision":7,"target":"http://127.0.0.1:4000","allowed_ip_prefixes":[]}`))
+			request := httptest.NewRequest(http.MethodPost, "/v1/public-urls/public_url_1", strings.NewReader(`{"expected_mutation_revision":"7","target":"http://127.0.0.1:4000","allowed_ip_prefixes":[]}`))
 			request.Header.Set("Authorization", "Bearer exact-access-token")
 			response := httptest.NewRecorder()
 			test.call(h, response, request)
@@ -646,7 +646,7 @@ func TestTargetlessSavedPublicURLPolicyUpdateValidatesPurposeAndLifecycle(t *tes
 				IdentityID: "identity_1", TeamID: "team_1", ActingMembershipID: "membership_1", PolicyRevision: 7,
 				DomainID: "domain_1", CanonicalHostname: "demo.example", PublicURLScope: "member",
 			}}
-			request := httptest.NewRequest(http.MethodPatch, "/v1/public-urls/public_url_1", strings.NewReader(`{"expected_mutation_revision":4,"target":"","allowed_ip_prefixes":[]}`))
+			request := httptest.NewRequest(http.MethodPatch, "/v1/public-urls/public_url_1", strings.NewReader(`{"expected_mutation_revision":"4","target":"","allowed_ip_prefixes":[]}`))
 			request.Header.Set("Authorization", "Bearer exact-access-token")
 			response := httptest.NewRecorder()
 			(&handler{store: store, authorizer: authorizer}).UpdatePublicURL(response, request, "public_url_1")

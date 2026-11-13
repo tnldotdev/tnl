@@ -37,7 +37,7 @@ type Event struct {
 	SourceIP              string    `json:"source_ip,omitempty"`
 	Outcome               string    `json:"outcome,omitempty"`
 	Reason                string    `json:"reason,omitempty"`
-	ConfigurationRevision int64     `json:"configuration_revision,omitempty"`
+	ConfigurationRevision int64     `json:"configuration_revision,omitempty,string"`
 }
 
 // observation carries only component-known facts. control derives team and
@@ -49,9 +49,9 @@ type Observation struct {
 	EventType           string    `json:"event_type"`
 	OccurredAt          time.Time `json:"occurred_at"`
 	RunID               string    `json:"run_id"`
-	RunNumber           int64     `json:"run_number"`
+	RunNumber           int64     `json:"run_number,string"`
 	PairID              string    `json:"pair_id,omitempty"`
-	DeliveryGeneration  int64     `json:"delivery_generation,omitempty"`
+	DeliveryGeneration  int64     `json:"delivery_generation,omitempty,string"`
 	VisitorConnectionID string    `json:"visitor_connection_id"`
 	SourceIP            string    `json:"source_ip,omitempty"`
 	Outcome             string    `json:"outcome"`

@@ -183,13 +183,13 @@ func (h *handler) UpdatePublicURL(response http.ResponseWriter, request *http.Re
 		return
 	}
 	var body struct {
-		ExpectedMutationRevision int64           `json:"expected_mutation_revision"`
+		ExpectedMutationRevision int64           `json:"expected_mutation_revision,string"`
 		Target                   json.RawMessage `json:"target"`
 		AllowedIPPrefixes        json.RawMessage `json:"allowed_ip_prefixes"`
 		RequirePostQuantum       json.RawMessage `json:"require_post_quantum"`
 	}
 	if err := decodeJSONLimited(response, request, &body, 1<<20); err != nil ||
-		body.ExpectedMutationRevision < 1 || body.ExpectedMutationRevision > 9007199254740991 ||
+		body.ExpectedMutationRevision < 1 ||
 		len(body.Target) == 0 && len(body.AllowedIPPrefixes) == 0 && len(body.RequirePostQuantum) == 0 ||
 		string(body.Target) == "null" || string(body.AllowedIPPrefixes) == "null" || string(body.RequirePostQuantum) == "null" {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")

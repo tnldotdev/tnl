@@ -35,7 +35,13 @@ schemas:
       team_id: { type: string }
       project_key: { type: string }
       project_label: { type: string }
-      revision: { type: integer, format: int64 }
+      revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "revision,string" },
+        }
       updated_at: { type: string, format: date-time }
   PreviewSummary:
     description: "A preview created by the current identity. Fetch its detail for the included public URLs."
@@ -116,7 +122,13 @@ schemas:
         description: Required on first apply. Omit on updates to retain the saved source binding.
       project_label:
         { type: string, minLength: 1, maxLength: 63, pattern: "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$" }
-      expected_revision: { type: integer, format: int64, minimum: 0 }
+      expected_revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "expected_revision,string" },
+        }
       configuration: { $ref: "../openapi.yaml#/components/schemas/ProjectConfiguration" }
   ProjectConfiguration:
     type: object
@@ -388,7 +400,13 @@ schemas:
       team_id: { type: string }
       project_key: { type: string }
       source_fingerprint: { type: string }
-      revision: { type: integer, format: int64 }
+      revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "revision,string" },
+        }
       configuration_hash: { type: string }
       configuration: { $ref: "../openapi.yaml#/components/schemas/ProjectConfiguration" }
       services:
@@ -428,8 +446,20 @@ schemas:
       service_kind: { type: string, enum: [public_url, service, local] }
       service_id: { type: string }
       hostname: { type: string }
-      desired_revision: { type: integer, format: int64 }
-      trust_revision: { type: integer, format: int64 }
+      desired_revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "desired_revision,string" },
+        }
+      trust_revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "trust_revision,string" },
+        }
       port: { type: integer, minimum: 1024, maximum: 65535 }
       public: { type: boolean }
   LocalServiceSource:

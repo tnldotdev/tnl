@@ -274,7 +274,8 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 		t.Fatal(err)
 	}
 	port = allocated.Addr().(*net.TCPAddr).Port
-	_ = allocated.Close()
+	defer allocated.Close()
+	var releasePort sync.Once
 	native := connectorfixture.NewConnector(t, ca, caKey, service, serviceRun, sessionID, managedHostname, providerAddress)
 	var revoked atomic.Bool
 	renewed := make(chan struct{})
@@ -575,7 +576,12 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 		case r.URL.Path == "/v1/workload/services":
 			_ = json.NewEncoder(w).Encode(map[string]any{"services": []any{map[string]any{"id": service, "service": serviceName, "protocol": protocol, "endpoint": map[string]any{"hostname": managedHostname, "port": port, "public": true}}}})
 		case strings.HasSuffix(r.URL.Path, "/run"):
-			_ = json.NewEncoder(w).Encode(map[string]any{"service_id": service, "service_run_id": serviceRun, "run_number": 1, "protocol": protocol, "trust_revision": trustRevision, "expires_at": time.Now().Add(time.Minute), "subject": current.Subject, "endpoint": map[string]any{"hostname": managedHostname, "port": port, "public": true}, "pair_ready": native.Ready})
+			// retain the managed port through fixture and owner IPC startup.
+			// the native owner binds it immediately after resolving this run.
+			releasePort.Do(func() { _ = allocated.Close() })
+			_ = json.NewEncoder(w).Encode(controlv1.ServiceSelection{ServiceId: service, ServiceRunId: serviceRun, RunNumber: 1,
+				Protocol: controlv1.ServiceProtocol(protocol), TrustRevision: trustRevision, ExpiresAt: time.Now().Add(time.Minute), Subject: current.Subject,
+				Endpoint: &controlv1.ServiceEndpoint{Hostname: managedHostname, Port: port, Public: true}, PairReady: &native.Ready})
 		case strings.Contains(r.URL.Path, "/connector-peer-pairs"):
 			var requested controlv1.ConnectorPeerPairRequest
 			var source controlv1.VisitorTokenWorkloadSource

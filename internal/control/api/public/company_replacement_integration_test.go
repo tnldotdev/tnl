@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -247,12 +248,12 @@ func TestIntegrationCompanySuccessfulSourceReplacementAndExplicitRebind(t *testi
 		admissions[p] = request
 	}
 	decisionPath := "/v1/service/teams/" + team.ID + "/company-admissions/" + admissions[employee].RequestId
-	decision := map[string]any{"connection_revision": b.Revision, "decision": "approved"}
+	decision := map[string]any{"connection_revision": strconv.FormatInt(b.Revision, 10), "decision": "approved"}
 	f.decode(f.ownerCall("POST", decisionPath, owner.sub, f.proof(a.IdentityConnection, owner.dir), decision), 403, nil)
 	f.decode(f.ownerCall("POST", decisionPath, founder.sub, f.proof(b.IdentityConnection, "b/"+founder.slug), decision), 403, nil)
 	f.decode(f.ownerCall("POST", decisionPath, admin.sub, f.proof(b.IdentityConnection, "b/"+admin.slug), decision), 403, nil)
 	f.decode(f.ownerCall("POST", decisionPath, formerAdmin.sub, f.proof(b.IdentityConnection, "b/"+formerAdmin.slug), decision), 403, nil)
-	f.decode(f.ownerCall("POST", decisionPath, owner.sub, f.proof(b.IdentityConnection, "b/"+owner.slug), map[string]any{"connection_revision": b.Revision - 1, "decision": "approved"}), 409, nil)
+	f.decode(f.ownerCall("POST", decisionPath, owner.sub, f.proof(b.IdentityConnection, "b/"+owner.slug), map[string]any{"connection_revision": strconv.FormatInt(b.Revision-1, 10), "decision": "approved"}), 409, nil)
 	for _, p := range []*person{admin, formerAdmin, employee, suspended} {
 		path := "/v1/service/teams/" + team.ID + "/company-admissions/" + admissions[p].RequestId
 		f.decode(f.ownerCall("POST", path, owner.sub, f.proof(b.IdentityConnection, "b/"+owner.slug), decision), 204, nil)

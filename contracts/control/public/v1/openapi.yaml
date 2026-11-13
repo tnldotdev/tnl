@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: tnl control API
   version: 1.0.0
-  description: "Manage public URLs, services, projects, sharing, and publisher runtimes. Each operation names the credential it accepts; control sessions, publisher tokens, group leases, run tokens, guest credentials, and workload credentials are not interchangeable. Some operations authenticate with a signed assertion or credential in the request body instead of Authorization. Use the authority API for sign-in, identities, teams, and domains."
+  description: "Manage public URLs, services, projects, sharing, and publisher runtimes. Revisions, run numbers, generations, epochs, and event cursors are decimal strings in JSON, including mutation preconditions; their range is 0 through 9223372036854775807, subject to each operation's positive-value rules. Keep these values as strings in JavaScript, or use BigInt for comparison and arithmetic. Ports, bounded counts, and durations remain numbers. Each operation names the credential it accepts; control sessions, publisher tokens, group leases, run tokens, guest credentials, and workload credentials are not interchangeable. Some operations authenticate with a signed assertion or credential in the request body instead of Authorization. Use the authority API for sign-in, identities, teams, and domains."
   license:
     name: BSD-3-Clause
     identifier: BSD-3-Clause

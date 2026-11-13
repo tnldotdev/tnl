@@ -69,7 +69,7 @@ func TestConnectorPeerRebindGeneratedClientAndState(t *testing.T) {
 	}
 	response, err := ParseRebindConnectorPeerPairResponse(&http.Response{StatusCode: http.StatusOK,
 		Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(
-			`{"high_water_generation":8,"ready_relays":[],"operation":{"operation_id":"ik_1234567890123456789012","delivery_generation":8,"status":"aborted"}}`))})
+			`{"high_water_generation":"8","ready_relays":[],"operation":{"operation_id":"ik_1234567890123456789012","delivery_generation":"8","status":"aborted"}}`))})
 	if err != nil || response.JSON200 == nil || response.JSON200.HighWaterGeneration != 8 || response.JSON200.Pending != nil ||
 		response.JSON200.Active != nil || response.JSON200.Operation == nil || response.JSON200.Operation.Status != ConnectorPeerPairOperationAborted {
 		t.Fatal("generated lifecycle state changed", err)

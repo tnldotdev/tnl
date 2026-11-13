@@ -96,7 +96,7 @@ export function FeedbackList({
             <p>{thread.report.text}</p>
             <small>
               {thread.scope.page_title || thread.scope.page_path} · {thread.message_count}{" "}
-              {thread.message_count === 1 ? "message" : "messages"}
+              {thread.message_count === "1" ? "message" : "messages"}
             </small>
             <div class="card-actions">
               <span class="muted">{thread.state}</span>

@@ -83,7 +83,7 @@ export function ThreadView({ api, id }: { api: FeedbackAPI; id: string }) {
             <button
               type="button"
               disabled={history.isPending || append.isPending}
-              onClick={() => history.mutate(data.olderCursor ?? 0)}
+              onClick={() => history.mutate(data.olderCursor ?? "0")}
             >
               Load more history
             </button>

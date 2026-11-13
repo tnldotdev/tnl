@@ -142,7 +142,7 @@ export function Pins({
             [
             {position.thread.state === "resolved"
               ? "x"
-              : position.thread.message_count > 9
+              : BigInt(position.thread.message_count) > 9n
                 ? "9+"
                 : position.thread.message_count}
             ]
@@ -160,7 +160,7 @@ export function Pins({
                 <span>{position.thread.report.author?.display_name ?? "anonymous"}</span>
                 <span>
                   {position.thread.message_count}{" "}
-                  {position.thread.message_count === 1 ? "message" : "messages"}
+                  {position.thread.message_count === "1" ? "message" : "messages"}
                 </span>
               </div>
               <p class="pin-preview-text">{position.thread.report.text}</p>

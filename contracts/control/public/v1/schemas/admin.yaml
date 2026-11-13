@@ -19,7 +19,13 @@ schemas:
       source_ip: { type: string }
       outcome: { type: string, maxLength: 64 }
       reason: { type: string, maxLength: 64 }
-      configuration_revision: { type: integer, format: int64, minimum: 1 }
+      configuration_revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "configuration_revision,omitempty,string" },
+        }
   ServiceAuditPage:
     type: object
     required: [events]
@@ -108,9 +114,12 @@ schemas:
       relay_run_id:
         $ref: "../openapi.yaml#/components/schemas/ResourceID"
       relay_lease_revision:
-        type: integer
-        format: int64
-        minimum: 1
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "relay_lease_revision,string" },
+        }
       protocol_version:
         type: integer
         format: int64
@@ -167,9 +176,12 @@ schemas:
       relay_run_id:
         $ref: "../openapi.yaml#/components/schemas/ResourceID"
       relay_lease_revision:
-        type: integer
-        format: int64
-        minimum: 1
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "relay_lease_revision,string" },
+        }
       deadline:
         type: string
         format: date-time
@@ -186,9 +198,12 @@ schemas:
       allowed:
         type: boolean
       revision:
-        type: integer
-        format: int64
-        minimum: 1
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "revision,string" },
+        }
       updated_at:
         type: string
         format: date-time

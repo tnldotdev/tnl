@@ -110,7 +110,11 @@ beforeEach(async () => {
     for (const event of await events()) {
       if (event.event !== "ready" || event.file === undefined) continue;
       try {
-        for (const operation of ["/fixture/release", "/fixture/release-stop"])
+        for (const operation of [
+          "/fixture/release",
+          "/fixture/release-stop",
+          "/fixture/release-cleanup",
+        ])
           await (await control(event.file, operation)).arrayBuffer();
         await run(binary, ["runtime", "connections", "stop", "--handle", event.file], {
           timeout: 5000,
@@ -238,8 +242,8 @@ test("an initial service read timeout retains the new shared owner for later pre
   expect((await events()).filter((event) => event.event === "start")).toHaveLength(1);
 }, 20_000);
 
-test("concurrent awaits after a known deadline join and replace one same-port owner", async () => {
-  await configure({ lifetimeMs: 4000, cleanupDelayMs: 500 });
+test("concurrent awaits replace one same-port owner only after expired cleanup joins", async () => {
+  await configure({ lifetimeMs: 4000, cleanup: "hold" });
   const { connectionHandle } = await import("../../src/internal/connector/connection.js");
   const handle = connectionHandle("database", vi.fn());
   const first = await handle;
@@ -256,6 +260,21 @@ test("concurrent awaits after a known deadline join and replace one same-port ow
   expect(
     (await events()).filter((event) => ["start", "read", "stop"].includes(event.event)),
   ).toEqual(before);
+  await expect(
+    Promise.all(
+      Array.from({ length: 8 }, () => Promise.resolve(connectionHandle("database", vi.fn()))),
+    ),
+  ).rejects.toMatchObject({ code: "sdk.connection_unavailable" });
+  expect((await events()).filter((event) => event.event === "start")).toHaveLength(1);
+  expect((await events()).filter((event) => event.event === "stop")).toHaveLength(0);
+  expect(() => process.kill(original.pid, 0)).not.toThrow();
+  await (await control(original.file, "/fixture/release-cleanup")).arrayBuffer();
+  await expect
+    .poll(async () => (await events()).filter((event) => event.event === "closed").length, {
+      timeout: 10_000,
+    })
+    .toBe(1);
+  await configure({ cleanup: "ready" });
   const current = await Promise.all(
     Array.from({ length: 8 }, () => Promise.resolve(connectionHandle("database", vi.fn()))),
   );
@@ -305,6 +324,11 @@ test("expiry recovery reports current authentication denial instead of reusing o
   const port = Number(await readFile(path.join(root, "port"), "utf8"));
   await configure({ authorization: "deny" });
   await waitForDeadline(original.file);
+  await expect
+    .poll(async () => (await events()).filter((event) => event.event === "closed").length, {
+      timeout: 10_000,
+    })
+    .toBe(1);
   await expect(Promise.all([handle, connectionHandle("database", vi.fn())])).rejects.toMatchObject({
     code: "sdk.authentication_required",
   });

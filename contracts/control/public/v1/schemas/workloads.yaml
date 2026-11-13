@@ -7,7 +7,13 @@ schemas:
       subject: { $ref: "../openapi.yaml#/components/schemas/VisitorSubject" }
       service_id: { type: string }
       valid_until: { type: string, format: date-time }
-      policy_revision: { type: integer, format: int64 }
+      policy_revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "policy_revision,string" },
+        }
   WorkloadServices:
     type: object
     additionalProperties: false

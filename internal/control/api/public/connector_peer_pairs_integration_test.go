@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
@@ -279,7 +280,7 @@ func TestIntegrationConnectorPeerPairPublicDevice(t *testing.T) {
 	deliveryPath := "/v1/services/" + service.ID + "/runs/" + run.RunID + "/connector-peer-pairs/" + pair.PairId + "/delivery"
 	deliver := func(bearer string, generation int64) *httptest.ResponseRecorder {
 		t.Helper()
-		return call(deliveryPath, bearer, map[string]int64{"delivery_generation": generation})
+		return call(deliveryPath, bearer, map[string]string{"delivery_generation": strconv.FormatInt(generation, 10)})
 	}
 	preparedPath := "/v1/services/" + service.ID + "/runs/" + run.RunID + "/connector-peer-pairs/" + pair.PairId + "/prepared"
 	report := controlv1.ConnectorPeerPairPrepared{Phase: controlv1.ConnectorPeerPairPreparedInstalled, DeliveryId: pair.DeliveryId, DeliveryGeneration: pair.DeliveryGeneration, BindingExpiresAt: pair.ExpiresAt}

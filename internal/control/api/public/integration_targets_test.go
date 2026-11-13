@@ -22,7 +22,7 @@ func TestIntegrationPurposeRejectsTargetOnCreateAndUpdate(t *testing.T) {
 					t.Fatalf("create integration with target = %d: %s", response.Code, response.Body.String())
 				}
 				mutation := &publicURLMutationStoreStub{publicURL: controlstate.PublicURL{ID: "public_url_1", TeamID: "team_1", Purpose: purpose, ServiceProtocol: controlstate.PublicURLServiceHTTP, MutationRevision: 1}}
-				request := httptest.NewRequest(http.MethodPatch, "/v1/public-urls/public_url_1", strings.NewReader(`{"expected_mutation_revision":1,"target":"`+target+`","allowed_ip_prefixes":[]}`))
+				request := httptest.NewRequest(http.MethodPatch, "/v1/public-urls/public_url_1", strings.NewReader(`{"expected_mutation_revision":"1","target":"`+target+`","allowed_ip_prefixes":[]}`))
 				request.Header.Set("Authorization", "Bearer session")
 				response = httptest.NewRecorder()
 				authorizer := &recordingAuthorizer{principal: testPublicURLReadPrincipal()}
@@ -31,7 +31,7 @@ func TestIntegrationPurposeRejectsTargetOnCreateAndUpdate(t *testing.T) {
 					t.Fatalf("update integration with target = %d: %s", response.Code, response.Body.String())
 				}
 				mutation.publicURL.TeamID = "team_other"
-				request = httptest.NewRequest(http.MethodPatch, "/v1/public-urls/public_url_1", strings.NewReader(`{"expected_mutation_revision":1,"target":"http://127.0.0.1:3000","allowed_ip_prefixes":[]}`))
+				request = httptest.NewRequest(http.MethodPatch, "/v1/public-urls/public_url_1", strings.NewReader(`{"expected_mutation_revision":"1","target":"http://127.0.0.1:3000","allowed_ip_prefixes":[]}`))
 				request.Header.Set("Authorization", "Bearer session")
 				response = httptest.NewRecorder()
 				(&handler{store: mutation, authorizer: authorizer}).UpdatePublicURL(response, request, "public_url_1")

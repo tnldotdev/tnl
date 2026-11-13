@@ -28,8 +28,8 @@ export interface FeedbackAPI {
   ): Promise<ThreadPage>;
   /** immutable report and current state, scoped to this public URL and preview. */
   inspect(id: string, signal: AbortSignal): Promise<Thread>;
-  /** ordered events after a numeric cursor; follow next_cursor until caught up. */
-  events(id: string, cursor: number | undefined, signal: AbortSignal): Promise<EventPage>;
+  /** ordered events after a decimal cursor; follow next_cursor until caught up. */
+  events(id: string, cursor: string | undefined, signal: AbortSignal): Promise<EventPage>;
   /** bounded, browser-scoped failures; query strings and request bodies are omitted. */
   evidence(signal: AbortSignal): Promise<Evidence["failed_requests"]>;
   /** first submission; retries must reuse the same key and frozen input. */

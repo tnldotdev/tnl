@@ -6,7 +6,12 @@ schemas:
     description: "Replacement service settings. Copy trust_revision into expected_trust_revision; a stale revision is rejected. Omit target_tls to remove it. Endpoint and placement are not writable here."
     properties:
       expected_trust_revision:
-        { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "expected_trust_revision,string" },
+        }
       protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
       target_tls: { $ref: "../openapi.yaml#/components/schemas/ServiceTargetTLS" }
       publisher_pool: { type: boolean }
@@ -24,11 +29,23 @@ schemas:
     properties:
       service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
       service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
-      run_number: { type: integer, format: int64, minimum: 1 }
+      run_number:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "run_number,string" },
+        }
       subject: { $ref: "../openapi.yaml#/components/schemas/VisitorSubject" }
       expires_at: { type: string, format: date-time }
       protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
-      trust_revision: { type: integer, format: int64, minimum: 1 }
+      trust_revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "trust_revision,string" },
+        }
       endpoint: { $ref: "../openapi.yaml#/components/schemas/ServiceEndpoint" }
       pair_ready: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairReady" }
   ServiceID:
@@ -84,7 +101,13 @@ schemas:
       protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
       target_tls: { $ref: "../openapi.yaml#/components/schemas/ServiceTargetTLS" }
       publisher_pool: { type: boolean }
-      trust_revision: { type: integer, format: int64, minimum: 1 }
+      trust_revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "trust_revision,string" },
+        }
       endpoint: { $ref: "../openapi.yaml#/components/schemas/ServiceEndpoint" }
   ServiceRunDeclaration:
     type: object
@@ -95,7 +118,13 @@ schemas:
         $ref: "./common.yaml#/schemas/PreferredRegions"
       protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
       target_tls: { $ref: "../openapi.yaml#/components/schemas/ServiceTargetTLS" }
-      trust_revision: { type: integer, format: int64, minimum: 1 }
+      trust_revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "trust_revision,string" },
+        }
   Service:
     type: object
     additionalProperties: false
@@ -120,7 +149,13 @@ schemas:
       kubernetes_auth: { $ref: "../openapi.yaml#/components/schemas/KubernetesAuth" }
       target_tls: { $ref: "../openapi.yaml#/components/schemas/ServiceTargetTLS" }
       publisher_pool: { type: boolean }
-      trust_revision: { type: integer, format: int64, minimum: 1 }
+      trust_revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "trust_revision,string" },
+        }
       created_at: { type: string, format: date-time }
       service_run_id:
         {
@@ -129,10 +164,11 @@ schemas:
         }
       run_number:
         {
-          type: integer,
-          format: int64,
-          minimum: 1,
-          description: Present only alongside service_run_id.,
+          type: string,
+          description: "Present only alongside service_run_id.",
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "run_number,omitempty,string" },
         }
   ServiceSummary:
     type: object
@@ -154,10 +190,22 @@ schemas:
       protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
       kubernetes_auth: { $ref: "../openapi.yaml#/components/schemas/KubernetesAuth" }
       publisher_pool: { type: boolean }
-      trust_revision: { type: integer, format: int64, minimum: 1 }
+      trust_revision:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "trust_revision,string" },
+        }
       created_at: { type: string, format: date-time }
       service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
-      run_number: { type: integer, format: int64, minimum: 1 }
+      run_number:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "run_number,omitempty,string" },
+        }
   ServicePage:
     type: object
     additionalProperties: false
@@ -260,7 +308,13 @@ schemas:
       team_id: { $ref: "../openapi.yaml#/components/schemas/TeamID" }
       service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
       service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
-      run_number: { type: integer, format: int64, minimum: 1 }
+      run_number:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "run_number,string" },
+        }
       publisher_identity_id: { $ref: "../openapi.yaml#/components/schemas/ResourceID" }
       publisher_grant_id: { $ref: "../openapi.yaml#/components/schemas/ResourceID" }
       publisher_key_id: { $ref: "../openapi.yaml#/components/schemas/ResourceID" }
@@ -277,7 +331,13 @@ schemas:
     properties:
       service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
       service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
-      run_number: { type: integer, format: int64, minimum: 1 }
+      run_number:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "run_number,string" },
+        }
       run_token: { type: string, minLength: 1, maxLength: 4096 }
       publisher_connections:
         {
@@ -294,7 +354,13 @@ schemas:
     properties:
       service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
       service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
-      run_number: { type: integer, format: int64, minimum: 1 }
+      run_number:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "run_number,string" },
+        }
       state: { type: string, enum: [starting, ready, closed] }
       publisher_expires_at: { type: string, format: date-time }
       healthy: { type: boolean }

@@ -105,7 +105,7 @@ func TestIntegrationServiceAuditBatchAPI(t *testing.T) {
 	visitor, _ := opaqueid.New(opaqueid.VisitorConnectionPrefix)
 	o := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: u.ID, ServiceKind: "public_url", EventType: "http.decision", OccurredAt: now, RunID: runs[0], RunNumber: 1, VisitorConnectionID: visitor, SourceIP: "192.0.2.1", Outcome: "denied", Reason: "authorization"}
 	body := struct {
-		PublishRunNumber int64                      `json:"publish_run_number"`
+		PublishRunNumber int64                      `json:"publish_run_number,string"`
 		Events           []serviceaudit.Observation `json:"events"`
 	}{1, []serviceaudit.Observation{o, o}}
 	endpoint := server.URL + "/v1/publish-runs/" + runs[0] + "/service-observations"

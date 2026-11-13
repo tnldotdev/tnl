@@ -141,9 +141,12 @@ schemas:
     required: [number]
     properties:
       number:
-        type: integer
-        format: int64
-        minimum: 1
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "number,string" },
+        }
   AuthenticationFacts:
     type: object
     additionalProperties: false

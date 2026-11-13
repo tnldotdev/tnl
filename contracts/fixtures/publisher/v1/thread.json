@@ -2,13 +2,13 @@
   "schema_version": 1,
   "id": "fb_0123456789abcdefghijkl",
   "state": "open",
-  "message_count": 1,
-  "latest_event_cursor": 4,
+  "message_count": "1",
+  "latest_event_cursor": "4",
   "scope": {
     "preview_id": "pv_0123456789abcdefghijkl",
     "public_url_id": "url_0123456789abcdefghijkl",
     "publish_run_id": "pr_0123456789abcdefghijkl",
-    "publish_run_number": 2,
+    "publish_run_number": "2",
     "service": "web",
     "page_path": "/settings",
     "page_title": "settings"

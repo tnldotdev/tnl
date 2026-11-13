@@ -42,7 +42,7 @@ type ConnectorPeerPairRequest struct {
 
 type ConnectorPeerPairRelay struct {
 	PublisherConnectionID string             `json:"publisher_connection_id"`
-	AssignmentRevision    int64              `json:"assignment_revision"`
+	AssignmentRevision    int64              `json:"assignment_revision,string"`
 	RelayLease            RelayLeaseIdentity `json:"relay_lease"`
 	RelayAddress          string             `json:"relay_address"`
 	TLSServerName         string             `json:"tls_server_name"`

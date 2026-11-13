@@ -46,7 +46,7 @@ func TestConnectorDecisionMetricsDistinguishHTTP200DenialAndStateFailure(t *test
 			mux.HandleFunc("POST /service/{service}/run/{run}", func(w http.ResponseWriter, r *http.Request) {
 				h.AuthorizeServiceClientCertificate(w, r, r.PathValue("service"), r.PathValue("run"))
 			})
-			r := httptest.NewRequest("POST", "/service/service/run/service-run", strings.NewReader(`{"run_number":1,"source_ip":"192.0.2.7","certificate":"AQ==","visitor_connection_id":"private-visitor"}`))
+			r := httptest.NewRequest("POST", "/service/service/run/service-run", strings.NewReader(`{"run_number":"1","source_ip":"192.0.2.7","certificate":"AQ==","visitor_connection_id":"private-visitor"}`))
 			r.Header.Set("Content-Type", "application/json")
 			r.Header.Set("Authorization", "Bearer private-token")
 			response := httptest.NewRecorder()

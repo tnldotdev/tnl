@@ -25,7 +25,7 @@ type CompanyLoginIntent struct {
 	ID                   string    `json:"intent_id"`
 	TeamID               string    `json:"team_id"`
 	IdentityConnectionID string    `json:"identity_connection_id"`
-	ConnectionRevision   int64     `json:"connection_revision"`
+	ConnectionRevision   int64     `json:"connection_revision,string"`
 	SourceID             string    `json:"source_id"`
 	Issuer               string    `json:"issuer"`
 	ClientID             string    `json:"client_id"`

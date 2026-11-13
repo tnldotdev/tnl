@@ -1757,7 +1757,7 @@ type AddPreviewPublicURLRequest struct {
 // AdminDrainRelayRequest defines model for AdminDrainRelayRequest.
 type AdminDrainRelayRequest struct {
 	Deadline           time.Time  `json:"deadline"`
-	RelayLeaseRevision int64      `json:"relay_lease_revision"`
+	RelayLeaseRevision int64      `json:"relay_lease_revision,string"`
 	RelayRunId         ResourceID `json:"relay_run_id"`
 }
 
@@ -1774,7 +1774,7 @@ type AdminRelayLease struct {
 	Region              string            `json:"region"`
 	RelayAddress        string            `json:"relay_address"`
 	RelayId             RelayID           `json:"relay_id"`
-	RelayLeaseRevision  int64             `json:"relay_lease_revision"`
+	RelayLeaseRevision  int64             `json:"relay_lease_revision,string"`
 	RelayRunId          ResourceID        `json:"relay_run_id"`
 	RelayServiceId      RelayServiceID    `json:"relay_service_id"`
 	RenewedAt           time.Time         `json:"renewed_at"`
@@ -1832,7 +1832,7 @@ type AppendFeedbackEventRequest struct {
 type AppendReviewerFeedbackEventRequest struct {
 	Access           FeedbackReviewerAccess `json:"access"`
 	Evidence         *FeedbackEvidence      `json:"evidence,omitempty"`
-	PublishRunNumber int64                  `json:"publish_run_number"`
+	PublishRunNumber int64                  `json:"publish_run_number,string"`
 
 	// SourceState Git identifiers captured for one project directory. Compare HEAD, project_path, and changed_files only when both captures are complete. Branch names, staging, and ignored files do not affect matching. File contents and absolute paths are not stored; truncated or unsupported captures are incomplete.
 	SourceState *SourceState                   `json:"source_state,omitempty"`
@@ -1848,7 +1848,7 @@ type AppliedProjectConfiguration struct {
 	Groups            *[]AppliedPublisherGroup     `json:"groups,omitempty"`
 	Members           []PublisherGroupMemberStatus `json:"members"`
 	ProjectKey        string                       `json:"project_key"`
-	Revision          int64                        `json:"revision"`
+	Revision          int64                        `json:"revision,string"`
 	Services          []AppliedProjectService      `json:"services"`
 	SourceFingerprint string                       `json:"source_fingerprint"`
 	TeamId            string                       `json:"team_id"`
@@ -1856,7 +1856,7 @@ type AppliedProjectConfiguration struct {
 
 // AppliedProjectService defines model for AppliedProjectService.
 type AppliedProjectService struct {
-	DesiredRevision int64                            `json:"desired_revision"`
+	DesiredRevision int64                            `json:"desired_revision,string"`
 	Hostname        *string                          `json:"hostname,omitempty"`
 	Port            *int                             `json:"port,omitempty"`
 	Public          *bool                            `json:"public,omitempty"`
@@ -1864,7 +1864,7 @@ type AppliedProjectService struct {
 	Service         string                           `json:"service"`
 	ServiceId       *string                          `json:"service_id,omitempty"`
 	ServiceKind     AppliedProjectServiceServiceKind `json:"service_kind"`
-	TrustRevision   int64                            `json:"trust_revision"`
+	TrustRevision   int64                            `json:"trust_revision,string"`
 }
 
 // AppliedProjectServiceServiceKind defines model for AppliedProjectService.ServiceKind.
@@ -1886,7 +1886,7 @@ type AppliedPublisherGroup struct {
 type ApplyProjectConfigurationRequest struct {
 	// Configuration Normalized declarative configuration, at most 512 KiB encoded. All local declarations defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its groups.
 	Configuration    ProjectConfiguration `json:"configuration"`
-	ExpectedRevision int64                `json:"expected_revision"`
+	ExpectedRevision int64                `json:"expected_revision,string"`
 	ProjectLabel     *string              `json:"project_label,omitempty"`
 
 	// Source Required on first apply. Omit on updates to retain the saved source binding.
@@ -1906,7 +1906,7 @@ type AuthenticationFactsMethods string
 // AuthorizeServiceClientCertificateRequest defines model for AuthorizeServiceClientCertificateRequest.
 type AuthorizeServiceClientCertificateRequest struct {
 	Certificate         []byte              `json:"certificate"`
-	RunNumber           int64               `json:"run_number"`
+	RunNumber           int64               `json:"run_number,string"`
 	SourceIp            string              `json:"source_ip"`
 	VisitorConnectionId VisitorConnectionID `json:"visitor_connection_id"`
 }
@@ -1933,7 +1933,7 @@ type AvailablePublicURLPage struct {
 // BrowserAccessRequest defines model for BrowserAccessRequest.
 type BrowserAccessRequest struct {
 	CookieSecret     string `json:"cookie_secret"`
-	PublishRunNumber int64  `json:"publish_run_number"`
+	PublishRunNumber int64  `json:"publish_run_number,string"`
 }
 
 // BrowserAccessResponse defines model for BrowserAccessResponse.
@@ -1946,7 +1946,7 @@ type BrowserAccessResponse struct {
 
 // BrowserHandoffRequest defines model for BrowserHandoffRequest.
 type BrowserHandoffRequest struct {
-	PublishRunNumber int64    `json:"publish_run_number"`
+	PublishRunNumber int64    `json:"publish_run_number,string"`
 	ShareId          *ShareID `json:"share_id,omitempty"`
 	ShareSecret      *string  `json:"share_secret,omitempty"`
 	Token            string   `json:"token"`
@@ -1972,7 +1972,7 @@ type CertificateChallengeMethod string
 type CertificateInstalledRequest struct {
 	IssuanceId       IssuanceID `json:"issuance_id"`
 	NotAfter         time.Time  `json:"not_after"`
-	PublishRunNumber int64      `json:"publish_run_number"`
+	PublishRunNumber int64      `json:"publish_run_number,string"`
 }
 
 // CertificateIssuance defines model for CertificateIssuance.
@@ -1985,7 +1985,7 @@ type CertificateIssuance struct {
 	NotBefore        *time.Time               `json:"not_before,omitempty"`
 	PublicUrlId      PublicURLID              `json:"public_url_id"`
 	PublishRunId     PublishRunID             `json:"publish_run_id"`
-	PublishRunNumber int64                    `json:"publish_run_number"`
+	PublishRunNumber int64                    `json:"publish_run_number,string"`
 	RetryAt          *time.Time               `json:"retry_at,omitempty"`
 	State            CertificateIssuanceState `json:"state"`
 	UpdatedAt        time.Time                `json:"updated_at"`
@@ -2009,7 +2009,7 @@ type ClientIPResponse struct {
 
 // ConnectionAssignment defines model for ConnectionAssignment.
 type ConnectionAssignment struct {
-	ConnectionAssignmentRevision           int64                    `json:"connection_assignment_revision"`
+	ConnectionAssignmentRevision           int64                    `json:"connection_assignment_revision,string"`
 	ConnectionSlot                         int                      `json:"connection_slot"`
 	PublisherConnectionCredential          string                   `json:"publisher_connection_credential"`
 	PublisherConnectionCredentialExpiresAt time.Time                `json:"publisher_connection_credential_expires_at"`
@@ -2026,7 +2026,7 @@ type ConnectorPeerPair struct {
 	BindingState     ConnectorPeerPairBindingState `json:"binding_state,omitempty"`
 
 	// DeliveryGeneration Current network binding revision; aborted revisions are never reused.
-	DeliveryGeneration int64 `json:"delivery_generation"`
+	DeliveryGeneration int64 `json:"delivery_generation,string"`
 
 	// DeliveryId Canonical unpadded base64url of the nonzero 16-byte delivery header identifier; not an access grant.
 	DeliveryId string `json:"delivery_id"`
@@ -2051,7 +2051,7 @@ type ConnectorPeerPair struct {
 	// PublisherProvedUntil Independent publisher path-proof freshness, at most five seconds and capped by installation, claim, pending-operation and owner bounds. Used only for activation, not a serving lease. Inspect, exact proof retries and owner renewal cannot extend it; fresh proofs use the prepared operation in service-runs.yaml.
 	PublisherProvedUntil *time.Time               `json:"publisher_proved_until,omitempty"`
 	Relays               []ConnectorPeerPairRelay `json:"relays"`
-	RunNumber            int64                    `json:"run_number"`
+	RunNumber            int64                    `json:"run_number,string"`
 	ServiceId            ServiceID                `json:"service_id"`
 	ServiceRunId         ServiceRunID             `json:"service_run_id"`
 
@@ -2061,7 +2061,7 @@ type ConnectorPeerPair struct {
 
 	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
 	Subject       VisitorSubject `json:"subject"`
-	TrustRevision int64          `json:"trust_revision,omitempty"`
+	TrustRevision int64          `json:"trust_revision,omitempty,string"`
 }
 
 // ConnectorPeerPairBindingState defines model for ConnectorPeerPairBindingState.
@@ -2069,7 +2069,7 @@ type ConnectorPeerPairBindingState string
 
 // ConnectorPeerPairCandidate A pair to reconcile, not delivery authority or permission to open an application stream.
 type ConnectorPeerPairCandidate struct {
-	DeliveryGeneration int64 `json:"delivery_generation"`
+	DeliveryGeneration int64 `json:"delivery_generation,string"`
 
 	// OwnerAuthority Current authorization for an installed connector owner in this publisher run. It contains no delivery key and does not renew any relay claim, installation, path proof, or visitor permission. It can be read during relay loss but cannot revive an expired owner.
 	OwnerAuthority *ConnectorPeerPairOwnerAuthority `json:"owner_authority,omitempty"`
@@ -2088,7 +2088,7 @@ type ConnectorPeerPairCandidates struct {
 type ConnectorPeerPairDelivery struct {
 	BindingChallenge   string                        `json:"binding_challenge,omitempty"`
 	BindingState       ConnectorPeerPairBindingState `json:"binding_state,omitempty"`
-	DeliveryGeneration int64                         `json:"delivery_generation"`
+	DeliveryGeneration int64                         `json:"delivery_generation,string"`
 	DeliveryId         string                        `json:"delivery_id"`
 	ExpiresAt          time.Time                     `json:"expires_at"`
 
@@ -2101,7 +2101,7 @@ type ConnectorPeerPairDelivery struct {
 	PairId              string                   `json:"pair_id"`
 	PublisherIdentityId string                   `json:"publisher_identity_id"`
 	Relays              []ConnectorPeerPairRelay `json:"relays"`
-	RunNumber           int64                    `json:"run_number"`
+	RunNumber           int64                    `json:"run_number,string"`
 	ServiceId           ServiceID                `json:"service_id"`
 	ServiceRunId        ServiceRunID             `json:"service_run_id"`
 
@@ -2113,7 +2113,7 @@ type ConnectorPeerPairDelivery struct {
 
 	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
 	Subject       VisitorSubject `json:"subject"`
-	TrustRevision int64          `json:"trust_revision,omitempty"`
+	TrustRevision int64          `json:"trust_revision,omitempty,string"`
 }
 
 // ConnectorPeerPairOwnerAuthority Current authorization for an installed connector owner in this publisher run. It contains no delivery key and does not renew any relay claim, installation, path proof, or visitor permission. It can be read during relay loss but cannot revive an expired owner.
@@ -2137,7 +2137,7 @@ type ConnectorPeerPairPrepared struct {
 
 	// BindingExpiresAt The original control-clock expires_at from the installed delivery response, not a new local deadline.
 	BindingExpiresAt   time.Time `json:"binding_expires_at"`
-	DeliveryGeneration int64     `json:"delivery_generation"`
+	DeliveryGeneration int64     `json:"delivery_generation,string"`
 	DeliveryId         string    `json:"delivery_id"`
 	OperationId        string    `json:"operation_id,omitempty"`
 
@@ -2159,7 +2159,7 @@ type ConnectorPeerPairReady struct {
 
 // ConnectorPeerPairRebindOperation defines model for ConnectorPeerPairRebindOperation.
 type ConnectorPeerPairRebindOperation struct {
-	DeliveryGeneration int64                                  `json:"delivery_generation"`
+	DeliveryGeneration int64                                  `json:"delivery_generation,string"`
 	OperationId        string                                 `json:"operation_id"`
 	Status             ConnectorPeerPairRebindOperationStatus `json:"status"`
 }
@@ -2176,7 +2176,7 @@ type ConnectorPeerPairRebindRequest struct {
 	BindingChallenge string `json:"binding_challenge"`
 
 	// ExpectedGeneration Known high-water for inspect, exact high-water CAS for prepare, exact pending revision for activate or abort.
-	ExpectedGeneration int64 `json:"expected_generation"`
+	ExpectedGeneration int64 `json:"expected_generation,string"`
 
 	// ExpectedRelays Exactly two ordered relay slots for prepare; empty for every other phase.
 	ExpectedRelays []ConnectorPeerPairRelay `json:"expected_relays"`
@@ -2190,20 +2190,20 @@ type ConnectorPeerPairRebindRequest struct {
 	Phase               ConnectorPeerPairRebindPhase `json:"phase"`
 	PublisherIdentityId string                       `json:"publisher_identity_id"`
 	RequestedAt         time.Time                    `json:"requested_at"`
-	RunNumber           int64                        `json:"run_number"`
+	RunNumber           int64                        `json:"run_number,string"`
 	ServiceRunId        ServiceRunID                 `json:"service_run_id"`
 	Signature           string                       `json:"signature"`
 	Source              json.RawMessage              `json:"source"`
 
 	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
 	Subject       VisitorSubject `json:"subject"`
-	TrustRevision int64          `json:"trust_revision"`
+	TrustRevision int64          `json:"trust_revision,string"`
 }
 
 // ConnectorPeerPairRebindState At most one active and one pending binding for the same retained owner. High-water and the last operation survive abort or expiry; observations never extend authority. Snapshot observed_at values agree. Ready relays are a credential-free hint for this saved run, never a new selection.
 type ConnectorPeerPairRebindState struct {
 	Active              *ConnectorPeerPair                `json:"active,omitempty"`
-	HighWaterGeneration int64                             `json:"high_water_generation"`
+	HighWaterGeneration int64                             `json:"high_water_generation,string"`
 	Operation           *ConnectorPeerPairRebindOperation `json:"operation,omitempty"`
 	Pending             *ConnectorPeerPair                `json:"pending,omitempty"`
 
@@ -2214,7 +2214,7 @@ type ConnectorPeerPairRebindState struct {
 
 // ConnectorPeerPairRelay defines model for ConnectorPeerPairRelay.
 type ConnectorPeerPairRelay struct {
-	AssignmentRevision    int64                   `json:"assignment_revision"`
+	AssignmentRevision    int64                   `json:"assignment_revision,string"`
 	PublisherConnectionId string                  `json:"publisher_connection_id"`
 	RelayAddress          string                  `json:"relay_address"`
 	RelayLease            ConnectorPeerRelayLease `json:"relay_lease"`
@@ -2228,7 +2228,7 @@ type ConnectorPeerPairRenewal struct {
 	Pair              ConnectorPeerPair    `json:"pair"`
 	Protocol          ServiceProtocol      `json:"protocol"`
 	RunValidUntil     time.Time            `json:"run_valid_until"`
-	TrustRevision     int64                `json:"trust_revision"`
+	TrustRevision     int64                `json:"trust_revision,string"`
 	VisitorPermission VisitorTokenResponse `json:"visitor_permission"`
 }
 
@@ -2237,13 +2237,13 @@ type ConnectorPeerPairRequest struct {
 	Action              ConnectorPeerPairRequestAction `json:"action"`
 	ExpectedRelays      []ConnectorPeerPairRelay       `json:"expected_relays"`
 	IdempotencyKey      IdempotencyKey                 `json:"idempotency_key"`
-	PreviousGeneration  *int64                         `json:"previous_generation,omitempty"`
+	PreviousGeneration  *int64                         `json:"previous_generation,omitempty,string"`
 	PreviousPairId      *string                        `json:"previous_pair_id,omitempty"`
 	PublisherIdentityId string                         `json:"publisher_identity_id"`
 
 	// RequestedAt Retain this timestamp on an uncertain reply retry. A successful fresh renewal supersedes earlier create or replace reply proofs; those proofs cannot recover the later renewal's bound.
 	RequestedAt  time.Time    `json:"requested_at"`
-	RunNumber    int64        `json:"run_number"`
+	RunNumber    int64        `json:"run_number,string"`
 	ServiceRunId ServiceRunID `json:"service_run_id"`
 
 	// Signature Unpadded base64url Ed25519 signature over ConnectorPeerPairProofMessage.
@@ -2260,7 +2260,7 @@ type ConnectorPeerPairRequestAction string
 // ConnectorPeerRelayLease defines model for ConnectorPeerRelayLease.
 type ConnectorPeerRelayLease struct {
 	RelayId            string `json:"relay_id"`
-	RelayLeaseRevision int64  `json:"relay_lease_revision"`
+	RelayLeaseRevision int64  `json:"relay_lease_revision,string"`
 	RelayRunId         string `json:"relay_run_id"`
 	RelayServiceId     string `json:"relay_service_id"`
 }
@@ -2293,7 +2293,7 @@ type ControlDiscoveryManagedUrlMode string
 // CreateCertificateIssuanceRequest defines model for CreateCertificateIssuanceRequest.
 type CreateCertificateIssuanceRequest struct {
 	Csr              []byte `json:"csr"`
-	PublishRunNumber int64  `json:"publish_run_number"`
+	PublishRunNumber int64  `json:"publish_run_number,string"`
 }
 
 // CreateFeedbackReportRequest defines model for CreateFeedbackReportRequest.
@@ -2304,7 +2304,7 @@ type CreateFeedbackReportRequest struct {
 	PagePath         string                 `json:"page_path"`
 	PageTitle        *string                `json:"page_title,omitempty"`
 	PreviewId        PreviewID              `json:"preview_id"`
-	PublishRunNumber int64                  `json:"publish_run_number"`
+	PublishRunNumber int64                  `json:"publish_run_number,string"`
 	Report           struct {
 		DisplayName *string `json:"display_name,omitempty"`
 		Text        string  `json:"text"`
@@ -2392,7 +2392,7 @@ type CreatePublisherGroupEnrollmentRequest struct {
 // CreateServiceCertificateIssuanceRequest defines model for CreateServiceCertificateIssuanceRequest.
 type CreateServiceCertificateIssuanceRequest struct {
 	Csr       []byte `json:"csr"`
-	RunNumber int64  `json:"run_number"`
+	RunNumber int64  `json:"run_number,string"`
 }
 
 // CreateServiceGrantRequest defines model for CreateServiceGrantRequest.
@@ -2457,7 +2457,7 @@ type DomainID = ResourceID
 // EnableShareAccessRequest defines model for EnableShareAccessRequest.
 type EnableShareAccessRequest struct {
 	PreviewId        *PreviewID `json:"preview_id,omitempty"`
-	PublishRunNumber int64      `json:"publish_run_number"`
+	PublishRunNumber int64      `json:"publish_run_number,string"`
 }
 
 // EnrollGuestPublisherRequest defines model for EnrollGuestPublisherRequest.
@@ -2500,7 +2500,7 @@ type FeedbackEvent struct {
 	Actor      FeedbackEventActor `json:"actor"`
 	At         time.Time          `json:"at"`
 	Author     *FeedbackAuthor    `json:"author,omitempty"`
-	Cursor     int64              `json:"cursor"`
+	Cursor     int64              `json:"cursor,string"`
 	Evidence   *FeedbackEvidence  `json:"evidence,omitempty"`
 	FeedbackId FeedbackID         `json:"feedback_id"`
 
@@ -2521,9 +2521,9 @@ type FeedbackEventInputType string
 
 // FeedbackEventPage defines model for FeedbackEventPage.
 type FeedbackEventPage struct {
-	EventCursor int64           `json:"event_cursor"`
+	EventCursor int64           `json:"event_cursor,string"`
 	Events      []FeedbackEvent `json:"events"`
-	NextCursor  *int64          `json:"next_cursor,omitempty"`
+	NextCursor  *int64          `json:"next_cursor,omitempty,string"`
 
 	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
 	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
@@ -2582,7 +2582,7 @@ type FeedbackScope struct {
 	PreviewId        PreviewID    `json:"preview_id"`
 	PublicUrlId      PublicURLID  `json:"public_url_id"`
 	PublishRunId     PublishRunID `json:"publish_run_id"`
-	PublishRunNumber int64        `json:"publish_run_number"`
+	PublishRunNumber int64        `json:"publish_run_number,string"`
 	Service          string       `json:"service"`
 }
 
@@ -2601,8 +2601,8 @@ type FeedbackThread struct {
 	Anchor            *FeedbackAnchor  `json:"anchor,omitempty"`
 	Evidence          FeedbackEvidence `json:"evidence"`
 	Id                FeedbackID       `json:"id"`
-	LatestEventCursor int64            `json:"latest_event_cursor"`
-	MessageCount      int64            `json:"message_count"`
+	LatestEventCursor int64            `json:"latest_event_cursor,string"`
+	MessageCount      int64            `json:"message_count,string"`
 	Report            FeedbackReport   `json:"report"`
 
 	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
@@ -2616,7 +2616,7 @@ type FeedbackThread struct {
 
 // FeedbackThreadPage defines model for FeedbackThreadPage.
 type FeedbackThreadPage struct {
-	EventCursor int64       `json:"event_cursor"`
+	EventCursor int64       `json:"event_cursor,string"`
 	NextCursor  *FeedbackID `json:"next_cursor,omitempty"`
 
 	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
@@ -2631,8 +2631,8 @@ type FeedbackThreadState string
 type FeedbackThreadSummary struct {
 	Anchor            *FeedbackAnchor `json:"anchor,omitempty"`
 	Id                FeedbackID      `json:"id"`
-	LatestEventCursor int64           `json:"latest_event_cursor"`
-	MessageCount      int64           `json:"message_count"`
+	LatestEventCursor int64           `json:"latest_event_cursor,string"`
+	MessageCount      int64           `json:"message_count,string"`
 	Report            FeedbackReport  `json:"report"`
 
 	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
@@ -2652,7 +2652,7 @@ type GitProjectSource struct {
 
 // GuestDemoNumber defines model for GuestDemoNumber.
 type GuestDemoNumber struct {
-	Number int64 `json:"number"`
+	Number int64 `json:"number,string"`
 }
 
 // GuestDemoSession defines model for GuestDemoSession.
@@ -2743,7 +2743,7 @@ type LocalServiceSource struct {
 type MaintenanceControl struct {
 	Allowed   bool                   `json:"allowed"`
 	Name      MaintenanceControlName `json:"name"`
-	Revision  int64                  `json:"revision"`
+	Revision  int64                  `json:"revision,string"`
 	UpdatedAt time.Time              `json:"updated_at"`
 	UpdatedBy IdentityID             `json:"updated_by"`
 }
@@ -2790,7 +2790,7 @@ type PreviewPageFeedbackRequest struct {
 	Cursor           *FeedbackID            `json:"cursor,omitempty"`
 	PagePath         *string                `json:"page_path,omitempty"`
 	PreviewId        PreviewID              `json:"preview_id"`
-	PublishRunNumber int64                  `json:"publish_run_number"`
+	PublishRunNumber int64                  `json:"publish_run_number,string"`
 	State            *FeedbackThreadState   `json:"state,omitempty"`
 }
 
@@ -2949,7 +2949,7 @@ type ProjectSourceIdentity struct {
 type ProjectSummary struct {
 	ProjectKey   string    `json:"project_key"`
 	ProjectLabel string    `json:"project_label"`
-	Revision     int64     `json:"revision"`
+	Revision     int64     `json:"revision,string"`
 	TeamId       string    `json:"team_id"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
@@ -3056,10 +3056,10 @@ type PublicURL struct {
 	Id                   PublicURLID             `json:"id"`
 	LifecycleState       PublicURLLifecycleState `json:"lifecycle_state"`
 	MembershipId         *MembershipID           `json:"membership_id,omitempty"`
-	MutationRevision     int64                   `json:"mutation_revision"`
-	NextPublishRunNumber int64                   `json:"next_publish_run_number"`
+	MutationRevision     int64                   `json:"mutation_revision,string"`
+	NextPublishRunNumber int64                   `json:"next_publish_run_number,string"`
 	OpenPublishRunId     *PublishRunID           `json:"open_publish_run_id,omitempty"`
-	PolicyRevision       int64                   `json:"policy_revision"`
+	PolicyRevision       int64                   `json:"policy_revision,string"`
 	PublicUrlScope       PublicURLScope          `json:"public_url_scope"`
 	PublisherPool        *bool                   `json:"publisher_pool,omitempty"`
 	Purpose              PublicURLPurpose        `json:"purpose"`
@@ -3102,9 +3102,9 @@ type PublishRun struct {
 	ExpiresAt                 time.Time       `json:"expires_at"`
 	Id                        PublishRunID    `json:"id"`
 	MembershipId              *MembershipID   `json:"membership_id,omitempty"`
-	PolicyRevision            int64           `json:"policy_revision"`
+	PolicyRevision            int64           `json:"policy_revision,string"`
 	PublicUrlId               PublicURLID     `json:"public_url_id"`
-	PublishRunNumber          int64           `json:"publish_run_number"`
+	PublishRunNumber          int64           `json:"publish_run_number,string"`
 	ReadyAt                   *time.Time      `json:"ready_at,omitempty"`
 	ReadyPublisherConnections *int            `json:"ready_publisher_connections,omitempty"`
 	State                     PublishRunState `json:"state"`
@@ -3123,7 +3123,7 @@ type PublishRunID = ResourceID
 // PublishRunServiceObservations defines model for PublishRunServiceObservations.
 type PublishRunServiceObservations struct {
 	Events           []ServiceObservation `json:"events"`
-	PublishRunNumber int64                `json:"publish_run_number"`
+	PublishRunNumber int64                `json:"publish_run_number,string"`
 }
 
 // PublishRunSetup defines model for PublishRunSetup.
@@ -3143,7 +3143,7 @@ type PublishRunState string
 
 // PublishRunVersionRequest defines model for PublishRunVersionRequest.
 type PublishRunVersionRequest struct {
-	PublishRunNumber int64 `json:"publish_run_number"`
+	PublishRunNumber int64 `json:"publish_run_number,string"`
 }
 
 // PublisherApplicationLimits defines model for PublisherApplicationLimits.
@@ -3230,7 +3230,7 @@ type PublisherGrantKind string
 type PublisherGroupAcknowledgement struct {
 	ConfigurationHash string `json:"configuration_hash"`
 	Healthy           bool   `json:"healthy"`
-	Revision          int64  `json:"revision"`
+	Revision          int64  `json:"revision,string"`
 }
 
 // PublisherGroupAssignments defines model for PublisherGroupAssignments.
@@ -3239,7 +3239,7 @@ type PublisherGroupAssignments struct {
 	CertificateStatePlans []CertificatePlan                 `json:"certificate_state_plans"`
 	ConfigurationHash     string                            `json:"configuration_hash"`
 	Member                PublisherGroupMember              `json:"member"`
-	Revision              int64                             `json:"revision"`
+	Revision              int64                             `json:"revision,string"`
 	Services              []PublisherGroupServiceAssignment `json:"services"`
 }
 
@@ -3277,13 +3277,13 @@ type PublisherGroupMember struct {
 // PublisherGroupMemberStatus defines model for PublisherGroupMemberStatus.
 type PublisherGroupMemberStatus struct {
 	AcknowledgedAt      *time.Time `json:"acknowledged_at,omitempty"`
-	CurrentRevision     int64      `json:"current_revision"`
+	CurrentRevision     int64      `json:"current_revision,string"`
 	GroupId             string     `json:"group_id"`
 	GroupName           string     `json:"group_name"`
 	Healthy             bool       `json:"healthy"`
 	KeyId               string     `json:"key_id"`
 	LeaseExpiresAt      *time.Time `json:"lease_expires_at,omitempty"`
-	ObservedRevision    int64      `json:"observed_revision"`
+	ObservedRevision    int64      `json:"observed_revision,string"`
 	ProjectKey          string     `json:"project_key"`
 	PublisherIdentityId string     `json:"publisher_identity_id"`
 
@@ -3301,7 +3301,7 @@ type PublisherGroupServiceAssignment struct {
 	Service       string                                     `json:"service"`
 	ServiceId     string                                     `json:"service_id"`
 	ServiceKind   PublisherGroupServiceAssignmentServiceKind `json:"service_kind"`
-	TrustRevision int64                                      `json:"trust_revision"`
+	TrustRevision int64                                      `json:"trust_revision,omitempty,string"`
 }
 
 // PublisherGroupServiceAssignmentServiceKind defines model for PublisherGroupServiceAssignment.ServiceKind.
@@ -3347,7 +3347,7 @@ type PublisherRuntimeRequest struct {
 
 	// Deployment Deployment metadata reported by a group publisher and covered by its signed runtime assertion. It is not cloud attestation or permission. Values cannot change within a process run; deployment, provider, replica, and instance remain bound to the publisher identity across restarts.
 	Deployment          *PublisherDeploymentReport `json:"deployment,omitempty"`
-	ExpectedEpoch       int64                      `json:"expected_epoch"`
+	ExpectedEpoch       int64                      `json:"expected_epoch,string"`
 	ProcessRunId        string                     `json:"process_run_id"`
 	PublisherIdentityId string                     `json:"publisher_identity_id"`
 
@@ -3360,7 +3360,7 @@ type PublisherRuntimeRequestAction string
 
 // PublisherRuntimeResponse defines model for PublisherRuntimeResponse.
 type PublisherRuntimeResponse struct {
-	Epoch          int64                `json:"epoch"`
+	Epoch          int64                `json:"epoch,string"`
 	GroupLease     *PublisherGroupLease `json:"group_lease,omitempty"`
 	LeaseExpiresAt *time.Time           `json:"lease_expires_at,omitempty"`
 }
@@ -3375,7 +3375,7 @@ type PublisherRuntimeStatus struct {
 
 	// Deployment An accepted publisher deployment report, with control receipt times and a control-derived group_id. It does not prove cloud state, image identity, or target health. The group/deployment/replica combination belongs to this publisher identity.
 	Deployment          *PublisherDeploymentObservation `json:"deployment,omitempty"`
-	Epoch               int64                           `json:"epoch"`
+	Epoch               int64                           `json:"epoch,string"`
 	Evidence            PublisherRuntimeStatusEvidence  `json:"evidence"`
 	LastSeenAt          time.Time                       `json:"last_seen_at"`
 	LeaseExpiresAt      time.Time                       `json:"lease_expires_at"`
@@ -3395,12 +3395,12 @@ type PublisherRuntimeStatusEvidence string
 
 // PublisherVisitorPolicyRequest defines model for PublisherVisitorPolicyRequest.
 type PublisherVisitorPolicyRequest struct {
-	AfterRevision int64 `json:"after_revision"`
+	AfterRevision int64 `json:"after_revision,string"`
 
 	// Resource An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
 	Resource  VisitorResourceScope `json:"resource"`
 	RunId     string               `json:"run_id"`
-	RunNumber int64                `json:"run_number"`
+	RunNumber int64                `json:"run_number,string"`
 }
 
 // ReadinessResponse defines model for ReadinessResponse.
@@ -3460,7 +3460,7 @@ type RedeemPublisherGroupEnrollmentRequest struct {
 // RedeemShareRequest defines model for RedeemShareRequest.
 type RedeemShareRequest struct {
 	HandoffToken     *string  `json:"handoff_token,omitempty"`
-	PublishRunNumber int64    `json:"publish_run_number"`
+	PublishRunNumber int64    `json:"publish_run_number,string"`
 	Secret           *string  `json:"secret,omitempty"`
 	ShareId          *ShareID `json:"share_id,omitempty"`
 }
@@ -3473,14 +3473,14 @@ type RelayServiceID = ResourceID
 
 // RenamePublisherGroupRequest defines model for RenamePublisherGroupRequest.
 type RenamePublisherGroupRequest struct {
-	ExpectedRevision int64  `json:"expected_revision"`
+	ExpectedRevision int64  `json:"expected_revision,string"`
 	Name             string `json:"name"`
 	TeamId           string `json:"team_id"`
 }
 
 // RenamePublisherNamespaceRequest defines model for RenamePublisherNamespaceRequest.
 type RenamePublisherNamespaceRequest struct {
-	ExpectedRevision int64  `json:"expected_revision"`
+	ExpectedRevision int64  `json:"expected_revision,string"`
 	IdempotencyKey   string `json:"idempotency_key"`
 	NamespaceLabel   string `json:"namespace_label"`
 	TeamId           string `json:"team_id"`
@@ -3488,7 +3488,7 @@ type RenamePublisherNamespaceRequest struct {
 
 // ReplaceVisitorAccessRequest defines model for ReplaceVisitorAccessRequest.
 type ReplaceVisitorAccessRequest struct {
-	ExpectedRevision int64             `json:"expected_revision"`
+	ExpectedRevision int64             `json:"expected_revision,string"`
 	Ip               []string          `json:"ip"`
 	Mode             VisitorAccessMode `json:"mode"`
 }
@@ -3505,9 +3505,9 @@ type ReviewerFeedbackEventInputType string
 // ReviewerFeedbackReadRequest defines model for ReviewerFeedbackReadRequest.
 type ReviewerFeedbackReadRequest struct {
 	Access           FeedbackReviewerAccess `json:"access"`
-	AfterCursor      *int64                 `json:"after_cursor,omitempty"`
+	AfterCursor      *int64                 `json:"after_cursor,omitempty,string"`
 	PreviewId        PreviewID              `json:"preview_id"`
-	PublishRunNumber int64                  `json:"publish_run_number"`
+	PublishRunNumber int64                  `json:"publish_run_number,string"`
 }
 
 // Service Saved service and its approved protocol/TLS trust. service_run_id and run_number are an optional ready-publisher hint; select a run before each new connection.
@@ -3531,7 +3531,7 @@ type Service struct {
 	PublisherPool  bool              `json:"publisher_pool"`
 
 	// RunNumber Present only alongside service_run_id.
-	RunNumber *int64 `json:"run_number,omitempty"`
+	RunNumber *int64 `json:"run_number,omitempty,string"`
 
 	// ServiceRunId Present for a ready run with a live publisher grant and at least one live ready publisher connection; first readiness requires two.
 	ServiceRunId *ServiceRunID       `json:"service_run_id,omitempty"`
@@ -3540,13 +3540,13 @@ type Service struct {
 	// TargetTls Approved publisher-to-target trust. This never selects or disables visitor TLS.
 	TargetTls     *ServiceTargetTLS `json:"target_tls,omitempty"`
 	TeamId        TeamID            `json:"team_id"`
-	TrustRevision int64             `json:"trust_revision"`
+	TrustRevision int64             `json:"trust_revision,string"`
 }
 
 // ServiceAuditEvent defines model for ServiceAuditEvent.
 type ServiceAuditEvent struct {
 	ActorIdentityId       *string                      `json:"actor_identity_id,omitempty"`
-	ConfigurationRevision *int64                       `json:"configuration_revision,omitempty"`
+	ConfigurationRevision *int64                       `json:"configuration_revision,omitempty,string"`
 	Cursor                string                       `json:"cursor"`
 	DeviceId              *string                      `json:"device_id,omitempty"`
 	EventType             string                       `json:"event_type"`
@@ -3574,7 +3574,7 @@ type ServiceAuditPage struct {
 
 // ServiceBrowserRequest defines model for ServiceBrowserRequest.
 type ServiceBrowserRequest struct {
-	RunNumber int64  `json:"run_number"`
+	RunNumber int64  `json:"run_number,string"`
 	Secret    string `json:"secret"`
 }
 
@@ -3582,7 +3582,7 @@ type ServiceBrowserRequest struct {
 type ServiceCertificateInstalledRequest struct {
 	IssuanceId IssuanceID `json:"issuance_id"`
 	NotAfter   time.Time  `json:"not_after"`
-	RunNumber  int64      `json:"run_number"`
+	RunNumber  int64      `json:"run_number,string"`
 }
 
 // ServiceCertificateIssuance defines model for ServiceCertificateIssuance.
@@ -3594,7 +3594,7 @@ type ServiceCertificateIssuance struct {
 	NotBefore           *time.Time               `json:"not_before,omitempty"`
 	PublisherIdentityId string                   `json:"publisher_identity_id"`
 	RetryAt             *time.Time               `json:"retry_at,omitempty"`
-	RunNumber           int64                    `json:"run_number"`
+	RunNumber           int64                    `json:"run_number,string"`
 	ServiceId           ServiceID                `json:"service_id"`
 	ServiceRunId        ServiceRunID             `json:"service_run_id"`
 	State               CertificateIssuanceState `json:"state"`
@@ -3703,7 +3703,7 @@ type ServiceMetadata struct {
 
 	// TargetTls Approved publisher-to-target trust. This never selects or disables visitor TLS.
 	TargetTls     *ServiceTargetTLS `json:"target_tls,omitempty"`
-	TrustRevision int64             `json:"trust_revision"`
+	TrustRevision int64             `json:"trust_revision,string"`
 }
 
 // ServiceName defines model for ServiceName.
@@ -3711,7 +3711,7 @@ type ServiceName = string
 
 // ServiceObservation defines model for ServiceObservation.
 type ServiceObservation struct {
-	DeliveryGeneration  int64                         `json:"delivery_generation,omitempty"`
+	DeliveryGeneration  int64                         `json:"delivery_generation,omitempty,string"`
 	EventId             string                        `json:"event_id"`
 	EventType           ServiceObservationEventType   `json:"event_type"`
 	OccurredAt          time.Time                     `json:"occurred_at"`
@@ -3719,7 +3719,7 @@ type ServiceObservation struct {
 	PairId              *string                       `json:"pair_id,omitempty"`
 	Reason              *ServiceObservationReason     `json:"reason,omitempty"`
 	RunId               string                        `json:"run_id"`
-	RunNumber           int64                         `json:"run_number"`
+	RunNumber           int64                         `json:"run_number,string"`
 	ServiceId           string                        `json:"service_id"`
 	ServiceKind         ServiceObservationServiceKind `json:"service_kind"`
 	SourceIp            *string                       `json:"source_ip,omitempty"`
@@ -3768,7 +3768,7 @@ type ServiceRunDeclaration struct {
 
 	// TargetTls Approved publisher-to-target trust. This never selects or disables visitor TLS.
 	TargetTls     *ServiceTargetTLS `json:"target_tls,omitempty"`
-	TrustRevision int64             `json:"trust_revision"`
+	TrustRevision int64             `json:"trust_revision,string"`
 }
 
 // ServiceRunHeartbeat defines model for ServiceRunHeartbeat.
@@ -3784,7 +3784,7 @@ type ServiceRunID = string
 // ServiceRunObservations defines model for ServiceRunObservations.
 type ServiceRunObservations struct {
 	Events    []ServiceObservation `json:"events"`
-	RunNumber int64                `json:"run_number"`
+	RunNumber int64                `json:"run_number,string"`
 }
 
 // ServiceRunPreparation defines model for ServiceRunPreparation.
@@ -3797,7 +3797,7 @@ type ServiceRunPreparation struct {
 	PublisherGrantId    ResourceID       `json:"publisher_grant_id"`
 	PublisherIdentityId ResourceID       `json:"publisher_identity_id"`
 	PublisherKeyId      ResourceID       `json:"publisher_key_id"`
-	RunNumber           int64            `json:"run_number"`
+	RunNumber           int64            `json:"run_number,string"`
 	ServiceId           ServiceID        `json:"service_id"`
 	ServicePort         int              `json:"service_port"`
 	ServiceRunId        ServiceRunID     `json:"service_run_id"`
@@ -3807,7 +3807,7 @@ type ServiceRunPreparation struct {
 // ServiceRunSetup defines model for ServiceRunSetup.
 type ServiceRunSetup struct {
 	PublisherConnections []ConnectionAssignment `json:"publisher_connections"`
-	RunNumber            int64                  `json:"run_number"`
+	RunNumber            int64                  `json:"run_number,string"`
 	RunToken             string                 `json:"run_token"`
 	ServiceId            ServiceID              `json:"service_id"`
 	ServiceRunId         ServiceRunID           `json:"service_run_id"`
@@ -3819,7 +3819,7 @@ type ServiceRunState struct {
 	Healthy              *bool                  `json:"healthy,omitempty"`
 	PublisherConnections []ConnectionAssignment `json:"publisher_connections"`
 	PublisherExpiresAt   time.Time              `json:"publisher_expires_at"`
-	RunNumber            int64                  `json:"run_number"`
+	RunNumber            int64                  `json:"run_number,string"`
 	ServiceId            ServiceID              `json:"service_id"`
 	ServiceRunId         ServiceRunID           `json:"service_run_id"`
 	State                ServiceRunStateState   `json:"state"`
@@ -3838,13 +3838,13 @@ type ServiceSelection struct {
 	// PairReady A short-lived, credential-free snapshot for signing an exact pair request. It never grants a relay claim.
 	PairReady    *ConnectorPeerPairReady `json:"pair_ready,omitempty"`
 	Protocol     ServiceProtocol         `json:"protocol"`
-	RunNumber    int64                   `json:"run_number"`
+	RunNumber    int64                   `json:"run_number,string"`
 	ServiceId    ServiceID               `json:"service_id"`
 	ServiceRunId ServiceRunID            `json:"service_run_id"`
 
 	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
 	Subject       VisitorSubject `json:"subject"`
-	TrustRevision int64          `json:"trust_revision"`
+	TrustRevision int64          `json:"trust_revision,string"`
 }
 
 // ServiceSummary Service identity, placement, and an optional run. Omits target trust, target addresses, credentials, and publisher HTTP limits.
@@ -3863,11 +3863,11 @@ type ServiceSummary struct {
 	Placement      *ServicePlacement   `json:"placement,omitempty"`
 	Protocol       ServiceProtocol     `json:"protocol"`
 	PublisherPool  bool                `json:"publisher_pool"`
-	RunNumber      *int64              `json:"run_number,omitempty"`
+	RunNumber      *int64              `json:"run_number,omitempty,string"`
 	ServiceRunId   *ServiceRunID       `json:"service_run_id,omitempty"`
 	Source         *LocalServiceSource `json:"source,omitempty"`
 	TeamId         TeamID              `json:"team_id"`
-	TrustRevision  int64               `json:"trust_revision"`
+	TrustRevision  int64               `json:"trust_revision,string"`
 }
 
 // ServiceTargetTLS Approved publisher-to-target trust. This never selects or disables visitor TLS.
@@ -4017,7 +4017,7 @@ type TrafficSelection struct {
 // UpdatePublicURLRequest A partial edit that requires the saved mutation revision. Omission keeps a field; an empty IP list clears it. Null values and edits without a writable field are rejected.
 type UpdatePublicURLRequest struct {
 	AllowedIpPrefixes        *[]string `json:"allowed_ip_prefixes,omitempty"`
-	ExpectedMutationRevision int64     `json:"expected_mutation_revision"`
+	ExpectedMutationRevision int64     `json:"expected_mutation_revision,string"`
 
 	// RequirePostQuantum Omit to preserve the saved public URL's requirement.
 	RequirePostQuantum *bool `json:"require_post_quantum,omitempty"`
@@ -4028,7 +4028,7 @@ type UpdatePublicURLRequest struct {
 
 // UpdateServiceRequest Replacement service settings. Copy trust_revision into expected_trust_revision; a stale revision is rejected. Omit target_tls to remove it. Endpoint and placement are not writable here.
 type UpdateServiceRequest struct {
-	ExpectedTrustRevision int64           `json:"expected_trust_revision"`
+	ExpectedTrustRevision int64           `json:"expected_trust_revision,string"`
 	Protocol              ServiceProtocol `json:"protocol"`
 	PublisherPool         bool            `json:"publisher_pool"`
 
@@ -4110,10 +4110,10 @@ type VisitorPolicySnapshot struct {
 	Hostname           string           `json:"hostname"`
 	Ip                 *VisitorPolicyIP `json:"ip,omitempty"`
 	Issuer             string           `json:"issuer"`
-	KeyRevision        int64            `json:"key_revision"`
+	KeyRevision        int64            `json:"key_revision,string"`
 
 	// MetadataRevision current service trust revision; zero for public URLs.
-	MetadataRevision int64     `json:"metadata_revision"`
+	MetadataRevision int64     `json:"metadata_revision,string"`
 	ObservedAt       time.Time `json:"observed_at"`
 	Port             int       `json:"port"`
 
@@ -4121,15 +4121,15 @@ type VisitorPolicySnapshot struct {
 	Resource              VisitorResourceScope     `json:"resource"`
 	ValidUntil            time.Time                `json:"valid_until"`
 	VerificationKeys      []VisitorVerificationKey `json:"verification_keys"`
-	VisitorPolicyRevision int64                    `json:"visitor_policy_revision"`
+	VisitorPolicyRevision int64                    `json:"visitor_policy_revision,string"`
 	WorkloadLeases        []VisitorWorkloadLease   `json:"workload_leases"`
 }
 
 // VisitorPolicyUpdate defines model for VisitorPolicyUpdate.
 type VisitorPolicyUpdate struct {
-	AfterRevision    int64                 `json:"after_revision"`
+	AfterRevision    int64                 `json:"after_revision,string"`
 	Policy           VisitorPolicySnapshot `json:"policy"`
-	Revisions        []int64               `json:"revisions"`
+	Revisions        RevisionList          `json:"revisions"`
 	SnapshotRequired bool                  `json:"snapshot_required"`
 
 	// VisitorSourceAuthority Opaque tunnelv1 source authority for the exact ingress process and public run. Present only in ingress preparation responses; it supplies neither visitor permission nor capacity.
@@ -4212,8 +4212,8 @@ type VisitorTokenResponse struct {
 	Resource VisitorResourceScope `json:"resource"`
 
 	// ServiceTrustRevision Current service metadata revision, present only for service permissions.
-	ServiceTrustRevision  *int64 `json:"service_trust_revision,omitempty"`
-	VisitorPolicyRevision int64  `json:"visitor_policy_revision"`
+	ServiceTrustRevision  *int64 `json:"service_trust_revision,omitempty,string"`
+	VisitorPolicyRevision int64  `json:"visitor_policy_revision,string"`
 	VisitorToken          string `json:"visitor_token"`
 }
 
@@ -4297,7 +4297,7 @@ type WorkloadProvider string
 
 // WorkloadServiceAuthorization defines model for WorkloadServiceAuthorization.
 type WorkloadServiceAuthorization struct {
-	PolicyRevision int64  `json:"policy_revision"`
+	PolicyRevision int64  `json:"policy_revision,string"`
 	ServiceId      string `json:"service_id"`
 
 	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
@@ -4563,12 +4563,12 @@ type ListConnectorPeerPairsParams struct {
 
 // DeliverConnectorPeerPairJSONBody defines parameters for DeliverConnectorPeerPair.
 type DeliverConnectorPeerPairJSONBody struct {
-	DeliveryGeneration int64 `json:"delivery_generation"`
+	DeliveryGeneration int64 `json:"delivery_generation,string"`
 }
 
 // StartServiceRunJSONBody defines parameters for StartServiceRun.
 type StartServiceRunJSONBody struct {
-	RunNumber int64 `json:"run_number"`
+	RunNumber int64 `json:"run_number,string"`
 }
 
 // SelectServiceRunJSONBody defines parameters for SelectServiceRun.
@@ -11460,7 +11460,7 @@ func NewListFeedbackEventsRequest(server string, params *ListFeedbackEventsParam
 
 		if params.AfterCursor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "after_cursor", *params.AfterCursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "after_cursor", *params.AfterCursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -11555,7 +11555,7 @@ func NewListFeedbackThreadEventsRequest(server string, feedbackId FeedbackID, pa
 
 		if params.AfterCursor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "after_cursor", *params.AfterCursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "after_cursor", *params.AfterCursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -35161,7 +35161,7 @@ func (siw *ServerInterfaceWrapper) ListFeedbackEvents(w http.ResponseWriter, r *
 
 	// ------------- Optional query parameter "after_cursor" -------------
 
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "after_cursor", r.URL.Query(), &params.AfterCursor, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "after_cursor", r.URL.Query(), &params.AfterCursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
 	if err != nil {
 		var requiredError *runtime.RequiredParameterError
 		if errors.As(err, &requiredError) {
@@ -35229,7 +35229,7 @@ func (siw *ServerInterfaceWrapper) ListFeedbackThreadEvents(w http.ResponseWrite
 
 	// ------------- Optional query parameter "after_cursor" -------------
 
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "after_cursor", r.URL.Query(), &params.AfterCursor, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "after_cursor", r.URL.Query(), &params.AfterCursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
 	if err != nil {
 		var requiredError *runtime.RequiredParameterError
 		if errors.As(err, &requiredError) {

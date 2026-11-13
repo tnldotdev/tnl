@@ -58,7 +58,7 @@ func TestPublisherVisitorPolicyGeneratedMaximumRequest(t *testing.T) {
 }
 
 func TestPublisherVisitorPolicyRejectsInvalidBodiesBeforeBackend(t *testing.T) {
-	base := `{"resource":{"kind":"public_url","id":"url_` + strings.Repeat("A", 22) + `"},"run_id":"run","run_number":1,"after_revision":0`
+	base := `{"resource":{"kind":"public_url","id":"url_` + strings.Repeat("A", 22) + `"},"run_id":"run","run_number":"1","after_revision":"0"`
 	empty := base + `}`
 	for _, tc := range []struct {
 		name, body string

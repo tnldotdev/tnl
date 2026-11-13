@@ -65,7 +65,7 @@ func (h *handler) ListServiceAudit(w http.ResponseWriter, r *http.Request, team 
 
 func (h *handler) ReportPublishRunServiceObservations(w http.ResponseWriter, r *http.Request, runID string) {
 	var body struct {
-		PublishRunNumber int64                      `json:"publish_run_number"`
+		PublishRunNumber int64                      `json:"publish_run_number,string"`
 		Events           []serviceaudit.Observation `json:"events"`
 	}
 	if decodeJSONLimited(w, r, &body, serviceaudit.MaxPayloadBytes) != nil || body.PublishRunNumber < 1 {
@@ -101,7 +101,7 @@ func (h *handler) ReportPublishRunServiceObservations(w http.ResponseWriter, r *
 func (h *handler) ReportServiceRunObservations(w http.ResponseWriter, r *http.Request, serviceID controlv1.ServiceID, runID controlv1.ServiceRunID) {
 	w.Header().Set("Cache-Control", "no-store")
 	var body struct {
-		RunNumber int64                      `json:"run_number"`
+		RunNumber int64                      `json:"run_number,string"`
 		Events    []serviceaudit.Observation `json:"events"`
 	}
 	if decodeJSONLimited(w, r, &body, serviceaudit.MaxPayloadBytes) != nil || body.RunNumber < 1 {

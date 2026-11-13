@@ -75,7 +75,7 @@ type IdentityConnection struct {
 	Issuer    string `json:"issuer"`
 	Admission string `json:"admission"`
 	State     string `json:"state"`
-	Revision  int64  `json:"revision"`
+	Revision  int64  `json:"revision,string"`
 	SourceID  string `json:"source_id"`
 }
 
@@ -211,10 +211,10 @@ func (d *Database) DisconnectIdentityConnection(ctx context.Context, p ControlPr
 type ProvisionCompanyEligibilityRequest struct {
 	TeamID               string    `json:"team_id"`
 	IdentityConnectionID string    `json:"identity_connection_id"`
-	ConnectionRevision   int64     `json:"connection_revision"`
+	ConnectionRevision   int64     `json:"connection_revision,string"`
 	IdentityID           string    `json:"identity_id"`
 	Subject              string    `json:"subject"`
-	Revision             int64     `json:"revision"`
+	Revision             int64     `json:"revision,string"`
 	Eligible             bool      `json:"eligible"`
 	ValidUntil           time.Time `json:"valid_until"`
 	MemberSlug           string    `json:"member_slug"`

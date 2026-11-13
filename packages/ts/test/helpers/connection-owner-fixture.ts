@@ -13,7 +13,7 @@ export const connectionFixturePlan = z.object({
   prepared: z.enum(["ready", "invalid", "blocked"]).default("ready"),
   stop: z.enum(["ready", "hold"]).default("ready"),
   lifetimeMs: z.number().int().min(500).max(60_000).default(60_000),
-  cleanupDelayMs: z.number().int().min(0).max(5000).default(0),
+  cleanup: z.enum(["ready", "hold"]).default("ready"),
   authorization: z.enum(["allow", "deny"]).default("allow"),
 });
 export const connectionFixtureEvent = z.object({
@@ -74,6 +74,13 @@ export async function runConnectionOwnerFixture(root: string): Promise<void> {
       let finishStop: (() => void) | undefined;
       let stopGate: Promise<void> | undefined;
       let stopping: Promise<void> | undefined;
+      let finishCleanup: (() => void) | undefined;
+      const cleanupGate =
+        (await plan()).cleanup === "hold"
+          ? new Promise<void>((resolve) => {
+              finishCleanup = resolve;
+            })
+          : undefined;
       if ((await plan()).prepared === "blocked")
         held = new Promise<void>((resolve) => {
           release = resolve;
@@ -133,6 +140,8 @@ export async function runConnectionOwnerFixture(root: string): Promise<void> {
             heldRead = false;
           } else if (operation === "/fixture/release-stop") {
             finishStop?.();
+          } else if (operation === "/fixture/release-cleanup") {
+            finishCleanup?.();
           } else if (operation === "/v1/connections/kube-credential") {
             held = new Promise<void>((resolve) => {
               release = resolve;
@@ -185,7 +194,7 @@ export async function runConnectionOwnerFixture(root: string): Promise<void> {
       });
       const close = async () => {
         release?.();
-        await delay((await plan()).cleanupDelayMs);
+        await cleanupGate;
         const closed = new Promise<void>((resolve) => owner.close(() => resolve()));
         owner.closeAllConnections();
         await Promise.all([
@@ -244,6 +253,13 @@ export async function runConnectionOwnerFixture(root: string): Promise<void> {
       if (registry === undefined) throw new Error("missing SDK registry");
       const filename = path.join(registry, "fixture-owner.json");
       const lockPath = path.join(registry, "fixture-owner.lock");
+      if (operation === "sdk-prepare" && args.includes("--recover-handle")) {
+        const recovered = args[args.indexOf("--recover-handle") + 1];
+        if (recovered === undefined) throw new Error("missing recovery handle");
+        // mirror the native kernel-lock fence before selection can stop or start
+        // anything. an expired descriptor alone does not prove joined cleanup.
+        await readFile(path.join(path.dirname(recovered), "closed"));
+      }
       const failedBeforeWait = await readFile(filename, "utf8")
         .then((data) => {
           const status = z
@@ -329,11 +345,6 @@ export async function runConnectionOwnerFixture(root: string): Promise<void> {
           if (operation === "sdk-stop") await unlink(filename).catch(() => {});
           process.stdout.write(JSON.stringify({ schema: 1, state: "stopped" }));
           return;
-        }
-        if (args.includes("--recover-handle")) {
-          const recovered = args[args.indexOf("--recover-handle") + 1];
-          if (recovered === undefined) throw new Error("missing recovery handle");
-          await readFile(path.join(path.dirname(recovered), "closed"));
         }
         if (selected === undefined) {
           created = true;

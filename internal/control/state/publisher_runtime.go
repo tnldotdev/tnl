@@ -36,7 +36,7 @@ type PublisherRuntimeRequest struct {
 }
 
 type PublisherRuntimeResponse struct {
-	Epoch          int64                `json:"epoch"`
+	Epoch          int64                `json:"epoch,string"`
 	LeaseExpiresAt *time.Time           `json:"lease_expires_at,omitempty"`
 	GroupLease     *PublisherGroupLease `json:"group_lease,omitempty"`
 }
@@ -45,7 +45,7 @@ type PublisherRuntimeStatus struct {
 	PublisherIdentityID string                                    `json:"publisher_identity_id"`
 	TeamID              string                                    `json:"team_id"`
 	ProcessRunID        string                                    `json:"process_run_id"`
-	Epoch               int64                                     `json:"epoch"`
+	Epoch               int64                                     `json:"epoch,string"`
 	Evidence            string                                    `json:"evidence"`
 	Address             string                                    `json:"address,omitempty"`
 	AddressFamily       string                                    `json:"address_family"`

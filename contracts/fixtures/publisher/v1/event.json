@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "cursor": 5,
+  "cursor": "5",
   "feedback_id": "fb_0123456789abcdefghijkl",
   "type": "reply",
   "actor": "reviewer",

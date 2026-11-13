@@ -26,7 +26,7 @@ export const FeedbackScope = z.strictObject({
   preview_id: ResourceID,
   public_url_id: ResourceID,
   publish_run_id: ResourceID,
-  publish_run_number: z.number().int().min(1),
+  publish_run_number: z.string().regex(new RegExp("^[0-9]+$")),
   page_path: z.string().min(1).max(2048).regex(new RegExp("^/")),
   page_title: z.string().max(256).optional(),
   service: z.string().min(1).max(32),
@@ -131,8 +131,8 @@ export const SourceState = z.strictObject({
 
 export type FeedbackThread = z.infer<typeof FeedbackThread>;
 export const FeedbackThread = z.strictObject({
-  message_count: z.number().int().min(1),
-  latest_event_cursor: z.number().int().min(0),
+  message_count: z.string().regex(new RegExp("^[0-9]+$")),
+  latest_event_cursor: z.string().regex(new RegExp("^[0-9]+$")),
   schema_version: ReviewSchemaVersion,
   id: ResourceID,
   state: FeedbackThreadState,
@@ -145,8 +145,8 @@ export const FeedbackThread = z.strictObject({
 
 export type FeedbackThreadSummary = z.infer<typeof FeedbackThreadSummary>;
 export const FeedbackThreadSummary = z.strictObject({
-  message_count: z.number().int().min(1),
-  latest_event_cursor: z.number().int().min(0),
+  message_count: z.string().regex(new RegExp("^[0-9]+$")),
+  latest_event_cursor: z.string().regex(new RegExp("^[0-9]+$")),
   schema_version: ReviewSchemaVersion,
   id: ResourceID,
   state: FeedbackThreadState,
@@ -160,13 +160,13 @@ export const FeedbackThreadPage = z.strictObject({
   schema_version: ReviewSchemaVersion,
   threads: z.array(FeedbackThreadSummary).max(100),
   next_cursor: ResourceID.optional(),
-  event_cursor: z.number().int().min(0),
+  event_cursor: z.string().regex(new RegExp("^[0-9]+$")),
 });
 
 export type FeedbackEvent = z.infer<typeof FeedbackEvent>;
 export const FeedbackEvent = z.strictObject({
   schema_version: ReviewSchemaVersion,
-  cursor: z.number().int().min(1),
+  cursor: z.string().regex(new RegExp("^[0-9]+$")),
   feedback_id: ResourceID,
   type: FeedbackEventType,
   actor: z.enum(["implementer", "reviewer"]),
@@ -181,8 +181,8 @@ export type FeedbackEventPage = z.infer<typeof FeedbackEventPage>;
 export const FeedbackEventPage = z.strictObject({
   schema_version: ReviewSchemaVersion,
   events: z.array(FeedbackEvent).max(25),
-  next_cursor: z.number().int().min(1).optional(),
-  event_cursor: z.number().int().min(0),
+  next_cursor: z.string().regex(new RegExp("^[0-9]+$")).optional(),
+  event_cursor: z.string().regex(new RegExp("^[0-9]+$")),
 });
 
 export type BrowserAccessStatus = z.infer<typeof BrowserAccessStatus>;
@@ -191,7 +191,7 @@ export const BrowserAccessStatus = z.strictObject({
   allowed: z.boolean(),
   preview_id: ResourceID,
   public_url_id: ResourceID,
-  publish_run_number: z.number().int().min(1),
+  publish_run_number: z.string().regex(new RegExp("^[0-9]+$")),
   access_method: z.enum(["anonymous", "share", "team", "visitor"]).optional(),
   expires_at: z.iso.datetime().optional(),
   reason: z.literal("TNL_VISITOR_ACCESS_DENIED").optional(),

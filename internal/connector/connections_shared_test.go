@@ -202,7 +202,13 @@ func TestIntegrationConnectionSharedOwnerStalledSibling(t *testing.T) {
 			if service == ids[1] {
 				i = 1
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"service_id": service, "service_run_id": serviceRun, "run_number": 1, "protocol": protocols[i], "trust_revision": trustRevision, "expires_at": now.Add(time.Minute), "subject": session.Subject, "endpoint": controlv1.ServiceEndpoint{Hostname: serviceNames[i] + ".example.test", Port: 15443 + i}, "pair_ready": natives[service].Ready})
+			_ = json.NewEncoder(w).Encode(controlv1.ServiceSelection{
+				ServiceId: service, ServiceRunId: serviceRun, RunNumber: 1,
+				Protocol: controlv1.ServiceProtocol(protocols[i]), TrustRevision: trustRevision,
+				ExpiresAt: now.Add(time.Minute), Subject: session.Subject,
+				Endpoint:  &controlv1.ServiceEndpoint{Hostname: serviceNames[i] + ".example.test", Port: 15443 + i},
+				PairReady: &natives[service].Ready,
+			})
 		case strings.Contains(r.URL.Path, "/connector-peer-pairs"):
 			parts := strings.Split(r.URL.Path, "/")
 			var body controlv1.ConnectorPeerPairRequest
