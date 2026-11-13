@@ -108,7 +108,7 @@ func TestManagedDNSOwnerAttemptPreservesPersistedProviderFailure(t *testing.T) {
 		t.Run(map[bool]string{false: "saved", true: "save-failed"}[saveFails], func(t *testing.T) {
 			ctx, record := workerobservation.Start(t)
 			now := time.Now().UTC()
-			store := &managedDNSStoreStub{work: controlstate.ServiceEndpointDNSWork{Hostname: "api.example.test", OwnerID: "group", State: controlstate.PublicURLDNSPending, Attempts: 1, LastError: "old"}}
+			store := &managedDNSStoreStub{work: controlstate.ServiceEndpointDNSWork{Hostname: "api.example.test", OwnerID: "deployment", State: controlstate.PublicURLDNSPending, Attempts: 1, LastError: "old"}}
 			if saveFails {
 				store.saveErr = errors.New("private-provider-cause save")
 			}

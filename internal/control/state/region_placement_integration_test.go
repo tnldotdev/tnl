@@ -120,13 +120,13 @@ func TestIntegrationProviderRegionServiceRun(t *testing.T) {
 	if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
 		t.Fatal(err)
 	}
-	e, err := d.IssuePublisherGroupEnrollment(t.Context(), r.TeamID, r.ProjectKey, "production", r.ActorID, 1, time.Hour, now)
+	e, err := testDeploymentPublisherEnrollment(d, t.Context(), r.TeamID, r.ProjectKey, "production", r.ActorID, 1, time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replica := enrollAppliedGroup(t, d, r, e, now)
+	replica := enrollAppliedDeployment(t, d, r, e, now)
 	assignment := replica.assignments.Services[0]
-	access := groupAssignmentAccess(t, d, replica, assignment, now)
+	access := deploymentAssignmentAccess(t, d, replica, assignment, now)
 	metadata := ServiceMetadata{Protocol: assignment.Configuration.Protocol, TrustRevision: assignment.TrustRevision}
 	preferences := []string{"fly:sjc", "aws:us-west-1"}
 	prep, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "regional", now, metadata, preferences...)

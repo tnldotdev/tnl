@@ -9,16 +9,16 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 )
 
-// endpoint identity is durable across runs, publisher replicas and group-key
-// renames. group moves never silently broaden certificate authority.
-func (d *Database) ensureServiceEndpoint(ctx context.Context, tx pgx.Tx, service, group string, automation bool, now time.Time) error {
+// endpoint identity is durable across runs, publisher replicas and deployment-key
+// renames. deployment moves never silently broaden certificate authority.
+func (d *Database) ensureServiceEndpoint(ctx context.Context, tx pgx.Tx, service, deployment string, automation bool, now time.Time) error {
 	var namespace, domain, pool, name, hostname string
 	var public bool
-	err := tx.QueryRow(ctx, `SELECT g.namespace,g.domain_id,t.ingress_pool_id,s.name,s.certificate_hostname,g.public FROM control.project_publisher_groups g JOIN control.teams t ON t.id=g.team_id JOIN control.services s ON s.id=$1 AND s.team_id=g.team_id WHERE g.id=$2 AND g.deleted_at IS NULL FOR UPDATE OF s`, service, group).Scan(&namespace, &domain, &pool, &name, &hostname, &public)
+	err := tx.QueryRow(ctx, `SELECT g.namespace,g.domain_id,t.ingress_pool_id,s.name,s.certificate_hostname,g.public FROM control.deployments g JOIN control.teams t ON t.id=g.team_id JOIN control.services s ON s.id=$1 AND s.team_id=g.team_id WHERE g.id=$2 AND g.deleted_at IS NULL FOR UPDATE OF s`, service, deployment).Scan(&namespace, &domain, &pool, &name, &hostname, &public)
 	if err != nil {
 		return err
 	}
-	// a desired group move changes the endpoint, not the service's identity or
+	// a desired deployment move changes the endpoint, not the service's identity or
 	// visitor grants. the apply transaction has already revoked old publishers.
 	hostname = name + "." + namespace
 	canonical, err := naming.CanonicalizeHostname(hostname)
@@ -29,10 +29,10 @@ func (d *Database) ensureServiceEndpoint(ctx context.Context, tx pgx.Tx, service
 	if err != nil {
 		return err
 	}
-	if err = reconcileServiceEndpoint(ctx, tx, serviceEndpoint{ServiceID: service, GroupID: group, DomainID: domain, Hostname: hostname, Namespace: namespace, PoolID: pool, Public: public, Automation: automation}, now); err != nil {
+	if err = reconcileServiceEndpoint(ctx, tx, serviceEndpoint{ServiceID: service, DeploymentID: deployment, DomainID: domain, Hostname: hostname, Namespace: namespace, PoolID: pool, Public: public, Automation: automation}, now); err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `UPDATE control.services SET certificate_hostname=$2,certificate_scope=$3,domain_id=$4,service_port=$5,ingress_pool_id=$6,public=$7,name_scope=$8 WHERE id=$1`, service, hostname, namespace, domain, port, pool, public, group)
+	_, err = tx.Exec(ctx, `UPDATE control.services SET certificate_hostname=$2,certificate_scope=$3,domain_id=$4,service_port=$5,ingress_pool_id=$6,public=$7,name_scope=$8 WHERE id=$1`, service, hostname, namespace, domain, port, pool, public, deployment)
 	return projectConstraintError(err)
 }
 

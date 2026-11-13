@@ -77,6 +77,8 @@ jobs:
             shard: 1/1
           - suite: local-database
             shard: 1/1
+          - suite: deployment-database
+            shard: 1/1
           - suite: management-sdk
             shard: 1/1
     steps:

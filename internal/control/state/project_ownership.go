@@ -12,13 +12,13 @@ import (
 // extra visitor grants and operational publisher identity revocation are separate.
 var ErrProjectManaged = errors.New("resource is managed by project configuration")
 
-func rejectPublisherGroupGrantMutation(ctx context.Context, tx pgx.Tx, publisher string) error {
+func rejectDeploymentPublisherGrantMutation(ctx context.Context, tx pgx.Tx, publisher string) error {
 	var member bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.publisher_group_members WHERE publisher_identity_id=$1)`, publisher).Scan(&member); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.deployment_publisher_members WHERE publisher_identity_id=$1)`, publisher).Scan(&member); err != nil {
 		return err
 	}
 	if member {
-		return fmt.Errorf("change publisher group grant: %w", ErrProjectManaged)
+		return fmt.Errorf("change deployment grant: %w", ErrProjectManaged)
 	}
 	return nil
 }
@@ -40,7 +40,7 @@ func rejectProjectManagedGrant(ctx context.Context, tx pgx.Tx, id string) error 
 	var managed bool
 	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.applied_project_services WHERE visitor_grant_id=$1)
 	    OR EXISTS(SELECT 1 FROM control.local_project_services WHERE visitor_grant_id=$1)
-	    OR EXISTS(SELECT 1 FROM control.publisher_group_service_grants WHERE grant_id=$1)`, id).Scan(&managed)
+	    OR EXISTS(SELECT 1 FROM control.deployment_publisher_service_grants WHERE grant_id=$1)`, id).Scan(&managed)
 	if err != nil {
 		return err
 	}

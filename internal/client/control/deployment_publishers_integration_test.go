@@ -78,8 +78,8 @@ func TestIntegrationDeploymentPublisherClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	member, err := client.RedeemPublisherGroupEnrollment(t.Context(), enrollment.EnrollmentKey, public)
-	if err != nil || member.GroupId != selected.Id {
+	member, err := client.RedeemDeploymentPublisherEnrollment(t.Context(), enrollment.EnrollmentKey, public)
+	if err != nil || member.DeploymentId != selected.Id {
 		t.Fatal("existing group enrollment did not accept scoped setup", err)
 	}
 	page, err := client.ListDeploymentPublishers(t.Context(), team, "shop", selected.Id, "", 1)

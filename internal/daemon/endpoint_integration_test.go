@@ -63,15 +63,15 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			enrollment, err := f.identity.routes.CreatePublisherGroupEnrollment(t.Context(), project, group, controlv1.CreatePublisherGroupEnrollmentRequest{TeamId: f.identity.teamID, MaxMembers: 1, ExpiresIn: 600})
+			enrollment, err := f.identity.routes.CreateDeploymentPublisherEnrollment(t.Context(), f.identity.teamID, project, group, "endpoint-enrollment", controlv1.CreateDeploymentPublisherEnrollmentRequest{Services: []string{"api"}, MaxMembers: new(1), ExpiresIn: new(600)})
 			if err != nil {
 				t.Fatal(err)
 			}
-			member, err := f.identity.routes.RedeemPublisherGroupEnrollment(t.Context(), enrollment.EnrollmentKey, public)
+			member, err := f.identity.routes.RedeemDeploymentPublisherEnrollment(t.Context(), enrollment.EnrollmentKey, public)
 			if err != nil {
 				t.Fatal(err)
 			}
-			owner, err := publisheridentity.NewGroup(publisheridentity.NativeControl{PublicURLControl: f.identity.routes, Services: f.identity.routes}, f.identity.routes, f.identity.authority, f.identity.routes.ControlURL(), member, key)
+			owner, err := publisheridentity.NewDeployment(publisheridentity.NativeControl{PublicURLControl: f.identity.routes, Services: f.identity.routes}, f.identity.routes, f.identity.authority, f.identity.routes.ControlURL(), member, key)
 			if err != nil {
 				t.Fatal(err)
 			}

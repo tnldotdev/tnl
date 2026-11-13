@@ -603,18 +603,18 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 	if serviceID == "" {
 		t.Fatal("no applied api service")
 	}
-	enrollment, err := d.IssuePublisherGroupEnrollment(ctx, r.TeamID, r.ProjectKey, "production", r.ActorID, 1, time.Hour, now)
+	enrollment, err := testDeploymentPublisherEnrollment(d, ctx, r.TeamID, r.ProjectKey, "production", r.ActorID, 1, time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replica := enrollAppliedGroup(t, d, r, enrollment, now)
-	var assignment PublisherGroupServiceAssignment
+	replica := enrollAppliedDeployment(t, d, r, enrollment, now)
+	var assignment DeploymentPublisherServiceAssignment
 	for _, candidate := range replica.assignments.Services {
 		if candidate.ServiceID == serviceID {
 			assignment = candidate
 		}
 	}
-	access := groupAssignmentAccess(t, d, replica, assignment, now)
+	access := deploymentAssignmentAccess(t, d, replica, assignment, now)
 	prep, err := d.PrepareServiceRun(ctx, serviceID, access.PublisherIdentity, "peer-pair", now,
 		ServiceMetadata{Protocol: assignment.Configuration.Protocol, PublisherPool: true, TrustRevision: assignment.TrustRevision})
 	if err != nil {

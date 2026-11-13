@@ -18,6 +18,10 @@ import (
 )
 
 type deploymentCommand struct {
+	Rename    deploymentRenameCommand `cmd:"" help:"Rename a deployment selector without changing endpoints."`
+	Namespace struct {
+		Rename deploymentNamespaceRenameCommand `cmd:"" help:"Replace the DNS namespace and retire the old publication authority."`
+	} `cmd:"" help:"Manage a deployment's DNS namespace separately from its selector."`
 	Create deploymentCreateCommand `cmd:"" help:"Create a deployment from existing project service declarations."`
 	List   deploymentListCommand   `cmd:"" help:"List deployments in the selected project."`
 	Show   deploymentSelectCommand `cmd:"" help:"Show one saved deployment by name or ID."`
@@ -151,7 +155,7 @@ func runDeployment(ctx context.Context, command string, flags cli, project proje
 	if err != nil {
 		return err
 	}
-	if command == "deployment list" && (flags.Deployment.List.Limit < 1 || flags.Deployment.List.Limit > 100 || flags.Deployment.List.After != "" && !opaqueid.Valid(flags.Deployment.List.After, "pgrp_")) {
+	if command == "deployment list" && (flags.Deployment.List.Limit < 1 || flags.Deployment.List.Limit > 100 || flags.Deployment.List.After != "" && !opaqueid.Valid(flags.Deployment.List.After, "dpl_")) {
 		return publisherCLIError("select --limit 1-100 and an optional deployment ID with --after")
 	}
 	for _, selector := range []string{flags.Deployment.Show.Deployment, flags.Deployment.Update.Deployment, flags.Deployment.Delete.Deployment} {
@@ -177,7 +181,7 @@ func runDeployment(ctx context.Context, command string, flags cli, project proje
 		if len(page.Deployments) > flags.Deployment.List.Limit {
 			return failure.Wrap("read deployments", failure.ServerResponseInvalid, errors.New("deployment page exceeded its requested limit"))
 		}
-		if page.NextCursor != nil && !opaqueid.Valid(*page.NextCursor, "pgrp_") {
+		if page.NextCursor != nil && !opaqueid.Valid(*page.NextCursor, "dpl_") {
 			return failure.Wrap("read deployments", failure.ServerResponseInvalid, errors.New("control returned an invalid deployment cursor"))
 		}
 		for _, deployment := range page.Deployments {
@@ -249,7 +253,7 @@ func runDeployment(ctx context.Context, command string, flags cli, project proje
 }
 
 func validDeploymentSelector(selector string) bool {
-	return selector != "local" && (naming.ValidServiceName(selector) || opaqueid.Valid(selector, "pgrp_"))
+	return selector != "local" && (naming.ValidServiceName(selector) || opaqueid.Valid(selector, "dpl_"))
 }
 
 func deploymentProjectKey(ctx context.Context, project projectConfiguration, key string) (string, error) {
@@ -267,7 +271,7 @@ func deploymentProjectKey(ctx context.Context, project projectConfiguration, key
 }
 
 func validateDeploymentResult(deployment controlv1.Deployment, team, project string) error {
-	if deployment.TeamId != team || deployment.ProjectKey != project || !opaqueid.Valid(deployment.Id, "pgrp_") || !naming.ValidServiceName(deployment.Name) || deployment.Name == "local" || deployment.Revision < 1 {
+	if deployment.TeamId != team || deployment.ProjectKey != project || !opaqueid.Valid(deployment.Id, "dpl_") || !naming.ValidServiceName(deployment.Name) || deployment.Name == "local" || deployment.Revision < 1 {
 		return failure.Wrap("read deployment", failure.ServerResponseInvalid, errors.New("control returned another or invalid deployment selection"))
 	}
 	for name, service := range deployment.Services {

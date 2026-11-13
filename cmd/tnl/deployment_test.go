@@ -14,7 +14,7 @@ import (
 func TestDeploymentCommandsCaptureExplicitProjectAndTeam(t *testing.T) {
 	for _, args := range [][]string{
 		{"deployment", "create", "customer", "--target", "db=orders.us-east-1.rds.amazonaws.com:5432", "--target-tls", "db=aws-rds", "--idempotency-key", "customer-setup"},
-		{"deployment", "list", "--after", "pgrp_aaaaaaaaaaaaaaaaaaaaaa", "--limit", "1"},
+		{"deployment", "list", "--after", "dpl_aaaaaaaaaaaaaaaaaaaaaa", "--limit", "1"},
 		{"deployment", "show", "production"},
 		{"deployment", "update", "production", "--target", "db=replacement.internal:5432"},
 		{"deployment", "delete", "production"},
@@ -66,7 +66,7 @@ func TestDeploymentTargetFlagsUseCanonicalVerifiedTLS(t *testing.T) {
 }
 
 func TestDeploymentReadRejectsCrossScopeAndRendersDeterministically(t *testing.T) {
-	deployment := controlv1.Deployment{Id: "pgrp_aaaaaaaaaaaaaaaaaaaaaa", TeamId: "team-selected", ProjectKey: "shop", Name: "production", Revision: 7,
+	deployment := controlv1.Deployment{Id: "dpl_aaaaaaaaaaaaaaaaaaaaaa", TeamId: "team-selected", ProjectKey: "shop", Name: "production", Revision: 7,
 		Services: map[string]controlv1.DeploymentService{"web": {Id: "svc_bbbbbbbbbbbbbbbbbbbbbb", Protocol: "http", TrustRevision: 1}, "db": {Id: "svc_cccccccccccccccccccccc", Protocol: "postgres", TrustRevision: 1}}}
 	if err := validateDeploymentResult(deployment, deployment.TeamId, deployment.ProjectKey); err != nil {
 		t.Fatal(err)

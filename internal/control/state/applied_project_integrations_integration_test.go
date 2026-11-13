@@ -11,7 +11,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 )
 
-func TestIntegrationAppliedProjectRootIntegrationsAndRemoteGroups(t *testing.T) {
+func TestIntegrationAppliedProjectRootIntegrationsAndRemoteDeployments(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "applied_root_integrations")
 	d.managedURLMode = naming.ManagedURLModeSimple
 	r := appliedProjectRequest(t, d, now)
@@ -72,19 +72,19 @@ func TestIntegrationAppliedProjectRootIntegrationsAndRemoteGroups(t *testing.T) 
 	if err = d.pool.QueryRow(t.Context(), `SELECT configuration_ciphertext FROM control.applied_projects WHERE team_id=$1 AND project_key=$2`, r.TeamID, r.ProjectKey).Scan(&encrypted); err != nil || bytes.Contains(encrypted, []byte("/hooks/payments")) {
 		t.Fatal("root declaration was not encrypted with the complete configuration", err)
 	}
-	enrollment, err := d.IssuePublisherGroupEnrollment(t.Context(), r.TeamID, r.ProjectKey, "eks", r.ActorID, 1, time.Hour, now)
+	enrollment, err := testDeploymentPublisherEnrollment(d, t.Context(), r.TeamID, r.ProjectKey, "eks", r.ActorID, 1, time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replica := enrollAppliedGroup(t, d, r, enrollment, now)
+	replica := enrollAppliedDeployment(t, d, r, enrollment, now)
 	if len(replica.assignments.Services) != 1 || replica.assignments.Services[0].Service != "remote" {
-		t.Fatal("local integration service was assigned to the remote group")
+		t.Fatal("local integration service was assigned to the remote deployment")
 	}
 	wire, err := json.Marshal(replica.assignments)
 	if err != nil || bytes.Contains(wire, []byte("webhooks")) || bytes.Contains(wire, []byte("/hooks/payments")) {
 		t.Fatal("remote assignment received local integration handler declarations", err)
 	}
-	access := groupAssignmentAccess(t, d, replica, replica.assignments.Services[0], now)
+	access := deploymentAssignmentAccess(t, d, replica, replica.assignments.Services[0], now)
 	r.ExpectedRevision = remoteApplied.Revision
 	r.Configuration.OAuth = false
 	endpoint := r.Configuration.Webhooks["payments"]
@@ -97,20 +97,20 @@ func TestIntegrationAppliedProjectRootIntegrationsAndRemoteGroups(t *testing.T) 
 	if changed.Revision != remoteApplied.Revision+1 || changed.Configuration.OAuth || changed.Configuration.Webhooks["payments"].Path != endpoint.Path {
 		t.Fatal("local-only integration edit did not update status")
 	}
-	current, err := d.GetPublisherGroupAssignments(t.Context(), replica.lease.AccessToken, now)
+	current, err := d.GetDeploymentPublisherAssignments(t.Context(), replica.lease.AccessToken, now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if current.Revision != replica.assignments.Revision || current.ConfigurationHash != replica.assignments.ConfigurationHash || current.Services[0].ServiceID != replica.assignments.Services[0].ServiceID || current.Services[0].GrantID != replica.assignments.Services[0].GrantID {
-		t.Fatal("local metadata edit replaced unrelated group publication grants")
+		t.Fatal("local metadata edit replaced unrelated deployment publication grants")
 	}
 	if _, err = d.AuthenticatePublisherAccess(t.Context(), access.Token, "", now); err != nil {
-		t.Fatal("local metadata edit revoked an unrelated native group grant", err)
+		t.Fatal("local metadata edit revoked an unrelated native deployment grant", err)
 	}
-	if err = d.AcknowledgePublisherGroupConfiguration(t.Context(), replica.lease.AccessToken, 3, configured.ConfigurationHash, false, now); !errors.Is(err, ErrProjectConfigurationStale) {
-		t.Fatal("group acknowledgement accepted project-level configuration facts", err)
+	if err = d.AcknowledgeDeploymentPublisherConfiguration(t.Context(), replica.lease.AccessToken, 3, configured.ConfigurationHash, false, now); !errors.Is(err, ErrProjectConfigurationStale) {
+		t.Fatal("deployment acknowledgement accepted project-level configuration facts", err)
 	}
-	if err = d.AcknowledgePublisherGroupConfiguration(t.Context(), replica.lease.AccessToken, current.Revision, current.ConfigurationHash, false, now); err != nil {
+	if err = d.AcknowledgeDeploymentPublisherConfiguration(t.Context(), replica.lease.AccessToken, current.Revision, current.ConfigurationHash, false, now); err != nil {
 		t.Fatal(err)
 	}
 	bad := r
@@ -140,6 +140,6 @@ func TestIntegrationAppliedProjectRootIntegrationsAndRemoteGroups(t *testing.T) 
 		t.Fatal("removing local declarations did not reconcile the complete desired root")
 	}
 	if _, err = d.AuthenticatePublisherAccess(t.Context(), access.Token, "", now); err != nil {
-		t.Fatal("removing local declarations disturbed the externally operated group", err)
+		t.Fatal("removing local declarations disturbed the externally operated deployment", err)
 	}
 }

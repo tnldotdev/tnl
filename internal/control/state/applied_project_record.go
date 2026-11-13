@@ -41,7 +41,7 @@ func (d *Database) openAppliedProjectRecord(row controlstatedb.ControlAppliedPro
 // its deployment is deleted. callers hold the project row while reading this
 // active registry, including during apply's transactional reconciliation.
 func (record appliedProjectRecord) workloads(ctx context.Context, q *controlstatedb.Queries, project controlstatedb.ControlAppliedProject) (map[string]ProjectWorkload, error) {
-	deployments, err := q.ListProjectPublisherGroups(ctx, controlstatedb.ListProjectPublisherGroupsParams{TeamID: project.TeamID, ProjectKey: project.ProjectKey})
+	deployments, err := q.ListProjectDeployments(ctx, controlstatedb.ListProjectDeploymentsParams{TeamID: project.TeamID, ProjectKey: project.ProjectKey})
 	if err != nil {
 		return nil, err
 	}

@@ -288,7 +288,7 @@ var definitions = map[Reason]Definition{
 	},
 	AppRemoteService: {
 		Class: Invalid, Message: "readiness checks require a local configured service",
-		Action: "select a local service with --service; use tnl status for applied publisher groups", Retry: RetryAfterChange,
+		Action: "select a local service with --service; use tnl status for applied deployments", Retry: RetryAfterChange,
 	},
 	NamedPublishOverrides: {
 		Class: Invalid, Message: "named publishing uses the selected project configuration",

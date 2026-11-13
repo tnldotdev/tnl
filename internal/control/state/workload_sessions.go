@@ -162,7 +162,7 @@ func (d *Database) ExchangeWorkload(ctx context.Context, r ExchangeWorkloadReque
 			return result, err
 		}
 		for _, s := range services {
-			tag, err := tx.Exec(ctx, `INSERT INTO control.workload_session_services(workload_session_id,service_id,service) SELECT $1,applied.service_id,applied.service FROM control.applied_project_services applied JOIN control.services service ON service.id=applied.service_id JOIN control.project_publisher_groups deployment ON deployment.id=applied.group_id AND deployment.deleted_at IS NULL WHERE applied.team_id=$2 AND applied.project_key=$3 AND applied.service=$4 AND service.enabled AND service.deleted_at IS NULL AND deployment.name=$5`, id, r.TeamID, r.ProjectKey, s, p.Deployment)
+			tag, err := tx.Exec(ctx, `INSERT INTO control.workload_session_services(workload_session_id,service_id,service) SELECT $1,applied.service_id,applied.service FROM control.applied_project_services applied JOIN control.services service ON service.id=applied.service_id JOIN control.deployments deployment ON deployment.id=applied.deployment_id AND deployment.deleted_at IS NULL WHERE applied.team_id=$2 AND applied.project_key=$3 AND applied.service=$4 AND service.enabled AND service.deleted_at IS NULL AND deployment.name=$5`, id, r.TeamID, r.ProjectKey, s, p.Deployment)
 			if err != nil {
 				return result, err
 			}

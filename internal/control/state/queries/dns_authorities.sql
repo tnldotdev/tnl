@@ -120,8 +120,8 @@ SELECT
           AND routes.dns_state NOT IN ('unmanaged', 'removed')
     )
     AND NOT EXISTS (
-        SELECT 1 FROM control.project_publisher_groups publisher_group
-        WHERE publisher_group.domain_id=sqlc.arg(authority_domain_id) AND publisher_group.deleted_at IS NULL
+        SELECT 1 FROM control.deployments deployment
+        WHERE deployment.domain_id=sqlc.arg(authority_domain_id) AND deployment.deleted_at IS NULL
     )
     AND NOT EXISTS (
         SELECT 1 FROM control.services service

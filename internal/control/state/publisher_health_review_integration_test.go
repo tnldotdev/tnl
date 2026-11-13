@@ -10,7 +10,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
 
-func TestIntegrationPublisherGroupHealthRuntimeReplacement(t *testing.T) {
+func TestIntegrationDeploymentPublisherHealthRuntimeReplacement(t *testing.T) {
 	for _, ordering := range []string{"equal", "reversed", "ack-first", "start-first"} {
 		t.Run(ordering, func(t *testing.T) {
 			d, now := newControlStateIntegrationDatabase(t, "group_health_"+ordering)
@@ -22,14 +22,14 @@ func TestIntegrationPublisherGroupHealthRuntimeReplacement(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			e, err := d.IssuePublisherGroupEnrollment(t.Context(), r.TeamID, r.ProjectKey, "remote", r.ActorID, 1, time.Hour, now)
+			e, err := testDeploymentPublisherEnrollment(d, t.Context(), r.TeamID, r.ProjectKey, "remote", r.ActorID, 1, time.Hour, now)
 			if err != nil {
 				t.Fatal(err)
 			}
-			replica := enrollAppliedGroup(t, d, r, e, now)
+			replica := enrollAppliedDeployment(t, d, r, e, now)
 			request := func(run string, epoch int64, at time.Time) PublisherRuntimeRequest {
 				t.Helper()
-				v := PublisherRuntimeRequest{PublisherIdentityID: replica.member.PublisherIdentityID, ScopeID: replica.member.GroupID, ProcessRunID: run, ExpectedEpoch: epoch, Action: "start", Audience: "https://control.example/v1/publisher-runtime", Now: at}
+				v := PublisherRuntimeRequest{PublisherIdentityID: replica.member.PublisherIdentityID, ScopeID: replica.member.DeploymentID, ProcessRunID: run, ExpectedEpoch: epoch, Action: "start", Audience: "https://control.example/v1/publisher-runtime", Now: at}
 				v.Assertion, err = publisherproof.Sign(v.PublisherIdentityID, replica.member.KeyID, publisherproof.RuntimeScope(v.ScopeID, v.Action, run, epoch, ""), v.Audience, replica.private, at)
 				if err != nil {
 					t.Fatal(err)
@@ -45,7 +45,7 @@ func TestIntegrationPublisherGroupHealthRuntimeReplacement(t *testing.T) {
 				ackAt = now.Add(time.Second)
 			}
 			ack := func(ctx context.Context) error {
-				return d.AcknowledgePublisherGroupConfiguration(ctx, first.GroupLease.AccessToken, replica.assignments.Revision, replica.assignments.ConfigurationHash, true, ackAt)
+				return d.AcknowledgeDeploymentPublisherConfiguration(ctx, first.DeploymentLease.AccessToken, replica.assignments.Revision, replica.assignments.ConfigurationHash, true, ackAt)
 			}
 			if err := ack(t.Context()); err != nil {
 				t.Fatal(err)
@@ -85,7 +85,7 @@ func TestIntegrationPublisherGroupHealthRuntimeReplacement(t *testing.T) {
 				query, args := `SELECT id FROM control.publisher_identities WHERE id=$1 FOR UPDATE`, []any{replica.member.PublisherIdentityID}
 				firstOp, secondOp := start, ack
 				if ordering == "ack-first" {
-					query, args = `SELECT id FROM control.project_publisher_groups WHERE id=$1 FOR UPDATE`, []any{replica.member.GroupID}
+					query, args = `SELECT id FROM control.deployments WHERE id=$1 FOR UPDATE`, []any{replica.member.DeploymentID}
 					firstOp, secondOp = ack, start
 				}
 				if _, err := gate.Exec(ctx, query, args...); err != nil {
@@ -106,7 +106,7 @@ func TestIntegrationPublisherGroupHealthRuntimeReplacement(t *testing.T) {
 				}
 				err = awaitIntegrationResult(t, ctx, two)
 				if ordering == "start-first" {
-					if !errors.Is(err, ErrPublisherGroup) {
+					if !errors.Is(err, ErrDeploymentPublisher) {
 						t.Fatal("old acknowledgement escaped replacement", err)
 					}
 				} else if err != nil {
@@ -116,7 +116,7 @@ func TestIntegrationPublisherGroupHealthRuntimeReplacement(t *testing.T) {
 			status(false)
 			// a current acknowledgement may have an earlier request clock. health
 			// belongs to the serialized runtime, not its wall-clock ordering.
-			if err := d.AcknowledgePublisherGroupConfiguration(t.Context(), replacement.GroupLease.AccessToken, replica.assignments.Revision, replica.assignments.ConfigurationHash, true, now.Add(-time.Second)); err != nil {
+			if err := d.AcknowledgeDeploymentPublisherConfiguration(t.Context(), replacement.DeploymentLease.AccessToken, replica.assignments.Revision, replica.assignments.ConfigurationHash, true, now.Add(-time.Second)); err != nil {
 				t.Fatal(err)
 			}
 			status(true)

@@ -50,7 +50,7 @@ func TestIntegrationDeletedDeploymentNameCannotRebindHistoricalWorkload(t *testi
 		t.Run(attempt.key, func(t *testing.T) {
 			if attempt.at.After(now) {
 				var reusable bool
-				if err := d.pool.QueryRow(ctx, `SELECT control.service_namespace_reusable(namespace,$2) FROM control.project_publisher_groups WHERE id=$1`, production.ID, attempt.at).Scan(&reusable); err != nil || !reusable {
+				if err := d.pool.QueryRow(ctx, `SELECT control.service_namespace_reusable(namespace,$2) FROM control.deployments WHERE id=$1`, production.ID, attempt.at).Scan(&reusable); err != nil || !reusable {
 					t.Fatal("fixture did not pass namespace quarantine", reusable, err)
 				}
 			}
@@ -98,7 +98,7 @@ func TestIntegrationDeletedDeploymentNameCannotRebindHistoricalWorkload(t *testi
 		t.Fatal("failed recreation committed a replacement deployment", deployments, err)
 	}
 	var owner string
-	if err := d.pool.QueryRow(ctx, `SELECT group_id FROM control.publisher_group_names WHERE team_id=$1 AND project_key=$2 AND name='production'`, r.TeamID, r.ProjectKey).Scan(&owner); err != nil || owner != production.ID {
+	if err := d.pool.QueryRow(ctx, `SELECT deployment_id FROM control.deployment_names WHERE team_id=$1 AND project_key=$2 AND name='production'`, r.TeamID, r.ProjectKey).Scan(&owner); err != nil || owner != production.ID {
 		t.Fatal("deleted deployment name lost its immutable identity fence", owner, err)
 	}
 }

@@ -38,11 +38,11 @@ func TestIntegrationProjectRetirement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrollment, err := d.IssuePublisherGroupEnrollment(ctx, r.TeamID, r.ProjectKey, "production", r.ActorID, 2, time.Hour, now)
+	enrollment, err := testDeploymentPublisherEnrollment(d, ctx, r.TeamID, r.ProjectKey, "production", r.ActorID, 2, time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = enrollAppliedGroup(t, d, r, enrollment, now)
+	_ = enrollAppliedDeployment(t, d, r, enrollment, now)
 	exchange, _ := workloadExchange(t, r, now)
 	workload, err := d.ExchangeWorkload(ctx, exchange, now)
 	if err != nil {
@@ -88,7 +88,7 @@ func TestIntegrationProjectRetirement(t *testing.T) {
 		t.Fatal("retirement accepted stale revision", err)
 	}
 	retired, err := d.RetireProject(ctx, r.TeamID, r.ProjectKey, r.ActorID, applied.Revision, now.Add(time.Second))
-	if err != nil || retired.RetiredAt == nil || retired.Revision != applied.Revision+1 || len(retired.Services) != 0 || len(retired.Groups) != 0 || len(retired.Members) != 0 {
+	if err != nil || retired.RetiredAt == nil || retired.Revision != applied.Revision+1 || len(retired.Services) != 0 || len(retired.Deployments) != 0 || len(retired.Members) != 0 {
 		t.Fatal("retired project", retired, err)
 	}
 	page, err := d.ListProjects(ctx, r.TeamID, r.ActorID, "")
@@ -103,9 +103,9 @@ func TestIntegrationProjectRetirement(t *testing.T) {
 	if _, err = d.CheckWorkloadService(ctx, workload.Credential, workload.ServiceIDs[0], now.Add(time.Second)); !errors.Is(err, ErrWorkloadDenied) {
 		t.Fatal("retirement retained workload access", err)
 	}
-	var activeGroups, activeEnrollments, realizations int
-	if err = d.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM control.project_publisher_groups WHERE team_id=$1 AND project_key=$2 AND deleted_at IS NULL),(SELECT count(*) FROM control.publisher_group_enrollments WHERE group_id=$3 AND revoked_at IS NULL),(SELECT count(*) FROM control.local_project_services WHERE team_id=$1 AND project_key=$2)`, r.TeamID, r.ProjectKey, applied.Groups[0].ID).Scan(&activeGroups, &activeEnrollments, &realizations); err != nil || activeGroups+activeEnrollments+realizations != 0 {
-		t.Fatal("retirement retained assignments", activeGroups, activeEnrollments, realizations, err)
+	var activeDeployments, activeEnrollments, realizations int
+	if err = d.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM control.deployments WHERE team_id=$1 AND project_key=$2 AND deleted_at IS NULL),(SELECT count(*) FROM control.deployment_publisher_enrollments WHERE deployment_id=$3 AND revoked_at IS NULL),(SELECT count(*) FROM control.local_project_services WHERE team_id=$1 AND project_key=$2)`, r.TeamID, r.ProjectKey, applied.Deployments[0].ID).Scan(&activeDeployments, &activeEnrollments, &realizations); err != nil || activeDeployments+activeEnrollments+realizations != 0 {
+		t.Fatal("retirement retained assignments", activeDeployments, activeEnrollments, realizations, err)
 	}
 	if preserved, err := d.GetPreview(ctx, preview.ID); err != nil || preserved.ID != preview.ID {
 		t.Fatal("retirement deleted separate preview history", err)

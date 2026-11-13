@@ -88,7 +88,7 @@ func WithVisitor(ctx context.Context, id string) context.Context {
 // these spans end at the operation boundary, not when the publisher exits.
 func PublisherOperation(ctx context.Context, operation operationName) (context.Context, func(error)) {
 	switch operation {
-	case "startup", "heartbeat", "connect", "private_startup", "private_heartbeat", "private_connect", "target_connect", "target_tls", "target_preflight", "readiness_probe", "visitor_admission", "visitor_tls", "visitor_negotiation", "target_negotiation", "native_auth", "visitor_authorization", "certificate", "group_lease", "group_startup", "group_shutdown", "group_assignments", "group_acknowledge":
+	case "startup", "heartbeat", "connect", "private_startup", "private_heartbeat", "private_connect", "target_connect", "target_tls", "target_preflight", "readiness_probe", "visitor_admission", "visitor_tls", "visitor_negotiation", "target_negotiation", "native_auth", "visitor_authorization", "certificate", "deployment_lease", "deployment_startup", "deployment_shutdown", "deployment_assignments", "deployment_acknowledge":
 	default:
 		return ctx, func(error) {}
 	}

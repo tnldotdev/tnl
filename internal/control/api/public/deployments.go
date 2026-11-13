@@ -12,6 +12,8 @@ import (
 )
 
 type DeploymentStore interface {
+	RenameDeploymentNamespace(context.Context, controlstate.RenameDeploymentNamespaceRequest) (controlstate.AppliedProjectConfiguration, error)
+	RenameDeployment(context.Context, string, string, string, string, string, int64, time.Time) (controlstate.AppliedProjectConfiguration, error)
 	CreateDeployment(context.Context, controlstate.CreateDeploymentRequest) (controlstate.Deployment, error)
 	UpdateDeployment(context.Context, controlstate.UpdateDeploymentRequest) (controlstate.Deployment, error)
 	GetDeployment(context.Context, controlstate.DeploymentScope, string) (controlstate.Deployment, error)

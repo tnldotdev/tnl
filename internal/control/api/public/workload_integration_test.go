@@ -242,7 +242,7 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 	if _, err = authority.IdentityContext(ctx); !errors.Is(err, clientauthority.ErrUnauthenticated) {
 		t.Fatal("workload became a human control session", err)
 	}
-	if _, err = workloadControl.GetPublisherGroupAssignments(ctx, session.Credential); err == nil {
+	if _, err = workloadControl.GetDeploymentPublisherAssignments(ctx, session.Credential); err == nil {
 		t.Fatal("workload became a publisher")
 	}
 	// verify actual response bodies contain no assertion, provider selector or

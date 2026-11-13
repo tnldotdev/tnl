@@ -9,11 +9,13 @@ later steps in the same job.
 This example uses a pnpm project with a PostgreSQL service named `database` and a
 GitHub workload named `deploy`. Before running it:
 
-- Declare `services.database` in this project's configuration, assign it to a
-  named publisher group, and have a publisher in that group serving it.
-- Declare `workloads.deploy` with `provider: github`, `services: [database]`, and
+- Declare `services.database` in this project's configuration, bind its target in
+  `deployments.production.targets.database`, and have an approved publisher serving
+  that deployment.
+- Declare `workloads.deploy` with `provider: github`, `deployment: production`,
+  `services: [database]`, and
   GitHub rules matching `.github/workflows/deploy.yml`, `refs/heads/main`, and the
-  `push` event. Save that policy with `pnpm exec tnl apply` from your signed-in
+  `push` event. Save that policy with `pnpm exec tnl apply --deployment production` from your signed-in
   checkout. For a private repository, the first apply also needs `gh` authenticated
   with read access to that repository. The action uses the saved policy.
 - Pin pnpm 11 or newer in `package.json`, for example
