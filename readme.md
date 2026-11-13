@@ -402,7 +402,7 @@ Here's how `tnl` compares to Tailscale, Cloudflare, and ngrok.
 | --------------------------------------------- | ----------------------- | ---------------------- | ---------------------------- | ----------------------- |
 | Connect without a publicly reachable endpoint | `tnl connect`           | WireGuard mesh network | Cloudflare One/`cloudflared` | `ngrokd` or Kubernetes  |
 | Use your own domain for public HTTPS          | Yes                     | No, only `*.ts.net`    | Yes                          | Yes                     |
-| Built-in web firewall (WAF)                   | No                      | No                     | Yes                          | Yes                     |
+| Built-in web firewall (WAF)                   | Yes                     | No                     | Yes                          | Yes                     |
 | Run the server infrastructure yourself        | Yes                     | w/ Headscale           | No                           | No                      |
 | Route a whole subnet                          | No, individual services | Yes                    | Yes                          | No, individual services |
 
