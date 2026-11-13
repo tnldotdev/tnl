@@ -1,24 +1,33 @@
-// generated from contracts/integrations/telemetry/v1; do not edit.
+// generated from contracts/integrations/telemetry/v1/openapi.yaml with @hey-api/openapi-ts; do not edit.
 
-import { z } from "zod";
+import * as z from "zod";
 
-// <Schemas>
-export type Client = z.infer<typeof Client>;
-export const Client = z.strictObject({
+export const clientSchema = z.strictObject({
   version: z.string().min(1).max(64),
   os: z.enum(["darwin", "linux", "windows", "other"]),
   arch: z.enum(["amd64", "arm64", "other"]),
   ci: z.boolean(),
 });
 
-export type EventID = z.infer<typeof EventID>;
-export const EventID = z.string().regex(new RegExp("^tev_[A-Za-z0-9]{22}$"));
+export const publicationReadySchema = z.strictObject({
+  server_kind: z.enum(["hosted", "self_hosted"]),
+  publish_mode: z.enum(["app", "demo"]),
+  framework: z.enum(["vite", "next", "other"]).optional(),
+});
 
-export type Outcome = z.infer<typeof Outcome>;
-export const Outcome = z.enum(["succeeded", "failed", "canceled"]);
+export const integrationOutcomeSchema = z.strictObject({
+  kind: z.enum(["oauth", "webhook"]),
+  outcome: z.enum(["ready", "redirected", "reached_receiver"]),
+  delivery: z.enum(["fanout", "selected"]).optional(),
+});
 
-export type CommandOutcome = z.infer<typeof CommandOutcome>;
-export const CommandOutcome = z.strictObject({
+export const operationSchema = z.enum(["relay_connect", "direct_connect", "fallback", "recovery"]);
+
+export const pathSchema = z.enum(["quic", "tls_tcp", "direct_udp"]);
+
+export const outcomeSchema = z.enum(["succeeded", "failed", "canceled"]);
+
+export const commandOutcomeSchema = z.strictObject({
   command: z.enum([
     "init",
     "login",
@@ -81,108 +90,83 @@ export const CommandOutcome = z.strictObject({
       "other",
     ])
     .optional(),
-  outcome: Outcome,
+  outcome: outcomeSchema,
   failure_stage: z
     .enum(["setup", "command", "authentication", "local_service", "public_url"])
     .optional(),
-  diagnostic_code: z.string().regex(new RegExp("^TNL_[A-Z_]{1,64}$")).optional(),
+  diagnostic_code: z
+    .string()
+    .regex(/^TNL_[A-Z_]{1,64}$/)
+    .optional(),
 });
 
-export type CommandEvent = z.infer<typeof CommandEvent>;
-export const CommandEvent = z.strictObject({
-  event_id: EventID,
+export const durationSchema = z.enum(["lt_1s", "lt_10s", "lt_1m", "longer"]);
+
+export const measurementSchema = z.strictObject({
+  operation: operationSchema,
+  path: pathSchema,
+  outcome: outcomeSchema,
+  duration: durationSchema.optional(),
+  count: z.int().gte(1).lte(1000000000),
+});
+
+export const transportReportSchema = z.strictObject({
+  role: z.enum(["publisher", "connector"]),
+  measurements: z.array(measurementSchema).min(1).max(144),
+});
+
+export const eventIdSchema = z.string().regex(/^tev_[A-Za-z0-9]{22}$/);
+
+export const commandEventSchema = z.strictObject({
+  event_id: eventIdSchema,
   event_version: z.literal(1),
-  name: z.literal("command.outcome"),
-  payload: CommandOutcome,
+  name: z.enum(["command.outcome"]),
+  payload: commandOutcomeSchema,
 });
 
-export type PublicationReady = z.infer<typeof PublicationReady>;
-export const PublicationReady = z.strictObject({
-  server_kind: z.enum(["hosted", "self_hosted"]),
-  publish_mode: z.enum(["app", "demo"]),
-  framework: z.enum(["vite", "next", "other"]).optional(),
-});
-
-export type ReadyEvent = z.infer<typeof ReadyEvent>;
-export const ReadyEvent = z.strictObject({
-  event_id: EventID,
+export const readyEventSchema = z.strictObject({
+  event_id: eventIdSchema,
   event_version: z.literal(1),
-  name: z.literal("tunnel.ready"),
-  payload: PublicationReady,
+  name: z.enum(["tunnel.ready"]),
+  payload: publicationReadySchema,
 });
 
-export type DemoEvent = z.infer<typeof DemoEvent>;
-export const DemoEvent = z.strictObject({
-  event_id: EventID,
+export const demoEventSchema = z.strictObject({
+  event_id: eventIdSchema,
   event_version: z.literal(1),
-  name: z.literal("demo.first_ping"),
+  name: z.enum(["demo.first_ping"]),
   payload: z.strictObject({}),
 });
 
-export type IntegrationOutcome = z.infer<typeof IntegrationOutcome>;
-export const IntegrationOutcome = z.strictObject({
-  kind: z.enum(["oauth", "webhook"]),
-  outcome: z.enum(["ready", "redirected", "reached_receiver"]),
-  delivery: z.enum(["fanout", "selected"]).optional(),
-});
-
-export type IntegrationEvent = z.infer<typeof IntegrationEvent>;
-export const IntegrationEvent = z.strictObject({
-  event_id: EventID,
+export const integrationEventSchema = z.strictObject({
+  event_id: eventIdSchema,
   event_version: z.literal(1),
-  name: z.literal("integration.outcome"),
-  payload: IntegrationOutcome,
+  name: z.enum(["integration.outcome"]),
+  payload: integrationOutcomeSchema,
 });
 
-export type Operation = z.infer<typeof Operation>;
-export const Operation = z.enum(["relay_connect", "direct_connect", "fallback", "recovery"]);
-
-export type Path = z.infer<typeof Path>;
-export const Path = z.enum(["quic", "tls_tcp", "direct_udp"]);
-
-export type Duration = z.infer<typeof Duration>;
-export const Duration = z.enum(["lt_1s", "lt_10s", "lt_1m", "longer"]);
-
-export type Measurement = z.infer<typeof Measurement>;
-export const Measurement = z.strictObject({
-  operation: Operation,
-  path: Path,
-  outcome: Outcome,
-  duration: Duration.optional(),
-  count: z.number().int().min(1).max(1000000000),
-});
-
-export type TransportReport = z.infer<typeof TransportReport>;
-export const TransportReport = z.strictObject({
-  role: z.enum(["publisher", "connector"]),
-  measurements: z.array(Measurement).min(1).max(144),
-});
-
-export type TransportEvent = z.infer<typeof TransportEvent>;
-export const TransportEvent = z.strictObject({
-  event_id: EventID,
+export const transportEventSchema = z.strictObject({
+  event_id: eventIdSchema,
   event_version: z.literal(1),
-  name: z.literal("transport.report"),
-  payload: TransportReport,
+  name: z.enum(["transport.report"]),
+  payload: transportReportSchema,
 });
 
-export type Event = z.infer<typeof Event>;
-export const Event = z.discriminatedUnion("name", [
-  CommandEvent.extend({ name: z.literal("command.outcome") }),
-  ReadyEvent.extend({ name: z.literal("tunnel.ready") }),
-  DemoEvent.extend({ name: z.literal("demo.first_ping") }),
-  IntegrationEvent.extend({ name: z.literal("integration.outcome") }),
-  TransportEvent.extend({ name: z.literal("transport.report") }),
+export const eventSchema = z.discriminatedUnion("name", [
+  commandEventSchema.extend({ name: z.literal("command.outcome") }),
+  readyEventSchema.extend({ name: z.literal("tunnel.ready") }),
+  demoEventSchema.extend({ name: z.literal("demo.first_ping") }),
+  integrationEventSchema.extend({ name: z.literal("integration.outcome") }),
+  transportEventSchema.extend({ name: z.literal("transport.report") }),
 ]);
 
-export type CollectedEvent = z.infer<typeof CollectedEvent>;
-export const CollectedEvent = z.strictObject({ client: Client, event: Event });
-
-export type Batch = z.infer<typeof Batch>;
-export const Batch = z.strictObject({
-  schema_version: z.literal(1),
-  installation_id: z.string().regex(new RegExp("^inst_[A-Za-z0-9]{22}$")),
-  events: z.array(CollectedEvent).min(1).max(25),
+export const collectedEventSchema = z.strictObject({
+  client: clientSchema,
+  event: eventSchema,
 });
 
-// </Schemas>
+export const batchSchema = z.strictObject({
+  schema_version: z.literal(1),
+  installation_id: z.string().regex(/^inst_[A-Za-z0-9]{22}$/),
+  events: z.array(collectedEventSchema).min(1).max(25),
+});

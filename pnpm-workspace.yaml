@@ -4,6 +4,8 @@ packages:
 
 overrides:
   "@esbuild-kit/core-utils>esbuild": "0.25.12"
+  # hey api needs the compiler API; application checks still use TypeScript 7.
+  "@hey-api/openapi-ts>typescript": 6.0.3
   "oxfmt@0.59.0>tinypool": "2.2.0"
   zod: "4.6.7"
 
