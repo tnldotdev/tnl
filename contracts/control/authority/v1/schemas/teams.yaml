@@ -8,7 +8,13 @@ schemas:
     properties:
       team_id: { type: string }
       identity_connection_id: { type: string }
-      connection_revision: { type: integer, format: int64, minimum: 1 }
+      connection_revision:
+        {
+          type: string,
+          pattern: "^[1-9][0-9]*$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "connection_revision,string" },
+        }
       subject: { type: string }
       source_id: { type: string }
       authenticated_at:
