@@ -111,6 +111,16 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	if err != nil || discovered.Groups == nil || len(*discovered.Groups) != 1 || (*discovered.Groups)[0].Id == "" {
 		t.Fatal("discovered selector did not resolve group detail", err)
 	}
+	status, err := reader.GetProjectStatus(ctx, project, controlv1.GetProjectStatusParams{TeamId: team})
+	if err != nil || status.Revision != discovered.Revision || len(status.Publications) != 4 {
+		t.Fatal("HTTP project status lost declarations", status, err)
+	}
+	if _, err = anonymous.GetProjectStatus(ctx, project, controlv1.GetProjectStatusParams{TeamId: team}); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+		t.Fatal("project status accepted anonymous access", err)
+	}
+	if _, err = reader.GetProjectStatus(ctx, project, controlv1.GetProjectStatusParams{TeamId: "other-team"}); !errors.Is(err, clientcontrol.ErrNotFound) {
+		t.Fatal("project status crossed teams", err)
+	}
 	replay := controlv1.ApplyProjectConfigurationRequest{TeamId: team, Configuration: discovered.Configuration}
 	if result, err := reader.ApplyProjectConfiguration(ctx, project, replay); err != nil || result.Revision != discovered.Revision || result.SourceFingerprint != resolved.SourceFingerprint {
 		t.Fatal("same-content replay required a caller fingerprint or changed the saved source", err)

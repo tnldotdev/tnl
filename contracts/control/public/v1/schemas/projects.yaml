@@ -121,7 +121,13 @@ schemas:
         $ref: "../openapi.yaml#/components/schemas/GitProjectSource"
         description: Required on first apply. Omit on updates to retain the saved source binding.
       project_label:
-        { type: string, minLength: 1, maxLength: 63, pattern: "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$" }
+        {
+          type: string,
+          minLength: 1,
+          maxLength: 63,
+          pattern: "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
+          description: "Initial DNS label. Saved on first apply; later values do not rename the project or existing namespaces. Read project status or discovery for the saved label.",
+        }
       expected_revision:
         {
           type: string,

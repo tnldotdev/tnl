@@ -38,6 +38,12 @@ func (c *Client) ListProjects(ctx context.Context, params controlv1.ListProjects
 	})
 }
 
+func (c *Client) GetProjectStatus(ctx context.Context, project string, params controlv1.GetProjectStatusParams) (controlv1.ProjectStatus, error) {
+	return requestWithAccess[controlv1.ProjectStatus](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.GetProjectStatus(ctx, project, &params, editors...)
+	})
+}
+
 func (c *Client) ResolveProjectSource(ctx context.Context, source controlv1.GitProjectSource) (controlv1.ProjectSourceIdentity, error) {
 	return requestWithAccess[controlv1.ProjectSourceIdentity](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.ResolveProjectSource(ctx, source, editors...)

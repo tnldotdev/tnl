@@ -648,6 +648,93 @@ func (e ProblemCode) Valid() bool {
 	}
 }
 
+// Defines values for ProjectPublicationStatusPublicationState.
+const (
+	ProjectPublicationStatusPublicationStatePrepared ProjectPublicationStatusPublicationState = "prepared"
+	ProjectPublicationStatusPublicationStateReady    ProjectPublicationStatusPublicationState = "ready"
+	ProjectPublicationStatusPublicationStateStarting ProjectPublicationStatusPublicationState = "starting"
+)
+
+// Valid indicates whether the value is a known member of the ProjectPublicationStatusPublicationState enum.
+func (e ProjectPublicationStatusPublicationState) Valid() bool {
+	switch e {
+	case ProjectPublicationStatusPublicationStatePrepared:
+		return true
+	case ProjectPublicationStatusPublicationStateReady:
+		return true
+	case ProjectPublicationStatusPublicationStateStarting:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ProjectPublicationStatusReason.
+const (
+	ProjectPublicationStatusReasonCertificateExpired ProjectPublicationStatusReason = "certificate_expired"
+	ProjectPublicationStatusReasonCertificatePending ProjectPublicationStatusReason = "certificate_pending"
+	ProjectPublicationStatusReasonConnectionsPending ProjectPublicationStatusReason = "connections_pending"
+	ProjectPublicationStatusReasonDisabled           ProjectPublicationStatusReason = "disabled"
+	ProjectPublicationStatusReasonDnsUnavailable     ProjectPublicationStatusReason = "dns_unavailable"
+	ProjectPublicationStatusReasonNotPublishing      ProjectPublicationStatusReason = "not_publishing"
+	ProjectPublicationStatusReasonNotRealized        ProjectPublicationStatusReason = "not_realized"
+	ProjectPublicationStatusReasonPublisherExpired   ProjectPublicationStatusReason = "publisher_expired"
+	ProjectPublicationStatusReasonPublisherUnhealthy ProjectPublicationStatusReason = "publisher_unhealthy"
+	ProjectPublicationStatusReasonReady              ProjectPublicationStatusReason = "ready"
+	ProjectPublicationStatusReasonStarting           ProjectPublicationStatusReason = "starting"
+)
+
+// Valid indicates whether the value is a known member of the ProjectPublicationStatusReason enum.
+func (e ProjectPublicationStatusReason) Valid() bool {
+	switch e {
+	case ProjectPublicationStatusReasonCertificateExpired:
+		return true
+	case ProjectPublicationStatusReasonCertificatePending:
+		return true
+	case ProjectPublicationStatusReasonConnectionsPending:
+		return true
+	case ProjectPublicationStatusReasonDisabled:
+		return true
+	case ProjectPublicationStatusReasonDnsUnavailable:
+		return true
+	case ProjectPublicationStatusReasonNotPublishing:
+		return true
+	case ProjectPublicationStatusReasonNotRealized:
+		return true
+	case ProjectPublicationStatusReasonPublisherExpired:
+		return true
+	case ProjectPublicationStatusReasonPublisherUnhealthy:
+		return true
+	case ProjectPublicationStatusReasonReady:
+		return true
+	case ProjectPublicationStatusReasonStarting:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ProjectPublicationStatusServiceKind.
+const (
+	ProjectPublicationStatusServiceKindLocal     ProjectPublicationStatusServiceKind = "local"
+	ProjectPublicationStatusServiceKindPublicUrl ProjectPublicationStatusServiceKind = "public_url"
+	ProjectPublicationStatusServiceKindService   ProjectPublicationStatusServiceKind = "service"
+)
+
+// Valid indicates whether the value is a known member of the ProjectPublicationStatusServiceKind enum.
+func (e ProjectPublicationStatusServiceKind) Valid() bool {
+	switch e {
+	case ProjectPublicationStatusServiceKindLocal:
+		return true
+	case ProjectPublicationStatusServiceKindPublicUrl:
+		return true
+	case ProjectPublicationStatusServiceKindService:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ProjectServiceAccessTeam.
 const (
 	True ProjectServiceAccessTeam = true
@@ -2874,6 +2961,38 @@ type ProjectPublicMetadata struct {
 	SourceFingerprint string `json:"source_fingerprint"`
 }
 
+// ProjectPublicationStatus defines model for ProjectPublicationStatus.
+type ProjectPublicationStatus struct {
+	CertificateExpiresAt      *time.Time                                `json:"certificate_expires_at,omitempty"`
+	Hostname                  string                                    `json:"hostname"`
+	Port                      *int                                      `json:"port,omitempty"`
+	PublicUrlId               *string                                   `json:"public_url_id,omitempty"`
+	PublicationState          *ProjectPublicationStatusPublicationState `json:"publication_state,omitempty"`
+	PublishRunId              *string                                   `json:"publish_run_id,omitempty"`
+	PublisherExpiresAt        *time.Time                                `json:"publisher_expires_at,omitempty"`
+	PublisherGroup            string                                    `json:"publisher_group"`
+	Ready                     bool                                      `json:"ready"`
+	ReadyPublisherConnections int                                       `json:"ready_publisher_connections"`
+	Reason                    ProjectPublicationStatusReason            `json:"reason"`
+	RunNumber                 int64                                     `json:"run_number,omitempty,string"`
+	Service                   string                                    `json:"service"`
+	ServiceId                 *string                                   `json:"service_id,omitempty"`
+	ServiceKind               ProjectPublicationStatusServiceKind       `json:"service_kind"`
+	ServiceRunId              *string                                   `json:"service_run_id,omitempty"`
+
+	// WorktreeKey Opaque worktree selector, not a checkout path.
+	WorktreeKey *string `json:"worktree_key,omitempty"`
+}
+
+// ProjectPublicationStatusPublicationState defines model for ProjectPublicationStatus.PublicationState.
+type ProjectPublicationStatusPublicationState string
+
+// ProjectPublicationStatusReason defines model for ProjectPublicationStatus.Reason.
+type ProjectPublicationStatusReason string
+
+// ProjectPublicationStatusServiceKind defines model for ProjectPublicationStatus.ServiceKind.
+type ProjectPublicationStatusServiceKind string
+
 // ProjectPublisherGroup defines model for ProjectPublisherGroup.
 type ProjectPublisherGroup struct {
 	Description *string `json:"description,omitempty"`
@@ -2943,6 +3062,17 @@ type ProjectSourceIdentity struct {
 	ProjectKey        string `json:"project_key"`
 	ProjectLabel      string `json:"project_label"`
 	SourceFingerprint string `json:"source_fingerprint"`
+}
+
+// ProjectStatus defines model for ProjectStatus.
+type ProjectStatus struct {
+	NextCursor   *string                    `json:"next_cursor,omitempty"`
+	ObservedAt   time.Time                  `json:"observed_at"`
+	ProjectKey   string                     `json:"project_key"`
+	ProjectLabel string                     `json:"project_label"`
+	Publications []ProjectPublicationStatus `json:"publications"`
+	Revision     int64                      `json:"revision,string"`
+	TeamId       string                     `json:"team_id"`
 }
 
 // ProjectSummary Saved project identity and configuration revision. Fetch configuration separately to read or edit its declarations.
@@ -4449,6 +4579,12 @@ type GetProjectServiceParams struct {
 	SourceFingerprint string `form:"source_fingerprint" json:"source_fingerprint"`
 }
 
+// GetProjectStatusParams defines parameters for GetProjectStatus.
+type GetProjectStatusParams struct {
+	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
+	Cursor *string     `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
 // ListPublicURLsParams defines parameters for ListPublicURLs.
 type ListPublicURLsParams struct {
 	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
@@ -5417,6 +5553,13 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/projects/{project_key}/services/{service} (the `GetProjectService` operationId).
 	GetProjectService(ctx context.Context, projectKey string, service ServiceName, params *GetProjectServiceParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetProjectStatus Inspect project publications across worktrees and publisher groups
+	//
+	// Read a manager-only snapshot of declared services, realized worktree resources, and open publications. Each publication appears separately; an idle resource or unrealized declaration appears once. Follow next_cursor with the same project, team, and identity. Readiness describes control's current lease, certificate, and relay observations, not a fresh visitor probe. Targets, credentials, and checkout paths are omitted.
+	//
+	// Corresponds with GET /v1/projects/{project_key}/status (the `GetProjectStatus` operationId).
+	GetProjectStatus(ctx context.Context, projectKey string, params *GetProjectStatusParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListPublicURLs List public URLs for one team
 	//
@@ -7783,6 +7926,23 @@ func (c *Client) RenamePublisherGroup(ctx context.Context, projectKey string, gr
 // Corresponds with GET /v1/projects/{project_key}/services/{service} (the `GetProjectService` operationId).
 func (c *Client) GetProjectService(ctx context.Context, projectKey string, service ServiceName, params *GetProjectServiceParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetProjectServiceRequest(c.Server, projectKey, service, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetProjectStatus Inspect project publications across worktrees and publisher groups
+//
+// Read a manager-only snapshot of declared services, realized worktree resources, and open publications. Each publication appears separately; an idle resource or unrealized declaration appears once. Follow next_cursor with the same project, team, and identity. Readiness describes control's current lease, certificate, and relay observations, not a fresh visitor probe. Targets, credentials, and checkout paths are omitted.
+//
+// Corresponds with GET /v1/projects/{project_key}/status (the `GetProjectStatus` operationId).
+func (c *Client) GetProjectStatus(ctx context.Context, projectKey string, params *GetProjectStatusParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetProjectStatusRequest(c.Server, projectKey, params)
 	if err != nil {
 		return nil, err
 	}
@@ -12810,6 +12970,75 @@ func NewGetProjectServiceRequest(server string, projectKey string, service Servi
 			for _, qp := range strings.Split(queryFrag, "&") {
 				rawQueryFragments = append(rawQueryFragments, qp)
 			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetProjectStatusRequest constructs an http.Request for the GetProjectStatus method
+func NewGetProjectStatusRequest(server string, projectKey string, params *GetProjectStatusParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/status", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
 		}
 
 		if encoded := queryValues.Encode(); encoded != "" {
@@ -18266,6 +18495,15 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/projects/{project_key}/services/{service} (the `GetProjectService` operationId).
 	GetProjectServiceWithResponse(ctx context.Context, projectKey string, service ServiceName, params *GetProjectServiceParams, reqEditors ...RequestEditorFn) (*GetProjectServiceResponse, error)
 
+	// GetProjectStatusWithResponse Inspect project publications across worktrees and publisher groups
+	//
+	// Read a manager-only snapshot of declared services, realized worktree resources, and open publications. Each publication appears separately; an idle resource or unrealized declaration appears once. Follow next_cursor with the same project, team, and identity. Readiness describes control's current lease, certificate, and relay observations, not a fresh visitor probe. Targets, credentials, and checkout paths are omitted.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/projects/{project_key}/status (the `GetProjectStatus` operationId).
+	GetProjectStatusWithResponse(ctx context.Context, projectKey string, params *GetProjectStatusParams, reqEditors ...RequestEditorFn) (*GetProjectStatusResponse, error)
+
 	// ListPublicURLsWithResponse List public URLs for one team
 	//
 	// Read a cursor-paginated inventory of public URLs the caller may manage in one team. An exact canonical_hostname filter returns zero or one non-deleted URL and cannot be combined with a cursor.
@@ -21607,6 +21845,54 @@ func (r GetProjectServiceResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetProjectServiceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetProjectStatusResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ProjectStatus
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetProjectStatusResponse) GetJSON200() *ProjectStatus {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetProjectStatusResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetProjectStatusResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetProjectStatusResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetProjectStatusResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetProjectStatusResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -27207,6 +27493,21 @@ func (c *ClientWithResponses) GetProjectServiceWithResponse(ctx context.Context,
 	return ParseGetProjectServiceResponse(rsp)
 }
 
+// GetProjectStatusWithResponse Inspect project publications across worktrees and publisher groups
+//
+// Read a manager-only snapshot of declared services, realized worktree resources, and open publications. Each publication appears separately; an idle resource or unrealized declaration appears once. Follow next_cursor with the same project, team, and identity. Readiness describes control's current lease, certificate, and relay observations, not a fresh visitor probe. Targets, credentials, and checkout paths are omitted.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/projects/{project_key}/status (the `GetProjectStatus` operationId).
+func (c *ClientWithResponses) GetProjectStatusWithResponse(ctx context.Context, projectKey string, params *GetProjectStatusParams, reqEditors ...RequestEditorFn) (*GetProjectStatusResponse, error) {
+	rsp, err := c.GetProjectStatus(ctx, projectKey, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetProjectStatusResponse(rsp)
+}
+
 // ListPublicURLsWithResponse List public URLs for one team
 //
 // Read a cursor-paginated inventory of public URLs the caller may manage in one team. An exact canonical_hostname filter returns zero or one non-deleted URL and cannot be combined with a cursor.
@@ -30970,6 +31271,39 @@ func ParseGetProjectServiceResponse(rsp *http.Response) (*GetProjectServiceRespo
 	return response, nil
 }
 
+// ParseGetProjectStatusResponse parses an HTTP response from a GetProjectStatusWithResponse call
+func ParseGetProjectStatusResponse(rsp *http.Response) (*GetProjectStatusResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetProjectStatusResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ProjectStatus
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListPublicURLsResponse parses an HTTP response from a ListPublicURLsWithResponse call
 func ParseListPublicURLsResponse(rsp *http.Response) (*ListPublicURLsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -34430,6 +34764,9 @@ type ServerInterface interface {
 	// GetProjectService Resolve an applied service by project source and key
 	// (GET /v1/projects/{project_key}/services/{service})
 	GetProjectService(w http.ResponseWriter, r *http.Request, projectKey string, service ServiceName, params GetProjectServiceParams)
+	// GetProjectStatus Inspect project publications across worktrees and publisher groups
+	// (GET /v1/projects/{project_key}/status)
+	GetProjectStatus(w http.ResponseWriter, r *http.Request, projectKey string, params GetProjectStatusParams)
 	// ListPublicURLs List public URLs for one team
 	// (GET /v1/public-urls)
 	ListPublicURLs(w http.ResponseWriter, r *http.Request, params ListPublicURLsParams)
@@ -36128,6 +36465,61 @@ func (siw *ServerInterfaceWrapper) GetProjectService(w http.ResponseWriter, r *h
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetProjectService(w, r, projectKey, service, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetProjectStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetProjectStatus(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetProjectStatusParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetProjectStatus(w, r, projectKey, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -39625,6 +40017,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/status", wrapper.GetProjectStatus)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/resolve-source", wrapper.ResolveProjectSource)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects", wrapper.ListProjects)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs", wrapper.ListConnectorPeerPairs)
