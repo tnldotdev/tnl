@@ -20,6 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
+	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
@@ -264,9 +265,12 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 		prepare: prepare,
 		base: publisher.Config{Control: publicationControl, ControlURL: auth.ServerEndpoint, State: store, Target: config.Target, DrainTime: config.DrainTime,
 			VisitorControl: auth.Control, BrowserControl: auth.Control, Shares: auth.Control,
-			Limits:    limits,
-			Ephemeral: config.Ephemeral,
-			TeamID:    team.Id, MembershipID: membership.Id, DomainID: domain.Id, PublicURLScope: controlv1.Member, Purpose: controlv1.App,
+			// transport load measures forwarding capacity, recovery, and unbounded
+			// bandwidth, not the separate fail-fast HTTP inspection gate.
+			Protection: httpprotection.Settings{WAF: httpprotection.Off},
+			Limits:     limits,
+			Ephemeral:  config.Ephemeral,
+			TeamID:     team.Id, MembershipID: membership.Id, DomainID: domain.Id, PublicURLScope: controlv1.Member, Purpose: controlv1.App,
 			PolicyRevision: uint64(team.PolicyRevision), AccessMode: controlv1.Anonymous, AllowedIPPrefixes: config.AllowedIPPrefixes,
 			TransportTLS:  config.RelayTLS,
 			QUICConfig:    benchmarkQUICConfig(config.QUICDisablePathMTUDiscovery, config.QUICQlog, config.QUICKeepAlive),

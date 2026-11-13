@@ -14,6 +14,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 )
 
 const RequestTimeout = 5 * time.Second
@@ -141,7 +143,7 @@ func (v Visitor) Request(parent context.Context, url string, scheduled time.Time
 		return
 	}
 	if response.StatusCode != http.StatusOK || response.TLS == nil || len(response.TLS.VerifiedChains) == 0 {
-		failure = &measurementResponseError{operation: "unverified visitor response", status: response.StatusCode}
+		failure = &measurementResponseError{operation: "unverified visitor response", status: response.StatusCode, code: diagnostic.Code(response.Header.Get("Tnl-Error-Code"))}
 		return
 	}
 	if response.Header.Get("X-TNL-Bench-Host") != request.URL.Host {
