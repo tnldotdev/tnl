@@ -205,12 +205,8 @@ func runURLUpdate(ctx context.Context, flags publicURLUpdateCommand, output, dia
 			return err
 		}
 	}
-	allowed := []string{}
-	if publicURL.AllowedIpPrefixes != nil {
-		allowed = *publicURL.AllowedIpPrefixes
-	}
 	updated, err := session.Authenticated().Control.UpdatePublicURL(ctx, flags.PublicURLID, controlv1.UpdatePublicURLRequest{
-		Target: target, AllowedIpPrefixes: allowed,
+		Target: &target, ExpectedMutationRevision: publicURL.MutationRevision,
 	})
 	if err != nil {
 		return err

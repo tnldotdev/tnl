@@ -1,15 +1,18 @@
 package public
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/control/api/serviceaccess"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/httpjson"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -73,23 +76,38 @@ func targetTLSInput(t *controlv1.ServiceTargetTLS) *controlstate.ServiceTargetTL
 }
 
 func (h *handler) ConfigureService(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID) {
-	var body controlv1.ServiceMetadata
-	if decodeJSONLimited(w, r, &body, 2<<20) != nil {
-		writeProblem(w, 400, controlv1.InvalidRequest, "invalid service metadata")
+	var body struct {
+		ExpectedTrustRevision int64                     `json:"expected_trust_revision"`
+		Protocol              controlv1.ServiceProtocol `json:"protocol"`
+		PublisherPool         *bool                     `json:"publisher_pool"`
+		TargetTLS             json.RawMessage           `json:"target_tls"`
+	}
+	if decodeJSONLimited(w, r, &body, 2<<20) != nil ||
+		body.ExpectedTrustRevision < 1 || body.ExpectedTrustRevision > 9007199254740991 ||
+		!body.Protocol.Valid() || body.PublisherPool == nil {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid service update")
 		return
+	}
+	var trust *controlv1.ServiceTargetTLS
+	if len(body.TargetTLS) > 0 {
+		if err := httpjson.Decode(json.NewDecoder(bytes.NewReader(body.TargetTLS)), &trust); err != nil || trust == nil {
+			writeProblem(w, 400, controlv1.InvalidRequest, "invalid target TLS trust")
+			return
+		}
 	}
 	store, identity, ok := h.serviceVisitor(w, r)
 	if !ok {
 		return
 	}
-	metadata := controlstate.ServiceMetadata{Protocol: string(body.Protocol), PublisherPool: body.PublisherPool, TLS: targetTLSInput(body.TargetTls), TrustRevision: body.TrustRevision}
-	if metadata.Validate() != nil || metadata.TrustRevision < 1 {
+	metadata := controlstate.ServiceMetadata{Protocol: string(body.Protocol), PublisherPool: *body.PublisherPool,
+		TLS: targetTLSInput(trust), TrustRevision: body.ExpectedTrustRevision}
+	if metadata.Validate() != nil {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid service protocol or TLS trust")
 		return
 	}
 	record, err := store.ConfigureService(r.Context(), id, identity, metadata, time.Now())
 	if err != nil {
-		serviceVisitorError(r.Context(), w, "configure service", err)
+		serviceVisitorError(r.Context(), w, "update service", err)
 		return
 	}
 	writeJSON(w, 200, serviceaccess.Service(record))
@@ -144,7 +162,7 @@ func (h *handler) ListServices(w http.ResponseWriter, r *http.Request, params co
 		serviceVisitorError(r.Context(), w, "list services", err)
 		return
 	}
-	page := controlv1.ServicePage{Services: make([]controlv1.Service, 0, len(rows))}
+	page := controlv1.ServicePage{Services: make([]controlv1.ServiceSummary, 0, len(rows))}
 	for _, row := range rows {
 		page.Services = append(page.Services, serviceaccess.Summary(row))
 	}
@@ -343,7 +361,7 @@ func (h *handler) ListAvailableServices(w http.ResponseWriter, r *http.Request, 
 		serviceVisitorError(r.Context(), w, "list available services", err)
 		return
 	}
-	page := controlv1.ServicePage{Services: make([]controlv1.Service, 0, len(rows))}
+	page := controlv1.ServicePage{Services: make([]controlv1.ServiceSummary, 0, len(rows))}
 	for _, row := range rows {
 		entry := serviceaccess.Summary(controlstate.ServiceRecord{ID: row.ID, TeamID: row.TeamID, Name: row.Name, Enabled: true, CreatedAt: row.CreatedAt, ServiceMetadata: row.ServiceMetadata})
 		entry.KubernetesAuth = row.KubernetesAuth

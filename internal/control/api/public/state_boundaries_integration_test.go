@@ -10,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -22,7 +23,75 @@ import (
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
+
+func TestIntegrationManagementMutations(t *testing.T) {
+	f, session, _, _, service := serviceFixture(t)
+	ctx := t.Context()
+	h, err := NewHandler(Config{}, DatabaseStores(f.d), f.d, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewTLSServer(h)
+	t.Cleanup(server.Close)
+	client, err := clientcontrol.New(server.URL, server.Client(), credentials.AccessToken(session.AccessToken))
+	if err != nil {
+		t.Fatal(err)
+	}
+	member := session.Identity.Memberships[0]
+	domains, err := f.d.ListTeamDomains(ctx, session.Identity.Identity.Id, member.TeamId)
+	if err != nil || len(domains) == 0 {
+		t.Fatal("team domains", err)
+	}
+	url, err := f.d.CreatePublicURL(ctx, controlstate.CreatePublicURLRequest{
+		TeamID: member.TeamId, DomainID: domains[0].ID, MembershipID: member.Id, ActingIdentityID: session.Identity.Identity.Id,
+		IdempotencyKey: "management", RequestDigest: sha256.Sum256([]byte("management")),
+		CanonicalHostname: "management." + member.ManagedLabel + ".example.test", Target: "http://127.0.0.1:3000",
+		PublicURLScope: controlstate.PublicURLScopeMember, Purpose: controlstate.PublicURLPurposeApp, DNSState: controlstate.PublicURLDNSUnmanaged,
+		AllowedIPPrefixes: []string{"192.0.2.0/24"},
+	}, f.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := client.GetPublicURL(ctx, url.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := first
+	updated, err := client.UpdatePublicURL(ctx, first.Id, controlv1.UpdatePublicURLRequest{
+		ExpectedMutationRevision: first.MutationRevision, Target: new("http://127.0.0.1:4000"),
+	})
+	if err != nil || updated.AllowedIpPrefixes == nil || len(*updated.AllowedIpPrefixes) != 1 || updated.MutationRevision <= first.MutationRevision {
+		t.Fatalf("target-only edit lost IP policy: %+v %v", updated, err)
+	}
+	if _, err := client.UpdatePublicURL(ctx, second.Id, controlv1.UpdatePublicURLRequest{
+		ExpectedMutationRevision: second.MutationRevision, AllowedIpPrefixes: new([]string{}),
+	}); !errors.Is(err, clientcontrol.ErrStatusConflict) {
+		t.Fatalf("stale editor overwrote current URL: %v", err)
+	}
+	cleared, err := client.UpdatePublicURL(ctx, first.Id, controlv1.UpdatePublicURLRequest{
+		ExpectedMutationRevision: updated.MutationRevision, AllowedIpPrefixes: new([]string{}),
+	})
+	if err != nil || cleared.Target != "http://127.0.0.1:4000" || cleared.AllowedIpPrefixes != nil && len(*cleared.AllowedIpPrefixes) != 0 {
+		t.Fatalf("IP clear lost target or retained policy: %+v %v", cleared, err)
+	}
+	configuration := controlv1.UpdateServiceRequest{Protocol: controlv1.Tcp, PublisherPool: false, ExpectedTrustRevision: service.TrustRevision}
+	if _, err := client.ConfigureService(ctx, service.ID, configuration); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ConfigureService(ctx, service.ID, configuration); !errors.Is(err, clientcontrol.ErrStatusConflict) {
+		t.Fatalf("stale service edit was accepted: %v", err)
+	}
+	request := httptest.NewRequest(http.MethodPut, "/v1/services/"+service.ID,
+		strings.NewReader(`{"protocol":"tcp","publisher_pool":false,"expected_trust_revision":2,"endpoint":{"hostname":"ignored.example","port":1234,"public":true}}`))
+	request.Header.Set("Authorization", "Bearer "+session.AccessToken)
+	response := httptest.NewRecorder()
+	h.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("ignored endpoint was accepted: %d %s", response.Code, response.Body.String())
+	}
+}
 
 func TestIntegrationPrivateInventoryLargeTrust(t *testing.T) {
 	f, owner, _, team, _ := serviceFixture(t)

@@ -219,7 +219,7 @@ func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
 				if enabled {
 					metadata.TargetTls = publisheridentity.ServiceTargetTLS(&trust)
 				}
-				service, err = session.Authenticated().Control.ConfigureService(t.Context(), service.Id, metadata)
+				service, err = session.Authenticated().Control.ConfigureService(t.Context(), service.Id, controlv1.UpdateServiceRequest{Protocol: metadata.Protocol, TargetTls: metadata.TargetTls, PublisherPool: metadata.PublisherPool, ExpectedTrustRevision: service.TrustRevision})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -252,7 +252,7 @@ func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
 			defer unblock()
 			metadata := publisheridentity.ServiceMetadata(service)
 			metadata.TargetTls = nil
-			service, err = session.Authenticated().Control.ConfigureService(t.Context(), service.Id, metadata)
+			service, err = session.Authenticated().Control.ConfigureService(t.Context(), service.Id, controlv1.UpdateServiceRequest{Protocol: metadata.Protocol, TargetTls: metadata.TargetTls, PublisherPool: metadata.PublisherPool, ExpectedTrustRevision: service.TrustRevision})
 			if err != nil {
 				t.Fatal(err)
 			}

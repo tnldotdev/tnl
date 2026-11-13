@@ -100,7 +100,7 @@ func TestTargetlessSavedPublicURLReconciliationKeepsLocalTargetOnPolicyChanges(t
 			for _, policy := range [][]string{{"198.51.100.1/32"}, {}} {
 				config.AllowedIPPrefixes = policy
 				got, _, err := createOrLoadPublicURL(t.Context(), config)
-				if err != nil || got.Target != "" || control.updated == nil || control.updated.Target != "" || !slices.Equal(control.updated.AllowedIpPrefixes, policy) {
+				if err != nil || got.Target != "" || control.updated == nil || control.updated.Target == nil || *control.updated.Target != "" || control.updated.AllowedIpPrefixes == nil || !slices.Equal(*control.updated.AllowedIpPrefixes, policy) {
 					t.Fatalf("policy reconciliation changed target ownership: %+v, %+v, %v", got, control.updated, err)
 				}
 			}
@@ -108,7 +108,7 @@ func TestTargetlessSavedPublicURLReconciliationKeepsLocalTargetOnPolicyChanges(t
 				control.routes[0].AllowedIpPrefixes = &current
 				config.AllowedIPPrefixes = nil
 				got, _, err := createOrLoadPublicURL(t.Context(), config)
-				if err != nil || got.Target != "" || control.updated.Target != "" || control.updated.AllowedIpPrefixes == nil || len(control.updated.AllowedIpPrefixes) != 0 {
+				if err != nil || got.Target != "" || control.updated.Target == nil || *control.updated.Target != "" || control.updated.AllowedIpPrefixes == nil || len(*control.updated.AllowedIpPrefixes) != 0 {
 					t.Fatalf("integration policy did not clear to an empty array: %+v, %+v, %v", got, control.updated, err)
 				}
 			}

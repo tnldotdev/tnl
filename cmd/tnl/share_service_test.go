@@ -146,9 +146,9 @@ func TestServiceShareSelectionUsesSourceBindingAndManagerRead(t *testing.T) {
 					if r.URL.Query().Get("cursor") == "" {
 						other := scope
 						other.ProjectKey = "another-project"
-						_ = json.NewEncoder(w).Encode(controlv1.ServicePage{Services: []controlv1.Service{{Id: "svc_abcdefghijkl0123456789", Name: selector, TeamId: shareTestTeam, Source: &other}}, NextCursor: new("next")})
+						_ = json.NewEncoder(w).Encode(controlv1.ServicePage{Services: []controlv1.ServiceSummary{{Id: "svc_abcdefghijkl0123456789", Name: selector, TeamId: shareTestTeam, Source: &other}}, NextCursor: new("next")})
 					} else {
-						_ = json.NewEncoder(w).Encode(controlv1.ServicePage{Services: []controlv1.Service{{Id: shareTestService, Name: "saved-name", TeamId: shareTestTeam, Source: &scope}}})
+						_ = json.NewEncoder(w).Encode(controlv1.ServicePage{Services: []controlv1.ServiceSummary{{Id: shareTestService, Name: "saved-name", TeamId: shareTestTeam, Source: &scope}}})
 					}
 				case "/v1/services/" + shareTestService:
 					reads++
@@ -220,10 +220,10 @@ func TestServiceShareSelectionUsesSourceBindingAndManagerRead(t *testing.T) {
 					if test.name == "invalid ID" {
 						item.Id = ""
 					}
-					items := []controlv1.Service{item}
+					items := []controlv1.ServiceSummary{{Id: item.Id, TeamId: item.TeamId, Name: item.Name, Source: item.Source}}
 					if test.name == "ambiguous" {
 						item.Id = "svc_abcdefghijkl0123456789"
-						items = append(items, item)
+						items = append(items, controlv1.ServiceSummary{Id: item.Id, TeamId: item.TeamId, Name: item.Name, Source: item.Source})
 					}
 					_ = json.NewEncoder(w).Encode(controlv1.ServicePage{Services: items})
 				case "/v1/services/" + shareTestService:

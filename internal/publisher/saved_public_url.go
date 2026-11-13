@@ -150,7 +150,7 @@ func reconcilePublicURL(ctx context.Context, config Config, publicURL controlv1.
 		}
 		updated, err := management.UpdatePublicURL(ctx, publicURL.Id, controlv1.UpdatePublicURLRequest{
 			RequirePostQuantum: config.RequirePostQuantum,
-			Target:             desiredTarget, AllowedIpPrefixes: append([]string{}, desiredPolicy...),
+			Target:             new(desiredTarget), AllowedIpPrefixes: new(append([]string{}, desiredPolicy...)), ExpectedMutationRevision: publicURL.MutationRevision,
 		})
 		return updated, classifyPublicURLConflict(err)
 	}
@@ -163,7 +163,7 @@ func reconcilePublicURL(ctx context.Context, config Config, publicURL controlv1.
 	}
 	updated, err := management.UpdatePublicURL(ctx, publicURL.Id, controlv1.UpdatePublicURLRequest{
 		RequirePostQuantum: config.RequirePostQuantum,
-		Target:             desiredTarget, AllowedIpPrefixes: append([]string{}, desiredPolicy...),
+		Target:             new(desiredTarget), ExpectedMutationRevision: publicURL.MutationRevision,
 	})
 	return updated, classifyPublicURLConflict(err)
 }

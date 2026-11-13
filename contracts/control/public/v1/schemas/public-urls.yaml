@@ -171,8 +171,15 @@ schemas:
   UpdatePublicURLRequest:
     type: object
     additionalProperties: false
-    required: [target, allowed_ip_prefixes]
+    description: Change only supplied fields. Omission preserves the saved value; an empty IP list clears the IP policy. Null values and updates without a writable field are rejected. A stale revision returns conflict.
+    required: [expected_mutation_revision]
+    minProperties: 2
     properties:
+      expected_mutation_revision:
+        type: integer
+        format: int64
+        minimum: 1
+        maximum: 9007199254740991
       require_post_quantum:
         type: boolean
         description: Omit to preserve the saved public URL's requirement.

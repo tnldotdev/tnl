@@ -10,7 +10,12 @@ paths:
         - { name: team_id, in: path, required: true, schema: { type: string } }
         - { name: service_id, in: query, schema: { type: string, maxLength: 128 } }
         - { name: service, in: query, schema: { type: string, maxLength: 253 } }
-        - { name: after, in: query, schema: { type: integer, format: int64, minimum: 0 } }
+        - {
+            name: after,
+            in: query,
+            schema: { type: string, minLength: 1, maxLength: 128 },
+            description: Copy next_cursor verbatim from the previous page.,
+          }
         - { name: since, in: query, schema: { type: string, format: date-time } }
         - {
             name: limit,

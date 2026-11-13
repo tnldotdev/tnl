@@ -96,9 +96,9 @@ func TestConnectConfiguredPrivateSelectionUsesExactVisitorBinding(t *testing.T) 
 					_ = json.NewEncoder(w).Encode(controlv1.LocalProjectService{Service: "orders", WorktreeKey: worktree, ServiceKind: controlv1.LocalProjectServiceServiceKindService, ServiceId: "svc_bound", Metadata: &controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocolHTTP}})
 				case "/v1/visitor/services":
 					inventory++
-					services := []controlv1.Service{{Id: "svc_unrelated", Name: "orders", TeamId: "team_one"}, {Id: "svc_alias", Name: alias, TeamId: "team_one"}, {Id: "svc_remote", Name: group, TeamId: "team_one"}, {Id: "svc_worktree_b", Name: "orders-other-worktree", TeamId: "team_one"}, {Id: "svc_spoof", Name: "svc_bound", TeamId: "team_one"}}
+					services := []controlv1.ServiceSummary{{Id: "svc_unrelated", Name: "orders", TeamId: "team_one"}, {Id: "svc_alias", Name: alias, TeamId: "team_one"}, {Id: "svc_remote", Name: group, TeamId: "team_one"}, {Id: "svc_worktree_b", Name: "orders-other-worktree", TeamId: "team_one"}, {Id: "svc_spoof", Name: "svc_bound", TeamId: "team_one"}}
 					if !test.omitID {
-						services = append(services, controlv1.Service{Id: "svc_bound", Name: "database-scoped", TeamId: "team_one"})
+						services = append(services, controlv1.ServiceSummary{Id: "svc_bound", Name: "database-scoped", TeamId: "team_one"})
 					}
 					_ = json.NewEncoder(w).Encode(controlv1.ServicePage{Services: services})
 				default:

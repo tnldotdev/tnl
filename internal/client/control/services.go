@@ -58,7 +58,9 @@ func (c *Client) ListServices(ctx context.Context, team string) ([]controlv1.Ser
 		if err != nil {
 			return nil, err
 		}
-		all = append(all, page.Services...)
+		for _, summary := range page.Services {
+			all = append(all, serviceInventoryItem(summary))
+		}
 		if page.NextCursor == nil {
 			return all, nil
 		}
@@ -82,7 +84,9 @@ func (c *Client) ListAvailableServices(ctx context.Context) ([]controlv1.Service
 		if err != nil {
 			return nil, err
 		}
-		all = append(all, page.Services...)
+		for _, summary := range page.Services {
+			all = append(all, serviceInventoryItem(summary))
+		}
 		if page.NextCursor == nil {
 			return all, nil
 		}
@@ -92,6 +96,15 @@ func (c *Client) ListAvailableServices(ctx context.Context) ([]controlv1.Service
 		seen[*page.NextCursor] = true
 		cursor = page.NextCursor
 	}
+}
+
+// preserve the native inventory and CLI JSON shape while the HTTP contract names
+// its smaller allowlisted model explicitly.
+func serviceInventoryItem(s controlv1.ServiceSummary) controlv1.Service {
+	return controlv1.Service{Id: s.Id, TeamId: s.TeamId, DomainId: s.DomainId, Name: s.Name,
+		Placement: s.Placement, Source: s.Source, Enabled: s.Enabled, Endpoint: s.Endpoint,
+		Protocol: s.Protocol, KubernetesAuth: s.KubernetesAuth, PublisherPool: s.PublisherPool,
+		TrustRevision: s.TrustRevision, CreatedAt: s.CreatedAt, ServiceRunId: s.ServiceRunId, RunNumber: s.RunNumber}
 }
 
 func (c *Client) PrepareServiceRun(ctx context.Context, serviceID, key, publisherAccess string, declared controlv1.ServiceRunDeclaration) (controlv1.ServiceRunPreparation, error) {
@@ -107,9 +120,9 @@ func (c *Client) PrepareServiceRun(ctx context.Context, serviceID, key, publishe
 	})
 }
 
-func (c *Client) ConfigureService(ctx context.Context, id string, metadata controlv1.ServiceMetadata) (controlv1.Service, error) {
+func (c *Client) ConfigureService(ctx context.Context, id string, body controlv1.UpdateServiceRequest) (controlv1.Service, error) {
 	return requestWithAccess[controlv1.Service](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.ConfigureService(ctx, id, metadata, editors...)
+		return c.api.ConfigureService(ctx, id, body, editors...)
 	})
 }
 

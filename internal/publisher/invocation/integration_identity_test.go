@@ -71,10 +71,10 @@ func TestNativeIntegrationConfigCreatesUpdatesAndReloadsWithoutTarget(t *testing
 					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 						return nil, err
 					}
-					if body.Target != "" || body.AllowedIpPrefixes == nil {
+					if body.Target != nil || body.AllowedIpPrefixes == nil {
 						t.Errorf("integration policy update = %+v", body)
 					}
-					prefixes = slices.Clone(body.AllowedIpPrefixes)
+					prefixes = slices.Clone(*body.AllowedIpPrefixes)
 					publicURL.AllowedIpPrefixes = &prefixes
 					updates++
 					value = publicURL

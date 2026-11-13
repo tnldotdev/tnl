@@ -51,7 +51,7 @@ func nativeIntegrationConfig(ctx context.Context, database *clientstate.Database
 		currentPolicy = *publicURL.AllowedIpPrefixes
 	}
 	if !slices.Equal(currentPolicy, cfg.AllowedIPPrefixes) {
-		publicURL, err = services.routes.UpdatePublicURL(ctx, publicURL.Id, controlv1.UpdatePublicURLRequest{Target: "", AllowedIpPrefixes: cfg.AllowedIPPrefixes})
+		publicURL, err = services.routes.UpdatePublicURL(ctx, publicURL.Id, controlv1.UpdatePublicURLRequest{AllowedIpPrefixes: new(append([]string{}, cfg.AllowedIPPrefixes...)), ExpectedMutationRevision: publicURL.MutationRevision})
 		if err != nil {
 			return cfg, err
 		}

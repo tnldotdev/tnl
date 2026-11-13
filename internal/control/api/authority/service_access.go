@@ -82,7 +82,7 @@ func (h *handler) ListWebsiteServices(w http.ResponseWriter, r *http.Request, te
 		serviceAccessError(r.Context(), w, "list website services", err)
 		return
 	}
-	page := controlv1.ServicePage{Services: make([]controlv1.Service, 0, len(rows))}
+	page := controlv1.ServicePage{Services: make([]controlv1.ServiceSummary, 0, len(rows))}
 	for _, row := range rows {
 		page.Services = append(page.Services, serviceaccess.Summary(row))
 	}

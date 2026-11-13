@@ -171,7 +171,7 @@ func TestClientUpdatesPublicURL(t *testing.T) {
 		var body map[string]json.RawMessage
 		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 			t.Error(err)
-		} else if string(body["target"]) != `"http://127.0.0.1:4000"` || string(body["allowed_ip_prefixes"]) != "[]" {
+		} else if string(body["target"]) != `"http://127.0.0.1:4000"` || string(body["allowed_ip_prefixes"]) != "[]" || string(body["expected_mutation_revision"]) != "4" {
 			t.Errorf("update body = %#v", body)
 		}
 		response.Header().Set("Content-Type", "application/json")
@@ -183,7 +183,7 @@ func TestClientUpdatesPublicURL(t *testing.T) {
 		t.Fatal(err)
 	}
 	publicURL, err := client.UpdatePublicURL(t.Context(), "public_url_1", controlv1.UpdatePublicURLRequest{
-		Target: target, AllowedIpPrefixes: prefixes,
+		Target: &target, AllowedIpPrefixes: &prefixes, ExpectedMutationRevision: 4,
 	})
 	if err != nil {
 		t.Fatal(err)
