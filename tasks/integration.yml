@@ -129,6 +129,12 @@ tasks:
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./tests/integration/connector -run='^TestPostgresLocalDeployment$' -count=1 -timeout=3m -args -tnl-test-tier=integration
 
+  management-sdk:
+    desc: Check the generated HTTP management SDK against real control and disposable PostgreSQL
+    deps: [":js:build"]
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./packages/ts/test/http -run='^TestIntegrationGeneratedManagementHTTP$' -count=1 -timeout=3m -args -tnl-test-tier=integration
+
   tcp-clients:
     desc: Check both SDKs against disposable PostgreSQL and MySQL with verified TLS
     deps: [":js:build", ":py:sync"]

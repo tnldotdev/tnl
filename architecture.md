@@ -325,15 +325,16 @@ public Go SDK exposes a prepared publisher identity, not its key or control clie
 
 Edit the source, then regenerate:
 
-| Source                                                  | Generated output                                   |
-| ------------------------------------------------------- | -------------------------------------------------- |
-| `contracts/control/**/v1`                               | Four matching Go packages under `pkg/api/control`. |
-| `contracts/publisher/{local,browser}/v1`                | Two Go packages and browser API validators.        |
-| `contracts/integrations/telemetry/v1`                   | Go telemetry models and TypeScript validators.     |
-| `internal/control/state/{migrations,queries,sqlc.yaml}` | PostgreSQL access in `controlstatedb`.             |
-| `internal/client/state/{migrations,queries,sqlc.yaml}`  | SQLite access in `clientstatedb`.                  |
-| `internal/config` and its generators                    | JSON Schema, SDK configuration types, and keys.    |
-| `internal/client/project/loader.ts`                     | Embedded JavaScript loader.                        |
+| Source                                                  | Generated output                                                       |
+| ------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `contracts/control/**/v1`                               | Four matching Go packages under `pkg/api/control`.                     |
+| `contracts/control/public/v1` management operations     | Fetch-only TypeScript SDK under `packages/ts/src/internal/management`. |
+| `contracts/publisher/{local,browser}/v1`                | Two Go packages and browser API validators.                            |
+| `contracts/integrations/telemetry/v1`                   | Go telemetry models and TypeScript validators.                         |
+| `internal/control/state/{migrations,queries,sqlc.yaml}` | PostgreSQL access in `controlstatedb`.                                 |
+| `internal/client/state/{migrations,queries,sqlc.yaml}`  | SQLite access in `clientstatedb`.                                      |
+| `internal/config` and its generators                    | JSON Schema, SDK configuration types, and keys.                        |
+| `internal/client/project/loader.ts`                     | Embedded JavaScript loader.                                            |
 
 The six HTTP serving contracts follow the component serving them. Local publisher
 registration and the browser API are separate contracts. Edit their OpenAPI

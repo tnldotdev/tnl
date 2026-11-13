@@ -103,6 +103,16 @@ Zod resolvers keep closed request objects strict and JSON counters numeric; serv
 authorization and validation remain authoritative. The generator uses a pinned
 TypeScript 6 compiler API without changing the TypeScript 7 application checks.
 
+The HTTP management SDK is generated from the nine approved operations by
+`scripts/generate/management-sdk.ts`. Its stock Fetch helpers are built in a
+separate referenced TypeScript project: strict mode stays enabled, with only
+`exactOptionalPropertyTypes` disabled for generated code because Hey API 0.99
+assigns `undefined` to optional helper properties. Handwritten code and public
+consumer tests retain all repository checks. Only the stock `client`/`core`
+helpers are excluded from authored-code lint rules; generated operations,
+validators, and models remain linted, except the stock validator's escaped
+regex delimiters. Do not patch the generated runtime.
+
 The control baseline requires a fresh PostgreSQL database and a coordinated
 stop/start of all server roles. `tnld migrate` accepts only
 `TNLD_DATABASE_DIRECT_URL`; serving roles use pooled `TNLD_DATABASE_URL` and

@@ -49,6 +49,11 @@
       "import": "./dist/config.js",
       "default": "./dist/config.js"
     },
+    "./http": {
+      "types": "./dist/http.d.ts",
+      "import": "./dist/http.js",
+      "default": "./dist/http.js"
+    },
     "./workload": {
       "types": "./dist/workload.d.ts",
       "node": {
@@ -71,7 +76,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "pnpm run clean && tsc --project tsconfig.json && node ../../scripts/package/node-licenses.ts",
+    "build": "pnpm run clean && tsc --build tsconfig.management.json --force && tsc --project tsconfig.json && node ../../scripts/package/node-licenses.ts",
     "clean": "node --input-type=module -e 'import {rmSync} from \"node:fs\"; rmSync(\"dist\", {recursive:true, force:true})'",
     "prepack": "pnpm run build"
   },
