@@ -88,7 +88,7 @@ tasks:
       - go -C tools/testharness run . --tnl-test-shard='{{.SHARD}}' postgres -- go test -race -v ./cmd/tnl -run='{{.RUN}}' -skip='{{.SKIP}}' -count=1 -timeout='{{.TIMEOUT}}' -args -tnl-test-tier=integration
 
   cli:shard:
-    desc: Run an ordinary CLI shard, excluding the separately scheduled real-clock identity proof
+    desc: Run an ordinary CLI shard, excluding the separately scheduled identity restart smoke
     requires:
       vars: [SHARD]
     cmds:
@@ -98,7 +98,7 @@ tasks:
           SKIP: ^TestIntegrationCLINamedLocalIdentityContinuity$
 
   cli:identity:
-    desc: Cross three complete local owner and Git transitions
+    desc: Check one joined CLI owner restart across local Git identity changes
     cmds:
       - task: cli
         vars:
