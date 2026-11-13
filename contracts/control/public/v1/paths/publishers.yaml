@@ -5,13 +5,7 @@ paths:
       tags: [publisher-runtime]
       summary: Inspect a publisher runtime
       security: []
-      description: >-
-        Read the runtime epoch without recording an address. A one-use Ed25519
-        assertion binds this endpoint, publisher identity, inspect action, scope,
-        process run, expected epoch, and deployment report. The body's identity
-        and action must match the route.
-        Authentication is the signed assertion in the JSON body, not a bearer
-        token; the empty security array does not mean anonymous access.
+      description: "Read the runtime epoch without recording an address. Send a one-use signed assertion for this endpoint in the body. The body's publisher identity and action must match the route."
       requestBody:
         required: true
         content:
@@ -34,7 +28,7 @@ paths:
       tags: [publisher-runtime]
       summary: Start a publisher runtime
       security: []
-      description: Compare the inspected epoch and start one process run. The one-use assertion binds this endpoint, publisher identity, start action, scope, process run, epoch, and deployment report. A retry retains the same process run and expected epoch. Control records only the validated request source, never a body address. Group start also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+      description: "Start a process run if the inspected epoch still matches. Send a one-use signed assertion for this endpoint in the body, with matching publisher identity and action. After an uncertain response, keep the same process run and expected epoch but use a fresh assertion. Group runtimes also receive a group lease."
       requestBody:
         required: true
         content:
@@ -55,7 +49,7 @@ paths:
       tags: [publisher-runtime]
       summary: Renew a publisher runtime
       security: []
-      description: Renew only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, renew action, scope, process run, epoch, and deployment report. Control records only the validated request source, never a body address. Group renew also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+      description: "Renew the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route. Group runtimes also receive a group lease."
       requestBody:
         required: true
         content:
@@ -76,7 +70,7 @@ paths:
       tags: [publisher-runtime]
       summary: Stop a publisher runtime
       security: []
-      description: Stop only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, stop action, scope, process run, epoch, and deployment report. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+      description: "Stop the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route."
       requestBody:
         required: true
         content:

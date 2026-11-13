@@ -66,7 +66,7 @@ schemas:
       connection_deadline:
         type: string
         format: date-time
-        description: Guest observation bound, including idle connections after readiness. When present, ingress requires the run's ready routing projection before forwarding visitors, and ingress and publisher bind connections to this policy's locally confirmed lifetime. Enabled policy valid_until must not exceed this deadline. Preparation policy can be installed and acknowledged without granting visitor permission.
+        description: "Latest allowed lifetime for guest visitor connections, including idle connections. Ingress forwards visitors only after the run is ready; ingress and publisher keep connections within this deadline. An enabled policy's valid_until cannot exceed it. Installing preparation policy does not grant visitor access."
       enabled: { type: boolean }
       anonymous: { type: boolean }
       verification_keys:

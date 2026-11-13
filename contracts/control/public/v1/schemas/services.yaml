@@ -3,7 +3,7 @@ schemas:
     type: object
     additionalProperties: false
     required: [protocol, publisher_pool, expected_trust_revision]
-    description: Replace approved protocol, publisher pool and target trust. Omit target_tls to remove it. Copy trust_revision from the service into expected_trust_revision; stale revisions return conflict. Endpoint and placement are not writable here.
+    description: "Replacement service settings. Copy trust_revision into expected_trust_revision; a stale revision is rejected. Omit target_tls to remove it. Endpoint and placement are not writable here."
     properties:
       expected_trust_revision:
         { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
@@ -137,7 +137,7 @@ schemas:
   ServiceSummary:
     type: object
     additionalProperties: false
-    description: Inventory identity, placement and selection hints. Never includes target trust, targets, credentials or publisher HTTP limits.
+    description: "Service identity, placement, and an optional run. Omits target trust, target addresses, credentials, and publisher HTTP limits."
     required: [id, team_id, name, enabled, created_at, protocol, publisher_pool, trust_revision]
     dependentRequired:
       service_run_id: [run_number]
@@ -223,7 +223,7 @@ schemas:
   ServiceInvitationCreation:
     type: object
     additionalProperties: false
-    description: One-time credential for POST /v1/service-invitations/accept using {secret} after verified-email sign-in. No invitation UI origin is configured by this API. Give the recipient this credential and the control URL; tnl share service invite accept accepts it. Exact creation retries return credential_delivery_unavailable with details.resource_id; revoke and reissue with a new key if delivery was lost. Acceptance is one-use; revocation also revokes the accepted grant.
+    description: "Creation-only invitation metadata and credential. After signing in with the invited verified email, the recipient sends {secret: credential} to /v1/service-invitations/accept. Credentials cannot be recovered; an exact creation retry returns credential_delivery_unavailable with the invitation ID so you can revoke and reissue it."
     required: [invitation, credential]
     properties:
       invitation: { $ref: "../openapi.yaml#/components/schemas/ServiceInvitation" }

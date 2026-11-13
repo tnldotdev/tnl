@@ -215,12 +215,7 @@ schemas:
     type: object
     additionalProperties: false
     required: [schema_version, head_commit, project_path, branch, changed_files, complete]
-    description: >-
-      Bounded Git identifiers for the source present in one project directory.
-      Compare HEAD, project_path, and changed_files only when both records are
-      complete. Branch names and index state do not affect matching. Source
-      bytes and absolute paths are not stored. Ignored files are outside this
-      comparison; an unsupported or truncated capture is incomplete.
+    description: "Git identifiers captured for one project directory. Compare HEAD, project_path, and changed_files only when both captures are complete. Branch names, staging, and ignored files do not affect matching. File contents and absolute paths are not stored; truncated or unsupported captures are incomplete."
     properties:
       schema_version:
         $ref: "../openapi.yaml#/components/schemas/ReviewSchemaVersion"

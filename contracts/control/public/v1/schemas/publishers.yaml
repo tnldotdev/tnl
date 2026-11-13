@@ -20,12 +20,7 @@ schemas:
   PublisherDeploymentReport:
     type: object
     additionalProperties: false
-    description: >-
-      Optional, bounded metadata reported by a signed group publisher process.
-      The runtime assertion binds every field. It supplies no tenant, group, or
-      publisher authority and is not AWS attestation. Values stay fixed within
-      a process run. Deployment, provider, replica and instance stay bound to
-      the same publisher identity across replacement processes.
+    description: "Deployment metadata reported by a group publisher and covered by its signed runtime assertion. It is not cloud attestation or permission. Values cannot change within a process run; deployment, provider, replica, and instance remain bound to the publisher identity across restarts."
     required:
       [
         deployment_id,
@@ -55,13 +50,7 @@ schemas:
   PublisherDeploymentObservation:
     type: object
     additionalProperties: false
-    description: >-
-      A deployment report accepted through the signed runtime lifecycle.
-      Publisher and team are the surrounding runtime's authenticated identity;
-      group_id is derived by control from current publisher membership.
-      Timestamps are control receipt times. This is evidence of a publisher
-      report, not cloud deployment state, image attestation or target health.
-      The group/deployment/replica tuple is reserved for this publisher identity.
+    description: "An accepted publisher deployment report, with control receipt times and a control-derived group_id. It does not prove cloud state, image identity, or target health. The group/deployment/replica combination belongs to this publisher identity."
     required: [report, group_id, evidence, first_observed_at, observed_at]
     properties:
       report: { $ref: "../openapi.yaml#/components/schemas/PublisherDeploymentReport" }
@@ -79,12 +68,7 @@ schemas:
   PublisherRuntimeStatus:
     type: object
     additionalProperties: false
-    description: >-
-      Latest explicitly started runtime for this immutable publisher identity.
-      A single bounded record survives stop and lease expiry. Active describes
-      the runtime lease, not target reachability or a permanent static IP.
-      Control egress may differ from database-target routing, address family,
-      or NAT. This evidence never grants access or configures an allowlist.
+    description: "Last explicitly started runtime for this publisher identity, retained after stop or lease expiry. Active means its lease is live, not that the target is reachable or its egress IP is fixed. The source address seen by control can differ from the address used to reach targets and grants no access."
     required:
       [
         publisher_identity_id,

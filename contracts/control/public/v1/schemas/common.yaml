@@ -2,37 +2,37 @@ securitySchemes:
   workloadAuth:
     type: http
     scheme: bearer
-    description: Visitor-only workload credential. Never accepted as a control session or publisher credential.
+    description: "Visitor-only workload credential. It cannot manage resources or publish services."
   bearerAuth:
     type: http
     scheme: bearer
     bearerFormat: tnl access token
-    description: Current control session access token. Does not stand in for a publisher, run, group lease, guest trial, or workload credential.
+    description: "Access token for a signed-in control session."
   publishRunAuth:
     type: http
     scheme: bearer
     bearerFormat: tnl publish-run token
-    description: Token for one public URL publish run, returned when that run is created. Not a control session or publisher access token.
+    description: "Token for one public URL publish run, returned when the run is created."
   serviceRunAuth:
     type: http
     scheme: bearer
     bearerFormat: tnl service run token
-    description: Token for one service run, returned when that prepared run is started. Not a publisher access token.
+    description: "Token for one service run, returned when the prepared run is started."
   publisherAuth:
     type: http
     scheme: bearer
     bearerFormat: tnl grant-scoped publisher access token
-    description: Short-lived pta_ token obtained by exchanging a signed publisher assertion with the authority API. Authorizes only its exact publisher grant, not a group lease or an existing run token.
+    description: "Short-lived pta_ token for one publisher grant. Obtain it from the authority API using a signed assertion."
   publisherGroupLeaseAuth:
     type: http
     scheme: bearer
     bearerFormat: tnl publisher group lease
-    description: Short-lived pgl_ lease returned by group lease acquisition or group runtime start/renew. Authorizes assignments and configuration acknowledgements for one replica; a pta_ publisher access token is not accepted.
+    description: "A pgl_ lease for one publisher-group member. Use it to read assignments and acknowledge configuration."
   guestAuth:
     type: http
     scheme: bearer
     bearerFormat: tnl guest trial credential
-    description: Restricted credential returned by guest demo creation. Bound to the guest trial and its source-address policy; not a signed-in control session.
+    description: "Guest demo credential, limited by the trial's deadline and source-address policy."
 parameters:
   ServiceID:
     name: service_id

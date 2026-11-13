@@ -1822,7 +1822,7 @@ type AllocateEphemeralPublicURLRequest struct {
 type AppendFeedbackEventRequest struct {
 	Evidence *FeedbackEvidence `json:"evidence,omitempty"`
 
-	// SourceState Bounded Git identifiers for the source present in one project directory. Compare HEAD, project_path, and changed_files only when both records are complete. Branch names and index state do not affect matching. Source bytes and absolute paths are not stored. Ignored files are outside this comparison; an unsupported or truncated capture is incomplete.
+	// SourceState Git identifiers captured for one project directory. Compare HEAD, project_path, and changed_files only when both captures are complete. Branch names, staging, and ignored files do not affect matching. File contents and absolute paths are not stored; truncated or unsupported captures are incomplete.
 	SourceState *SourceState           `json:"source_state,omitempty"`
 	Text        *string                `json:"text,omitempty"`
 	Type        FeedbackEventInputType `json:"type"`
@@ -1834,7 +1834,7 @@ type AppendReviewerFeedbackEventRequest struct {
 	Evidence         *FeedbackEvidence      `json:"evidence,omitempty"`
 	PublishRunNumber int64                  `json:"publish_run_number"`
 
-	// SourceState Bounded Git identifiers for the source present in one project directory. Compare HEAD, project_path, and changed_files only when both records are complete. Branch names and index state do not affect matching. Source bytes and absolute paths are not stored. Ignored files are outside this comparison; an unsupported or truncated capture is incomplete.
+	// SourceState Git identifiers captured for one project directory. Compare HEAD, project_path, and changed_files only when both captures are complete. Branch names, staging, and ignored files do not affect matching. File contents and absolute paths are not stored; truncated or unsupported captures are incomplete.
 	SourceState *SourceState                   `json:"source_state,omitempty"`
 	Text        *string                        `json:"text,omitempty"`
 	Type        ReviewerFeedbackEventInputType `json:"type"`
@@ -2071,7 +2071,7 @@ type ConnectorPeerPairBindingState string
 type ConnectorPeerPairCandidate struct {
 	DeliveryGeneration int64 `json:"delivery_generation"`
 
-	// OwnerAuthority Current authority for an already installed retained owner in this exact publisher run. This observation contains no delivery key, does not authorize packets or application bytes, and does not renew a relay claim, installation, path proof, or application permission. It remains available during temporary relay loss; an expired local owner cannot be revived by a later observation.
+	// OwnerAuthority Current authorization for an installed connector owner in this publisher run. It contains no delivery key and does not renew any relay claim, installation, path proof, or visitor permission. It can be read during relay loss but cannot revive an expired owner.
 	OwnerAuthority *ConnectorPeerPairOwnerAuthority `json:"owner_authority,omitempty"`
 	PairId         string                           `json:"pair_id"`
 }
@@ -2116,7 +2116,7 @@ type ConnectorPeerPairDelivery struct {
 	TrustRevision int64          `json:"trust_revision,omitempty"`
 }
 
-// ConnectorPeerPairOwnerAuthority Current authority for an already installed retained owner in this exact publisher run. This observation contains no delivery key, does not authorize packets or application bytes, and does not renew a relay claim, installation, path proof, or application permission. It remains available during temporary relay loss; an expired local owner cannot be revived by a later observation.
+// ConnectorPeerPairOwnerAuthority Current authorization for an installed connector owner in this publisher run. It contains no delivery key and does not renew any relay claim, installation, path proof, or visitor permission. It can be read during relay loss but cannot revive an expired owner.
 type ConnectorPeerPairOwnerAuthority struct {
 	ExpiresAt  time.Time `json:"expires_at"`
 	ObservedAt time.Time `json:"observed_at"`
@@ -2232,7 +2232,7 @@ type ConnectorPeerPairRenewal struct {
 	VisitorPermission VisitorTokenResponse `json:"visitor_permission"`
 }
 
-// ConnectorPeerPairRequest Sign the canonical ConnectorPeerPairProofMessage Go v1 array, not the snake_case HTTP object. Source is selected by kind; a device uses the sole control bearer, a workload uses its credential and no control bearer. Each connector owner creates with a distinct idempotency key and retains that stable owner key across create, renew and replace. A pair ID and generation alone never prove ownership. Replacement also names the exact predecessor and issues a new pair, delivery ID, key and generation; it does not transfer a running session. An uncertain response repeats the exact signed request, including its timestamp, action and owner key.
+// ConnectorPeerPairRequest Sign the v1 ConnectorPeerPairProofMessage array, not this HTTP JSON object. Device sources require their control session; workload sources use the body credential and omit Authorization. Keep one idempotency key for the connector owner's lifetime. Replacement names the exact predecessor and creates a new pair; IDs and generations do not prove ownership. After an uncertain response, resend the identical signed request, including timestamp, action, and owner key.
 type ConnectorPeerPairRequest struct {
 	Action              ConnectorPeerPairRequestAction `json:"action"`
 	ExpectedRelays      []ConnectorPeerPairRelay       `json:"expected_relays"`
@@ -2311,7 +2311,7 @@ type CreateFeedbackReportRequest struct {
 	} `json:"report"`
 	Service string `json:"service"`
 
-	// SourceAtReport Bounded Git identifiers for the source present in one project directory. Compare HEAD, project_path, and changed_files only when both records are complete. Branch names and index state do not affect matching. Source bytes and absolute paths are not stored. Ignored files are outside this comparison; an unsupported or truncated capture is incomplete.
+	// SourceAtReport Git identifiers captured for one project directory. Compare HEAD, project_path, and changed_files only when both captures are complete. Branch names, staging, and ignored files do not affect matching. File contents and absolute paths are not stored; truncated or unsupported captures are incomplete.
 	SourceAtReport SourceState `json:"source_at_report"`
 }
 
@@ -2507,7 +2507,7 @@ type FeedbackEvent struct {
 	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
 	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
 
-	// SourceState Bounded Git identifiers for the source present in one project directory. Compare HEAD, project_path, and changed_files only when both records are complete. Branch names and index state do not affect matching. Source bytes and absolute paths are not stored. Ignored files are outside this comparison; an unsupported or truncated capture is incomplete.
+	// SourceState Git identifiers captured for one project directory. Compare HEAD, project_path, and changed_files only when both captures are complete. Branch names, staging, and ignored files do not affect matching. File contents and absolute paths are not stored; truncated or unsupported captures are incomplete.
 	SourceState *SourceState      `json:"source_state,omitempty"`
 	Text        *string           `json:"text,omitempty"`
 	Type        FeedbackEventType `json:"type"`
@@ -2609,7 +2609,7 @@ type FeedbackThread struct {
 	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
 	Scope         FeedbackScope       `json:"scope"`
 
-	// SourceAtReport Bounded Git identifiers for the source present in one project directory. Compare HEAD, project_path, and changed_files only when both records are complete. Branch names and index state do not affect matching. Source bytes and absolute paths are not stored. Ignored files are outside this comparison; an unsupported or truncated capture is incomplete.
+	// SourceAtReport Git identifiers captured for one project directory. Compare HEAD, project_path, and changed_files only when both captures are complete. Branch names, staging, and ignored files do not affect matching. File contents and absolute paths are not stored; truncated or unsupported captures are incomplete.
 	SourceAtReport SourceState         `json:"source_at_report"`
 	State          FeedbackThreadState `json:"state"`
 }
@@ -2641,11 +2641,13 @@ type FeedbackThreadSummary struct {
 	State         FeedbackThreadState `json:"state"`
 }
 
-// GitProjectSource defines model for GitProjectSource.
+// GitProjectSource Repository origin and configuration path used to identify a project. These facts are a locator, not proof of repository ownership.
 type GitProjectSource struct {
 	// ConfigurationPath Repository-relative configuration filename using forward slashes. Absolute paths and parent traversal are rejected.
 	ConfigurationPath string `json:"configuration_path"`
-	GitOrigin         string `json:"git_origin"`
+
+	// GitOrigin Network Git remote URL. Do not include private credentials; transport and login details do not affect project identity.
+	GitOrigin string `json:"git_origin"`
 }
 
 // GuestDemoNumber defines model for GuestDemoNumber.
@@ -2792,7 +2794,7 @@ type PreviewPageFeedbackRequest struct {
 	State            *FeedbackThreadState   `json:"state,omitempty"`
 }
 
-// PreviewSummary defines model for PreviewSummary.
+// PreviewSummary A preview created by the current identity. Fetch its detail for the included public URLs.
 type PreviewSummary struct {
 	CreatedAt time.Time `json:"created_at"`
 	Id        PreviewID `json:"id"`
@@ -2906,7 +2908,7 @@ type ProjectServiceConfiguration struct {
 	// TargetDiscovery Exact provider selector resolved by the assigned publisher with its own AWS credentials. Control does not discover targets or credentials. EKS requires kubernetes; RDS requires postgres or mysql, verified against provider metadata.
 	TargetDiscovery *ProjectTargetDiscovery `json:"target_discovery,omitempty"`
 
-	// TargetTls Publisher-to-target TLS trust, independent of visitor TLS. The protocol selects native negotiation. ca_pem is a CA-only snapshot added to the publisher's system roots. Control derives digest from hostname and ca_pem and includes it in normalized output. A supplied digest must match; callers do not need to compute it.
+	// TargetTls Publisher-to-target TLS trust, separate from visitor TLS. ca_pem adds CA certificates to the publisher's system roots. Control computes digest from the exact hostname and CA bytes. Omit it when changing trust settings; a supplied digest must match.
 	TargetTls *ProjectTargetTLS `json:"target_tls,omitempty"`
 }
 
@@ -2936,14 +2938,14 @@ type ProjectServicePublicURL struct {
 	RequirePostQuantum *bool                `json:"require_post_quantum,omitempty"`
 }
 
-// ProjectSourceIdentity defines model for ProjectSourceIdentity.
+// ProjectSourceIdentity Server-derived source identity. Use project_key to read or apply configuration; callers do not need to compute the fingerprint.
 type ProjectSourceIdentity struct {
 	ProjectKey        string `json:"project_key"`
 	ProjectLabel      string `json:"project_label"`
 	SourceFingerprint string `json:"source_fingerprint"`
 }
 
-// ProjectSummary defines model for ProjectSummary.
+// ProjectSummary Saved project identity and configuration revision. Fetch configuration separately to read or edit its declarations.
 type ProjectSummary struct {
 	ProjectKey   string    `json:"project_key"`
 	ProjectLabel string    `json:"project_label"`
@@ -2967,11 +2969,14 @@ type ProjectTargetDiscoveryEndpoint string
 // ProjectTargetDiscoveryType defines model for ProjectTargetDiscovery.Type.
 type ProjectTargetDiscoveryType string
 
-// ProjectTargetTLS Publisher-to-target TLS trust, independent of visitor TLS. The protocol selects native negotiation. ca_pem is a CA-only snapshot added to the publisher's system roots. Control derives digest from hostname and ca_pem and includes it in normalized output. A supplied digest must match; callers do not need to compute it.
+// ProjectTargetTLS Publisher-to-target TLS trust, separate from visitor TLS. ca_pem adds CA certificates to the publisher's system roots. Control computes digest from the exact hostname and CA bytes. Omit it when changing trust settings; a supplied digest must match.
 type ProjectTargetTLS struct {
-	CaPem    *string `json:"ca_pem,omitempty"`
-	Digest   string  `json:"digest,omitempty"`
-	Hostname string  `json:"hostname"`
+	// CaPem CA certificates in PEM format, not a file path or URL. Do not include private keys.
+	CaPem *string `json:"ca_pem,omitempty"`
+
+	// Digest Computed by control and included in resolved configuration. Callers may omit it.
+	Digest   string `json:"digest,omitempty"`
+	Hostname string `json:"hostname"`
 }
 
 // ProjectWebhook defines model for ProjectWebhook.
@@ -3157,21 +3162,21 @@ type PublisherConnectionID = ResourceID
 // PublisherConnectionState defines model for PublisherConnectionState.
 type PublisherConnectionState string
 
-// PublisherDeploymentObservation A deployment report accepted through the signed runtime lifecycle. Publisher and team are the surrounding runtime's authenticated identity; group_id is derived by control from current publisher membership. Timestamps are control receipt times. This is evidence of a publisher report, not cloud deployment state, image attestation or target health. The group/deployment/replica tuple is reserved for this publisher identity.
+// PublisherDeploymentObservation An accepted publisher deployment report, with control receipt times and a control-derived group_id. It does not prove cloud state, image identity, or target health. The group/deployment/replica combination belongs to this publisher identity.
 type PublisherDeploymentObservation struct {
 	Evidence        PublisherDeploymentObservationEvidence `json:"evidence"`
 	FirstObservedAt time.Time                              `json:"first_observed_at"`
 	GroupId         string                                 `json:"group_id"`
 	ObservedAt      time.Time                              `json:"observed_at"`
 
-	// Report Optional, bounded metadata reported by a signed group publisher process. The runtime assertion binds every field. It supplies no tenant, group, or publisher authority and is not AWS attestation. Values stay fixed within a process run. Deployment, provider, replica and instance stay bound to the same publisher identity across replacement processes.
+	// Report Deployment metadata reported by a group publisher and covered by its signed runtime assertion. It is not cloud attestation or permission. Values cannot change within a process run; deployment, provider, replica, and instance remain bound to the publisher identity across restarts.
 	Report PublisherDeploymentReport `json:"report"`
 }
 
 // PublisherDeploymentObservationEvidence defines model for PublisherDeploymentObservation.Evidence.
 type PublisherDeploymentObservationEvidence string
 
-// PublisherDeploymentReport Optional, bounded metadata reported by a signed group publisher process. The runtime assertion binds every field. It supplies no tenant, group, or publisher authority and is not AWS attestation. Values stay fixed within a process run. Deployment, provider, replica and instance stay bound to the same publisher identity across replacement processes.
+// PublisherDeploymentReport Deployment metadata reported by a group publisher and covered by its signed runtime assertion. It is not cloud attestation or permission. Values cannot change within a process run; deployment, provider, replica, and instance remain bound to the publisher identity across restarts.
 type PublisherDeploymentReport struct {
 	DeploymentId string `json:"deployment_id"`
 
@@ -3282,7 +3287,7 @@ type PublisherGroupMemberStatus struct {
 	ProjectKey          string     `json:"project_key"`
 	PublisherIdentityId string     `json:"publisher_identity_id"`
 
-	// Runtime Latest explicitly started runtime for this immutable publisher identity. A single bounded record survives stop and lease expiry. Active describes the runtime lease, not target reachability or a permanent static IP. Control egress may differ from database-target routing, address family, or NAT. This evidence never grants access or configures an allowlist.
+	// Runtime Last explicitly started runtime for this publisher identity, retained after stop or lease expiry. Active means its lease is live, not that the target is reachable or its egress IP is fixed. The source address seen by control can differ from the address used to reach targets and grants no access.
 	Runtime    *PublisherRuntimeStatus `json:"runtime,omitempty"`
 	SnapshotAt time.Time               `json:"snapshot_at"`
 	TeamId     string                  `json:"team_id"`
@@ -3319,7 +3324,7 @@ type PublisherIdentity struct {
 	Ownership         PublisherIdentityOwnership `json:"ownership"`
 	RevokedAt         *time.Time                 `json:"revoked_at,omitempty"`
 
-	// Runtime Latest explicitly started runtime for this immutable publisher identity. A single bounded record survives stop and lease expiry. Active describes the runtime lease, not target reachability or a permanent static IP. Control egress may differ from database-target routing, address family, or NAT. This evidence never grants access or configures an allowlist.
+	// Runtime Last explicitly started runtime for this publisher identity, retained after stop or lease expiry. Active means its lease is live, not that the target is reachable or its egress IP is fixed. The source address seen by control can differ from the address used to reach targets and grants no access.
 	Runtime *PublisherRuntimeStatus `json:"runtime,omitempty"`
 }
 
@@ -3340,7 +3345,7 @@ type PublisherRuntimeRequest struct {
 	Action    PublisherRuntimeRequestAction `json:"action"`
 	Assertion string                        `json:"assertion"`
 
-	// Deployment Optional, bounded metadata reported by a signed group publisher process. The runtime assertion binds every field. It supplies no tenant, group, or publisher authority and is not AWS attestation. Values stay fixed within a process run. Deployment, provider, replica and instance stay bound to the same publisher identity across replacement processes.
+	// Deployment Deployment metadata reported by a group publisher and covered by its signed runtime assertion. It is not cloud attestation or permission. Values cannot change within a process run; deployment, provider, replica, and instance remain bound to the publisher identity across restarts.
 	Deployment          *PublisherDeploymentReport `json:"deployment,omitempty"`
 	ExpectedEpoch       int64                      `json:"expected_epoch"`
 	ProcessRunId        string                     `json:"process_run_id"`
@@ -3360,7 +3365,7 @@ type PublisherRuntimeResponse struct {
 	LeaseExpiresAt *time.Time           `json:"lease_expires_at,omitempty"`
 }
 
-// PublisherRuntimeStatus Latest explicitly started runtime for this immutable publisher identity. A single bounded record survives stop and lease expiry. Active describes the runtime lease, not target reachability or a permanent static IP. Control egress may differ from database-target routing, address family, or NAT. This evidence never grants access or configures an allowlist.
+// PublisherRuntimeStatus Last explicitly started runtime for this publisher identity, retained after stop or lease expiry. Active means its lease is live, not that the target is reachable or its egress IP is fixed. The source address seen by control can differ from the address used to reach targets and grants no access.
 type PublisherRuntimeStatus struct {
 	Active bool `json:"active"`
 
@@ -3368,7 +3373,7 @@ type PublisherRuntimeStatus struct {
 	Address       *string                             `json:"address,omitempty"`
 	AddressFamily PublisherRuntimeStatusAddressFamily `json:"address_family"`
 
-	// Deployment A deployment report accepted through the signed runtime lifecycle. Publisher and team are the surrounding runtime's authenticated identity; group_id is derived by control from current publisher membership. Timestamps are control receipt times. This is evidence of a publisher report, not cloud deployment state, image attestation or target health. The group/deployment/replica tuple is reserved for this publisher identity.
+	// Deployment An accepted publisher deployment report, with control receipt times and a control-derived group_id. It does not prove cloud state, image identity, or target health. The group/deployment/replica combination belongs to this publisher identity.
 	Deployment          *PublisherDeploymentObservation `json:"deployment,omitempty"`
 	Epoch               int64                           `json:"epoch"`
 	Evidence            PublisherRuntimeStatusEvidence  `json:"evidence"`
@@ -3669,7 +3674,7 @@ type ServiceInvitation struct {
 	ServiceId  ServiceID           `json:"service_id"`
 }
 
-// ServiceInvitationCreation One-time credential for POST /v1/service-invitations/accept using {secret} after verified-email sign-in. No invitation UI origin is configured by this API. Give the recipient this credential and the control URL; tnl share service invite accept accepts it. Exact creation retries return credential_delivery_unavailable with details.resource_id; revoke and reissue with a new key if delivery was lost. Acceptance is one-use; revocation also revokes the accepted grant.
+// ServiceInvitationCreation Creation-only invitation metadata and credential. After signing in with the invited verified email, the recipient sends {secret: credential} to /v1/service-invitations/accept. Credentials cannot be recovered; an exact creation retry returns credential_delivery_unavailable with the invitation ID so you can revoke and reissue it.
 type ServiceInvitationCreation struct {
 	Credential string            `json:"credential"`
 	Invitation ServiceInvitation `json:"invitation"`
@@ -3842,7 +3847,7 @@ type ServiceSelection struct {
 	TrustRevision int64          `json:"trust_revision"`
 }
 
-// ServiceSummary Inventory identity, placement and selection hints. Never includes target trust, targets, credentials or publisher HTTP limits.
+// ServiceSummary Service identity, placement, and an optional run. Omits target trust, target addresses, credentials, and publisher HTTP limits.
 type ServiceSummary struct {
 	CreatedAt time.Time `json:"created_at"`
 	DomainId  *DomainID `json:"domain_id,omitempty"`
@@ -3903,7 +3908,7 @@ type Share struct {
 // ShareScope defines model for Share.Scope.
 type ShareScope string
 
-// ShareCreation One-time delivery. Save the complete link or token_source before discarding this response. Control retains only a digest; an exact retry returns credential_delivery_unavailable with details.resource_id after current authorization. Revoke that ID and create with a new key if delivery was lost. Expiry and captured public URLs never change on retry.
+// ShareCreation The share, a link for reviewers, and a token source for visitor-token requests. Keep these values: lists and detail reads do not return secrets. An identical retry returns credential_delivery_unavailable with the existing share ID.
 type ShareCreation struct {
 	Link        string                  `json:"link"`
 	Share       Share                   `json:"share"`
@@ -3953,7 +3958,7 @@ type SourceFileState struct {
 // SourceFileStateStatus Working-tree change from HEAD; staging does not affect this value
 type SourceFileStateStatus string
 
-// SourceState Bounded Git identifiers for the source present in one project directory. Compare HEAD, project_path, and changed_files only when both records are complete. Branch names and index state do not affect matching. Source bytes and absolute paths are not stored. Ignored files are outside this comparison; an unsupported or truncated capture is incomplete.
+// SourceState Git identifiers captured for one project directory. Compare HEAD, project_path, and changed_files only when both captures are complete. Branch names, staging, and ignored files do not affect matching. File contents and absolute paths are not stored; truncated or unsupported captures are incomplete.
 type SourceState struct {
 	// Branch Informational branch name; empty for detached HEAD or when unavailable
 	Branch string `json:"branch"`
@@ -4009,7 +4014,7 @@ type TrafficSelection struct {
 	UploadBytes *int64 `json:"upload_bytes,omitempty"`
 }
 
-// UpdatePublicURLRequest Change only supplied fields. Omission preserves the saved value; an empty IP list clears the IP policy. Null values and updates without a writable field are rejected. A stale revision returns conflict.
+// UpdatePublicURLRequest A partial edit that requires the saved mutation revision. Omission keeps a field; an empty IP list clears it. Null values and edits without a writable field are rejected.
 type UpdatePublicURLRequest struct {
 	AllowedIpPrefixes        *[]string `json:"allowed_ip_prefixes,omitempty"`
 	ExpectedMutationRevision int64     `json:"expected_mutation_revision"`
@@ -4021,7 +4026,7 @@ type UpdatePublicURLRequest struct {
 	Target *string `json:"target,omitempty"`
 }
 
-// UpdateServiceRequest Replace approved protocol, publisher pool and target trust. Omit target_tls to remove it. Copy trust_revision from the service into expected_trust_revision; stale revisions return conflict. Endpoint and placement are not writable here.
+// UpdateServiceRequest Replacement service settings. Copy trust_revision into expected_trust_revision; a stale revision is rejected. Omit target_tls to remove it. Endpoint and placement are not writable here.
 type UpdateServiceRequest struct {
 	ExpectedTrustRevision int64           `json:"expected_trust_revision"`
 	Protocol              ServiceProtocol `json:"protocol"`
@@ -4083,7 +4088,7 @@ type VisitorInvitation struct {
 	RevokedAt          *time.Time  `json:"revoked_at,omitempty"`
 }
 
-// VisitorInvitationCreation One-time credential for POST /v1/visitor-invitations/accept using {secret} after signing in with the current verified recipient email. No invitation UI origin is configured by this API. Give the recipient the complete credential and control URL; tnl share invite accept accepts it. Exact creation retries return credential_delivery_unavailable with details.resource_id; revoke and reissue with a new key if delivery was lost.
+// VisitorInvitationCreation Creation-only invitation metadata and credential. After signing in with the invited verified email, the recipient sends {secret: credential} to /v1/visitor-invitations/accept. Credentials cannot be recovered; an exact creation retry returns credential_delivery_unavailable with the invitation ID so you can revoke and reissue it.
 type VisitorInvitationCreation struct {
 	Credential string            `json:"credential"`
 	Invitation VisitorInvitation `json:"invitation"`
@@ -4099,7 +4104,7 @@ type VisitorPolicyIP struct {
 type VisitorPolicySnapshot struct {
 	Anonymous bool `json:"anonymous"`
 
-	// ConnectionDeadline Guest observation bound, including idle connections after readiness. When present, ingress requires the run's ready routing projection before forwarding visitors, and ingress and publisher bind connections to this policy's locally confirmed lifetime. Enabled policy valid_until must not exceed this deadline. Preparation policy can be installed and acknowledged without granting visitor permission.
+	// ConnectionDeadline Latest allowed lifetime for guest visitor connections, including idle connections. Ingress forwards visitors only after the run is ready; ingress and publisher keep connections within this deadline. An enabled policy's valid_until cannot exceed it. Installing preparation policy does not grant visitor access.
 	ConnectionDeadline *time.Time       `json:"connection_deadline,omitempty"`
 	Enabled            bool             `json:"enabled"`
 	Hostname           string           `json:"hostname"`
@@ -5045,21 +5050,21 @@ type ClientInterface interface {
 
 	// CompletePreviewBrowserLogin Return a signed-in visitor to the preview
 	//
-	// Complete the identity provider callback using the pending login state and authorization code, then redirect to a one-time host-bound handoff. No bearer token is used; the callback is authenticated by the checked login flow, not by the empty security array.
+	// Check the pending login state and authorization code, then redirect the browser to a one-time publisher handoff. This callback uses the checked sign-in flow, not a bearer token.
 	//
 	// Corresponds with GET /v1/browser/callback (the `CompletePreviewBrowserLogin` operationId).
 	CompletePreviewBrowserLogin(ctx context.Context, params *CompletePreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// BeginPreviewBrowserLogin Start sign-in for a preview visitor
 	//
-	// Begin the configured browser sign-in flow for a public URL, optionally within a preview. No bearer credential is required to begin sign-in; current visit permission is checked before a usable browser credential is issued.
+	// Start browser sign-in for a public URL, optionally within a preview. Navigate to this URL rather than fetching JSON. Current visitor permission is checked before issuing a browser credential.
 	//
 	// Corresponds with GET /v1/browser/login (the `BeginPreviewBrowserLogin` operationId).
 	BeginPreviewBrowserLogin(ctx context.Context, params *BeginPreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// BeginServiceBrowserLogin Start browser sign-in for one HTTP service
 	//
-	// Start sign-in for one service HTTP service. Uses the common browser callback and a snapshot of ready runs; the allocated service port is retained.
+	// Start browser sign-in for one HTTP service. Navigate to this URL rather than fetching JSON. The common callback preserves the allocated service port and checks current visitor access before issuing a credential.
 	//
 	// Corresponds with GET /v1/browser/service-login (the `BeginServiceBrowserLogin` operationId).
 	BeginServiceBrowserLogin(ctx context.Context, params *BeginServiceBrowserLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5172,7 +5177,7 @@ type ClientInterface interface {
 
 	// ListPreviews List the caller's previews
 	//
-	// List the caller's previews in one current team, ordered by immutable preview ID. Includes previews created before project configuration was applied. Team administrators do not gain access to another creator's preview. Cursors are bound to this team, identity, and collection. Read each ID with the preview endpoint to get its public URL IDs.
+	// List previews created by the signed-in identity in this team. Team visitor access does not grant access to another creator's preview records. Read each preview for its public URLs. Follow next_cursor unchanged; each page checks current access.
 	//
 	// Corresponds with GET /v1/previews (the `ListPreviews` operationId).
 	ListPreviews(ctx context.Context, params *ListPreviewsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5229,7 +5234,7 @@ type ClientInterface interface {
 
 	// CreateShareWithBody Store one share for a snapshot of authorized public URLs
 	//
-	// Store a share using current preview management authorization and an idempotency key. It captures the authorized public URL IDs now; later preview membership changes do not expand that share's access.
+	// Create a share for the selected public URL IDs in this preview. entry_public_url_id chooses the landing URL and must be in that set. Later preview changes do not expand the share. Control returns the link and token source once; an identical retry returns the existing share ID in a credential_delivery_unavailable problem.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5238,7 +5243,7 @@ type ClientInterface interface {
 
 	// CreateShare Store one share for a snapshot of authorized public URLs
 	//
-	// Store a share using current preview management authorization and an idempotency key. It captures the authorized public URL IDs now; later preview membership changes do not expand that share's access.
+	// Create a share for the selected public URL IDs in this preview. entry_public_url_id chooses the landing URL and must be in that set. Later preview changes do not expand the share. Control returns the link and token source once; an identical retry returns the existing share ID in a credential_delivery_unavailable problem.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -5265,14 +5270,14 @@ type ClientInterface interface {
 
 	// ListProjects List applied projects
 	//
-	// List applied project selectors for a current team manager, ordered by immutable project_key. Summaries contain no targets, configuration, or checkout paths. Use each selector with the configuration endpoint; its detail includes publisher group IDs and current members. Cursors are bound to this team, identity, and collection. Authorization is checked on every page.
+	// List applied projects the current team manager may manage, ordered by project_key. Summaries omit configuration, targets, and checkout paths. Read a project's configuration for its groups, members, and editable declarations. Follow next_cursor unchanged; each page checks current access.
 	//
 	// Corresponds with GET /v1/projects (the `ListProjects` operationId).
 	ListProjects(ctx context.Context, params *ListProjectsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ResolveProjectSourceWithBody Resolve a project's portable source selector
 	//
-	// Resolve a network Git origin and repository-relative configuration path to the existing portable project selector. Does not read a repository, evaluate configuration, create a project, or reserve a name. Branches, checkout directories, and configuration content do not affect this identity. Use the returned project_key with the configuration endpoint, passing these source facts on first apply.
+	// Compute the portable project key from a Git origin and repository-relative configuration path. No repository is fetched, configuration evaluated, or state created. Branches, checkout directories, and file contents do not affect the key. Use it with the configuration endpoint and send the source facts on first apply.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5281,7 +5286,7 @@ type ClientInterface interface {
 
 	// ResolveProjectSource Resolve a project's portable source selector
 	//
-	// Resolve a network Git origin and repository-relative configuration path to the existing portable project selector. Does not read a repository, evaluate configuration, create a project, or reserve a name. Branches, checkout directories, and configuration content do not affect this identity. Use the returned project_key with the configuration endpoint, passing these source facts on first apply.
+	// Compute the portable project key from a Git origin and repository-relative configuration path. No repository is fetched, configuration evaluated, or state created. Branches, checkout directories, and file contents do not affect the key. Use it with the configuration endpoint and send the source facts on first apply.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -5297,7 +5302,7 @@ type ClientInterface interface {
 
 	// ApplyProjectConfigurationWithBody Apply a project's desired services and publisher groups
 	//
-	// Atomically reconcile declarations. On first apply provide source facts; control derives the source fingerprint using the same portable identity rules as resolve-source. On updates source may be omitted to retain the saved binding, or supplied to check that it matches. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+	// Save declarations and update their resources together. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5306,7 +5311,7 @@ type ClientInterface interface {
 
 	// ApplyProjectConfiguration Apply a project's desired services and publisher groups
 	//
-	// Atomically reconcile declarations. On first apply provide source facts; control derives the source fingerprint using the same portable identity rules as resolve-source. On updates source may be omitted to retain the saved binding, or supplied to check that it matches. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+	// Save declarations and update their resources together. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -5315,14 +5320,14 @@ type ClientInterface interface {
 
 	// GetLocalProjectService Resolve one existing source-bound worktree service
 	//
-	// Read the exact service previously realized for this team, project source, service key, and worktree. Requires current ordinary private visitor access, not project management access. Returns only immutable identity and approved visitor protocol/TLS metadata, never configuration, targets, or credentials. Does not realize or adopt a service. Missing or unauthorized bindings return not found; an authorized binding with another source fingerprint returns conflict. No other team, project, worktree, or saved name is searched.
+	// Read the existing service for this team, source, service key, and worktree. Requires visitor access, not project management permission. Returns identity and visitor protocol/TLS metadata, never targets or credentials. It does not create a service or search other worktrees or names. Missing or unauthorized bindings return 404; an authorized source mismatch returns 409.
 	//
 	// Corresponds with GET /v1/projects/{project_key}/local-services/{service} (the `GetLocalProjectService` operationId).
 	GetLocalProjectService(ctx context.Context, projectKey string, service string, params *GetLocalProjectServiceParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RealizeLocalProjectServiceWithBody Realize one declared local service for a worktree
 	//
-	// Realize only one source-bound local service for one worktree. Private IDs are allocated here with worktree-scoped names, never adopted by name. Public IDs must be exact caller-owned app URLs already allocated by this runtime, bound to the caller's membership or to the caller's own personal team when current namespace authorization selects shared scope. Organization shared URLs and another member's or team's URLs are rejected. Records provenance before first apply; later apply reconciles that legitimate resource. When configuration has been applied the local declaration must match it. Does not apply remote group changes.
+	// Create or reuse one service for this source and worktree. Private services get worktree-specific names; saved services are never adopted by name. A public URL must already belong to this runtime and the caller's membership or personal team; organization-shared and other members' URLs are rejected. If configuration was applied, the declaration must match it. Remote publisher groups are unchanged.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5331,7 +5336,7 @@ type ClientInterface interface {
 
 	// RealizeLocalProjectService Realize one declared local service for a worktree
 	//
-	// Realize only one source-bound local service for one worktree. Private IDs are allocated here with worktree-scoped names, never adopted by name. Public IDs must be exact caller-owned app URLs already allocated by this runtime, bound to the caller's membership or to the caller's own personal team when current namespace authorization selects shared scope. Organization shared URLs and another member's or team's URLs are rejected. Records provenance before first apply; later apply reconciles that legitimate resource. When configuration has been applied the local declaration must match it. Does not apply remote group changes.
+	// Create or reuse one service for this source and worktree. Private services get worktree-specific names; saved services are never adopted by name. A public URL must already belong to this runtime and the caller's membership or personal team; organization-shared and other members' URLs are rejected. If configuration was applied, the declaration must match it. Remote publisher groups are unchanged.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -5340,7 +5345,7 @@ type ClientInterface interface {
 
 	// GetProjectPublicMetadata Read visitor-safe project service identities and hostnames
 	//
-	// Browser-safe project source and public service IDs/hostnames, including exact local worktree realizations before or after first apply. Returns only public services the caller may visit, or all public services for a project manager. A service key may appear more than once for separate worktree URLs. Never returns configuration, targets, trust, grants, or publisher data.
+	// Read public service IDs and hostnames for this project's worktrees. Visitors see only services they may visit; project managers see all public services. A service key can appear once per worktree. Targets, configuration, trust, grants, and publisher data are omitted.
 	//
 	// Corresponds with GET /v1/projects/{project_key}/public-metadata (the `GetProjectPublicMetadata` operationId).
 	GetProjectPublicMetadata(ctx context.Context, projectKey string, params *GetProjectPublicMetadataParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5372,7 +5377,7 @@ type ClientInterface interface {
 
 	// RenamePublisherNamespaceWithBody Replace a publisher group's DNS namespace label
 	//
-	// Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
+	// Change the group's DNS label while keeping its IDs and ports. This closes old service runs and assigns new publication grants and certificate plans. Old names remain reserved until control finishes its certificate and DNS cleanup checks. The configuration key and separately configured public URLs do not change. Send the current expected revision; an identical retry with the same key returns the original result.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5381,7 +5386,7 @@ type ClientInterface interface {
 
 	// RenamePublisherNamespace Replace a publisher group's DNS namespace label
 	//
-	// Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
+	// Change the group's DNS label while keeping its IDs and ports. This closes old service runs and assigns new publication grants and certificate plans. Old names remain reserved until control finishes its certificate and DNS cleanup checks. The configuration key and separately configured public URLs do not change. Send the current expected revision; an identical retry with the same key returns the original result.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -5390,7 +5395,7 @@ type ClientInterface interface {
 
 	// RenamePublisherGroupWithBody Rename a group's configuration selector without changing endpoints
 	//
-	// Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
+	// Rename the configuration key without changing the group's ID, namespace, services, ports, or publisher grants. Old selectors remain reserved for this group. Update project configuration before the next apply; retrying a completed rename is safe.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5399,7 +5404,7 @@ type ClientInterface interface {
 
 	// RenamePublisherGroup Rename a group's configuration selector without changing endpoints
 	//
-	// Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
+	// Rename the configuration key without changing the group's ID, namespace, services, ports, or publisher grants. Old selectors remain reserved for this group. Update project configuration before the next apply; retrying a completed rename is safe.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -5454,7 +5459,7 @@ type ClientInterface interface {
 
 	// UpdatePublicURLWithBody Update a public URL's target and IP policy
 	//
-	// Replace the target and IP policy, optionally changing the post-quantum requirement, under current management authorization. Use replaceVisitorAccess for complete visitor access policy replacement; this operation does not create a new publish run.
+	// Change only the supplied fields using the mutation_revision you read as expected_mutation_revision. Omitted fields keep their saved values; an empty IP list clears the filter. Null values, empty edits, and stale revisions are rejected.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5463,7 +5468,7 @@ type ClientInterface interface {
 
 	// UpdatePublicURL Update a public URL's target and IP policy
 	//
-	// Replace the target and IP policy, optionally changing the post-quantum requirement, under current management authorization. Use replaceVisitorAccess for complete visitor access policy replacement; this operation does not create a new publish run.
+	// Change only the supplied fields using the mutation_revision you read as expected_mutation_revision. Omitted fields keep their saved values; an empty IP list clears the filter. Null values, empty edits, and stale revisions are rejected.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -5472,7 +5477,7 @@ type ClientInterface interface {
 
 	// ReplaceVisitorAccessWithBody Replace the complete live visitor access policy
 	//
-	// Replace the complete saved visitor access policy under current public URL management authorization. Omitted optional policy members are not a partial patch; publishers must enforce the resulting current visitor policy for new work.
+	// Replace the access mode and complete IP filter using the current mutation revision. An empty IP list removes the filter. Existing grants, shares, and invitations are unchanged; this operation does not revoke every source of visitor access.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5481,7 +5486,7 @@ type ClientInterface interface {
 
 	// ReplaceVisitorAccess Replace the complete live visitor access policy
 	//
-	// Replace the complete saved visitor access policy under current public URL management authorization. Omitted optional policy members are not a partial patch; publishers must enforce the resulting current visitor policy for new work.
+	// Replace the access mode and complete IP filter using the current mutation revision. An empty IP list removes the filter. Existing grants, shares, and invitations are unchanged; this operation does not revoke every source of visitor access.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -5565,7 +5570,7 @@ type ClientInterface interface {
 
 	// CreateVisitorInvitationWithBody Invite a verified email identity to one public URL
 	//
-	// Issue an expiring one-use invitation under current public URL management authorization. Acceptance requires the recipient's verified email and creates an exact-URL identity grant, not team membership.
+	// Invite the verified email identity to this public URL. Control returns the credential once. An identical authorized retry returns credential_delivery_unavailable with the invitation ID; revoke and reissue if delivery was lost. Acceptance creates visitor access, not team membership or management permission.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5574,7 +5579,7 @@ type ClientInterface interface {
 
 	// CreateVisitorInvitation Invite a verified email identity to one public URL
 	//
-	// Issue an expiring one-use invitation under current public URL management authorization. Acceptance requires the recipient's verified email and creates an exact-URL identity grant, not team membership.
+	// Invite the verified email identity to this public URL. Control returns the credential once. An identical authorized retry returns credential_delivery_unavailable with the invitation ID; revoke and reissue if delivery was lost. Acceptance creates visitor access, not team membership or management permission.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -5942,14 +5947,14 @@ type ClientInterface interface {
 
 	// GetPublisherGroupAssignments Read services and grants assigned to one leased group replica
 	//
-	// Authenticate with the current pgl_ group lease and read the replica's exact service assignments and publisher grant IDs. These assignments may contain targets; a pta_ publisher access token cannot read them.
+	// Read the replica's assigned services and publisher grants using its current pgl_ lease. Assignments can include targets. A pta_ publisher token cannot read them.
 	//
 	// Corresponds with GET /v1/publisher/groups/assignments (the `GetPublisherGroupAssignments` operationId).
 	GetPublisherGroupAssignments(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AcknowledgePublisherGroupConfigurationWithBody Acknowledge the exact configuration installed by a group replica
 	//
-	// Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
+	// Report the installed configuration revision, hash, and health using the replica's current pgl_ lease. Stale or mismatched configuration is rejected; a pta_ publisher token cannot acknowledge it.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5958,7 +5963,7 @@ type ClientInterface interface {
 
 	// AcknowledgePublisherGroupConfiguration Acknowledge the exact configuration installed by a group replica
 	//
-	// Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
+	// Report the installed configuration revision, hash, and health using the replica's current pgl_ lease. Stale or mismatched configuration is rejected; a pta_ publisher token cannot acknowledge it.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -5967,7 +5972,7 @@ type ClientInterface interface {
 
 	// RedeemPublisherGroupEnrollmentWithBody Enroll a replica's signing key with a group enrollment secret
 	//
-	// Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+	// Register a replica's Ed25519 public key using enrollment_key in the body. Retrying the same key returns the same membership without consuming more enrollment capacity.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5976,7 +5981,7 @@ type ClientInterface interface {
 
 	// RedeemPublisherGroupEnrollment Enroll a replica's signing key with a group enrollment secret
 	//
-	// Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+	// Register a replica's Ed25519 public key using enrollment_key in the body. Retrying the same key returns the same membership without consuming more enrollment capacity.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -5985,7 +5990,7 @@ type ClientInterface interface {
 
 	// AcquirePublisherGroupLeaseWithBody Exchange a signed replica assertion for a group lease
 	//
-	// Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
+	// Exchange a one-use signed assertion in the body for a pgl_ group lease. The assertion's audience is this endpoint's full control URL, and its grant claim is the group ID.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5994,7 +5999,7 @@ type ClientInterface interface {
 
 	// AcquirePublisherGroupLease Exchange a signed replica assertion for a group lease
 	//
-	// Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
+	// Exchange a one-use signed assertion in the body for a pgl_ group lease. The assertion's audience is this endpoint's full control URL, and its grant claim is the group ID.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6003,7 +6008,7 @@ type ClientInterface interface {
 
 	// VerifyPublisherGroupIdentityWithBody Verify a replica's group membership without acquiring a lease
 	//
-	// Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
+	// Verify group membership using a one-use signed assertion in the body. Its audience is this endpoint's full control URL. Returns current and historical selectors without replacing the running publisher's group lease.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6012,7 +6017,7 @@ type ClientInterface interface {
 
 	// VerifyPublisherGroupIdentity Verify a replica's group membership without acquiring a lease
 	//
-	// Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
+	// Verify group membership using a one-use signed assertion in the body. Its audience is this endpoint's full control URL. Returns current and historical selectors without replacing the running publisher's group lease.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6053,7 +6058,7 @@ type ClientInterface interface {
 
 	// InspectPublisherRuntimeWithBody Inspect a publisher runtime
 	//
-	// Read the runtime epoch without recording an address. A one-use Ed25519 assertion binds this endpoint, publisher identity, inspect action, scope, process run, expected epoch, and deployment report. The body's identity and action must match the route. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	// Read the runtime epoch without recording an address. Send a one-use signed assertion for this endpoint in the body. The body's publisher identity and action must match the route.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6062,7 +6067,7 @@ type ClientInterface interface {
 
 	// InspectPublisherRuntime Inspect a publisher runtime
 	//
-	// Read the runtime epoch without recording an address. A one-use Ed25519 assertion binds this endpoint, publisher identity, inspect action, scope, process run, expected epoch, and deployment report. The body's identity and action must match the route. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	// Read the runtime epoch without recording an address. Send a one-use signed assertion for this endpoint in the body. The body's publisher identity and action must match the route.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6071,7 +6076,7 @@ type ClientInterface interface {
 
 	// RenewPublisherRuntimeWithBody Renew a publisher runtime
 	//
-	// Renew only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, renew action, scope, process run, epoch, and deployment report. Control records only the validated request source, never a body address. Group renew also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	// Renew the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route. Group runtimes also receive a group lease.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6080,7 +6085,7 @@ type ClientInterface interface {
 
 	// RenewPublisherRuntime Renew a publisher runtime
 	//
-	// Renew only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, renew action, scope, process run, epoch, and deployment report. Control records only the validated request source, never a body address. Group renew also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	// Renew the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route. Group runtimes also receive a group lease.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6089,7 +6094,7 @@ type ClientInterface interface {
 
 	// StartPublisherRuntimeWithBody Start a publisher runtime
 	//
-	// Compare the inspected epoch and start one process run. The one-use assertion binds this endpoint, publisher identity, start action, scope, process run, epoch, and deployment report. A retry retains the same process run and expected epoch. Control records only the validated request source, never a body address. Group start also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	// Start a process run if the inspected epoch still matches. Send a one-use signed assertion for this endpoint in the body, with matching publisher identity and action. After an uncertain response, keep the same process run and expected epoch but use a fresh assertion. Group runtimes also receive a group lease.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6098,7 +6103,7 @@ type ClientInterface interface {
 
 	// StartPublisherRuntime Start a publisher runtime
 	//
-	// Compare the inspected epoch and start one process run. The one-use assertion binds this endpoint, publisher identity, start action, scope, process run, epoch, and deployment report. A retry retains the same process run and expected epoch. Control records only the validated request source, never a body address. Group start also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	// Start a process run if the inspected epoch still matches. Send a one-use signed assertion for this endpoint in the body, with matching publisher identity and action. After an uncertain response, keep the same process run and expected epoch but use a fresh assertion. Group runtimes also receive a group lease.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6107,7 +6112,7 @@ type ClientInterface interface {
 
 	// StopPublisherRuntimeWithBody Stop a publisher runtime
 	//
-	// Stop only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, stop action, scope, process run, epoch, and deployment report. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	// Stop the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6116,7 +6121,7 @@ type ClientInterface interface {
 
 	// StopPublisherRuntime Stop a publisher runtime
 	//
-	// Stop only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, stop action, scope, process run, epoch, and deployment report. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	// Stop the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6196,7 +6201,7 @@ type ClientInterface interface {
 
 	// ConfigureServiceWithBody Replace a service's approved protocol and target TLS trust
 	//
-	// Set the saved protocol, publisher pool, and target TLS trust snapshot using current service management permission. Publishers must declare matching trust when preparing later runs; this is not a target address update or a publication start.
+	// Replace the approved protocol, publisher-pool setting, and target TLS trust. Send trust_revision as expected_trust_revision; omit target_tls to remove it. Endpoint and placement cannot be changed here. Publishers must declare matching trust when preparing later runs.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6205,7 +6210,7 @@ type ClientInterface interface {
 
 	// ConfigureService Replace a service's approved protocol and target TLS trust
 	//
-	// Set the saved protocol, publisher pool, and target TLS trust snapshot using current service management permission. Publishers must declare matching trust when preparing later runs; this is not a target address update or a publication start.
+	// Replace the approved protocol, publisher-pool setting, and target TLS trust. Send trust_revision as expected_trust_revision; omit target_tls to remove it. Endpoint and placement cannot be changed here. Publishers must declare matching trust when preparing later runs.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6232,7 +6237,7 @@ type ClientInterface interface {
 
 	// PrepareConnectorPeerPairWithBody Prepare a signed connector pair for an exact ready service run
 	//
-	// Signed create or replace for one exact ready service run. The request signature must prove the selected device or workload key. A device source also requires its matching identity's control session bearer token. A workload source authenticates with its credential in the JSON body and must omit Authorization entirely, including empty headers. The empty security object represents body authentication, not anonymous access. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+	// Create or replace a pair for the selected service run using the device or workload signature. Device sources require the matching control session. Workload sources use the body credential and must omit Authorization, including empty headers. Control rechecks current access and both relay leases; a selection snapshot is not permission.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6241,7 +6246,7 @@ type ClientInterface interface {
 
 	// PrepareConnectorPeerPair Prepare a signed connector pair for an exact ready service run
 	//
-	// Signed create or replace for one exact ready service run. The request signature must prove the selected device or workload key. A device source also requires its matching identity's control session bearer token. A workload source authenticates with its credential in the JSON body and must omit Authorization entirely, including empty headers. The empty security object represents body authentication, not anonymous access. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+	// Create or replace a pair for the selected service run using the device or workload signature. Device sources require the matching control session. Workload sources use the body credential and must omit Authorization, including empty headers. Control rechecks current access and both relay leases; a selection snapshot is not permission.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6250,7 +6255,7 @@ type ClientInterface interface {
 
 	// RebindConnectorPeerPairWithBody Inspect or change a retained connector pair's network binding
 	//
-	// Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+	// Inspect, prepare, activate, or abort a network binding for an existing connector owner. Sign with the same source key. Device sources require the matching control session; workload sources use the body credential and must omit Authorization, including empty headers. This cannot select another run or revive an expired owner. Only stale_network_binding permits recovery by inspecting retained state; other authorization failures are terminal.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6259,7 +6264,7 @@ type ClientInterface interface {
 
 	// RebindConnectorPeerPair Inspect or change a retained connector pair's network binding
 	//
-	// Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+	// Inspect, prepare, activate, or abort a network binding for an existing connector owner. Sign with the same source key. Device sources require the matching control session; workload sources use the body credential and must omit Authorization, including empty headers. This cannot select another run or revive an expired owner. Only stale_network_binding permits recovery by inspecting retained state; other authorization failures are terminal.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6268,7 +6273,7 @@ type ClientInterface interface {
 
 	// RenewConnectorPeerPairWithBody Renew an exact signed connector pair and visitor permission
 	//
-	// Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
+	// Renew the existing pair and visitor permission together, without selecting another run. The signature must prove the same device or workload key. Device sources require the matching control session; workload sources use the body credential and must omit Authorization, including empty headers. The response contains the pair lease, run validity, and visitor permission from that decision.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6277,7 +6282,7 @@ type ClientInterface interface {
 
 	// RenewConnectorPeerPair Renew an exact signed connector pair and visitor permission
 	//
-	// Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
+	// Renew the existing pair and visitor permission together, without selecting another run. The signature must prove the same device or workload key. Device sources require the matching control session; workload sources use the body credential and must omit Authorization, including empty headers. The response contains the pair lease, run validity, and visitor permission from that decision.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6318,14 +6323,14 @@ type ClientInterface interface {
 
 	// ListServiceHTTPGrants List an HTTP service's visitor credentials without secrets
 	//
-	// Secretless credential inventory for one service HTTP service. Requires current service management permission; includes expired and revoked records.
+	// List this service's HTTP visitor credentials without their secrets. Requires current service management permission and includes expired and revoked records.
 	//
 	// Corresponds with GET /v1/services/{service_id}/http-grants (the `ListServiceHTTPGrants` operationId).
 	ListServiceHTTPGrants(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateServiceHTTPGrantWithBody Create a service-scoped HTTP visitor token or share
 	//
-	// Create a service-scoped HTTP token or share. Requires current service management and visitor permission. The secret is returned once and grants no management or feedback permission.
+	// Create an HTTP visitor credential for this service. Requires both current management and visitor permission. Each call creates a new credential, returned once; it grants neither management nor feedback permission.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6334,7 +6339,7 @@ type ClientInterface interface {
 
 	// CreateServiceHTTPGrant Create a service-scoped HTTP visitor token or share
 	//
-	// Create a service-scoped HTTP token or share. Requires current service management and visitor permission. The secret is returned once and grants no management or feedback permission.
+	// Create an HTTP visitor credential for this service. Requires both current management and visitor permission. Each call creates a new credential, returned once; it grants neither management nor feedback permission.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6357,7 +6362,7 @@ type ClientInterface interface {
 
 	// InviteServiceVisitorWithBody Invite a verified email identity to one service
 	//
-	// A new key creates one exact-service invitation with a one-time credential. An exact retry by the same actor returns HTTP 409 credential_delivery_unavailable with details.resource_id after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
+	// Invite the verified email identity to this service. Control returns the credential once. An identical authorized retry returns credential_delivery_unavailable with the existing invitation ID; if delivery was lost, revoke it and create another with a new key. Reusing a key with changed input conflicts. No secret is kept for recovery.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6366,7 +6371,7 @@ type ClientInterface interface {
 
 	// InviteServiceVisitor Invite a verified email identity to one service
 	//
-	// A new key creates one exact-service invitation with a one-time credential. An exact retry by the same actor returns HTTP 409 credential_delivery_unavailable with details.resource_id after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
+	// Invite the verified email identity to this service. Control returns the credential once. An identical authorized retry returns credential_delivery_unavailable with the existing invitation ID; if delivery was lost, revoke it and create another with a new key. Reusing a key with changed input conflicts. No secret is kept for recovery.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6644,7 +6649,7 @@ type ClientInterface interface {
 
 	// CreateURLShareWithBody Store one share for an exact authorized HTTP public URL
 	//
-	// A guest trial can share only its own demo URL from the issuing IP; the share expires by the trial's end even if the requested expiry is later.
+	// Create a share for one public URL and return its link and token source once. Use that URL's ID as entry_public_url_id. An identical retry returns the existing share ID in a credential_delivery_unavailable problem; revoke and reissue if delivery was lost. Guest shares are limited to the trial's URL, source IP, and expiry.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6653,7 +6658,7 @@ type ClientInterface interface {
 
 	// CreateURLShare Store one share for an exact authorized HTTP public URL
 	//
-	// A guest trial can share only its own demo URL from the issuing IP; the share expires by the trial's end even if the requested expiry is later.
+	// Create a share for one public URL and return its link and token source once. Use that URL's ID as entry_public_url_id. An identical retry returns the existing share ID in a credential_delivery_unavailable problem; revoke and reissue if delivery was lost. Guest shares are limited to the trial's URL, source IP, and expiry.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6726,7 +6731,7 @@ type ClientInterface interface {
 
 	// ReadPublisherVisitorPolicyWithBody Refresh the current run's visitor policy and verification keys
 	//
-	// Read one current publisher run's scoped visitor policy, revocations, and public verification keys. The bearer credential is the exact run token. This background operation is independent of the publisher's process lease and of ordinary visitor admission.
+	// Refresh visitor policy and revocations for one publisher run using its exact run token. This is a publisher operation, not a visitor or management read, and can return private policy data for the run. It does not renew the publisher process lease or grant traffic access.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6735,7 +6740,7 @@ type ClientInterface interface {
 
 	// ReadPublisherVisitorPolicy Refresh the current run's visitor policy and verification keys
 	//
-	// Read one current publisher run's scoped visitor policy, revocations, and public verification keys. The bearer credential is the exact run token. This background operation is independent of the publisher's process lease and of ordinary visitor admission.
+	// Refresh visitor policy and revocations for one publisher run using its exact run token. This is a publisher operation, not a visitor or management read, and can return private policy data for the run. It does not renew the publisher process lease or grant traffic access.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6744,7 +6749,12 @@ type ClientInterface interface {
 
 	// IssueVisitorTokenWithBody Prepare or renew an exact-resource visitor permission
 	//
-	// Prepare or renew one exact-resource visitor permission. For source.kind control_session or device, authenticate with the current control session bearer token. For browser_session, workload, share, share_session, or grant, authenticate with the source credential in the JSON body and omit Authorization entirely; even an empty Authorization header is rejected. The empty security object represents these body-authenticated branches, not anonymous issuance. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+	// Prepare or renew permission to visit one resource.
+	//
+	// - control_session or device: send a control-session bearer token.
+	// - browser_session, workload, share, share_session, or grant: send the source credential in the body. Omit Authorization entirely, including empty headers.
+	//
+	// Control checks current access. Use refresh credentials only to request another visitor token.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6753,7 +6763,12 @@ type ClientInterface interface {
 
 	// IssueVisitorToken Prepare or renew an exact-resource visitor permission
 	//
-	// Prepare or renew one exact-resource visitor permission. For source.kind control_session or device, authenticate with the current control session bearer token. For browser_session, workload, share, share_session, or grant, authenticate with the source credential in the JSON body and omit Authorization entirely; even an empty Authorization header is rejected. The empty security object represents these body-authenticated branches, not anonymous issuance. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+	// Prepare or renew permission to visit one resource.
+	//
+	// - control_session or device: send a control-session bearer token.
+	// - browser_session, workload, share, share_session, or grant: send the source credential in the body. Omit Authorization entirely, including empty headers.
+	//
+	// Control checks current access. Use refresh credentials only to request another visitor token.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6769,7 +6784,7 @@ type ClientInterface interface {
 
 	// ListAvailableServices List services available to the signed-in visitor
 	//
-	// Authorized saved services for tnl connect, including offline services. Initial readiness requires two ready publisher connections; after that one surviving ready connection keeps a run available during replacement. Inventory includes the visitor endpoint hostname but grants no stream ticket and omits target addresses, target TLS trust, and secrets.
+	// List services the signed-in visitor may use, including offline services. Results include visitor endpoints, not target addresses, target trust, or secrets. Listing a service does not grant traffic access. Initial readiness needs two publisher connections; one surviving connection can keep an already-ready run available.
 	//
 	// Corresponds with GET /v1/visitor/services (the `ListAvailableServices` operationId).
 	ListAvailableServices(ctx context.Context, params *ListAvailableServicesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -6950,7 +6965,7 @@ func (c *Client) GetAdminServerStatus(ctx context.Context, reqEditors ...Request
 
 // CompletePreviewBrowserLogin Return a signed-in visitor to the preview
 //
-// Complete the identity provider callback using the pending login state and authorization code, then redirect to a one-time host-bound handoff. No bearer token is used; the callback is authenticated by the checked login flow, not by the empty security array.
+// Check the pending login state and authorization code, then redirect the browser to a one-time publisher handoff. This callback uses the checked sign-in flow, not a bearer token.
 //
 // Corresponds with GET /v1/browser/callback (the `CompletePreviewBrowserLogin` operationId).
 func (c *Client) CompletePreviewBrowserLogin(ctx context.Context, params *CompletePreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -6967,7 +6982,7 @@ func (c *Client) CompletePreviewBrowserLogin(ctx context.Context, params *Comple
 
 // BeginPreviewBrowserLogin Start sign-in for a preview visitor
 //
-// Begin the configured browser sign-in flow for a public URL, optionally within a preview. No bearer credential is required to begin sign-in; current visit permission is checked before a usable browser credential is issued.
+// Start browser sign-in for a public URL, optionally within a preview. Navigate to this URL rather than fetching JSON. Current visitor permission is checked before issuing a browser credential.
 //
 // Corresponds with GET /v1/browser/login (the `BeginPreviewBrowserLogin` operationId).
 func (c *Client) BeginPreviewBrowserLogin(ctx context.Context, params *BeginPreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -6984,7 +6999,7 @@ func (c *Client) BeginPreviewBrowserLogin(ctx context.Context, params *BeginPrev
 
 // BeginServiceBrowserLogin Start browser sign-in for one HTTP service
 //
-// Start sign-in for one service HTTP service. Uses the common browser callback and a snapshot of ready runs; the allocated service port is retained.
+// Start browser sign-in for one HTTP service. Navigate to this URL rather than fetching JSON. The common callback preserves the allocated service port and checks current visitor access before issuing a credential.
 //
 // Corresponds with GET /v1/browser/service-login (the `BeginServiceBrowserLogin` operationId).
 func (c *Client) BeginServiceBrowserLogin(ctx context.Context, params *BeginServiceBrowserLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -7247,7 +7262,7 @@ func (c *Client) GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (
 
 // ListPreviews List the caller's previews
 //
-// List the caller's previews in one current team, ordered by immutable preview ID. Includes previews created before project configuration was applied. Team administrators do not gain access to another creator's preview. Cursors are bound to this team, identity, and collection. Read each ID with the preview endpoint to get its public URL IDs.
+// List previews created by the signed-in identity in this team. Team visitor access does not grant access to another creator's preview records. Read each preview for its public URLs. Follow next_cursor unchanged; each page checks current access.
 //
 // Corresponds with GET /v1/previews (the `ListPreviews` operationId).
 func (c *Client) ListPreviews(ctx context.Context, params *ListPreviewsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -7374,7 +7389,7 @@ func (c *Client) ListShares(ctx context.Context, previewId PreviewID, params *Li
 
 // CreateShareWithBody Store one share for a snapshot of authorized public URLs
 //
-// Store a share using current preview management authorization and an idempotency key. It captures the authorized public URL IDs now; later preview membership changes do not expand that share's access.
+// Create a share for the selected public URL IDs in this preview. entry_public_url_id chooses the landing URL and must be in that set. Later preview changes do not expand the share. Control returns the link and token source once; an identical retry returns the existing share ID in a credential_delivery_unavailable problem.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7393,7 +7408,7 @@ func (c *Client) CreateShareWithBody(ctx context.Context, previewId PreviewID, p
 
 // CreateShare Store one share for a snapshot of authorized public URLs
 //
-// Store a share using current preview management authorization and an idempotency key. It captures the authorized public URL IDs now; later preview membership changes do not expand that share's access.
+// Create a share for the selected public URL IDs in this preview. entry_public_url_id chooses the landing URL and must be in that set. Later preview changes do not expand the share. Control returns the link and token source once; an identical retry returns the existing share ID in a credential_delivery_unavailable problem.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -7450,7 +7465,7 @@ func (c *Client) SetPreviewTeamAccess(ctx context.Context, previewId PreviewID, 
 
 // ListProjects List applied projects
 //
-// List applied project selectors for a current team manager, ordered by immutable project_key. Summaries contain no targets, configuration, or checkout paths. Use each selector with the configuration endpoint; its detail includes publisher group IDs and current members. Cursors are bound to this team, identity, and collection. Authorization is checked on every page.
+// List applied projects the current team manager may manage, ordered by project_key. Summaries omit configuration, targets, and checkout paths. Read a project's configuration for its groups, members, and editable declarations. Follow next_cursor unchanged; each page checks current access.
 //
 // Corresponds with GET /v1/projects (the `ListProjects` operationId).
 func (c *Client) ListProjects(ctx context.Context, params *ListProjectsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -7467,7 +7482,7 @@ func (c *Client) ListProjects(ctx context.Context, params *ListProjectsParams, r
 
 // ResolveProjectSourceWithBody Resolve a project's portable source selector
 //
-// Resolve a network Git origin and repository-relative configuration path to the existing portable project selector. Does not read a repository, evaluate configuration, create a project, or reserve a name. Branches, checkout directories, and configuration content do not affect this identity. Use the returned project_key with the configuration endpoint, passing these source facts on first apply.
+// Compute the portable project key from a Git origin and repository-relative configuration path. No repository is fetched, configuration evaluated, or state created. Branches, checkout directories, and file contents do not affect the key. Use it with the configuration endpoint and send the source facts on first apply.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7486,7 +7501,7 @@ func (c *Client) ResolveProjectSourceWithBody(ctx context.Context, contentType s
 
 // ResolveProjectSource Resolve a project's portable source selector
 //
-// Resolve a network Git origin and repository-relative configuration path to the existing portable project selector. Does not read a repository, evaluate configuration, create a project, or reserve a name. Branches, checkout directories, and configuration content do not affect this identity. Use the returned project_key with the configuration endpoint, passing these source facts on first apply.
+// Compute the portable project key from a Git origin and repository-relative configuration path. No repository is fetched, configuration evaluated, or state created. Branches, checkout directories, and file contents do not affect the key. Use it with the configuration endpoint and send the source facts on first apply.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -7522,7 +7537,7 @@ func (c *Client) GetProjectConfiguration(ctx context.Context, projectKey string,
 
 // ApplyProjectConfigurationWithBody Apply a project's desired services and publisher groups
 //
-// Atomically reconcile declarations. On first apply provide source facts; control derives the source fingerprint using the same portable identity rules as resolve-source. On updates source may be omitted to retain the saved binding, or supplied to check that it matches. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+// Save declarations and update their resources together. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7541,7 +7556,7 @@ func (c *Client) ApplyProjectConfigurationWithBody(ctx context.Context, projectK
 
 // ApplyProjectConfiguration Apply a project's desired services and publisher groups
 //
-// Atomically reconcile declarations. On first apply provide source facts; control derives the source fingerprint using the same portable identity rules as resolve-source. On updates source may be omitted to retain the saved binding, or supplied to check that it matches. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+// Save declarations and update their resources together. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -7560,7 +7575,7 @@ func (c *Client) ApplyProjectConfiguration(ctx context.Context, projectKey strin
 
 // GetLocalProjectService Resolve one existing source-bound worktree service
 //
-// Read the exact service previously realized for this team, project source, service key, and worktree. Requires current ordinary private visitor access, not project management access. Returns only immutable identity and approved visitor protocol/TLS metadata, never configuration, targets, or credentials. Does not realize or adopt a service. Missing or unauthorized bindings return not found; an authorized binding with another source fingerprint returns conflict. No other team, project, worktree, or saved name is searched.
+// Read the existing service for this team, source, service key, and worktree. Requires visitor access, not project management permission. Returns identity and visitor protocol/TLS metadata, never targets or credentials. It does not create a service or search other worktrees or names. Missing or unauthorized bindings return 404; an authorized source mismatch returns 409.
 //
 // Corresponds with GET /v1/projects/{project_key}/local-services/{service} (the `GetLocalProjectService` operationId).
 func (c *Client) GetLocalProjectService(ctx context.Context, projectKey string, service string, params *GetLocalProjectServiceParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -7577,7 +7592,7 @@ func (c *Client) GetLocalProjectService(ctx context.Context, projectKey string, 
 
 // RealizeLocalProjectServiceWithBody Realize one declared local service for a worktree
 //
-// Realize only one source-bound local service for one worktree. Private IDs are allocated here with worktree-scoped names, never adopted by name. Public IDs must be exact caller-owned app URLs already allocated by this runtime, bound to the caller's membership or to the caller's own personal team when current namespace authorization selects shared scope. Organization shared URLs and another member's or team's URLs are rejected. Records provenance before first apply; later apply reconciles that legitimate resource. When configuration has been applied the local declaration must match it. Does not apply remote group changes.
+// Create or reuse one service for this source and worktree. Private services get worktree-specific names; saved services are never adopted by name. A public URL must already belong to this runtime and the caller's membership or personal team; organization-shared and other members' URLs are rejected. If configuration was applied, the declaration must match it. Remote publisher groups are unchanged.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7596,7 +7611,7 @@ func (c *Client) RealizeLocalProjectServiceWithBody(ctx context.Context, project
 
 // RealizeLocalProjectService Realize one declared local service for a worktree
 //
-// Realize only one source-bound local service for one worktree. Private IDs are allocated here with worktree-scoped names, never adopted by name. Public IDs must be exact caller-owned app URLs already allocated by this runtime, bound to the caller's membership or to the caller's own personal team when current namespace authorization selects shared scope. Organization shared URLs and another member's or team's URLs are rejected. Records provenance before first apply; later apply reconciles that legitimate resource. When configuration has been applied the local declaration must match it. Does not apply remote group changes.
+// Create or reuse one service for this source and worktree. Private services get worktree-specific names; saved services are never adopted by name. A public URL must already belong to this runtime and the caller's membership or personal team; organization-shared and other members' URLs are rejected. If configuration was applied, the declaration must match it. Remote publisher groups are unchanged.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -7615,7 +7630,7 @@ func (c *Client) RealizeLocalProjectService(ctx context.Context, projectKey stri
 
 // GetProjectPublicMetadata Read visitor-safe project service identities and hostnames
 //
-// Browser-safe project source and public service IDs/hostnames, including exact local worktree realizations before or after first apply. Returns only public services the caller may visit, or all public services for a project manager. A service key may appear more than once for separate worktree URLs. Never returns configuration, targets, trust, grants, or publisher data.
+// Read public service IDs and hostnames for this project's worktrees. Visitors see only services they may visit; project managers see all public services. A service key can appear once per worktree. Targets, configuration, trust, grants, and publisher data are omitted.
 //
 // Corresponds with GET /v1/projects/{project_key}/public-metadata (the `GetProjectPublicMetadata` operationId).
 func (c *Client) GetProjectPublicMetadata(ctx context.Context, projectKey string, params *GetProjectPublicMetadataParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -7687,7 +7702,7 @@ func (c *Client) RevokePublisherGroupMember(ctx context.Context, projectKey stri
 
 // RenamePublisherNamespaceWithBody Replace a publisher group's DNS namespace label
 //
-// Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
+// Change the group's DNS label while keeping its IDs and ports. This closes old service runs and assigns new publication grants and certificate plans. Old names remain reserved until control finishes its certificate and DNS cleanup checks. The configuration key and separately configured public URLs do not change. Send the current expected revision; an identical retry with the same key returns the original result.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7706,7 +7721,7 @@ func (c *Client) RenamePublisherNamespaceWithBody(ctx context.Context, projectKe
 
 // RenamePublisherNamespace Replace a publisher group's DNS namespace label
 //
-// Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
+// Change the group's DNS label while keeping its IDs and ports. This closes old service runs and assigns new publication grants and certificate plans. Old names remain reserved until control finishes its certificate and DNS cleanup checks. The configuration key and separately configured public URLs do not change. Send the current expected revision; an identical retry with the same key returns the original result.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -7725,7 +7740,7 @@ func (c *Client) RenamePublisherNamespace(ctx context.Context, projectKey string
 
 // RenamePublisherGroupWithBody Rename a group's configuration selector without changing endpoints
 //
-// Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
+// Rename the configuration key without changing the group's ID, namespace, services, ports, or publisher grants. Old selectors remain reserved for this group. Update project configuration before the next apply; retrying a completed rename is safe.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7744,7 +7759,7 @@ func (c *Client) RenamePublisherGroupWithBody(ctx context.Context, projectKey st
 
 // RenamePublisherGroup Rename a group's configuration selector without changing endpoints
 //
-// Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
+// Rename the configuration key without changing the group's ID, namespace, services, ports, or publisher grants. Old selectors remain reserved for this group. Update project configuration before the next apply; retrying a completed rename is safe.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -7869,7 +7884,7 @@ func (c *Client) GetPublicURL(ctx context.Context, publicUrlId PublicURLID, reqE
 
 // UpdatePublicURLWithBody Update a public URL's target and IP policy
 //
-// Replace the target and IP policy, optionally changing the post-quantum requirement, under current management authorization. Use replaceVisitorAccess for complete visitor access policy replacement; this operation does not create a new publish run.
+// Change only the supplied fields using the mutation_revision you read as expected_mutation_revision. Omitted fields keep their saved values; an empty IP list clears the filter. Null values, empty edits, and stale revisions are rejected.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7888,7 +7903,7 @@ func (c *Client) UpdatePublicURLWithBody(ctx context.Context, publicUrlId Public
 
 // UpdatePublicURL Update a public URL's target and IP policy
 //
-// Replace the target and IP policy, optionally changing the post-quantum requirement, under current management authorization. Use replaceVisitorAccess for complete visitor access policy replacement; this operation does not create a new publish run.
+// Change only the supplied fields using the mutation_revision you read as expected_mutation_revision. Omitted fields keep their saved values; an empty IP list clears the filter. Null values, empty edits, and stale revisions are rejected.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -7907,7 +7922,7 @@ func (c *Client) UpdatePublicURL(ctx context.Context, publicUrlId PublicURLID, b
 
 // ReplaceVisitorAccessWithBody Replace the complete live visitor access policy
 //
-// Replace the complete saved visitor access policy under current public URL management authorization. Omitted optional policy members are not a partial patch; publishers must enforce the resulting current visitor policy for new work.
+// Replace the access mode and complete IP filter using the current mutation revision. An empty IP list removes the filter. Existing grants, shares, and invitations are unchanged; this operation does not revoke every source of visitor access.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7926,7 +7941,7 @@ func (c *Client) ReplaceVisitorAccessWithBody(ctx context.Context, publicUrlId P
 
 // ReplaceVisitorAccess Replace the complete live visitor access policy
 //
-// Replace the complete saved visitor access policy under current public URL management authorization. Omitted optional policy members are not a partial patch; publishers must enforce the resulting current visitor policy for new work.
+// Replace the access mode and complete IP filter using the current mutation revision. An empty IP list removes the filter. Existing grants, shares, and invitations are unchanged; this operation does not revoke every source of visitor access.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -8110,7 +8125,7 @@ func (c *Client) ListVisitorInvitations(ctx context.Context, publicUrlId PublicU
 
 // CreateVisitorInvitationWithBody Invite a verified email identity to one public URL
 //
-// Issue an expiring one-use invitation under current public URL management authorization. Acceptance requires the recipient's verified email and creates an exact-URL identity grant, not team membership.
+// Invite the verified email identity to this public URL. Control returns the credential once. An identical authorized retry returns credential_delivery_unavailable with the invitation ID; revoke and reissue if delivery was lost. Acceptance creates visitor access, not team membership or management permission.
 //
 // Takes any type of body and a specified content type.
 //
@@ -8129,7 +8144,7 @@ func (c *Client) CreateVisitorInvitationWithBody(ctx context.Context, publicUrlI
 
 // CreateVisitorInvitation Invite a verified email identity to one public URL
 //
-// Issue an expiring one-use invitation under current public URL management authorization. Acceptance requires the recipient's verified email and creates an exact-URL identity grant, not team membership.
+// Invite the verified email identity to this public URL. Control returns the credential once. An identical authorized retry returns credential_delivery_unavailable with the invitation ID; revoke and reissue if delivery was lost. Acceptance creates visitor access, not team membership or management permission.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -8917,7 +8932,7 @@ func (c *Client) RevokePublisherGrant(ctx context.Context, publisherIdentityId P
 
 // GetPublisherGroupAssignments Read services and grants assigned to one leased group replica
 //
-// Authenticate with the current pgl_ group lease and read the replica's exact service assignments and publisher grant IDs. These assignments may contain targets; a pta_ publisher access token cannot read them.
+// Read the replica's assigned services and publisher grants using its current pgl_ lease. Assignments can include targets. A pta_ publisher token cannot read them.
 //
 // Corresponds with GET /v1/publisher/groups/assignments (the `GetPublisherGroupAssignments` operationId).
 func (c *Client) GetPublisherGroupAssignments(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -8934,7 +8949,7 @@ func (c *Client) GetPublisherGroupAssignments(ctx context.Context, reqEditors ..
 
 // AcknowledgePublisherGroupConfigurationWithBody Acknowledge the exact configuration installed by a group replica
 //
-// Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
+// Report the installed configuration revision, hash, and health using the replica's current pgl_ lease. Stale or mismatched configuration is rejected; a pta_ publisher token cannot acknowledge it.
 //
 // Takes any type of body and a specified content type.
 //
@@ -8953,7 +8968,7 @@ func (c *Client) AcknowledgePublisherGroupConfigurationWithBody(ctx context.Cont
 
 // AcknowledgePublisherGroupConfiguration Acknowledge the exact configuration installed by a group replica
 //
-// Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
+// Report the installed configuration revision, hash, and health using the replica's current pgl_ lease. Stale or mismatched configuration is rejected; a pta_ publisher token cannot acknowledge it.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -8972,7 +8987,7 @@ func (c *Client) AcknowledgePublisherGroupConfiguration(ctx context.Context, bod
 
 // RedeemPublisherGroupEnrollmentWithBody Enroll a replica's signing key with a group enrollment secret
 //
-// Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+// Register a replica's Ed25519 public key using enrollment_key in the body. Retrying the same key returns the same membership without consuming more enrollment capacity.
 //
 // Takes any type of body and a specified content type.
 //
@@ -8991,7 +9006,7 @@ func (c *Client) RedeemPublisherGroupEnrollmentWithBody(ctx context.Context, con
 
 // RedeemPublisherGroupEnrollment Enroll a replica's signing key with a group enrollment secret
 //
-// Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+// Register a replica's Ed25519 public key using enrollment_key in the body. Retrying the same key returns the same membership without consuming more enrollment capacity.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -9010,7 +9025,7 @@ func (c *Client) RedeemPublisherGroupEnrollment(ctx context.Context, body Redeem
 
 // AcquirePublisherGroupLeaseWithBody Exchange a signed replica assertion for a group lease
 //
-// Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
+// Exchange a one-use signed assertion in the body for a pgl_ group lease. The assertion's audience is this endpoint's full control URL, and its grant claim is the group ID.
 //
 // Takes any type of body and a specified content type.
 //
@@ -9029,7 +9044,7 @@ func (c *Client) AcquirePublisherGroupLeaseWithBody(ctx context.Context, content
 
 // AcquirePublisherGroupLease Exchange a signed replica assertion for a group lease
 //
-// Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
+// Exchange a one-use signed assertion in the body for a pgl_ group lease. The assertion's audience is this endpoint's full control URL, and its grant claim is the group ID.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -9048,7 +9063,7 @@ func (c *Client) AcquirePublisherGroupLease(ctx context.Context, body AcquirePub
 
 // VerifyPublisherGroupIdentityWithBody Verify a replica's group membership without acquiring a lease
 //
-// Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
+// Verify group membership using a one-use signed assertion in the body. Its audience is this endpoint's full control URL. Returns current and historical selectors without replacing the running publisher's group lease.
 //
 // Takes any type of body and a specified content type.
 //
@@ -9067,7 +9082,7 @@ func (c *Client) VerifyPublisherGroupIdentityWithBody(ctx context.Context, conte
 
 // VerifyPublisherGroupIdentity Verify a replica's group membership without acquiring a lease
 //
-// Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
+// Verify group membership using a one-use signed assertion in the body. Its audience is this endpoint's full control URL. Returns current and historical selectors without replacing the running publisher's group lease.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -9158,7 +9173,7 @@ func (c *Client) DeletePublisherPublicURL(ctx context.Context, publicUrlId Publi
 
 // InspectPublisherRuntimeWithBody Inspect a publisher runtime
 //
-// Read the runtime epoch without recording an address. A one-use Ed25519 assertion binds this endpoint, publisher identity, inspect action, scope, process run, expected epoch, and deployment report. The body's identity and action must match the route. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+// Read the runtime epoch without recording an address. Send a one-use signed assertion for this endpoint in the body. The body's publisher identity and action must match the route.
 //
 // Takes any type of body and a specified content type.
 //
@@ -9177,7 +9192,7 @@ func (c *Client) InspectPublisherRuntimeWithBody(ctx context.Context, publisherI
 
 // InspectPublisherRuntime Inspect a publisher runtime
 //
-// Read the runtime epoch without recording an address. A one-use Ed25519 assertion binds this endpoint, publisher identity, inspect action, scope, process run, expected epoch, and deployment report. The body's identity and action must match the route. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+// Read the runtime epoch without recording an address. Send a one-use signed assertion for this endpoint in the body. The body's publisher identity and action must match the route.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -9196,7 +9211,7 @@ func (c *Client) InspectPublisherRuntime(ctx context.Context, publisherIdentityI
 
 // RenewPublisherRuntimeWithBody Renew a publisher runtime
 //
-// Renew only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, renew action, scope, process run, epoch, and deployment report. Control records only the validated request source, never a body address. Group renew also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+// Renew the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route. Group runtimes also receive a group lease.
 //
 // Takes any type of body and a specified content type.
 //
@@ -9215,7 +9230,7 @@ func (c *Client) RenewPublisherRuntimeWithBody(ctx context.Context, publisherIde
 
 // RenewPublisherRuntime Renew a publisher runtime
 //
-// Renew only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, renew action, scope, process run, epoch, and deployment report. Control records only the validated request source, never a body address. Group renew also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+// Renew the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route. Group runtimes also receive a group lease.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -9234,7 +9249,7 @@ func (c *Client) RenewPublisherRuntime(ctx context.Context, publisherIdentityId 
 
 // StartPublisherRuntimeWithBody Start a publisher runtime
 //
-// Compare the inspected epoch and start one process run. The one-use assertion binds this endpoint, publisher identity, start action, scope, process run, epoch, and deployment report. A retry retains the same process run and expected epoch. Control records only the validated request source, never a body address. Group start also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+// Start a process run if the inspected epoch still matches. Send a one-use signed assertion for this endpoint in the body, with matching publisher identity and action. After an uncertain response, keep the same process run and expected epoch but use a fresh assertion. Group runtimes also receive a group lease.
 //
 // Takes any type of body and a specified content type.
 //
@@ -9253,7 +9268,7 @@ func (c *Client) StartPublisherRuntimeWithBody(ctx context.Context, publisherIde
 
 // StartPublisherRuntime Start a publisher runtime
 //
-// Compare the inspected epoch and start one process run. The one-use assertion binds this endpoint, publisher identity, start action, scope, process run, epoch, and deployment report. A retry retains the same process run and expected epoch. Control records only the validated request source, never a body address. Group start also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+// Start a process run if the inspected epoch still matches. Send a one-use signed assertion for this endpoint in the body, with matching publisher identity and action. After an uncertain response, keep the same process run and expected epoch but use a fresh assertion. Group runtimes also receive a group lease.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -9272,7 +9287,7 @@ func (c *Client) StartPublisherRuntime(ctx context.Context, publisherIdentityId 
 
 // StopPublisherRuntimeWithBody Stop a publisher runtime
 //
-// Stop only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, stop action, scope, process run, epoch, and deployment report. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+// Stop the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route.
 //
 // Takes any type of body and a specified content type.
 //
@@ -9291,7 +9306,7 @@ func (c *Client) StopPublisherRuntimeWithBody(ctx context.Context, publisherIden
 
 // StopPublisherRuntime Stop a publisher runtime
 //
-// Stop only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, stop action, scope, process run, epoch, and deployment report. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+// Stop the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -9471,7 +9486,7 @@ func (c *Client) GetService(ctx context.Context, serviceId ServiceID, reqEditors
 
 // ConfigureServiceWithBody Replace a service's approved protocol and target TLS trust
 //
-// Set the saved protocol, publisher pool, and target TLS trust snapshot using current service management permission. Publishers must declare matching trust when preparing later runs; this is not a target address update or a publication start.
+// Replace the approved protocol, publisher-pool setting, and target TLS trust. Send trust_revision as expected_trust_revision; omit target_tls to remove it. Endpoint and placement cannot be changed here. Publishers must declare matching trust when preparing later runs.
 //
 // Takes any type of body and a specified content type.
 //
@@ -9490,7 +9505,7 @@ func (c *Client) ConfigureServiceWithBody(ctx context.Context, serviceId Service
 
 // ConfigureService Replace a service's approved protocol and target TLS trust
 //
-// Set the saved protocol, publisher pool, and target TLS trust snapshot using current service management permission. Publishers must declare matching trust when preparing later runs; this is not a target address update or a publication start.
+// Replace the approved protocol, publisher-pool setting, and target TLS trust. Send trust_revision as expected_trust_revision; omit target_tls to remove it. Endpoint and placement cannot be changed here. Publishers must declare matching trust when preparing later runs.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -9547,7 +9562,7 @@ func (c *Client) IssueServiceClientCertificate(ctx context.Context, serviceId Se
 
 // PrepareConnectorPeerPairWithBody Prepare a signed connector pair for an exact ready service run
 //
-// Signed create or replace for one exact ready service run. The request signature must prove the selected device or workload key. A device source also requires its matching identity's control session bearer token. A workload source authenticates with its credential in the JSON body and must omit Authorization entirely, including empty headers. The empty security object represents body authentication, not anonymous access. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+// Create or replace a pair for the selected service run using the device or workload signature. Device sources require the matching control session. Workload sources use the body credential and must omit Authorization, including empty headers. Control rechecks current access and both relay leases; a selection snapshot is not permission.
 //
 // Takes any type of body and a specified content type.
 //
@@ -9566,7 +9581,7 @@ func (c *Client) PrepareConnectorPeerPairWithBody(ctx context.Context, serviceId
 
 // PrepareConnectorPeerPair Prepare a signed connector pair for an exact ready service run
 //
-// Signed create or replace for one exact ready service run. The request signature must prove the selected device or workload key. A device source also requires its matching identity's control session bearer token. A workload source authenticates with its credential in the JSON body and must omit Authorization entirely, including empty headers. The empty security object represents body authentication, not anonymous access. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+// Create or replace a pair for the selected service run using the device or workload signature. Device sources require the matching control session. Workload sources use the body credential and must omit Authorization, including empty headers. Control rechecks current access and both relay leases; a selection snapshot is not permission.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -9585,7 +9600,7 @@ func (c *Client) PrepareConnectorPeerPair(ctx context.Context, serviceId Service
 
 // RebindConnectorPeerPairWithBody Inspect or change a retained connector pair's network binding
 //
-// Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+// Inspect, prepare, activate, or abort a network binding for an existing connector owner. Sign with the same source key. Device sources require the matching control session; workload sources use the body credential and must omit Authorization, including empty headers. This cannot select another run or revive an expired owner. Only stale_network_binding permits recovery by inspecting retained state; other authorization failures are terminal.
 //
 // Takes any type of body and a specified content type.
 //
@@ -9604,7 +9619,7 @@ func (c *Client) RebindConnectorPeerPairWithBody(ctx context.Context, serviceId 
 
 // RebindConnectorPeerPair Inspect or change a retained connector pair's network binding
 //
-// Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+// Inspect, prepare, activate, or abort a network binding for an existing connector owner. Sign with the same source key. Device sources require the matching control session; workload sources use the body credential and must omit Authorization, including empty headers. This cannot select another run or revive an expired owner. Only stale_network_binding permits recovery by inspecting retained state; other authorization failures are terminal.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -9623,7 +9638,7 @@ func (c *Client) RebindConnectorPeerPair(ctx context.Context, serviceId ServiceI
 
 // RenewConnectorPeerPairWithBody Renew an exact signed connector pair and visitor permission
 //
-// Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
+// Renew the existing pair and visitor permission together, without selecting another run. The signature must prove the same device or workload key. Device sources require the matching control session; workload sources use the body credential and must omit Authorization, including empty headers. The response contains the pair lease, run validity, and visitor permission from that decision.
 //
 // Takes any type of body and a specified content type.
 //
@@ -9642,7 +9657,7 @@ func (c *Client) RenewConnectorPeerPairWithBody(ctx context.Context, serviceId S
 
 // RenewConnectorPeerPair Renew an exact signed connector pair and visitor permission
 //
-// Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
+// Renew the existing pair and visitor permission together, without selecting another run. The signature must prove the same device or workload key. Device sources require the matching control session; workload sources use the body credential and must omit Authorization, including empty headers. The response contains the pair lease, run validity, and visitor permission from that decision.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -9733,7 +9748,7 @@ func (c *Client) RevokeServiceGrant(ctx context.Context, serviceId ServiceID, gr
 
 // ListServiceHTTPGrants List an HTTP service's visitor credentials without secrets
 //
-// Secretless credential inventory for one service HTTP service. Requires current service management permission; includes expired and revoked records.
+// List this service's HTTP visitor credentials without their secrets. Requires current service management permission and includes expired and revoked records.
 //
 // Corresponds with GET /v1/services/{service_id}/http-grants (the `ListServiceHTTPGrants` operationId).
 func (c *Client) ListServiceHTTPGrants(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -9750,7 +9765,7 @@ func (c *Client) ListServiceHTTPGrants(ctx context.Context, serviceId ServiceID,
 
 // CreateServiceHTTPGrantWithBody Create a service-scoped HTTP visitor token or share
 //
-// Create a service-scoped HTTP token or share. Requires current service management and visitor permission. The secret is returned once and grants no management or feedback permission.
+// Create an HTTP visitor credential for this service. Requires both current management and visitor permission. Each call creates a new credential, returned once; it grants neither management nor feedback permission.
 //
 // Takes any type of body and a specified content type.
 //
@@ -9769,7 +9784,7 @@ func (c *Client) CreateServiceHTTPGrantWithBody(ctx context.Context, serviceId S
 
 // CreateServiceHTTPGrant Create a service-scoped HTTP visitor token or share
 //
-// Create a service-scoped HTTP token or share. Requires current service management and visitor permission. The secret is returned once and grants no management or feedback permission.
+// Create an HTTP visitor credential for this service. Requires both current management and visitor permission. Each call creates a new credential, returned once; it grants neither management nor feedback permission.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -9822,7 +9837,7 @@ func (c *Client) ListServiceInvitations(ctx context.Context, serviceId ServiceID
 
 // InviteServiceVisitorWithBody Invite a verified email identity to one service
 //
-// A new key creates one exact-service invitation with a one-time credential. An exact retry by the same actor returns HTTP 409 credential_delivery_unavailable with details.resource_id after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
+// Invite the verified email identity to this service. Control returns the credential once. An identical authorized retry returns credential_delivery_unavailable with the existing invitation ID; if delivery was lost, revoke it and create another with a new key. Reusing a key with changed input conflicts. No secret is kept for recovery.
 //
 // Takes any type of body and a specified content type.
 //
@@ -9841,7 +9856,7 @@ func (c *Client) InviteServiceVisitorWithBody(ctx context.Context, serviceId Ser
 
 // InviteServiceVisitor Invite a verified email identity to one service
 //
-// A new key creates one exact-service invitation with a one-time credential. An exact retry by the same actor returns HTTP 409 credential_delivery_unavailable with details.resource_id after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
+// Invite the verified email identity to this service. Control returns the credential once. An identical authorized retry returns credential_delivery_unavailable with the existing invitation ID; if delivery was lost, revoke it and create another with a new key. Reusing a key with changed input conflicts. No secret is kept for recovery.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -10439,7 +10454,7 @@ func (c *Client) ListTeamShares(ctx context.Context, params *ListTeamSharesParam
 
 // CreateURLShareWithBody Store one share for an exact authorized HTTP public URL
 //
-// A guest trial can share only its own demo URL from the issuing IP; the share expires by the trial's end even if the requested expiry is later.
+// Create a share for one public URL and return its link and token source once. Use that URL's ID as entry_public_url_id. An identical retry returns the existing share ID in a credential_delivery_unavailable problem; revoke and reissue if delivery was lost. Guest shares are limited to the trial's URL, source IP, and expiry.
 //
 // Takes any type of body and a specified content type.
 //
@@ -10458,7 +10473,7 @@ func (c *Client) CreateURLShareWithBody(ctx context.Context, params *CreateURLSh
 
 // CreateURLShare Store one share for an exact authorized HTTP public URL
 //
-// A guest trial can share only its own demo URL from the issuing IP; the share expires by the trial's end even if the requested expiry is later.
+// Create a share for one public URL and return its link and token source once. Use that URL's ID as entry_public_url_id. An identical retry returns the existing share ID in a credential_delivery_unavailable problem; revoke and reissue if delivery was lost. Guest shares are limited to the trial's URL, source IP, and expiry.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -10621,7 +10636,7 @@ func (c *Client) AcceptVisitorInvitation(ctx context.Context, body AcceptVisitor
 
 // ReadPublisherVisitorPolicyWithBody Refresh the current run's visitor policy and verification keys
 //
-// Read one current publisher run's scoped visitor policy, revocations, and public verification keys. The bearer credential is the exact run token. This background operation is independent of the publisher's process lease and of ordinary visitor admission.
+// Refresh visitor policy and revocations for one publisher run using its exact run token. This is a publisher operation, not a visitor or management read, and can return private policy data for the run. It does not renew the publisher process lease or grant traffic access.
 //
 // Takes any type of body and a specified content type.
 //
@@ -10640,7 +10655,7 @@ func (c *Client) ReadPublisherVisitorPolicyWithBody(ctx context.Context, content
 
 // ReadPublisherVisitorPolicy Refresh the current run's visitor policy and verification keys
 //
-// Read one current publisher run's scoped visitor policy, revocations, and public verification keys. The bearer credential is the exact run token. This background operation is independent of the publisher's process lease and of ordinary visitor admission.
+// Refresh visitor policy and revocations for one publisher run using its exact run token. This is a publisher operation, not a visitor or management read, and can return private policy data for the run. It does not renew the publisher process lease or grant traffic access.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -10659,7 +10674,12 @@ func (c *Client) ReadPublisherVisitorPolicy(ctx context.Context, body ReadPublis
 
 // IssueVisitorTokenWithBody Prepare or renew an exact-resource visitor permission
 //
-// Prepare or renew one exact-resource visitor permission. For source.kind control_session or device, authenticate with the current control session bearer token. For browser_session, workload, share, share_session, or grant, authenticate with the source credential in the JSON body and omit Authorization entirely; even an empty Authorization header is rejected. The empty security object represents these body-authenticated branches, not anonymous issuance. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+// Prepare or renew permission to visit one resource.
+//
+// - control_session or device: send a control-session bearer token.
+// - browser_session, workload, share, share_session, or grant: send the source credential in the body. Omit Authorization entirely, including empty headers.
+//
+// Control checks current access. Use refresh credentials only to request another visitor token.
 //
 // Takes any type of body and a specified content type.
 //
@@ -10678,7 +10698,12 @@ func (c *Client) IssueVisitorTokenWithBody(ctx context.Context, contentType stri
 
 // IssueVisitorToken Prepare or renew an exact-resource visitor permission
 //
-// Prepare or renew one exact-resource visitor permission. For source.kind control_session or device, authenticate with the current control session bearer token. For browser_session, workload, share, share_session, or grant, authenticate with the source credential in the JSON body and omit Authorization entirely; even an empty Authorization header is rejected. The empty security object represents these body-authenticated branches, not anonymous issuance. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+// Prepare or renew permission to visit one resource.
+//
+// - control_session or device: send a control-session bearer token.
+// - browser_session, workload, share, share_session, or grant: send the source credential in the body. Omit Authorization entirely, including empty headers.
+//
+// Control checks current access. Use refresh credentials only to request another visitor token.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -10714,7 +10739,7 @@ func (c *Client) ListAvailablePublicURLs(ctx context.Context, params *ListAvaila
 
 // ListAvailableServices List services available to the signed-in visitor
 //
-// Authorized saved services for tnl connect, including offline services. Initial readiness requires two ready publisher connections; after that one surviving ready connection keeps a run available during replacement. Inventory includes the visitor endpoint hostname but grants no stream ticket and omits target addresses, target TLS trust, and secrets.
+// List services the signed-in visitor may use, including offline services. Results include visitor endpoints, not target addresses, target trust, or secrets. Listing a service does not grant traffic access. Initial readiness needs two publisher connections; one surviving connection can keep an already-ready run available.
 //
 // Corresponds with GET /v1/visitor/services (the `ListAvailableServices` operationId).
 func (c *Client) ListAvailableServices(ctx context.Context, params *ListAvailableServicesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -17829,7 +17854,7 @@ type ClientWithResponsesInterface interface {
 
 	// CompletePreviewBrowserLoginWithResponse Return a signed-in visitor to the preview
 	//
-	// Complete the identity provider callback using the pending login state and authorization code, then redirect to a one-time host-bound handoff. No bearer token is used; the callback is authenticated by the checked login flow, not by the empty security array.
+	// Check the pending login state and authorization code, then redirect the browser to a one-time publisher handoff. This callback uses the checked sign-in flow, not a bearer token.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -17838,7 +17863,7 @@ type ClientWithResponsesInterface interface {
 
 	// BeginPreviewBrowserLoginWithResponse Start sign-in for a preview visitor
 	//
-	// Begin the configured browser sign-in flow for a public URL, optionally within a preview. No bearer credential is required to begin sign-in; current visit permission is checked before a usable browser credential is issued.
+	// Start browser sign-in for a public URL, optionally within a preview. Navigate to this URL rather than fetching JSON. Current visitor permission is checked before issuing a browser credential.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -17847,7 +17872,7 @@ type ClientWithResponsesInterface interface {
 
 	// BeginServiceBrowserLoginWithResponse Start browser sign-in for one HTTP service
 	//
-	// Start sign-in for one service HTTP service. Uses the common browser callback and a snapshot of ready runs; the allocated service port is retained.
+	// Start browser sign-in for one HTTP service. Navigate to this URL rather than fetching JSON. The common callback preserves the allocated service port and checks current visitor access before issuing a credential.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -17982,7 +18007,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListPreviewsWithResponse List the caller's previews
 	//
-	// List the caller's previews in one current team, ordered by immutable preview ID. Includes previews created before project configuration was applied. Team administrators do not gain access to another creator's preview. Cursors are bound to this team, identity, and collection. Read each ID with the preview endpoint to get its public URL IDs.
+	// List previews created by the signed-in identity in this team. Team visitor access does not grant access to another creator's preview records. Read each preview for its public URLs. Follow next_cursor unchanged; each page checks current access.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -18045,7 +18070,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateShareWithBodyWithResponse Store one share for a snapshot of authorized public URLs
 	//
-	// Store a share using current preview management authorization and an idempotency key. It captures the authorized public URL IDs now; later preview membership changes do not expand that share's access.
+	// Create a share for the selected public URL IDs in this preview. entry_public_url_id chooses the landing URL and must be in that set. Later preview changes do not expand the share. Control returns the link and token source once; an identical retry returns the existing share ID in a credential_delivery_unavailable problem.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18054,7 +18079,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateShareWithResponse Store one share for a snapshot of authorized public URLs
 	//
-	// Store a share using current preview management authorization and an idempotency key. It captures the authorized public URL IDs now; later preview membership changes do not expand that share's access.
+	// Create a share for the selected public URL IDs in this preview. entry_public_url_id chooses the landing URL and must be in that set. Later preview changes do not expand the share. Control returns the link and token source once; an identical retry returns the existing share ID in a credential_delivery_unavailable problem.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18081,7 +18106,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListProjectsWithResponse List applied projects
 	//
-	// List applied project selectors for a current team manager, ordered by immutable project_key. Summaries contain no targets, configuration, or checkout paths. Use each selector with the configuration endpoint; its detail includes publisher group IDs and current members. Cursors are bound to this team, identity, and collection. Authorization is checked on every page.
+	// List applied projects the current team manager may manage, ordered by project_key. Summaries omit configuration, targets, and checkout paths. Read a project's configuration for its groups, members, and editable declarations. Follow next_cursor unchanged; each page checks current access.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -18090,7 +18115,7 @@ type ClientWithResponsesInterface interface {
 
 	// ResolveProjectSourceWithBodyWithResponse Resolve a project's portable source selector
 	//
-	// Resolve a network Git origin and repository-relative configuration path to the existing portable project selector. Does not read a repository, evaluate configuration, create a project, or reserve a name. Branches, checkout directories, and configuration content do not affect this identity. Use the returned project_key with the configuration endpoint, passing these source facts on first apply.
+	// Compute the portable project key from a Git origin and repository-relative configuration path. No repository is fetched, configuration evaluated, or state created. Branches, checkout directories, and file contents do not affect the key. Use it with the configuration endpoint and send the source facts on first apply.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18099,7 +18124,7 @@ type ClientWithResponsesInterface interface {
 
 	// ResolveProjectSourceWithResponse Resolve a project's portable source selector
 	//
-	// Resolve a network Git origin and repository-relative configuration path to the existing portable project selector. Does not read a repository, evaluate configuration, create a project, or reserve a name. Branches, checkout directories, and configuration content do not affect this identity. Use the returned project_key with the configuration endpoint, passing these source facts on first apply.
+	// Compute the portable project key from a Git origin and repository-relative configuration path. No repository is fetched, configuration evaluated, or state created. Branches, checkout directories, and file contents do not affect the key. Use it with the configuration endpoint and send the source facts on first apply.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18117,7 +18142,7 @@ type ClientWithResponsesInterface interface {
 
 	// ApplyProjectConfigurationWithBodyWithResponse Apply a project's desired services and publisher groups
 	//
-	// Atomically reconcile declarations. On first apply provide source facts; control derives the source fingerprint using the same portable identity rules as resolve-source. On updates source may be omitted to retain the saved binding, or supplied to check that it matches. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+	// Save declarations and update their resources together. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18126,7 +18151,7 @@ type ClientWithResponsesInterface interface {
 
 	// ApplyProjectConfigurationWithResponse Apply a project's desired services and publisher groups
 	//
-	// Atomically reconcile declarations. On first apply provide source facts; control derives the source fingerprint using the same portable identity rules as resolve-source. On updates source may be omitted to retain the saved binding, or supplied to check that it matches. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+	// Save declarations and update their resources together. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18135,7 +18160,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetLocalProjectServiceWithResponse Resolve one existing source-bound worktree service
 	//
-	// Read the exact service previously realized for this team, project source, service key, and worktree. Requires current ordinary private visitor access, not project management access. Returns only immutable identity and approved visitor protocol/TLS metadata, never configuration, targets, or credentials. Does not realize or adopt a service. Missing or unauthorized bindings return not found; an authorized binding with another source fingerprint returns conflict. No other team, project, worktree, or saved name is searched.
+	// Read the existing service for this team, source, service key, and worktree. Requires visitor access, not project management permission. Returns identity and visitor protocol/TLS metadata, never targets or credentials. It does not create a service or search other worktrees or names. Missing or unauthorized bindings return 404; an authorized source mismatch returns 409.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -18144,7 +18169,7 @@ type ClientWithResponsesInterface interface {
 
 	// RealizeLocalProjectServiceWithBodyWithResponse Realize one declared local service for a worktree
 	//
-	// Realize only one source-bound local service for one worktree. Private IDs are allocated here with worktree-scoped names, never adopted by name. Public IDs must be exact caller-owned app URLs already allocated by this runtime, bound to the caller's membership or to the caller's own personal team when current namespace authorization selects shared scope. Organization shared URLs and another member's or team's URLs are rejected. Records provenance before first apply; later apply reconciles that legitimate resource. When configuration has been applied the local declaration must match it. Does not apply remote group changes.
+	// Create or reuse one service for this source and worktree. Private services get worktree-specific names; saved services are never adopted by name. A public URL must already belong to this runtime and the caller's membership or personal team; organization-shared and other members' URLs are rejected. If configuration was applied, the declaration must match it. Remote publisher groups are unchanged.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18153,7 +18178,7 @@ type ClientWithResponsesInterface interface {
 
 	// RealizeLocalProjectServiceWithResponse Realize one declared local service for a worktree
 	//
-	// Realize only one source-bound local service for one worktree. Private IDs are allocated here with worktree-scoped names, never adopted by name. Public IDs must be exact caller-owned app URLs already allocated by this runtime, bound to the caller's membership or to the caller's own personal team when current namespace authorization selects shared scope. Organization shared URLs and another member's or team's URLs are rejected. Records provenance before first apply; later apply reconciles that legitimate resource. When configuration has been applied the local declaration must match it. Does not apply remote group changes.
+	// Create or reuse one service for this source and worktree. Private services get worktree-specific names; saved services are never adopted by name. A public URL must already belong to this runtime and the caller's membership or personal team; organization-shared and other members' URLs are rejected. If configuration was applied, the declaration must match it. Remote publisher groups are unchanged.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18162,7 +18187,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetProjectPublicMetadataWithResponse Read visitor-safe project service identities and hostnames
 	//
-	// Browser-safe project source and public service IDs/hostnames, including exact local worktree realizations before or after first apply. Returns only public services the caller may visit, or all public services for a project manager. A service key may appear more than once for separate worktree URLs. Never returns configuration, targets, trust, grants, or publisher data.
+	// Read public service IDs and hostnames for this project's worktrees. Visitors see only services they may visit; project managers see all public services. A service key can appear once per worktree. Targets, configuration, trust, grants, and publisher data are omitted.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -18198,7 +18223,7 @@ type ClientWithResponsesInterface interface {
 
 	// RenamePublisherNamespaceWithBodyWithResponse Replace a publisher group's DNS namespace label
 	//
-	// Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
+	// Change the group's DNS label while keeping its IDs and ports. This closes old service runs and assigns new publication grants and certificate plans. Old names remain reserved until control finishes its certificate and DNS cleanup checks. The configuration key and separately configured public URLs do not change. Send the current expected revision; an identical retry with the same key returns the original result.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18207,7 +18232,7 @@ type ClientWithResponsesInterface interface {
 
 	// RenamePublisherNamespaceWithResponse Replace a publisher group's DNS namespace label
 	//
-	// Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
+	// Change the group's DNS label while keeping its IDs and ports. This closes old service runs and assigns new publication grants and certificate plans. Old names remain reserved until control finishes its certificate and DNS cleanup checks. The configuration key and separately configured public URLs do not change. Send the current expected revision; an identical retry with the same key returns the original result.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18216,7 +18241,7 @@ type ClientWithResponsesInterface interface {
 
 	// RenamePublisherGroupWithBodyWithResponse Rename a group's configuration selector without changing endpoints
 	//
-	// Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
+	// Rename the configuration key without changing the group's ID, namespace, services, ports, or publisher grants. Old selectors remain reserved for this group. Update project configuration before the next apply; retrying a completed rename is safe.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18225,7 +18250,7 @@ type ClientWithResponsesInterface interface {
 
 	// RenamePublisherGroupWithResponse Rename a group's configuration selector without changing endpoints
 	//
-	// Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
+	// Rename the configuration key without changing the group's ID, namespace, services, ports, or publisher grants. Old selectors remain reserved for this group. Update project configuration before the next apply; retrying a completed rename is safe.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18288,7 +18313,7 @@ type ClientWithResponsesInterface interface {
 
 	// UpdatePublicURLWithBodyWithResponse Update a public URL's target and IP policy
 	//
-	// Replace the target and IP policy, optionally changing the post-quantum requirement, under current management authorization. Use replaceVisitorAccess for complete visitor access policy replacement; this operation does not create a new publish run.
+	// Change only the supplied fields using the mutation_revision you read as expected_mutation_revision. Omitted fields keep their saved values; an empty IP list clears the filter. Null values, empty edits, and stale revisions are rejected.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18297,7 +18322,7 @@ type ClientWithResponsesInterface interface {
 
 	// UpdatePublicURLWithResponse Update a public URL's target and IP policy
 	//
-	// Replace the target and IP policy, optionally changing the post-quantum requirement, under current management authorization. Use replaceVisitorAccess for complete visitor access policy replacement; this operation does not create a new publish run.
+	// Change only the supplied fields using the mutation_revision you read as expected_mutation_revision. Omitted fields keep their saved values; an empty IP list clears the filter. Null values, empty edits, and stale revisions are rejected.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18306,7 +18331,7 @@ type ClientWithResponsesInterface interface {
 
 	// ReplaceVisitorAccessWithBodyWithResponse Replace the complete live visitor access policy
 	//
-	// Replace the complete saved visitor access policy under current public URL management authorization. Omitted optional policy members are not a partial patch; publishers must enforce the resulting current visitor policy for new work.
+	// Replace the access mode and complete IP filter using the current mutation revision. An empty IP list removes the filter. Existing grants, shares, and invitations are unchanged; this operation does not revoke every source of visitor access.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18315,7 +18340,7 @@ type ClientWithResponsesInterface interface {
 
 	// ReplaceVisitorAccessWithResponse Replace the complete live visitor access policy
 	//
-	// Replace the complete saved visitor access policy under current public URL management authorization. Omitted optional policy members are not a partial patch; publishers must enforce the resulting current visitor policy for new work.
+	// Replace the access mode and complete IP filter using the current mutation revision. An empty IP list removes the filter. Existing grants, shares, and invitations are unchanged; this operation does not revoke every source of visitor access.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18405,7 +18430,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateVisitorInvitationWithBodyWithResponse Invite a verified email identity to one public URL
 	//
-	// Issue an expiring one-use invitation under current public URL management authorization. Acceptance requires the recipient's verified email and creates an exact-URL identity grant, not team membership.
+	// Invite the verified email identity to this public URL. Control returns the credential once. An identical authorized retry returns credential_delivery_unavailable with the invitation ID; revoke and reissue if delivery was lost. Acceptance creates visitor access, not team membership or management permission.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18414,7 +18439,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateVisitorInvitationWithResponse Invite a verified email identity to one public URL
 	//
-	// Issue an expiring one-use invitation under current public URL management authorization. Acceptance requires the recipient's verified email and creates an exact-URL identity grant, not team membership.
+	// Invite the verified email identity to this public URL. Control returns the credential once. An identical authorized retry returns credential_delivery_unavailable with the invitation ID; revoke and reissue if delivery was lost. Acceptance creates visitor access, not team membership or management permission.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18792,7 +18817,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetPublisherGroupAssignmentsWithResponse Read services and grants assigned to one leased group replica
 	//
-	// Authenticate with the current pgl_ group lease and read the replica's exact service assignments and publisher grant IDs. These assignments may contain targets; a pta_ publisher access token cannot read them.
+	// Read the replica's assigned services and publisher grants using its current pgl_ lease. Assignments can include targets. A pta_ publisher token cannot read them.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -18801,7 +18826,7 @@ type ClientWithResponsesInterface interface {
 
 	// AcknowledgePublisherGroupConfigurationWithBodyWithResponse Acknowledge the exact configuration installed by a group replica
 	//
-	// Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
+	// Report the installed configuration revision, hash, and health using the replica's current pgl_ lease. Stale or mismatched configuration is rejected; a pta_ publisher token cannot acknowledge it.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18810,7 +18835,7 @@ type ClientWithResponsesInterface interface {
 
 	// AcknowledgePublisherGroupConfigurationWithResponse Acknowledge the exact configuration installed by a group replica
 	//
-	// Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
+	// Report the installed configuration revision, hash, and health using the replica's current pgl_ lease. Stale or mismatched configuration is rejected; a pta_ publisher token cannot acknowledge it.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18819,7 +18844,7 @@ type ClientWithResponsesInterface interface {
 
 	// RedeemPublisherGroupEnrollmentWithBodyWithResponse Enroll a replica's signing key with a group enrollment secret
 	//
-	// Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+	// Register a replica's Ed25519 public key using enrollment_key in the body. Retrying the same key returns the same membership without consuming more enrollment capacity.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18828,7 +18853,7 @@ type ClientWithResponsesInterface interface {
 
 	// RedeemPublisherGroupEnrollmentWithResponse Enroll a replica's signing key with a group enrollment secret
 	//
-	// Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+	// Register a replica's Ed25519 public key using enrollment_key in the body. Retrying the same key returns the same membership without consuming more enrollment capacity.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18837,7 +18862,7 @@ type ClientWithResponsesInterface interface {
 
 	// AcquirePublisherGroupLeaseWithBodyWithResponse Exchange a signed replica assertion for a group lease
 	//
-	// Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
+	// Exchange a one-use signed assertion in the body for a pgl_ group lease. The assertion's audience is this endpoint's full control URL, and its grant claim is the group ID.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18846,7 +18871,7 @@ type ClientWithResponsesInterface interface {
 
 	// AcquirePublisherGroupLeaseWithResponse Exchange a signed replica assertion for a group lease
 	//
-	// Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
+	// Exchange a one-use signed assertion in the body for a pgl_ group lease. The assertion's audience is this endpoint's full control URL, and its grant claim is the group ID.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18855,7 +18880,7 @@ type ClientWithResponsesInterface interface {
 
 	// VerifyPublisherGroupIdentityWithBodyWithResponse Verify a replica's group membership without acquiring a lease
 	//
-	// Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
+	// Verify group membership using a one-use signed assertion in the body. Its audience is this endpoint's full control URL. Returns current and historical selectors without replacing the running publisher's group lease.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18864,7 +18889,7 @@ type ClientWithResponsesInterface interface {
 
 	// VerifyPublisherGroupIdentityWithResponse Verify a replica's group membership without acquiring a lease
 	//
-	// Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
+	// Verify group membership using a one-use signed assertion in the body. Its audience is this endpoint's full control URL. Returns current and historical selectors without replacing the running publisher's group lease.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18909,7 +18934,7 @@ type ClientWithResponsesInterface interface {
 
 	// InspectPublisherRuntimeWithBodyWithResponse Inspect a publisher runtime
 	//
-	// Read the runtime epoch without recording an address. A one-use Ed25519 assertion binds this endpoint, publisher identity, inspect action, scope, process run, expected epoch, and deployment report. The body's identity and action must match the route. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	// Read the runtime epoch without recording an address. Send a one-use signed assertion for this endpoint in the body. The body's publisher identity and action must match the route.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18918,7 +18943,7 @@ type ClientWithResponsesInterface interface {
 
 	// InspectPublisherRuntimeWithResponse Inspect a publisher runtime
 	//
-	// Read the runtime epoch without recording an address. A one-use Ed25519 assertion binds this endpoint, publisher identity, inspect action, scope, process run, expected epoch, and deployment report. The body's identity and action must match the route. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	// Read the runtime epoch without recording an address. Send a one-use signed assertion for this endpoint in the body. The body's publisher identity and action must match the route.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18927,7 +18952,7 @@ type ClientWithResponsesInterface interface {
 
 	// RenewPublisherRuntimeWithBodyWithResponse Renew a publisher runtime
 	//
-	// Renew only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, renew action, scope, process run, epoch, and deployment report. Control records only the validated request source, never a body address. Group renew also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	// Renew the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route. Group runtimes also receive a group lease.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18936,7 +18961,7 @@ type ClientWithResponsesInterface interface {
 
 	// RenewPublisherRuntimeWithResponse Renew a publisher runtime
 	//
-	// Renew only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, renew action, scope, process run, epoch, and deployment report. Control records only the validated request source, never a body address. Group renew also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	// Renew the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route. Group runtimes also receive a group lease.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18945,7 +18970,7 @@ type ClientWithResponsesInterface interface {
 
 	// StartPublisherRuntimeWithBodyWithResponse Start a publisher runtime
 	//
-	// Compare the inspected epoch and start one process run. The one-use assertion binds this endpoint, publisher identity, start action, scope, process run, epoch, and deployment report. A retry retains the same process run and expected epoch. Control records only the validated request source, never a body address. Group start also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	// Start a process run if the inspected epoch still matches. Send a one-use signed assertion for this endpoint in the body, with matching publisher identity and action. After an uncertain response, keep the same process run and expected epoch but use a fresh assertion. Group runtimes also receive a group lease.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18954,7 +18979,7 @@ type ClientWithResponsesInterface interface {
 
 	// StartPublisherRuntimeWithResponse Start a publisher runtime
 	//
-	// Compare the inspected epoch and start one process run. The one-use assertion binds this endpoint, publisher identity, start action, scope, process run, epoch, and deployment report. A retry retains the same process run and expected epoch. Control records only the validated request source, never a body address. Group start also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	// Start a process run if the inspected epoch still matches. Send a one-use signed assertion for this endpoint in the body, with matching publisher identity and action. After an uncertain response, keep the same process run and expected epoch but use a fresh assertion. Group runtimes also receive a group lease.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18963,7 +18988,7 @@ type ClientWithResponsesInterface interface {
 
 	// StopPublisherRuntimeWithBodyWithResponse Stop a publisher runtime
 	//
-	// Stop only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, stop action, scope, process run, epoch, and deployment report. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	// Stop the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18972,7 +18997,7 @@ type ClientWithResponsesInterface interface {
 
 	// StopPublisherRuntimeWithResponse Stop a publisher runtime
 	//
-	// Stop only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, stop action, scope, process run, epoch, and deployment report. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+	// Stop the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -19062,7 +19087,7 @@ type ClientWithResponsesInterface interface {
 
 	// ConfigureServiceWithBodyWithResponse Replace a service's approved protocol and target TLS trust
 	//
-	// Set the saved protocol, publisher pool, and target TLS trust snapshot using current service management permission. Publishers must declare matching trust when preparing later runs; this is not a target address update or a publication start.
+	// Replace the approved protocol, publisher-pool setting, and target TLS trust. Send trust_revision as expected_trust_revision; omit target_tls to remove it. Endpoint and placement cannot be changed here. Publishers must declare matching trust when preparing later runs.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -19071,7 +19096,7 @@ type ClientWithResponsesInterface interface {
 
 	// ConfigureServiceWithResponse Replace a service's approved protocol and target TLS trust
 	//
-	// Set the saved protocol, publisher pool, and target TLS trust snapshot using current service management permission. Publishers must declare matching trust when preparing later runs; this is not a target address update or a publication start.
+	// Replace the approved protocol, publisher-pool setting, and target TLS trust. Send trust_revision as expected_trust_revision; omit target_tls to remove it. Endpoint and placement cannot be changed here. Publishers must declare matching trust when preparing later runs.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -19098,7 +19123,7 @@ type ClientWithResponsesInterface interface {
 
 	// PrepareConnectorPeerPairWithBodyWithResponse Prepare a signed connector pair for an exact ready service run
 	//
-	// Signed create or replace for one exact ready service run. The request signature must prove the selected device or workload key. A device source also requires its matching identity's control session bearer token. A workload source authenticates with its credential in the JSON body and must omit Authorization entirely, including empty headers. The empty security object represents body authentication, not anonymous access. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+	// Create or replace a pair for the selected service run using the device or workload signature. Device sources require the matching control session. Workload sources use the body credential and must omit Authorization, including empty headers. Control rechecks current access and both relay leases; a selection snapshot is not permission.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -19107,7 +19132,7 @@ type ClientWithResponsesInterface interface {
 
 	// PrepareConnectorPeerPairWithResponse Prepare a signed connector pair for an exact ready service run
 	//
-	// Signed create or replace for one exact ready service run. The request signature must prove the selected device or workload key. A device source also requires its matching identity's control session bearer token. A workload source authenticates with its credential in the JSON body and must omit Authorization entirely, including empty headers. The empty security object represents body authentication, not anonymous access. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+	// Create or replace a pair for the selected service run using the device or workload signature. Device sources require the matching control session. Workload sources use the body credential and must omit Authorization, including empty headers. Control rechecks current access and both relay leases; a selection snapshot is not permission.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -19116,7 +19141,7 @@ type ClientWithResponsesInterface interface {
 
 	// RebindConnectorPeerPairWithBodyWithResponse Inspect or change a retained connector pair's network binding
 	//
-	// Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+	// Inspect, prepare, activate, or abort a network binding for an existing connector owner. Sign with the same source key. Device sources require the matching control session; workload sources use the body credential and must omit Authorization, including empty headers. This cannot select another run or revive an expired owner. Only stale_network_binding permits recovery by inspecting retained state; other authorization failures are terminal.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -19125,7 +19150,7 @@ type ClientWithResponsesInterface interface {
 
 	// RebindConnectorPeerPairWithResponse Inspect or change a retained connector pair's network binding
 	//
-	// Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+	// Inspect, prepare, activate, or abort a network binding for an existing connector owner. Sign with the same source key. Device sources require the matching control session; workload sources use the body credential and must omit Authorization, including empty headers. This cannot select another run or revive an expired owner. Only stale_network_binding permits recovery by inspecting retained state; other authorization failures are terminal.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -19134,7 +19159,7 @@ type ClientWithResponsesInterface interface {
 
 	// RenewConnectorPeerPairWithBodyWithResponse Renew an exact signed connector pair and visitor permission
 	//
-	// Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
+	// Renew the existing pair and visitor permission together, without selecting another run. The signature must prove the same device or workload key. Device sources require the matching control session; workload sources use the body credential and must omit Authorization, including empty headers. The response contains the pair lease, run validity, and visitor permission from that decision.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -19143,7 +19168,7 @@ type ClientWithResponsesInterface interface {
 
 	// RenewConnectorPeerPairWithResponse Renew an exact signed connector pair and visitor permission
 	//
-	// Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
+	// Renew the existing pair and visitor permission together, without selecting another run. The signature must prove the same device or workload key. Device sources require the matching control session; workload sources use the body credential and must omit Authorization, including empty headers. The response contains the pair lease, run validity, and visitor permission from that decision.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -19188,7 +19213,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListServiceHTTPGrantsWithResponse List an HTTP service's visitor credentials without secrets
 	//
-	// Secretless credential inventory for one service HTTP service. Requires current service management permission; includes expired and revoked records.
+	// List this service's HTTP visitor credentials without their secrets. Requires current service management permission and includes expired and revoked records.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -19197,7 +19222,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateServiceHTTPGrantWithBodyWithResponse Create a service-scoped HTTP visitor token or share
 	//
-	// Create a service-scoped HTTP token or share. Requires current service management and visitor permission. The secret is returned once and grants no management or feedback permission.
+	// Create an HTTP visitor credential for this service. Requires both current management and visitor permission. Each call creates a new credential, returned once; it grants neither management nor feedback permission.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -19206,7 +19231,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateServiceHTTPGrantWithResponse Create a service-scoped HTTP visitor token or share
 	//
-	// Create a service-scoped HTTP token or share. Requires current service management and visitor permission. The secret is returned once and grants no management or feedback permission.
+	// Create an HTTP visitor credential for this service. Requires both current management and visitor permission. Each call creates a new credential, returned once; it grants neither management nor feedback permission.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -19233,7 +19258,7 @@ type ClientWithResponsesInterface interface {
 
 	// InviteServiceVisitorWithBodyWithResponse Invite a verified email identity to one service
 	//
-	// A new key creates one exact-service invitation with a one-time credential. An exact retry by the same actor returns HTTP 409 credential_delivery_unavailable with details.resource_id after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
+	// Invite the verified email identity to this service. Control returns the credential once. An identical authorized retry returns credential_delivery_unavailable with the existing invitation ID; if delivery was lost, revoke it and create another with a new key. Reusing a key with changed input conflicts. No secret is kept for recovery.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -19242,7 +19267,7 @@ type ClientWithResponsesInterface interface {
 
 	// InviteServiceVisitorWithResponse Invite a verified email identity to one service
 	//
-	// A new key creates one exact-service invitation with a one-time credential. An exact retry by the same actor returns HTTP 409 credential_delivery_unavailable with details.resource_id after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
+	// Invite the verified email identity to this service. Control returns the credential once. An identical authorized retry returns credential_delivery_unavailable with the existing invitation ID; if delivery was lost, revoke it and create another with a new key. Reusing a key with changed input conflicts. No secret is kept for recovery.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -19530,7 +19555,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateURLShareWithBodyWithResponse Store one share for an exact authorized HTTP public URL
 	//
-	// A guest trial can share only its own demo URL from the issuing IP; the share expires by the trial's end even if the requested expiry is later.
+	// Create a share for one public URL and return its link and token source once. Use that URL's ID as entry_public_url_id. An identical retry returns the existing share ID in a credential_delivery_unavailable problem; revoke and reissue if delivery was lost. Guest shares are limited to the trial's URL, source IP, and expiry.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -19539,7 +19564,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateURLShareWithResponse Store one share for an exact authorized HTTP public URL
 	//
-	// A guest trial can share only its own demo URL from the issuing IP; the share expires by the trial's end even if the requested expiry is later.
+	// Create a share for one public URL and return its link and token source once. Use that URL's ID as entry_public_url_id. An identical retry returns the existing share ID in a credential_delivery_unavailable problem; revoke and reissue if delivery was lost. Guest shares are limited to the trial's URL, source IP, and expiry.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -19620,7 +19645,7 @@ type ClientWithResponsesInterface interface {
 
 	// ReadPublisherVisitorPolicyWithBodyWithResponse Refresh the current run's visitor policy and verification keys
 	//
-	// Read one current publisher run's scoped visitor policy, revocations, and public verification keys. The bearer credential is the exact run token. This background operation is independent of the publisher's process lease and of ordinary visitor admission.
+	// Refresh visitor policy and revocations for one publisher run using its exact run token. This is a publisher operation, not a visitor or management read, and can return private policy data for the run. It does not renew the publisher process lease or grant traffic access.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -19629,7 +19654,7 @@ type ClientWithResponsesInterface interface {
 
 	// ReadPublisherVisitorPolicyWithResponse Refresh the current run's visitor policy and verification keys
 	//
-	// Read one current publisher run's scoped visitor policy, revocations, and public verification keys. The bearer credential is the exact run token. This background operation is independent of the publisher's process lease and of ordinary visitor admission.
+	// Refresh visitor policy and revocations for one publisher run using its exact run token. This is a publisher operation, not a visitor or management read, and can return private policy data for the run. It does not renew the publisher process lease or grant traffic access.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -19638,7 +19663,12 @@ type ClientWithResponsesInterface interface {
 
 	// IssueVisitorTokenWithBodyWithResponse Prepare or renew an exact-resource visitor permission
 	//
-	// Prepare or renew one exact-resource visitor permission. For source.kind control_session or device, authenticate with the current control session bearer token. For browser_session, workload, share, share_session, or grant, authenticate with the source credential in the JSON body and omit Authorization entirely; even an empty Authorization header is rejected. The empty security object represents these body-authenticated branches, not anonymous issuance. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+	// Prepare or renew permission to visit one resource.
+	//
+	// - control_session or device: send a control-session bearer token.
+	// - browser_session, workload, share, share_session, or grant: send the source credential in the body. Omit Authorization entirely, including empty headers.
+	//
+	// Control checks current access. Use refresh credentials only to request another visitor token.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -19647,7 +19677,12 @@ type ClientWithResponsesInterface interface {
 
 	// IssueVisitorTokenWithResponse Prepare or renew an exact-resource visitor permission
 	//
-	// Prepare or renew one exact-resource visitor permission. For source.kind control_session or device, authenticate with the current control session bearer token. For browser_session, workload, share, share_session, or grant, authenticate with the source credential in the JSON body and omit Authorization entirely; even an empty Authorization header is rejected. The empty security object represents these body-authenticated branches, not anonymous issuance. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+	// Prepare or renew permission to visit one resource.
+	//
+	// - control_session or device: send a control-session bearer token.
+	// - browser_session, workload, share, share_session, or grant: send the source credential in the body. Omit Authorization entirely, including empty headers.
+	//
+	// Control checks current access. Use refresh credentials only to request another visitor token.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -19665,7 +19700,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListAvailableServicesWithResponse List services available to the signed-in visitor
 	//
-	// Authorized saved services for tnl connect, including offline services. Initial readiness requires two ready publisher connections; after that one surviving ready connection keeps a run available during replacement. Inventory includes the visitor endpoint hostname but grants no stream ticket and omits target addresses, target TLS trust, and secrets.
+	// List services the signed-in visitor may use, including offline services. Results include visitor endpoints, not target addresses, target trust, or secrets. Listing a service does not grant traffic access. Initial readiness needs two publisher connections; one surviving connection can keep an already-ready run available.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -26484,7 +26519,7 @@ func (c *ClientWithResponses) GetAdminServerStatusWithResponse(ctx context.Conte
 
 // CompletePreviewBrowserLoginWithResponse Return a signed-in visitor to the preview
 //
-// Complete the identity provider callback using the pending login state and authorization code, then redirect to a one-time host-bound handoff. No bearer token is used; the callback is authenticated by the checked login flow, not by the empty security array.
+// Check the pending login state and authorization code, then redirect the browser to a one-time publisher handoff. This callback uses the checked sign-in flow, not a bearer token.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -26499,7 +26534,7 @@ func (c *ClientWithResponses) CompletePreviewBrowserLoginWithResponse(ctx contex
 
 // BeginPreviewBrowserLoginWithResponse Start sign-in for a preview visitor
 //
-// Begin the configured browser sign-in flow for a public URL, optionally within a preview. No bearer credential is required to begin sign-in; current visit permission is checked before a usable browser credential is issued.
+// Start browser sign-in for a public URL, optionally within a preview. Navigate to this URL rather than fetching JSON. Current visitor permission is checked before issuing a browser credential.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -26514,7 +26549,7 @@ func (c *ClientWithResponses) BeginPreviewBrowserLoginWithResponse(ctx context.C
 
 // BeginServiceBrowserLoginWithResponse Start browser sign-in for one HTTP service
 //
-// Start sign-in for one service HTTP service. Uses the common browser callback and a snapshot of ready runs; the allocated service port is retained.
+// Start browser sign-in for one HTTP service. Navigate to this URL rather than fetching JSON. The common callback preserves the allocated service port and checks current visitor access before issuing a credential.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -26739,7 +26774,7 @@ func (c *ClientWithResponses) GetHealthWithResponse(ctx context.Context, reqEdit
 
 // ListPreviewsWithResponse List the caller's previews
 //
-// List the caller's previews in one current team, ordered by immutable preview ID. Includes previews created before project configuration was applied. Team administrators do not gain access to another creator's preview. Cursors are bound to this team, identity, and collection. Read each ID with the preview endpoint to get its public URL IDs.
+// List previews created by the signed-in identity in this team. Team visitor access does not grant access to another creator's preview records. Read each preview for its public URLs. Follow next_cursor unchanged; each page checks current access.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -26844,7 +26879,7 @@ func (c *ClientWithResponses) ListSharesWithResponse(ctx context.Context, previe
 
 // CreateShareWithBodyWithResponse Store one share for a snapshot of authorized public URLs
 //
-// Store a share using current preview management authorization and an idempotency key. It captures the authorized public URL IDs now; later preview membership changes do not expand that share's access.
+// Create a share for the selected public URL IDs in this preview. entry_public_url_id chooses the landing URL and must be in that set. Later preview changes do not expand the share. Control returns the link and token source once; an identical retry returns the existing share ID in a credential_delivery_unavailable problem.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -26859,7 +26894,7 @@ func (c *ClientWithResponses) CreateShareWithBodyWithResponse(ctx context.Contex
 
 // CreateShareWithResponse Store one share for a snapshot of authorized public URLs
 //
-// Store a share using current preview management authorization and an idempotency key. It captures the authorized public URL IDs now; later preview membership changes do not expand that share's access.
+// Create a share for the selected public URL IDs in this preview. entry_public_url_id chooses the landing URL and must be in that set. Later preview changes do not expand the share. Control returns the link and token source once; an identical retry returns the existing share ID in a credential_delivery_unavailable problem.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -26904,7 +26939,7 @@ func (c *ClientWithResponses) SetPreviewTeamAccessWithResponse(ctx context.Conte
 
 // ListProjectsWithResponse List applied projects
 //
-// List applied project selectors for a current team manager, ordered by immutable project_key. Summaries contain no targets, configuration, or checkout paths. Use each selector with the configuration endpoint; its detail includes publisher group IDs and current members. Cursors are bound to this team, identity, and collection. Authorization is checked on every page.
+// List applied projects the current team manager may manage, ordered by project_key. Summaries omit configuration, targets, and checkout paths. Read a project's configuration for its groups, members, and editable declarations. Follow next_cursor unchanged; each page checks current access.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -26919,7 +26954,7 @@ func (c *ClientWithResponses) ListProjectsWithResponse(ctx context.Context, para
 
 // ResolveProjectSourceWithBodyWithResponse Resolve a project's portable source selector
 //
-// Resolve a network Git origin and repository-relative configuration path to the existing portable project selector. Does not read a repository, evaluate configuration, create a project, or reserve a name. Branches, checkout directories, and configuration content do not affect this identity. Use the returned project_key with the configuration endpoint, passing these source facts on first apply.
+// Compute the portable project key from a Git origin and repository-relative configuration path. No repository is fetched, configuration evaluated, or state created. Branches, checkout directories, and file contents do not affect the key. Use it with the configuration endpoint and send the source facts on first apply.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -26934,7 +26969,7 @@ func (c *ClientWithResponses) ResolveProjectSourceWithBodyWithResponse(ctx conte
 
 // ResolveProjectSourceWithResponse Resolve a project's portable source selector
 //
-// Resolve a network Git origin and repository-relative configuration path to the existing portable project selector. Does not read a repository, evaluate configuration, create a project, or reserve a name. Branches, checkout directories, and configuration content do not affect this identity. Use the returned project_key with the configuration endpoint, passing these source facts on first apply.
+// Compute the portable project key from a Git origin and repository-relative configuration path. No repository is fetched, configuration evaluated, or state created. Branches, checkout directories, and file contents do not affect the key. Use it with the configuration endpoint and send the source facts on first apply.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -26964,7 +26999,7 @@ func (c *ClientWithResponses) GetProjectConfigurationWithResponse(ctx context.Co
 
 // ApplyProjectConfigurationWithBodyWithResponse Apply a project's desired services and publisher groups
 //
-// Atomically reconcile declarations. On first apply provide source facts; control derives the source fingerprint using the same portable identity rules as resolve-source. On updates source may be omitted to retain the saved binding, or supplied to check that it matches. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+// Save declarations and update their resources together. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -26979,7 +27014,7 @@ func (c *ClientWithResponses) ApplyProjectConfigurationWithBodyWithResponse(ctx 
 
 // ApplyProjectConfigurationWithResponse Apply a project's desired services and publisher groups
 //
-// Atomically reconcile declarations. On first apply provide source facts; control derives the source fingerprint using the same portable identity rules as resolve-source. On updates source may be omitted to retain the saved binding, or supplied to check that it matches. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+// Save declarations and update their resources together. On first apply, provide source facts; control computes the fingerprint and project TLS digests. Later applies may omit source to retain its binding. Changed content requires the current revision; identical content is safe to replay. Targets remain encrypted and visible only to managers and scoped publishers.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -26994,7 +27029,7 @@ func (c *ClientWithResponses) ApplyProjectConfigurationWithResponse(ctx context.
 
 // GetLocalProjectServiceWithResponse Resolve one existing source-bound worktree service
 //
-// Read the exact service previously realized for this team, project source, service key, and worktree. Requires current ordinary private visitor access, not project management access. Returns only immutable identity and approved visitor protocol/TLS metadata, never configuration, targets, or credentials. Does not realize or adopt a service. Missing or unauthorized bindings return not found; an authorized binding with another source fingerprint returns conflict. No other team, project, worktree, or saved name is searched.
+// Read the existing service for this team, source, service key, and worktree. Requires visitor access, not project management permission. Returns identity and visitor protocol/TLS metadata, never targets or credentials. It does not create a service or search other worktrees or names. Missing or unauthorized bindings return 404; an authorized source mismatch returns 409.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -27009,7 +27044,7 @@ func (c *ClientWithResponses) GetLocalProjectServiceWithResponse(ctx context.Con
 
 // RealizeLocalProjectServiceWithBodyWithResponse Realize one declared local service for a worktree
 //
-// Realize only one source-bound local service for one worktree. Private IDs are allocated here with worktree-scoped names, never adopted by name. Public IDs must be exact caller-owned app URLs already allocated by this runtime, bound to the caller's membership or to the caller's own personal team when current namespace authorization selects shared scope. Organization shared URLs and another member's or team's URLs are rejected. Records provenance before first apply; later apply reconciles that legitimate resource. When configuration has been applied the local declaration must match it. Does not apply remote group changes.
+// Create or reuse one service for this source and worktree. Private services get worktree-specific names; saved services are never adopted by name. A public URL must already belong to this runtime and the caller's membership or personal team; organization-shared and other members' URLs are rejected. If configuration was applied, the declaration must match it. Remote publisher groups are unchanged.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -27024,7 +27059,7 @@ func (c *ClientWithResponses) RealizeLocalProjectServiceWithBodyWithResponse(ctx
 
 // RealizeLocalProjectServiceWithResponse Realize one declared local service for a worktree
 //
-// Realize only one source-bound local service for one worktree. Private IDs are allocated here with worktree-scoped names, never adopted by name. Public IDs must be exact caller-owned app URLs already allocated by this runtime, bound to the caller's membership or to the caller's own personal team when current namespace authorization selects shared scope. Organization shared URLs and another member's or team's URLs are rejected. Records provenance before first apply; later apply reconciles that legitimate resource. When configuration has been applied the local declaration must match it. Does not apply remote group changes.
+// Create or reuse one service for this source and worktree. Private services get worktree-specific names; saved services are never adopted by name. A public URL must already belong to this runtime and the caller's membership or personal team; organization-shared and other members' URLs are rejected. If configuration was applied, the declaration must match it. Remote publisher groups are unchanged.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -27039,7 +27074,7 @@ func (c *ClientWithResponses) RealizeLocalProjectServiceWithResponse(ctx context
 
 // GetProjectPublicMetadataWithResponse Read visitor-safe project service identities and hostnames
 //
-// Browser-safe project source and public service IDs/hostnames, including exact local worktree realizations before or after first apply. Returns only public services the caller may visit, or all public services for a project manager. A service key may appear more than once for separate worktree URLs. Never returns configuration, targets, trust, grants, or publisher data.
+// Read public service IDs and hostnames for this project's worktrees. Visitors see only services they may visit; project managers see all public services. A service key can appear once per worktree. Targets, configuration, trust, grants, and publisher data are omitted.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -27099,7 +27134,7 @@ func (c *ClientWithResponses) RevokePublisherGroupMemberWithResponse(ctx context
 
 // RenamePublisherNamespaceWithBodyWithResponse Replace a publisher group's DNS namespace label
 //
-// Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
+// Change the group's DNS label while keeping its IDs and ports. This closes old service runs and assigns new publication grants and certificate plans. Old names remain reserved until control finishes its certificate and DNS cleanup checks. The configuration key and separately configured public URLs do not change. Send the current expected revision; an identical retry with the same key returns the original result.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -27114,7 +27149,7 @@ func (c *ClientWithResponses) RenamePublisherNamespaceWithBodyWithResponse(ctx c
 
 // RenamePublisherNamespaceWithResponse Replace a publisher group's DNS namespace label
 //
-// Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
+// Change the group's DNS label while keeping its IDs and ports. This closes old service runs and assigns new publication grants and certificate plans. Old names remain reserved until control finishes its certificate and DNS cleanup checks. The configuration key and separately configured public URLs do not change. Send the current expected revision; an identical retry with the same key returns the original result.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -27129,7 +27164,7 @@ func (c *ClientWithResponses) RenamePublisherNamespaceWithResponse(ctx context.C
 
 // RenamePublisherGroupWithBodyWithResponse Rename a group's configuration selector without changing endpoints
 //
-// Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
+// Rename the configuration key without changing the group's ID, namespace, services, ports, or publisher grants. Old selectors remain reserved for this group. Update project configuration before the next apply; retrying a completed rename is safe.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -27144,7 +27179,7 @@ func (c *ClientWithResponses) RenamePublisherGroupWithBodyWithResponse(ctx conte
 
 // RenamePublisherGroupWithResponse Rename a group's configuration selector without changing endpoints
 //
-// Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
+// Rename the configuration key without changing the group's ID, namespace, services, ports, or publisher grants. Old selectors remain reserved for this group. Update project configuration before the next apply; retrying a completed rename is safe.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -27249,7 +27284,7 @@ func (c *ClientWithResponses) GetPublicURLWithResponse(ctx context.Context, publ
 
 // UpdatePublicURLWithBodyWithResponse Update a public URL's target and IP policy
 //
-// Replace the target and IP policy, optionally changing the post-quantum requirement, under current management authorization. Use replaceVisitorAccess for complete visitor access policy replacement; this operation does not create a new publish run.
+// Change only the supplied fields using the mutation_revision you read as expected_mutation_revision. Omitted fields keep their saved values; an empty IP list clears the filter. Null values, empty edits, and stale revisions are rejected.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -27264,7 +27299,7 @@ func (c *ClientWithResponses) UpdatePublicURLWithBodyWithResponse(ctx context.Co
 
 // UpdatePublicURLWithResponse Update a public URL's target and IP policy
 //
-// Replace the target and IP policy, optionally changing the post-quantum requirement, under current management authorization. Use replaceVisitorAccess for complete visitor access policy replacement; this operation does not create a new publish run.
+// Change only the supplied fields using the mutation_revision you read as expected_mutation_revision. Omitted fields keep their saved values; an empty IP list clears the filter. Null values, empty edits, and stale revisions are rejected.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -27279,7 +27314,7 @@ func (c *ClientWithResponses) UpdatePublicURLWithResponse(ctx context.Context, p
 
 // ReplaceVisitorAccessWithBodyWithResponse Replace the complete live visitor access policy
 //
-// Replace the complete saved visitor access policy under current public URL management authorization. Omitted optional policy members are not a partial patch; publishers must enforce the resulting current visitor policy for new work.
+// Replace the access mode and complete IP filter using the current mutation revision. An empty IP list removes the filter. Existing grants, shares, and invitations are unchanged; this operation does not revoke every source of visitor access.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -27294,7 +27329,7 @@ func (c *ClientWithResponses) ReplaceVisitorAccessWithBodyWithResponse(ctx conte
 
 // ReplaceVisitorAccessWithResponse Replace the complete live visitor access policy
 //
-// Replace the complete saved visitor access policy under current public URL management authorization. Omitted optional policy members are not a partial patch; publishers must enforce the resulting current visitor policy for new work.
+// Replace the access mode and complete IP filter using the current mutation revision. An empty IP list removes the filter. Existing grants, shares, and invitations are unchanged; this operation does not revoke every source of visitor access.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -27444,7 +27479,7 @@ func (c *ClientWithResponses) ListVisitorInvitationsWithResponse(ctx context.Con
 
 // CreateVisitorInvitationWithBodyWithResponse Invite a verified email identity to one public URL
 //
-// Issue an expiring one-use invitation under current public URL management authorization. Acceptance requires the recipient's verified email and creates an exact-URL identity grant, not team membership.
+// Invite the verified email identity to this public URL. Control returns the credential once. An identical authorized retry returns credential_delivery_unavailable with the invitation ID; revoke and reissue if delivery was lost. Acceptance creates visitor access, not team membership or management permission.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -27459,7 +27494,7 @@ func (c *ClientWithResponses) CreateVisitorInvitationWithBodyWithResponse(ctx co
 
 // CreateVisitorInvitationWithResponse Invite a verified email identity to one public URL
 //
-// Issue an expiring one-use invitation under current public URL management authorization. Acceptance requires the recipient's verified email and creates an exact-URL identity grant, not team membership.
+// Invite the verified email identity to this public URL. Control returns the credential once. An identical authorized retry returns credential_delivery_unavailable with the invitation ID; revoke and reissue if delivery was lost. Acceptance creates visitor access, not team membership or management permission.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28089,7 +28124,7 @@ func (c *ClientWithResponses) RevokePublisherGrantWithResponse(ctx context.Conte
 
 // GetPublisherGroupAssignmentsWithResponse Read services and grants assigned to one leased group replica
 //
-// Authenticate with the current pgl_ group lease and read the replica's exact service assignments and publisher grant IDs. These assignments may contain targets; a pta_ publisher access token cannot read them.
+// Read the replica's assigned services and publisher grants using its current pgl_ lease. Assignments can include targets. A pta_ publisher token cannot read them.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -28104,7 +28139,7 @@ func (c *ClientWithResponses) GetPublisherGroupAssignmentsWithResponse(ctx conte
 
 // AcknowledgePublisherGroupConfigurationWithBodyWithResponse Acknowledge the exact configuration installed by a group replica
 //
-// Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
+// Report the installed configuration revision, hash, and health using the replica's current pgl_ lease. Stale or mismatched configuration is rejected; a pta_ publisher token cannot acknowledge it.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28119,7 +28154,7 @@ func (c *ClientWithResponses) AcknowledgePublisherGroupConfigurationWithBodyWith
 
 // AcknowledgePublisherGroupConfigurationWithResponse Acknowledge the exact configuration installed by a group replica
 //
-// Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
+// Report the installed configuration revision, hash, and health using the replica's current pgl_ lease. Stale or mismatched configuration is rejected; a pta_ publisher token cannot acknowledge it.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28134,7 +28169,7 @@ func (c *ClientWithResponses) AcknowledgePublisherGroupConfigurationWithResponse
 
 // RedeemPublisherGroupEnrollmentWithBodyWithResponse Enroll a replica's signing key with a group enrollment secret
 //
-// Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+// Register a replica's Ed25519 public key using enrollment_key in the body. Retrying the same key returns the same membership without consuming more enrollment capacity.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28149,7 +28184,7 @@ func (c *ClientWithResponses) RedeemPublisherGroupEnrollmentWithBodyWithResponse
 
 // RedeemPublisherGroupEnrollmentWithResponse Enroll a replica's signing key with a group enrollment secret
 //
-// Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+// Register a replica's Ed25519 public key using enrollment_key in the body. Retrying the same key returns the same membership without consuming more enrollment capacity.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28164,7 +28199,7 @@ func (c *ClientWithResponses) RedeemPublisherGroupEnrollmentWithResponse(ctx con
 
 // AcquirePublisherGroupLeaseWithBodyWithResponse Exchange a signed replica assertion for a group lease
 //
-// Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
+// Exchange a one-use signed assertion in the body for a pgl_ group lease. The assertion's audience is this endpoint's full control URL, and its grant claim is the group ID.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28179,7 +28214,7 @@ func (c *ClientWithResponses) AcquirePublisherGroupLeaseWithBodyWithResponse(ctx
 
 // AcquirePublisherGroupLeaseWithResponse Exchange a signed replica assertion for a group lease
 //
-// Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
+// Exchange a one-use signed assertion in the body for a pgl_ group lease. The assertion's audience is this endpoint's full control URL, and its grant claim is the group ID.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28194,7 +28229,7 @@ func (c *ClientWithResponses) AcquirePublisherGroupLeaseWithResponse(ctx context
 
 // VerifyPublisherGroupIdentityWithBodyWithResponse Verify a replica's group membership without acquiring a lease
 //
-// Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
+// Verify group membership using a one-use signed assertion in the body. Its audience is this endpoint's full control URL. Returns current and historical selectors without replacing the running publisher's group lease.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28209,7 +28244,7 @@ func (c *ClientWithResponses) VerifyPublisherGroupIdentityWithBodyWithResponse(c
 
 // VerifyPublisherGroupIdentityWithResponse Verify a replica's group membership without acquiring a lease
 //
-// Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
+// Verify group membership using a one-use signed assertion in the body. Its audience is this endpoint's full control URL. Returns current and historical selectors without replacing the running publisher's group lease.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28284,7 +28319,7 @@ func (c *ClientWithResponses) DeletePublisherPublicURLWithResponse(ctx context.C
 
 // InspectPublisherRuntimeWithBodyWithResponse Inspect a publisher runtime
 //
-// Read the runtime epoch without recording an address. A one-use Ed25519 assertion binds this endpoint, publisher identity, inspect action, scope, process run, expected epoch, and deployment report. The body's identity and action must match the route. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+// Read the runtime epoch without recording an address. Send a one-use signed assertion for this endpoint in the body. The body's publisher identity and action must match the route.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28299,7 +28334,7 @@ func (c *ClientWithResponses) InspectPublisherRuntimeWithBodyWithResponse(ctx co
 
 // InspectPublisherRuntimeWithResponse Inspect a publisher runtime
 //
-// Read the runtime epoch without recording an address. A one-use Ed25519 assertion binds this endpoint, publisher identity, inspect action, scope, process run, expected epoch, and deployment report. The body's identity and action must match the route. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+// Read the runtime epoch without recording an address. Send a one-use signed assertion for this endpoint in the body. The body's publisher identity and action must match the route.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28314,7 +28349,7 @@ func (c *ClientWithResponses) InspectPublisherRuntimeWithResponse(ctx context.Co
 
 // RenewPublisherRuntimeWithBodyWithResponse Renew a publisher runtime
 //
-// Renew only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, renew action, scope, process run, epoch, and deployment report. Control records only the validated request source, never a body address. Group renew also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+// Renew the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route. Group runtimes also receive a group lease.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28329,7 +28364,7 @@ func (c *ClientWithResponses) RenewPublisherRuntimeWithBodyWithResponse(ctx cont
 
 // RenewPublisherRuntimeWithResponse Renew a publisher runtime
 //
-// Renew only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, renew action, scope, process run, epoch, and deployment report. Control records only the validated request source, never a body address. Group renew also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+// Renew the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route. Group runtimes also receive a group lease.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28344,7 +28379,7 @@ func (c *ClientWithResponses) RenewPublisherRuntimeWithResponse(ctx context.Cont
 
 // StartPublisherRuntimeWithBodyWithResponse Start a publisher runtime
 //
-// Compare the inspected epoch and start one process run. The one-use assertion binds this endpoint, publisher identity, start action, scope, process run, epoch, and deployment report. A retry retains the same process run and expected epoch. Control records only the validated request source, never a body address. Group start also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+// Start a process run if the inspected epoch still matches. Send a one-use signed assertion for this endpoint in the body, with matching publisher identity and action. After an uncertain response, keep the same process run and expected epoch but use a fresh assertion. Group runtimes also receive a group lease.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28359,7 +28394,7 @@ func (c *ClientWithResponses) StartPublisherRuntimeWithBodyWithResponse(ctx cont
 
 // StartPublisherRuntimeWithResponse Start a publisher runtime
 //
-// Compare the inspected epoch and start one process run. The one-use assertion binds this endpoint, publisher identity, start action, scope, process run, epoch, and deployment report. A retry retains the same process run and expected epoch. Control records only the validated request source, never a body address. Group start also issues the existing group lease atomically. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+// Start a process run if the inspected epoch still matches. Send a one-use signed assertion for this endpoint in the body, with matching publisher identity and action. After an uncertain response, keep the same process run and expected epoch but use a fresh assertion. Group runtimes also receive a group lease.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28374,7 +28409,7 @@ func (c *ClientWithResponses) StartPublisherRuntimeWithResponse(ctx context.Cont
 
 // StopPublisherRuntimeWithBodyWithResponse Stop a publisher runtime
 //
-// Stop only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, stop action, scope, process run, epoch, and deployment report. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+// Stop the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28389,7 +28424,7 @@ func (c *ClientWithResponses) StopPublisherRuntimeWithBodyWithResponse(ctx conte
 
 // StopPublisherRuntimeWithResponse Stop a publisher runtime
 //
-// Stop only the current process run and epoch. The one-use assertion binds this endpoint, publisher identity, stop action, scope, process run, epoch, and deployment report. Authentication is the signed assertion in the JSON body, not a bearer token; the empty security array does not mean anonymous access.
+// Stop the current process run and epoch using a one-use signed assertion for this endpoint. The body's publisher identity and action must match the route.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28539,7 +28574,7 @@ func (c *ClientWithResponses) GetServiceWithResponse(ctx context.Context, servic
 
 // ConfigureServiceWithBodyWithResponse Replace a service's approved protocol and target TLS trust
 //
-// Set the saved protocol, publisher pool, and target TLS trust snapshot using current service management permission. Publishers must declare matching trust when preparing later runs; this is not a target address update or a publication start.
+// Replace the approved protocol, publisher-pool setting, and target TLS trust. Send trust_revision as expected_trust_revision; omit target_tls to remove it. Endpoint and placement cannot be changed here. Publishers must declare matching trust when preparing later runs.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28554,7 +28589,7 @@ func (c *ClientWithResponses) ConfigureServiceWithBodyWithResponse(ctx context.C
 
 // ConfigureServiceWithResponse Replace a service's approved protocol and target TLS trust
 //
-// Set the saved protocol, publisher pool, and target TLS trust snapshot using current service management permission. Publishers must declare matching trust when preparing later runs; this is not a target address update or a publication start.
+// Replace the approved protocol, publisher-pool setting, and target TLS trust. Send trust_revision as expected_trust_revision; omit target_tls to remove it. Endpoint and placement cannot be changed here. Publishers must declare matching trust when preparing later runs.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28599,7 +28634,7 @@ func (c *ClientWithResponses) IssueServiceClientCertificateWithResponse(ctx cont
 
 // PrepareConnectorPeerPairWithBodyWithResponse Prepare a signed connector pair for an exact ready service run
 //
-// Signed create or replace for one exact ready service run. The request signature must prove the selected device or workload key. A device source also requires its matching identity's control session bearer token. A workload source authenticates with its credential in the JSON body and must omit Authorization entirely, including empty headers. The empty security object represents body authentication, not anonymous access. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+// Create or replace a pair for the selected service run using the device or workload signature. Device sources require the matching control session. Workload sources use the body credential and must omit Authorization, including empty headers. Control rechecks current access and both relay leases; a selection snapshot is not permission.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28614,7 +28649,7 @@ func (c *ClientWithResponses) PrepareConnectorPeerPairWithBodyWithResponse(ctx c
 
 // PrepareConnectorPeerPairWithResponse Prepare a signed connector pair for an exact ready service run
 //
-// Signed create or replace for one exact ready service run. The request signature must prove the selected device or workload key. A device source also requires its matching identity's control session bearer token. A workload source authenticates with its credential in the JSON body and must omit Authorization entirely, including empty headers. The empty security object represents body authentication, not anonymous access. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+// Create or replace a pair for the selected service run using the device or workload signature. Device sources require the matching control session. Workload sources use the body credential and must omit Authorization, including empty headers. Control rechecks current access and both relay leases; a selection snapshot is not permission.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28629,7 +28664,7 @@ func (c *ClientWithResponses) PrepareConnectorPeerPairWithResponse(ctx context.C
 
 // RebindConnectorPeerPairWithBodyWithResponse Inspect or change a retained connector pair's network binding
 //
-// Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+// Inspect, prepare, activate, or abort a network binding for an existing connector owner. Sign with the same source key. Device sources require the matching control session; workload sources use the body credential and must omit Authorization, including empty headers. This cannot select another run or revive an expired owner. Only stale_network_binding permits recovery by inspecting retained state; other authorization failures are terminal.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28644,7 +28679,7 @@ func (c *ClientWithResponses) RebindConnectorPeerPairWithBodyWithResponse(ctx co
 
 // RebindConnectorPeerPairWithResponse Inspect or change a retained connector pair's network binding
 //
-// Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+// Inspect, prepare, activate, or abort a network binding for an existing connector owner. Sign with the same source key. Device sources require the matching control session; workload sources use the body credential and must omit Authorization, including empty headers. This cannot select another run or revive an expired owner. Only stale_network_binding permits recovery by inspecting retained state; other authorization failures are terminal.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28659,7 +28694,7 @@ func (c *ClientWithResponses) RebindConnectorPeerPairWithResponse(ctx context.Co
 
 // RenewConnectorPeerPairWithBodyWithResponse Renew an exact signed connector pair and visitor permission
 //
-// Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
+// Renew the existing pair and visitor permission together, without selecting another run. The signature must prove the same device or workload key. Device sources require the matching control session; workload sources use the body credential and must omit Authorization, including empty headers. The response contains the pair lease, run validity, and visitor permission from that decision.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28674,7 +28709,7 @@ func (c *ClientWithResponses) RenewConnectorPeerPairWithBodyWithResponse(ctx con
 
 // RenewConnectorPeerPairWithResponse Renew an exact signed connector pair and visitor permission
 //
-// Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
+// Renew the existing pair and visitor permission together, without selecting another run. The signature must prove the same device or workload key. Device sources require the matching control session; workload sources use the body credential and must omit Authorization, including empty headers. The response contains the pair lease, run validity, and visitor permission from that decision.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28749,7 +28784,7 @@ func (c *ClientWithResponses) RevokeServiceGrantWithResponse(ctx context.Context
 
 // ListServiceHTTPGrantsWithResponse List an HTTP service's visitor credentials without secrets
 //
-// Secretless credential inventory for one service HTTP service. Requires current service management permission; includes expired and revoked records.
+// List this service's HTTP visitor credentials without their secrets. Requires current service management permission and includes expired and revoked records.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -28764,7 +28799,7 @@ func (c *ClientWithResponses) ListServiceHTTPGrantsWithResponse(ctx context.Cont
 
 // CreateServiceHTTPGrantWithBodyWithResponse Create a service-scoped HTTP visitor token or share
 //
-// Create a service-scoped HTTP token or share. Requires current service management and visitor permission. The secret is returned once and grants no management or feedback permission.
+// Create an HTTP visitor credential for this service. Requires both current management and visitor permission. Each call creates a new credential, returned once; it grants neither management nor feedback permission.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28779,7 +28814,7 @@ func (c *ClientWithResponses) CreateServiceHTTPGrantWithBodyWithResponse(ctx con
 
 // CreateServiceHTTPGrantWithResponse Create a service-scoped HTTP visitor token or share
 //
-// Create a service-scoped HTTP token or share. Requires current service management and visitor permission. The secret is returned once and grants no management or feedback permission.
+// Create an HTTP visitor credential for this service. Requires both current management and visitor permission. Each call creates a new credential, returned once; it grants neither management nor feedback permission.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28824,7 +28859,7 @@ func (c *ClientWithResponses) ListServiceInvitationsWithResponse(ctx context.Con
 
 // InviteServiceVisitorWithBodyWithResponse Invite a verified email identity to one service
 //
-// A new key creates one exact-service invitation with a one-time credential. An exact retry by the same actor returns HTTP 409 credential_delivery_unavailable with details.resource_id after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
+// Invite the verified email identity to this service. Control returns the credential once. An identical authorized retry returns credential_delivery_unavailable with the existing invitation ID; if delivery was lost, revoke it and create another with a new key. Reusing a key with changed input conflicts. No secret is kept for recovery.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28839,7 +28874,7 @@ func (c *ClientWithResponses) InviteServiceVisitorWithBodyWithResponse(ctx conte
 
 // InviteServiceVisitorWithResponse Invite a verified email identity to one service
 //
-// A new key creates one exact-service invitation with a one-time credential. An exact retry by the same actor returns HTTP 409 credential_delivery_unavailable with details.resource_id after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
+// Invite the verified email identity to this service. Control returns the credential once. An identical authorized retry returns credential_delivery_unavailable with the existing invitation ID; if delivery was lost, revoke it and create another with a new key. Reusing a key with changed input conflicts. No secret is kept for recovery.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -29319,7 +29354,7 @@ func (c *ClientWithResponses) ListTeamSharesWithResponse(ctx context.Context, pa
 
 // CreateURLShareWithBodyWithResponse Store one share for an exact authorized HTTP public URL
 //
-// A guest trial can share only its own demo URL from the issuing IP; the share expires by the trial's end even if the requested expiry is later.
+// Create a share for one public URL and return its link and token source once. Use that URL's ID as entry_public_url_id. An identical retry returns the existing share ID in a credential_delivery_unavailable problem; revoke and reissue if delivery was lost. Guest shares are limited to the trial's URL, source IP, and expiry.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -29334,7 +29369,7 @@ func (c *ClientWithResponses) CreateURLShareWithBodyWithResponse(ctx context.Con
 
 // CreateURLShareWithResponse Store one share for an exact authorized HTTP public URL
 //
-// A guest trial can share only its own demo URL from the issuing IP; the share expires by the trial's end even if the requested expiry is later.
+// Create a share for one public URL and return its link and token source once. Use that URL's ID as entry_public_url_id. An identical retry returns the existing share ID in a credential_delivery_unavailable problem; revoke and reissue if delivery was lost. Guest shares are limited to the trial's URL, source IP, and expiry.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -29469,7 +29504,7 @@ func (c *ClientWithResponses) AcceptVisitorInvitationWithResponse(ctx context.Co
 
 // ReadPublisherVisitorPolicyWithBodyWithResponse Refresh the current run's visitor policy and verification keys
 //
-// Read one current publisher run's scoped visitor policy, revocations, and public verification keys. The bearer credential is the exact run token. This background operation is independent of the publisher's process lease and of ordinary visitor admission.
+// Refresh visitor policy and revocations for one publisher run using its exact run token. This is a publisher operation, not a visitor or management read, and can return private policy data for the run. It does not renew the publisher process lease or grant traffic access.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -29484,7 +29519,7 @@ func (c *ClientWithResponses) ReadPublisherVisitorPolicyWithBodyWithResponse(ctx
 
 // ReadPublisherVisitorPolicyWithResponse Refresh the current run's visitor policy and verification keys
 //
-// Read one current publisher run's scoped visitor policy, revocations, and public verification keys. The bearer credential is the exact run token. This background operation is independent of the publisher's process lease and of ordinary visitor admission.
+// Refresh visitor policy and revocations for one publisher run using its exact run token. This is a publisher operation, not a visitor or management read, and can return private policy data for the run. It does not renew the publisher process lease or grant traffic access.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -29499,7 +29534,12 @@ func (c *ClientWithResponses) ReadPublisherVisitorPolicyWithResponse(ctx context
 
 // IssueVisitorTokenWithBodyWithResponse Prepare or renew an exact-resource visitor permission
 //
-// Prepare or renew one exact-resource visitor permission. For source.kind control_session or device, authenticate with the current control session bearer token. For browser_session, workload, share, share_session, or grant, authenticate with the source credential in the JSON body and omit Authorization entirely; even an empty Authorization header is rejected. The empty security object represents these body-authenticated branches, not anonymous issuance. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+// Prepare or renew permission to visit one resource.
+//
+// - control_session or device: send a control-session bearer token.
+// - browser_session, workload, share, share_session, or grant: send the source credential in the body. Omit Authorization entirely, including empty headers.
+//
+// Control checks current access. Use refresh credentials only to request another visitor token.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -29514,7 +29554,12 @@ func (c *ClientWithResponses) IssueVisitorTokenWithBodyWithResponse(ctx context.
 
 // IssueVisitorTokenWithResponse Prepare or renew an exact-resource visitor permission
 //
-// Prepare or renew one exact-resource visitor permission. For source.kind control_session or device, authenticate with the current control session bearer token. For browser_session, workload, share, share_session, or grant, authenticate with the source credential in the JSON body and omit Authorization entirely; even an empty Authorization header is rejected. The empty security object represents these body-authenticated branches, not anonymous issuance. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+// Prepare or renew permission to visit one resource.
+//
+// - control_session or device: send a control-session bearer token.
+// - browser_session, workload, share, share_session, or grant: send the source credential in the body. Omit Authorization entirely, including empty headers.
+//
+// Control checks current access. Use refresh credentials only to request another visitor token.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -29544,7 +29589,7 @@ func (c *ClientWithResponses) ListAvailablePublicURLsWithResponse(ctx context.Co
 
 // ListAvailableServicesWithResponse List services available to the signed-in visitor
 //
-// Authorized saved services for tnl connect, including offline services. Initial readiness requires two ready publisher connections; after that one surviving ready connection keeps a run available during replacement. Inventory includes the visitor endpoint hostname but grants no stream ticket and omits target addresses, target TLS trust, and secrets.
+// List services the signed-in visitor may use, including offline services. Results include visitor endpoints, not target addresses, target trust, or secrets. Listing a service does not grant traffic access. Initial readiness needs two publisher connections; one surviving connection can keep an already-ready run available.
 //
 // Returns a wrapper object for the known response body format(s).
 //

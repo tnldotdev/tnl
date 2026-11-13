@@ -34,7 +34,7 @@ schemas:
   ConnectorPeerPairRequest:
     type: object
     additionalProperties: false
-    description: Sign the canonical ConnectorPeerPairProofMessage Go v1 array, not the snake_case HTTP object. Source is selected by kind; a device uses the sole control bearer, a workload uses its credential and no control bearer. Each connector owner creates with a distinct idempotency key and retains that stable owner key across create, renew and replace. A pair ID and generation alone never prove ownership. Replacement also names the exact predecessor and issues a new pair, delivery ID, key and generation; it does not transfer a running session. An uncertain response repeats the exact signed request, including its timestamp, action and owner key.
+    description: "Sign the v1 ConnectorPeerPairProofMessage array, not this HTTP JSON object. Device sources require their control session; workload sources use the body credential and omit Authorization. Keep one idempotency key for the connector owner's lifetime. Replacement names the exact predecessor and creates a new pair; IDs and generations do not prove ownership. After an uncertain response, resend the identical signed request, including timestamp, action, and owner key."
     required:
       [
         service_run_id,

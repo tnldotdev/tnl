@@ -12,7 +12,7 @@ schemas:
   ConnectorPeerPairOwnerAuthority:
     type: object
     additionalProperties: false
-    description: Current authority for an already installed retained owner in this exact publisher run. This observation contains no delivery key, does not authorize packets or application bytes, and does not renew a relay claim, installation, path proof, or application permission. It remains available during temporary relay loss; an expired local owner cannot be revived by a later observation.
+    description: "Current authorization for an installed connector owner in this publisher run. It contains no delivery key and does not renew any relay claim, installation, path proof, or visitor permission. It can be read during relay loss but cannot revive an expired owner."
     required: [observed_at, expires_at]
     properties:
       observed_at: { type: string, format: date-time }

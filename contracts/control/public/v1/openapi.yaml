@@ -2,21 +2,7 @@ openapi: 3.1.0
 info:
   title: tnl control API
   version: 1.0.0
-  description: |-
-    Manage saved public URLs, services, projects, preview sharing, and publisher
-    lifecycles on one tnl server. The tags separate management, visitor preparation,
-    and publisher runtime operations; a public endpoint is not necessarily anonymous.
-
-    Send only the credential named by an operation. Control session access tokens,
-    guest trial credentials, publisher access tokens, group leases, publish run
-    tokens, service run tokens, and workload credentials have different authority.
-    A security requirement with an empty object, or an empty security array, may
-    describe authentication carried in the request body rather than Authorization.
-    Read the operation description for signed assertions and source-specific rules.
-    In particular, visitor preparation with body credentials rejects Authorization
-    where documented; do not attach a default control session to those requests.
-
-    The authority API handles identities, teams, domains, and sign-in separately.
+  description: "Manage public URLs, services, projects, sharing, and publisher runtimes. Each operation names the credential it accepts; control sessions, publisher tokens, group leases, run tokens, guest credentials, and workload credentials are not interchangeable. Some operations authenticate with a signed assertion or credential in the request body instead of Authorization. Use the authority API for sign-in, identities, teams, and domains."
   license:
     name: BSD-3-Clause
     identifier: BSD-3-Clause
