@@ -25,12 +25,17 @@ func (h *handler) deploymentManager(w http.ResponseWriter, r *http.Request, team
 		writeProblem(w, 503, controlv1.Unavailable, "deployment management is unavailable")
 		return controlstate.DeploymentScope{}, false
 	}
-	actor, ok := h.projectManager(w, r, team)
-	return controlstate.DeploymentScope{TeamID: team, ProjectKey: project, ActorID: actor}, ok
+	return h.deploymentPrincipal(w, r, team, project)
 }
 
 func deploymentProblem(ctx context.Context, w http.ResponseWriter, operation string, err error) {
 	switch {
+	case errors.Is(err, controlstate.ErrDeploymentCredentialUnavailable):
+		writeProblem(w, 409, controlv1.Conflict, "original credential approval expired, was revoked, or changed; a current team manager must register a new approval with a new request key")
+	case errors.Is(err, controlstate.ErrDeploymentAccess):
+		writeProblem(w, 403, controlv1.Forbidden, "deployment operation is outside this credential's approval")
+	case errors.Is(err, controlstate.ErrPublisherIdentity):
+		writeBearerProblem(w)
 	case errors.Is(err, controlstate.ErrDeploymentNotFound):
 		writeProblem(w, 404, controlv1.NotFound, "deployment not found")
 	case errors.Is(err, controlstate.ErrDeploymentStale):

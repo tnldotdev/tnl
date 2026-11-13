@@ -15,6 +15,8 @@ func ConnectorSubject(subject Subject) (tunnelv1.VisitorSubject, error) {
 		return tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: subject.IdentityID, DeviceID: subject.DeviceID}, nil
 	case Workload:
 		return tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorWorkloadSession, WorkloadSessionID: subject.SessionID}, nil
+	case RegisteredKey:
+		return tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorRegisteredKey, GrantID: subject.GrantID, KeyID: subject.KeyID}, nil
 	default:
 		return tunnelv1.VisitorSubject{}, ErrBinding
 	}
@@ -59,6 +61,8 @@ func VerifyConnectorPeerRenewalProof(entry tunnelv1.ConnectorPeerVisitorEntry, i
 	case Device:
 		expectedKey = s.KeySHA256
 	case Workload:
+		expectedKey = s.KeySHA256
+	case RegisteredKey:
 		expectedKey = s.KeySHA256
 	}
 	if keyErr != nil || signatureErr != nil || messageErr != nil || digestErr != nil || expectedKey == "" || digest != expectedKey || !ed25519.Verify(public, message, signature) {

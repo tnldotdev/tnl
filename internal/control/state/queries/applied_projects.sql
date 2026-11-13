@@ -56,6 +56,16 @@ SELECT * FROM control.project_publisher_groups
 WHERE team_id=sqlc.arg(team_id) AND project_key=sqlc.arg(project_key) AND deleted_at IS NULL
 AND id COLLATE "C">sqlc.arg(after_id)::text COLLATE "C" ORDER BY id COLLATE "C" LIMIT sqlc.arg(page_limit);
 
+-- name: ListAuthorizedDeployments :many
+SELECT deployment.* FROM control.project_publisher_groups deployment
+JOIN control.deployment_management_grants approval ON approval.grant_id=sqlc.arg(grant_id)
+AND approval.team_id=deployment.team_id AND approval.project_key=deployment.project_key
+WHERE deployment.deleted_at IS NULL
+AND (approval.all_deployments OR EXISTS(SELECT 1 FROM control.deployment_management_deployments scope WHERE scope.grant_id=approval.grant_id AND scope.deployment_id=deployment.id))
+AND EXISTS(SELECT 1 FROM control.applied_project_services binding JOIN control.deployment_management_services scope
+    ON scope.grant_id=approval.grant_id AND scope.capability='manage' AND scope.service=binding.service AND scope.revoked_at IS NULL WHERE binding.group_id=deployment.id)
+AND deployment.id COLLATE "C">sqlc.arg(after_id)::text COLLATE "C" ORDER BY deployment.id COLLATE "C" LIMIT sqlc.arg(page_limit);
+
 -- name: AcknowledgePublisherGroupConfiguration :exec
 UPDATE control.publisher_group_members
 SET observed_revision=sqlc.arg(revision), healthy=sqlc.arg(healthy), acknowledged_at=sqlc.arg(acknowledged_at)

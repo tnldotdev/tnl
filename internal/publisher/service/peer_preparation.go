@@ -10,6 +10,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -256,6 +257,11 @@ func (b *Bound) connectorPeerPolicyCurrent(binding PeerBinding) bool {
 	}
 	if binding.subject.Kind == tunnelv1.VisitorWorkloadSession {
 		parent, found := view.Workload(binding.subject.WorkloadSessionID)
+		return found && parent.ExpiresAt.After(view.AuthorityTime(time.Now()))
+	}
+	if binding.subject.Kind == tunnelv1.VisitorRegisteredKey {
+		id := (visitortoken.RegisteredKey{GrantID: binding.subject.GrantID, KeyID: binding.subject.KeyID}).AuthorityID()
+		parent, found := view.RegisteredKey(id)
 		return found && parent.ExpiresAt.After(view.AuthorityTime(time.Now()))
 	}
 	return true

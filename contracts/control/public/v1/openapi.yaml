@@ -65,6 +65,16 @@ paths:
     $ref: "./paths/projects.yaml#/paths/~1v1~1projects~1resolve-source"
   /v1/projects:
     $ref: "./paths/projects.yaml#/paths/~1v1~1projects"
+  /v1/projects/{project_key}/deployment-credentials:
+    $ref: "./paths/deployment-credentials.yaml#/paths/~1v1~1projects~1{project_key}~1deployment-credentials"
+  /v1/projects/{project_key}/deployments/{deployment}/services/{service}/select:
+    $ref: "./paths/deployment-connect.yaml#/paths/~1v1~1projects~1{project_key}~1deployments~1{deployment}~1services~1{service}~1select"
+  /v1/projects/{project_key}/deployments/{deployment}/publisher-enrollments:
+    $ref: "./paths/deployment-publishers.yaml#/paths/~1v1~1projects~1{project_key}~1deployments~1{deployment}~1publisher-enrollments"
+  /v1/projects/{project_key}/deployments/{deployment}/publishers:
+    $ref: "./paths/deployment-publishers.yaml#/paths/~1v1~1projects~1{project_key}~1deployments~1{deployment}~1publishers"
+  /v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher}:
+    $ref: "./paths/deployment-publishers.yaml#/paths/~1v1~1projects~1{project_key}~1deployments~1{deployment}~1publishers~1{publisher}"
   /v1/projects/{project_key}/deployments:
     $ref: "./paths/deployments.yaml#/paths/~1v1~1projects~1{project_key}~1deployments"
   /v1/projects/{project_key}/deployments/{deployment}:
@@ -402,6 +412,8 @@ components:
       $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenDeviceSource"
     VisitorTokenWorkloadSource:
       $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenWorkloadSource"
+    VisitorTokenRegisteredKeySource:
+      $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenRegisteredKeySource"
     VisitorTokenShareSource:
       $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenShareSource"
     VisitorTokenShareSessionSource:
@@ -424,6 +436,8 @@ components:
       $ref: "./schemas/visitor-policy.yaml#/schemas/VisitorVerificationKey"
     VisitorWorkloadLease:
       $ref: "./schemas/visitor-policy.yaml#/schemas/VisitorWorkloadLease"
+    VisitorRegisteredKeyLease:
+      $ref: "./schemas/visitor-policy.yaml#/schemas/VisitorRegisteredKeyLease"
     HashedIPPrefix:
       $ref: "./schemas/visitor-policy.yaml#/schemas/HashedIPPrefix"
     CreateVisitorCredentialRequest:
@@ -458,6 +472,22 @@ components:
       $ref: "./schemas/projects.yaml#/schemas/ProjectPage"
     DeploymentTargetTLS:
       $ref: "./schemas/deployments.yaml#/schemas/DeploymentTargetTLS"
+    RegisterDeploymentCredentialRequest:
+      $ref: "./schemas/deployment-credentials.yaml#/schemas/RegisterDeploymentCredentialRequest"
+    DeploymentCredential:
+      $ref: "./schemas/deployment-credentials.yaml#/schemas/DeploymentCredential"
+    DeploymentCredentialServiceSelection:
+      $ref: "./schemas/deployment-credentials.yaml#/schemas/DeploymentCredentialServiceSelection"
+    DeploymentCredentialServiceProtocols:
+      $ref: "./schemas/deployment-credentials.yaml#/schemas/DeploymentCredentialServiceProtocols"
+    CreateDeploymentPublisherEnrollmentRequest:
+      $ref: "./schemas/deployment-publishers.yaml#/schemas/CreateDeploymentPublisherEnrollmentRequest"
+    DeploymentPublisherEnrollment:
+      $ref: "./schemas/deployment-publishers.yaml#/schemas/DeploymentPublisherEnrollment"
+    DeploymentPublisher:
+      $ref: "./schemas/deployment-publishers.yaml#/schemas/DeploymentPublisher"
+    DeploymentPublisherPage:
+      $ref: "./schemas/deployment-publishers.yaml#/schemas/DeploymentPublisherPage"
     DeploymentTarget:
       $ref: "./schemas/deployments.yaml#/schemas/DeploymentTarget"
     DeploymentTargets:

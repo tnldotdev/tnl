@@ -7,7 +7,7 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-// the policy includes up to 64 keys, 4096 workloads, 2048 IP prefixes and
+// the policy includes up to 64 keys, 4096 workloads, 4096 registered keys, 2048 IP prefixes and
 // 256 events. their bounded strings and control's RFC3339Nano timestamps fit
 // within 2 MiB; unrelated operations retain the 1 MiB response limit.
 const maxVisitorPolicyResponseBytes = 2 << 20

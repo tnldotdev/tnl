@@ -572,7 +572,11 @@ SELECT EXISTS (
     WHERE p.id = $1 AND g.id = $2
       AND (p.ownership <> 'member' OR control.active_membership(p.owner_membership_id, CURRENT_TIMESTAMP))
       AND (p.kind = 'guest' OR EXISTS (SELECT 1 FROM control.teams t WHERE t.id = p.team_id AND t.deleted_at IS NULL))
-      AND ((g.kind = 'service' AND p.kind <> 'guest' AND s.team_id = p.team_id
+      AND ((g.kind = 'deployment_credential' AND p.kind <> 'guest' AND EXISTS (
+                SELECT 1 FROM control.deployment_management_grants approval
+                WHERE approval.grant_id=g.id AND approval.team_id=p.team_id
+                AND control.deployment_credential_available(g.id))) OR
+           (g.kind = 'service' AND p.kind <> 'guest' AND s.team_id = p.team_id
              AND s.enabled AND s.deleted_at IS NULL
              AND (s.domain_id IS NULL OR d.state='ready' AND d.released_at IS NULL AND (d.kind='managed' OR d.team_id=p.team_id))) OR
           (d.state = 'ready' AND d.released_at IS NULL AND (d.kind = 'managed' OR d.team_id = p.team_id)
@@ -596,6 +600,58 @@ func (q *Queries) PublisherScopeAvailable(ctx context.Context, arg PublisherScop
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const readPublisherGrant = `-- name: ReadPublisherGrant :one
+SELECT id, publisher_identity_id, created_by_identity_id, kind, public_url_id, service_id, domain_id, namespace, membership_id, public_url_scope, created_at, expires_at, revoked_at FROM control.publisher_grants WHERE id = $1 AND publisher_identity_id = $2
+`
+
+type ReadPublisherGrantParams struct {
+	ID                  string
+	PublisherIdentityID string
+}
+
+func (q *Queries) ReadPublisherGrant(ctx context.Context, arg ReadPublisherGrantParams) (ControlPublisherGrant, error) {
+	row := q.db.QueryRow(ctx, readPublisherGrant, arg.ID, arg.PublisherIdentityID)
+	var i ControlPublisherGrant
+	err := row.Scan(
+		&i.ID,
+		&i.PublisherIdentityID,
+		&i.CreatedByIdentityID,
+		&i.Kind,
+		&i.PublicURLID,
+		&i.ServiceID,
+		&i.DomainID,
+		&i.Namespace,
+		&i.MembershipID,
+		&i.PublicURLScope,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
+const readPublisherIdentity = `-- name: ReadPublisherIdentity :one
+SELECT id, team_id, name, kind, created_by_identity_id, ownership, owner_membership_id, guest_id, created_at, revoked_at FROM control.publisher_identities WHERE id = $1
+`
+
+func (q *Queries) ReadPublisherIdentity(ctx context.Context, id string) (ControlPublisherIdentity, error) {
+	row := q.db.QueryRow(ctx, readPublisherIdentity, id)
+	var i ControlPublisherIdentity
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.Name,
+		&i.Kind,
+		&i.CreatedByIdentityID,
+		&i.Ownership,
+		&i.OwnerMembershipID,
+		&i.GuestID,
+		&i.CreatedAt,
+		&i.RevokedAt,
+	)
+	return i, err
 }
 
 const redeemPublisherEnrollment = `-- name: RedeemPublisherEnrollment :exec
