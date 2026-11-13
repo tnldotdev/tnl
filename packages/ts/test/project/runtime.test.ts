@@ -27,6 +27,29 @@ afterEach(() => {
 });
 
 describe("root runtime", () => {
+  test.each(["http", "postgres", "mysql", "tcp", "kubernetes"] as const)(
+    "keeps a private %s identity without an ingress reservation",
+    (protocol) => {
+      const service = {
+        protocol,
+        hostname: "private.member.example",
+        namespace: "member.example",
+        port: 0,
+        public: false,
+        ...(["http", "kubernetes"].includes(protocol)
+          ? { url: "https://private.member.example" }
+          : {}),
+      };
+      const payload = { ...project, services: { private: service }, dev: false };
+      expect(parseRuntimePayload(JSON.stringify(payload))?.services.private).toEqual(service);
+      expect(() =>
+        parseRuntimePayload(
+          JSON.stringify({ ...payload, services: { private: { ...service, public: true } } }),
+        ),
+      ).toThrow();
+    },
+  );
+
   test("exposes the configured port and optional metadata", async () => {
     vi.stubEnv("TNL_PROJECT_RUNTIME", undefined);
     vi.stubEnv("PORT", undefined);

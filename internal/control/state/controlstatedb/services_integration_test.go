@@ -63,6 +63,8 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	testutil.SeedServicePort(t, conn, service.ID, 20000, now)
+	service.Endpoint.Port = 20000
 	for _, relay := range []string{"relay-a", "relay-b"} {
 		exec(`INSERT INTO control.relay_services(relay_service_id,relay_address,tls_server_name,created_at,updated_at) VALUES($1,$2,$1,$3,$3)`, relay, relay+":443", now)
 		exec(`INSERT INTO control.relay_leases(relay_id,relay_service_id,relay_run_id,relay_lease_revision,protocol_version,internal_relay_address,connection_capacity,stream_capacity,registered_at,renewed_at,lease_expires_at)

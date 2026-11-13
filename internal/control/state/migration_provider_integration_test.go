@@ -71,8 +71,8 @@ func testMigrationRejectsProviderBaseline(t *testing.T, previous string, provide
 		}
 	}
 	assertProvider(t, excluded, true)
-	if version, err := readSchemaVersion(ctx, d.pool); err != nil || version != 1 {
-		t.Fatalf("predecessor schema version = %d, %v; want 1", version, err)
+	if version, err := readSchemaVersion(ctx, d.pool); err != nil || version != schemaVersion {
+		t.Fatalf("schema version changed while reconstructing predecessor identity: %d, %v", version, err)
 	}
 	snapshot := func(t *testing.T) string {
 		t.Helper()

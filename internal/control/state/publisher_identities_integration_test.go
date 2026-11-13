@@ -81,20 +81,20 @@ func TestIntegrationPublisherFreshBaseline(t *testing.T) {
 		}
 	}
 	files, err := migrationFiles.ReadDir("migrations")
-	if err != nil || len(files) != 1 || files[0].Name() != "00001_baseline.sql" || schemaVersion != 1 {
+	if err != nil || len(files) != 2 || files[0].Name() != "00001_baseline.sql" || files[1].Name() != "00002_private_service_ports.sql" || schemaVersion != 2 {
 		t.Fatalf("baseline = %v, %v", files, err)
 	}
 	var actualVersion int64
 	var actualBaseline string
-	if err := d.pool.QueryRow(t.Context(), `SELECT MAX(version_id) FILTER (WHERE is_applied) FROM control.goose_db_version`).Scan(&actualVersion); err != nil || actualVersion != 1 {
-		t.Fatal("fresh database did not initialize schema 1", actualVersion, err)
+	if err := d.pool.QueryRow(t.Context(), `SELECT MAX(version_id) FILTER (WHERE is_applied) FROM control.goose_db_version`).Scan(&actualVersion); err != nil || actualVersion != schemaVersion {
+		t.Fatal("fresh database did not initialize the current schema", actualVersion, err)
 	}
 	if err := d.pool.QueryRow(t.Context(), `SELECT baseline_id FROM control.schema_identity WHERE id=1`).Scan(&actualBaseline); err != nil || actualBaseline != baselineID {
 		t.Fatal("fresh baseline identity changed", actualBaseline, err)
 	}
 	// an older database's larger migration counter cannot pass this baseline's
 	// readiness check just because its numeric version is greater than one.
-	if _, err := d.pool.Exec(t.Context(), `INSERT INTO control.goose_db_version (version_id, is_applied) VALUES (2, true)`); err != nil {
+	if _, err := d.pool.Exec(t.Context(), `INSERT INTO control.goose_db_version (version_id, is_applied) VALUES ($1, true)`, schemaVersion+1); err != nil {
 		t.Fatal(err)
 	}
 	if err := d.Readiness(t.Context()); err == nil {

@@ -26,6 +26,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/managedcert"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
@@ -137,6 +138,7 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	if err != nil {
 		t.Fatal(err)
 	}
+	testutil.SeedServicePort(t, inspect, service.ID, 20000, now)
 	var policy int64
 	if err = inspect.QueryRow(ctx, `SELECT policy_revision FROM control.teams WHERE id=$1`, team).Scan(&policy); err != nil {
 		t.Fatal(err)
