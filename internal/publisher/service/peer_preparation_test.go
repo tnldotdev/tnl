@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/base64"
 	"testing"
 	"time"
 
@@ -9,6 +10,44 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
+
+func TestRegisteredKeyInstallationWaitsForExactBackgroundPolicy(t *testing.T) {
+	b, p, _, _, control := connectorPeerFixture(t, "127.0.0.1:1")
+	binding := p.bindingSnapshot()
+	binding.subject = tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorRegisteredKey, GrantID: "pgrant_aaaaaaaaaaaaaaaaaaaaaa", KeyID: "pkey_bbbbbbbbbbbbbbbbbbbbbb"}
+	if b.connectorPeerPolicyCurrent(binding) {
+		t.Fatal("registered key became ready without current policy")
+	}
+	apply := func(parents []controlv1.VisitorRegisteredKeyLease) {
+		t.Helper()
+		r := b.prepared.policy.Begin()
+		policy := control.policy
+		policy.ObservedAt = time.Now()
+		policy.ValidUntil = policy.ObservedAt.Add(visitortoken.PolicyLifetime)
+		policy.RegisteredKeyLeases = parents
+		update, err := visitorlease.Decode(controlv1.VisitorPolicyUpdate{Policy: policy, SnapshotRequired: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := b.prepared.policy.Apply(r, update); err != nil {
+			t.Fatal(err)
+		}
+	}
+	parent := controlv1.VisitorRegisteredKeyLease{GrantId: binding.subject.GrantID, KeyId: binding.subject.KeyID, KeySha256: base64.RawURLEncoding.EncodeToString(make([]byte, 32)), ExpiresAt: time.Now().Add(time.Minute)}
+	apply([]controlv1.VisitorRegisteredKeyLease{parent})
+	if !b.connectorPeerPolicyCurrent(binding) {
+		t.Fatal("exact registered key could not become ready")
+	}
+	parent.KeyId = "pkey_cccccccccccccccccccccc"
+	apply([]controlv1.VisitorRegisteredKeyLease{parent})
+	if b.connectorPeerPolicyCurrent(binding) {
+		t.Fatal("another key retained installation readiness")
+	}
+	apply(nil)
+	if b.connectorPeerPolicyCurrent(binding) {
+		t.Fatal("revoked key retained installation readiness")
+	}
+}
 
 func TestConnectorPeerPreparationRetriesUnconfirmedInstallation(t *testing.T) {
 	for _, test := range []struct {

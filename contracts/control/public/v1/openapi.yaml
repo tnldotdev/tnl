@@ -9,8 +9,10 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example.com
 paths:
-  /v1/projects/{project_key}/deployment-management-credentials:
-    $ref: "./paths/deployment-management.yaml#/paths/~1v1~1projects~1{project_key}~1deployment-management-credentials"
+  /v1/projects/{project_key}/deployment-credentials:
+    $ref: "./paths/deployment-credentials.yaml#/paths/~1v1~1projects~1{project_key}~1deployment-credentials"
+  /v1/projects/{project_key}/deployments/{deployment}/services/{service}/select:
+    $ref: "./paths/deployment-connect.yaml#/paths/~1v1~1projects~1{project_key}~1deployments~1{deployment}~1services~1{service}~1select"
   /v1/projects/{project_key}/deployments/{deployment}/publisher-enrollments:
     $ref: "./paths/deployment-publishers.yaml#/paths/~1v1~1projects~1{project_key}~1deployments~1{deployment}~1publisher-enrollments"
   /v1/projects/{project_key}/deployments/{deployment}/publishers:
@@ -338,6 +340,8 @@ components:
       $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenDeviceSource"
     VisitorTokenWorkloadSource:
       $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenWorkloadSource"
+    VisitorTokenRegisteredKeySource:
+      $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenRegisteredKeySource"
     VisitorTokenShareSource:
       $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenShareSource"
     VisitorTokenShareSessionSource:
@@ -360,6 +364,8 @@ components:
       $ref: "./schemas/visitor-policy.yaml#/schemas/VisitorVerificationKey"
     VisitorWorkloadLease:
       $ref: "./schemas/visitor-policy.yaml#/schemas/VisitorWorkloadLease"
+    VisitorRegisteredKeyLease:
+      $ref: "./schemas/visitor-policy.yaml#/schemas/VisitorRegisteredKeyLease"
     HashedIPPrefix:
       $ref: "./schemas/visitor-policy.yaml#/schemas/HashedIPPrefix"
     CreateVisitorCredentialRequest:
@@ -382,10 +388,14 @@ components:
       $ref: "./schemas/projects.yaml#/schemas/ApplyProjectConfigurationRequest"
     DeploymentTargetTLS:
       $ref: "./schemas/deployments.yaml#/schemas/DeploymentTargetTLS"
-    RegisterDeploymentManagementRequest:
-      $ref: "./schemas/deployment-management.yaml#/schemas/RegisterDeploymentManagementRequest"
-    DeploymentManagementCredential:
-      $ref: "./schemas/deployment-management.yaml#/schemas/DeploymentManagementCredential"
+    RegisterDeploymentCredentialRequest:
+      $ref: "./schemas/deployment-credentials.yaml#/schemas/RegisterDeploymentCredentialRequest"
+    DeploymentCredential:
+      $ref: "./schemas/deployment-credentials.yaml#/schemas/DeploymentCredential"
+    DeploymentCredentialServiceSelection:
+      $ref: "./schemas/deployment-credentials.yaml#/schemas/DeploymentCredentialServiceSelection"
+    DeploymentCredentialServiceProtocols:
+      $ref: "./schemas/deployment-credentials.yaml#/schemas/DeploymentCredentialServiceProtocols"
     CreateDeploymentPublisherEnrollmentRequest:
       $ref: "./schemas/deployment-publishers.yaml#/schemas/CreateDeploymentPublisherEnrollmentRequest"
     DeploymentPublisherEnrollment:

@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-deployment-management')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-deployment-connect')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-deployment-management');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-deployment-connect');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -1576,7 +1576,7 @@ CREATE UNIQUE INDEX publisher_identity_keys_current ON control.publisher_identit
 CREATE TABLE control.publisher_grants (
     id text PRIMARY KEY CHECK (id <> ''), publisher_identity_id text NOT NULL REFERENCES control.publisher_identities(id) ON DELETE CASCADE,
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
-    kind text NOT NULL CHECK (kind IN ('saved_public_url', 'namespace', 'service', 'deployment_management')),
+    kind text NOT NULL CHECK (kind IN ('saved_public_url', 'namespace', 'service', 'deployment_credential')),
     public_url_id text REFERENCES control.public_urls(id) ON DELETE CASCADE,
     service_id text,
     domain_id text REFERENCES control.domains(id) ON DELETE RESTRICT, namespace text,
@@ -1587,7 +1587,7 @@ CREATE TABLE control.publisher_grants (
     CHECK ((kind = 'saved_public_url' AND public_url_id IS NOT NULL AND service_id IS NULL AND domain_id IS NULL AND namespace IS NULL AND public_url_scope IS NULL AND membership_id IS NULL)
         OR (kind = 'namespace' AND public_url_id IS NULL AND service_id IS NULL AND domain_id IS NOT NULL AND namespace IS NOT NULL AND namespace <> '' AND public_url_scope IS NOT NULL AND (public_url_scope = 'member') = (membership_id IS NOT NULL))
         OR (kind = 'service' AND service_id IS NOT NULL AND public_url_id IS NULL AND domain_id IS NULL AND namespace IS NULL AND public_url_scope IS NULL AND membership_id IS NULL)
-        OR (kind = 'deployment_management' AND service_id IS NULL AND public_url_id IS NULL AND domain_id IS NULL AND namespace IS NULL AND public_url_scope IS NULL AND membership_id IS NULL AND expires_at IS NOT NULL))
+        OR (kind = 'deployment_credential' AND service_id IS NULL AND public_url_id IS NULL AND domain_id IS NULL AND namespace IS NULL AND public_url_scope IS NULL AND membership_id IS NULL AND expires_at IS NOT NULL))
 );
 CREATE UNIQUE INDEX publisher_grants_active_url ON control.publisher_grants(publisher_identity_id, public_url_id) WHERE revoked_at IS NULL AND kind = 'saved_public_url';
 CREATE UNIQUE INDEX publisher_grants_active_namespace ON control.publisher_grants(publisher_identity_id, domain_id, namespace) WHERE revoked_at IS NULL AND kind = 'namespace';
@@ -2077,8 +2077,8 @@ CREATE TABLE control.project_publisher_groups (
 );
 CREATE UNIQUE INDEX project_publisher_groups_active ON control.project_publisher_groups(team_id, project_key, name) WHERE deleted_at IS NULL;
 CREATE UNIQUE INDEX project_publisher_groups_namespace ON control.project_publisher_groups(namespace) WHERE deleted_at IS NULL AND namespace <> '';
--- management uses the existing signed identity, proof, token, and revocation
--- lifecycle. these rows approve operations, never publication or visitor access.
+-- deployment capabilities share one signed identity, proof, token and deadline.
+-- each capability has its own fixed service allowlist.
 CREATE TABLE control.deployment_management_grants (
     grant_id text PRIMARY KEY REFERENCES control.publisher_grants(id) ON DELETE RESTRICT,
     team_id text NOT NULL,
@@ -2105,10 +2105,11 @@ CREATE TABLE control.deployment_management_services (
     grant_id text NOT NULL,
     team_id text NOT NULL,
     project_key text NOT NULL,
+    capability text NOT NULL CHECK (capability IN ('manage','connect')),
     service text NOT NULL,
     protocol text NOT NULL CHECK (protocol IN ('http','tcp','mysql','postgres','kubernetes')),
     revoked_at timestamptz,
-    PRIMARY KEY (grant_id,service),
+    PRIMARY KEY (grant_id,capability,service),
     FOREIGN KEY (grant_id,team_id,project_key) REFERENCES control.deployment_management_grants(grant_id,team_id,project_key)
 );
 -- +goose StatementBegin
@@ -2279,6 +2280,35 @@ CREATE TABLE control.publisher_group_members (
     FOREIGN KEY (key_id, publisher_identity_id) REFERENCES control.publisher_identity_keys(id, publisher_identity_id) ON DELETE RESTRICT
 );
 -- +goose StatementBegin
+CREATE FUNCTION control.deployment_credential_available(approval text) RETURNS boolean LANGUAGE sql STABLE AS $$
+    SELECT EXISTS(SELECT 1 FROM control.deployment_management_services scope WHERE scope.grant_id=approval)
+    AND NOT EXISTS(SELECT 1 FROM control.deployment_management_services scope
+        LEFT JOIN control.project_services declaration ON declaration.team_id=scope.team_id AND declaration.project_key=scope.project_key
+        AND declaration.name=scope.service AND declaration.protocol=scope.protocol
+        WHERE scope.grant_id=approval AND (scope.revoked_at IS NOT NULL OR declaration.name IS NULL))
+$$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+CREATE FUNCTION control.deployment_connect_authority(approval_id text,signing_key_id text,selected_service_id text,at_time timestamptz)
+RETURNS TABLE(public_key bytea,expires_at timestamptz,revision bigint) LANGUAGE sql STABLE AS $$
+    SELECT signing.public_key,LEAST(grant_record.expires_at,at_time+interval '90 seconds'),project.revision
+    FROM control.deployment_management_grants approval
+    JOIN control.publisher_grants grant_record ON grant_record.id=approval.grant_id AND grant_record.kind='deployment_credential'
+        AND grant_record.revoked_at IS NULL AND grant_record.expires_at>at_time
+    JOIN control.publisher_identities principal ON principal.id=grant_record.publisher_identity_id
+        AND principal.team_id=approval.team_id AND principal.ownership='team' AND principal.revoked_at IS NULL
+    JOIN control.publisher_identity_keys signing ON signing.publisher_identity_id=principal.id AND signing.id=signing_key_id AND signing.retired_at IS NULL
+    JOIN control.teams team ON team.id=approval.team_id AND team.deleted_at IS NULL
+    JOIN control.applied_projects project ON project.team_id=approval.team_id AND project.project_key=approval.project_key
+    JOIN control.deployment_management_services selected ON selected.grant_id=approval.grant_id AND selected.capability='connect' AND selected.revoked_at IS NULL
+    JOIN control.applied_project_services binding ON binding.team_id=approval.team_id AND binding.project_key=approval.project_key AND binding.service=selected.service AND binding.service_id=selected_service_id
+    JOIN control.project_publisher_groups deployment ON deployment.id=binding.group_id AND deployment.deleted_at IS NULL
+    JOIN control.services service ON service.id=binding.service_id AND service.team_id=approval.team_id AND service.protocol=selected.protocol AND service.enabled AND service.deleted_at IS NULL
+    WHERE approval.grant_id=approval_id AND control.deployment_credential_available(approval.grant_id)
+    AND (approval.all_deployments OR EXISTS(SELECT 1 FROM control.deployment_management_deployments allowed WHERE allowed.grant_id=approval.grant_id AND allowed.deployment_id=deployment.id))
+$$;
+-- +goose StatementEnd
+-- +goose StatementBegin
 CREATE FUNCTION control.deployment_management_publisher_allowed(approval text,publisher text) RETURNS boolean LANGUAGE sql STABLE AS $$
     SELECT EXISTS(SELECT 1 FROM control.publisher_group_members member
     JOIN control.publisher_group_enrollments enrollment ON enrollment.id=member.enrollment_id AND enrollment.scoped
@@ -2287,7 +2317,7 @@ CREATE FUNCTION control.deployment_management_publisher_allowed(approval text,pu
     AND NOT EXISTS(SELECT 1 FROM control.publisher_group_enrollment_services scope
         WHERE scope.enrollment_id=enrollment.id AND NOT EXISTS(
             SELECT 1 FROM control.deployment_management_services allowed WHERE allowed.grant_id=approval
-            AND allowed.service=scope.service AND allowed.protocol=scope.protocol AND allowed.revoked_at IS NULL)))
+            AND allowed.capability='manage' AND allowed.service=scope.service AND allowed.protocol=scope.protocol AND allowed.revoked_at IS NULL)))
 $$;
 -- +goose StatementEnd
 CREATE TABLE control.publisher_group_leases (
@@ -2783,7 +2813,7 @@ CREATE TABLE control.connector_peer_pairs (
     service_run_id text NOT NULL,
     run_number bigint NOT NULL CHECK (run_number >= 1),
     publisher_identity_id text NOT NULL REFERENCES control.publisher_identities(id) ON DELETE RESTRICT,
-    subject_kind text NOT NULL CHECK (subject_kind IN ('human_device','workload_session')),
+    subject_kind text NOT NULL CHECK (subject_kind IN ('human_device','workload_session','registered_key')),
     subject_id text NOT NULL,
     parent_control_session_id text REFERENCES control.control_sessions(id),
     -- the initial create key survives replacement so replay cannot revive it.

@@ -216,6 +216,11 @@ func (d *Database) RotatePublisherKey(ctx context.Context, token, sourceIP, repl
 	}
 	defer rollback(ctx, tx, "rotate publisher key", &retErr)()
 	q := controlstatedb.New(tx)
+	// key retirement fences connector admission under the same team guard as
+	// grant revocation, before any publication or identity locks are acquired.
+	if _, err := q.LockLocalTeamForMutation(ctx, identity.Scope.TeamID); err != nil {
+		return publisherLookupError(err, ErrPublisherIdentity)
+	}
 	if _, _, err := d.livePublisher(ctx, q, identity.ID, identity.GrantID, sourceIP, now); err != nil {
 		return err
 	}

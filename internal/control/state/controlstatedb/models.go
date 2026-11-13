@@ -383,6 +383,7 @@ type ControlDeploymentManagementService struct {
 	GrantID    string
 	TeamID     string
 	ProjectKey string
+	Capability string
 	Service    string
 	Protocol   string
 	RevokedAt  pgtype.Timestamptz

@@ -45,7 +45,7 @@ func (d *Database) RebindConnectorPeerPair(ctx context.Context, serviceID, pairI
 		return result, ErrServiceAccess
 	}
 	switch r.Source.(type) {
-	case DeviceTokenSource, WorkloadTokenSource:
+	case DeviceTokenSource, WorkloadTokenSource, RegisteredKeyTokenSource:
 	default:
 		return result, ErrServiceAccess
 	}
@@ -257,6 +257,9 @@ func (d *Database) RebindConnectorPeerPair(ctx context.Context, serviceID, pairI
 		result.Pending = &pending
 		result.PendingUntil = bound
 		until = minTime(until, bound)
+	}
+	if err = d.lockRegisteredVisitorAuthority(ctx, tx, r.Source, authority.Permission, clock); err != nil {
+		return ConnectorPeerPairRebindState{}, err
 	}
 	if _, err = tx.Exec(ctx, "SET CONSTRAINTS ALL IMMEDIATE"); err != nil {
 		return ConnectorPeerPairRebindState{}, err

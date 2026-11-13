@@ -13,16 +13,16 @@ import (
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
 
-func managementRegistration(t *testing.T, scope DeploymentScope, now time.Time) (RegisterDeploymentManagementRequest, ed25519.PrivateKey) {
+func managementRegistration(t *testing.T, scope DeploymentScope, now time.Time) (RegisterDeploymentCredentialRequest, ed25519.PrivateKey) {
 	t.Helper()
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return RegisterDeploymentManagementRequest{DeploymentScope: scope, Name: "customer-api", IdempotencyKey: "register", PublicKey: public, Services: []string{"db"}, AllDeployments: true, Lifetime: time.Hour, Now: now}, private
+	return RegisterDeploymentCredentialRequest{DeploymentScope: scope, Name: "customer-api", IdempotencyKey: "register", PublicKey: public, Permissions: map[string][]string{"manage": {"db"}}, AllDeployments: true, Lifetime: time.Hour, Now: now}, private
 }
 
-func managementAccess(t *testing.T, d *Database, credential DeploymentManagementCredential, private ed25519.PrivateKey, now time.Time) PublisherAccess {
+func managementAccess(t *testing.T, d *Database, credential DeploymentCredential, private ed25519.PrivateKey, now time.Time) PublisherAccess {
 	t.Helper()
 	assertion, err := publisherproof.Sign(credential.ClientID, credential.KeyID, credential.GrantID, publisherTestAudience, private, now)
 	if err != nil {
@@ -51,17 +51,17 @@ func TestIntegrationDeploymentManagementScopeAndRecovery(t *testing.T) {
 	}
 	request, private := managementRegistration(t, manager, now)
 	request.AllDeployments, request.DeploymentIDs = false, []string{production.ID}
-	credential, err := d.RegisterDeploymentManagement(t.Context(), request)
+	credential, err := d.RegisterDeploymentCredential(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	recovered, err := d.RegisterDeploymentManagement(t.Context(), request)
+	recovered, err := d.RegisterDeploymentCredential(t.Context(), request)
 	if err != nil || !reflect.DeepEqual(recovered, credential) {
 		t.Fatal("registration changed identity, scope, or fixed deadline", recovered, err)
 	}
 	changed := request
-	changed.Services = []string{"web"}
-	if _, err = d.RegisterDeploymentManagement(t.Context(), changed); !errors.Is(err, ErrServiceConflict) {
+	changed.Permissions = map[string][]string{"manage": {"web"}}
+	if _, err = d.RegisterDeploymentCredential(t.Context(), changed); !errors.Is(err, ErrServiceConflict) {
 		t.Fatal("registration request key expanded intent", err)
 	}
 	access := managementAccess(t, d, credential, private, now)
@@ -112,7 +112,7 @@ func TestIntegrationDeploymentManagementScopeAndRecovery(t *testing.T) {
 	}
 	// explicit project-wide approval creates only the captured service names.
 	request.AllDeployments, request.DeploymentIDs, request.IdempotencyKey = true, nil, "project-wide"
-	broad, err := d.RegisterDeploymentManagement(t.Context(), request)
+	broad, err := d.RegisterDeploymentCredential(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestIntegrationDeploymentManagementPublisherIsolation(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "management_publishers")
 	r, setup := deploymentPublisherRequest(t, d, now)
 	request, private := managementRegistration(t, setup.DeploymentScope, now)
-	credential, err := d.RegisterDeploymentManagement(t.Context(), request)
+	credential, err := d.RegisterDeploymentCredential(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestIntegrationDeploymentManagementPublisherIsolation(t *testing.T) {
 	}
 	// another credential issued by the same person has its own request-key space.
 	request.IdempotencyKey = "second-credential"
-	second, err := d.RegisterDeploymentManagement(t.Context(), request)
+	second, err := d.RegisterDeploymentCredential(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,11 +207,11 @@ func TestIntegrationDeploymentManagementPublisherIsolation(t *testing.T) {
 	if _, err = d.GetPublisherGroupAssignments(t.Context(), widePublisher.lease.AccessToken, now); err != nil {
 		t.Fatal("backend revocation retired an installed publisher", err)
 	}
-	if _, err = d.RegisterDeploymentManagement(t.Context(), request); err != nil {
+	if _, err = d.RegisterDeploymentCredential(t.Context(), request); err != nil {
 		t.Fatal("independent credential lost registration", err)
 	}
 	request.IdempotencyKey = "register"
-	if _, err = d.RegisterDeploymentManagement(t.Context(), request); !errors.Is(err, ErrDeploymentCredentialUnavailable) {
+	if _, err = d.RegisterDeploymentCredential(t.Context(), request); !errors.Is(err, ErrDeploymentCredentialUnavailable) {
 		t.Fatal("registration replay restored revoked authority", err)
 	}
 }
@@ -222,7 +222,7 @@ func TestIntegrationDeploymentManagementApprovalRetirement(t *testing.T) {
 			d, now := newControlStateIntegrationDatabase(t, "management_retirement_"+mutation)
 			r, setup := deploymentPublisherRequest(t, d, now)
 			request, private := managementRegistration(t, setup.DeploymentScope, now)
-			credential, err := d.RegisterDeploymentManagement(t.Context(), request)
+			credential, err := d.RegisterDeploymentCredential(t.Context(), request)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -246,11 +246,11 @@ func TestIntegrationDeploymentManagementApprovalRetirement(t *testing.T) {
 			if _, err = d.AuthenticatePublisherAccess(t.Context(), access.Token, "", now); !errors.Is(err, ErrPublisherIdentity) {
 				t.Fatal("rollback restored retired service approval", err)
 			}
-			if _, err = d.RegisterDeploymentManagement(t.Context(), request); !errors.Is(err, ErrDeploymentCredentialUnavailable) {
+			if _, err = d.RegisterDeploymentCredential(t.Context(), request); !errors.Is(err, ErrDeploymentCredentialUnavailable) {
 				t.Fatal("registration replay restored retired scope", err)
 			}
 			request.IdempotencyKey = "explicit-new-approval"
-			if _, err = d.RegisterDeploymentManagement(t.Context(), request); err != nil {
+			if _, err = d.RegisterDeploymentCredential(t.Context(), request); err != nil {
 				t.Fatal("manager could not approve current declaration", err)
 			}
 		})
@@ -261,7 +261,7 @@ func TestIntegrationDeploymentManagementSurvivesCreatorDeparture(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "management_departure")
 	_, setup := deploymentPublisherRequest(t, d, now)
 	request, private := managementRegistration(t, setup.DeploymentScope, now)
-	credential, err := d.RegisterDeploymentManagement(t.Context(), request)
+	credential, err := d.RegisterDeploymentCredential(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +289,7 @@ func TestIntegrationDeploymentManagementRevocationDuringLockWait(t *testing.T) {
 			d, now := newControlStateIntegrationDatabase(t, "management_wait_"+operation)
 			r, setup := deploymentPublisherRequest(t, d, now)
 			request, private := managementRegistration(t, setup.DeploymentScope, now)
-			credential, err := d.RegisterDeploymentManagement(t.Context(), request)
+			credential, err := d.RegisterDeploymentCredential(t.Context(), request)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -379,7 +379,7 @@ func TestIntegrationDeploymentManagementDeadlinesDuringLockWait(t *testing.T) {
 			d, now := newControlStateIntegrationDatabase(t, "management_deadline_"+boundary)
 			_, setup := deploymentPublisherRequest(t, d, now)
 			request, private := managementRegistration(t, setup.DeploymentScope, now)
-			credential, err := d.RegisterDeploymentManagement(t.Context(), request)
+			credential, err := d.RegisterDeploymentCredential(t.Context(), request)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -428,7 +428,7 @@ func TestIntegrationDeploymentManagementDeadlinesDuringLockWait(t *testing.T) {
 					_, err = d.ExchangePublisherAssertion(ctx, credential.ClientID, credential.GrantID, publisherTestAudience, assertion, "", now)
 				case "registration":
 					request.Now = credential.ExpiresAt.Add(-time.Second)
-					_, err = d.RegisterDeploymentManagement(ctx, request)
+					_, err = d.RegisterDeploymentCredential(ctx, request)
 				default:
 					_, err = d.UpdateDeployment(ctx, UpdateDeploymentRequest{DeploymentScope: DeploymentScope{TeamID: request.TeamID, ProjectKey: request.ProjectKey, AccessToken: access.Token}, Selector: deployment.ID, ExpectedRevision: deployment.Revision, Targets: map[string]DeploymentTarget{"db": {Address: "late.internal:5432"}}, Now: at})
 				}
@@ -469,7 +469,7 @@ func TestIntegrationDeploymentManagementRegistrationRechecksManager(t *testing.T
 			_, setup := deploymentPublisherRequest(t, d, now)
 			request, _ := managementRegistration(t, setup.DeploymentScope, now)
 			if operation == "recover" {
-				if _, err := d.RegisterDeploymentManagement(t.Context(), request); err != nil {
+				if _, err := d.RegisterDeploymentCredential(t.Context(), request); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -485,7 +485,7 @@ func TestIntegrationDeploymentManagementRegistrationRechecksManager(t *testing.T
 				t.Fatal(err)
 			}
 			done := make(chan error, 1)
-			workers.Go(func() { _, err := d.RegisterDeploymentManagement(ctx, request); done <- err })
+			workers.Go(func() { _, err := d.RegisterDeploymentCredential(ctx, request); done <- err })
 			waitForPostgresBlock(t, ctx, d, int32(gate.Conn().PgConn().PID()), done)
 			if _, err = gate.Exec(ctx, `UPDATE control.identities SET disabled_at=$2 WHERE id=$1`, request.ActorID, now); err != nil {
 				t.Fatal(err)
@@ -508,7 +508,7 @@ func TestIntegrationDeploymentManagementCombinedIdentityLockOrder(t *testing.T) 
 	d, now := newControlStateIntegrationDatabase(t, "management_combined_lock_order")
 	r, setup := deploymentPublisherRequest(t, d, now)
 	request, private := managementRegistration(t, setup.DeploymentScope, now)
-	credential, err := d.RegisterDeploymentManagement(t.Context(), request)
+	credential, err := d.RegisterDeploymentCredential(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -572,14 +572,10 @@ SELECT EXISTS (
     WHERE p.id = $1 AND g.id = $2
       AND (p.ownership <> 'member' OR control.active_membership(p.owner_membership_id, CURRENT_TIMESTAMP))
       AND (p.kind = 'guest' OR EXISTS (SELECT 1 FROM control.teams t WHERE t.id = p.team_id AND t.deleted_at IS NULL))
-      AND ((g.kind = 'deployment_management' AND p.kind <> 'guest' AND EXISTS (
+      AND ((g.kind = 'deployment_credential' AND p.kind <> 'guest' AND EXISTS (
                 SELECT 1 FROM control.deployment_management_grants approval
                 WHERE approval.grant_id=g.id AND approval.team_id=p.team_id
-                AND EXISTS(SELECT 1 FROM control.deployment_management_services scope WHERE scope.grant_id=g.id)
-                AND NOT EXISTS(SELECT 1 FROM control.deployment_management_services scope
-                    LEFT JOIN control.project_services declaration ON declaration.team_id=scope.team_id AND declaration.project_key=scope.project_key
-                    AND declaration.name=scope.service AND declaration.protocol=scope.protocol
-                    WHERE scope.grant_id=g.id AND (scope.revoked_at IS NOT NULL OR declaration.name IS NULL)))) OR
+                AND control.deployment_credential_available(g.id))) OR
            (g.kind = 'service' AND p.kind <> 'guest' AND s.team_id = p.team_id
              AND s.enabled AND s.deleted_at IS NULL
              AND (s.domain_id IS NULL OR d.state='ready' AND d.released_at IS NULL AND (d.kind='managed' OR d.team_id=p.team_id))) OR

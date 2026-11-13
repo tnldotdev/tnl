@@ -100,10 +100,10 @@ func (q *Queries) ListDeploymentManagementDeployments(ctx context.Context, grant
 }
 
 const listDeploymentManagementServices = `-- name: ListDeploymentManagementServices :many
-SELECT approval.grant_id, approval.team_id, approval.project_key, approval.service, approval.protocol, approval.revoked_at FROM control.deployment_management_services approval
+SELECT approval.grant_id, approval.team_id, approval.project_key, approval.capability, approval.service, approval.protocol, approval.revoked_at FROM control.deployment_management_services approval
 JOIN control.project_services declaration ON declaration.team_id=approval.team_id
 AND declaration.project_key=approval.project_key AND declaration.name=approval.service AND declaration.protocol=approval.protocol
-WHERE approval.grant_id=$1 AND approval.revoked_at IS NULL ORDER BY approval.service
+WHERE approval.grant_id=$1 AND approval.revoked_at IS NULL ORDER BY approval.capability,approval.service
 `
 
 func (q *Queries) ListDeploymentManagementServices(ctx context.Context, grantID string) ([]ControlDeploymentManagementService, error) {
@@ -119,6 +119,7 @@ func (q *Queries) ListDeploymentManagementServices(ctx context.Context, grantID 
 			&i.GrantID,
 			&i.TeamID,
 			&i.ProjectKey,
+			&i.Capability,
 			&i.Service,
 			&i.Protocol,
 			&i.RevokedAt,

@@ -23,7 +23,7 @@ import (
 )
 
 func TestPublisherVisitorPolicyHTTPMaximumAndBounds(t *testing.T) {
-	for _, fault := range []string{"maximum", "keys", "workloads", "prefixes", "events", "nil key", "short key", "overlong key", "bytes"} {
+	for _, fault := range []string{"maximum", "keys", "workloads", "registered keys", "duplicate registered key", "expired registered key", "prefixes", "events", "nil key", "short key", "overlong key", "bytes"} {
 		t.Run(fault, func(t *testing.T) {
 			body, private := policyfixture.Maximum(t, time.Now().UTC())
 			body.Policy.VisitorPolicyRevision = math.MaxInt64 - 256
@@ -35,6 +35,12 @@ func TestPublisherVisitorPolicyHTTPMaximumAndBounds(t *testing.T) {
 				body.Policy.VerificationKeys = append(body.Policy.VerificationKeys, body.Policy.VerificationKeys[0])
 			case "workloads":
 				body.Policy.WorkloadLeases = append(body.Policy.WorkloadLeases, body.Policy.WorkloadLeases[0])
+			case "registered keys":
+				body.Policy.RegisteredKeyLeases = append(body.Policy.RegisteredKeyLeases, body.Policy.RegisteredKeyLeases[0])
+			case "duplicate registered key":
+				body.Policy.RegisteredKeyLeases[1] = body.Policy.RegisteredKeyLeases[0]
+			case "expired registered key":
+				body.Policy.RegisteredKeyLeases[0].ExpiresAt = body.Policy.ObservedAt
 			case "prefixes":
 				body.Policy.Ip.Prefixes = append(body.Policy.Ip.Prefixes, body.Policy.Ip.Prefixes[0])
 			case "events":
@@ -121,6 +127,13 @@ func TestPublisherVisitorPolicyHTTPMaximumAndBounds(t *testing.T) {
 					t.Fatal("publisher truncated or changed workload authority")
 				}
 			}
+			for _, parent := range body.Policy.RegisteredKeyLeases {
+				id := (visitortoken.RegisteredKey{GrantID: parent.GrantId, KeyID: parent.KeyId}).AuthorityID()
+				lease, ok := view.RegisteredKey(id)
+				if !ok || lease.KeySHA256 != parent.KeySha256 || !lease.ExpiresAt.Equal(parent.ExpiresAt) {
+					t.Fatal("publisher truncated or changed registered key authority")
+				}
+			}
 			authorityNow := view.AuthorityTime(time.Now())
 			permission := visitortoken.Permission{Scope: view.Scope, Hostname: view.Hostname, Port: view.Port, VisitorPolicyRevision: view.VisitorPolicyRevision,
 				Subject: visitortoken.Browser{IdentityID: "ident_" + strings.Repeat("C", 22), SessionID: "cs_" + strings.Repeat("D", 22)}, ExpiresAt: authorityNow.Add(time.Minute)}
@@ -150,6 +163,7 @@ func TestPublisherVisitorPolicyHTTPMaximumPublicRunSourceKey(t *testing.T) {
 	body, _ := policyfixture.Maximum(t, time.Now().UTC())
 	body.Policy.Resource = controlv1.VisitorResourceScope{Kind: "public_url", Id: visitorfixture.PublicURLID}
 	body.Policy.Port = 443
+	body.Policy.RegisteredKeyLeases = []controlv1.VisitorRegisteredKeyLease{}
 	body.Policy.VisitorPolicyRevision = math.MaxInt64 - 256
 	body.VisitorSourceKey = visitorfixture.SourceKeyBytes()
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

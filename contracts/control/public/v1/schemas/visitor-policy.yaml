@@ -48,6 +48,7 @@ schemas:
         anonymous,
         verification_keys,
         workload_leases,
+        registered_key_leases,
       ]
     properties:
       resource: { $ref: "../openapi.yaml#/components/schemas/VisitorResourceScope" }
@@ -77,6 +78,10 @@ schemas:
         type: array
         maxItems: 4096
         items: { $ref: "../openapi.yaml#/components/schemas/VisitorWorkloadLease" }
+      registered_key_leases:
+        type: array
+        maxItems: 4096
+        items: { $ref: "../openapi.yaml#/components/schemas/VisitorRegisteredKeyLease" }
       ip: { $ref: "../openapi.yaml#/components/schemas/VisitorPolicyIP" }
   VisitorVerificationKey:
     type: object
@@ -91,6 +96,15 @@ schemas:
     required: [session_id, key_sha256, expires_at]
     properties:
       session_id: { type: string, pattern: "^wls_[A-Za-z0-9]{22}$" }
+      key_sha256: { type: string, pattern: "^[A-Za-z0-9_-]{43}$" }
+      expires_at: { type: string, format: date-time }
+  VisitorRegisteredKeyLease:
+    type: object
+    additionalProperties: false
+    required: [grant_id, key_id, key_sha256, expires_at]
+    properties:
+      grant_id: { type: string }
+      key_id: { type: string }
       key_sha256: { type: string, pattern: "^[A-Za-z0-9_-]{43}$" }
       expires_at: { type: string, format: date-time }
   VisitorPolicyIP:

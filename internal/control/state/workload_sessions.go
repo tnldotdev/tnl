@@ -342,6 +342,10 @@ func VisitorSubjectAccess(ctx context.Context, tx pgx.Tx, service string, subjec
 	if subject.Validate() != nil {
 		return time.Time{}, 0, ErrServiceAccess
 	}
+	if subject.Kind == tunnelv1.VisitorRegisteredKey {
+		facts, err := deploymentConnectAuthority(ctx, tx, subject.GrantID, subject.KeyID, service, now)
+		return facts.ExpiresAt, facts.Revision, err
+	}
 	if subject.Kind == tunnelv1.VisitorHumanDevice {
 		var found bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.visitor_devices WHERE id=$1 AND identity_id=$2 AND revoked_at IS NULL)`, subject.DeviceID, subject.IdentityID).Scan(&found); err != nil {

@@ -12,7 +12,7 @@ SELECT * FROM control.deployment_management_grants WHERE grant_id=sqlc.arg(grant
 SELECT approval.* FROM control.deployment_management_services approval
 JOIN control.project_services declaration ON declaration.team_id=approval.team_id
 AND declaration.project_key=approval.project_key AND declaration.name=approval.service AND declaration.protocol=approval.protocol
-WHERE approval.grant_id=sqlc.arg(grant_id) AND approval.revoked_at IS NULL ORDER BY approval.service;
+WHERE approval.grant_id=sqlc.arg(grant_id) AND approval.revoked_at IS NULL ORDER BY approval.capability,approval.service;
 
 -- name: ListDeploymentManagementDeployments :many
 SELECT deployment_id FROM control.deployment_management_deployments WHERE grant_id=sqlc.arg(grant_id) ORDER BY deployment_id;

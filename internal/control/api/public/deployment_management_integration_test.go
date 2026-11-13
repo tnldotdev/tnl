@@ -48,7 +48,8 @@ func TestIntegrationDeploymentManagementHTTPContracts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := NewHandler(Config{ManagedURLMode: naming.ManagedURLModeSimple}, DatabaseStores(d), d, nil)
+	const visitorIssuer = "https://control.example.test"
+	h, err := NewHandler(Config{ManagedURLMode: naming.ManagedURLModeSimple, ControlURL: visitorIssuer}, DatabaseStores(d), d, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,15 +73,16 @@ func TestIntegrationDeploymentManagementHTTPContracts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	all := controlv1.RegisterDeploymentManagementRequestAllDeployments(true)
-	body := controlv1.RegisterDeploymentManagementRequest{Name: "customer-api", PublicKey: base64.RawURLEncoding.EncodeToString(public), Services: []string{"db"}, AllDeployments: &all, ExpiresIn: 600}
-	params := &controlv1.RegisterDeploymentManagementParams{TeamId: team, IdempotencyKey: "register"}
-	created, err := api.RegisterDeploymentManagementWithResponse(ctx, "example", params, body, manager)
+	all := controlv1.RegisterDeploymentCredentialRequestAllDeployments(true)
+	body := controlv1.RegisterDeploymentCredentialRequest{Name: "customer-api", PublicKey: base64.RawURLEncoding.EncodeToString(public), AllDeployments: &all, ExpiresIn: 600}
+	body.Permissions.Manage = new(controlv1.DeploymentCredentialServiceSelection{"db"})
+	params := &controlv1.RegisterDeploymentCredentialParams{TeamId: team, IdempotencyKey: "register"}
+	created, err := api.RegisterDeploymentCredentialWithResponse(ctx, "example", params, body, manager)
 	if err != nil || created.JSON201 == nil || created.HTTPResponse.Header.Get("Cache-Control") != "no-store" {
 		t.Fatalf("register: %+v %v", created, err)
 	}
 	credential := created.JSON201
-	recovered, err := api.RegisterDeploymentManagementWithResponse(ctx, "example", params, body, manager)
+	recovered, err := api.RegisterDeploymentCredentialWithResponse(ctx, "example", params, body, manager)
 	if err != nil || !bytes.Equal(created.Body, recovered.Body) {
 		t.Fatal("registration retry changed public facts or deadline", err)
 	}
@@ -98,7 +100,8 @@ func TestIntegrationDeploymentManagementHTTPContracts(t *testing.T) {
 	}{
 		{"capabilities", []string{"manage", "connect", "publish"}}, {"private_key", base64.RawURLEncoding.EncodeToString(private)},
 		{"all_deployments", false}, {"deployment_ids", []string{}}, {"expires_in", 9223372036854775807},
-		{"services", []string{"db", "db"}}, {"services", []string{"undeclared"}}, {"public_key", "invalid"},
+		{"permissions", map[string]any{"manage": []string{"db", "db"}}}, {"permissions", map[string]any{"connect": []string{"undeclared"}}}, {"public_key", "invalid"},
+		{"permissions", map[string]any{}}, {"permissions", map[string]any{"manage": []string{}}}, {"permissions", map[string]any{"publish": []string{"web"}}}, {"services", []string{"db"}},
 	} {
 		invalid := maps.Clone(valid)
 		invalid[test.field] = test.value
@@ -106,7 +109,7 @@ func TestIntegrationDeploymentManagementHTTPContracts(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		response, err := api.RegisterDeploymentManagementWithBodyWithResponse(ctx, "example", &controlv1.RegisterDeploymentManagementParams{TeamId: team, IdempotencyKey: "invalid"}, "application/json", bytes.NewReader(data), manager)
+		response, err := api.RegisterDeploymentCredentialWithBodyWithResponse(ctx, "example", &controlv1.RegisterDeploymentCredentialParams{TeamId: team, IdempotencyKey: "invalid"}, "application/json", bytes.NewReader(data), manager)
 		if err != nil || response.StatusCode() != 400 || response.ApplicationproblemJSONDefault == nil || response.ApplicationproblemJSONDefault.Code != controlv1.InvalidRequest || bytes.Contains(response.Body, []byte(base64.RawURLEncoding.EncodeToString(private))) {
 			t.Fatal("invalid registration escaped strict boundary or leaked key", test.field, response, err)
 		}
@@ -127,7 +130,7 @@ func TestIntegrationDeploymentManagementHTTPContracts(t *testing.T) {
 	production := read.JSON200
 	for _, call := range []func() (int, error){
 		func() (int, error) {
-			r, e := api.RegisterDeploymentManagementWithResponse(ctx, "example", params, body, runtime)
+			r, e := api.RegisterDeploymentCredentialWithResponse(ctx, "example", params, body, runtime)
 			if e != nil {
 				return 0, e
 			}
@@ -171,6 +174,54 @@ func TestIntegrationDeploymentManagementHTTPContracts(t *testing.T) {
 	if err != nil || setup.JSON201 == nil || setup.JSON201.ExpiresAt.After(credential.ExpiresAt) {
 		t.Fatalf("runtime setup: %+v %v", setup, err)
 	}
+	t.Run("connect only and combined registration", func(t *testing.T) {
+		if err := d.PrepareVisitorSigningKeys(ctx, visitorIssuer, now); err != nil {
+			t.Fatal(err)
+		}
+		for _, combined := range []bool{false, true} {
+			registration := body
+			registration.Permissions.Manage = nil
+			registration.Permissions.Connect = new(controlv1.DeploymentCredentialServiceSelection{"db"})
+			key := "connect-only"
+			if combined {
+				registration.Permissions.Manage = new(controlv1.DeploymentCredentialServiceSelection{"web"})
+				key = "combined"
+			}
+			registered, err := api.RegisterDeploymentCredentialWithResponse(ctx, "example", &controlv1.RegisterDeploymentCredentialParams{TeamId: team, IdempotencyKey: key}, registration, manager)
+			if err != nil || registered.JSON201 == nil {
+				t.Fatalf("register connect: %+v %v", registered, err)
+			}
+			facts := registered.JSON201
+			access, err := authority.ExchangePublisherAssertion(ctx, facts.ClientId, facts.GrantId, facts.KeyId, private)
+			if err != nil {
+				t.Fatal(err)
+			}
+			read, err := api.GetDeploymentWithResponse(ctx, "example", "production", &controlv1.GetDeploymentParams{TeamId: team}, auth(access))
+			if err != nil || !combined && read.StatusCode() != 403 || combined && (read.JSON200 == nil || len(read.JSON200.Targets) != 1 || read.JSON200.Services["web"].Id == "") {
+				t.Fatal("connect permission escaped its independent management allowlist", err)
+			}
+			source, err := json.Marshal(controlv1.VisitorTokenRegisteredKeySource{Kind: controlv1.VisitorTokenRegisteredKey, Credential: access})
+			if err != nil {
+				t.Fatal(err)
+			}
+			permission := controlv1.VisitorTokenRequest{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKindService, Id: production.Services["db"].Id}, Source: source}
+			issued, err := api.IssueVisitorTokenWithResponse(ctx, permission)
+			if err != nil || issued.JSON200 == nil || issued.JSON200.ExpiresAt.After(facts.ExpiresAt) {
+				t.Fatalf("connect permission: %+v %v", issued, err)
+			}
+			conflict, err := api.IssueVisitorTokenWithResponse(ctx, permission, manager)
+			if err != nil || conflict.StatusCode() != 400 {
+				t.Fatal("accepted mixed credential sources", err)
+			}
+			if err = d.RevokePublisherGrant(ctx, team, facts.ClientId, facts.GrantId, session.Identity.Identity.ID, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			issued, err = api.IssueVisitorTokenWithResponse(ctx, permission)
+			if err != nil || issued.StatusCode() != 403 {
+				t.Fatal("registered visitor ignored current revocation", err)
+			}
+		}
+	})
 	revoked, err := api.RevokePublisherGrantWithResponse(ctx, credential.ClientId, credential.GrantId, &controlv1.RevokePublisherGrantParams{TeamId: team}, manager)
 	if err != nil || revoked.StatusCode() != 204 {
 		t.Fatal("existing grant revocation failed", revoked, err)
@@ -179,7 +230,7 @@ func TestIntegrationDeploymentManagementHTTPContracts(t *testing.T) {
 	if err != nil || read.StatusCode() != 401 {
 		t.Fatal("runtime use ignored current grant revocation", err)
 	}
-	recovered, err = api.RegisterDeploymentManagementWithResponse(ctx, "example", params, body, manager)
+	recovered, err = api.RegisterDeploymentCredentialWithResponse(ctx, "example", params, body, manager)
 	if err != nil || recovered.StatusCode() != 409 {
 		t.Fatal("registration replay revived revoked grant", err)
 	}

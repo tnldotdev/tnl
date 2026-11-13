@@ -34,7 +34,8 @@ type Stores struct {
 	ProjectConfiguration      ProjectConfigurationStore
 	Deployments               DeploymentStore
 	DeploymentPublishers      DeploymentPublisherStore
-	DeploymentManagement      DeploymentManagementStore
+	DeploymentCredentials     DeploymentCredentialStore
+	DeploymentConnect         DeploymentConnectStore
 	ProjectServices           ProjectServiceStore
 	LocalProjects             LocalProjectStore
 	Services                  ServiceStore
@@ -134,7 +135,7 @@ func DatabaseStores(database *controlstate.Database) Stores {
 		BrowserAccess: database, Shares: database, ShareAccess: database, Feedback: database,
 		Guests: database, GuestAuthorization: database, GuestPublishers: database,
 		PublisherRuns: database, PublisherIdentities: database, PublisherGroups: database,
-		PublisherRuntime: database, ProjectConfiguration: database, ProjectServices: database, Deployments: database, DeploymentPublishers: database, DeploymentManagement: database,
+		PublisherRuntime: database, ProjectConfiguration: database, ProjectServices: database, Deployments: database, DeploymentPublishers: database, DeploymentCredentials: database, DeploymentConnect: database,
 		LocalProjects: database, Services: database, ServiceRuns: database,
 		ServiceCertificates: database, ServiceClientCertificates: database, ServiceHTTP: database,
 		ServiceAudit: database, ConnectorPeerPairs: database, VisitorPolicy: database,

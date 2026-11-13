@@ -16,68 +16,78 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
-const DeploymentManagementGrant = "deployment_management"
+const DeploymentCredentialGrant = "deployment_credential"
 
 var ErrDeploymentAccess = errors.New("deployment operation is outside the current credential approval")
 var ErrDeploymentCredentialUnavailable = errors.New("original deployment credential approval is no longer usable")
 
-type RegisterDeploymentManagementRequest struct {
+type RegisterDeploymentCredentialRequest struct {
 	DeploymentScope
 	Name, IdempotencyKey string
 	PublicKey            ed25519.PublicKey
-	Services             []string
+	Permissions          map[string][]string
 	DeploymentIDs        []string
 	AllDeployments       bool
 	Lifetime             time.Duration
 	Now                  time.Time
 }
 
-type DeploymentManagementCredential struct {
-	ClientID       string            `json:"client_id"`
-	KeyID          string            `json:"key_id"`
-	GrantID        string            `json:"grant_id"`
-	TeamID         string            `json:"team_id"`
-	ProjectKey     string            `json:"project_key"`
-	Services       map[string]string `json:"services"`
-	DeploymentIDs  []string          `json:"deployment_ids"`
-	AllDeployments bool              `json:"all_deployments"`
-	ExpiresAt      time.Time         `json:"expires_at"`
+type DeploymentCredential struct {
+	ClientID       string                       `json:"client_id"`
+	KeyID          string                       `json:"key_id"`
+	GrantID        string                       `json:"grant_id"`
+	TeamID         string                       `json:"team_id"`
+	ProjectKey     string                       `json:"project_key"`
+	Permissions    map[string]map[string]string `json:"permissions"`
+	DeploymentIDs  []string                     `json:"deployment_ids"`
+	AllDeployments bool                         `json:"all_deployments"`
+	ExpiresAt      time.Time                    `json:"expires_at"`
 }
 
-type deploymentManagementScope struct{ team string }
+type deploymentCredentialScope struct{ team string }
 
-func (s deploymentManagementScope) publisherScope() PublisherScope {
-	return PublisherScope{TeamID: s.team, Kind: DeploymentManagementGrant}
+func (s deploymentCredentialScope) publisherScope() PublisherScope {
+	return PublisherScope{TeamID: s.team, Kind: DeploymentCredentialGrant}
 }
 
 // registration is manager-only. control stores the public key, not a second
 // bootstrap secret or signing engine. the original key recovers one fixed grant.
-func (d *Database) RegisterDeploymentManagement(ctx context.Context, r RegisterDeploymentManagementRequest) (result DeploymentManagementCredential, retErr error) {
+func (d *Database) RegisterDeploymentCredential(ctx context.Context, r RegisterDeploymentCredentialRequest) (result DeploymentCredential, retErr error) {
 	clock := newAuthorizationClock(r.Now)
 	if r.AccessToken != "" || !naming.ValidServiceName(r.Name) || !validIdempotencyKey(r.IdempotencyKey) || len(r.PublicKey) != ed25519.PublicKeySize ||
-		len(r.Services) < 1 || len(r.Services) > 128 || len(r.DeploymentIDs) > 128 || r.AllDeployments == (len(r.DeploymentIDs) > 0) || r.Lifetime < time.Minute || r.Lifetime > 30*24*time.Hour {
+		len(r.Permissions) < 1 || len(r.Permissions) > 2 || len(r.DeploymentIDs) > 128 || r.AllDeployments == (len(r.DeploymentIDs) > 0) || r.Lifetime < time.Minute || r.Lifetime > 30*24*time.Hour {
 		return result, ErrProjectConfigurationInvalid
 	}
-	r.Services, r.DeploymentIDs = slices.Clone(r.Services), slices.Clone(r.DeploymentIDs)
-	slices.Sort(r.Services)
-	slices.Sort(r.DeploymentIDs)
-	for i, name := range r.Services {
-		if !naming.ValidServiceName(name) || i > 0 && name == r.Services[i-1] {
+	permissions := make(map[string][]string, len(r.Permissions))
+	for capability, names := range r.Permissions {
+		if capability != "manage" && capability != "connect" || len(names) < 1 || len(names) > 128 {
 			return result, ErrProjectConfigurationInvalid
 		}
+		names = slices.Clone(names)
+		slices.Sort(names)
+		for i, name := range names {
+			if !naming.ValidServiceName(name) || i > 0 && name == names[i-1] {
+				return result, ErrProjectConfigurationInvalid
+			}
+		}
+		permissions[capability] = names
 	}
+	r.Permissions = permissions
+	r.DeploymentIDs = slices.Clone(r.DeploymentIDs)
+	slices.Sort(r.DeploymentIDs)
 	for i, id := range r.DeploymentIDs {
 		if !opaqueid.Valid(id, "pgrp_") || i > 0 && id == r.DeploymentIDs[i-1] {
 			return result, ErrProjectConfigurationInvalid
 		}
 	}
 	intent, err := json.Marshal(struct {
-		Name                    string
-		PublicKey               []byte
-		Services, DeploymentIDs []string
-		AllDeployments          bool
-		Lifetime                time.Duration
-	}{r.Name, r.PublicKey, r.Services, r.DeploymentIDs, r.AllDeployments, r.Lifetime})
+		Name           string
+		PublicKey      []byte
+		Permissions    map[string][]string
+		DeploymentIDs  []string
+		AllDeployments bool
+		Lifetime       time.Duration
+	}{r.Name, r.PublicKey, r.Permissions, r.DeploymentIDs, r.AllDeployments, r.Lifetime})
 	if err != nil {
 		return result, err
 	}
@@ -86,7 +96,7 @@ func (d *Database) RegisterDeploymentManagement(ctx context.Context, r RegisterD
 	if err != nil {
 		return result, err
 	}
-	defer rollback(ctx, tx, "register deployment management", &retErr)()
+	defer rollback(ctx, tx, "register deployment credential", &retErr)()
 	if _, err = lockDeploymentManager(ctx, tx, r.DeploymentScope); err != nil {
 		return result, err
 	}
@@ -111,7 +121,7 @@ func (d *Database) RegisterDeploymentManagement(ctx context.Context, r RegisterD
 		if key.RetiredAt.Valid || !bytes.Equal(key.PublicKey, r.PublicKey) {
 			return result, ErrDeploymentCredentialUnavailable
 		}
-		result = DeploymentManagementCredential{ClientID: identity.ID, KeyID: key.ID, GrantID: approval.GrantID, TeamID: r.TeamID, ProjectKey: r.ProjectKey, AllDeployments: approval.AllDeployments, ExpiresAt: recovered.ExpiresAt.Time.UTC()}
+		result = DeploymentCredential{ClientID: identity.ID, KeyID: key.ID, GrantID: approval.GrantID, TeamID: r.TeamID, ProjectKey: r.ProjectKey, AllDeployments: approval.AllDeployments, ExpiresAt: recovered.ExpiresAt.Time.UTC()}
 	} else {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return result, err
@@ -129,13 +139,15 @@ func (d *Database) RegisterDeploymentManagement(ctx context.Context, r RegisterD
 		for _, declaration := range declarations {
 			protocols[declaration.Name] = declaration.Protocol
 		}
-		for _, name := range r.Services {
-			if protocols[name] == "" {
-				return result, ErrProjectConfigurationInvalid
+		for _, names := range r.Permissions {
+			for _, name := range names {
+				if protocols[name] == "" {
+					return result, ErrProjectConfigurationInvalid
+				}
 			}
 		}
 		until := r.Now.Add(r.Lifetime).UTC().Truncate(time.Microsecond)
-		identity, err := insertPublisher(ctx, q, deploymentManagementScope{r.TeamID}, r.Name, "automation", r.ActorID, "", "team", "", r.PublicKey, &until, r.Now)
+		identity, err := insertPublisher(ctx, q, deploymentCredentialScope{r.TeamID}, r.Name, "automation", r.ActorID, "", "team", "", r.PublicKey, &until, r.Now)
 		if err != nil {
 			return result, err
 		}
@@ -149,27 +161,29 @@ func (d *Database) RegisterDeploymentManagement(ctx context.Context, r RegisterD
 				return result, err
 			}
 		}
-		for _, name := range r.Services {
-			if _, err = tx.Exec(ctx, `INSERT INTO control.deployment_management_services(grant_id,team_id,project_key,service,protocol) VALUES($1,$2,$3,$4,$5)`, identity.GrantID, r.TeamID, r.ProjectKey, name, protocols[name]); err != nil {
-				return result, err
+		for capability, names := range r.Permissions {
+			for _, name := range names {
+				if _, err = tx.Exec(ctx, `INSERT INTO control.deployment_management_services(grant_id,team_id,project_key,capability,service,protocol) VALUES($1,$2,$3,$4,$5,$6)`, identity.GrantID, r.TeamID, r.ProjectKey, capability, name, protocols[name]); err != nil {
+					return result, err
+				}
 			}
 		}
-		result = DeploymentManagementCredential{ClientID: identity.ID, KeyID: identity.KeyID, GrantID: identity.GrantID, TeamID: r.TeamID, ProjectKey: r.ProjectKey, AllDeployments: r.AllDeployments, ExpiresAt: until}
+		result = DeploymentCredential{ClientID: identity.ID, KeyID: identity.KeyID, GrantID: identity.GrantID, TeamID: r.TeamID, ProjectKey: r.ProjectKey, AllDeployments: r.AllDeployments, ExpiresAt: until}
 	}
-	result.Services, result.DeploymentIDs, err = deploymentManagementSelection(ctx, q, result.GrantID)
+	result.Permissions, result.DeploymentIDs, err = deploymentCredentialSelection(ctx, q, result.GrantID)
 	if err != nil {
-		return DeploymentManagementCredential{}, err
+		return DeploymentCredential{}, err
 	}
 	if !result.ExpiresAt.After(clock.current()) {
-		return DeploymentManagementCredential{}, ErrDeploymentCredentialUnavailable
+		return DeploymentCredential{}, ErrDeploymentCredentialUnavailable
 	}
 	if err = commitDeployment(ctx, tx, r.DeploymentScope); err != nil {
-		return DeploymentManagementCredential{}, err
+		return DeploymentCredential{}, err
 	}
 	return result, nil
 }
 
-func deploymentManagementSelection(ctx context.Context, q *controlstatedb.Queries, grant string) (map[string]string, []string, error) {
+func deploymentCredentialSelection(ctx context.Context, q *controlstatedb.Queries, grant string) (map[string]map[string]string, []string, error) {
 	services, err := q.ListDeploymentManagementServices(ctx, grant)
 	if err != nil {
 		return nil, nil, err
@@ -181,9 +195,12 @@ func deploymentManagementSelection(ctx context.Context, q *controlstatedb.Querie
 	if ids == nil {
 		ids = []string{}
 	}
-	result := map[string]string{}
+	result := map[string]map[string]string{}
 	for _, service := range services {
-		result[service.Service] = service.Protocol
+		if result[service.Capability] == nil {
+			result[service.Capability] = map[string]string{}
+		}
+		result[service.Capability][service.Service] = service.Protocol
 	}
 	return result, ids, nil
 }
@@ -221,7 +238,7 @@ func (d *Database) lockDeploymentAccess(ctx context.Context, tx pgx.Tx, scope De
 	if err != nil {
 		return access, project, err
 	}
-	if identity.Scope.TeamID != scope.TeamID || identity.Scope.Kind != DeploymentManagementGrant {
+	if identity.Scope.TeamID != scope.TeamID || identity.Scope.Kind != DeploymentCredentialGrant {
 		return access, project, ErrDeploymentAccess
 	}
 	approval, err := q.GetDeploymentManagementGrant(ctx, identity.GrantID)
@@ -238,7 +255,12 @@ func (d *Database) lockDeploymentAccess(ctx context.Context, tx pgx.Tx, scope De
 	}
 	access.expiresAt = grant.ExpiresAt.Time
 	access.allDeployments = approval.AllDeployments
-	access.services, access.deployments, err = deploymentManagementSelection(ctx, q, identity.GrantID)
+	var permissions map[string]map[string]string
+	permissions, access.deployments, err = deploymentCredentialSelection(ctx, q, identity.GrantID)
+	access.services = permissions["manage"]
+	if err == nil && len(access.services) == 0 {
+		err = ErrDeploymentAccess
+	}
 	return access, project, err
 }
 

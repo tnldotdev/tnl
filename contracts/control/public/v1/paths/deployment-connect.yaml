@@ -1,0 +1,27 @@
+paths:
+  /v1/projects/{project_key}/deployments/{deployment}/services/{service}/select:
+    parameters:
+      - { name: project_key, in: path, required: true, schema: { type: string } }
+      - { name: deployment, in: path, required: true, schema: { type: string } }
+      - { name: service, in: path, required: true, schema: { type: string } }
+      - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
+    post:
+      operationId: selectDeploymentServiceRun
+      description: Resolve one service name in one selected deployment and select a ready publication using current visitor authority. Returns only visitor endpoint, protocol and source-bound connection hints, never targets or management data. Device sources require their control session; workload and registered-key sources supply their credential in the body without an Authorization header. Management approval alone grants no access.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [source]
+              properties:
+                source: { $ref: "../openapi.yaml#/components/schemas/VisitorTokenSource" }
+      responses:
+        "200":
+          description: Current selected service publication
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/ServiceSelection" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
