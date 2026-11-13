@@ -15,7 +15,15 @@ npm run dev
 
 `tnl init` sets up project and framework configuration, or tells you what to
 change in existing files. Start your app with its usual development script.
-Each Git worktree gets its own public URL; restarting the app reuses it.
+Vite and Next.js still start locally without a tnl login or when control is
+offline; they report that the preview is unavailable rather than showing an
+unverified public URL. Run `TNL_PREVIEW=required npm run dev` when a preview is
+required, or `TNL_PREVIEW=off npm run dev` to skip tnl without editing shared
+configuration. You can also set `tnl({ preview: "required" })` or
+`withTnl(config, { preview: "required" })`. Explicit `tnl.connect` calls still
+require service access.
+When a preview is available, each Git worktree gets its own public URL;
+restarting the app reuses it.
 Run `npx tnl wait` in another terminal to check when it can receive visitors.
 
 ## publish a node or bun app

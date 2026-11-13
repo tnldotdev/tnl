@@ -98,14 +98,16 @@ OpenAPI sources live in `contracts/`. SQL sources live beside each state package
 `sqlc.yaml`. [Generation tasks](tasks/generate.yml) list the generated paths.
 The tunnel protocol in `pkg/protocol/tunnelv1` is handwritten.
 
-The control baseline requires a fresh PostgreSQL database and a coordinated
-stop/start of all server roles. `tnld migrate` accepts only
-`TNLD_DATABASE_DIRECT_URL`; serving roles use pooled `TNLD_DATABASE_URL` and
-require the exact schema version and baseline identity. Connector session
-rebinding and the post-quantum public URL policy are part of the version 1
-baseline, including provider-qualified ingress and relay regions and saved run
-preferences. Use a fresh database, run `tnld migrate`, and start matching server,
-publisher, and connector binaries. Databases from previous baselines are rejected.
+The `0.1.0` control baseline has schema version `1` and identity `v1`. Initialize
+a fresh PostgreSQL database with `tnld migrate`, then start matching server,
+publisher, and connector binaries. Pre-release databases are rejected; do not
+relabel or import them. Replacing a pre-release deployment requires a coordinated
+stop/start of all server roles.
+
+`tnld migrate` accepts only `TNLD_DATABASE_DIRECT_URL`; serving roles use pooled
+`TNLD_DATABASE_URL` and require the exact schema version and baseline identity.
+Keep the released baseline intact. Future schema changes need ordered migrations
+and an explicit compatibility plan, not a new feature-specific baseline identity.
 A publisher restart does not restore its application sockets.
 
 The client telemetry baseline also requires a fresh client state directory. Use

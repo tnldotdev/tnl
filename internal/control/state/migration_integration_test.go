@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -117,6 +118,10 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 	if err := database.pool.QueryRow(ctx, `SELECT MAX(version_id) FILTER (WHERE is_applied) FROM control.goose_db_version`).Scan(&version); err != nil || version != schemaVersion {
 		t.Fatalf("schema version = %d, %v", version, err)
 	}
+	var identity string
+	if err := database.pool.QueryRow(ctx, `SELECT baseline_id FROM control.schema_identity WHERE id=1`).Scan(&identity); err != nil || identity != "v1" {
+		t.Fatalf("baseline identity = %q, %v; want v1", identity, err)
+	}
 	// serving roles require the exact coordinated baseline and version.
 	if _, err := database.pool.Exec(ctx, `ALTER TABLE control.public_urls ADD COLUMN future_note text`); err != nil {
 		t.Fatal(err)
@@ -153,6 +158,58 @@ func TestIntegrationMigrationRejectsOtherVersionOneBaseline(t *testing.T) {
 	if database, err := Open(ctx, url, testStorageKey, "", naming.ManagedURLModeGenerated); err == nil {
 		database.Close()
 		t.Fatal("serving accepted a different version-one baseline")
+	}
+}
+
+func TestIntegrationMigrationRejectsPreReleaseBaselineWithoutChanges(t *testing.T) {
+	d, url, _ := newControlStateIntegrationDatabaseWithURL(t, "pre_release_baseline")
+	ctx := t.Context()
+	for _, query := range []string{
+		`ALTER TABLE control.schema_identity DROP CONSTRAINT schema_identity_baseline_id_check`,
+		`UPDATE control.schema_identity SET baseline_id='tnl-control-fresh-v1-provider-regions' WHERE id=1`,
+		`ALTER TABLE control.schema_identity ADD CONSTRAINT schema_identity_baseline_id_check
+			CHECK (baseline_id='tnl-control-fresh-v1-provider-regions')`,
+	} {
+		if _, err := d.pool.Exec(ctx, query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snapshot := func() string {
+		t.Helper()
+		var value string
+		if err := d.pool.QueryRow(ctx, `SELECT jsonb_build_array(
+			(SELECT jsonb_agg(v ORDER BY id) FROM control.goose_db_version v),
+			(SELECT to_jsonb(i) FROM control.schema_identity i WHERE id=1),
+			(SELECT pg_get_constraintdef(oid) FROM pg_constraint
+			 WHERE conrelid='control.schema_identity'::regclass AND conname='schema_identity_baseline_id_check'))::text`).Scan(&value); err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	before := snapshot()
+	for _, check := range []struct {
+		name string
+		run  func() error
+	}{
+		{"migrate", func() error { return Migrate(ctx, url) }},
+		{"readiness", func() error { return d.Readiness(ctx) }},
+		{"open", func() error {
+			opened, err := Open(ctx, url, testStorageKey, "", naming.ManagedURLModeGenerated)
+			if opened != nil {
+				opened.Close()
+			}
+			return err
+		}},
+	} {
+		t.Run(check.name, func(t *testing.T) {
+			err := check.run()
+			if err == nil || !strings.Contains(err.Error(), "incompatible database baseline") || !strings.Contains(err.Error(), "use a fresh PostgreSQL database") {
+				t.Fatalf("rejection = %v; want incompatible baseline with fresh-database diagnostic", err)
+			}
+			if snapshot() != before {
+				t.Fatal("compatibility check changed the pre-release version, identity, or constraint")
+			}
+		})
 	}
 }
 

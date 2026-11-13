@@ -24,7 +24,7 @@ import (
 const (
 	// the coordinated baseline requires the exact migration and identity.
 	schemaVersion       int64 = 1
-	baselineID                = "tnl-control-fresh-v1-provider-regions"
+	baselineID                = "v1"
 	versionTable              = "control.goose_db_version"
 	bootstrapRetryDelay       = 25 * time.Millisecond
 )

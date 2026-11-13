@@ -227,7 +227,7 @@ func TestBackgroundRejectsNamespaceEphemeralAndImplicitServer(t *testing.T) {
 func TestInstallPreflightLeavesEnrollmentAndStateUntouched(t *testing.T) {
 	_, a, _, selection := backgroundFixture(t)
 	root := filepath.Join(t.TempDir(), "not-installed")
-	flags := publishCommand{Target: "http://127.0.0.1:5432"}
+	flags := publishCommand{Target: unavailableInstalledTarget(t)}
 	flags.ServerURL = "https://control.example"
 	err := runEnrolledBackgroundPublish(t.Context(), flags, selection, backgroundPublishFlags{Install: true, SystemStateDir: root}, io.Discard, strings.NewReader(""), installedjobs.ExecutorFunc(func(context.Context, installedjobs.Command) error {
 		t.Fatal("missing service reached the manager")
@@ -475,9 +475,24 @@ func TestConfiguredWorktreeHostnameBindsTeamDomainAndGrant(t *testing.T) {
 
 func TestConfiguredInstallPreflightDoesNotOpenProjectOrServiceState(t *testing.T) {
 	_, flags := configuredInstallFixture(t)
-	flags.StateDir = filepath.Join(t.TempDir(), "no-user-state")
-	serviceRoot := filepath.Join(t.TempDir(), "no-service")
-	err := runEnrolledBackgroundPublish(t.Context(), flags, enrolledPublishSelection{}, backgroundPublishFlags{Install: true, SystemStateDir: serviceRoot}, io.Discard, strings.NewReader(""), installedjobs.ExecutorFunc(func(context.Context, installedjobs.Command) error {
+	target := config.Target(unavailableInstalledTarget(t))
+	service := flags.project.Config.Services[flags.Service]
+	service.Target.Address = &target
+	flags.project.Config.Services[flags.Service] = service
+	flags.Target = string(target)
+	// macOS exposes its temporary directory through a /var symlink; installed
+	// state rejects symlinked ancestors before it reaches target preflight.
+	userParent, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	serviceParent, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	flags.StateDir = filepath.Join(userParent, "no-user-state")
+	serviceRoot := filepath.Join(serviceParent, "no-service")
+	err = runEnrolledBackgroundPublish(t.Context(), flags, enrolledPublishSelection{}, backgroundPublishFlags{Install: true, SystemStateDir: serviceRoot}, io.Discard, strings.NewReader(""), installedjobs.ExecutorFunc(func(context.Context, installedjobs.Command) error {
 		t.Fatal("missing supervisor reached the manager")
 		return nil
 	}))
@@ -489,6 +504,17 @@ func TestConfiguredInstallPreflightDoesNotOpenProjectOrServiceState(t *testing.T
 			t.Fatalf("preflight mutated state at %s: %v", path, err)
 		}
 	}
+}
+
+func unavailableInstalledTarget(t *testing.T) string {
+	t.Helper()
+	// an HTTP-only listener always fails the HTTPS target preflight, even if a
+	// developer happens to have PostgreSQL listening on port 5432.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+	return strings.Replace(server.URL, "http://", "https://", 1)
 }
 
 func TestInstalledConfiguredServiceRejectsStaleSavedTarget(t *testing.T) {
