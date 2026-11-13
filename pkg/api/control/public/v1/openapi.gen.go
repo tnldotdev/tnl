@@ -375,6 +375,39 @@ func (e DeploymentPublisherServiceAssignmentServiceKind) Valid() bool {
 	}
 }
 
+// Defines values for DeploymentTargetStatusApp.
+const (
+	DeploymentTargetStatusAppTrue DeploymentTargetStatusApp = true
+)
+
+// Valid indicates whether the value is a known member of the DeploymentTargetStatusApp enum.
+func (e DeploymentTargetStatusApp) Valid() bool {
+	switch e {
+	case DeploymentTargetStatusAppTrue:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DeploymentTemporaryPublication.
+const (
+	TemporaryPublicationAnonymous  DeploymentTemporaryPublication = "anonymous"
+	TemporaryPublicationRestricted DeploymentTemporaryPublication = "restricted"
+)
+
+// Valid indicates whether the value is a known member of the DeploymentTemporaryPublication enum.
+func (e DeploymentTemporaryPublication) Valid() bool {
+	switch e {
+	case TemporaryPublicationAnonymous:
+		return true
+	case TemporaryPublicationRestricted:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for FeedbackEventActor.
 const (
 	Implementer FeedbackEventActor = "implementer"
@@ -2602,7 +2635,7 @@ type Deployment struct {
 	TeamId     TeamID                            `json:"team_id"`
 }
 
-// DeploymentCredential Public registration facts for one team-owned signing identity and independent approved capabilities. Use the signed /v1/publisher-token exchange. No publication, credential administration, or project-definition authority is granted. Revoke with existing publisher identity/grant administration; separately enrolled publishers remain independent.
+// DeploymentCredential Public registration facts for one team-owned signing identity and independent approved capabilities. Use the signed /v1/publisher-token exchange. Publication uses only explicitly approved HTTP bindings or temporary allocation. No credential administration or project-definition authority is granted. Revoke with existing publisher identity/grant administration; separately enrolled publishers remain independent.
 type DeploymentCredential struct {
 	AllDeployments bool      `json:"all_deployments"`
 	ClientId       string    `json:"client_id"`
@@ -2613,6 +2646,7 @@ type DeploymentCredential struct {
 	Permissions    struct {
 		Connect *DeploymentCredentialServiceProtocols `json:"connect,omitempty"`
 		Manage  *DeploymentCredentialServiceProtocols `json:"manage,omitempty"`
+		Publish *DeploymentPublishApproval            `json:"publish,omitempty"`
 	} `json:"permissions"`
 	ProjectKey string `json:"project_key"`
 	TeamId     string `json:"team_id"`
@@ -2628,6 +2662,28 @@ type DeploymentCredentialServiceSelection = []string
 type DeploymentPage struct {
 	Deployments []Deployment `json:"deployments"`
 	NextCursor  *string      `json:"next_cursor,omitempty"`
+}
+
+// DeploymentPublication defines model for DeploymentPublication.
+type DeploymentPublication struct {
+	Limits    *ProjectPublicLimits `json:"limits,omitempty"`
+	PublicUrl PublicURL            `json:"public_url"`
+}
+
+// DeploymentPublishApproval defines model for DeploymentPublishApproval.
+type DeploymentPublishApproval struct {
+	Services *DeploymentCredentialServiceProtocols `json:"services,omitempty"`
+
+	// Temporary Explicit temporary allocation approval in the selected deployments' namespaces. restricted permits only restricted visitor access; anonymous also permits an explicit anonymous request. Every allocation defaults to restricted. Exact custom saved hostnames never become allocation namespaces.
+	Temporary *DeploymentTemporaryPublication `json:"temporary,omitempty"`
+}
+
+// DeploymentPublishSelection Independently approve named saved HTTP URLs, temporary allocation, or both. Named approval does not imply temporary allocation or permit editing saved visitor policy. No service declarations are needed for temporary-only approval.
+type DeploymentPublishSelection struct {
+	Services *DeploymentCredentialServiceSelection `json:"services,omitempty"`
+
+	// Temporary Explicit temporary allocation approval in the selected deployments' namespaces. restricted permits only restricted visitor access; anonymous also permits an explicit anonymous request. Every allocation defaults to restricted. Exact custom saved hostnames never become allocation namespaces.
+	Temporary *DeploymentTemporaryPublication `json:"temporary,omitempty"`
 }
 
 // DeploymentPublisher One publisher in the selected deployment (deployment_id), including its retained last observation after revocation. No enrollment secret, signing key, access token, or target is returned. Healthy reports configuration acknowledgement and a current lease, not database login or SQL readiness.
@@ -2751,10 +2807,15 @@ type DeploymentPublisherVerification struct {
 // DeploymentService defines model for DeploymentService.
 type DeploymentService struct {
 	// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
-	Endpoint      *ServiceEndpoint `json:"endpoint,omitempty"`
-	Id            ServiceID        `json:"id"`
-	Protocol      ServiceProtocol  `json:"protocol"`
-	TrustRevision int64            `json:"trust_revision"`
+	Endpoint *ServiceEndpoint `json:"endpoint,omitempty"`
+
+	// Id The bound saved service or public URL ID.
+	Id       ResourceID      `json:"id"`
+	Protocol ServiceProtocol `json:"protocol"`
+
+	// PublicUrl The saved HTTP public URL when this binding uses one rather than a private service endpoint.
+	PublicUrl     *string `json:"public_url,omitempty"`
+	TrustRevision int64   `json:"trust_revision"`
 }
 
 // DeploymentSettings defines model for DeploymentSettings.
@@ -2777,12 +2838,18 @@ type DeploymentTarget struct {
 type DeploymentTargetStatus struct {
 	Address *string `json:"address,omitempty"`
 
+	// App The application supplies its bound HTTP listener at publication time.
+	App *DeploymentTargetStatusApp `json:"app,omitempty"`
+
 	// Discovery Exact provider selector resolved by the assigned publisher with its own AWS credentials. Control does not discover targets or credentials. EKS requires kubernetes; RDS requires postgres or mysql, verified against provider metadata.
 	Discovery *ProjectTargetDiscovery `json:"discovery,omitempty"`
 
 	// Tls Verified publisher-to-target TLS. CA is system (the default), aws-rds, or PEM-encoded CA certificates; never a path or URL. aws-rds selects only the supplied endpoint's regional roots offline and requires its hostname for verification. Reads return captured CA material, not a discovery credential.
 	Tls *DeploymentTargetTLS `json:"tls,omitempty"`
 }
+
+// DeploymentTargetStatusApp The application supplies its bound HTTP listener at publication time.
+type DeploymentTargetStatusApp bool
 
 // DeploymentTargetTLS Verified publisher-to-target TLS. CA is system (the default), aws-rds, or PEM-encoded CA certificates; never a path or URL. aws-rds selects only the supplied endpoint's regional roots offline and requires its hostname for verification. Reads return captured CA material, not a discovery credential.
 type DeploymentTargetTLS struct {
@@ -2792,6 +2859,9 @@ type DeploymentTargetTLS struct {
 
 // DeploymentTargets defines model for DeploymentTargets.
 type DeploymentTargets map[string]DeploymentTarget
+
+// DeploymentTemporaryPublication Explicit temporary allocation approval in the selected deployments' namespaces. restricted permits only restricted visitor access; anonymous also permits an explicit anonymous request. Every allocation defaults to restricted. Exact custom saved hostnames never become allocation namespaces.
+type DeploymentTemporaryPublication string
 
 // DomainID defines model for DomainID.
 type DomainID = ResourceID
@@ -3265,10 +3335,10 @@ type ProjectServiceConfiguration struct {
 	Name     *string             `json:"name,omitempty"`
 	Protocol *ServiceProtocol    `json:"protocol,omitempty"`
 
-	// PublicUrl Enables a local service's public URL. Saved deployments use http settings and reject this block.
+	// PublicUrl Enables an HTTP public URL. Local URLs belong to the developer preview; remote saved URLs belong to the team/project/deployment and retain their own visitor policy. Remote declarations cannot mark a named URL ephemeral; unnamed application publication allocates temporary URLs separately.
 	PublicUrl *ProjectServicePublicURL `json:"public_url,omitempty"`
 
-	// Target Public URL targets are HTTP/HTTPS origins with an explicit port and no trailing slash. Service targets normalize to host:port with separate target_tls trust. Only local declarations may use deferred app, compose:SERVICE:PORT, or docker:CONTAINER:PORT descriptors; control does not discover targets.
+	// Target Public URL targets are HTTP/HTTPS origins with an explicit port and no trailing slash. Service targets normalize to host:port with separate target_tls trust. The app descriptor defers an HTTP public URL listener to its application owner in any deployment. Only local declarations may use compose:SERVICE:PORT or docker:CONTAINER:PORT descriptors; control does not discover targets.
 	Target string `json:"target"`
 
 	// TargetDiscovery Exact provider selector resolved by the assigned publisher with its own AWS credentials. Control does not discover targets or credentials. EKS requires kubernetes; RDS requires postgres or mysql, verified against provider metadata.
@@ -3295,7 +3365,7 @@ type ProjectServiceHTTP struct {
 	} `json:"readiness,omitempty"`
 }
 
-// ProjectServicePublicURL Enables a local service's public URL. Saved deployments use http settings and reject this block.
+// ProjectServicePublicURL Enables an HTTP public URL. Local URLs belong to the developer preview; remote saved URLs belong to the team/project/deployment and retain their own visitor policy. Remote declarations cannot mark a named URL ephemeral; unnamed application publication allocates temporary URLs separately.
 type ProjectServicePublicURL struct {
 	Access   *ProjectPublicAccess `json:"access,omitempty"`
 	DomainId *string              `json:"domain_id,omitempty"`
@@ -3777,6 +3847,9 @@ type RegisterDeploymentCredentialRequest struct {
 	Permissions struct {
 		Connect *DeploymentCredentialServiceSelection `json:"connect,omitempty"`
 		Manage  *DeploymentCredentialServiceSelection `json:"manage,omitempty"`
+
+		// Publish Independently approve named saved HTTP URLs, temporary allocation, or both. Named approval does not imply temporary allocation or permit editing saved visitor policy. No service declarations are needed for temporary-only approval.
+		Publish *DeploymentPublishSelection `json:"publish,omitempty"`
 	} `json:"permissions"`
 
 	// PublicKey Unpadded base64url Ed25519 public key. The caller keeps the private key.
@@ -4823,6 +4896,16 @@ type UpdateDeploymentParams struct {
 	IfMatch *string `json:"If-Match,omitempty"`
 }
 
+// AllocateDeploymentPublicationParams defines parameters for AllocateDeploymentPublication.
+type AllocateDeploymentPublicationParams struct {
+	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
+}
+
+// GetDeploymentPublicationParams defines parameters for GetDeploymentPublication.
+type GetDeploymentPublicationParams struct {
+	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
+}
+
 // CreateDeploymentPublisherEnrollmentParams defines parameters for CreateDeploymentPublisherEnrollment.
 type CreateDeploymentPublisherEnrollmentParams struct {
 	TeamId         TeamIDQuery `form:"team_id" json:"team_id"`
@@ -5103,6 +5186,9 @@ type UpdateDeploymentJSONRequestBody = UpdateDeploymentRequest
 
 // RenameDeploymentNamespaceJSONRequestBody defines body for RenameDeploymentNamespace for application/json ContentType.
 type RenameDeploymentNamespaceJSONRequestBody = RenameDeploymentNamespaceRequest
+
+// AllocateDeploymentPublicationJSONRequestBody defines body for AllocateDeploymentPublication for application/json ContentType.
+type AllocateDeploymentPublicationJSONRequestBody = AllocateEphemeralPublicURLRequest
 
 // CreateDeploymentPublisherEnrollmentJSONRequestBody defines body for CreateDeploymentPublisherEnrollment for application/json ContentType.
 type CreateDeploymentPublisherEnrollmentJSONRequestBody = CreateDeploymentPublisherEnrollmentRequest
@@ -6022,6 +6108,31 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/projects/{project_key}/deployments/{deployment}/namespace/rename (the `RenameDeploymentNamespace` operationId).
 	RenameDeploymentNamespace(ctx context.Context, projectKey string, deployment string, body RenameDeploymentNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AllocateDeploymentPublicationWithBody Allocate an approved temporary HTTP public URL
+	//
+	// Allocate an unnamed temporary HTTP public URL in this deployment's namespace. Requires explicit temporary publication approval, independently of named services, management, and connection approval. Visitor access defaults to restricted; anonymous access additionally requires explicit approval and request. Repeating the same invocation and intent recovers only the original live allocation, never a replacement or extended deadline. Delete using the existing publisher public URL operation.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/projects/{project_key}/deployments/{deployment}/public-urls (the `AllocateDeploymentPublication` operationId).
+	AllocateDeploymentPublicationWithBody(ctx context.Context, projectKey string, deployment string, params *AllocateDeploymentPublicationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AllocateDeploymentPublication Allocate an approved temporary HTTP public URL
+	//
+	// Allocate an unnamed temporary HTTP public URL in this deployment's namespace. Requires explicit temporary publication approval, independently of named services, management, and connection approval. Visitor access defaults to restricted; anonymous access additionally requires explicit approval and request. Repeating the same invocation and intent recovers only the original live allocation, never a replacement or extended deadline. Delete using the existing publisher public URL operation.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/projects/{project_key}/deployments/{deployment}/public-urls (the `AllocateDeploymentPublication` operationId).
+	AllocateDeploymentPublication(ctx context.Context, projectKey string, deployment string, params *AllocateDeploymentPublicationParams, body AllocateDeploymentPublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetDeploymentPublication Resolve an approved saved HTTP publication
+	//
+	// Resolve one approved named HTTP publication and its saved limits without management authority. The current signed credential must independently approve publication of this logical service in this deployment. The saved hostname and visitor policy cannot be changed.
+	//
+	// Corresponds with GET /v1/projects/{project_key}/deployments/{deployment}/public-urls/{service} (the `GetDeploymentPublication` operationId).
+	GetDeploymentPublication(ctx context.Context, projectKey string, deployment string, service string, params *GetDeploymentPublicationParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateDeploymentPublisherEnrollmentWithBody Approve scoped publisher enrollment
 	//
@@ -8510,6 +8621,61 @@ func (c *Client) RenameDeploymentNamespaceWithBody(ctx context.Context, projectK
 // Corresponds with POST /v1/projects/{project_key}/deployments/{deployment}/namespace/rename (the `RenameDeploymentNamespace` operationId).
 func (c *Client) RenameDeploymentNamespace(ctx context.Context, projectKey string, deployment string, body RenameDeploymentNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRenameDeploymentNamespaceRequest(c.Server, projectKey, deployment, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AllocateDeploymentPublicationWithBody Allocate an approved temporary HTTP public URL
+//
+// Allocate an unnamed temporary HTTP public URL in this deployment's namespace. Requires explicit temporary publication approval, independently of named services, management, and connection approval. Visitor access defaults to restricted; anonymous access additionally requires explicit approval and request. Repeating the same invocation and intent recovers only the original live allocation, never a replacement or extended deadline. Delete using the existing publisher public URL operation.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/projects/{project_key}/deployments/{deployment}/public-urls (the `AllocateDeploymentPublication` operationId).
+func (c *Client) AllocateDeploymentPublicationWithBody(ctx context.Context, projectKey string, deployment string, params *AllocateDeploymentPublicationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAllocateDeploymentPublicationRequestWithBody(c.Server, projectKey, deployment, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AllocateDeploymentPublication Allocate an approved temporary HTTP public URL
+//
+// Allocate an unnamed temporary HTTP public URL in this deployment's namespace. Requires explicit temporary publication approval, independently of named services, management, and connection approval. Visitor access defaults to restricted; anonymous access additionally requires explicit approval and request. Repeating the same invocation and intent recovers only the original live allocation, never a replacement or extended deadline. Delete using the existing publisher public URL operation.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/projects/{project_key}/deployments/{deployment}/public-urls (the `AllocateDeploymentPublication` operationId).
+func (c *Client) AllocateDeploymentPublication(ctx context.Context, projectKey string, deployment string, params *AllocateDeploymentPublicationParams, body AllocateDeploymentPublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAllocateDeploymentPublicationRequest(c.Server, projectKey, deployment, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetDeploymentPublication Resolve an approved saved HTTP publication
+//
+// Resolve one approved named HTTP publication and its saved limits without management authority. The current signed credential must independently approve publication of this logical service in this deployment. The saved hostname and visitor policy cannot be changed.
+//
+// Corresponds with GET /v1/projects/{project_key}/deployments/{deployment}/public-urls/{service} (the `GetDeploymentPublication` operationId).
+func (c *Client) GetDeploymentPublication(ctx context.Context, projectKey string, deployment string, service string, params *GetDeploymentPublicationParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetDeploymentPublicationRequest(c.Server, projectKey, deployment, service, params)
 	if err != nil {
 		return nil, err
 	}
@@ -13906,6 +14072,154 @@ func NewRenameDeploymentNamespaceRequestWithBody(server string, projectKey strin
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewAllocateDeploymentPublicationRequest calls the generic AllocateDeploymentPublication builder with application/json body
+func NewAllocateDeploymentPublicationRequest(server string, projectKey string, deployment string, params *AllocateDeploymentPublicationParams, body AllocateDeploymentPublicationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAllocateDeploymentPublicationRequestWithBody(server, projectKey, deployment, params, "application/json", bodyReader)
+}
+
+// NewAllocateDeploymentPublicationRequestWithBody constructs an http.Request for the AllocateDeploymentPublication method, with any body, and a specified content type
+func NewAllocateDeploymentPublicationRequestWithBody(server string, projectKey string, deployment string, params *AllocateDeploymentPublicationParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "deployment", deployment, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/deployments/%s/public-urls", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetDeploymentPublicationRequest constructs an http.Request for the GetDeploymentPublication method
+func NewGetDeploymentPublicationRequest(server string, projectKey string, deployment string, service string, params *GetDeploymentPublicationParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "deployment", deployment, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "service", service, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/deployments/%s/public-urls/%s", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -20186,6 +20500,33 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/projects/{project_key}/deployments/{deployment}/namespace/rename (the `RenameDeploymentNamespace` operationId).
 	RenameDeploymentNamespaceWithResponse(ctx context.Context, projectKey string, deployment string, body RenameDeploymentNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*RenameDeploymentNamespaceResponse, error)
 
+	// AllocateDeploymentPublicationWithBodyWithResponse Allocate an approved temporary HTTP public URL
+	//
+	// Allocate an unnamed temporary HTTP public URL in this deployment's namespace. Requires explicit temporary publication approval, independently of named services, management, and connection approval. Visitor access defaults to restricted; anonymous access additionally requires explicit approval and request. Repeating the same invocation and intent recovers only the original live allocation, never a replacement or extended deadline. Delete using the existing publisher public URL operation.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/projects/{project_key}/deployments/{deployment}/public-urls (the `AllocateDeploymentPublication` operationId).
+	AllocateDeploymentPublicationWithBodyWithResponse(ctx context.Context, projectKey string, deployment string, params *AllocateDeploymentPublicationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AllocateDeploymentPublicationResponse, error)
+
+	// AllocateDeploymentPublicationWithResponse Allocate an approved temporary HTTP public URL
+	//
+	// Allocate an unnamed temporary HTTP public URL in this deployment's namespace. Requires explicit temporary publication approval, independently of named services, management, and connection approval. Visitor access defaults to restricted; anonymous access additionally requires explicit approval and request. Repeating the same invocation and intent recovers only the original live allocation, never a replacement or extended deadline. Delete using the existing publisher public URL operation.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/projects/{project_key}/deployments/{deployment}/public-urls (the `AllocateDeploymentPublication` operationId).
+	AllocateDeploymentPublicationWithResponse(ctx context.Context, projectKey string, deployment string, params *AllocateDeploymentPublicationParams, body AllocateDeploymentPublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*AllocateDeploymentPublicationResponse, error)
+
+	// GetDeploymentPublicationWithResponse Resolve an approved saved HTTP publication
+	//
+	// Resolve one approved named HTTP publication and its saved limits without management authority. The current signed credential must independently approve publication of this logical service in this deployment. The saved hostname and visitor policy cannot be changed.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/projects/{project_key}/deployments/{deployment}/public-urls/{service} (the `GetDeploymentPublication` operationId).
+	GetDeploymentPublicationWithResponse(ctx context.Context, projectKey string, deployment string, service string, params *GetDeploymentPublicationParams, reqEditors ...RequestEditorFn) (*GetDeploymentPublicationResponse, error)
+
 	// CreateDeploymentPublisherEnrollmentWithBodyWithResponse Approve scoped publisher enrollment
 	//
 	// Approve bounded publisher setup for selected existing services. Requires a current team manager or management approval for this deployment and every selected service. Setup cannot outlive the management grant. The original request key is scoped to the acting person or machine and recovers the same secret only while current authority, captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing deployment-publisher enrollment exchange.
@@ -23653,6 +23994,102 @@ func (r RenameDeploymentNamespaceResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RenameDeploymentNamespaceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AllocateDeploymentPublicationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *PublicURL
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r AllocateDeploymentPublicationResponse) GetJSON201() *PublicURL {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AllocateDeploymentPublicationResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r AllocateDeploymentPublicationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AllocateDeploymentPublicationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AllocateDeploymentPublicationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AllocateDeploymentPublicationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetDeploymentPublicationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DeploymentPublication
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetDeploymentPublicationResponse) GetJSON200() *DeploymentPublication {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetDeploymentPublicationResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetDeploymentPublicationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetDeploymentPublicationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetDeploymentPublicationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetDeploymentPublicationResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -29807,6 +30244,51 @@ func (c *ClientWithResponses) RenameDeploymentNamespaceWithResponse(ctx context.
 	return ParseRenameDeploymentNamespaceResponse(rsp)
 }
 
+// AllocateDeploymentPublicationWithBodyWithResponse Allocate an approved temporary HTTP public URL
+//
+// Allocate an unnamed temporary HTTP public URL in this deployment's namespace. Requires explicit temporary publication approval, independently of named services, management, and connection approval. Visitor access defaults to restricted; anonymous access additionally requires explicit approval and request. Repeating the same invocation and intent recovers only the original live allocation, never a replacement or extended deadline. Delete using the existing publisher public URL operation.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/projects/{project_key}/deployments/{deployment}/public-urls (the `AllocateDeploymentPublication` operationId).
+func (c *ClientWithResponses) AllocateDeploymentPublicationWithBodyWithResponse(ctx context.Context, projectKey string, deployment string, params *AllocateDeploymentPublicationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AllocateDeploymentPublicationResponse, error) {
+	rsp, err := c.AllocateDeploymentPublicationWithBody(ctx, projectKey, deployment, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAllocateDeploymentPublicationResponse(rsp)
+}
+
+// AllocateDeploymentPublicationWithResponse Allocate an approved temporary HTTP public URL
+//
+// Allocate an unnamed temporary HTTP public URL in this deployment's namespace. Requires explicit temporary publication approval, independently of named services, management, and connection approval. Visitor access defaults to restricted; anonymous access additionally requires explicit approval and request. Repeating the same invocation and intent recovers only the original live allocation, never a replacement or extended deadline. Delete using the existing publisher public URL operation.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/projects/{project_key}/deployments/{deployment}/public-urls (the `AllocateDeploymentPublication` operationId).
+func (c *ClientWithResponses) AllocateDeploymentPublicationWithResponse(ctx context.Context, projectKey string, deployment string, params *AllocateDeploymentPublicationParams, body AllocateDeploymentPublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*AllocateDeploymentPublicationResponse, error) {
+	rsp, err := c.AllocateDeploymentPublication(ctx, projectKey, deployment, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAllocateDeploymentPublicationResponse(rsp)
+}
+
+// GetDeploymentPublicationWithResponse Resolve an approved saved HTTP publication
+//
+// Resolve one approved named HTTP publication and its saved limits without management authority. The current signed credential must independently approve publication of this logical service in this deployment. The saved hostname and visitor policy cannot be changed.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/projects/{project_key}/deployments/{deployment}/public-urls/{service} (the `GetDeploymentPublication` operationId).
+func (c *ClientWithResponses) GetDeploymentPublicationWithResponse(ctx context.Context, projectKey string, deployment string, service string, params *GetDeploymentPublicationParams, reqEditors ...RequestEditorFn) (*GetDeploymentPublicationResponse, error) {
+	rsp, err := c.GetDeploymentPublication(ctx, projectKey, deployment, service, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetDeploymentPublicationResponse(rsp)
+}
+
 // CreateDeploymentPublisherEnrollmentWithBodyWithResponse Approve scoped publisher enrollment
 //
 // Approve bounded publisher setup for selected existing services. Requires a current team manager or management approval for this deployment and every selected service. Setup cannot outlive the management grant. The original request key is scoped to the acting person or machine and recovers the same secret only while current authority, captured bindings, deadline, and remaining capacity are valid. Does not create AWS resources or grant general management/connect/namespace authority. Redeem through the existing deployment-publisher enrollment exchange.
@@ -33831,6 +34313,72 @@ func ParseRenameDeploymentNamespaceResponse(rsp *http.Response) (*RenameDeployme
 	return response, nil
 }
 
+// ParseAllocateDeploymentPublicationResponse parses an HTTP response from a AllocateDeploymentPublicationWithResponse call
+func ParseAllocateDeploymentPublicationResponse(rsp *http.Response) (*AllocateDeploymentPublicationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AllocateDeploymentPublicationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest PublicURL
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetDeploymentPublicationResponse parses an HTTP response from a GetDeploymentPublicationWithResponse call
+func ParseGetDeploymentPublicationResponse(rsp *http.Response) (*GetDeploymentPublicationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetDeploymentPublicationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DeploymentPublication
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseCreateDeploymentPublisherEnrollmentResponse parses an HTTP response from a CreateDeploymentPublisherEnrollmentWithResponse call
 func ParseCreateDeploymentPublisherEnrollmentResponse(rsp *http.Response) (*CreateDeploymentPublisherEnrollmentResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -37680,6 +38228,12 @@ type ServerInterface interface {
 	// RenameDeploymentNamespace Replace a deployment's DNS namespace label
 	// (POST /v1/projects/{project_key}/deployments/{deployment}/namespace/rename)
 	RenameDeploymentNamespace(w http.ResponseWriter, r *http.Request, projectKey string, deployment string)
+	// AllocateDeploymentPublication Allocate an approved temporary HTTP public URL
+	// (POST /v1/projects/{project_key}/deployments/{deployment}/public-urls)
+	AllocateDeploymentPublication(w http.ResponseWriter, r *http.Request, projectKey string, deployment string, params AllocateDeploymentPublicationParams)
+	// GetDeploymentPublication Resolve an approved saved HTTP publication
+	// (GET /v1/projects/{project_key}/deployments/{deployment}/public-urls/{service})
+	GetDeploymentPublication(w http.ResponseWriter, r *http.Request, projectKey string, deployment string, service string, params GetDeploymentPublicationParams)
 	// CreateDeploymentPublisherEnrollment Approve scoped publisher enrollment
 	// (POST /v1/projects/{project_key}/deployments/{deployment}/publisher-enrollments)
 	CreateDeploymentPublisherEnrollment(w http.ResponseWriter, r *http.Request, projectKey string, deployment string, params CreateDeploymentPublisherEnrollmentParams)
@@ -39476,6 +40030,117 @@ func (siw *ServerInterfaceWrapper) RenameDeploymentNamespace(w http.ResponseWrit
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RenameDeploymentNamespace(w, r, projectKey, deployment)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AllocateDeploymentPublication operation middleware
+func (siw *ServerInterfaceWrapper) AllocateDeploymentPublication(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "deployment" -------------
+	var deployment string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "deployment", r.PathValue("deployment"), &deployment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "deployment", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params AllocateDeploymentPublicationParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AllocateDeploymentPublication(w, r, projectKey, deployment, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetDeploymentPublication operation middleware
+func (siw *ServerInterfaceWrapper) GetDeploymentPublication(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "deployment" -------------
+	var deployment string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "deployment", r.PathValue("deployment"), &deployment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "deployment", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "service" -------------
+	var service string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service", r.PathValue("service"), &service, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetDeploymentPublicationParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetDeploymentPublication(w, r, projectKey, deployment, service, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -43653,6 +44318,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/deployments/{deployment}/public-urls/{service}", wrapper.GetDeploymentPublication)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/deployments/{deployment}/public-urls", wrapper.AllocateDeploymentPublication)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/retire", wrapper.RetireProject)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/status", wrapper.GetProjectStatus)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/resolve-source", wrapper.ResolveProjectSource)

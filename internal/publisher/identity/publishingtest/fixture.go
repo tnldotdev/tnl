@@ -84,6 +84,7 @@ func (f *Fixture) SavedPublicURL(ctx context.Context, purpose controlv1.PublicUR
 		return publicURL, err
 	}
 	publicURL.ServiceProtocol = controlv1.Http
+	publicURL.MutationRevision = 1
 	f.mu.Lock()
 	f.routes[publicURL.Id] = publicURL
 	f.mu.Unlock()

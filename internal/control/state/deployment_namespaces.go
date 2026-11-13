@@ -26,6 +26,12 @@ func resolveDeploymentDomain(ctx context.Context, tx pgx.Tx, team, project, name
 	if _, err := q.GetPublisherDomain(ctx, controlstatedb.GetPublisherDomainParams{ID: c.Settings.DomainID, TeamID: text(team)}); err != nil {
 		return c, publisherLookupError(err, ErrProjectConfigurationInvalid)
 	}
+	for name, service := range c.Services {
+		if service.PublicURL != nil && service.PublicURL.DomainID == "" {
+			service.PublicURL.DomainID = c.Settings.DomainID
+			c.Services[name] = service
+		}
+	}
 	return c, nil
 }
 
@@ -44,9 +50,18 @@ func (d *Database) ensureDeploymentNamespace(ctx context.Context, tx pgx.Tx, r A
 		if err != nil {
 			return publisherLookupError(err, ErrProjectConfigurationInvalid)
 		}
-		var label, teamName string
-		if err = tx.QueryRow(ctx, `SELECT managed_label,display_name FROM control.teams WHERE id=$1`, r.TeamID).Scan(&label, &teamName); err != nil {
+		var label, teamName, teamKind string
+		if err = tx.QueryRow(ctx, `SELECT managed_label,display_name,kind FROM control.teams WHERE id=$1`, r.TeamID).Scan(&label, &teamName, &teamKind); err != nil {
 			return err
+		}
+		if domain.Kind == "custom" || domain.Kind == "managed" && teamKind == "organization" && d.managedURLMode == naming.ManagedURLModeSimple {
+			reserved, err := q.TeamMemberSlugReserved(ctx, controlstatedb.TeamMemberSlugReservedParams{TeamID: r.TeamID, Label: projectLabel})
+			if err != nil {
+				return err
+			}
+			if reserved {
+				return ErrServiceConflict
+			}
 		}
 		owner := domain.CanonicalDomain
 		if domain.Kind == "managed" {

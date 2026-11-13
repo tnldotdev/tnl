@@ -11,7 +11,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
@@ -321,26 +320,6 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		policyRevision = creation.PolicyRevision
 	}
 
-	publicURLID, err := opaqueid.New(opaqueid.PublicURLPrefix)
-	if err != nil {
-		return PublicURL{}, fmt.Errorf("controlstate: create public_url: generate route ID: %w", err)
-	}
-	policyCiphertext, policyHashes, policyKeyID, err := d.storeIPPolicy(publicURLID, prefixes, request.GuestID != "")
-	if err != nil {
-		return PublicURL{}, fmt.Errorf("controlstate: protect IP policy: %w", err)
-	}
-	digestCiphertext, err := d.sealSecret(publicURLRequestDigestContext(publicURLID), request.RequestDigest[:])
-	if err != nil {
-		return PublicURL{}, fmt.Errorf("controlstate: protect request digest: %w", err)
-	}
-	policyStorageKeyID := ""
-	if len(policyCiphertext) != 0 {
-		policyStorageKeyID = d.storageKey.CurrentID()
-	}
-	membershipID := pgtype.Text{}
-	if request.MembershipID != "" {
-		membershipID = text(request.MembershipID)
-	}
 	managed, err := queries.ServiceNamespaceOwnsHostname(ctx, request.CanonicalHostname)
 	if err != nil {
 		return result, err
@@ -348,24 +327,7 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 	if managed {
 		return result, ErrPublicURLConflict
 	}
-	row, err := queries.InsertPublicURL(ctx, controlstatedb.InsertPublicURLParams{
-		ID: publicURLID, TeamID: request.TeamID, DomainID: request.DomainID, MembershipID: membershipID,
-		CreatedByIdentityID: request.ActingIdentityID, IdempotencyKey: request.IdempotencyKey,
-		RequestDigestCiphertext:   digestCiphertext,
-		RequestDigestStorageKeyID: text(d.storageKey.CurrentID()),
-		CanonicalHostname:         request.CanonicalHostname, Namespace: namespace, Target: request.Target,
-		PublicURLScope: string(request.PublicURLScope), Purpose: string(request.Purpose), IngressPoolID: ingressPoolID,
-		ServiceProtocol:    string(request.ServiceProtocol),
-		RequirePostQuantum: request.RequirePostQuantum,
-		PublisherPool:      request.PublisherPool,
-		PolicyRevision:     policyRevision, AccessMode: string(request.AccessMode), IpPolicy: string(routeIPPolicy(prefixes)),
-		AllowedIpPolicyCiphertext:   policyCiphertext,
-		AllowedIpPolicyStorageKeyID: nullableText(policyStorageKeyID),
-		AllowedIpHashes:             policyHashes, AllowedIpHashKeyID: nullableText(policyKeyID),
-		DnsAuthorityReference: nullableText(request.DNSAuthorityReference),
-		DnsState:              string(request.DNSState), Ephemeral: request.Ephemeral,
-		ExpiresAt: ephemeralRouteExpiry(request.Ephemeral, now), CreatedAt: timestamptz(now),
-	})
+	row, err := d.insertPublicURL(ctx, queries, request, namespace, ingressPoolID, policyRevision, prefixes, now)
 	if err != nil {
 		var postgresError *pgconn.PgError
 		if errors.As(err, &postgresError) && postgresError.Code == "23505" {
@@ -378,6 +340,7 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		}
 		return PublicURL{}, fmt.Errorf("controlstate: create public_url: insert public_url: %w", err)
 	}
+	publicURLID := row.ID
 	if request.PublisherIdentityID != "" {
 		if err := queries.InsertPublisherAllocation(ctx, controlstatedb.InsertPublisherAllocationParams{PublicURLID: publicURLID, PublisherIdentityID: request.PublisherIdentityID, PublisherGrantID: request.PublisherGrantID, InvocationID: request.PublisherInvocationID}); err != nil {
 			return PublicURL{}, err
@@ -407,4 +370,39 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		result.AllowedIPPrefixes = nil
 	}
 	return result, nil
+}
+
+// callers authorize the owner, hostname, maintenance gate, and selected namespace
+// in their transaction before inserting through this shared persistence boundary.
+func (d *Database) insertPublicURL(ctx context.Context, q *controlstatedb.Queries, request CreatePublicURLRequest, namespace, ingressPool string, revision int64, prefixes []netip.Prefix, now time.Time) (controlstatedb.ControlPublicUrl, error) {
+	var zero controlstatedb.ControlPublicUrl
+	id, err := opaqueid.New(opaqueid.PublicURLPrefix)
+	if err != nil {
+		return zero, err
+	}
+	policy, hashes, hashKey, err := d.storeIPPolicy(id, prefixes, request.GuestID != "")
+	if err != nil {
+		return zero, err
+	}
+	digest, err := d.sealSecret(publicURLRequestDigestContext(id), request.RequestDigest[:])
+	if err != nil {
+		return zero, err
+	}
+	policyKey := ""
+	if len(policy) != 0 {
+		policyKey = d.storageKey.CurrentID()
+	}
+	return q.InsertPublicURL(ctx, controlstatedb.InsertPublicURLParams{
+		ID: id, TeamID: request.TeamID, DomainID: request.DomainID, MembershipID: nullableText(request.MembershipID),
+		CreatedByIdentityID: request.ActingIdentityID, IdempotencyKey: request.IdempotencyKey,
+		RequestDigestCiphertext: digest, RequestDigestStorageKeyID: text(d.storageKey.CurrentID()),
+		CanonicalHostname: request.CanonicalHostname, Namespace: namespace, Target: request.Target,
+		PublicURLScope: string(request.PublicURLScope), Purpose: string(request.Purpose), IngressPoolID: ingressPool,
+		ServiceProtocol: string(request.ServiceProtocol), RequirePostQuantum: request.RequirePostQuantum, PublisherPool: request.PublisherPool,
+		PolicyRevision: revision, AccessMode: string(request.AccessMode), IpPolicy: string(routeIPPolicy(prefixes)),
+		AllowedIpPolicyCiphertext: policy, AllowedIpPolicyStorageKeyID: nullableText(policyKey),
+		AllowedIpHashes: hashes, AllowedIpHashKeyID: nullableText(hashKey),
+		DnsAuthorityReference: nullableText(request.DNSAuthorityReference), DnsState: string(request.DNSState), Ephemeral: request.Ephemeral,
+		ExpiresAt: ephemeralRouteExpiry(request.Ephemeral, now), CreatedAt: timestamptz(now),
+	})
 }

@@ -62,7 +62,7 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 		savedName, protocol := config.ServiceName(name, service), controlv1.ServiceProtocol(config.Protocol(service))
 		entry := controlv1.ProjectServiceConfiguration{Name: &savedName, Protocol: &protocol}
 		httpSettings := service.HTTP
-		if deployment != "local" {
+		if deployment != "local" && service.Tunnel == nil {
 			resolved, err := config.ResolveRemoteHTTP(project.Config.Tunnel, service.HTTP)
 			if err != nil {
 				return declaration, err
@@ -87,7 +87,7 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 				endpoint := controlv1.ProjectTargetDiscoveryEndpoint(*t.Endpoint)
 				entry.TargetDiscovery.Endpoint = &endpoint
 			}
-		} else if deployment == "local" {
+		} else if deployment == "local" || config.TargetType(service) == "app" {
 			// local discovery stays local. this declarative descriptor contains no
 			// checkout path, discovered container address or running app listener.
 			entry.Target = config.TargetType(service)
@@ -148,18 +148,16 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 			if err != nil {
 				return declaration, err
 			}
-			if deployment == "local" {
-				if effective.Tunnel.PublicURL != nil {
-					hostname, _ := naming.ParseExactPublicURL(*effective.Tunnel.PublicURL)
-					entry.PublicUrl.Hostname = &hostname
+			if effective.Tunnel.PublicURL != nil {
+				hostname, _ := naming.ParseExactPublicURL(*effective.Tunnel.PublicURL)
+				entry.PublicUrl.Hostname = &hostname
+			}
+			if effective.Tunnel.Domain != nil {
+				domain, err := current.ReadyDomain(*effective.Tunnel.Domain)
+				if err != nil {
+					return declaration, err
 				}
-				if effective.Tunnel.Domain != nil {
-					domain, err := current.ReadyDomain(*effective.Tunnel.Domain)
-					if err != nil {
-						return declaration, err
-					}
-					entry.PublicUrl.DomainId = &domain.Id
-				}
+				entry.PublicUrl.DomainId = &domain.Id
 			}
 		}
 		declaration.Services[name] = entry

@@ -110,6 +110,27 @@ func TestDeploymentConfigurationCapturesWorkloadSelection(t *testing.T) {
 	}
 }
 
+func TestDeploymentConfigurationPublicAppDoesNotRepeatItsListener(t *testing.T) {
+	p := deploymentProjectFixture()
+	p.Deployments["production"].Targets["web"] = DeploymentBinding{Tunnel: &Tunnel{Access: &Access{Mode: "restricted"}}}
+	selected, err := ResolveDeployment(p, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	web := selected.Services["web"]
+	if TargetType(web) != "app" || web.Target.Address != nil || !IsPublicService(web) || SelectedDeployment(selected) != "production" {
+		t.Fatal("deployment public app invented a listener or selected a developer namespace")
+	}
+	p.Deployments["production"].Targets["web"] = DeploymentBinding{Tunnel: &Tunnel{Ephemeral: new(true)}}
+	if err := ValidateProject(p); err == nil {
+		t.Fatal("named deployment app accepted temporary saved URL settings")
+	}
+	p.Deployments["production"].Targets["web"] = DeploymentBinding{}
+	if err := ValidateProject(p); err == nil {
+		t.Fatal("unpublished remote app was accepted without a serving owner")
+	}
+}
+
 func TestResolvedDeploymentOwnsSettings(t *testing.T) {
 	project := deploymentProjectFixture()
 	description, domain := "production database", "example.test"
