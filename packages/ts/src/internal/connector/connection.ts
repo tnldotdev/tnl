@@ -15,7 +15,7 @@ import type {
 } from "../../project.js";
 import { clientFactory } from "./client_factory.js";
 import { awaitableConnection } from "./awaitable_connection.js";
-import { ownerIPC, prepareExternal } from "./connection_ipc.js";
+import { ownerIPC, prepareExternal, type OwnerIPC } from "./connection_ipc.js";
 import { context, contextKey, type NativeScope } from "./context.js";
 import { cancellable } from "./cancellation.js";
 import type { ConnectionSnapshot } from "./snapshot.js";
@@ -771,7 +771,12 @@ export async function deploymentAccess(project: string, token: string) {
 
 // one registry per explicit deployment handle. existing native selection, IPC,
 // transport adapters and stop acknowledgements retain their owning lifetimes.
-export function deploymentConnector(selection: NonNullable<SelectionOptions["deployment"]>) {
+export function deploymentConnector(
+  selection: Omit<NonNullable<SelectionOptions["deployment"]>, "token"> & {
+    readonly token?: string;
+    readonly handle?: string;
+  },
+) {
   const key = `deployment:${randomUUID()}`;
   const captured = {
     binary: resolveNativeBinary(),
@@ -783,6 +788,7 @@ export function deploymentConnector(selection: NonNullable<SelectionOptions["dep
     },
   };
   let loading: Promise<NativeScope> | undefined;
+  let borrowed: Promise<OwnerIPC> | undefined;
   let closed = false;
   let closing: Promise<void> | undefined;
   const closedError = new TnlError("sdk.client_closed");
@@ -790,9 +796,30 @@ export function deploymentConnector(selection: NonNullable<SelectionOptions["dep
   const http = new Map<string, ReturnType<typeof managedFetch>>();
   const prepareRemoteWork = async (name: string) => {
     if (closed) throw closedError;
+    if (selection.token === undefined) {
+      const file = selection.handle;
+      if (file === undefined) throw new TnlError("sdk.configuration_invalid");
+      const ipc = await (borrowed ??= ownerIPC(file));
+      const prepared = parsePrepared(
+        await ipc.prepare(name, undefined, undefined, {
+          project: selection.project,
+          name: selection.name,
+        }),
+        name,
+        file,
+      );
+      if (closed) throw closedError;
+      return prepared;
+    }
     const scope = await (loading ??= nativeScope(key, captured));
     const requested_at = new Date().toISOString();
-    const options: SelectionOptions = { requested_at, deployment: selection };
+    const deployment = {
+      project: selection.project,
+      name: selection.name,
+      token: selection.token,
+      ...(selection.services === undefined ? {} : { services: selection.services }),
+    };
+    const options: SelectionOptions = { requested_at, deployment };
     const args = [
       "sdk-prepare",
       "--directory",
@@ -806,13 +833,7 @@ export function deploymentConnector(selection: NonNullable<SelectionOptions["dep
       "--selected-service",
       name,
     ];
-    const raw = await scope.select(
-      args,
-      { schema: 1, deployment: selection },
-      name,
-      undefined,
-      options,
-    );
+    const raw = await scope.select(args, { schema: 1, deployment }, name, undefined, options);
     const value = parseValue(sdkPreparationSchema, raw, "sdk.response_invalid");
     if ("reason" in value) throw machineError({ stderr: JSON.stringify(value) }, "sdk-prepare");
     if (value.owner.executable !== scope.binary) throw new TnlError("sdk.response_invalid");
@@ -871,6 +892,7 @@ export function deploymentConnector(selection: NonNullable<SelectionOptions["dep
       closing ??= (async () => {
         const operations = await Promise.allSettled(pending);
         const cleanup = async () => {
+          if (borrowed !== undefined) (await borrowed).close();
           if (loading !== undefined) {
             const scope = await loading;
             if (scope.close === undefined) throw new TnlError("sdk.response_invalid");

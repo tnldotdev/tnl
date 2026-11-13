@@ -41,18 +41,28 @@ class Deployment:
         if re.fullmatch(r"dpl_[A-Za-z0-9]{22}", name) is None:
             service_name(name)
         self._local = name == "local"
-        if not self._local and token is None:
+        self._project, self._name, self._token = project, name, token
+        self._environment = dict(os.environ)
+        mounted = (
+            self._environment.get("TNL_CONNECTION_HANDLE")
+            if token is None and not self._local
+            else None
+        )
+        if not self._local and token is None and mounted is None:
             raise TnlError("sdk.configuration_invalid", "supply an approved deployment credential")
         self._services = dict(services)
         self._scope = _Scope(
             str(Path.cwd().resolve()),
-            None,
-            deployment={
+            mounted,
+            deployment=None
+            if mounted is not None
+            else {
                 "project": project,
                 "name": name,
                 "token": token,
                 "services": list(services),
             },
+            selection=None if mounted is None else {"project": project, "name": name},
         )
         self._pid = os.getpid()
         self._closed = False
