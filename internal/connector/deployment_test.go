@@ -48,6 +48,9 @@ func TestDeploymentContextNeedsNoProjectFilesAndFencesExactSelection(t *testing.
 	if first.Deployment != "production" || first.Workload != "" || first.TeamID != c.Approval.TeamId || len(p.Config.Services) != 5 {
 		t.Fatal("borrowed local/provider configuration")
 	}
+	if p.Deployment != first.Deployment || p.Config.Deployment != first.Deployment {
+		t.Fatal("registered connection lost its selected deployment")
+	}
 	data, err := json.Marshal(first)
 	if err != nil {
 		t.Fatal(err)

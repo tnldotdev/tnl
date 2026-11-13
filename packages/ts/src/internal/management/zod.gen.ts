@@ -58,15 +58,6 @@ export const deploymentTargetStatusSchema = z.strictObject({
   discovery: projectTargetDiscoverySchema.optional(),
 });
 
-export const deploymentPublisherIdentitySchema = z.object({
-  team_id: z.string(),
-  project_key: z.string(),
-  deployment_id: z.string(),
-  deployment_name: z.string(),
-  publisher_identity_id: z.string(),
-  key_id: z.string(),
-});
-
 /**
  * Deployment metadata reported by a deployment publisher and covered by its signed runtime assertion. It is not cloud attestation or permission. Values cannot change within a process run; deployment, provider, replica, and instance remain bound to the publisher identity across restarts.
  */
@@ -133,18 +124,6 @@ export const publisherRuntimeStatusSchema = z.strictObject({
   deployment: publisherDeploymentObservationSchema.optional(),
 });
 
-export const deploymentPublisherStatusSchema = deploymentPublisherIdentitySchema.and(
-  z.object({
-    observed_revision: z.string().regex(/^[0-9]+$/),
-    current_revision: z.string().regex(/^[0-9]+$/),
-    snapshot_at: z.iso.datetime({ offset: true }),
-    acknowledged_at: z.iso.datetime({ offset: true }).optional(),
-    healthy: z.boolean(),
-    lease_expires_at: z.iso.datetime({ offset: true }).optional(),
-    runtime: publisherRuntimeStatusSchema.optional(),
-  }),
-);
-
 export const serviceIdSchema = z.string().regex(/^svc_[A-Za-z0-9]{22}$/);
 
 export const serviceProtocolSchema = z.enum(["http", "tcp", "mysql", "postgres", "kubernetes"]);
@@ -164,12 +143,23 @@ export const deploymentPublisherEnrollmentSchema = z.strictObject({
 /**
  * One publisher in the selected deployment (deployment_id), including its retained last observation after revocation. No enrollment secret, signing key, access token, or target is returned. Healthy reports configuration acknowledgement and a current lease, not database login or SQL readiness.
  */
-export const deploymentPublisherSchema = deploymentPublisherStatusSchema.and(
-  z.object({
-    services: z.record(z.string(), serviceProtocolSchema),
-    revoked_at: z.iso.datetime({ offset: true }).optional(),
-  }),
-);
+export const deploymentPublisherSchema = z.strictObject({
+  team_id: z.string(),
+  project_key: z.string(),
+  deployment_id: z.string(),
+  deployment_name: z.string(),
+  publisher_identity_id: z.string(),
+  key_id: z.string(),
+  observed_revision: z.string().regex(/^[0-9]+$/),
+  current_revision: z.string().regex(/^[0-9]+$/),
+  snapshot_at: z.iso.datetime({ offset: true }),
+  acknowledged_at: z.iso.datetime({ offset: true }).optional(),
+  healthy: z.boolean(),
+  lease_expires_at: z.iso.datetime({ offset: true }).optional(),
+  runtime: publisherRuntimeStatusSchema.optional(),
+  services: z.record(z.string(), serviceProtocolSchema),
+  revoked_at: z.iso.datetime({ offset: true }).optional(),
+});
 
 export const deploymentPublisherPageSchema = z.strictObject({
   publishers: z.array(deploymentPublisherSchema).max(100),

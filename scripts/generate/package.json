@@ -1,0 +1,10 @@
+{
+  "name": "@tnl/codegen",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@hey-api/openapi-python": "0.0.24",
+    "@hey-api/openapi-ts": "0.99.0",
+    "typescript": "6.0.3"
+  }
+}
