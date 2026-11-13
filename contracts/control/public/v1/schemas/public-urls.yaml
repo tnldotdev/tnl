@@ -171,7 +171,7 @@ schemas:
   UpdatePublicURLRequest:
     type: object
     additionalProperties: false
-    description: Change only supplied fields. Omission preserves the saved value; an empty IP list clears the IP policy. Null values and updates without a writable field are rejected. A stale revision returns conflict.
+    description: "A partial edit that requires the saved mutation revision. Omission keeps a field; an empty IP list clears it. Null values and edits without a writable field are rejected."
     required: [expected_mutation_revision]
     minProperties: 2
     properties:

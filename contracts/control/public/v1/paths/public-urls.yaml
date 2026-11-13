@@ -69,7 +69,7 @@ paths:
     patch:
       operationId: updatePublicURL
       tags: [public-urls]
-      description: Replace the target and IP policy, optionally changing the post-quantum requirement, under current management authorization. Use replaceVisitorAccess for complete visitor access policy replacement; this operation does not create a new publish run.
+      description: "Change only the supplied fields using the mutation_revision you read as expected_mutation_revision. Omitted fields keep their saved values; an empty IP list clears the filter. Null values, empty edits, and stale revisions are rejected."
       summary: Update a public URL's target and IP policy
       security:
         - bearerAuth: []

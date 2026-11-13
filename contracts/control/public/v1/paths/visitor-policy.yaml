@@ -4,7 +4,7 @@ paths:
       operationId: readPublisherVisitorPolicy
       tags: [visitor-policy]
       summary: Refresh the current run's visitor policy and verification keys
-      description: Read one current publisher run's scoped visitor policy, revocations, and public verification keys. The bearer credential is the exact run token. This background operation is independent of the publisher's process lease and of ordinary visitor admission.
+      description: "Refresh visitor policy and revocations for one publisher run using its exact run token. This is a publisher operation, not a visitor or management read, and can return private policy data for the run. It does not renew the publisher process lease or grant traffic access."
       security: [{ publishRunAuth: [] }, { serviceRunAuth: [] }]
       requestBody:
         required: true

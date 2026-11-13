@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -50,7 +49,7 @@ func TestIntegrationWorkloadExchangeFreshAssertionRetry(t *testing.T) {
 			oldExpiry := issuedAt.Add(test.proofLifetime)
 			claims["exp"] = oldExpiry.Unix()
 			initial := f.issuer.Sign(t, claims)
-			first, err := job.Exchange(t.Context(), f.team, "example", f.body.SourceFingerprint, "test", initial, nil)
+			first, err := job.Exchange(t.Context(), f.team, "example", f.sourceFingerprint, "test", initial, nil)
 			if len(transport.responses) != 1 {
 				t.Fatalf("initial exchange did not return a committed server session: requests=%d successful_responses=%d http_statuses=%v native_error=%v", len(transport.requests), len(transport.responses), transport.statuses, err)
 			}
@@ -86,7 +85,7 @@ func TestIntegrationWorkloadExchangeFreshAssertionRetry(t *testing.T) {
 			freshExpiry := freshIssuedAt.Add(10 * time.Minute)
 			claims["iat"], claims["nbf"], claims["exp"] = freshIssuedAt.Unix(), freshIssuedAt.Unix(), freshExpiry.Unix()
 			fresh := f.issuer.Sign(t, claims)
-			next, retryErr := job.Exchange(t.Context(), f.team, "example", f.body.SourceFingerprint, "test", fresh, nil)
+			next, retryErr := job.Exchange(t.Context(), f.team, "example", f.sourceFingerprint, "test", fresh, nil)
 			if len(transport.requests) != 2 || len(transport.responses) != 2 {
 				t.Fatalf("fresh-token exchange retry failed: requests=%d want=2 successful_responses=%d want=2 http_statuses=%v native_error=%v proof_lifetime=%s lease_remaining=%s identity_remaining=%s", len(transport.requests), len(transport.responses), transport.statuses, retryErr, freshExpiry.Sub(time.Unix(claims["iat"].(int64), 0)), time.Until(committed.LeaseExpiresAt), time.Until(committed.IdentityExpiresAt))
 			}
@@ -130,7 +129,7 @@ func TestIntegrationWorkloadExchangeFreshAssertionRetry(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = other.Exchange(t.Context(), f.team, "example", f.body.SourceFingerprint, "test", fresh, nil)
+			_, err = other.Exchange(t.Context(), f.team, "example", f.sourceFingerprint, "test", fresh, nil)
 			var problem *clientauthority.ProblemError
 			if !errors.As(err, &problem) || problem.Status != http.StatusConflict {
 				t.Fatal("fresh token allowed another native key to take over the same execution", err)
@@ -148,7 +147,7 @@ func TestIntegrationWorkloadExchangeFreshAssertionRetryCannotResurrect(t *testin
 				t.Fatal(err)
 			}
 			claims := githubtest.Claims(f.server.URL, time.Now())
-			initial, err := job.Exchange(t.Context(), f.team, "example", f.body.SourceFingerprint, "test", f.issuer.Sign(t, claims), nil)
+			initial, err := job.Exchange(t.Context(), f.team, "example", f.sourceFingerprint, "test", f.issuer.Sign(t, claims), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -172,7 +171,7 @@ func TestIntegrationWorkloadExchangeFreshAssertionRetryCannotResurrect(t *testin
 			freshIssuedAt := time.Now().Truncate(time.Second)
 			claims["jti"] = "fresh-after-authority-ended"
 			claims["iat"], claims["nbf"], claims["exp"] = freshIssuedAt.Unix(), freshIssuedAt.Unix(), freshIssuedAt.Add(10*time.Minute).Unix()
-			_, err = job.Exchange(t.Context(), f.team, "example", f.body.SourceFingerprint, "test", f.issuer.Sign(t, claims), nil)
+			_, err = job.Exchange(t.Context(), f.team, "example", f.sourceFingerprint, "test", f.issuer.Sign(t, claims), nil)
 			var problem *clientauthority.ProblemError
 			if !errors.As(err, &problem) || problem.Status != want {
 				t.Fatalf("fresh verified assertion revived %s authority: %v", boundary, err)
@@ -240,12 +239,13 @@ func (transport *workloadExchangeRetryTransport) RoundTrip(r *http.Request) (*ht
 }
 
 type workloadExchangeRetryFixture struct {
-	server  *httptest.Server
-	issuer  *githubtest.Issuer
-	inspect *pgx.Conn
-	owner   *clientcontrol.Client
-	team    string
-	body    controlv1.ApplyProjectConfigurationRequest
+	sourceFingerprint string
+	server            *httptest.Server
+	issuer            *githubtest.Issuer
+	inspect           *pgx.Conn
+	owner             *clientcontrol.Client
+	team              string
+	body              controlv1.ApplyProjectConfigurationRequest
 }
 
 func newWorkloadExchangeRetryFixture(t *testing.T) *workloadExchangeRetryFixture {
@@ -289,7 +289,7 @@ func newWorkloadExchangeRetryFixture(t *testing.T) *workloadExchangeRetryFixture
 	team := human.Identity.Memberships[0].TeamID
 	group := "production"
 	policies := map[string]controlv1.ProjectWorkload{"test": {Provider: controlv1.WorkloadGitHub, Github: &controlv1.ProjectWorkloadGitHub{Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}}, Services: []string{"api", "db"}, MaxDurationSeconds: 3600}}
-	f := &workloadExchangeRetryFixture{server: server, issuer: issuer, inspect: inspect, owner: owner, team: team, body: controlv1.ApplyProjectConfigurationRequest{TeamId: team, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{Workloads: &policies, PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {PublisherGroup: &group, Target: "api.internal:3000"}, "db": {PublisherGroup: &group, Target: "db.internal:5432"}}, Webhooks: map[string]controlv1.ProjectWebhook{}}}}
+	f := &workloadExchangeRetryFixture{server: server, issuer: issuer, inspect: inspect, owner: owner, team: team, body: controlv1.ApplyProjectConfigurationRequest{TeamId: team, Source: &testProjectSource, Configuration: controlv1.ProjectConfiguration{Workloads: &policies, PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {PublisherGroup: &group, Target: "api.internal:3000"}, "db": {PublisherGroup: &group, Target: "db.internal:5432"}}, Webhooks: map[string]controlv1.ProjectWebhook{}}}}
 	f.apply(t)
 	return f
 }
@@ -301,6 +301,7 @@ func (f *workloadExchangeRetryFixture) apply(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.body.ExpectedRevision = applied.Revision
+	f.sourceFingerprint = applied.SourceFingerprint
 }
 
 func (f *workloadExchangeRetryFixture) saved(t *testing.T, id string) []byte {

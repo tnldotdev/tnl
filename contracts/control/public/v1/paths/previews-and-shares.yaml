@@ -25,6 +25,22 @@ paths:
         default:
           $ref: "../openapi.yaml#/components/responses/Problem"
   /v1/previews:
+    get:
+      operationId: listPreviews
+      summary: List the caller's previews
+      tags: [previews]
+      security: [{ bearerAuth: [] }]
+      description: "List previews created by the signed-in identity in this team. Team visitor access does not grant access to another creator's preview records. Read each preview for its public URLs. Follow next_cursor unchanged; each page checks current access."
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
+        - { name: cursor, in: query, schema: { type: string, maxLength: 2048 } }
+      responses:
+        "200":
+          description: Up to 100 creator-owned preview summaries
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/PreviewPage" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
     post:
       operationId: createPreview
       tags: [previews]
@@ -122,7 +138,7 @@ paths:
     post:
       operationId: createShare
       tags: [shares]
-      description: Store a share using current preview management authorization and an idempotency key. It captures the authorized public URL IDs now; later preview membership changes do not expand that share's access.
+      description: "Create a share for the selected public URL IDs in this preview. entry_public_url_id chooses the landing URL and must be in that set. Later preview changes do not expand the share. Control returns the link and token source once; an identical retry returns the existing share ID in a credential_delivery_unavailable problem."
       summary: Store one share for a snapshot of authorized public URLs
       security:
         - bearerAuth: []
@@ -174,7 +190,7 @@ paths:
       operationId: createURLShare
       tags: [shares]
       summary: Store one share for an exact authorized HTTP public URL
-      description: A guest trial can share only its own demo URL from the issuing IP; the share expires by the trial's end even if the requested expiry is later.
+      description: "Create a share for one public URL and return its link and token source once. Use that URL's ID as entry_public_url_id. An identical retry returns the existing share ID in a credential_delivery_unavailable problem; revoke and reissue if delivery was lost. Guest shares are limited to the trial's URL, source IP, and expiry."
       security:
         - bearerAuth: []
         - guestAuth: []

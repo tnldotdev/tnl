@@ -68,7 +68,7 @@ schemas:
   ShareCreation:
     type: object
     additionalProperties: false
-    description: One-time delivery. Save the complete link or token_source before discarding this response. Control retains only a digest; an exact retry returns credential_delivery_unavailable with details.resource_id after current authorization. Revoke that ID and create with a new key if delivery was lost. Expiry and captured public URLs never change on retry.
+    description: "The share, a link for reviewers, and a token source for visitor-token requests. Keep these values: lists and detail reads do not return secrets. An identical retry returns credential_delivery_unavailable with the existing share ID."
     required: [share, link, token_source]
     properties:
       share:

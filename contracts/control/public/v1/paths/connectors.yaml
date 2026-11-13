@@ -64,7 +64,7 @@ paths:
       operationId: listAvailableServices
       tags: [connectors]
       summary: List services available to the signed-in visitor
-      description: Authorized saved services for tnl connect, including offline services. Initial readiness requires two ready publisher connections; after that one surviving ready connection keeps a run available during replacement. Inventory includes the visitor endpoint hostname but grants no stream ticket and omits target addresses, target TLS trust, and secrets.
+      description: "List services the signed-in visitor may use, including offline services. Results include visitor endpoints, not target addresses, target trust, or secrets. Listing a service does not grant traffic access. Initial readiness needs two publisher connections; one surviving connection can keep an already-ready run available."
       security: [{ bearerAuth: [] }]
       parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceCursor" }]
       responses:
@@ -113,7 +113,7 @@ paths:
       tags: [connectors]
       summary: Prepare a signed connector pair for an exact ready service run
       security: [{}, { bearerAuth: [] }]
-      description: Signed create or replace for one exact ready service run. The request signature must prove the selected device or workload key. A device source also requires its matching identity's control session bearer token. A workload source authenticates with its credential in the JSON body and must omit Authorization entirely, including empty headers. The empty security object represents body authentication, not anonymous access. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+      description: "Create or replace a pair for the selected service run using the device or workload signature. Device sources require the matching control session. Workload sources use the body credential and must omit Authorization, including empty headers. Control rechecks current access and both relay leases; a selection snapshot is not permission."
       parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
       requestBody:
         required: true
@@ -133,7 +133,7 @@ paths:
       tags: [connectors]
       summary: Renew an exact signed connector pair and visitor permission
       security: [{}, { bearerAuth: [] }]
-      description: Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
+      description: "Renew the existing pair and visitor permission together, without selecting another run. The signature must prove the same device or workload key. Device sources require the matching control session; workload sources use the body credential and must omit Authorization, including empty headers. The response contains the pair lease, run validity, and visitor permission from that decision."
       parameters:
         - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
         - {
@@ -160,7 +160,7 @@ paths:
       tags: [connectors]
       summary: Inspect or change a retained connector pair's network binding
       security: [{}, { bearerAuth: [] }]
-      description: Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. The signature proves the selected source key. A device source requires its matching identity's control session bearer token; a workload source uses its JSON body credential and must omit Authorization entirely, including empty headers. The empty security object is not anonymous access. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+      description: "Inspect, prepare, activate, or abort a network binding for an existing connector owner. Sign with the same source key. Device sources require the matching control session; workload sources use the body credential and must omit Authorization, including empty headers. This cannot select another run or revive an expired owner. Only stale_network_binding permits recovery by inspecting retained state; other authorization failures are terminal."
       parameters:
         - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
         - name: pair_id

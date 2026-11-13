@@ -37,6 +37,10 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
+var testProjectSource = controlv1.GitProjectSource{GitOrigin: "https://example.test/example.git", ConfigurationPath: "tnl.yml"}
+
+const testProjectSourceFingerprint = "a4c232311b1a5083342e81207d920e296029c9181e4a45f9f3492a13216aa45c"
+
 // real clock: both siblings retain their original tcp, http and postgresql
 // streams across the 90-second lease and 135-second startup proof. only the
 // capped sibling ends at its original 205-second hard deadline.
@@ -53,7 +57,7 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 			initialClaims := githubtest.Claims(f.controlConfig.ControlOrigin(), time.Now())
 			initialClaims["exp"] = time.Now().Add(135 * time.Second).Unix()
 			assertion := issuer.Sign(t, initialClaims)
-			session, err := job.Exchange(t.Context(), f.identity.teamID, "workload", strings.Repeat("a", 64), "test", assertion, nil)
+			session, err := job.Exchange(t.Context(), f.identity.teamID, "workload", testProjectSourceFingerprint, "test", assertion, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -90,7 +94,7 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 			continuousClaims := githubtest.Claims(f.controlConfig.ControlOrigin(), time.Now())
 			continuousClaims["check_run_id"], continuousClaims["jti"] = "555", "continuous-initial-proof"
 			continuousClaims["exp"] = time.Now().Add(135 * time.Second).Unix()
-			continuousSession, err := continuous.Exchange(t.Context(), f.identity.teamID, "workload", strings.Repeat("a", 64), "continuous", issuer.Sign(t, continuousClaims), nil)
+			continuousSession, err := continuous.Exchange(t.Context(), f.identity.teamID, "workload", testProjectSourceFingerprint, "continuous", issuer.Sign(t, continuousClaims), nil)
 			if err != nil || continuousSession.ExpiresAt != nil {
 				t.Fatal("continuous session acquired a hard limit", err)
 			}
@@ -162,7 +166,7 @@ func TestIntegrationWorkloadTransportClosure(t *testing.T) {
 					if reason == "revocation" {
 						policy = "continuous"
 					}
-					session, err := job.Exchange(t.Context(), f.identity.teamID, "workload", strings.Repeat("a", 64), policy, issuer.Sign(t, claims), nil)
+					session, err := job.Exchange(t.Context(), f.identity.teamID, "workload", testProjectSourceFingerprint, policy, issuer.Sign(t, claims), nil)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -225,7 +229,7 @@ func startWorkloadRuntimeServices(t *testing.T, f *privateSeparatedFixture, tran
 	continuous := policies["test"]
 	continuous.MaxDurationSeconds = 0
 	policies["continuous"] = continuous
-	applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{Workloads: &policies, PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {}}, Services: services, Webhooks: map[string]controlv1.ProjectWebhook{}}})
+	applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{TeamId: f.identity.teamID, Source: &testProjectSource, Configuration: controlv1.ProjectConfiguration{Workloads: &policies, PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {}}, Services: services, Webhooks: map[string]controlv1.ProjectWebhook{}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,7 +292,7 @@ func TestIntegrationWorkloadTransportHTTPNoFallback(t *testing.T) {
 	cleanupIntegrationHTTPServer(t, target, f.owner)
 	group, protocol := "public", controlv1.ServiceProtocolHTTP
 	policies := map[string]controlv1.ProjectWorkload{"test": {Provider: controlv1.WorkloadGitHub, Github: &controlv1.ProjectWorkloadGitHub{Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}}, Services: []string{"api"}, MaxDurationSeconds: 60}}
-	_, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{Workloads: &policies, PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {Public: new(true)}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {PublisherGroup: &group, Protocol: &protocol, Target: strings.TrimPrefix(target.URL, "http://")}}, Webhooks: map[string]controlv1.ProjectWebhook{}}})
+	_, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{TeamId: f.identity.teamID, Source: &testProjectSource, Configuration: controlv1.ProjectConfiguration{Workloads: &policies, PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {Public: new(true)}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {PublisherGroup: &group, Protocol: &protocol, Target: strings.TrimPrefix(target.URL, "http://")}}, Webhooks: map[string]controlv1.ProjectWebhook{}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +301,7 @@ func TestIntegrationWorkloadTransportHTTPNoFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = job.Exchange(t.Context(), f.identity.teamID, "workload", strings.Repeat("a", 64), "test", issuer.Sign(t, githubtest.Claims(f.controlConfig.ControlOrigin(), time.Now())), nil); err != nil {
+	if _, err = job.Exchange(t.Context(), f.identity.teamID, "workload", testProjectSourceFingerprint, "test", issuer.Sign(t, githubtest.Claims(f.controlConfig.ControlOrigin(), time.Now())), nil); err != nil {
 		t.Fatal(err)
 	}
 	inventory, err := job.ListServices(t.Context())

@@ -26,7 +26,7 @@ import (
 var (
 	ErrProjectConfigurationInvalid = errors.New("project configuration is invalid")
 	ErrProjectConfigurationStale   = errors.New("project configuration revision changed")
-	ErrProjectSourceConflict       = errors.New("project label belongs to another source")
+	ErrProjectSourceConflict       = errors.New("project key is bound to another source")
 	fingerprintPattern             = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
 
@@ -97,6 +97,7 @@ type ProjectWebhook struct {
 }
 type ApplyProjectConfigurationRequest struct {
 	TeamID, ProjectKey, SourceFingerprint, ActorID string
+	Source                                         *naming.GitProjectSource
 	ProjectLabel                                   string
 	ExpectedRevision                               int64
 	Configuration                                  ProjectConfiguration
@@ -230,7 +231,17 @@ func (d *Database) openAppliedProject(row controlstatedb.ControlAppliedProject) 
 }
 
 func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProjectConfigurationRequest) (result AppliedProjectConfiguration, retErr error) {
-	if !naming.ValidProjectKey(r.ProjectKey) || !fingerprintPattern.MatchString(r.SourceFingerprint) || r.ExpectedRevision < 0 || r.ExpectedRevision == 1<<63-1 {
+	if r.Source != nil {
+		identity, err := r.Source.Identity()
+		if err != nil {
+			return result, ErrProjectConfigurationInvalid
+		}
+		r.SourceFingerprint = identity.Fingerprint
+		if r.ProjectLabel == "" {
+			r.ProjectLabel = identity.Label
+		}
+	}
+	if !naming.ValidProjectKey(r.ProjectKey) || r.SourceFingerprint != "" && !fingerprintPattern.MatchString(r.SourceFingerprint) || r.ExpectedRevision < 0 || r.ExpectedRevision == 1<<63-1 {
 		return result, ErrProjectConfigurationInvalid
 	}
 	c, _, err := NormalizeProjectConfiguration(r.Configuration)
@@ -248,6 +259,16 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	}
 	if err = serviceManager(ctx, tx, r.TeamID, r.ActorID); err != nil {
 		return result, err
+	}
+	if r.SourceFingerprint == "" {
+		row, err := q.LockAppliedProject(ctx, controlstatedb.LockAppliedProjectParams{TeamID: r.TeamID, ProjectKey: r.ProjectKey})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return result, ErrProjectConfigurationInvalid
+		}
+		if err != nil {
+			return result, err
+		}
+		r.SourceFingerprint = row.SourceFingerprint
 	}
 	if err = checkLocalProjectSource(ctx, tx, r.TeamID, r.ProjectKey, r.SourceFingerprint); err != nil {
 		return result, err

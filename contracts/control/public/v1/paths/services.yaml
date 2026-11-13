@@ -88,7 +88,7 @@ paths:
       operationId: configureService
       tags: [services]
       summary: Replace a service's approved protocol and target TLS trust
-      description: Set the saved protocol, publisher pool, and target TLS trust snapshot using current service management permission. Publishers must declare matching trust when preparing later runs; this is not a target address update or a publication start.
+      description: "Replace the approved protocol, publisher-pool setting, and target TLS trust. Send trust_revision as expected_trust_revision; omit target_tls to remove it. Endpoint and placement cannot be changed here. Publishers must declare matching trust when preparing later runs."
       security: [{ bearerAuth: [] }]
       parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
       requestBody:
@@ -230,7 +230,7 @@ paths:
       operationId: inviteServiceVisitor
       tags: [visitor-access]
       summary: Invite a verified email identity to one service
-      description: A new key creates one exact-service invitation with a one-time credential. An exact retry by the same actor returns HTTP 409 credential_delivery_unavailable with details.resource_id after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
+      description: "Invite the verified email identity to this service. Control returns the credential once. An identical authorized retry returns credential_delivery_unavailable with the existing invitation ID; if delivery was lost, revoke it and create another with a new key. Reusing a key with changed input conflicts. No secret is kept for recovery."
       security: [{ bearerAuth: [] }]
       parameters:
         [

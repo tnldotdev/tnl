@@ -14,6 +14,12 @@ type Declaration struct {
 	Digest   string
 }
 
+// NewDeclaration derives the project digest from the exact approved bytes.
+func NewDeclaration(hostname string, ca []byte) (Declaration, error) {
+	d := Declaration{Hostname: hostname, CAPEM: ca, Digest: declarationDigest(hostname, ca)}
+	return d, d.Validate()
+}
+
 func (d Declaration) Validate() error {
 	_, err := d.Snapshot()
 	return err

@@ -5,7 +5,7 @@ paths:
       tags: [browser-access]
       summary: Start browser sign-in for one HTTP service
       security: []
-      description: Start sign-in for one service HTTP service. Uses the common browser callback and a snapshot of ready runs; the allocated service port is retained.
+      description: "Start browser sign-in for one HTTP service. Navigate to this URL rather than fetching JSON. The common callback preserves the allocated service port and checks current visitor access before issuing a credential."
       parameters:
         - {
             name: service_id,
@@ -29,7 +29,7 @@ paths:
       tags: [visitor-access]
       summary: List an HTTP service's visitor credentials without secrets
       security: [{ bearerAuth: [] }]
-      description: Secretless credential inventory for one service HTTP service. Requires current service management permission; includes expired and revoked records.
+      description: "List this service's HTTP visitor credentials without their secrets. Requires current service management permission and includes expired and revoked records."
       parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
       responses:
         "200":
@@ -45,7 +45,7 @@ paths:
       tags: [visitor-access]
       summary: Create a service-scoped HTTP visitor token or share
       security: [{ bearerAuth: [] }]
-      description: Create a service-scoped HTTP token or share. Requires current service management and visitor permission. The secret is returned once and grants no management or feedback permission.
+      description: "Create an HTTP visitor credential for this service. Requires both current management and visitor permission. Each call creates a new credential, returned once; it grants neither management nor feedback permission."
       parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
       requestBody:
         required: true
@@ -262,7 +262,7 @@ paths:
       operationId: createVisitorInvitation
       tags: [visitor-access]
       summary: Invite a verified email identity to one public URL
-      description: Issue an expiring one-use invitation under current public URL management authorization. Acceptance requires the recipient's verified email and creates an exact-URL identity grant, not team membership.
+      description: "Invite the verified email identity to this public URL. Control returns the credential once. An identical authorized retry returns credential_delivery_unavailable with the invitation ID; revoke and reissue if delivery was lost. Acceptance creates visitor access, not team membership or management permission."
       security: [{ bearerAuth: [] }]
       parameters:
         - { $ref: "../openapi.yaml#/components/parameters/IdempotencyKey" }
@@ -326,7 +326,7 @@ paths:
     put:
       operationId: replaceVisitorAccess
       tags: [visitor-access]
-      description: Replace the complete saved visitor access policy under current public URL management authorization. Omitted optional policy members are not a partial patch; publishers must enforce the resulting current visitor policy for new work.
+      description: "Replace the access mode and complete IP filter using the current mutation revision. An empty IP list removes the filter. Existing grants, shares, and invitations are unchanged; this operation does not revoke every source of visitor access."
       summary: Replace the complete live visitor access policy
       security: [{ bearerAuth: [] }]
       requestBody:
@@ -345,7 +345,7 @@ paths:
     get:
       operationId: beginPreviewBrowserLogin
       tags: [browser-access]
-      description: Begin the configured browser sign-in flow for a public URL, optionally within a preview. No bearer credential is required to begin sign-in; current visit permission is checked before a usable browser credential is issued.
+      description: "Start browser sign-in for a public URL, optionally within a preview. Navigate to this URL rather than fetching JSON. Current visitor permission is checked before issuing a browser credential."
       summary: Start sign-in for a preview visitor
       security: []
       parameters:
@@ -376,7 +376,7 @@ paths:
     get:
       operationId: completePreviewBrowserLogin
       tags: [browser-access]
-      description: Complete the identity provider callback using the pending login state and authorization code, then redirect to a one-time host-bound handoff. No bearer token is used; the callback is authenticated by the checked login flow, not by the empty security array.
+      description: "Check the pending login state and authorization code, then redirect the browser to a one-time publisher handoff. This callback uses the checked sign-in flow, not a bearer token."
       summary: Return a signed-in visitor to the preview
       security: []
       parameters:

@@ -90,6 +90,7 @@ type AdminStore interface {
 }
 
 type PreviewStore interface {
+	ListPreviews(context.Context, string, string, string) (controlstate.PreviewPage, error)
 	CreatePreview(context.Context, string, string, string, time.Time) (controlstate.Preview, error)
 	GetPreview(context.Context, string) (controlstate.Preview, error)
 	AddPreviewPublicURL(context.Context, controlstate.AddPreviewPublicURLRequest, time.Time) (controlstate.Preview, error)

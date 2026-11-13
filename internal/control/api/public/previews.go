@@ -11,6 +11,32 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
+func (h *handler) ListPreviews(w http.ResponseWriter, r *http.Request, params controlv1.ListPreviewsParams) {
+	w.Header().Set("Cache-Control", "no-store")
+	actor, ok := h.projectManager(w, r, params.TeamId)
+	if !ok {
+		return
+	}
+	if h.previews == nil {
+		writeProblem(w, 503, controlv1.Unavailable, "previews are unavailable")
+		return
+	}
+	cursor := ""
+	if params.Cursor != nil {
+		cursor = *params.Cursor
+	}
+	page, err := h.previews.ListPreviews(r.Context(), params.TeamId, actor, cursor)
+	if errors.Is(err, controlstate.ErrDiscoveryCursor) {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid discovery cursor")
+		return
+	}
+	if err != nil {
+		writeControlStateProblem(r.Context(), w, "list previews", err)
+		return
+	}
+	writeJSON(w, 200, page)
+}
+
 func (h *handler) CreatePreview(response http.ResponseWriter, request *http.Request, _ controlv1.CreatePreviewParams) {
 	var body controlv1.CreatePreviewRequest
 	if err := decodeJSONLimited(response, request, &body, 1<<20); err != nil || body.TeamId == "" {

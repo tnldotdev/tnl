@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -91,7 +90,7 @@ func TestIntegrationWorkloadHTTPPublicTLS(t *testing.T) {
 		"other":   {PublisherGroup: &group, Protocol: &protocol, Target: target.URL, TargetTls: &targetTrust},
 		"private": {PublisherGroup: &private, Protocol: &protocol, Target: target.URL, TargetTls: &targetTrust},
 	}, Webhooks: map[string]controlv1.ProjectWebhook{}}
-	applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64), Configuration: configuration})
+	applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{TeamId: f.identity.teamID, Source: &testProjectSource, Configuration: configuration})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +103,7 @@ func TestIntegrationWorkloadHTTPPublicTLS(t *testing.T) {
 		}
 		claims := githubtest.Claims(f.controlConfig.ControlOrigin(), time.Now())
 		claims["check_run_id"], claims["jti"] = execution, execution
-		if _, err := job.Exchange(t.Context(), f.identity.teamID, "workload", strings.Repeat("a", 64), name, issuer.Sign(t, claims), nil); err != nil {
+		if _, err := job.Exchange(t.Context(), f.identity.teamID, "workload", applied.SourceFingerprint, name, issuer.Sign(t, claims), nil); err != nil {
 			t.Fatal(err)
 		}
 		return job
@@ -264,7 +263,7 @@ func TestIntegrationWorkloadHTTPPublicTLS(t *testing.T) {
 	changed.Github.Ref = "refs/heads/other"
 	changed.Github.WorkflowRef = "example/repository/.github/workflows/test.yml@refs/heads/other"
 	policies["provider"] = changed
-	if _, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{TeamId: f.identity.teamID, ExpectedRevision: applied.Revision, SourceFingerprint: strings.Repeat("a", 64), Configuration: configuration}); err != nil {
+	if _, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{TeamId: f.identity.teamID, ExpectedRevision: applied.Revision, Source: &testProjectSource, Configuration: configuration}); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(30 * time.Second)

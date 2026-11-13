@@ -8,10 +8,12 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/naming"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type ProjectConfigurationStore interface {
+	ListProjects(context.Context, string, string, string) (controlstate.ProjectPage, error)
 	ResolveProjectConfiguration(context.Context, string, string, controlstate.ProjectConfiguration) (controlstate.ProjectConfiguration, error)
 	ApplyProjectConfiguration(context.Context, controlstate.ApplyProjectConfigurationRequest) (controlstate.AppliedProjectConfiguration, error)
 	GetProjectConfiguration(context.Context, string, string, string) (controlstate.AppliedProjectConfiguration, error)
@@ -19,6 +21,8 @@ type ProjectConfigurationStore interface {
 
 func projectConfigurationProblem(ctx context.Context, w http.ResponseWriter, operation string, err error) {
 	switch {
+	case errors.Is(err, controlstate.ErrDiscoveryCursor):
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid discovery cursor")
 	case errors.Is(err, controlstate.ErrWorkloadBinding):
 		writeProblem(w, 400, controlv1.InvalidRequest, "GitHub workload policy requires verified repository and owner IDs; apply from a trusted operator with repository metadata access")
 	case errors.Is(err, controlstate.ErrProjectConfigurationInvalid):
@@ -26,7 +30,7 @@ func projectConfigurationProblem(ctx context.Context, w http.ResponseWriter, ope
 	case errors.Is(err, controlstate.ErrProjectConfigurationStale):
 		writeProblem(w, 409, controlv1.Conflict, "project configuration changed; read the current revision and apply again")
 	case errors.Is(err, controlstate.ErrProjectSourceConflict):
-		writeProblem(w, 409, controlv1.Conflict, "project label belongs to another source; select a different project label")
+		writeProblem(w, 409, controlv1.Conflict, "project key is bound to another source")
 	case errors.Is(err, controlstate.ErrServicePortsExhausted):
 		writeProblem(w, 503, controlv1.PlacementUnavailable, "ingress pool has no available service port; ask the operator to extend its service port inventory")
 	case errors.Is(err, controlstate.ErrServiceConflict), errors.Is(err, controlstate.ErrPublicURLConflict):
@@ -40,6 +44,46 @@ func projectConfigurationProblem(ctx context.Context, w http.ResponseWriter, ope
 	default:
 		writeControlStateProblem(ctx, w, operation, err)
 	}
+}
+
+func (h *handler) ListProjects(w http.ResponseWriter, r *http.Request, params controlv1.ListProjectsParams) {
+	w.Header().Set("Cache-Control", "no-store")
+	actor, ok := h.projectManager(w, r, params.TeamId)
+	if !ok {
+		return
+	}
+	if h.dependencies.ProjectConfiguration == nil {
+		writeProblem(w, 503, controlv1.Unavailable, "project configuration is unavailable")
+		return
+	}
+	cursor := ""
+	if params.Cursor != nil {
+		cursor = *params.Cursor
+	}
+	page, err := h.dependencies.ProjectConfiguration.ListProjects(r.Context(), params.TeamId, actor, cursor)
+	if err != nil {
+		projectConfigurationProblem(r.Context(), w, "list projects", err)
+		return
+	}
+	writeJSON(w, 200, page)
+}
+
+func (h *handler) ResolveProjectSource(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if _, ok := h.authorizeReads(w, r); !ok {
+		return
+	}
+	var source naming.GitProjectSource
+	if decodeJSONLimited(w, r, &source, 16<<10) != nil {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid project source")
+		return
+	}
+	identity, err := source.Identity()
+	if err != nil {
+		writeProblem(w, 400, controlv1.InvalidRequest, "project source requires a network Git origin and repository-relative configuration path")
+		return
+	}
+	writeJSON(w, 200, controlv1.ProjectSourceIdentity{ProjectKey: identity.Key, SourceFingerprint: identity.Fingerprint, ProjectLabel: identity.Label})
 }
 
 func (h *handler) projectManager(w http.ResponseWriter, r *http.Request, team string) (string, bool) {
@@ -62,11 +106,11 @@ func (h *handler) ApplyProjectConfiguration(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var body struct {
-		TeamID            string                             `json:"team_id"`
-		SourceFingerprint string                             `json:"source_fingerprint"`
-		ProjectLabel      string                             `json:"project_label"`
-		ExpectedRevision  *int64                             `json:"expected_revision"`
-		Configuration     *controlstate.ProjectConfiguration `json:"configuration"`
+		TeamID           string                             `json:"team_id"`
+		Source           *naming.GitProjectSource           `json:"source"`
+		ProjectLabel     string                             `json:"project_label"`
+		ExpectedRevision *int64                             `json:"expected_revision"`
+		Configuration    *controlstate.ProjectConfiguration `json:"configuration"`
 	}
 	if decodeJSONLimited(w, r, &body, 4<<20) != nil || body.ExpectedRevision == nil || body.Configuration == nil {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid normalized project configuration")
@@ -86,7 +130,7 @@ func (h *handler) ApplyProjectConfiguration(w http.ResponseWriter, r *http.Reque
 		projectConfigurationProblem(r.Context(), w, "resolve project public hostnames", err)
 		return
 	}
-	result, err := store.ApplyProjectConfiguration(r.Context(), controlstate.ApplyProjectConfigurationRequest{TeamID: body.TeamID, ProjectKey: project, SourceFingerprint: body.SourceFingerprint, ProjectLabel: body.ProjectLabel, ActorID: actor, ExpectedRevision: *body.ExpectedRevision, Configuration: c, DNSAutomation: h.config.DNSAutomation, TrafficDefaults: h.config.TrafficDefaults, TrafficCeiling: h.config.TrafficCeiling, Now: time.Now()})
+	result, err := store.ApplyProjectConfiguration(r.Context(), controlstate.ApplyProjectConfigurationRequest{TeamID: body.TeamID, ProjectKey: project, Source: body.Source, ProjectLabel: body.ProjectLabel, ActorID: actor, ExpectedRevision: *body.ExpectedRevision, Configuration: c, DNSAutomation: h.config.DNSAutomation, TrafficDefaults: h.config.TrafficDefaults, TrafficCeiling: h.config.TrafficCeiling, Now: time.Now()})
 	if err != nil {
 		projectConfigurationProblem(r.Context(), w, "apply project configuration", err)
 		return

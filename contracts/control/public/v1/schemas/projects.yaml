@@ -1,4 +1,69 @@
 schemas:
+  GitProjectSource:
+    description: "Repository origin and configuration path used to identify a project. These facts are a locator, not proof of repository ownership."
+    type: object
+    additionalProperties: false
+    required: [git_origin, configuration_path]
+    properties:
+      git_origin:
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "description": "Network Git remote URL. Do not include private credentials; transport and login details do not affect project identity.",
+        }
+      configuration_path:
+        type: string
+        minLength: 1
+        maxLength: 4096
+        description: Repository-relative configuration filename using forward slashes. Absolute paths and parent traversal are rejected.
+  ProjectSourceIdentity:
+    description: "Server-derived source identity. Use project_key to read or apply configuration; callers do not need to compute the fingerprint."
+    type: object
+    additionalProperties: false
+    required: [project_key, source_fingerprint, project_label]
+    properties:
+      project_key: { type: string }
+      source_fingerprint: { type: string }
+      project_label: { type: string }
+  ProjectSummary:
+    description: "Saved project identity and configuration revision. Fetch configuration separately to read or edit its declarations."
+    type: object
+    additionalProperties: false
+    required: [team_id, project_key, project_label, revision, updated_at]
+    properties:
+      team_id: { type: string }
+      project_key: { type: string }
+      project_label: { type: string }
+      revision: { type: integer, format: int64 }
+      updated_at: { type: string, format: date-time }
+  PreviewSummary:
+    description: "A preview created by the current identity. Fetch its detail for the included public URLs."
+    type: object
+    additionalProperties: false
+    required: [id, team_id, created_at]
+    properties:
+      id: { $ref: "../openapi.yaml#/components/schemas/PreviewID" }
+      team_id: { type: string }
+      created_at: { type: string, format: date-time }
+  PreviewPage:
+    type: object
+    additionalProperties: false
+    required: [previews]
+    properties:
+      previews:
+        type: array
+        items: { $ref: "../openapi.yaml#/components/schemas/PreviewSummary" }
+      next_cursor: { type: string }
+  ProjectPage:
+    type: object
+    additionalProperties: false
+    required: [projects]
+    properties:
+      projects:
+        type: array
+        items: { $ref: "../openapi.yaml#/components/schemas/ProjectSummary" }
+      next_cursor: { type: string }
   ProjectPublicMetadata:
     type: object
     additionalProperties: false
@@ -43,10 +108,12 @@ schemas:
   ApplyProjectConfigurationRequest:
     type: object
     additionalProperties: false
-    required: [team_id, source_fingerprint, expected_revision, configuration]
+    required: [team_id, expected_revision, configuration]
     properties:
       team_id: { type: string }
-      source_fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
+      source:
+        $ref: "../openapi.yaml#/components/schemas/GitProjectSource"
+        description: Required on first apply. Omit on updates to retain the saved source binding.
       project_label:
         { type: string, minLength: 1, maxLength: 63, pattern: "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$" }
       expected_revision: { type: integer, format: int64, minimum: 0 }
@@ -280,12 +347,23 @@ schemas:
   ProjectTargetTLS:
     type: object
     additionalProperties: false
-    required: [hostname, digest]
-    description: Publisher-to-target TLS trust, independent of visitor TLS. The protocol selects native negotiation. ca_pem is a CA-only snapshot added to the publisher's system roots. digest is lowercase SHA-256 of "tnl-target-tls/v1", NUL, hostname, NUL, and ca_pem.
+    required: [hostname]
+    description: "Publisher-to-target TLS trust, separate from visitor TLS. ca_pem adds CA certificates to the publisher's system roots. Control computes digest from the exact hostname and CA bytes. Omit it when changing trust settings; a supplied digest must match."
     properties:
       hostname: { type: string, minLength: 1, maxLength: 253 }
-      ca_pem: { type: string, maxLength: 1048576 }
-      digest: { type: string, pattern: "^[0-9a-f]{64}$" }
+      ca_pem:
+        {
+          "type": "string",
+          "maxLength": 1048576,
+          "description": "CA certificates in PEM format, not a file path or URL. Do not include private keys.",
+        }
+      digest:
+        {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "x-go-type-skip-optional-pointer": true,
+          "description": "Computed by control and included in resolved configuration. Callers may omit it.",
+        }
   ProjectServiceAccess:
     type: object
     additionalProperties: false

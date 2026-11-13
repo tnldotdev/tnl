@@ -5,7 +5,7 @@ paths:
       tags: [publisher-groups]
       summary: Replace a publisher group's DNS namespace label
       security: [{ bearerAuth: [] }]
-      description: Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
+      description: "Change the group's DNS label while keeping its IDs and ports. This closes old service runs and assigns new publication grants and certificate plans. Old names remain reserved until control finishes its certificate and DNS cleanup checks. The configuration key and separately configured public URLs do not change. Send the current expected revision; an identical retry with the same key returns the original result."
       parameters:
         - { name: project_key, in: path, required: true, schema: { type: string } }
         - { name: group_name, in: path, required: true, schema: { type: string } }
@@ -27,7 +27,7 @@ paths:
       tags: [publisher-groups]
       summary: Rename a group's configuration selector without changing endpoints
       security: [{ bearerAuth: [] }]
-      description: Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
+      description: "Rename the configuration key without changing the group's ID, namespace, services, ports, or publisher grants. Old selectors remain reserved for this group. Update project configuration before the next apply; retrying a completed rename is safe."
       parameters:
         - { name: project_key, in: path, required: true, schema: { type: string } }
         - { name: group_name, in: path, required: true, schema: { type: string } }
@@ -103,7 +103,7 @@ paths:
       tags: [publisher-groups]
       summary: Enroll a replica's signing key with a group enrollment secret
       security: []
-      description: Authenticate with enrollment_key in the JSON body and submit the replica's own Ed25519 public key. No Authorization credential is used by this operation; security with an empty array does not waive the enrollment secret. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+      description: "Register a replica's Ed25519 public key using enrollment_key in the body. Retrying the same key returns the same membership without consuming more enrollment capacity."
       requestBody:
         {
           required: true,
@@ -135,7 +135,7 @@ paths:
       tags: [publisher-groups]
       summary: Verify a replica's group membership without acquiring a lease
       security: []
-      description: Authenticate with the one-use signed assertion in the JSON body, not a bearer token. Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The assertion audience is the control URL followed by this path. The empty security array describes body authentication, not anonymous access.
+      description: "Verify group membership using a one-use signed assertion in the body. Its audience is this endpoint's full control URL. Returns current and historical selectors without replacing the running publisher's group lease."
       requestBody:
         required: true
         content:
@@ -154,7 +154,7 @@ paths:
       tags: [publisher-groups]
       summary: Exchange a signed replica assertion for a group lease
       security: []
-      description: Authenticate with a one-use signed assertion in the JSON body, not a bearer token, and receive a short-lived pgl_ group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID. The empty security array describes body authentication, not anonymous access.
+      description: "Exchange a one-use signed assertion in the body for a pgl_ group lease. The assertion's audience is this endpoint's full control URL, and its grant claim is the group ID."
       requestBody:
         {
           required: true,
@@ -183,7 +183,7 @@ paths:
       operationId: getPublisherGroupAssignments
       tags: [publisher-groups]
       summary: Read services and grants assigned to one leased group replica
-      description: Authenticate with the current pgl_ group lease and read the replica's exact service assignments and publisher grant IDs. These assignments may contain targets; a pta_ publisher access token cannot read them.
+      description: "Read the replica's assigned services and publisher grants using its current pgl_ lease. Assignments can include targets. A pta_ publisher token cannot read them."
       security: [{ publisherGroupLeaseAuth: [] }]
       responses:
         "200":
@@ -204,7 +204,7 @@ paths:
       operationId: acknowledgePublisherGroupConfiguration
       tags: [publisher-groups]
       summary: Acknowledge the exact configuration installed by a group replica
-      description: Report the installed revision, configuration hash, and health using the replica's current pgl_ group lease. Control rejects stale or mismatched desired state; a pta_ publisher access token cannot acknowledge a group configuration.
+      description: "Report the installed configuration revision, hash, and health using the replica's current pgl_ lease. Stale or mismatched configuration is rejected; a pta_ publisher token cannot acknowledge it."
       security: [{ publisherGroupLeaseAuth: [] }]
       requestBody:
         {

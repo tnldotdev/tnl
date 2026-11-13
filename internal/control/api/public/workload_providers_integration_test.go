@@ -109,7 +109,7 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 			if err = json.Unmarshal(data, &wire); err != nil {
 				t.Fatal(err)
 			}
-			body := controlv1.ApplyProjectConfigurationRequest{TeamId: team, SourceFingerprint: strings.Repeat("a", 64), Configuration: wire}
+			body := controlv1.ApplyProjectConfigurationRequest{TeamId: team, Source: &testProjectSource, Configuration: wire}
 			applied, err := owner.ApplyProjectConfiguration(ctx, "store", body)
 			if err != nil {
 				t.Fatal(err)
@@ -119,7 +119,7 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 				t.Fatal(err)
 			}
 			token := issuer.Sign(t, claims)
-			identity, err := job.IdentifyPolicy(ctx, team, "store", body.SourceFingerprint, "storefront", token)
+			identity, err := job.IdentifyPolicy(ctx, team, "store", applied.SourceFingerprint, "storefront", token)
 			if err != nil {
 				t.Fatal("verify owner identity", err)
 			}
@@ -127,7 +127,7 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 			if identity.AssertionExpiresAt.Unix() != now.Add(10*time.Minute).Unix() {
 				t.Fatal("identity cache expiry did not come from the verified assertion")
 			}
-			session, err := job.Exchange(ctx, team, "store", body.SourceFingerprint, "storefront", token, nil)
+			session, err := job.Exchange(ctx, team, "store", applied.SourceFingerprint, "storefront", token, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -145,7 +145,7 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 			}
 			claims["exp"] = now.Add(11 * time.Minute).Unix()
 			rotated := issuer.Sign(t, claims)
-			if current, err := job.Identify(ctx, team, "store", body.SourceFingerprint, "storefront", rotated); err != nil || current != binding {
+			if current, err := job.Identify(ctx, team, "store", applied.SourceFingerprint, "storefront", rotated); err != nil || current != binding {
 				t.Fatal("rotating assertion changed owner identity", err)
 			}
 			if attached, err := job.Attach(ctx, rotated); err != nil || attached.Id != session.Id || attached.Binding != binding || !attached.ExpiresAt.Equal(*session.ExpiresAt) || attached.AssertionExpiresAt == nil || attached.AssertionExpiresAt.Unix() != now.Add(11*time.Minute).Unix() {
@@ -159,7 +159,7 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 				original := execution[key]
 				execution[key] = next
 				replacementToken := issuer.Sign(t, claims)
-				replacementBinding, err := job.Identify(ctx, team, "store", body.SourceFingerprint, "storefront", replacementToken)
+				replacementBinding, err := job.Identify(ctx, team, "store", applied.SourceFingerprint, "storefront", replacementToken)
 				if err != nil || replacementBinding == binding {
 					t.Fatal("replacement execution reused the old binding", err)
 				}
@@ -178,7 +178,7 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				replaced, err := replacement.Exchange(ctx, team, "store", body.SourceFingerprint, "storefront", replacementToken, nil)
+				replaced, err := replacement.Exchange(ctx, team, "store", applied.SourceFingerprint, "storefront", replacementToken, nil)
 				if err != nil || replaced.Id == session.Id || replaced.Binding != replacementBinding {
 					t.Fatal("replacement execution did not receive separate authority", err)
 				}
@@ -203,7 +203,7 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 					t.Fatalf("%s session emitted GitHub field %s", provider, field)
 				}
 			}
-			retry, err := job.Exchange(ctx, team, "store", body.SourceFingerprint, "storefront", token, nil)
+			retry, err := job.Exchange(ctx, team, "store", applied.SourceFingerprint, "storefront", token, nil)
 			if err != nil || retry.Id != session.Id || retry.Credential != session.Credential || !retry.ExpiresAt.Equal(*session.ExpiresAt) {
 				t.Fatal("nonce retry changed fixed session", err)
 			}
@@ -211,11 +211,11 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			second, err := other.Exchange(ctx, team, "store", body.SourceFingerprint, "storefront", token, nil)
+			second, err := other.Exchange(ctx, team, "store", applied.SourceFingerprint, "storefront", token, nil)
 			if err != nil || second.Id == session.Id {
 				t.Fatal("reusable provider token did not create a separately key-bound session", err)
 			}
-			for _, bad := range []struct{ source, name string }{{strings.Repeat("b", 64), "storefront"}, {body.SourceFingerprint, "another"}} {
+			for _, bad := range []struct{ source, name string }{{strings.Repeat("b", 64), "storefront"}, {applied.SourceFingerprint, "another"}} {
 				if _, err = job.Exchange(ctx, team, "store", bad.source, bad.name, token, nil); err == nil {
 					t.Fatal("assertion crossed source or policy boundary")
 				}
@@ -234,7 +234,7 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 				if _, err := job.Attach(ctx, issuer.Sign(t, claims)); err == nil {
 					t.Fatalf("attachment accepted wrong %s", field)
 				}
-				if _, err = job.Exchange(ctx, team, "store", body.SourceFingerprint, "storefront", issuer.Sign(t, claims), nil); err == nil {
+				if _, err = job.Exchange(ctx, team, "store", applied.SourceFingerprint, "storefront", issuer.Sign(t, claims), nil); err == nil {
 					t.Fatalf("wrong %s accepted", field)
 				}
 				selected[key] = original
