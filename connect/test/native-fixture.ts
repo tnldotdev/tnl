@@ -107,6 +107,8 @@ if (op === "oidc") {
 } else if (op === "context") {
   emit({
     schema: 1,
+    team_name: "acme",
+    deployment: "production",
     directory: config.contextDirectory ?? process.cwd(),
     config_digest: "a".repeat(64),
     server: "https://control.example",

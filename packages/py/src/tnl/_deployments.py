@@ -45,18 +45,26 @@ class Deployment:
         self._local = name == "local"
         self._project, self._name, self._token = project, name, token
         self._environment = dict(os.environ)
-        if not self._local and token is None:
+        mounted = (
+            self._environment.get("TNL_CONNECTION_HANDLE")
+            if token is None and not self._local
+            else None
+        )
+        if not self._local and token is None and mounted is None:
             raise TnlError("sdk.configuration_invalid", "supply an approved deployment credential")
         self._services = dict(services)
         self._scope = _Scope(
             str(Path.cwd().resolve()),
-            None,
-            deployment={
+            mounted,
+            deployment=None
+            if mounted is not None
+            else {
                 "project": project,
                 "name": name,
                 "token": token,
                 "services": list(services),
             },
+            selection=None if mounted is None else {"project": project, "name": name},
         )
         self._closed = False
         self._pending: set[asyncio.Task[tuple[object, DeploymentConnection]]] = set()
@@ -167,6 +175,10 @@ class Deployment:
     ) -> Publication:
         if self._closed:
             raise _error("closed")
+        if not self._local and self._token is None:
+            raise TnlError(
+                "sdk.configuration_invalid", "a borrowed visitor capability cannot publish"
+            )
         if len(self._publications) + len(self._publication_tasks) >= 64:
             raise TnlError("sdk.client_capacity", "close an unused publication")
         service = first if isinstance(first, str) else None

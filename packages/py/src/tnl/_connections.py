@@ -580,10 +580,16 @@ class _FailureObservation:
 
 class _Scope:
     def __init__(
-        self, directory: str, mounted: str | None, *, deployment: dict[str, object] | None = None
+        self,
+        directory: str,
+        mounted: str | None,
+        *,
+        deployment: dict[str, object] | None = None,
+        selection: dict[str, str] | None = None,
     ) -> None:
         self.directory, self.mounted = directory, mounted
         self.deployment = deployment
+        self.selection = None if selection is None else dict(selection)
         self.creator_pid = os.getpid()
         self.registry: str | None = None
         self._binary: Path | None = None
@@ -618,7 +624,12 @@ class _Scope:
                     raise _error("closed")
                 if self.selected.ipc is None:
                     self.selected.ipc = OwnerIPC(self.mounted)
-            return _prepared(self.selected.ipc.prepare(service), service), self.selected
+            expected: dict[str, object] | None = (
+                None if self.selection is None else {"selection": self.selection}
+            )
+            return _prepared(
+                self.selected.ipc.prepare(service, selection=expected), service
+            ), self.selected
         with self.lock:
             if self.registry is None:
                 self.registry = str(Path(tempfile.mkdtemp(prefix="tnl-sdk-")).resolve())
@@ -945,6 +956,8 @@ class _Scope:
                 self.registry = None
 
     def stop(self) -> None:
+        if self.mounted is not None and self.selected.ipc is not None:
+            self.selected.ipc.close()
         if self.registry is not None:
             stopped = _object(
                 _command(

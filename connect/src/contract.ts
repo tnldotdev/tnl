@@ -18,11 +18,13 @@ export const contextSchema = z
     server: httpsOriginSchema.refine((value) => value.length <= 4096),
     audience: text,
     team_id: text,
+    team_name: text.optional(),
     project_key: text,
     source_id: text,
     worktree_key: text,
     project_label: text,
     workload: serviceNameSchema,
+    deployment: serviceNameSchema.optional(),
     services: z
       .array(serviceNameSchema)
       .min(1)

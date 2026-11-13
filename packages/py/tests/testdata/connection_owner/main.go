@@ -139,7 +139,7 @@ func run() error {
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}}
 	go echo(stream, nil, false)
 	go echo(listener, tlsConfig, *postgresAuth)
-	scope := connectorruntime.Context{Schema: 1, Directory: parent, ConfigDigest: strings.Repeat("a", 64), Server: "https://control.example.test", Audience: "https://control.example.test", ProjectKey: "project", SourceID: "source", WorktreeKey: "worktree", Services: []string{"database", "stream"}}
+	scope := connectorruntime.Context{Schema: 1, Directory: parent, ConfigDigest: strings.Repeat("a", 64), Server: "https://control.example.test", Audience: "https://control.example.test", TeamID: "tm_selected", TeamName: "acme", ProjectKey: "project", Deployment: "production", SourceID: "source", WorktreeKey: "worktree", Services: []string{"database", "stream"}}
 	b := &backend{expires: expires, ca: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), port: listener.Addr().(*net.TCPAddr).Port, streamPort: stream.Addr().(*net.TCPAddr).Port, listeners: []net.Listener{listener, stream}}
 	b.transportID, err = opaqueid.New("ctg_")
 	if err != nil {

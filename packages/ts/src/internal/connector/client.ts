@@ -161,7 +161,11 @@ export function createClient<const Services extends ServiceFacts = Record<never,
     deployment(name: string): Deployment<Services> {
       if (!serviceNameSchema.safeParse(name).success && !/^pgrp_[a-z0-9]{22}$/.test(name))
         throw new TnlError("sdk.configuration_invalid");
-      if (name !== "local" && (project === undefined || token === undefined))
+      const mounted = token === undefined ? process.env.TNL_CONNECTION_HANDLE : undefined;
+      if (
+        name !== "local" &&
+        (project === undefined || (token === undefined && mounted === undefined))
+      )
         throw new TnlError("sdk.configuration_invalid");
       const directory = process.cwd();
       const binary = resolveNativeBinary();
@@ -171,7 +175,8 @@ export function createClient<const Services extends ServiceFacts = Record<never,
           ? undefined
           : deploymentConnector({
               project: project ?? "",
-              token: token ?? "",
+              ...(token === undefined ? {} : { token }),
+              ...(mounted === undefined ? {} : { handle: mounted }),
               name,
               services: [...protocols.keys()],
             });
@@ -216,6 +221,8 @@ export function createClient<const Services extends ServiceFacts = Record<never,
           third?: NamedPublicationOptions,
         ): Promise<Publication> {
           if (closed) throw closedError;
+          if (name !== "local" && token === undefined)
+            throw new TnlError("sdk.configuration_invalid");
           if (publications.size + pending.size >= 64) throw new TnlError("sdk.client_capacity");
           const service = typeof first === "string" ? first : undefined;
           const server = (service === undefined ? first : second) as LocalHTTPServer | FetchHandler;

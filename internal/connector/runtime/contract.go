@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/project/meta"
@@ -40,6 +41,7 @@ type Context struct {
 	Server       string   `json:"server"`
 	Audience     string   `json:"audience"`
 	TeamID       string   `json:"team_id"`
+	TeamName     string   `json:"team_name,omitempty"`
 	ProjectKey   string   `json:"project_key"`
 	SourceID     string   `json:"source_id"`
 	WorktreeKey  string   `json:"worktree_key"`
@@ -91,20 +93,36 @@ func (s GitHubActionsRefresh) Getenv(name string) string {
 }
 
 type Request struct {
-	Schema            int                 `json:"schema"`
-	Directory         string              `json:"directory"`
-	ConfigDigest      string              `json:"config_digest"`
-	Service           string              `json:"service,omitempty"`
-	Assertion         string              `json:"assertion,omitempty"`
-	AcquireAssertion  bool                `json:"acquire_assertion,omitempty"`
-	Workload          string              `json:"workload,omitempty"`
-	Manifest          string              `json:"manifest,omitempty"`
-	RequestedAt       string              `json:"requested_at,omitempty"`
-	SDKRequestHandle  string              `json:"sdk_request_handle,omitempty"`
-	SDKWorkload       *SDKWorkloadRequest `json:"sdk_workload,omitempty"`
-	SDKWorkloadPolicy string              `json:"sdk_workload_policy,omitempty"`
-	SDKEnvironment    *SDKEnvironment     `json:"sdk_environment,omitempty"`
-	Deployment        *DeploymentRequest  `json:"deployment,omitempty"`
+	Schema            int                         `json:"schema"`
+	Directory         string                      `json:"directory"`
+	ConfigDigest      string                      `json:"config_digest"`
+	Service           string                      `json:"service,omitempty"`
+	Assertion         string                      `json:"assertion,omitempty"`
+	AcquireAssertion  bool                        `json:"acquire_assertion,omitempty"`
+	Workload          string                      `json:"workload,omitempty"`
+	Manifest          string                      `json:"manifest,omitempty"`
+	RequestedAt       string                      `json:"requested_at,omitempty"`
+	SDKRequestHandle  string                      `json:"sdk_request_handle,omitempty"`
+	SDKWorkload       *SDKWorkloadRequest         `json:"sdk_workload,omitempty"`
+	SDKWorkloadPolicy string                      `json:"sdk_workload_policy,omitempty"`
+	SDKEnvironment    *SDKEnvironment             `json:"sdk_environment,omitempty"`
+	Deployment        *DeploymentRequest          `json:"deployment,omitempty"`
+	Selection         *ProjectDeploymentSelection `json:"selection,omitempty"`
+}
+
+// selection narrows a borrowed capability; it never supplies visitor authority.
+type ProjectDeploymentSelection struct {
+	Project string `json:"project"`
+	Name    string `json:"name"`
+}
+
+func (c Context) MatchesSelection(s *ProjectDeploymentSelection) bool {
+	if s == nil {
+		return true
+	}
+	team, project, found := strings.Cut(s.Project, "/")
+	return found && team != "" && project == c.ProjectKey && s.Name != "" &&
+		s.Name == c.Deployment && (team == c.TeamID || c.TeamName != "" && team == c.TeamName)
 }
 
 // carried only on private stdin/IPC. context and saved handles contain no token.
