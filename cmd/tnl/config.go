@@ -473,6 +473,8 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		apply(&flags.Publisher.Enroll.remoteFlags, true)
 	case "publisher provision":
 		apply(&flags.Publisher.Provision.remoteFlags, true)
+	case "publisher setup":
+		apply(&flags.Publisher.Setup.remoteFlags, true)
 	case "publisher list":
 		apply(&flags.Publisher.List.remoteFlags, true)
 	case "publisher revoke <publisher-identity-id>":

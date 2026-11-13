@@ -704,7 +704,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, factories
 	case "publisher current":
 		return runPublisherCurrent(ctx, flags.Publisher.Current, stdout)
 	case "publisher setup":
-		return runPublisherSetup(ctx, flags.Publisher.Setup, stdout, stderr)
+		return runPublisherSetup(ctx, flags.Publisher.Setup, project, stdout, stderr)
 	case "publisher serve":
 		return runPublisherServe(ctx, flags.Publisher.Serve, project, stdout, stderr)
 	case "publisher rename <group> <name>":
@@ -714,9 +714,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, factories
 	case "publisher provision":
 		return runPublisherProvision(ctx, flags.Publisher.Provision, project, stdout, stderr)
 	case "publisher list":
-		return runPublisherList(ctx, flags.Publisher.List, stdout, stderr)
+		return runPublisherList(ctx, flags.Publisher.List, project, stdout, stderr)
 	case "publisher revoke <publisher-identity-id>":
-		return runPublisherRevoke(ctx, flags.Publisher.Revoke, stdout, stderr)
+		return runPublisherRevoke(ctx, flags.Publisher.Revoke, project, stdout, stderr)
 	case "publisher grant add <publisher-identity-id>":
 		return runPublisherGrantAdd(ctx, flags.Publisher.Grant.Add, stdout, stderr)
 	case "publisher grant revoke <publisher-identity-id> <grant-id>":

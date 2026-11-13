@@ -132,19 +132,11 @@ func runDeployment(ctx context.Context, command string, flags cli, project proje
 	if selected == nil {
 		return failure.Wrap("select deployment operation", failure.InvalidCommand, errors.New("unknown deployment operation"))
 	}
-	key := selected.ProjectKey
-	if key == "" {
-		source, err := project.SourceIdentity(ctx)
-		if err != nil {
-			return err
-		}
-		key = source.Key
-	}
-	if !naming.ValidProjectKey(key) {
-		return publisherCLIError("pass a valid --project-key or run inside the applied Git project")
+	key, err := deploymentProjectKey(ctx, project, selected.ProjectKey)
+	if err != nil {
+		return err
 	}
 	var targets map[string]controlv1.DeploymentTarget
-	var err error
 	if command == "deployment create <name>" {
 		if !naming.ValidServiceName(flags.Deployment.Create.Name) || flags.Deployment.Create.Name == "local" {
 			return publisherCLIError("choose a deployment name other than local")
@@ -163,7 +155,7 @@ func runDeployment(ctx context.Context, command string, flags cli, project proje
 		return publisherCLIError("select --limit 1-100 and an optional deployment ID with --after")
 	}
 	for _, selector := range []string{flags.Deployment.Show.Deployment, flags.Deployment.Update.Deployment, flags.Deployment.Delete.Deployment} {
-		if selector != "" && (selector == "local" || !naming.ValidServiceName(selector) && !opaqueid.Valid(selector, "pgrp_")) {
+		if selector != "" && !validDeploymentSelector(selector) {
 			return publisherCLIError("select a saved deployment name or ID; local is a client-side selection")
 		}
 	}
@@ -254,6 +246,24 @@ func runDeployment(ctx context.Context, command string, flags cli, project proje
 		return failure.Wrap("write deployment", failure.OutputUnavailable, json.NewEncoder(output).Encode(deployment))
 	}
 	return writeHumanFrame(output, "tnl "+strings.Split(command, " <")[0], "saved", "no target connection or database query was checked", deploymentBlock(deployment))
+}
+
+func validDeploymentSelector(selector string) bool {
+	return selector != "local" && (naming.ValidServiceName(selector) || opaqueid.Valid(selector, "pgrp_"))
+}
+
+func deploymentProjectKey(ctx context.Context, project projectConfiguration, key string) (string, error) {
+	if key == "" {
+		source, err := project.SourceIdentity(ctx)
+		if err != nil {
+			return "", err
+		}
+		key = source.Key
+	}
+	if !naming.ValidProjectKey(key) {
+		return "", publisherCLIError("pass a valid --project-key or run inside the applied Git project")
+	}
+	return key, nil
 }
 
 func validateDeploymentResult(deployment controlv1.Deployment, team, project string) error {
