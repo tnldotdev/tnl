@@ -53,7 +53,7 @@ func TestIntegrationCLIDeploymentCRUD(t *testing.T) {
 	mux := http.NewServeMux()
 	server := httptest.NewTLSServer(mux)
 	t.Cleanup(server.Close)
-	public, err := controlpublic.NewHandler(controlpublic.Config{ControlURL: server.URL, ManagedURLMode: naming.ManagedURLModeSimple}, controlpublic.DatabaseStores(database), database, nil)
+	public, err := controlpublic.NewHandler(controlpublic.Config{ControlURL: server.URL, ManagedURLMode: naming.ManagedURLModeSimple, OIDCIssuer: "https://identity.fixture.test"}, controlpublic.DatabaseStores(database), database, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
