@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -257,7 +258,7 @@ func TestIntegrationAppliedProjectGroupAssignmentsRunsAndRevocation(t *testing.T
 				t.Fatal("group HTTP selected superseded public URL run")
 			}
 		}
-		if err = d.AcknowledgePublisherGroupConfiguration(t.Context(), replica.lease.AccessToken, status.Revision, status.ConfigurationHash, true, now); err != nil {
+		if err = d.AcknowledgePublisherGroupConfiguration(t.Context(), replica.lease.AccessToken, replica.assignments.Revision, replica.assignments.ConfigurationHash, true, now); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -304,7 +305,7 @@ func TestIntegrationAppliedProjectGroupAssignmentsRunsAndRevocation(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = d.AcknowledgePublisherGroupConfiguration(t.Context(), b.lease.AccessToken, 1, status.ConfigurationHash, true, now); !errors.Is(err, ErrProjectConfigurationStale) {
+	if err = d.AcknowledgePublisherGroupConfiguration(t.Context(), b.lease.AccessToken, b.assignments.Revision, b.assignments.ConfigurationHash, true, now); !errors.Is(err, ErrProjectConfigurationStale) {
 		t.Fatal("stale ack was accepted", err)
 	}
 	newAssignments, err := d.GetPublisherGroupAssignments(t.Context(), b.lease.AccessToken, now)
@@ -460,10 +461,17 @@ func TestIntegrationAppliedProjectGroupReassignmentKeepsSavedService(t *testing.
 func TestIntegrationAppliedProjectStorageRotation(t *testing.T) {
 	d, databaseURL, now := newControlStateIntegrationDatabaseWithURL(t, "applied_rotation")
 	r := appliedProjectRequest(t, d, now)
+	r.Configuration.PublisherGroups["remote"] = ProjectPublisherGroup{}
+	r.Configuration.Services["database"] = ProjectServiceConfiguration{PublisherGroup: "remote", Protocol: "postgres", Target: "private.internal:5432"}
 	before, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
 		t.Fatal(err)
 	}
+	enrollment, err := d.IssuePublisherGroupEnrollment(t.Context(), r.TeamID, r.ProjectKey, "remote", r.ActorID, 1, time.Hour, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replica := enrollAppliedGroup(t, d, r, enrollment, now)
 	newKey := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32))
 	rotating, err := Open(t.Context(), databaseURL, newKey, testStorageKey, naming.ManagedURLModeGenerated)
 	if err != nil {
@@ -481,6 +489,10 @@ func TestIntegrationAppliedProjectStorageRotation(t *testing.T) {
 	after, err := reopened.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, r.ActorID)
 	if err != nil || after.ConfigurationHash != before.ConfigurationHash || after.Configuration.Services["web"].Target != before.Configuration.Services["web"].Target {
 		t.Fatal("applied target cannot be read after dropping the old key", err)
+	}
+	assignments, err := reopened.GetPublisherGroupAssignments(t.Context(), replica.lease.AccessToken, now)
+	if err != nil || !reflect.DeepEqual(assignments, replica.assignments) {
+		t.Fatal("deployment targets cannot be read after dropping the old key", err)
 	}
 }
 
@@ -605,16 +617,24 @@ func TestIntegrationAppliedProjectHTTPSettingsAndTargetTrust(t *testing.T) {
 	s.PublicURL = nil
 	period := config.Duration(time.Second)
 	s.HTTP.Limits.Rate = &config.Rate{Per: &period}
-	bad.Configuration.Services["web"] = s
-	encoded, err := json.Marshal(bad.Configuration)
+	deployment, err := controlstatedb.New(d.pool).LockProjectPublisherGroup(t.Context(), replica.member.GroupID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	encrypted, err := d.storageKey.Seal(appliedProjectContext(r.TeamID, r.ProjectKey), encoded)
+	snapshot, err := d.openDeploymentConfiguration(deployment)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.pool.Exec(t.Context(), `UPDATE control.applied_projects SET configuration_ciphertext=$3,storage_key_id=$4 WHERE team_id=$1 AND project_key=$2`, r.TeamID, r.ProjectKey, encrypted, d.storageKey.CurrentID()); err != nil {
+	snapshot.Services["web"] = s
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encrypted, err := d.storageKey.Seal(deploymentConfigurationContext(deployment.ID), encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = d.pool.Exec(t.Context(), `UPDATE control.project_publisher_groups SET configuration_ciphertext=$2,storage_key_id=$3 WHERE id=$1`, deployment.ID, encrypted, d.storageKey.CurrentID()); err != nil {
 		t.Fatal(err)
 	}
 	if err = d.serviceHTTPSourceAllowed(t.Context(), controlstatedb.New(d.pool), id, netip.MustParseAddr("203.0.113.10")); !errors.Is(err, ErrServiceAccess) {

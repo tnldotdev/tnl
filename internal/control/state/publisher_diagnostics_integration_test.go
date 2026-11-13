@@ -50,7 +50,7 @@ func TestIntegrationPublisherDiagnosticsFreshness(t *testing.T) {
 	if err := observe("renew", 0); !errors.Is(err, ErrPublisherRuntimeStale) {
 		t.Fatal("stale runtime was not rejected", err)
 	}
-	if err := d.AcknowledgePublisherGroupConfiguration(ctx, replica.lease.AccessToken, project.Revision, project.ConfigurationHash, true, now); err != nil {
+	if err := d.AcknowledgePublisherGroupConfiguration(ctx, replica.lease.AccessToken, replica.assignments.Revision, replica.assignments.ConfigurationHash, true, now); err != nil {
 		t.Fatal(err)
 	}
 	read := func() PublisherGroupMemberStatus {

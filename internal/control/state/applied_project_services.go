@@ -209,7 +209,7 @@ func (d *Database) revokeAppliedServicePublishers(ctx context.Context, tx pgx.Tx
 	if err := d.revokeProjectResourcePublishers(ctx, tx, q, s, now); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `DELETE FROM control.publisher_group_service_grants WHERE team_id=$1 AND project_key=$2 AND service=$3`, s.TeamID, s.ProjectKey, s.Service)
+	_, err := tx.Exec(ctx, `DELETE FROM control.publisher_group_service_grants WHERE team_id=$1 AND project_key=$2 AND service=$3 AND group_id=$4`, s.TeamID, s.ProjectKey, s.Service, s.GroupID)
 	return err
 }
 
@@ -256,7 +256,7 @@ func (d *Database) removeAppliedService(ctx context.Context, tx pgx.Tx, q *contr
 	if err := d.retireProjectResource(ctx, tx, q, s, now); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `DELETE FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2 AND service=$3`, s.TeamID, s.ProjectKey, s.Service)
+	_, err := tx.Exec(ctx, `DELETE FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2 AND service=$3 AND group_id IS NOT DISTINCT FROM $4`, s.TeamID, s.ProjectKey, s.Service, s.GroupID)
 	return err
 }
 
@@ -298,14 +298,14 @@ func (d *Database) retireProjectResource(ctx context.Context, tx pgx.Tx, q *cont
 
 func (d *Database) reconcileAppliedVisitorGrant(ctx context.Context, tx pgx.Tx, s controlstatedb.ControlAppliedProjectService, actor string, enabled bool, now time.Time) error {
 	var grant string
-	if err := tx.QueryRow(ctx, `SELECT COALESCE(visitor_grant_id,'') FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2 AND service=$3`, s.TeamID, s.ProjectKey, s.Service).Scan(&grant); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(visitor_grant_id,'') FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2 AND service=$3 AND group_id IS NOT DISTINCT FROM $4`, s.TeamID, s.ProjectKey, s.Service, s.GroupID).Scan(&grant); err != nil {
 		return err
 	}
 	grant, err := reconcileProjectVisitorGrant(ctx, tx, s, actor, grant, enabled, now)
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `UPDATE control.applied_project_services SET visitor_grant_id=$4 WHERE team_id=$1 AND project_key=$2 AND service=$3`, s.TeamID, s.ProjectKey, s.Service, nullableText(grant))
+	_, err = tx.Exec(ctx, `UPDATE control.applied_project_services SET visitor_grant_id=$4 WHERE team_id=$1 AND project_key=$2 AND service=$3 AND group_id IS NOT DISTINCT FROM $5`, s.TeamID, s.ProjectKey, s.Service, nullableText(grant), s.GroupID)
 	return err
 }
 
@@ -375,7 +375,7 @@ func (d *Database) reconcileAppliedPublisherGrants(ctx context.Context, tx pgx.T
 
 func (d *Database) ensureGroupServiceGrant(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, publisher string, s controlstatedb.ControlAppliedProjectService, actor string, now time.Time) error {
 	var existing string
-	err := tx.QueryRow(ctx, `SELECT assignment.grant_id FROM control.publisher_group_service_grants assignment WHERE assignment.publisher_identity_id=$1 AND assignment.team_id=$2 AND assignment.project_key=$3 AND assignment.service=$4`, publisher, s.TeamID, s.ProjectKey, s.Service).Scan(&existing)
+	err := tx.QueryRow(ctx, `SELECT assignment.grant_id FROM control.publisher_group_service_grants assignment WHERE assignment.publisher_identity_id=$1 AND assignment.team_id=$2 AND assignment.project_key=$3 AND assignment.service=$4 AND assignment.group_id=$5`, publisher, s.TeamID, s.ProjectKey, s.Service, s.GroupID).Scan(&existing)
 	if err == nil {
 		return nil
 	}
@@ -387,6 +387,6 @@ func (d *Database) ensureGroupServiceGrant(ctx context.Context, tx pgx.Tx, q *co
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO control.publisher_group_service_grants(publisher_identity_id,team_id,project_key,service,grant_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT(publisher_identity_id,team_id,project_key,service) DO UPDATE SET grant_id=EXCLUDED.grant_id`, publisher, s.TeamID, s.ProjectKey, s.Service, g.ID)
+	_, err = tx.Exec(ctx, `INSERT INTO control.publisher_group_service_grants(publisher_identity_id,team_id,project_key,service,grant_id,group_id) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(publisher_identity_id,team_id,project_key,service) DO UPDATE SET grant_id=EXCLUDED.grant_id`, publisher, s.TeamID, s.ProjectKey, s.Service, g.ID, s.GroupID)
 	return err
 }

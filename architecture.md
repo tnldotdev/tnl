@@ -248,6 +248,10 @@ Use the package that defines a shared value. HTTP limits, for example, use
 `naming/ingresspool` defines an address pool ID shared by control and ingress;
 control state need not import ingress just to name that pool.
 
+`security/rdsroots` owns the pinned offline Amazon RDS regional CA catalog used
+by publisher discovery and control target approval. It depends on neither owner;
+control must not import publisher discovery to approve a supplied endpoint.
+
 For shared behavior, define a small interface where it is used and have the
 caller supply the implementation. Do not copy permission checks or run-management
 code to avoid an import, or leave forwarding wrappers after moving code.

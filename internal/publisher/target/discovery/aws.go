@@ -21,7 +21,7 @@ import (
 	"github.com/aws/smithy-go"
 	"github.com/aws/smithy-go/logging"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
-	"github.com/tnldotdev/tnl/internal/publisher/target/discovery/rdsroots"
+	"github.com/tnldotdev/tnl/internal/security/rdsroots"
 )
 
 type EKS interface {

@@ -10,7 +10,7 @@ import (
 
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	publisherdiscovery "github.com/tnldotdev/tnl/internal/publisher/target/discovery"
-	"github.com/tnldotdev/tnl/internal/publisher/target/discovery/rdsroots"
+	"github.com/tnldotdev/tnl/internal/security/rdsroots"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 

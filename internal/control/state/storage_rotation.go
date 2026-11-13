@@ -82,6 +82,7 @@ func (d *Database) countPreviousStorageSecrets(ctx context.Context) (int64, erro
 			(SELECT count(*) FROM control.connector_peer_pending_bindings WHERE storage_key_id = $1) +
 			(SELECT count(*) FROM control.workload_sessions WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.applied_projects WHERE storage_key_id=$1) +
+			(SELECT count(*) FROM control.project_publisher_groups WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.service_http_browser_logins WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.service_http_browser_sessions WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.browser_login_attempts WHERE verifier_storage_key_id=$1) +
@@ -344,6 +345,9 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 		{`SELECT ctid::text, team_id || '/' || project_key, configuration_ciphertext FROM control.applied_projects
 		  WHERE storage_key_id=$1 ORDER BY team_id,project_key FOR UPDATE SKIP LOCKED LIMIT $2`,
 			"configuration_ciphertext", "storage_key_id", "control.applied_projects", func(id string) string { return "applied-project/" + id }},
+		{`SELECT ctid::text,id,configuration_ciphertext FROM control.project_publisher_groups
+		  WHERE storage_key_id=$1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $2`,
+			"configuration_ciphertext", "storage_key_id", "control.project_publisher_groups", deploymentConfigurationContext},
 		{`SELECT ctid::text, team_id || '/' || project_key || '/' || idempotency_key, response_ciphertext FROM control.publisher_namespace_renames
 		  WHERE storage_key_id=$1 ORDER BY team_id,project_key,idempotency_key LIMIT $2 FOR UPDATE SKIP LOCKED`,
 			"response_ciphertext", "storage_key_id", "control.publisher_namespace_renames", func(id string) string { return "publisher-namespace-rename/" + id }},

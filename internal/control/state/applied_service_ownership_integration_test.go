@@ -280,8 +280,13 @@ func assertPrivateOwnershipAssignments(t *testing.T, d *Database, replicas []enr
 		t.Fatal("unexpected exact group grants", count, err)
 	}
 	for _, replica := range replicas {
+		var revision int64
+		var hash string
+		if err := d.pool.QueryRow(t.Context(), `SELECT revision,configuration_hash FROM control.project_publisher_groups WHERE id=$1`, replica.member.GroupID).Scan(&revision, &hash); err != nil {
+			t.Fatal(err)
+		}
 		assignments, err := d.GetPublisherGroupAssignments(t.Context(), replica.lease.AccessToken, now)
-		if err != nil || assignments.Revision != status.Revision || assignments.ConfigurationHash != status.ConfigurationHash {
+		if err != nil || assignments.Revision != revision || assignments.ConfigurationHash != hash {
 			t.Fatal("group lost current configuration", err)
 		}
 		if status.Services[0].Kind == "local" {
@@ -301,7 +306,7 @@ func assertPrivateOwnershipAssignments(t *testing.T, d *Database, replicas []enr
 		if err = d.pool.QueryRow(t.Context(), `SELECT kind='service' AND service_id=$2 AND public_url_id IS NULL AND revoked_at IS NULL FROM control.publisher_grants WHERE id=$1 AND publisher_identity_id=$3`, a.GrantID, a.ServiceID, replica.member.PublisherIdentityID).Scan(&exact); err != nil || !exact {
 			t.Fatal("group grant is not exact", err)
 		}
-		if err = d.AcknowledgePublisherGroupConfiguration(t.Context(), replica.lease.AccessToken, status.Revision, status.ConfigurationHash, true, now); err != nil {
+		if err = d.AcknowledgePublisherGroupConfiguration(t.Context(), replica.lease.AccessToken, assignments.Revision, assignments.ConfigurationHash, true, now); err != nil {
 			t.Fatal(err)
 		}
 	}

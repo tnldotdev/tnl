@@ -34,6 +34,43 @@ func (q *Queries) AcknowledgePublisherGroupConfiguration(ctx context.Context, ar
 	return err
 }
 
+const getDeploymentServiceConfiguration = `-- name: GetDeploymentServiceConfiguration :one
+SELECT deployment.ownership, deployment.id, deployment.team_id, deployment.project_key, deployment.name, deployment.description, deployment.domain_id, deployment.namespace, deployment.public, deployment.revision, deployment.configuration_hash, deployment.configuration_ciphertext, deployment.storage_key_id, deployment.create_actor_id, deployment.create_idempotency_key, deployment.create_request_digest, deployment.deleted_at,binding.service FROM control.applied_project_services binding
+JOIN control.project_publisher_groups deployment ON deployment.id=binding.group_id AND deployment.deleted_at IS NULL
+WHERE binding.service_id=$1
+`
+
+type GetDeploymentServiceConfigurationRow struct {
+	ControlProjectPublisherGroup ControlProjectPublisherGroup
+	Service                      string
+}
+
+func (q *Queries) GetDeploymentServiceConfiguration(ctx context.Context, serviceID pgtype.Text) (GetDeploymentServiceConfigurationRow, error) {
+	row := q.db.QueryRow(ctx, getDeploymentServiceConfiguration, serviceID)
+	var i GetDeploymentServiceConfigurationRow
+	err := row.Scan(
+		&i.ControlProjectPublisherGroup.Ownership,
+		&i.ControlProjectPublisherGroup.ID,
+		&i.ControlProjectPublisherGroup.TeamID,
+		&i.ControlProjectPublisherGroup.ProjectKey,
+		&i.ControlProjectPublisherGroup.Name,
+		&i.ControlProjectPublisherGroup.Description,
+		&i.ControlProjectPublisherGroup.DomainID,
+		&i.ControlProjectPublisherGroup.Namespace,
+		&i.ControlProjectPublisherGroup.Public,
+		&i.ControlProjectPublisherGroup.Revision,
+		&i.ControlProjectPublisherGroup.ConfigurationHash,
+		&i.ControlProjectPublisherGroup.ConfigurationCiphertext,
+		&i.ControlProjectPublisherGroup.StorageKeyID,
+		&i.ControlProjectPublisherGroup.CreateActorID,
+		&i.ControlProjectPublisherGroup.CreateIdempotencyKey,
+		&i.ControlProjectPublisherGroup.CreateRequestDigest,
+		&i.ControlProjectPublisherGroup.DeletedAt,
+		&i.Service,
+	)
+	return i, err
+}
+
 const getLocalProjectService = `-- name: GetLocalProjectService :one
 SELECT local.source_fingerprint, s.id, s.team_id, s.name, s.name_scope, s.placement_worktree_key, s.placement_worktree_label, s.protocol, s.tls_metadata, s.trust_revision, s.visitor_revision, s.publisher_pool, s.domain_id, s.certificate_hostname, s.certificate_scope, s.service_port, s.ingress_pool_id, s.public, s.created_by_identity_id, s.idempotency_key, s.request_digest, s.enabled, s.next_run_number, s.created_at, s.updated_at, s.deleted_at
 FROM control.local_project_services local
@@ -105,7 +142,7 @@ func (q *Queries) InvalidatePublisherGroupRuntimeHealth(ctx context.Context, pub
 }
 
 const listAppliedProjectServices = `-- name: ListAppliedProjectServices :many
-SELECT team_id, project_key, service, group_id, service_id, public_url_id, visitor_grant_id, desired_revision FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2 ORDER BY service
+SELECT team_id, project_key, service, group_id, service_id, public_url_id, visitor_grant_id, desired_revision FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2 ORDER BY group_id,service
 `
 
 type ListAppliedProjectServicesParams struct {
@@ -131,6 +168,62 @@ func (q *Queries) ListAppliedProjectServices(ctx context.Context, arg ListApplie
 			&i.PublicURLID,
 			&i.VisitorGrantID,
 			&i.DesiredRevision,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDeployments = `-- name: ListDeployments :many
+SELECT ownership, id, team_id, project_key, name, description, domain_id, namespace, public, revision, configuration_hash, configuration_ciphertext, storage_key_id, create_actor_id, create_idempotency_key, create_request_digest, deleted_at FROM control.project_publisher_groups
+WHERE team_id=$1 AND project_key=$2 AND deleted_at IS NULL
+AND id COLLATE "C">$3::text COLLATE "C" ORDER BY id COLLATE "C" LIMIT $4
+`
+
+type ListDeploymentsParams struct {
+	TeamID     string
+	ProjectKey string
+	AfterID    string
+	PageLimit  int32
+}
+
+func (q *Queries) ListDeployments(ctx context.Context, arg ListDeploymentsParams) ([]ControlProjectPublisherGroup, error) {
+	rows, err := q.db.Query(ctx, listDeployments,
+		arg.TeamID,
+		arg.ProjectKey,
+		arg.AfterID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ControlProjectPublisherGroup
+	for rows.Next() {
+		var i ControlProjectPublisherGroup
+		if err := rows.Scan(
+			&i.Ownership,
+			&i.ID,
+			&i.TeamID,
+			&i.ProjectKey,
+			&i.Name,
+			&i.Description,
+			&i.DomainID,
+			&i.Namespace,
+			&i.Public,
+			&i.Revision,
+			&i.ConfigurationHash,
+			&i.ConfigurationCiphertext,
+			&i.StorageKeyID,
+			&i.CreateActorID,
+			&i.CreateIdempotencyKey,
+			&i.CreateRequestDigest,
+			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -224,7 +317,7 @@ func (q *Queries) ListDiscoverableProjects(ctx context.Context, arg ListDiscover
 }
 
 const listProjectPublisherGroups = `-- name: ListProjectPublisherGroups :many
-SELECT ownership, id, team_id, project_key, name, description, domain_id, namespace, public, deleted_at FROM control.project_publisher_groups WHERE team_id=$1 AND project_key=$2 AND deleted_at IS NULL ORDER BY name
+SELECT ownership, id, team_id, project_key, name, description, domain_id, namespace, public, revision, configuration_hash, configuration_ciphertext, storage_key_id, create_actor_id, create_idempotency_key, create_request_digest, deleted_at FROM control.project_publisher_groups WHERE team_id=$1 AND project_key=$2 AND deleted_at IS NULL ORDER BY name
 `
 
 type ListProjectPublisherGroupsParams struct {
@@ -251,6 +344,13 @@ func (q *Queries) ListProjectPublisherGroups(ctx context.Context, arg ListProjec
 			&i.DomainID,
 			&i.Namespace,
 			&i.Public,
+			&i.Revision,
+			&i.ConfigurationHash,
+			&i.ConfigurationCiphertext,
+			&i.StorageKeyID,
+			&i.CreateActorID,
+			&i.CreateIdempotencyKey,
+			&i.CreateRequestDigest,
 			&i.DeletedAt,
 		); err != nil {
 			return nil, err
@@ -263,15 +363,48 @@ func (q *Queries) ListProjectPublisherGroups(ctx context.Context, arg ListProjec
 	return items, nil
 }
 
+const listProjectServiceDeclarations = `-- name: ListProjectServiceDeclarations :many
+SELECT name,protocol FROM control.project_services WHERE team_id=$1 AND project_key=$2 ORDER BY name
+`
+
+type ListProjectServiceDeclarationsParams struct {
+	TeamID     string
+	ProjectKey string
+}
+
+type ListProjectServiceDeclarationsRow struct {
+	Name     string
+	Protocol string
+}
+
+func (q *Queries) ListProjectServiceDeclarations(ctx context.Context, arg ListProjectServiceDeclarationsParams) ([]ListProjectServiceDeclarationsRow, error) {
+	rows, err := q.db.Query(ctx, listProjectServiceDeclarations, arg.TeamID, arg.ProjectKey)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListProjectServiceDeclarationsRow
+	for rows.Next() {
+		var i ListProjectServiceDeclarationsRow
+		if err := rows.Scan(&i.Name, &i.Protocol); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPublisherGroupMemberStatus = `-- name: ListPublisherGroupMemberStatus :many
 SELECT g.id AS group_id, g.name AS group_name, m.publisher_identity_id, m.key_id,
-    m.observed_revision, p.revision AS current_revision, m.acknowledged_at,
-    (m.healthy AND m.lease_expires_at>$1 AND m.observed_revision=p.revision)::boolean AS healthy,
+    m.observed_revision, g.revision AS current_revision, m.acknowledged_at,
+    (m.healthy AND m.lease_expires_at>$1 AND m.observed_revision=g.revision)::boolean AS healthy,
     m.lease_expires_at
 FROM control.project_publisher_groups g
 JOIN control.publisher_group_members m ON m.group_id=g.id
 JOIN control.publisher_identities i ON i.id=m.publisher_identity_id
-JOIN control.applied_projects p ON p.team_id=g.team_id AND p.project_key=g.project_key
 WHERE g.team_id=$2 AND g.project_key=$3
     AND g.deleted_at IS NULL AND i.revoked_at IS NULL
 ORDER BY g.name,m.publisher_identity_id
@@ -325,6 +458,39 @@ func (q *Queries) ListPublisherGroupMemberStatus(ctx context.Context, arg ListPu
 	return items, nil
 }
 
+const listPublisherGroupServices = `-- name: ListPublisherGroupServices :many
+SELECT team_id, project_key, service, group_id, service_id, public_url_id, visitor_grant_id, desired_revision FROM control.applied_project_services WHERE group_id=$1::text ORDER BY service
+`
+
+func (q *Queries) ListPublisherGroupServices(ctx context.Context, groupID string) ([]ControlAppliedProjectService, error) {
+	rows, err := q.db.Query(ctx, listPublisherGroupServices, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ControlAppliedProjectService
+	for rows.Next() {
+		var i ControlAppliedProjectService
+		if err := rows.Scan(
+			&i.TeamID,
+			&i.ProjectKey,
+			&i.Service,
+			&i.GroupID,
+			&i.ServiceID,
+			&i.PublicURLID,
+			&i.VisitorGrantID,
+			&i.DesiredRevision,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockAppliedProject = `-- name: LockAppliedProject :one
 SELECT team_id, project_key, source_fingerprint, project_label, revision, configuration_hash, configuration_ciphertext, storage_key_id, created_by_identity_id, updated_at, retired_at FROM control.applied_projects WHERE team_id=$1 AND project_key=$2 FOR UPDATE
 `
@@ -351,6 +517,112 @@ func (q *Queries) LockAppliedProject(ctx context.Context, arg LockAppliedProject
 		&i.RetiredAt,
 	)
 	return i, err
+}
+
+const lockDeployment = `-- name: LockDeployment :one
+SELECT g.ownership, g.id, g.team_id, g.project_key, g.name, g.description, g.domain_id, g.namespace, g.public, g.revision, g.configuration_hash, g.configuration_ciphertext, g.storage_key_id, g.create_actor_id, g.create_idempotency_key, g.create_request_digest, g.deleted_at FROM control.project_publisher_groups g
+WHERE g.team_id=$1 AND g.project_key=$2 AND g.deleted_at IS NULL
+AND (g.id=$3 OR EXISTS(SELECT 1 FROM control.publisher_group_names alias WHERE alias.group_id=g.id AND alias.name=$3)) FOR UPDATE
+`
+
+type LockDeploymentParams struct {
+	TeamID     string
+	ProjectKey string
+	Selector   string
+}
+
+func (q *Queries) LockDeployment(ctx context.Context, arg LockDeploymentParams) (ControlProjectPublisherGroup, error) {
+	row := q.db.QueryRow(ctx, lockDeployment, arg.TeamID, arg.ProjectKey, arg.Selector)
+	var i ControlProjectPublisherGroup
+	err := row.Scan(
+		&i.Ownership,
+		&i.ID,
+		&i.TeamID,
+		&i.ProjectKey,
+		&i.Name,
+		&i.Description,
+		&i.DomainID,
+		&i.Namespace,
+		&i.Public,
+		&i.Revision,
+		&i.ConfigurationHash,
+		&i.ConfigurationCiphertext,
+		&i.StorageKeyID,
+		&i.CreateActorID,
+		&i.CreateIdempotencyKey,
+		&i.CreateRequestDigest,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const lockProjectPublisherGroup = `-- name: LockProjectPublisherGroup :one
+SELECT ownership, id, team_id, project_key, name, description, domain_id, namespace, public, revision, configuration_hash, configuration_ciphertext, storage_key_id, create_actor_id, create_idempotency_key, create_request_digest, deleted_at FROM control.project_publisher_groups WHERE id=$1 AND deleted_at IS NULL FOR UPDATE
+`
+
+func (q *Queries) LockProjectPublisherGroup(ctx context.Context, id string) (ControlProjectPublisherGroup, error) {
+	row := q.db.QueryRow(ctx, lockProjectPublisherGroup, id)
+	var i ControlProjectPublisherGroup
+	err := row.Scan(
+		&i.Ownership,
+		&i.ID,
+		&i.TeamID,
+		&i.ProjectKey,
+		&i.Name,
+		&i.Description,
+		&i.DomainID,
+		&i.Namespace,
+		&i.Public,
+		&i.Revision,
+		&i.ConfigurationHash,
+		&i.ConfigurationCiphertext,
+		&i.StorageKeyID,
+		&i.CreateActorID,
+		&i.CreateIdempotencyKey,
+		&i.CreateRequestDigest,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const removeProjectServiceDeclarations = `-- name: RemoveProjectServiceDeclarations :exec
+DELETE FROM control.project_services declaration
+WHERE declaration.team_id=$1 AND declaration.project_key=$2 AND NOT(declaration.name=ANY($3::text[]))
+AND NOT EXISTS(SELECT 1 FROM control.applied_project_services binding WHERE binding.team_id=declaration.team_id AND binding.project_key=declaration.project_key AND binding.service=declaration.name)
+`
+
+type RemoveProjectServiceDeclarationsParams struct {
+	TeamID     string
+	ProjectKey string
+	Names      []string
+}
+
+func (q *Queries) RemoveProjectServiceDeclarations(ctx context.Context, arg RemoveProjectServiceDeclarationsParams) error {
+	_, err := q.db.Exec(ctx, removeProjectServiceDeclarations, arg.TeamID, arg.ProjectKey, arg.Names)
+	return err
+}
+
+const saveProjectServiceDeclaration = `-- name: SaveProjectServiceDeclaration :exec
+INSERT INTO control.project_services(team_id,project_key,name,protocol)
+VALUES($1,$2,$3,$4)
+ON CONFLICT(team_id,project_key,name) DO UPDATE SET protocol=EXCLUDED.protocol
+`
+
+type SaveProjectServiceDeclarationParams struct {
+	TeamID     string
+	ProjectKey string
+	Name       string
+	Protocol   string
+}
+
+func (q *Queries) SaveProjectServiceDeclaration(ctx context.Context, arg SaveProjectServiceDeclarationParams) error {
+	_, err := q.db.Exec(ctx, saveProjectServiceDeclaration,
+		arg.TeamID,
+		arg.ProjectKey,
+		arg.Name,
+		arg.Protocol,
+	)
+	return err
 }
 
 const serviceNamespaceOwnsHostname = `-- name: ServiceNamespaceOwnsHostname :one

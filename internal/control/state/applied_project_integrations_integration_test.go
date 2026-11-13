@@ -94,16 +94,16 @@ func TestIntegrationAppliedProjectRootIntegrationsAndRemoteGroups(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if current.Revision != 4 || current.ConfigurationHash != changed.ConfigurationHash || current.Services[0].ServiceID != replica.assignments.Services[0].ServiceID || current.Services[0].GrantID != replica.assignments.Services[0].GrantID {
+	if current.Revision != replica.assignments.Revision || current.ConfigurationHash != replica.assignments.ConfigurationHash || current.Services[0].ServiceID != replica.assignments.Services[0].ServiceID || current.Services[0].GrantID != replica.assignments.Services[0].GrantID {
 		t.Fatal("local metadata edit replaced unrelated group publication grants")
 	}
 	if _, err = d.AuthenticatePublisherAccess(t.Context(), access.Token, "", now); err != nil {
 		t.Fatal("local metadata edit revoked an unrelated native group grant", err)
 	}
 	if err = d.AcknowledgePublisherGroupConfiguration(t.Context(), replica.lease.AccessToken, 3, configured.ConfigurationHash, false, now); !errors.Is(err, ErrProjectConfigurationStale) {
-		t.Fatal("root metadata edit accepted a stale group acknowledgement", err)
+		t.Fatal("group acknowledgement accepted project-level configuration facts", err)
 	}
-	if err = d.AcknowledgePublisherGroupConfiguration(t.Context(), replica.lease.AccessToken, 4, changed.ConfigurationHash, false, now); err != nil {
+	if err = d.AcknowledgePublisherGroupConfiguration(t.Context(), replica.lease.AccessToken, current.Revision, current.ConfigurationHash, false, now); err != nil {
 		t.Fatal(err)
 	}
 	bad := r
