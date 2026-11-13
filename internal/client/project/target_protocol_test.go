@@ -16,17 +16,17 @@ func TestTargetTrustSnapshotsAgreeForAllProtocolsAndPublisherGroups(t *testing.T
 					address = "https://127.0.0.1:8443"
 				}
 				project := Project{Root: t.TempDir(), Config: config.TNL{PublisherGroups: map[string]config.PublisherGroup{"production": {}}, Services: config.Services{
-					"service": {PublisherGroup: &publisher, Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &address, TLS: &config.TargetTLS{ServerName: &host}}},
+					"service": {PublisherGroup: &publisher, Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &address, TLS: &config.TargetTLS{Hostname: &host}}},
 				}}}
 				publication, err := project.ResolvePublish("service", "")
 				if err != nil {
 					t.Fatal(err)
 				}
-				local, err := project.CaptureServiceTrust(t.Context(), nil, "service", string(*publication.Target))
+				local, err := project.CaptureServiceTrust(t.Context(), "service", string(*publication.Target))
 				if err != nil {
 					t.Fatal(err)
 				}
-				applied, err := project.CaptureTargetTrust(t.Context(), nil, "service", "")
+				applied, err := project.CaptureTargetTrust(t.Context(), "service", "")
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -42,9 +42,9 @@ func TestTargetTrustSnapshotsAgreeForAllProtocolsAndPublisherGroups(t *testing.T
 func TestDeferredAppTargetTrustRequiresKnownCertificateIdentity(t *testing.T) {
 	host := "app.internal"
 	project := Project{Root: t.TempDir(), Config: config.TNL{Services: config.Services{
-		"app": {Target: &config.ServiceTarget{Type: "app", TLS: &config.TargetTLS{ServerName: &host}}},
+		"app": {Target: &config.ServiceTarget{Type: "app", TLS: &config.TargetTLS{Hostname: &host}}},
 	}}}
-	if snapshot, err := project.CaptureTargetTrust(t.Context(), nil, "app", ""); err != nil || snapshot.Hostname != host {
+	if snapshot, err := project.CaptureTargetTrust(t.Context(), "app", ""); err != nil || snapshot.Hostname != host {
 		t.Fatalf("deferred app trust: %+v %v", snapshot, err)
 	}
 	if _, err := project.ResolvePublish("app", "http://127.0.0.1:3000"); err == nil {
@@ -53,8 +53,8 @@ func TestDeferredAppTargetTrustRequiresKnownCertificateIdentity(t *testing.T) {
 	if _, err := project.ResolvePublish("app", "https://127.0.0.1:3000"); err != nil {
 		t.Fatal(err)
 	}
-	project.Config.Services["app"].Target.TLS.ServerName = nil
-	if _, err := project.CaptureTargetTrust(t.Context(), nil, "app", ""); err == nil {
+	project.Config.Services["app"].Target.TLS.Hostname = nil
+	if _, err := project.CaptureTargetTrust(t.Context(), "app", ""); err == nil {
 		t.Fatal("deferred app captured an unknown certificate identity")
 	}
 	project.Config.Services["app"].Target.TLS = nil

@@ -57,12 +57,9 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 	if err != nil {
 		return err
 	}
-	targetOptions, err := publisherproxy.TargetOptionsForCA(flags.TargetCAFile, flags.ProjectRoot)
+	targetOptions, err := publicTargetOptions(ctx, flags, target)
 	if err != nil {
 		return err
-	}
-	if protocol == controlv1.Http {
-		targetOptions.ServerName = flags.TargetTLSName
 	}
 	serverURL, state, err := resolveServer(ctx, flags.StateDir, flags.ServerURL)
 	if err != nil {
@@ -214,7 +211,7 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 			publisherConfig.Purpose = controlv1.Demo
 		}
 	}
-	publisherConfig.Mounts, err = ProjectMounts(project.Project, flags.Service, nil, flags.Resolver)
+	publisherConfig.Mounts, err = ProjectMounts(ctx, project.Project, flags.Service, nil, flags.Resolver)
 	if err != nil {
 		return err
 	}

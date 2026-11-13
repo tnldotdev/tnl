@@ -91,11 +91,15 @@ func (d *Database) ExchangeWorkload(ctx context.Context, r ExchangeWorkloadReque
 	if err != nil {
 		return result, publisherLookupError(err, ErrWorkloadDenied)
 	}
-	configuration, err := d.openAppliedProject(project)
+	record, err := d.openAppliedProjectRecord(project)
 	if err != nil {
 		return result, err
 	}
-	p, found := configuration.Workloads[r.Workload]
+	policies, err := record.workloads()
+	if err != nil {
+		return result, err
+	}
+	p, found := policies[r.Workload]
 	if !found || project.SourceFingerprint != r.SourceFingerprint || !p.matches(c) || c.Validate(clock.current()) != nil {
 		return result, ErrWorkloadDenied
 	}
@@ -158,7 +162,7 @@ func (d *Database) ExchangeWorkload(ctx context.Context, r ExchangeWorkloadReque
 			return result, err
 		}
 		for _, s := range services {
-			tag, err := tx.Exec(ctx, `INSERT INTO control.workload_session_services(workload_session_id,service_id,service) SELECT $1,applied.service_id,applied.service FROM control.applied_project_services applied JOIN control.services service ON service.id=applied.service_id JOIN control.project_publisher_groups deployment ON deployment.id=applied.group_id AND deployment.deleted_at IS NULL WHERE applied.team_id=$2 AND applied.project_key=$3 AND applied.service=$4 AND service.enabled AND service.deleted_at IS NULL AND deployment.name=$5`, id, r.TeamID, r.ProjectKey, s, configuration.Services[s].PublisherGroup)
+			tag, err := tx.Exec(ctx, `INSERT INTO control.workload_session_services(workload_session_id,service_id,service) SELECT $1,applied.service_id,applied.service FROM control.applied_project_services applied JOIN control.services service ON service.id=applied.service_id JOIN control.project_publisher_groups deployment ON deployment.id=applied.group_id AND deployment.deleted_at IS NULL WHERE applied.team_id=$2 AND applied.project_key=$3 AND applied.service=$4 AND service.enabled AND service.deleted_at IS NULL AND deployment.name=$5`, id, r.TeamID, r.ProjectKey, s, p.Deployment)
 			if err != nil {
 				return result, err
 			}

@@ -40,9 +40,9 @@ func TestConnectionStartOwnerGoogleMetadataFromConfig(t *testing.T) {
 			}
 			configuration := map[string]any{"version": 1, "tnl": map[string]any{
 				"server": "https://control.example", "team": "acme",
-				"publisher_groups": map[string]any{"remote": map[string]any{}},
-				"services":         map[string]any{"api": map[string]any{"publisher_group": "remote", "target": map[string]any{"type": "address", "address": "http://unused.invalid:3000"}}},
-				"workloads":        map[string]any{"job": map[string]any{"google": map[string]any{"service_account": "112010400000000710080", "audience": audience}, "services": []string{"api"}}},
+				"deployments": map[string]any{"remote": map[string]any{"targets": map[string]any{"api": map[string]any{"address": "http://unused.invalid:3000"}}}},
+				"services":    map[string]any{"api": map[string]any{}},
+				"workloads":   map[string]any{"job": map[string]any{"deployment": "remote", "google": map[string]any{"service_account": "112010400000000710080", "audience": audience}, "services": []string{"api"}}},
 			}}
 			data, err := json.Marshal(configuration)
 			if err != nil {

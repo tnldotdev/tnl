@@ -214,11 +214,10 @@ func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection Enrol
 			return err
 		}
 	}
-	options, err := publisherproxy.TargetOptionsForCA(flags.TargetCAFile, flags.ProjectRoot)
+	options, err := publicTargetOptions(ctx, flags.PublicOptions, target)
 	if err != nil {
 		return err
 	}
-	options.ServerName = flags.TargetTLSName
 	if flags.ProjectRoot == "" {
 		flags.ProjectRoot, err = currentProjectRoot(ctx)
 		if err != nil {
@@ -285,7 +284,7 @@ func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection Enrol
 	}
 	defer recorder.Close()
 	cfg.ObserveSummary = app.SummaryObservation(recorder)
-	cfg.Mounts, err = ProjectMounts(project.Project, flags.Service, nil, flags.Resolver)
+	cfg.Mounts, err = ProjectMounts(ctx, project.Project, flags.Service, nil, flags.Resolver)
 	if err != nil {
 		return err
 	}

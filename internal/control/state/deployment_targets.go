@@ -2,11 +2,8 @@ package state
 
 import (
 	"context"
-	"net"
 	"strings"
 
-	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/security/rdsroots"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
 )
 
@@ -48,27 +45,7 @@ func normalizeDeploymentTarget(ctx context.Context, name, protocol, group string
 		return s, ErrProjectConfigurationInvalid
 	}
 	if tls != nil {
-		host, _, _ := net.SplitHostPort(address)
-		identity := host
-		if tls.Hostname != "" {
-			identity = tls.Hostname
-		}
-		var snapshot targettrust.Snapshot
-		switch tls.CA {
-		case "", "system":
-			snapshot, err = targettrust.NewCache(nil).Capture(ctx, "", address, config.TrustSource{CA: "system", Hostname: &identity})
-		case "aws-rds":
-			if protocol != "postgres" && protocol != "mysql" || identity != host {
-				return s, ErrProjectConfigurationInvalid
-			}
-			var bundle string
-			bundle, err = rdsroots.BundleForHostname(host)
-			if err == nil {
-				snapshot, err = targettrust.CapturePEM(identity, []byte(bundle))
-			}
-		default:
-			snapshot, err = targettrust.CapturePEM(identity, []byte(tls.CA))
-		}
+		snapshot, err := targettrust.CapturePortable(ctx, protocol, address, tls.CA, tls.Hostname)
 		if err != nil {
 			return s, ErrProjectConfigurationInvalid
 		}

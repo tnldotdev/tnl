@@ -33,9 +33,9 @@ func (c *Client) RenamePublisherGroup(ctx context.Context, project, group string
 	})
 }
 
-func (c *Client) GetProjectConfiguration(ctx context.Context, team, project string) (controlv1.AppliedProjectConfiguration, error) {
+func (c *Client) GetProjectConfiguration(ctx context.Context, team, project, deployment string) (controlv1.AppliedProjectConfiguration, error) {
 	return requestWithAccess[controlv1.AppliedProjectConfiguration](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.GetProjectConfiguration(ctx, project, &controlv1.GetProjectConfigurationParams{TeamId: team}, editors...)
+		return c.api.GetProjectConfiguration(ctx, project, &controlv1.GetProjectConfigurationParams{TeamId: team, Deployment: deployment}, editors...)
 	})
 }
 

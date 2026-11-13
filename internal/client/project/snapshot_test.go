@@ -36,8 +36,8 @@ func TestSnapshotPreservesEvaluatedConfigurationAndPrimaryCheckout(t *testing.T)
 
 func TestSnapshotPreservesEvaluatedInspection(t *testing.T) {
 	for _, file := range []struct{ name, source string }{
-		{"tnl.json", `{"version":1,"tnl":{"inspection":{"retention":"24h","max_bytes":"64MiB"},"services":{"web":{"inspection":{"max_bytes":"1025KiB"}}}}}`},
-		{"tnl.config.ts", `export default () => ({inspection: {retention: "24h", maxBytes: "64MiB"}, services: {web: {inspection: {maxBytes: "1025KiB"}}}});`},
+		{"tnl.json", `{"version":1,"tnl":{"inspection":{"retention":"24h","max_bytes":"64MiB"},"services":{"web":{}},"deployments":{"local":{"targets":{"web":{"inspection":{"max_bytes":"1025KiB"}}}}}}}`},
+		{"tnl.config.ts", `export default () => ({inspection: {retention: "24h", maxBytes: "64MiB"}, services: {web: {}}, deployments: {local: {targets: {web: {inspection: {maxBytes: "1025KiB"}}}}}});`},
 	} {
 		t.Run(file.name, func(t *testing.T) {
 			root := t.TempDir()

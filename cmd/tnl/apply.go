@@ -10,6 +10,7 @@ import (
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	"github.com/tnldotdev/tnl/internal/config"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
@@ -18,10 +19,18 @@ import (
 
 type applyCommand struct {
 	scopedTeamFlags `embed:""`
+	Deployment      string           `name:"deployment" default:"local" help:"Apply only this configured deployment's targets and workloads."`
 	Output          statusOutputMode `name:"output" enum:"human,json" default:"human"`
 }
 
 func runApply(ctx context.Context, flags applyCommand, project projectConfiguration, output, diagnostics io.Writer) error {
+	if project.Declared == nil || project.Deployment != flags.Deployment {
+		return publisherCLIError("select a configured deployment with --deployment")
+	}
+	declarations := controlv1.ProjectServiceDeclarations{}
+	for name, service := range project.Declared.Services {
+		declarations[name] = controlv1.ServiceProtocol(config.DeclaredProtocol(service))
+	}
 	source, err := project.SourceIdentity(ctx)
 	if err != nil {
 		return failure.Wrap("identify applied project", failure.ProjectConfigInvalid, err)
@@ -46,7 +55,7 @@ func runApply(ctx context.Context, flags applyCommand, project projectConfigurat
 		return err
 	}
 	revision := int64(0)
-	existing, err := session.Authenticated().Control.GetProjectConfiguration(ctx, current.Team().Id, source.Key)
+	existing, err := session.Authenticated().Control.GetProjectConfiguration(ctx, current.Team().Id, source.Key, project.Deployment)
 	if err == nil {
 		if existing.SourceFingerprint != source.Fingerprint {
 			return publisherCLIError("project key belongs to another configuration source")
@@ -61,11 +70,12 @@ func runApply(ctx context.Context, flags applyCommand, project projectConfigurat
 	applied, err := session.Authenticated().Control.ApplyProjectConfiguration(ctx, source.Key, controlv1.ApplyProjectConfigurationRequest{
 		TeamId: current.Team().Id, SourceFingerprint: source.Fingerprint, ExpectedRevision: revision, Configuration: declaration,
 		ProjectLabel: &source.Label,
+		Deployment:   project.Deployment, ServiceDeclarations: declarations,
 	})
 	if err != nil {
 		return err
 	}
-	if applied.ProjectKey != source.Key || applied.TeamId != current.Team().Id || applied.SourceFingerprint != source.Fingerprint || applied.Revision < 1 {
+	if applied.Deployment != project.Deployment || applied.ProjectKey != source.Key || applied.TeamId != current.Team().Id || applied.SourceFingerprint != source.Fingerprint || applied.Revision < 1 {
 		return failure.Wrap("read applied project", failure.ServerResponseInvalid, errors.New("control returned another project configuration"))
 	}
 	if len(project.Config.Workloads) != 0 {

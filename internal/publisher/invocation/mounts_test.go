@@ -20,10 +20,10 @@ func (canceledMountResolver) ResolveTargetIdentity(ctx context.Context, _ client
 
 func TestDiscoveredMountPreservesRequestCancellation(t *testing.T) {
 	project := clientproject.Project{Config: config.TNL{Services: config.Services{
-		"web": {HTTP: &config.HTTPService{Paths: map[string]config.PathMount{"/api": {Service: "api"}}}},
+		"web": {Tunnel: &config.Tunnel{}, HTTP: &config.HTTPService{Paths: map[string]config.PathMount{"/api": {Service: "api"}}}},
 		"api": {Target: &config.ServiceTarget{Type: "docker", Container: new("api"), Port: new(3000)}},
 	}}}
-	mounts, err := ProjectMounts(project, "web", nil, canceledMountResolver{})
+	mounts, err := ProjectMounts(t.Context(), project, "web", nil, canceledMountResolver{})
 	if err != nil {
 		t.Fatal(err)
 	}

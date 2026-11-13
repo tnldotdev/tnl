@@ -43,7 +43,11 @@ func TestWorkloadProviderDeclarationsAndLegacyRejection(t *testing.T) {
 				t.Fatal("unknown service accepted")
 			}
 			configuration.Workloads["storefront"] = p
-			document := Document{Version: new(1), TNL: &configuration}
+			declared := Project{Services: map[string]ServiceDeclaration{"inventory": {}, "models": {Protocol: new("postgres")}},
+				Deployments: map[string]Deployment{"production": {Targets: map[string]DeploymentBinding{
+					"inventory": {ServiceTarget: *services["inventory"].Target}, "models": {ServiceTarget: *services["models"].Target},
+				}}}, Workloads: map[string]DeploymentWorkload{"storefront": {Deployment: "production", Workload: p}}}
+			document := Document{Version: new(1), TNL: &declared}
 			b, err := json.Marshal(document)
 			if err != nil {
 				t.Fatal(err)

@@ -101,7 +101,7 @@ func TestRuntimeWriterRejectsUnsafePaths(t *testing.T) {
 
 func TestPortableDeclarationsNeverUseRuntimeValues(t *testing.T) {
 	protocol := "postgres"
-	configuration := config.TNL{Services: config.Services{"database": {Protocol: &protocol}}}
+	configuration := config.Project{Services: map[string]config.ServiceDeclaration{"database": {Protocol: &protocol}}}
 	for _, root := range []string{"/checkout/one", "/another/checkout"} {
 		data, err := Declarations(configuration, root+"/tnl.config.ts", root+"/.tnl/generated")
 		if err != nil {

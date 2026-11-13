@@ -218,7 +218,7 @@ var definitions = map[Reason]Definition{
 	TargetDiscoveryStale:               {Class: Stale, Message: "cloud target discovery is stale", Action: "restore publisher access to AWS before opening new connections", Retry: RetryLater},
 	TargetTLSRejected: {
 		Class: Invalid, Message: "target TLS could not be verified or negotiated",
-		Action: "check the target protocol, target.tls.server_name, and target.tls.ca_file, then retry", Retry: RetryAfterChange,
+		Action: "check the target protocol, tls.hostname, and tls.ca, then retry", Retry: RetryAfterChange,
 	},
 	TargetUnavailable: {
 		Class: Unavailable, Message: "the publisher could not reach the target",

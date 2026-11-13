@@ -14,7 +14,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -52,7 +51,6 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 		}
 		declaration.Webhooks[name] = entry
 	}
-	cache := targettrust.NewCache(nil)
 	names := slices.Sorted(maps.Keys(project.Config.Services))
 	if len(selected) != 0 {
 		names = selected
@@ -127,8 +125,8 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 				}
 				discovered = resolved
 			}
-			if service.Target != nil && service.Target.TLS != nil {
-				trust, err := project.CaptureTargetTrust(ctx, cache, name, discovered)
+			{
+				trust, err := project.CaptureTargetTrust(ctx, name, discovered)
 				if err != nil {
 					return declaration, err
 				}

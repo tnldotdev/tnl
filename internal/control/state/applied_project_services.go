@@ -196,7 +196,7 @@ func (d *Database) appliedProjectTraffic(ctx context.Context, tx pgx.Tx, url str
 	if err != nil {
 		return nil, err
 	}
-	c, err := d.openAppliedProject(row)
+	c, err := d.openAppliedProject(row, "local")
 	if err != nil {
 		return nil, err
 	}

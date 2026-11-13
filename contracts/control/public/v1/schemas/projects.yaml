@@ -43,17 +43,33 @@ schemas:
   ApplyProjectConfigurationRequest:
     type: object
     additionalProperties: false
-    required: [team_id, source_fingerprint, expected_revision, configuration]
+    required:
+      [
+        team_id,
+        source_fingerprint,
+        deployment,
+        service_declarations,
+        expected_revision,
+        configuration,
+      ]
     properties:
       team_id: { type: string }
       source_fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
       project_label:
         { type: string, minLength: 1, maxLength: 63, pattern: "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$" }
       expected_revision: { type: integer, format: int64, minimum: 0 }
+      deployment: { type: string, pattern: "^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$" }
+      service_declarations:
+        { $ref: "../openapi.yaml#/components/schemas/ProjectServiceDeclarations" }
       configuration: { $ref: "../openapi.yaml#/components/schemas/ProjectConfiguration" }
+  ProjectServiceDeclarations:
+    type: object
+    maxProperties: 128
+    propertyNames: { pattern: "^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$" }
+    additionalProperties: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
   ProjectConfiguration:
     type: object
-    description: Normalized declarative configuration, at most 512 KiB encoded. All local declarations defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its groups.
+    description: Normalized bindings for exactly one selected deployment, at most 512 KiB encoded. Local selection has no publisher groups or workloads; a remote selection contains only its named group and policies. Logical declarations are sent separately. All local bindings defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
     additionalProperties: false
     required: [publisher_groups, services, oauth, webhooks]
     properties:
@@ -94,8 +110,10 @@ schemas:
   ProjectWorkload:
     type: object
     additionalProperties: false
-    required: [provider, trust, services, max_duration_seconds]
+    required: [deployment, provider, trust, services, max_duration_seconds]
     properties:
+      deployment:
+        { type: string, pattern: "^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$", not: { const: local } }
       provider: { $ref: "../openapi.yaml#/components/schemas/WorkloadProvider" }
       trust: { $ref: "../openapi.yaml#/components/schemas/WorkloadTrust" }
       github: { $ref: "../openapi.yaml#/components/schemas/ProjectWorkloadGitHub" }
@@ -298,6 +316,8 @@ schemas:
     required:
       [
         team_id,
+        deployment,
+        service_declarations,
         project_key,
         source_fingerprint,
         revision,
@@ -312,6 +332,9 @@ schemas:
       source_fingerprint: { type: string }
       revision: { type: integer, format: int64 }
       configuration_hash: { type: string }
+      deployment: { type: string }
+      service_declarations:
+        { $ref: "../openapi.yaml#/components/schemas/ProjectServiceDeclarations" }
       configuration: { $ref: "../openapi.yaml#/components/schemas/ProjectConfiguration" }
       services:
         {

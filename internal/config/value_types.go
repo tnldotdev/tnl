@@ -51,8 +51,7 @@ func validateYAMLValueTypes(node *yaml.Node, typ reflect.Type, active map[*yaml.
 			return errors.New("configuration object is required")
 		}
 		fields := map[string]reflect.Type{}
-		for i := 0; i < typ.NumField(); i++ {
-			field := typ.Field(i)
+		for _, field := range reflect.VisibleFields(typ) {
 			name, _, _ := strings.Cut(field.Tag.Get("yaml"), ",")
 			if name != "" && name != "-" {
 				fields[name] = field.Type

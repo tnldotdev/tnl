@@ -20,7 +20,7 @@ func (h *handler) GetProjectService(w http.ResponseWriter, r *http.Request, proj
 		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "applied service lookup is unavailable")
 		return
 	}
-	record, err := store.GetProjectService(r.Context(), controlstate.GetProjectServiceRequest{TeamID: params.TeamId, ProjectKey: project, SourceFingerprint: params.SourceFingerprint, Service: service, IdentityID: principal.identityID, Now: time.Now()})
+	record, err := store.GetProjectService(r.Context(), controlstate.GetProjectServiceRequest{Deployment: params.Deployment, TeamID: params.TeamId, ProjectKey: project, SourceFingerprint: params.SourceFingerprint, Service: service, IdentityID: principal.identityID, Now: time.Now()})
 	if err != nil {
 		serviceVisitorError(r.Context(), w, "read applied service", err)
 		return

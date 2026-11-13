@@ -531,9 +531,9 @@ func installConfiguredHealthTarget(t *testing.T, registry *installedjobs.Registr
 		t.Fatal(err)
 	}
 	address := config.Target(target.URL)
-	document := config.Document{Version: new(1), TNL: &config.TNL{Server: &old.Server, Team: new("studio"), Services: config.Services{
-		"opencode": {Tunnel: &config.Tunnel{PublicURL: &old.Status.PublicURL}, Target: &config.ServiceTarget{Type: "address", Address: &address, TLS: &config.TargetTLS{CAFile: new("target-ca.pem"), ServerName: new("example.com")}}, HTTP: &config.HTTPService{Readiness: &config.Readiness{Path: "/health"}}},
-	}}}
+	document := config.Document{Version: new(1), TNL: &config.Project{Server: &old.Server, Team: new("studio"), Services: map[string]config.ServiceDeclaration{"opencode": {}}, Deployments: map[string]config.Deployment{"local": {Targets: map[string]config.DeploymentBinding{
+		"opencode": {Tunnel: &config.Tunnel{PublicURL: &old.Status.PublicURL}, ServiceTarget: config.ServiceTarget{Address: &address, TLS: &config.TargetTLS{CA: new(string(ca)), Hostname: new("example.com")}}, HTTP: &config.HTTPService{Readiness: &config.Readiness{Path: "/health"}}},
+	}}}}}
 	data, err := json.Marshal(document)
 	if err != nil {
 		t.Fatal(err)

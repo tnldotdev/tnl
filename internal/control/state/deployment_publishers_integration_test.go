@@ -25,10 +25,19 @@ func deploymentPublisherRequest(t *testing.T, d *Database, now time.Time) (Apply
 		"web":   {PublisherGroup: "production", Target: "web.internal:3000"},
 		"stage": {PublisherGroup: "staging", Protocol: "postgres", Target: "stage.internal:5432"},
 	}}
-	if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
+	production := deploymentProjectRequest(r, "production")
+	first, err := d.ApplyProjectConfiguration(t.Context(), production)
+	if err != nil {
 		t.Fatal(err)
 	}
-	return r, CreateDeploymentPublisherEnrollmentRequest{DeploymentScope: DeploymentScope{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID}, Selector: "production", IdempotencyKey: "setup", Services: []string{"db"}, MaxMembers: 2, Lifetime: time.Hour, Now: now.Add(123456789 * time.Nanosecond)}
+	staging := deploymentProjectRequest(r, "staging")
+	staging.ExpectedRevision = first.Revision
+	second, err := d.ApplyProjectConfiguration(t.Context(), staging)
+	if err != nil {
+		t.Fatal(err)
+	}
+	production.ExpectedRevision = second.Revision
+	return production, CreateDeploymentPublisherEnrollmentRequest{DeploymentScope: DeploymentScope{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID}, Selector: "production", IdempotencyKey: "setup", Services: []string{"db"}, MaxMembers: 2, Lifetime: time.Hour, Now: now.Add(123456789 * time.Nanosecond)}
 }
 
 func TestIntegrationDeploymentPublisherScopeRecoveryAndRevocation(t *testing.T) {
@@ -79,12 +88,13 @@ func TestIntegrationDeploymentPublisherScopeRecoveryAndRevocation(t *testing.T) 
 	}
 	// target changes replace exact grants, but neither add service names nor
 	// change the captured protocol approval.
-	r.ExpectedRevision = 1
 	r.Configuration.Services["cache"] = ProjectServiceConfiguration{PublisherGroup: "production", Protocol: "tcp", Target: "cache.internal:6379"}
+	r.ServiceDeclarations["cache"] = "tcp"
 	db := r.Configuration.Services["db"]
 	db.Target = "replacement.internal:5432"
 	r.Configuration.Services["db"] = db
-	if _, err = d.ApplyProjectConfiguration(ctx, r); err != nil {
+	updated, err := d.ApplyProjectConfiguration(ctx, r)
+	if err != nil {
 		t.Fatal(err)
 	}
 	assignments, err := d.GetPublisherGroupAssignments(ctx, a.lease.AccessToken, now)
@@ -157,7 +167,7 @@ func TestIntegrationDeploymentPublisherScopeRecoveryAndRevocation(t *testing.T) 
 	if err != nil || bytes.Contains(wire, []byte("enrollment_key")) || bytes.Contains(wire, []byte("access_token")) || bytes.Contains(wire, []byte("target")) || bytes.Contains(wire, []byte(enrollment.Key)) {
 		t.Fatal("publisher read exposed setup secrets or targets", err)
 	}
-	r.ExpectedRevision = 2
+	r.ExpectedRevision = updated.Revision
 	db.Target = "third.internal:5432"
 	r.Configuration.Services["db"] = db
 	if _, err = d.ApplyProjectConfiguration(ctx, r); err != nil {
@@ -178,23 +188,25 @@ func TestIntegrationDeploymentPublisherApprovalCannotFollowReusedBindings(t *tes
 				t.Fatal(err)
 			}
 			replica := enrollAppliedGroup(t, d, r, enrollment.PublisherGroupEnrollment, now)
-			r.ExpectedRevision = 1
 			db := r.Configuration.Services["db"]
 			if mutation == "protocol" {
 				changed := db
 				changed.Protocol = "mysql"
 				r.Configuration.Services["db"] = changed
+				r.ServiceDeclarations["db"] = changed.Protocol
 			} else {
 				delete(r.Configuration.Services, "db")
 			}
-			if _, err = d.ApplyProjectConfiguration(t.Context(), r); err != nil {
+			updated, err := d.ApplyProjectConfiguration(t.Context(), r)
+			if err != nil {
 				t.Fatal(err)
 			}
 			if _, err = d.CreateDeploymentPublisherEnrollment(t.Context(), request); !errors.Is(err, ErrPublisherEnrollment) {
 				t.Fatal("recovery followed changed service approval", err)
 			}
-			r.ExpectedRevision = 2
+			r.ExpectedRevision = updated.Revision
 			r.Configuration.Services["db"] = db
+			r.ServiceDeclarations["db"] = db.Protocol
 			if _, err = d.ApplyProjectConfiguration(t.Context(), r); err != nil {
 				t.Fatal(err)
 			}

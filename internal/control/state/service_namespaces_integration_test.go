@@ -15,8 +15,15 @@ func TestIntegrationGroupNamespaceAndRename(t *testing.T) {
 		"orders": {PublisherGroup: "production", Protocol: "postgres", Target: "orders.internal:5432", Access: &ProjectServiceAccess{Team: true}},
 		"testdb": {PublisherGroup: "staging", Protocol: "postgres", Target: "staging.internal:5432"},
 	}}
+	staging := deploymentProjectRequest(r, "staging")
+	stage, err := d.ApplyProjectConfiguration(t.Context(), staging)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r = deploymentProjectRequest(r, "production")
+	r.ExpectedRevision = stage.Revision
 	first, err := d.ApplyProjectConfiguration(t.Context(), r)
-	if err != nil || len(first.Groups) != 2 || len(first.Services) != 2 {
+	if err != nil || len(first.Groups) != 1 || len(first.Services) != 1 {
 		t.Fatalf("apply: %+v %v", first, err)
 	}
 	var group AppliedPublisherGroup
@@ -60,6 +67,7 @@ func TestIntegrationGroupNamespaceAndRename(t *testing.T) {
 		t.Fatal("rename retry changed state", retry, err)
 	}
 	r.Configuration = renamed.Configuration
+	r.Deployment = "live"
 	r.ExpectedRevision = renamed.Revision
 	r.ProjectLabel = "a-different-checkout"
 	r.Now = now.Add(3 * time.Second)
@@ -77,12 +85,13 @@ func TestIntegrationGroupNamespaceAndRename(t *testing.T) {
 	}
 	// the old key still belongs to the same live namespace, not a new group.
 	r.ExpectedRevision = changed.Revision
-	r.Configuration.PublisherGroups["production"] = ProjectPublisherGroup{}
+	r.Deployment = "production"
+	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{}}
 	if _, err = d.ApplyProjectConfiguration(t.Context(), r); !errors.Is(err, ErrServiceConflict) {
 		t.Fatal("a renamed group's namespace was silently adopted", err)
 	}
-	current, err := d.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, r.ActorID)
-	if err != nil || current.Revision != changed.Revision || len(current.Groups) != 2 {
+	current, err := d.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, r.ActorID, "live")
+	if err != nil || current.Revision != changed.Revision || len(current.Groups) != 1 {
 		t.Fatal("failed name claim was not atomic", current, err)
 	}
 }
@@ -92,6 +101,10 @@ func TestIntegrationManagedProjectLabelCollision(t *testing.T) {
 	r := appliedProjectRequest(t, d, now)
 	r.ProjectLabel = "storefront"
 	r.Configuration.PublisherGroups = map[string]ProjectPublisherGroup{"production": {}}
+	service := r.Configuration.Services["web"]
+	service.PublisherGroup = "production"
+	r.Configuration.Services["web"] = service
+	r = selectedProjectRequest(r, "production")
 	if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
 		t.Fatal(err)
 	}

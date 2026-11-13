@@ -585,6 +585,7 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 	ctx := t.Context()
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = workloadConfiguration()
+	r = selectedProjectRequest(r, "production")
 	api := r.Configuration.Services["api"]
 	api.Target = "http://api.internal:3000"
 	api.HTTP = &config.HTTPService{Access: &config.Access{Mode: "restricted", IP: []string{"192.0.2.0/24"}}}

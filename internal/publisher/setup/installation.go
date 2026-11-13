@@ -88,9 +88,14 @@ func InstallPublication(ctx context.Context, selected Publication, presentation 
 	if caPath != "" && !filepath.IsAbs(caPath) {
 		caPath = filepath.Join(selected.ProjectRoot, caPath)
 	}
-	job.TargetCAPEM, err = ReadTrust(caPath)
-	if err != nil {
-		return err
+	if caPath != "" {
+		if len(job.TargetCAPEM) != 0 {
+			return installedjobs.ErrScope
+		}
+		job.TargetCAPEM, err = ReadTrust(caPath)
+		if err != nil {
+			return err
+		}
 	}
 	job.ServerCAPEM, err = ReadTrust(selected.ServerCAFile)
 	if err != nil {

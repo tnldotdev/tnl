@@ -97,6 +97,8 @@ type ProjectWebhook struct {
 }
 type ApplyProjectConfigurationRequest struct {
 	TeamID, ProjectKey, SourceFingerprint, ActorID string
+	Deployment                                     string
+	ServiceDeclarations                            map[string]string
 	ProjectLabel                                   string
 	ExpectedRevision                               int64
 	Configuration                                  ProjectConfiguration
@@ -124,15 +126,17 @@ type AppliedPublisherGroup struct {
 	Public     bool     `json:"public"`
 }
 type AppliedProjectConfiguration struct {
-	TeamID            string                       `json:"team_id"`
-	ProjectKey        string                       `json:"project_key"`
-	SourceFingerprint string                       `json:"source_fingerprint"`
-	Revision          int64                        `json:"revision"`
-	ConfigurationHash string                       `json:"configuration_hash"`
-	Configuration     ProjectConfiguration         `json:"configuration"`
-	Services          []AppliedProjectService      `json:"services"`
-	Members           []PublisherGroupMemberStatus `json:"members"`
-	Groups            []AppliedPublisherGroup      `json:"groups"`
+	Deployment          string                       `json:"deployment"`
+	ServiceDeclarations map[string]string            `json:"service_declarations"`
+	TeamID              string                       `json:"team_id"`
+	ProjectKey          string                       `json:"project_key"`
+	SourceFingerprint   string                       `json:"source_fingerprint"`
+	Revision            int64                        `json:"revision"`
+	ConfigurationHash   string                       `json:"configuration_hash"`
+	Configuration       ProjectConfiguration         `json:"configuration"`
+	Services            []AppliedProjectService      `json:"services"`
+	Members             []PublisherGroupMemberStatus `json:"members"`
+	Groups              []AppliedPublisherGroup      `json:"groups"`
 }
 
 // normalize a declarative value only. server code never evaluates project files.
@@ -217,25 +221,40 @@ func NormalizeProjectConfiguration(input ProjectConfiguration) (ProjectConfigura
 
 func appliedProjectContext(team, key string) string { return "applied-project/" + team + "/" + key }
 
-func (d *Database) openAppliedProject(row controlstatedb.ControlAppliedProject) (ProjectConfiguration, error) {
-	var c ProjectConfiguration
-	data, _, err := d.storageKey.Open(row.StorageKeyID, appliedProjectContext(row.TeamID, row.ProjectKey), row.ConfigurationCiphertext)
-	if err != nil {
-		return c, err
-	}
-	if err = json.Unmarshal(data, &c); err != nil {
-		return c, fmt.Errorf("decode applied project: %w", err)
-	}
-	return c, nil
-}
-
 func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProjectConfigurationRequest) (result AppliedProjectConfiguration, retErr error) {
-	if !naming.ValidProjectKey(r.ProjectKey) || !fingerprintPattern.MatchString(r.SourceFingerprint) || r.ExpectedRevision < 0 || r.ExpectedRevision == 1<<63-1 {
+	if !naming.ValidProjectKey(r.ProjectKey) || !naming.ValidServiceName(r.Deployment) || r.ServiceDeclarations == nil || len(r.ServiceDeclarations) > 128 || !fingerprintPattern.MatchString(r.SourceFingerprint) || r.ExpectedRevision < 0 || r.ExpectedRevision == 1<<63-1 {
 		return result, ErrProjectConfigurationInvalid
+	}
+	for name, protocol := range r.ServiceDeclarations {
+		if !naming.ValidServiceName(name) || !config.ValidProtocol(protocol) {
+			return result, ErrProjectConfigurationInvalid
+		}
 	}
 	c, _, err := NormalizeProjectConfiguration(r.Configuration)
 	if err != nil {
 		return result, err
+	}
+	if r.Deployment == "local" {
+		if len(c.PublisherGroups) != 0 || len(c.Workloads) != 0 {
+			return result, ErrProjectConfigurationInvalid
+		}
+	} else if len(c.PublisherGroups) != 1 || c.OAuth || len(c.Webhooks) != 0 {
+		return result, ErrProjectConfigurationInvalid
+	}
+	for name := range c.PublisherGroups {
+		if name != r.Deployment {
+			return result, ErrProjectConfigurationInvalid
+		}
+	}
+	for name, service := range c.Services {
+		if service.PublisherGroup != r.Deployment || r.ServiceDeclarations[name] != service.Protocol {
+			return result, ErrProjectConfigurationInvalid
+		}
+	}
+	for _, policy := range c.Workloads {
+		if policy.Deployment != r.Deployment {
+			return result, ErrProjectConfigurationInvalid
+		}
 	}
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
@@ -265,7 +284,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	if err = SetServiceAuditActor(ctx, tx, r.ActorID); err != nil {
 		return result, err
 	}
-	c, hash, err := NormalizeProjectConfiguration(c)
+	c, _, err = NormalizeProjectConfiguration(c)
 	if err != nil {
 		return result, err
 	}
@@ -288,7 +307,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 		if r.ExpectedRevision != 0 {
 			return result, ErrProjectConfigurationStale
 		}
-		data, _ := json.Marshal(ProjectConfiguration{})
+		data, _ := json.Marshal(appliedProjectRecord{})
 		sealed, e := d.storageKey.Seal(appliedProjectContext(r.TeamID, r.ProjectKey), data)
 		if e != nil {
 			return result, e
@@ -305,9 +324,20 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	if row.SourceFingerprint != r.SourceFingerprint {
 		return result, ErrProjectSourceConflict
 	}
-	old, err := d.openAppliedProject(row)
+	record, err := d.openAppliedProjectRecord(row)
 	if err != nil {
 		return result, err
+	}
+	old := record.Deployments[r.Deployment]
+	for deployment, saved := range record.Deployments {
+		if deployment == r.Deployment {
+			continue
+		}
+		for name := range c.Workloads {
+			if _, exists := saved.Workloads[name]; exists {
+				return result, ErrProjectConfigurationInvalid
+			}
+		}
 	}
 	groups, err := q.ListProjectPublisherGroups(ctx, controlstatedb.ListProjectPublisherGroupsParams{TeamID: r.TeamID, ProjectKey: r.ProjectKey})
 	if err != nil {
@@ -318,6 +348,9 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	presentGroups := map[string]bool{}
 	current := true
 	for _, g := range groups {
+		if g.Name != r.Deployment {
+			continue
+		}
 		presentGroups[g.Name] = true
 		_, wasDeclared := old.PublisherGroups[g.Name]
 		_, isDeclared := c.PublisherGroups[g.Name]
@@ -333,8 +366,6 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 			current = false
 		}
 		for name, service := range snapshot.Services {
-			// legacy apply can move a binding, but never pick one of several
-			// same-named deployments implicitly.
 			if _, exists := serving[name]; exists {
 				return result, ErrServiceConflict
 			}
@@ -346,11 +377,11 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 			current = false
 		}
 	}
-	if row.ConfigurationHash == hash && current {
+	if reflect.DeepEqual(old, c) && reflect.DeepEqual(record.ServiceDeclarations, r.ServiceDeclarations) && current {
 		if r.ExpectedRevision > row.Revision {
 			return result, ErrProjectConfigurationStale
 		}
-		result, err = d.appliedProjectStatus(ctx, tx, row, c)
+		result, err = d.appliedProjectStatus(ctx, tx, row, r.Deployment, c)
 		if err != nil {
 			return result, err
 		}
@@ -363,21 +394,33 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	if err = lockAppliedProjectPublications(ctx, tx, r.TeamID, r.ProjectKey); err != nil {
 		return result, err
 	}
-	for _, name := range sortedProjectKeys(c.Services) {
+	// project-wide declarations cannot contradict retained sibling bindings.
+	for deployment, saved := range record.Deployments {
+		if deployment == r.Deployment {
+			continue
+		}
+		for name, service := range saved.Services {
+			if r.ServiceDeclarations[name] != service.Protocol {
+				return result, ErrProjectManaged
+			}
+		}
+	}
+	for _, name := range sortedProjectKeys(r.ServiceDeclarations) {
 		var conflict bool
 		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.project_services declaration
 			JOIN control.applied_project_services binding ON binding.team_id=declaration.team_id
 			AND binding.project_key=declaration.project_key AND binding.service=declaration.name
 			WHERE declaration.team_id=$1 AND declaration.project_key=$2 AND declaration.name=$3
-			AND declaration.protocol<>$4 AND binding.group_id IS NOT NULL AND NOT(binding.group_id=ANY($5::text[])))`,
-			r.TeamID, r.ProjectKey, name, c.Services[name].Protocol, sortedProjectKeys(managedGroups)).Scan(&conflict); err != nil {
+			AND declaration.protocol<>$4 AND ((binding.group_id IS NULL AND $6<>'local') OR
+			(binding.group_id IS NOT NULL AND NOT(binding.group_id=ANY($5::text[])))))`,
+			r.TeamID, r.ProjectKey, name, r.ServiceDeclarations[name], sortedProjectKeys(managedGroups), r.Deployment).Scan(&conflict); err != nil {
 			return result, err
 		}
 		if conflict {
 			return result, ErrProjectManaged
 		}
 		if err = q.SaveProjectServiceDeclaration(ctx, controlstatedb.SaveProjectServiceDeclarationParams{
-			TeamID: r.TeamID, ProjectKey: r.ProjectKey, Name: name, Protocol: c.Services[name].Protocol,
+			TeamID: r.TeamID, ProjectKey: r.ProjectKey, Name: name, Protocol: r.ServiceDeclarations[name],
 		}); err != nil {
 			return result, err
 		}
@@ -416,7 +459,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	}
 	saved := map[string]controlstatedb.ControlAppliedProjectService{}
 	existing = slices.DeleteFunc(existing, func(s controlstatedb.ControlAppliedProjectService) bool {
-		return s.GroupID.Valid && !managedGroups[s.GroupID.String]
+		return s.GroupID.Valid && !managedGroups[s.GroupID.String] || !s.GroupID.Valid && r.Deployment != "local"
 	})
 	for _, s := range existing {
 		if _, exists := saved[s.Service]; exists {
@@ -518,11 +561,13 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 			}
 		}
 	}
-	if err = d.reconcileProjectLocalRealizations(ctx, tx, q, r, old, c); err != nil {
-		return result, err
+	if r.Deployment == "local" {
+		if err = d.reconcileProjectLocalRealizations(ctx, tx, q, r, old, c); err != nil {
+			return result, err
+		}
 	}
 	if err = q.RemoveProjectServiceDeclarations(ctx, controlstatedb.RemoveProjectServiceDeclarationsParams{
-		TeamID: r.TeamID, ProjectKey: r.ProjectKey, Names: sortedProjectKeys(c.Services),
+		TeamID: r.TeamID, ProjectKey: r.ProjectKey, Names: sortedProjectKeys(r.ServiceDeclarations),
 	}); err != nil {
 		return result, err
 	}
@@ -538,10 +583,24 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	if err = recordAppliedGroupConfiguration(ctx, tx, existing, newServices, changedGroups, r.ActorID, next, r.Now); err != nil {
 		return result, err
 	}
-	if err = reconcileWorkloadPolicies(ctx, tx, r, c); err != nil {
+	record.Deployments[r.Deployment] = c
+	record.ServiceDeclarations = r.ServiceDeclarations
+	policies, err := record.workloads()
+	if err != nil {
 		return result, err
 	}
-	data, _ := json.Marshal(c)
+	if err = reconcileWorkloadPolicies(ctx, tx, r, ProjectConfiguration{Workloads: policies}); err != nil {
+		return result, err
+	}
+	data, err := json.Marshal(record)
+	if err != nil {
+		return result, err
+	}
+	if len(record.Deployments) > 33 || len(policies) > 32 || len(data) > 16<<20 {
+		return result, ErrProjectConfigurationInvalid
+	}
+	digest := sha256.Sum256(data)
+	hash := hex.EncodeToString(digest[:])
 	sealed, err := d.storageKey.Seal(appliedProjectContext(r.TeamID, r.ProjectKey), data)
 	if err != nil {
 		return result, err
@@ -551,7 +610,8 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 		return result, err
 	}
 	row.Revision, row.ConfigurationHash = next, hash
-	result, err = d.appliedProjectStatus(ctx, tx, row, c)
+	row.ConfigurationCiphertext, row.StorageKeyID = sealed, d.storageKey.CurrentID()
+	result, err = d.appliedProjectStatus(ctx, tx, row, r.Deployment, c)
 	if err != nil {
 		return result, err
 	}
@@ -589,7 +649,10 @@ func projectConstraintError(err error) error {
 	return err
 }
 
-func (d *Database) GetProjectConfiguration(ctx context.Context, team, key, actor string) (result AppliedProjectConfiguration, retErr error) {
+func (d *Database) GetProjectConfiguration(ctx context.Context, team, key, actor, deployment string) (result AppliedProjectConfiguration, retErr error) {
+	if !naming.ValidServiceName(deployment) {
+		return result, ErrProjectConfigurationInvalid
+	}
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return result, err
@@ -606,19 +669,27 @@ func (d *Database) GetProjectConfiguration(ctx context.Context, team, key, actor
 	if err != nil {
 		return result, err
 	}
-	c, err := d.openAppliedProject(row)
+	c, err := d.openAppliedProject(row, deployment)
+	if errors.Is(err, pgx.ErrNoRows) {
+		c, _, err = NormalizeProjectConfiguration(ProjectConfiguration{})
+	}
 	if err != nil {
 		return result, err
 	}
-	result, err = d.appliedProjectStatus(ctx, tx, row, c)
+	result, err = d.appliedProjectStatus(ctx, tx, row, deployment, c)
 	if err != nil {
 		return result, err
 	}
 	return result, tx.Commit(ctx)
 }
 
-func (d *Database) appliedProjectStatus(ctx context.Context, tx pgx.Tx, row controlstatedb.ControlAppliedProject, c ProjectConfiguration) (AppliedProjectConfiguration, error) {
-	result := AppliedProjectConfiguration{TeamID: row.TeamID, ProjectKey: row.ProjectKey, SourceFingerprint: row.SourceFingerprint, Revision: row.Revision, ConfigurationHash: row.ConfigurationHash, Configuration: c, Services: []AppliedProjectService{}, Members: []PublisherGroupMemberStatus{}, Groups: []AppliedPublisherGroup{}}
+func (d *Database) appliedProjectStatus(ctx context.Context, tx pgx.Tx, row controlstatedb.ControlAppliedProject, deployment string, c ProjectConfiguration) (AppliedProjectConfiguration, error) {
+	result := AppliedProjectConfiguration{Deployment: deployment, TeamID: row.TeamID, ProjectKey: row.ProjectKey, SourceFingerprint: row.SourceFingerprint, Revision: row.Revision, ConfigurationHash: row.ConfigurationHash, Configuration: c, Services: []AppliedProjectService{}, Members: []PublisherGroupMemberStatus{}, Groups: []AppliedPublisherGroup{}}
+	record, err := d.openAppliedProjectRecord(row)
+	if err != nil {
+		return result, err
+	}
+	result.ServiceDeclarations = record.ServiceDeclarations
 	groups, err := controlstatedb.New(tx).ListProjectPublisherGroups(ctx, controlstatedb.ListProjectPublisherGroupsParams{TeamID: row.TeamID, ProjectKey: row.ProjectKey})
 	if err != nil {
 		return result, err
@@ -632,7 +703,14 @@ func (d *Database) appliedProjectStatus(ctx context.Context, tx pgx.Tx, row cont
 		return result, err
 	}
 	for _, s := range rows {
-		v := AppliedProjectService{Service: s.Service, PublisherGroup: c.Services[s.Service].PublisherGroup, Kind: "local", DesiredRevision: s.DesiredRevision}
+		group := "local"
+		if s.GroupID.Valid {
+			group = groupNames[s.GroupID.String]
+		}
+		if group != deployment {
+			continue
+		}
+		v := AppliedProjectService{Service: s.Service, PublisherGroup: group, Kind: "local", DesiredRevision: s.DesiredRevision}
 		if s.GroupID.Valid {
 			v.PublisherGroup = groupNames[s.GroupID.String]
 		}
@@ -642,7 +720,10 @@ func (d *Database) appliedProjectStatus(ctx context.Context, tx pgx.Tx, row cont
 				return result, err
 			}
 		} else if s.PublicURLID.Valid {
-			v.Kind, v.ServiceID, v.Hostname = "public_url", s.PublicURLID.String, c.Services[s.Service].PublicURL.Hostname
+			v.Kind, v.ServiceID = "public_url", s.PublicURLID.String
+			if err = tx.QueryRow(ctx, `SELECT hostname FROM control.public_urls WHERE id=$1`, s.PublicURLID.String).Scan(&v.Hostname); err != nil {
+				return result, err
+			}
 		}
 		result.Services = append(result.Services, v)
 	}
@@ -650,7 +731,11 @@ func (d *Database) appliedProjectStatus(ctx context.Context, tx pgx.Tx, row cont
 	if err != nil {
 		return result, err
 	}
+	result.Members = slices.DeleteFunc(result.Members, func(member PublisherGroupMemberStatus) bool { return member.GroupName != deployment })
 	for _, group := range groups {
+		if group.Name != deployment {
+			continue
+		}
 		var names []string
 		if err := tx.QueryRow(ctx, `SELECT array_agg(name ORDER BY name) FROM control.publisher_group_names WHERE group_id=$1`, group.ID).Scan(&names); err != nil {
 			return result, err

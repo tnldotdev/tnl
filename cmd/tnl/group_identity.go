@@ -57,7 +57,7 @@ func runPublisherGroupProvision(ctx context.Context, options groupIdentityProvis
 	if err != nil {
 		return err
 	}
-	applied, err := session.Authenticated().Control.GetProjectConfiguration(ctx, current.Team().Id, options.ProjectKey)
+	applied, err := session.Authenticated().Control.GetProjectConfiguration(ctx, current.Team().Id, options.ProjectKey, options.Group)
 	if err != nil {
 		return err
 	}

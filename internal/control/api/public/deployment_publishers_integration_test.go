@@ -37,13 +37,21 @@ func TestIntegrationDeploymentPublisherHTTPContracts(t *testing.T) {
 		t.Fatal(err)
 	}
 	team := session.Identity.Memberships[0].TeamID
-	_, err = d.ApplyProjectConfiguration(ctx, controlstate.ApplyProjectConfigurationRequest{
+	project, err := d.ApplyProjectConfiguration(ctx, controlstate.ApplyProjectConfigurationRequest{
+		Deployment: "production", ServiceDeclarations: map[string]string{"db": "postgres", "web": "http", "stage": "postgres"},
 		TeamID: team, ActorID: session.Identity.Identity.ID, ProjectKey: "example", SourceFingerprint: strings.Repeat("a", 64), Now: now,
-		Configuration: controlstate.ProjectConfiguration{PublisherGroups: map[string]controlstate.ProjectPublisherGroup{"production": {}, "staging": {}}, Services: map[string]controlstate.ProjectServiceConfiguration{
-			"db":    {PublisherGroup: "production", Protocol: "postgres", Target: "db.internal:5432"},
-			"web":   {PublisherGroup: "production", Target: "web.internal:3000"},
-			"stage": {PublisherGroup: "staging", Protocol: "postgres", Target: "stage.internal:5432"},
+		Configuration: controlstate.ProjectConfiguration{PublisherGroups: map[string]controlstate.ProjectPublisherGroup{"production": {}}, Services: map[string]controlstate.ProjectServiceConfiguration{
+			"db":  {PublisherGroup: "production", Protocol: "postgres", Target: "db.internal:5432"},
+			"web": {PublisherGroup: "production", Target: "web.internal:3000"},
 		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = d.ApplyProjectConfiguration(ctx, controlstate.ApplyProjectConfigurationRequest{
+		Deployment: "staging", ServiceDeclarations: project.ServiceDeclarations, ExpectedRevision: project.Revision,
+		TeamID: team, ActorID: session.Identity.Identity.ID, ProjectKey: "example", SourceFingerprint: strings.Repeat("a", 64), Now: now,
+		Configuration: controlstate.ProjectConfiguration{PublisherGroups: map[string]controlstate.ProjectPublisherGroup{"staging": {}}, Services: map[string]controlstate.ProjectServiceConfiguration{"stage": {PublisherGroup: "staging", Protocol: "postgres", Target: "stage.internal:5432"}}},
 	})
 	if err != nil {
 		t.Fatal(err)

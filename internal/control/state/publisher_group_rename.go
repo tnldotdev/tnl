@@ -2,6 +2,8 @@ package state
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"time"
 
@@ -37,10 +39,11 @@ func (d *Database) RenamePublisherGroup(ctx context.Context, team, project, old,
 	if err != nil {
 		return result, publisherLookupError(err, ErrPublisherGroup)
 	}
-	c, err := d.openAppliedProject(row)
+	record, err := d.openAppliedProjectRecord(row)
 	if err != nil {
 		return result, err
 	}
+	c, declared := record.Deployments[current]
 	deployment, err := q.LockProjectPublisherGroup(ctx, id)
 	if err != nil {
 		return result, err
@@ -50,7 +53,7 @@ func (d *Database) RenamePublisherGroup(ctx context.Context, team, project, old,
 		return result, err
 	}
 	if current == name {
-		result, err = d.appliedProjectStatus(ctx, tx, row, c)
+		result, err = d.appliedProjectStatus(ctx, tx, row, current, c)
 		if err != nil {
 			return result, err
 		}
@@ -59,7 +62,7 @@ func (d *Database) RenamePublisherGroup(ctx context.Context, team, project, old,
 	if current != old || row.Revision != expected {
 		return result, ErrProjectConfigurationStale
 	}
-	if _, exists := c.PublisherGroups[name]; exists {
+	if _, exists := record.Deployments[name]; exists {
 		return result, ErrServiceConflict
 	}
 	if err = claimPublisherGroupName(ctx, tx, team, project, name, id, now); err != nil {
@@ -79,14 +82,24 @@ func (d *Database) RenamePublisherGroup(ctx context.Context, team, project, old,
 		service.PublisherGroup = name
 		snapshot.Services[key] = service
 	}
-	c, hash, err := NormalizeProjectConfiguration(c)
+	if declared {
+		for key, policy := range c.Workloads {
+			policy.Deployment = name
+			c.Workloads[key] = policy
+		}
+		c, _, err = NormalizeProjectConfiguration(c)
+		if err != nil {
+			return result, err
+		}
+		delete(record.Deployments, current)
+		record.Deployments[name] = c
+	}
+	encoded, err := json.Marshal(record)
 	if err != nil {
 		return result, err
 	}
-	encoded, err := json.Marshal(c)
-	if err != nil {
-		return result, err
-	}
+	digest := sha256.Sum256(encoded)
+	hash := hex.EncodeToString(digest[:])
 	sealed, err := d.storageKey.Seal(appliedProjectContext(team, project), encoded)
 	if err != nil {
 		return result, err
@@ -105,7 +118,8 @@ func (d *Database) RenamePublisherGroup(ctx context.Context, team, project, old,
 	}
 	row.Revision++
 	row.ConfigurationHash = hash
-	result, err = d.appliedProjectStatus(ctx, tx, row, c)
+	row.ConfigurationCiphertext, row.StorageKeyID = sealed, d.storageKey.CurrentID()
+	result, err = d.appliedProjectStatus(ctx, tx, row, name, c)
 	if err != nil {
 		return result, err
 	}

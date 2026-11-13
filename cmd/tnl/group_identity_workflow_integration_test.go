@@ -60,9 +60,9 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	configuration := filepath.Join(root, "tnl.json")
-	data, err := json.Marshal(map[string]any{"version": 1, "tnl": map[string]any{"server": f.url, "team": team, "publisher_groups": map[string]any{"production": map[string]any{}}, "services": map[string]any{
-		"api": map[string]any{"publisher_group": "production", "target": map[string]any{"type": "address", "address": target.URL, "tls": map[string]any{"server_name": "example.com", "ca_file": "target.pem"}}, "access": map[string]any{"team": true}},
-	}}})
+	data, err := json.Marshal(map[string]any{"version": 1, "tnl": map[string]any{"server": f.url, "team": team, "services": map[string]any{"api": map[string]any{}}, "deployments": map[string]any{"production": map[string]any{"targets": map[string]any{
+		"api": map[string]any{"address": target.URL, "tls": map[string]any{"hostname": "example.com", "ca": string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: target.Certificate().Raw}))}, "access": map[string]any{"team": true}},
+	}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	var applied controlv1.AppliedProjectConfiguration
-	if err := json.Unmarshal(cliCall(t, t.Context(), []string{"--config", configuration, "apply", "--state-dir", person, "--output", "json"}), &applied); err != nil {
+	if err := json.Unmarshal(cliCall(t, t.Context(), []string{"--config", configuration, "apply", "--deployment", "production", "--state-dir", person, "--output", "json"}), &applied); err != nil {
 		t.Fatal(err)
 	}
 	credential := filepath.Join(t.TempDir(), "replica.json")
@@ -173,7 +173,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 			// an OLD task keeps polling while a manager renames and re-exports its
 			// exact member. verification must not replace that task's lease/run.
 			cliCall(t, t.Context(), []string{"--config", configuration, "publisher", "rename", "production", "live", "--state-dir", person})
-			applied, err = control.GetProjectConfiguration(t.Context(), team, applied.ProjectKey)
+			applied, err = control.GetProjectConfiguration(t.Context(), team, applied.ProjectKey, "production")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -189,7 +189,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 				}
 			}
 			workflowWait(t, 12*time.Second, func() bool {
-				status, err := control.GetProjectConfiguration(t.Context(), team, applied.ProjectKey)
+				status, err := control.GetProjectConfiguration(t.Context(), team, applied.ProjectKey, "production")
 				return err == nil && len(status.Members) == 1 && status.Members[0].ObservedRevision == applied.Revision
 			})
 			var keptRun string
@@ -282,7 +282,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 			body, _ := io.ReadAll(response.Body)
 			return response.StatusCode == http.StatusOK && string(body) == "portable group worker"
 		})
-		status, err := control.GetProjectConfiguration(t.Context(), team, applied.ProjectKey)
+		status, err := control.GetProjectConfiguration(t.Context(), team, applied.ProjectKey, "production")
 		if err != nil || len(status.Members) != 1 || status.Members[0].PublisherIdentityId != value.Member.PublisherIdentityId || !status.Members[0].Healthy || status.Members[0].ObservedRevision != applied.Revision {
 			t.Fatal("replacement changed membership or did not acknowledge its assignment", err)
 		}
@@ -316,7 +316,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 			joinConnector()
 			oldHostname := service.Endpoint.Hostname
 			cliCall(t, t.Context(), []string{"--config", configuration, "publisher", "namespace", "rename", "production", "new-dns", "--expected-revision", strconv.FormatInt(applied.Revision, 10), "--request-id", "dns-move", "--state-dir", person})
-			project, err := loadProjectConfiguration(t.Context(), cli{ConfigPath: configuration}, person)
+			project, err := loadProjectConfiguration(t.Context(), cli{ConfigPath: configuration, Connect: connectCommand{Start: connectStartCommand{Deployment: "production"}}}, person)
 			if err != nil {
 				t.Fatal(err)
 			}

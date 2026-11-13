@@ -19,6 +19,7 @@ func TestIntegrationServiceClientCertificateScopeAndRecovery(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "service_client_scope")
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"orders": {PublisherGroup: "production", Protocol: "postgres", Target: "orders.internal:5432"}}}
+	r = selectedProjectRequest(r, "production")
 	applied, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
 		t.Fatal(err)

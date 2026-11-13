@@ -1830,16 +1830,18 @@ type AppendReviewerFeedbackEventRequest struct {
 
 // AppliedProjectConfiguration defines model for AppliedProjectConfiguration.
 type AppliedProjectConfiguration struct {
-	// Configuration Normalized declarative configuration, at most 512 KiB encoded. All local declarations defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its groups.
-	Configuration     ProjectConfiguration         `json:"configuration"`
-	ConfigurationHash string                       `json:"configuration_hash"`
-	Groups            *[]AppliedPublisherGroup     `json:"groups,omitempty"`
-	Members           []PublisherGroupMemberStatus `json:"members"`
-	ProjectKey        string                       `json:"project_key"`
-	Revision          int64                        `json:"revision"`
-	Services          []AppliedProjectService      `json:"services"`
-	SourceFingerprint string                       `json:"source_fingerprint"`
-	TeamId            string                       `json:"team_id"`
+	// Configuration Normalized bindings for exactly one selected deployment, at most 512 KiB encoded. Local selection has no publisher groups or workloads; a remote selection contains only its named group and policies. Logical declarations are sent separately. All local bindings defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
+	Configuration       ProjectConfiguration         `json:"configuration"`
+	ConfigurationHash   string                       `json:"configuration_hash"`
+	Deployment          string                       `json:"deployment"`
+	Groups              *[]AppliedPublisherGroup     `json:"groups,omitempty"`
+	Members             []PublisherGroupMemberStatus `json:"members"`
+	ProjectKey          string                       `json:"project_key"`
+	Revision            int64                        `json:"revision"`
+	ServiceDeclarations ProjectServiceDeclarations   `json:"service_declarations"`
+	Services            []AppliedProjectService      `json:"services"`
+	SourceFingerprint   string                       `json:"source_fingerprint"`
+	TeamId              string                       `json:"team_id"`
 }
 
 // AppliedProjectService defines model for AppliedProjectService.
@@ -1872,12 +1874,14 @@ type AppliedPublisherGroup struct {
 
 // ApplyProjectConfigurationRequest defines model for ApplyProjectConfigurationRequest.
 type ApplyProjectConfigurationRequest struct {
-	// Configuration Normalized declarative configuration, at most 512 KiB encoded. All local declarations defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its groups.
-	Configuration     ProjectConfiguration `json:"configuration"`
-	ExpectedRevision  int64                `json:"expected_revision"`
-	ProjectLabel      *string              `json:"project_label,omitempty"`
-	SourceFingerprint string               `json:"source_fingerprint"`
-	TeamId            string               `json:"team_id"`
+	// Configuration Normalized bindings for exactly one selected deployment, at most 512 KiB encoded. Local selection has no publisher groups or workloads; a remote selection contains only its named group and policies. Logical declarations are sent separately. All local bindings defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
+	Configuration       ProjectConfiguration       `json:"configuration"`
+	Deployment          string                     `json:"deployment"`
+	ExpectedRevision    int64                      `json:"expected_revision"`
+	ProjectLabel        *string                    `json:"project_label,omitempty"`
+	ServiceDeclarations ProjectServiceDeclarations `json:"service_declarations"`
+	SourceFingerprint   string                     `json:"source_fingerprint"`
+	TeamId              string                     `json:"team_id"`
 }
 
 // AuthenticationFacts defines model for AuthenticationFacts.
@@ -2920,7 +2924,7 @@ type ProjectApplicationRate struct {
 	Per   string `json:"per"`
 }
 
-// ProjectConfiguration Normalized declarative configuration, at most 512 KiB encoded. All local declarations defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its groups.
+// ProjectConfiguration Normalized bindings for exactly one selected deployment, at most 512 KiB encoded. Local selection has no publisher groups or workloads; a remote selection contains only its named group and policies. Logical declarations are sent separately. All local bindings defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
 type ProjectConfiguration struct {
 	// Oauth Desired local app-led OAuth integration URL declaration. Applying it does not provision a handler on a named publisher group.
 	Oauth           bool                                   `json:"oauth"`
@@ -3003,6 +3007,9 @@ type ProjectServiceConfiguration struct {
 	TargetTls *ProjectTargetTLS `json:"target_tls,omitempty"`
 }
 
+// ProjectServiceDeclarations defines model for ProjectServiceDeclarations.
+type ProjectServiceDeclarations map[string]ServiceProtocol
+
 // ProjectServiceHTTP Local readiness and path mounts, or named-group restricted HTTP access and request limits. A group owns its endpoint and reachability.
 type ProjectServiceHTTP struct {
 	Access *ProjectPublicAccess          `json:"access,omitempty"`
@@ -3063,6 +3070,8 @@ type ProjectWebhook struct {
 
 // ProjectWorkload defines model for ProjectWorkload.
 type ProjectWorkload struct {
+	Deployment string `json:"deployment"`
+
 	// Github Immutable repository metadata verified during trusted manager apply; job assertions never establish this binding. Unchanged applies reuse the saved binding.
 	Github *ProjectWorkloadGitHub `json:"github,omitempty"`
 	Gitlab *ProjectWorkloadGitLab `json:"gitlab,omitempty"`
@@ -4487,7 +4496,8 @@ type CreateShareParams struct {
 
 // GetProjectConfigurationParams defines parameters for GetProjectConfiguration.
 type GetProjectConfigurationParams struct {
-	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
+	TeamId     TeamIDQuery `form:"team_id" json:"team_id"`
+	Deployment string      `form:"deployment" json:"deployment"`
 }
 
 // RegisterDeploymentCredentialParams defines parameters for RegisterDeploymentCredential.
@@ -4582,6 +4592,7 @@ type RevokePublisherGroupMemberParams struct {
 
 // GetProjectServiceParams defines parameters for GetProjectService.
 type GetProjectServiceParams struct {
+	Deployment        string `form:"deployment" json:"deployment"`
 	TeamId            TeamID `form:"team_id" json:"team_id"`
 	SourceFingerprint string `form:"source_fingerprint" json:"source_fingerprint"`
 }
@@ -5490,13 +5501,13 @@ type ClientInterface interface {
 	// ApplyProjectConfigurationWithBody performs a PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+	// Atomically reconcile all logical service declarations and only one selected deployment's normalized bindings and workload policies. Sibling deployments and their local realizations are preserved; declarations cannot contradict retained bindings. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current project revision. Targets are encrypted and only returned to project managers and scoped publishers.
 	ApplyProjectConfigurationWithBody(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ApplyProjectConfiguration performs a PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId) request.
 	// Takes a body of the `application/json` content type.
 	//
-	// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+	// Atomically reconcile all logical service declarations and only one selected deployment's normalized bindings and workload policies. Sibling deployments and their local realizations are preserved; declarations cannot contradict retained bindings. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current project revision. Targets are encrypted and only returned to project managers and scoped publishers.
 	ApplyProjectConfiguration(ctx context.Context, projectKey string, body ApplyProjectConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RegisterDeploymentCredentialWithBody performs a POST /v1/projects/{project_key}/deployment-credentials (the `RegisterDeploymentCredential` operationId) request,
@@ -5648,7 +5659,7 @@ type ClientInterface interface {
 
 	// GetProjectService performs a GET /v1/projects/{project_key}/services/{service} (the `GetProjectService` operationId) request.
 	//
-	// Resolve an applied service by its exact Git source and configuration key using current visitor access. Does not return targets or require project-manager permission.
+	// Resolve a service by its exact Git source, deployment, and logical service key using current visitor access. Does not return targets or require project-manager permission. Never searches another deployment or adopts a same-named service.
 	GetProjectService(ctx context.Context, projectKey string, service ServiceName, params *GetProjectServiceParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListPublicURLs List public URLs for one team
@@ -7071,7 +7082,7 @@ func (c *Client) GetProjectConfiguration(ctx context.Context, projectKey string,
 // ApplyProjectConfigurationWithBody performs a PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId) request,
 // with any type of body and a specified content type.
 //
-// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+// Atomically reconcile all logical service declarations and only one selected deployment's normalized bindings and workload policies. Sibling deployments and their local realizations are preserved; declarations cannot contradict retained bindings. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current project revision. Targets are encrypted and only returned to project managers and scoped publishers.
 func (c *Client) ApplyProjectConfigurationWithBody(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewApplyProjectConfigurationRequestWithBody(c.Server, projectKey, contentType, body)
 	if err != nil {
@@ -7087,7 +7098,7 @@ func (c *Client) ApplyProjectConfigurationWithBody(ctx context.Context, projectK
 // ApplyProjectConfiguration performs a PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId) request.
 // Takes a body of the `application/json` content type.
 //
-// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+// Atomically reconcile all logical service declarations and only one selected deployment's normalized bindings and workload policies. Sibling deployments and their local realizations are preserved; declarations cannot contradict retained bindings. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current project revision. Targets are encrypted and only returned to project managers and scoped publishers.
 func (c *Client) ApplyProjectConfiguration(ctx context.Context, projectKey string, body ApplyProjectConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewApplyProjectConfigurationRequest(c.Server, projectKey, body)
 	if err != nil {
@@ -7519,7 +7530,7 @@ func (c *Client) RenamePublisherGroup(ctx context.Context, projectKey string, gr
 
 // GetProjectService performs a GET /v1/projects/{project_key}/services/{service} (the `GetProjectService` operationId) request.
 //
-// Resolve an applied service by its exact Git source and configuration key using current visitor access. Does not return targets or require project-manager permission.
+// Resolve a service by its exact Git source, deployment, and logical service key using current visitor access. Does not return targets or require project-manager permission. Never searches another deployment or adopts a same-named service.
 func (c *Client) GetProjectService(ctx context.Context, projectKey string, service ServiceName, params *GetProjectServiceParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetProjectServiceRequest(c.Server, projectKey, service, params)
 	if err != nil {
@@ -11234,6 +11245,14 @@ func NewGetProjectConfigurationRequest(server string, projectKey string, params 
 			}
 		}
 
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "deployment", params.Deployment, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
 		if encoded := queryValues.Encode(); encoded != "" {
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
@@ -12646,6 +12665,14 @@ func NewGetProjectServiceRequest(server string, projectKey string, service Servi
 		// styled parameters, preserving literal commas as delimiters
 		// per the OpenAPI spec (e.g. "color=blue,black,brown").
 		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "deployment", params.Deployment, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
 
 		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 			return nil, err
@@ -17734,7 +17761,7 @@ type ClientWithResponsesInterface interface {
 	// ApplyProjectConfigurationWithBodyWithResponse performs a PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+	// Atomically reconcile all logical service declarations and only one selected deployment's normalized bindings and workload policies. Sibling deployments and their local realizations are preserved; declarations cannot contradict retained bindings. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current project revision. Targets are encrypted and only returned to project managers and scoped publishers.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	ApplyProjectConfigurationWithBodyWithResponse(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApplyProjectConfigurationResponse, error)
@@ -17742,7 +17769,7 @@ type ClientWithResponsesInterface interface {
 	// ApplyProjectConfigurationWithResponse performs a PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+	// Atomically reconcile all logical service declarations and only one selected deployment's normalized bindings and workload policies. Sibling deployments and their local realizations are preserved; declarations cannot contradict retained bindings. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current project revision. Targets are encrypted and only returned to project managers and scoped publishers.
 	ApplyProjectConfigurationWithResponse(ctx context.Context, projectKey string, body ApplyProjectConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*ApplyProjectConfigurationResponse, error)
 
 	// RegisterDeploymentCredentialWithBodyWithResponse performs a POST /v1/projects/{project_key}/deployment-credentials (the `RegisterDeploymentCredential` operationId) request,
@@ -17930,7 +17957,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetProjectServiceWithResponse performs a GET /v1/projects/{project_key}/services/{service} (the `GetProjectService` operationId) request.
 	//
-	// Resolve an applied service by its exact Git source and configuration key using current visitor access. Does not return targets or require project-manager permission.
+	// Resolve a service by its exact Git source, deployment, and logical service key using current visitor access. Does not return targets or require project-manager permission. Never searches another deployment or adopts a same-named service.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	GetProjectServiceWithResponse(ctx context.Context, projectKey string, service ServiceName, params *GetProjectServiceParams, reqEditors ...RequestEditorFn) (*GetProjectServiceResponse, error)
@@ -26283,7 +26310,7 @@ func (c *ClientWithResponses) GetProjectConfigurationWithResponse(ctx context.Co
 // ApplyProjectConfigurationWithBodyWithResponse performs a PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId) request,
 // with any type of body and a specified content type.
 //
-// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+// Atomically reconcile all logical service declarations and only one selected deployment's normalized bindings and workload policies. Sibling deployments and their local realizations are preserved; declarations cannot contradict retained bindings. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current project revision. Targets are encrypted and only returned to project managers and scoped publishers.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) ApplyProjectConfigurationWithBodyWithResponse(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApplyProjectConfigurationResponse, error) {
@@ -26297,7 +26324,7 @@ func (c *ClientWithResponses) ApplyProjectConfigurationWithBodyWithResponse(ctx 
 // ApplyProjectConfigurationWithResponse performs a PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+// Atomically reconcile all logical service declarations and only one selected deployment's normalized bindings and workload policies. Sibling deployments and their local realizations are preserved; declarations cannot contradict retained bindings. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current project revision. Targets are encrypted and only returned to project managers and scoped publishers.
 func (c *ClientWithResponses) ApplyProjectConfigurationWithResponse(ctx context.Context, projectKey string, body ApplyProjectConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*ApplyProjectConfigurationResponse, error) {
 	rsp, err := c.ApplyProjectConfiguration(ctx, projectKey, body, reqEditors...)
 	if err != nil {
@@ -26653,7 +26680,7 @@ func (c *ClientWithResponses) RenamePublisherGroupWithResponse(ctx context.Conte
 
 // GetProjectServiceWithResponse performs a GET /v1/projects/{project_key}/services/{service} (the `GetProjectService` operationId) request.
 //
-// Resolve an applied service by its exact Git source and configuration key using current visitor access. Does not return targets or require project-manager permission.
+// Resolve a service by its exact Git source, deployment, and logical service key using current visitor access. Does not return targets or require project-manager permission. Never searches another deployment or adopts a same-named service.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) GetProjectServiceWithResponse(ctx context.Context, projectKey string, service ServiceName, params *GetProjectServiceParams, reqEditors ...RequestEditorFn) (*GetProjectServiceResponse, error) {
@@ -34746,6 +34773,19 @@ func (siw *ServerInterfaceWrapper) GetProjectConfiguration(w http.ResponseWriter
 		return
 	}
 
+	// ------------- Required query parameter "deployment" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "deployment", r.URL.Query(), &params.Deployment, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "deployment"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "deployment", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetProjectConfiguration(w, r, projectKey, params)
 	}))
@@ -35858,6 +35898,19 @@ func (siw *ServerInterfaceWrapper) GetProjectService(w http.ResponseWriter, r *h
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetProjectServiceParams
+
+	// ------------- Required query parameter "deployment" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "deployment", r.URL.Query(), &params.Deployment, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "deployment"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "deployment", Err: err})
+		}
+		return
+	}
 
 	// ------------- Required query parameter "team_id" -------------
 

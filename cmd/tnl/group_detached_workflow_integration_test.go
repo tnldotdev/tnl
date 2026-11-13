@@ -32,7 +32,7 @@ func TestIntegrationCLIGroupDetachedHistoricalIdentity(t *testing.T) {
 	team, control := session.Identity().PersonalTeamId, session.Authenticated().Control
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "detached replica") }))
 	defer target.Close()
-	applied, err := control.ApplyProjectConfiguration(t.Context(), "detached", controlv1.ApplyProjectConfigurationRequest{TeamId: team, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{PublisherGroups: map[string]controlv1.ProjectPublisherGroup{"production": {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {PublisherGroup: new("production"), Target: target.URL, Access: &controlv1.ProjectServiceAccess{Team: true}}}}})
+	applied, err := control.ApplyProjectConfiguration(t.Context(), "detached", controlv1.ApplyProjectConfigurationRequest{Deployment: "production", ServiceDeclarations: controlv1.ProjectServiceDeclarations{"api": "http"}, TeamId: team, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{PublisherGroups: map[string]controlv1.ProjectPublisherGroup{"production": {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {PublisherGroup: new("production"), Target: target.URL, Access: &controlv1.ProjectServiceAccess{Team: true}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestIntegrationCLIGroupDetachedHistoricalIdentity(t *testing.T) {
 			if err != nil || state != "ready" {
 				return false
 			}
-			status, err := control.GetProjectConfiguration(t.Context(), team, "detached")
+			status, err := control.GetProjectConfiguration(t.Context(), team, "detached", "production")
 			return err == nil && len(status.Members) == 1 && status.Members[0].Healthy && status.Members[0].GroupName == "live" && status.Members[0].ObservedRevision == renamed.Revision
 		})
 		service, err := control.GetService(t.Context(), *applied.Services[0].ServiceId)

@@ -112,6 +112,8 @@ baseline, including provider-qualified ingress and relay regions and saved run
 preferences. Logical project declarations, deployment-scoped bindings, and
 encrypted serving snapshots, captured publisher setup approvals, and scoped
 independent deployment manage/connect approvals also require this fresh baseline.
+Selected deployment desired state uses `tnl-control-fresh-v1-selected-deployments`;
+each apply reconciles only its selected deployment against the project revision.
 Use a fresh database, run `tnld migrate`, and start matching server,
 publisher, and connector binaries. Databases from previous baselines are rejected.
 A publisher restart does not restore its application sockets.

@@ -104,12 +104,15 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 				p.GitLab = &controlstate.ProjectWorkloadGitLab{Server: "https://gitlab.example", Project: "shop/storefront", ProjectId: "123", NamespaceId: "456", DefaultBranch: new("trunk")}
 				configuration.Workloads["storefront"] = p
 			}
+			policy := configuration.Workloads["storefront"]
+			policy.Deployment = "production"
+			configuration.Workloads["storefront"] = policy
 			data, _ := json.Marshal(configuration)
 			var wire controlv1.ProjectConfiguration
 			if err = json.Unmarshal(data, &wire); err != nil {
 				t.Fatal(err)
 			}
-			body := controlv1.ApplyProjectConfigurationRequest{TeamId: team, SourceFingerprint: strings.Repeat("a", 64), Configuration: wire}
+			body := controlv1.ApplyProjectConfigurationRequest{Deployment: "production", ServiceDeclarations: controlv1.ProjectServiceDeclarations{"inventory": "http", "models": "postgres"}, TeamId: team, SourceFingerprint: strings.Repeat("a", 64), Configuration: wire}
 			applied, err := owner.ApplyProjectConfiguration(ctx, "store", body)
 			if err != nil {
 				t.Fatal(err)

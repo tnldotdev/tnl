@@ -121,7 +121,7 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	group := "remote"
-	applied, err := owner.ApplyProjectConfiguration(ctx, "egress", controlv1.ApplyProjectConfigurationRequest{TeamId: m.TeamID, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {PublisherGroup: &group, Target: "api.internal:3000"}, "db": {PublisherGroup: &group, Target: "db.internal:5432", Protocol: new(controlv1.Postgres)}}}})
+	applied, err := owner.ApplyProjectConfiguration(ctx, "egress", controlv1.ApplyProjectConfigurationRequest{Deployment: group, ServiceDeclarations: controlv1.ProjectServiceDeclarations{"api": "http", "db": "postgres"}, TeamId: m.TeamID, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {PublisherGroup: &group, Target: "api.internal:3000"}, "db": {PublisherGroup: &group, Target: "db.internal:5432", Protocol: new(controlv1.Postgres)}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,10 +224,10 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	if _, err = owner.ListPublisherIdentities(ctx, "team_other", ""); !errors.Is(err, clientcontrol.ErrNotFound) {
 		t.Fatal("cross-team status", err)
 	}
-	if _, err = client.GetProjectConfiguration(ctx, m.TeamID, "egress"); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+	if _, err = client.GetProjectConfiguration(ctx, m.TeamID, "egress", group); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("anonymous project status", err)
 	}
-	project, err := owner.GetProjectConfiguration(ctx, m.TeamID, "egress")
+	project, err := owner.GetProjectConfiguration(ctx, m.TeamID, "egress", "live")
 	if err != nil || len(project.Members) != 1 || project.Members[0].Runtime == nil {
 		t.Fatal("server status missing runtime", err)
 	}

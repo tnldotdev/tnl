@@ -17,6 +17,7 @@ func TestIntegrationWorkloadRenewalMigration(t *testing.T) {
 	ctx := t.Context()
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = workloadConfiguration()
+	r = selectedProjectRequest(r, "production")
 	if _, err := d.ApplyProjectConfiguration(ctx, r); err != nil {
 		t.Fatal(err)
 	}
@@ -163,6 +164,7 @@ func TestIntegrationMigrationRejectsSiblingWorkloadBaselines(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, previous := range []string{
+		"tnl-control-fresh-v1-deployment-connect",
 		"tnl-control-fresh-v1-deployment-management",
 		"tnl-control-fresh-v1-deployment-publishers",
 		"tnl-control-fresh-v1-deployment-configuration",

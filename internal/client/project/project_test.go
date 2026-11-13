@@ -21,14 +21,18 @@ tnl:
     access: {ip: [192.0.2.0/24]}
     ephemeral: true
   services:
-    web:
-      name: website
-      public_url:
-        access: anonymous
-      target: {type: address, address: 4000}
-      http:
-        open: true
-        readiness: {path: /status}
+    web: {}
+  deployments:
+    local:
+      targets:
+        web:
+          name: website
+          public_url:
+            access: anonymous
+          address: 4000
+          http:
+            open: true
+            readiness: {path: /status}
 `
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
@@ -37,7 +41,11 @@ tnl:
 	if err != nil {
 		t.Fatal(err)
 	}
-	project := Project{Config: *document.TNL}
+	selected, err := config.ResolveDeployment(*document.TNL, "local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := Project{Config: selected}
 	effective, err := project.EffectiveService("web")
 	if err != nil {
 		t.Fatal(err)

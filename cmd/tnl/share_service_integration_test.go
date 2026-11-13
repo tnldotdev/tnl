@@ -138,7 +138,7 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 		}
 	}
 	configFile, state := filepath.Join(root, "tnl.json"), filepath.Join(root, "state")
-	if err := os.WriteFile(configFile, []byte(`{"version":1,"tnl":{"publisher_groups":{"production":{}},"services":{"remote":{"publisher_group":"production","target":{"type":"address","address":"http://app.internal:3000"}},"localdb":{"target":{"type":"app"}}}}}`), 0600); err != nil {
+	if err := os.WriteFile(configFile, []byte(`{"version":1,"tnl":{"services":{"remote":{},"localdb":{}},"deployments":{"production":{"targets":{"remote":{"address":"http://app.internal:3000"}}},"local":{"targets":{"localdb":{}}}}}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	call := func(token, command string, args ...string) ([]byte, error) {
@@ -166,6 +166,9 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 	if err := json.Unmarshal(data, &applied); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := call(owner.AccessToken.String(), "apply", "--deployment", "production"); err != nil {
+		t.Fatal(err)
+	}
 	project, err := loadProjectConfiguration(ctx, cli{ConfigPath: configFile}, state)
 	if err != nil {
 		t.Fatal(err)
@@ -179,7 +182,7 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	remote, err := ownerControl.GetProjectService(ctx, source.Key, "remote", controlv1.GetProjectServiceParams{TeamId: team.Id, SourceFingerprint: source.Fingerprint})
+	remote, err := ownerControl.GetProjectService(ctx, source.Key, "remote", controlv1.GetProjectServiceParams{TeamId: team.Id, SourceFingerprint: source.Fingerprint, Deployment: "production"})
 	if err != nil {
 		t.Fatal(err)
 	}

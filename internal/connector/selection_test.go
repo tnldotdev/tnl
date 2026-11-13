@@ -64,7 +64,7 @@ func TestConnectConfiguredPrivateSelectionUsesExactVisitorBinding(t *testing.T) 
 				switch r.URL.Path {
 				case "/v1/projects/" + source.Key + "/services/remote":
 					remoteLookup++
-					if r.URL.Query().Get("source_fingerprint") != source.Fingerprint || r.URL.Query().Get("team_id") != test.team || len(r.URL.Query()) != 2 {
+					if r.URL.Query().Get("source_fingerprint") != source.Fingerprint || r.URL.Query().Get("team_id") != test.team || r.URL.Query().Get("deployment") != "production" || len(r.URL.Query()) != 3 {
 						t.Errorf("applied lookup scope = %s", r.URL)
 					}
 					if test.status != 0 {

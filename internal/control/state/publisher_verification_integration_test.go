@@ -13,6 +13,7 @@ func TestIntegrationGroupIdentityVerificationPreservesLease(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "group_verification")
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"api": {PublisherGroup: "production", Target: "api.internal:3000"}}}
+	r = selectedProjectRequest(r, "production")
 	applied, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
 		t.Fatal(err)

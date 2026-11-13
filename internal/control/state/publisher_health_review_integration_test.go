@@ -17,6 +17,7 @@ func TestIntegrationPublisherGroupHealthRuntimeReplacement(t *testing.T) {
 			r := appliedProjectRequest(t, d, now)
 			r.Configuration.PublisherGroups = map[string]ProjectPublisherGroup{"remote": {}}
 			r.Configuration.Services["web"] = ProjectServiceConfiguration{PublisherGroup: "remote", Target: "http://localhost:3000"}
+			r = selectedProjectRequest(r, "remote")
 			_, err := d.ApplyProjectConfiguration(t.Context(), r)
 			if err != nil {
 				t.Fatal(err)
@@ -51,7 +52,7 @@ func TestIntegrationPublisherGroupHealthRuntimeReplacement(t *testing.T) {
 			}
 			status := func(want bool) {
 				t.Helper()
-				s, err := d.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, r.ActorID)
+				s, err := d.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, r.ActorID, "remote")
 				if err != nil || len(s.Members) != 1 || s.Members[0].Healthy != want {
 					t.Fatalf("health want %t: %+v %v", want, s.Members, err)
 				}

@@ -228,18 +228,21 @@ func TestIntegrationDeploymentManagementApprovalRetirement(t *testing.T) {
 			}
 			access := managementAccess(t, d, credential, private, now)
 			saved := r.Configuration.Services["db"]
-			r.ExpectedRevision = 1
 			if mutation == "protocol" {
 				next := saved
 				next.Protocol = "mysql"
 				r.Configuration.Services["db"] = next
+				r.ServiceDeclarations["db"] = next.Protocol
 			} else {
 				delete(r.Configuration.Services, "db")
+				delete(r.ServiceDeclarations, "db")
 			}
-			if _, err = d.ApplyProjectConfiguration(t.Context(), r); err != nil {
+			updated, err := d.ApplyProjectConfiguration(t.Context(), r)
+			if err != nil {
 				t.Fatal(err)
 			}
-			r.ExpectedRevision, r.Configuration.Services["db"] = 2, saved
+			r.ExpectedRevision, r.Configuration.Services["db"] = updated.Revision, saved
+			r.ServiceDeclarations["db"] = saved.Protocol
 			if _, err = d.ApplyProjectConfiguration(t.Context(), r); err != nil {
 				t.Fatal(err)
 			}

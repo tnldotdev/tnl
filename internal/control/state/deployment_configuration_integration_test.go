@@ -21,6 +21,13 @@ func TestIntegrationDeploymentConfigurationRevisionIsIsolated(t *testing.T) {
 			"stage":    {PublisherGroup: "staging", Protocol: "postgres", Target: "staging.internal:5432"},
 		},
 	}
+	production := deploymentProjectRequest(r, "production")
+	first, err := d.ApplyProjectConfiguration(ctx, production)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r = deploymentProjectRequest(r, "staging")
+	r.ExpectedRevision = first.Revision
 	project, err := d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {
 		t.Fatal(err)

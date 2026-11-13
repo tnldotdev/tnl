@@ -53,9 +53,10 @@ func TestPostgresLocalDeployment(t *testing.T) {
 	}
 	root := t.TempDir()
 	installSDKNativePackage(t, root, *connectionCLIBinary)
-	configuration, err := json.Marshal(map[string]any{"version": 1, "tnl": map[string]any{"services": map[string]any{
-		"db": map[string]any{"protocol": "postgres", "target": map[string]any{"type": "address", "address": database.Host}},
-	}}})
+	configuration, err := json.Marshal(map[string]any{"version": 1, "tnl": map[string]any{
+		"services": map[string]any{"db": map[string]any{"protocol": "postgres"}},
+		"deployments": map[string]any{"local": map[string]any{"targets": map[string]any{"db": map[string]any{"address": database.Host}}}},
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -22,7 +22,7 @@ func selectionFixture(t *testing.T) (string, Manifest, func(Manifest)) {
 	if err := os.MkdirAll(generated, 0700); err != nil {
 		t.Fatal(err)
 	}
-	manifest := Manifest{Schema: 1, Server: "https://control.example.test", Team: "team", ProjectKey: "project", SourceFingerprint: strings.Repeat("a", 64), ProjectLabel: "app", Services: map[string]string{"api": "http"}, Workloads: map[string]Workload{"job": {Provider: "github", Services: []string{"api"}, MaxDurationSeconds: 3600, Acquisition: Acquisition{Method: "github-actions", Audience: "https://control.example.test"}}}}
+	manifest := Manifest{Schema: 1, Server: "https://control.example.test", Team: "team", ProjectKey: "project", SourceFingerprint: strings.Repeat("a", 64), ProjectLabel: "app", Services: map[string]string{"api": "http"}, Workloads: map[string]Workload{"job": {Deployment: "production", Provider: "github", Services: []string{"api"}, MaxDurationSeconds: 3600, Acquisition: Acquisition{Method: "github-actions", Audience: "https://control.example.test"}}}}
 	write := func(m Manifest) {
 		t.Helper()
 		data, err := json.Marshal(m)

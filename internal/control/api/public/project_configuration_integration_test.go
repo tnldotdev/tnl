@@ -68,17 +68,31 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	name, hostname, mode := "website", "upstream.internal", controlv1.Restricted
 	digest := sha256.Sum256([]byte("tnl-target-tls/v1\x00" + hostname + "\x00"))
 	body.Configuration.Services["public"] = controlv1.ProjectServiceConfiguration{PublisherGroup: &group, Name: &name, Target: "https://192.0.2.5:8443", TargetTls: &controlv1.ProjectTargetTLS{Hostname: hostname, Digest: hex.EncodeToString(digest[:])}, Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectPublicAccess{Mode: &mode}}}
+	body.Deployment = group
+	body.ServiceDeclarations = controlv1.ProjectServiceDeclarations{"web": "http", "public": "http", "local-app": "http", "local-private": "http"}
+	localBody := body
+	localBody.Deployment = "local"
+	localBody.Configuration = controlv1.ProjectConfiguration{Oauth: true, Webhooks: body.Configuration.Webhooks, PublisherGroups: map[string]controlv1.ProjectPublisherGroup{}, Services: map[string]controlv1.ProjectServiceConfiguration{"local-app": body.Configuration.Services["local-app"], "local-private": body.Configuration.Services["local-private"]}}
+	body.Configuration.Oauth = false
+	body.Configuration.Webhooks = map[string]controlv1.ProjectWebhook{}
+	delete(body.Configuration.Services, "local-app")
+	delete(body.Configuration.Services, "local-private")
 	if _, err = anonymous.ApplyProjectConfiguration(ctx, "example", body); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("anonymous desired-state mutation", err)
 	}
+	localApplied, err := owner.ApplyProjectConfiguration(ctx, "example", localBody)
+	if err != nil || !localApplied.Configuration.Oauth || len(localApplied.Configuration.Webhooks) != 1 || len(localApplied.Services) != 2 {
+		t.Fatal("local wire configuration lost integration declarations", localApplied, err)
+	}
+	body.ExpectedRevision = localApplied.Revision
 	applied, err := owner.ApplyProjectConfiguration(ctx, "example", body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if applied.Revision != 1 || len(applied.Services) != 4 || !applied.Configuration.Oauth || len(applied.Configuration.Webhooks) != 1 {
+	if applied.Revision != 2 || len(applied.Services) != 2 || applied.Configuration.Oauth || len(applied.Configuration.Webhooks) != 0 {
 		t.Fatalf("wire configuration: %+v", applied)
 	}
-	endpoint := applied.Configuration.Webhooks["payments"]
+	endpoint := localApplied.Configuration.Webhooks["payments"]
 	if endpoint.Delivery == nil || *endpoint.Delivery != "fanout" || endpoint.Methods == nil || len(*endpoint.Methods) != 1 || (*endpoint.Methods)[0] != "POST" {
 		t.Fatal("wire root declaration lost webhook defaults")
 	}
@@ -108,7 +122,11 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 		t.Fatal("content replay accepted a missing expected_revision", err)
 	}
 	var unknown map[string]any
-	if err = json.Unmarshal(encoded, &unknown); err != nil {
+	localEncoded, err := json.Marshal(localBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(localEncoded, &unknown); err != nil {
 		t.Fatal(err)
 	}
 	secret := "must-not-leak-webhook-secret"
@@ -170,11 +188,11 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	if err != nil || len(projection.Services) != 0 {
 		t.Fatal("service leaked into public URL metadata", projection, err)
 	}
-	local, err := owner.RealizeLocalProjectService(ctx, "example", "local-app", controlv1.RealizeLocalProjectServiceRequest{TeamId: team, SourceFingerprint: body.SourceFingerprint, WorktreeKey: "checkout-a", Configuration: body.Configuration.Services["local-app"]})
+	local, err := owner.RealizeLocalProjectService(ctx, "example", "local-app", controlv1.RealizeLocalProjectServiceRequest{TeamId: team, SourceFingerprint: body.SourceFingerprint, WorktreeKey: "checkout-a", Configuration: localBody.Configuration.Services["local-app"]})
 	if err == nil || local.ServiceId != "" {
 		t.Fatal("public realization accepted a missing exact public URL ID")
 	}
-	local, err = owner.RealizeLocalProjectService(ctx, "example", "local-private", controlv1.RealizeLocalProjectServiceRequest{TeamId: team, SourceFingerprint: body.SourceFingerprint, WorktreeKey: "checkout-a", Configuration: body.Configuration.Services["local-private"]})
+	local, err = owner.RealizeLocalProjectService(ctx, "example", "local-private", controlv1.RealizeLocalProjectServiceRequest{TeamId: team, SourceFingerprint: body.SourceFingerprint, WorktreeKey: "checkout-a", Configuration: localBody.Configuration.Services["local-private"]})
 	if err != nil || local.ServiceId == "" || local.Metadata == nil || local.Metadata.Protocol != controlv1.ServiceProtocolHTTP {
 		t.Fatal("local realization wire lost its approved resource metadata", local, err)
 	}
@@ -213,15 +231,19 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	if err = anonymous.AcknowledgePublisherGroupConfiguration(ctx, lease.AccessToken, controlv1.PublisherGroupAcknowledgement{Revision: assignments.Revision, ConfigurationHash: assignments.ConfigurationHash, Healthy: true}); err != nil {
 		t.Fatal(err)
 	}
-	current, err := owner.GetProjectConfiguration(ctx, team, "example")
+	current, err := owner.GetProjectConfiguration(ctx, team, "example", group)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(current.Members) != 1 || current.Members[0].ObservedRevision != 1 || !current.Members[0].Healthy {
 		t.Fatal("wire status lost acknowledgement")
 	}
-	if !current.Configuration.Oauth || len(current.Configuration.Webhooks) != 1 || current.Revision != 1 {
-		t.Fatal("wire status lost root state or invalid metadata changed the revision")
+	if current.Configuration.Oauth || len(current.Configuration.Webhooks) != 0 || current.Revision != applied.Revision {
+		t.Fatal("remote wire status borrowed local state or invalid metadata changed the revision")
+	}
+	localStatus, err := owner.GetProjectConfiguration(ctx, team, "example", "local")
+	if err != nil || !localStatus.Configuration.Oauth || len(localStatus.Configuration.Webhooks) != 1 || localStatus.Revision != current.Revision {
+		t.Fatal("remote apply changed local root state", localStatus, err)
 	}
 	// a group lease is not a person's session, and a session is not a group lease.
 	if _, err = anonymous.GetPublisherGroupAssignments(ctx, session.AccessToken.String()); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
@@ -231,7 +253,7 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = groupAsPerson.GetProjectConfiguration(ctx, team, "example"); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+	if _, err = groupAsPerson.GetProjectConfiguration(ctx, team, "example", group); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("group read manager configuration", err)
 	}
 	if _, err = groupAsPerson.SelectServiceRun(ctx, local.ServiceId, device.Id); !errors.Is(err, clientcontrol.ErrUnauthenticated) {

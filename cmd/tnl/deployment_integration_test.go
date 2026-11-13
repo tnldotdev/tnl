@@ -42,6 +42,7 @@ func TestIntegrationCLIDeploymentCRUD(t *testing.T) {
 	}
 	team := session.Identity.Memberships[0].TeamID
 	_, err = database.ApplyProjectConfiguration(t.Context(), controlstate.ApplyProjectConfigurationRequest{
+		Deployment: "local", ServiceDeclarations: map[string]string{"db": "postgres", "cache": "tcp"},
 		TeamID: team, ActorID: session.Identity.Identity.ID, ProjectKey: "shop", SourceFingerprint: strings.Repeat("a", 64), Now: now,
 		Configuration: controlstate.ProjectConfiguration{Services: map[string]controlstate.ProjectServiceConfiguration{
 			"db": {Protocol: "postgres", Target: "localhost:5432"}, "cache": {Protocol: "tcp", Target: "localhost:6379"},

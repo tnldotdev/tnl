@@ -56,7 +56,7 @@ type RegisteredTnlProject = keyof TnlProjectConfig extends never
 
 export type TnlRuntime = Readonly<
   Partial<Omit<ProjectMetadata, "services">> &
-    Partial<Omit<RegisteredTnlProject, "publisherGroups" | "workloads" | "services">> & {
+    Partial<Omit<RegisteredTnlProject, "workloads" | "services">> & {
       services: RegisteredTnlProject["services"];
       readonly port: number;
       readonly dev: boolean;

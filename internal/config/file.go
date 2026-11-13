@@ -66,7 +66,7 @@ func LoadDocument(path string) (Document, error) {
 		return Document{}, fmt.Errorf("load config %s: %w", path, err)
 	}
 	if document.TNL != nil {
-		NormalizePublicURLs(document.TNL)
+		NormalizeProjectPublicURLs(document.TNL)
 	}
 	return document, nil
 }
@@ -149,7 +149,7 @@ func ValidateDocument(document Document) error {
 		return fmt.Errorf("unsupported configuration version %d", *document.Version)
 	}
 	if document.TNL != nil {
-		if err := ValidateTNL(*document.TNL); err != nil {
+		if err := ValidateProject(*document.TNL); err != nil {
 			return fmt.Errorf("tnl: %w", err)
 		}
 	}

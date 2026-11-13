@@ -15,11 +15,12 @@ import (
 
 // Project is a selected and resolved project configuration.
 type Project struct {
-	Selection Selection
-	Config    config.TNL
-	Declared  *config.TNL
-	Worktree  Worktree
-	Root      string
+	Selection  Selection
+	Config     config.TNL
+	Declared   *config.Project
+	Deployment string
+	Worktree   Worktree
+	Root       string
 }
 
 // Resolve loads a selected project configuration and resolves its worktree and
@@ -52,25 +53,55 @@ func Resolve(ctx context.Context, selection Selection, cwd string, salt [32]byte
 		Root:      root,
 	}
 	if selection.Path == "" {
+		if selection.Workload != "" || selection.Deployment != "" && selection.Deployment != "local" {
+			return Project{}, errors.New("selected deployment or workload requires project configuration")
+		}
+		project.Deployment = "local"
 		return project, nil
 	}
 
+	var declared config.Project
 	if strings.EqualFold(filepath.Ext(selection.Path), ".ts") {
-		project.Config, err = loadTypeScript(ctx, selection.Path, cwd, project.Worktree)
+		declared, err = loadTypeScript(ctx, selection.Path, cwd, project.Worktree)
 	} else {
 		var document config.Document
 		document, err = config.LoadDocument(selection.Path)
 		if err == nil && document.TNL != nil {
-			project.Config = *document.TNL
+			declared = *document.TNL
 		}
 	}
 	if err != nil {
 		return Project{}, err
 	}
-	config.NormalizePublicURLs(&project.Config)
+	config.NormalizeProjectPublicURLs(&declared)
 	// retain evaluated declarations before resolving worktree-local defaults.
-	declared := project.Config
 	project.Declared = &declared
+	name := selection.Deployment
+	if selection.Workload != "" {
+		policy, found := declared.Workloads[selection.Workload]
+		if !found || name != "" && name != policy.Deployment {
+			return Project{}, errors.New("selected workload is missing or belongs to another deployment")
+		}
+		name = policy.Deployment
+	}
+	return project.SelectDeployment(name)
+}
+
+// SelectDeployment materializes one captured selection without changing another
+// handle or evaluating configuration again. local discovery defaults stay local.
+func (project Project) SelectDeployment(name string) (Project, error) {
+	if name == "" {
+		name = "local"
+	}
+	if project.Declared == nil {
+		return Project{}, errors.New("project declarations have not been loaded")
+	}
+	var err error
+	project.Config, err = config.ResolveDeployment(*project.Declared, name)
+	if err != nil {
+		return Project{}, err
+	}
+	project.Deployment = name
 	project.Config.Services = maps.Clone(project.Config.Services)
 
 	names := make([]string, 0, len(project.Config.Services))
@@ -223,8 +254,7 @@ func (p Project) EffectiveService(name string) (ResolvedService, error) {
 	return result, nil
 }
 
-// ResolvePublish finishes private discovery and resolves a relative target CA
-// path against the selected configuration's directory, independent of cwd.
+// ResolvePublish finishes target discovery for the captured deployment.
 func (p Project) ResolvePublish(name, discovered string) (*config.Publish, error) {
 	service, found := p.Config.Services[name]
 	if !found {
@@ -233,13 +263,6 @@ func (p Project) ResolvePublish(name, discovered string) (*config.Publish, error
 	result, err := config.ResolveServiceTarget(service, discovered)
 	if err != nil {
 		return nil, err
-	}
-	if result.TargetCAFile != nil && !filepath.IsAbs(*result.TargetCAFile) {
-		path, err := filepath.Abs(filepath.Join(p.Root, *result.TargetCAFile))
-		if err != nil {
-			return nil, err
-		}
-		result.TargetCAFile = &path
 	}
 	return result, nil
 }

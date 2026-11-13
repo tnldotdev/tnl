@@ -55,7 +55,7 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 			projectLabel := "storefront"
 			protocol := controlv1.ServiceProtocolHTTP
 			targetAddress := strings.TrimPrefix(target.URL, "http://")
-			applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), project, controlv1.ApplyProjectConfigurationRequest{TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64), ProjectLabel: &projectLabel, Configuration: controlv1.ProjectConfiguration{PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {PublisherGroup: &group, Protocol: &protocol, Target: targetAddress}}, Webhooks: map[string]controlv1.ProjectWebhook{}}})
+			applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), project, controlv1.ApplyProjectConfigurationRequest{Deployment: group, ServiceDeclarations: controlv1.ProjectServiceDeclarations{"api": protocol}, TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64), ProjectLabel: &projectLabel, Configuration: controlv1.ProjectConfiguration{PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {PublisherGroup: &group, Protocol: &protocol, Target: targetAddress}}, Webhooks: map[string]controlv1.ProjectWebhook{}}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -264,7 +264,7 @@ func checkManagedPublicEndpointTLS(t *testing.T, f *privateSeparatedFixture, con
 		group := applied.Configuration.PublisherGroups["production"]
 		group.Public = &public
 		applied.Configuration.PublisherGroups["production"] = group
-		result, err := f.identity.routes.ApplyProjectConfiguration(ctx, "managed-runtime", controlv1.ApplyProjectConfigurationRequest{TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64), ExpectedRevision: applied.Revision, Configuration: applied.Configuration})
+		result, err := f.identity.routes.ApplyProjectConfiguration(ctx, "managed-runtime", controlv1.ApplyProjectConfigurationRequest{Deployment: applied.Deployment, ServiceDeclarations: applied.ServiceDeclarations, TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64), ExpectedRevision: applied.Revision, Configuration: applied.Configuration})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -294,6 +294,7 @@ func TestIntegrationVisitorTokenWorkloadKeepsSelectedServicesKeyAndFixedDeadline
 	d, now := newControlStateIntegrationDatabase(t, "visitor_token_workload")
 	request := appliedProjectRequest(t, d, now)
 	request.Configuration = workloadConfiguration()
+	request = selectedProjectRequest(request, "production")
 	applied, err := d.ApplyProjectConfiguration(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)

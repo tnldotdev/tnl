@@ -50,12 +50,19 @@ func TestIntegrationAppliedProjectRootIntegrationsAndRemoteGroups(t *testing.T) 
 	r.Configuration = appliedWebhookConfiguration()
 	r.Configuration.PublisherGroups = map[string]ProjectPublisherGroup{"eks": {Description: "externally operated replicas"}}
 	r.Configuration.Services["remote"] = ProjectServiceConfiguration{PublisherGroup: "eks", Target: "https://eks.internal:8443", TargetTLS: appliedTargetTrust(t, "eks.internal")}
+	remote := deploymentProjectRequest(r, "eks")
+	r = deploymentProjectRequest(r, "local")
 	configured, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if configured.Revision != 3 || !configured.Configuration.OAuth || len(configured.Configuration.Webhooks) != 2 || configured.Configuration.Webhooks["chat"].Delivery != "selected" {
 		t.Fatal("root declarations were not normalized and stored")
+	}
+	remote.ExpectedRevision = configured.Revision
+	remoteApplied, err := d.ApplyProjectConfiguration(t.Context(), remote)
+	if err != nil {
+		t.Fatal(err)
 	}
 	var publicURLs, implicitIntegrations int
 	if err = d.pool.QueryRow(t.Context(), `SELECT count(*),count(*) FILTER(WHERE purpose IN('oauth','webhooks')) FROM control.public_urls WHERE team_id=$1`, r.TeamID).Scan(&publicURLs, &implicitIntegrations); err != nil || publicURLs != 0 || implicitIntegrations != 0 {
@@ -78,7 +85,7 @@ func TestIntegrationAppliedProjectRootIntegrationsAndRemoteGroups(t *testing.T) 
 		t.Fatal("remote assignment received local integration handler declarations", err)
 	}
 	access := groupAssignmentAccess(t, d, replica, replica.assignments.Services[0], now)
-	r.ExpectedRevision = 3
+	r.ExpectedRevision = remoteApplied.Revision
 	r.Configuration.OAuth = false
 	endpoint := r.Configuration.Webhooks["payments"]
 	endpoint.Path = "/hooks/payments-v2"
@@ -87,7 +94,7 @@ func TestIntegrationAppliedProjectRootIntegrationsAndRemoteGroups(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if changed.Revision != 4 || changed.Configuration.OAuth || changed.Configuration.Webhooks["payments"].Path != endpoint.Path {
+	if changed.Revision != remoteApplied.Revision+1 || changed.Configuration.OAuth || changed.Configuration.Webhooks["payments"].Path != endpoint.Path {
 		t.Fatal("local-only integration edit did not update status")
 	}
 	current, err := d.GetPublisherGroupAssignments(t.Context(), replica.lease.AccessToken, now)
@@ -107,29 +114,29 @@ func TestIntegrationAppliedProjectRootIntegrationsAndRemoteGroups(t *testing.T) 
 		t.Fatal(err)
 	}
 	bad := r
-	bad.ExpectedRevision = 4
+	bad.ExpectedRevision = changed.Revision
 	bad.Configuration.Webhooks = map[string]ProjectWebhook{"remote": {Service: "remote", Path: "/hooks/remote", Provider: "custom"}}
 	if _, err = d.ApplyProjectConfiguration(t.Context(), bad); !errors.Is(err, ErrProjectConfigurationInvalid) {
 		t.Fatal("remote webhook handler was implicitly accepted", err)
 	}
 	bad = r
-	bad.ExpectedRevision = 4
-	bad.Configuration.Services = map[string]ProjectServiceConfiguration{"remote": r.Configuration.Services["remote"]}
+	bad.ExpectedRevision = changed.Revision
+	bad.Configuration.Services = map[string]ProjectServiceConfiguration{}
 	if _, err = d.ApplyProjectConfiguration(t.Context(), bad); !errors.Is(err, ErrProjectConfigurationInvalid) {
 		t.Fatal("removing the declared local receiver left dangling endpoints", err)
 	}
-	status, err := d.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, r.ActorID)
-	if err != nil || status.Revision != 4 || status.ConfigurationHash != changed.ConfigurationHash {
+	status, err := d.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, r.ActorID, "local")
+	if err != nil || status.Revision != changed.Revision || status.ConfigurationHash != changed.ConfigurationHash {
 		t.Fatal("invalid endpoint apply changed desired state", err)
 	}
-	r.ExpectedRevision = 4
+	r.ExpectedRevision = changed.Revision
 	delete(r.Configuration.Services, "app")
 	r.Configuration.Webhooks = map[string]ProjectWebhook{}
 	removed, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if removed.Revision != 5 || len(removed.Configuration.Webhooks) != 0 || len(removed.Services) != 1 {
+	if removed.Revision != changed.Revision+1 || len(removed.Configuration.Webhooks) != 0 || len(removed.Services) != 0 {
 		t.Fatal("removing local declarations did not reconcile the complete desired root")
 	}
 	if _, err = d.AuthenticatePublisherAccess(t.Context(), access.Token, "", now); err != nil {

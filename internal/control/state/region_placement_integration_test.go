@@ -116,6 +116,7 @@ func TestIntegrationProviderRegionServiceRun(t *testing.T) {
 	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{
 		"orders": {PublisherGroup: "production", Protocol: "postgres", Target: "orders.internal:5432"},
 	}}
+	r = selectedProjectRequest(r, "production")
 	if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
 		t.Fatal(err)
 	}

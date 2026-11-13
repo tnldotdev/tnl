@@ -31,6 +31,7 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 	}
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {Public: true}}, Services: map[string]ProjectServiceConfiguration{"a": {PublisherGroup: "production", Target: "app:3000"}, "b": {PublisherGroup: "production", Target: "other:3000"}}}
+	r = selectedProjectRequest(r, "production")
 	applied, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
 		t.Fatal(err)

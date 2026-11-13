@@ -21,11 +21,21 @@ func TestIntegrationDeploymentServiceBindingsAndRemovalAreIsolated(t *testing.T)
 			"db": {PublisherGroup: "production", Name: "db", Protocol: "postgres", Target: "production.internal:5432"},
 		},
 	}
+	stagingRequest := deploymentProjectRequest(r, "staging")
+	first, err := d.ApplyProjectConfiguration(ctx, stagingRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r = deploymentProjectRequest(r, "production")
+	r.ExpectedRevision = first.Revision
 	status, err := d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {
 		t.Fatal(err)
 	}
 	groups := map[string]string{}
+	for _, group := range first.Groups {
+		groups[group.Name] = group.ID
+	}
 	for _, group := range status.Groups {
 		groups[group.Name] = group.ID
 	}
