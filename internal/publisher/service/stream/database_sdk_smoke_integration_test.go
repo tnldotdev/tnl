@@ -88,7 +88,7 @@ func TestIntegrationDatabaseSDKSmoke(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			scope := connectorruntime.Context{Schema: 1, Directory: root, ConfigDigest: strings.Repeat("a", 64), Server: "https://control.example.test", Audience: "https://control.example.test", ProjectKey: "driver-fixture", SourceID: "fixture", WorktreeKey: "fixture", Services: []string{"database"}}
+			scope := connectorruntime.Context{Schema: 1, Directory: root, ConfigDigest: strings.Repeat("a", 64), Server: "https://control.example.test", Audience: "https://control.example.test", TeamID: "tm_fixture", TeamName: "fixture", ProjectKey: "driver-fixture", Deployment: "production", SourceID: "fixture", WorktreeKey: "fixture", Services: []string{"database"}}
 			reader, writer := io.Pipe()
 			ctx, cancel := context.WithCancel(t.Context())
 			done := make(chan error, 1)

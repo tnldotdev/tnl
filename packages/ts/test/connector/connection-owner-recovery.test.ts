@@ -141,29 +141,36 @@ afterEach(() => {
 });
 
 test("a timed-out prepared read retains the live owner and its fixed-port listener", async () => {
-  const { connectionHandle } = await import("../../src/internal/connector/connection.js");
-  const handle = connectionHandle("database", vi.fn());
-  const first = await handle;
+  const { createClient } = await import("../../src/index.js");
+  const deployment = createClient({
+    project: "team/project",
+    token: "private",
+    services: { database: { protocol: "kubernetes" } },
+  }).deployment("production");
+  const first = await deployment.connect("database");
   const original = await owner();
   const release = await holdCredential(original.file);
-  await expect(Promise.resolve(handle)).rejects.toMatchObject({
+  await expect(deployment.connect("database")).rejects.toMatchObject({
     code: "sdk.connection_unavailable",
   });
   expect(() => process.kill(original.pid, 0)).not.toThrow();
   expect((await events()).filter((event) => event.event === "start")).toHaveLength(1);
   expect((await events()).filter((event) => event.event === "stop")).toHaveLength(0);
   await release();
-  expect(await connectionHandle("database", vi.fn())).toEqual(first);
-  expect({ ...handle }).toEqual(first);
+  expect(await deployment.connect("database")).toEqual(first);
   expect((await events()).filter((event) => event.event === "ready")).toHaveLength(1);
   expect(await owner()).toEqual(original);
 }, 20_000);
 
 test("canceling HTTP preparation leaves the shared owner and other awaiters intact", async () => {
   await configure({ protocol: "http" });
-  const { connectionHandle } = await import("../../src/internal/connector/connection.js");
-  const handle = connectionHandle("database", vi.fn());
-  const settings = await handle;
+  const { createClient } = await import("../../src/index.js");
+  const deployment = createClient({
+    project: "team/project",
+    token: "private",
+    services: { database: { protocol: "http" } },
+  }).deployment("production");
+  const settings = await deployment.connect("database");
   if (!("fetch" in settings)) throw new Error("expected HTTP settings");
   const original = await owner();
   const release = await holdCredential(original.file);
@@ -171,7 +178,7 @@ test("canceling HTTP preparation leaves the shared owner and other awaiters inta
   const canceled = settings.fetch("/", { signal: abort.signal });
   const reason = new DOMException("the caller stopped waiting", "AbortError");
   const rejected = expect(canceled).rejects.toBe(reason);
-  const waiting = Promise.resolve(connectionHandle("database", vi.fn()));
+  const waiting = deployment.connect("database");
   await expect
     .poll(async () => (await events()).filter((event) => event.event === "read").length, {
       timeout: 10_000,
@@ -182,7 +189,7 @@ test("canceling HTTP preparation leaves the shared owner and other awaiters inta
   expect((await events()).filter((event) => event.event === "read-canceled")).toHaveLength(0);
   await release();
   expect(await waiting).toMatchObject({ url: settings.url });
-  expect({ ...handle }).toMatchObject({ url: settings.url });
+  expect(await deployment.connect("database")).toMatchObject({ url: settings.url });
   expect((await events()).filter((event) => event.event === "start")).toHaveLength(1);
   expect((await events()).filter((event) => event.event === "stop")).toHaveLength(0);
   expect(await owner()).toEqual(original);
@@ -190,9 +197,13 @@ test("canceling HTTP preparation leaves the shared owner and other awaiters inta
 
 test("failed initial validation joins cleanup before any same-port replacement", async () => {
   await configure({ prepared: "invalid", stop: "hold" });
-  const { connectionHandle } = await import("../../src/internal/connector/connection.js");
-  const handle = connectionHandle("database", vi.fn());
-  const first = expect(Promise.resolve(handle)).rejects.toMatchObject({
+  const { createClient } = await import("../../src/index.js");
+  const deployment = createClient({
+    project: "team/project",
+    token: "private",
+    services: { database: { protocol: "kubernetes" } },
+  }).deployment("production");
+  const first = expect(deployment.connect("database")).rejects.toMatchObject({
     code: "sdk.response_invalid",
   });
   await expect
@@ -204,19 +215,16 @@ test("failed initial validation joins cleanup before any same-port replacement",
     .toBe(1);
   const original = await owner();
   const port = await readFile(path.join(root, "port"), "utf8");
-  const second = expect(
-    Promise.resolve(connectionHandle("database", vi.fn())),
-  ).rejects.toMatchObject({ code: "sdk.response_invalid" });
-  expect(() => ({ ...handle })).toThrow(
-    expect.objectContaining({ code: "sdk.connection_unprepared" }),
-  );
+  const second = expect(deployment.connect("database")).rejects.toMatchObject({
+    code: "sdk.response_invalid",
+  });
   expect((await events()).filter((event) => event.event === "start")).toHaveLength(1);
   await (await control(original.file, "/fixture/release-stop")).arrayBuffer();
   await Promise.all([first, second]);
   await configure({ prepared: "ready", stop: "ready" });
-  const recovered = await handle;
+  const recovered = await deployment.connect("database");
   expect(recovered).toHaveProperty("server", `https://127.0.0.1:${port}`);
-  expect({ ...handle }).toEqual(recovered);
+  expect(await deployment.connect("database")).toEqual(recovered);
   const history = await events();
   expect(history.filter((event) => event.event === "start")).toHaveLength(2);
   expect(history.findIndex((event) => event.event === "closed")).toBeLessThan(
@@ -227,26 +235,34 @@ test("failed initial validation joins cleanup before any same-port replacement",
 
 test("an initial service read timeout retains the new shared owner for later preparation", async () => {
   await configure({ prepared: "blocked" });
-  const { connectionHandle } = await import("../../src/internal/connector/connection.js");
-  const handle = connectionHandle("database", vi.fn());
-  await expect(Promise.resolve(handle)).rejects.toMatchObject({
+  const { createClient } = await import("../../src/index.js");
+  const deployment = createClient({
+    project: "team/project",
+    token: "private",
+    services: { database: { protocol: "kubernetes" } },
+  }).deployment("production");
+  await expect(deployment.connect("database")).rejects.toMatchObject({
     code: "sdk.connection_unavailable",
   });
   const original = await owner();
   expect((await events()).filter((event) => event.event === "closed")).toHaveLength(0);
   await (await control(original.file, "/fixture/release")).arrayBuffer();
   await configure({ prepared: "ready" });
-  const settings = await handle;
-  expect({ ...handle }).toEqual(settings);
+  const settings = await deployment.connect("database");
+  expect(await deployment.connect("database")).toEqual(settings);
   expect((await owner()).pid).toBe(original.pid);
   expect((await events()).filter((event) => event.event === "start")).toHaveLength(1);
 }, 20_000);
 
 test("concurrent awaits replace one same-port owner only after expired cleanup joins", async () => {
   await configure({ lifetimeMs: 4000, cleanup: "hold" });
-  const { connectionHandle } = await import("../../src/internal/connector/connection.js");
-  const handle = connectionHandle("database", vi.fn());
-  const first = await handle;
+  const { createClient } = await import("../../src/index.js");
+  const deployment = createClient({
+    project: "team/project",
+    token: "private",
+    services: { database: { protocol: "kubernetes" } },
+  }).deployment("production");
+  const first = await deployment.connect("database");
   const frozenFirst = JSON.stringify(first);
   const original = await owner();
   const port = Number(await readFile(path.join(root, "port"), "utf8"));
@@ -254,16 +270,11 @@ test("concurrent awaits replace one same-port owner only after expired cleanup j
   const before = (await events()).filter((event) =>
     ["start", "read", "stop"].includes(event.event),
   );
-  expect(() => ({ ...handle })).toThrow(
-    expect.objectContaining({ code: "sdk.connection_unprepared" }),
-  );
   expect(
     (await events()).filter((event) => ["start", "read", "stop"].includes(event.event)),
   ).toEqual(before);
   await expect(
-    Promise.all(
-      Array.from({ length: 8 }, () => Promise.resolve(connectionHandle("database", vi.fn()))),
-    ),
+    Promise.all(Array.from({ length: 8 }, () => deployment.connect("database"))),
   ).rejects.toMatchObject({ code: "sdk.connection_unavailable" });
   expect((await events()).filter((event) => event.event === "start")).toHaveLength(1);
   expect((await events()).filter((event) => event.event === "stop")).toHaveLength(0);
@@ -276,7 +287,7 @@ test("concurrent awaits replace one same-port owner only after expired cleanup j
     .toBe(1);
   await configure({ cleanup: "ready" });
   const current = await Promise.all(
-    Array.from({ length: 8 }, () => Promise.resolve(connectionHandle("database", vi.fn()))),
+    Array.from({ length: 8 }, () => deployment.connect("database")),
   );
   expect(current.every((settings) => Object.isFrozen(settings))).toBe(true);
   expect(current[0]).toMatchObject({ server: `https://127.0.0.1:${port}` });
@@ -286,7 +297,7 @@ test("concurrent awaits replace one same-port owner only after expired cleanup j
   expect(Object.isFrozen(first)).toBe(true);
   expect(JSON.stringify(first)).toBe(frozenFirst);
   expect(current[0]).not.toEqual(first);
-  expect({ ...handle }).toEqual(current[0]);
+  expect(await deployment.connect("database")).toEqual(current[0]);
   const replacement = await owner();
   expect(replacement.pid).not.toBe(original.pid);
   const history = await events();
@@ -303,23 +314,29 @@ test("expired caller-owned handles fail without SDK replacement or cleanup", asy
   const { stdout } = await run(binary, ["runtime", "connections", "start"]);
   const external = z.object({ connection_handle: z.string() }).parse(JSON.parse(stdout) as unknown);
   vi.stubEnv("TNL_CONNECTION_HANDLE", external.connection_handle);
-  const { connectionHandle } = await import("../../src/internal/connector/connection.js");
-  const handle = connectionHandle("database", vi.fn());
-  await handle;
+  const { createClient } = await import("../../src/index.js");
+  const deployment = createClient({
+    project: "team/project",
+    services: { database: { protocol: "kubernetes" } },
+  }).deployment("production");
+  await deployment.connect("database");
   await waitForDeadline(external.connection_handle);
-  await expect(Promise.resolve(handle)).rejects.toMatchObject({
+  await expect(deployment.connect("database")).rejects.toMatchObject({
     code: "sdk.connection_unavailable",
   });
-  expect(() => ({ ...handle })).toThrow();
   expect((await events()).filter((event) => event.event === "start")).toHaveLength(1);
   expect((await events()).filter((event) => event.event === "stop")).toHaveLength(0);
 }, 20_000);
 
 test("expiry recovery reports current authentication denial instead of reusing old rights", async () => {
   await configure({ lifetimeMs: 4000 });
-  const { connectionHandle } = await import("../../src/internal/connector/connection.js");
-  const handle = connectionHandle("database", vi.fn());
-  await handle;
+  const { createClient } = await import("../../src/index.js");
+  const deployment = createClient({
+    project: "team/project",
+    token: "private",
+    services: { database: { protocol: "kubernetes" } },
+  }).deployment("production");
+  await deployment.connect("database");
   const original = await owner();
   const port = Number(await readFile(path.join(root, "port"), "utf8"));
   await configure({ authorization: "deny" });
@@ -329,15 +346,14 @@ test("expiry recovery reports current authentication denial instead of reusing o
       timeout: 10_000,
     })
     .toBe(1);
-  await expect(Promise.all([handle, connectionHandle("database", vi.fn())])).rejects.toMatchObject({
+  await expect(
+    Promise.all([deployment.connect("database"), deployment.connect("database")]),
+  ).rejects.toMatchObject({
     code: "sdk.authentication_required",
   });
   const history = await events();
   expect(history.filter((event) => event.event === "start")).toHaveLength(2);
   expect(history.filter((event) => event.event === "ready")).toHaveLength(1);
   expect(history.filter((event) => event.event === "closed")).toHaveLength(1);
-  expect(() => ({ ...handle })).toThrow(
-    expect.objectContaining({ code: "sdk.connection_unprepared" }),
-  );
   await assertPortFree(port);
 }, 20_000);

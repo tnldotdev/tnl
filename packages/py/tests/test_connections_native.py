@@ -45,8 +45,10 @@ def test_installed_psycopg_uses_verified_hostname_and_explicit_transport_options
                 assert selector.select(10)
             status = json.loads(process.stdout.readline())
             monkeypatch.setenv("TNL_CONNECTION_HANDLE", status["connection_handle"])
-            handle = _connections.connect("database", directory=tmp_path)
-            db = handle.snapshot()
+            handle = tnl.create_client(
+                project="acme/project", services={"database": {"protocol": "postgres"}}
+            ).deployment("production")
+            db = asyncio.run(handle.connect("database"))
             assert isinstance(db, tnl.PostgresConnection) and db.ca is not None
             root = tmp_path / "root.pem"
             root.write_text(db.ca)
@@ -72,7 +74,7 @@ def test_installed_psycopg_uses_verified_hostname_and_explicit_transport_options
                 psycopg.connect(**{**options, "channel_binding": "require"})
         finally:
             if handle is not None:
-                handle.close()
+                asyncio.run(handle.aclose())
             process.terminate()
             process.wait(timeout=10)
 
@@ -130,13 +132,12 @@ def test_borrowed_deployment_selection_tls_isolation_and_connect_only_authority(
                     )
                     assert_tls_echo(a)
                     assert first._scope.selected.ipc is not sibling._scope.selected.ipc
+                    first_ipc = first._scope.selected.ipc
                     with pytest.raises(tnl.TnlError) as management:
                         await client.deployments.list()
                     assert management.value.code == "sdk.configuration_invalid"
                     await first.aclose()
-                    assert (
-                        first._scope.selected.ipc is not None and first._scope.selected.ipc.closed
-                    )
+                    assert first_ipc is not None and first_ipc.closed
                     assert (
                         sibling._scope.selected.ipc is not None
                         and not sibling._scope.selected.ipc.closed
@@ -251,6 +252,8 @@ def test_owned_deadline_recovery_joins_real_native_owner_before_same_port_restar
         if args[0] == "sdk-prepare":
             return selected(binary, args)
         calls.append(args[0])
+        if args[0] == "sdk-stop":
+            return {"schema": 1, "state": "stopped"}
         if args[0] == "sdk-close":
             # this fixture supplies selection replies, so join its selected real
             # owner directly. production registry routing has separate coverage.
@@ -302,16 +305,19 @@ def test_owned_deadline_recovery_joins_real_native_owner_before_same_port_restar
         )
 
     monkeypatch.setattr(_connections, "_command", native)
-    handle = _connections.connect("database", directory=tmp_path)
-    replacements: list[_connections.ConnectionHandle[tnl.Connection]] = []
+    handle = tnl.create_client(
+        project="acme/project",
+        token="fixture-private",
+        services={"database": {"protocol": "postgres"}},
+    ).deployment("production")
 
     async def one() -> tnl.Connection:
-        replacement = _connections.connect("database", directory=tmp_path)
-        replacements.append(replacement)
-        return await replacement
+        connection = await handle.connect("database")
+        assert isinstance(connection, tnl.PostgresConnection)
+        return connection
 
     async def scenario() -> None:
-        first = await handle
+        first = await handle.connect("database")
         assert isinstance(first, tnl.PostgresConnection)
         assert_tls_echo(first)
         original_expiry = first.expires_at
@@ -319,9 +325,7 @@ def test_owned_deadline_recovery_joins_real_native_owner_before_same_port_restar
         await asyncio.sleep(max(0, (original_expiry - datetime.now(UTC)).total_seconds()) + 0.05)
         await asyncio.to_thread(processes[0].wait, 5)
         before = list(calls)
-        with pytest.raises(tnl.TnlError) as caught:
-            handle.snapshot()
-        assert caught.value.code == "sdk.connection_expired"
+        assert first.expires_at == original_expiry
         assert calls == before
         results = await asyncio.gather(*(one() for _ in range(8)))
         current = results[0]
@@ -335,19 +339,16 @@ def test_owned_deadline_recovery_joins_real_native_owner_before_same_port_restar
         assert processes[0].pid != processes[1].pid
         assert first.expires_at == original_expiry < current.expires_at
         assert first.ca != current.ca
-        await handle.aclose()
         assert_tls_echo(current)
-        await replacements[0].aclose()
+        await handle.aclose()
         assert_port_reusable(port)
 
     try:
         asyncio.run(scenario())
     finally:
         try:
-            handle.close()
+            asyncio.run(handle.aclose())
         finally:
-            for replacement in replacements:
-                replacement.close()
             for process in processes:
                 if process.poll() is None:
                     process.terminate()
@@ -379,18 +380,21 @@ def test_prepared_native_cli_and_python_verified_tls(
             assert Path(handle_path).stat().st_mode & 0o777 == 0o600
             assert Path(handle_path).parent.stat().st_mode & 0o777 == 0o700
             monkeypatch.setenv("TNL_CONNECTION_HANDLE", handle_path)
-            handle = _connections.connect("database", directory=tmp_path)
-            assert handle.host == "127.0.0.1"
+            client = tnl.create_client(
+                project="acme/project",
+                services={"database": {"protocol": "postgres"}, "stream": {"protocol": "tcp"}},
+            )
+            handle = client.deployment("production")
 
             async def scenario() -> tnl.Connection:
-                # a sync native read inside this loop must not depend on it.
-                assert handle.port > 0
                 snapshots = await asyncio.gather(*(read() for _ in range(8)))
                 assert len({value.port for value in snapshots}) == 1
                 return snapshots[0]
 
             async def read() -> tnl.Connection:
-                return await handle
+                connection = await handle.connect("database")
+                assert isinstance(connection, tnl.PostgresConnection)
+                return connection
 
             connection = asyncio.run(scenario())
             assert isinstance(connection, tnl.PostgresConnection)
@@ -407,26 +411,30 @@ def test_prepared_native_cli_and_python_verified_tls(
                 assert raw.recv(1) == b"S"
                 with pytest.raises(ssl.SSLCertVerificationError):
                     connection.ssl.wrap_socket(raw, server_hostname="wrong.example.test")
-            stream = _connections.connect("stream", directory=tmp_path).snapshot()
+            stream = asyncio.run(handle.connect("stream"))
             assert isinstance(stream, tnl.TCPConnection) and not hasattr(stream, "ssl")
             with socket.create_connection((stream.host, stream.port), timeout=5) as raw:
                 raw.sendall(b"ping")
                 assert raw.recv(4) == b"ping"
             with pytest.raises(tnl.TnlError):
-                _connections.connect("missing", directory=tmp_path).snapshot()
-            handle.close()
+                asyncio.run(handle.connect("missing"))
+            asyncio.run(handle.aclose())
             assert process.poll() is None  # a mounted connector owner is not SDK-owned.
             os.chmod(handle_path, 0o644)
+            unsafe = client.deployment("production")
             with pytest.raises(tnl.TnlError):
-                _connections.connect("database", directory=tmp_path).snapshot()
+                asyncio.run(unsafe.connect("database"))
+            asyncio.run(unsafe.aclose())
             os.chmod(handle_path, 0o600)
             original = Path(handle_path).read_bytes()
             descriptor = cast(dict[str, object], json.loads(original))
             descriptor["expires_at"] = "2020-01-01T00:00:00Z"
             try:
                 Path(handle_path).write_text(json.dumps(descriptor))
+                expired = client.deployment("production")
                 with pytest.raises(tnl.TnlError):
-                    _connections.connect("database", directory=tmp_path).snapshot()
+                    asyncio.run(expired.connect("database"))
+                asyncio.run(expired.aclose())
                 assert process.poll() is None
             finally:
                 Path(handle_path).write_bytes(original)

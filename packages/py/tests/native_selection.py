@@ -2,6 +2,7 @@
 
 import asyncio
 import http.client
+import json
 import os
 import socket
 import ssl
@@ -9,7 +10,7 @@ import sys
 from pathlib import Path
 
 import tnl
-from tnl import _client, _connections
+from tnl import _connections
 
 # supply the built binary in place of the wheel's packaged binary only.
 _connections.native_binary = lambda: Path(sys.argv[1])
@@ -23,42 +24,52 @@ elif not native_provider:
 
 
 async def main() -> None:
-    handle = _connections.connect("api")
+    manifest = json.loads(Path(".tnl/generated/workloads.json").read_text())
+    client = tnl.create_client(
+        project=f"{manifest['team']}/{manifest['project_key']}",
+        services={"api": {"protocol": "http"}},
+    )
+    deployment = client.deployment("production")
     get_client: tnl.ClientFactory[ssl.SSLSocket] | None = None
     try:
 
-        async def prepare() -> _connections.Connection:
-            return await handle
+        async def prepare() -> tnl.HTTPConnection:
+            connection = await deployment.connect("api")
+            assert isinstance(connection, tnl.HTTPConnection)
+            return connection
 
         first = (await asyncio.gather(*(prepare() for _ in range(4 if native_provider else 1))))[0]
-        owner = handle._session.handle
+        owner = deployment._acquisitions["api"]._session.handle
         print("cold", flush=True)
         assert await asyncio.to_thread(input) == "warm"
         if native_provider:
             os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"] = "provider-warm"
         for _ in range(10):
-            current = await handle
+            current = await deployment.connect("api")
+            assert isinstance(current, tnl.HTTPConnection)
             assert current.port == first.port
-            assert handle._session.handle == owner
+            assert deployment._acquisitions["api"]._session.handle == owner
             assert current.expires_at == first.expires_at
         if native_provider:
             del os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]
             try:
-                await handle
+                await deployment.connect("api")
             except tnl.TnlError as error:
                 assert error.code == "sdk.workload_assertion_unavailable"
                 assert error.__cause__ is None
             else:
                 raise AssertionError("native used a stale provider credential")
             os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"] = "provider-warm"
-            assert (await handle).port == first.port
-            assert handle._session.handle == owner
+            assert (await prepare()).port == first.port
+            assert deployment._acquisitions["api"]._session.handle == owner
         print("warm", flush=True)
         if rotating_file:
             assert isinstance(first, tnl.HTTPConnection)
             created, closed = 0, 0
 
-            async def create_socket(connection: tnl.Connection) -> ssl.SSLSocket:
+            async def create_socket(
+                connection: tnl.Connection | tnl.LocalConnection,
+            ) -> ssl.SSLSocket:
                 nonlocal created
                 assert isinstance(connection, tnl.HTTPConnection)
                 created += 1
@@ -76,7 +87,7 @@ async def main() -> None:
                 closed += 1
                 client.close()
 
-            get_client = _client.client("api", create=create_socket, close=close_socket)
+            get_client = deployment.client("api", create=create_socket, close=close_socket)
             stream = await get_client()
             for _ in range(3):
                 assert await get_client() is stream
@@ -100,7 +111,8 @@ async def main() -> None:
                 print("streaming", flush=True)
                 assert await asyncio.to_thread(input) == "refreshed"
                 assert await asyncio.to_thread(response.read) == b"after-proof\n"
-                refreshed = await handle
+                refreshed = await deployment.connect("api")
+                assert isinstance(refreshed, tnl.HTTPConnection)
                 assert refreshed.port == first.port
             finally:
                 response.close()
@@ -110,14 +122,15 @@ async def main() -> None:
         if "lifecycle" in sys.argv:
             from native_lifecycle import run
 
-            await run(handle, first)
+            assert isinstance(first, tnl.HTTPConnection)
+            await run(client, deployment, first)
         assert await asyncio.to_thread(input) == "stop"
     finally:
         try:
             if get_client is not None:
                 await get_client.aclose()
         finally:
-            await handle.aclose()
+            await deployment.aclose()
 
 
 asyncio.run(main())

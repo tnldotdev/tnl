@@ -17,7 +17,6 @@ from tnl import _connections
 def test_close_before_first_handle_joins_native_and_retains_failed_stop(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(_connections, "_sessions", {})
     monkeypatch.delenv("TNL_CONNECTION_HANDLE", raising=False)
     for name in ("TNL_WORKLOAD", "VERCEL", "GITHUB_ACTIONS", "FLY_APP_NAME"):
         monkeypatch.delenv(name, raising=False)
@@ -45,10 +44,11 @@ def test_close_before_first_handle_joins_native_and_retains_failed_stop(
         return {"schema": 1, "state": "stopped"}
 
     monkeypatch.setattr(_connections, "_command", command)
-    handle = _connections.connect("database", directory=tmp_path)
+    scope = _connections._Scope(str(tmp_path), None)
+    handle = _connections.ConnectionAcquisition(scope, "database")
 
     async def prepare() -> tnl.Connection:
-        return await handle
+        return await handle.prepare()
 
     async def scenario() -> None:
         pending = asyncio.create_task(prepare())
@@ -72,7 +72,7 @@ def test_close_before_first_handle_joins_native_and_retains_failed_stop(
             with pytest.raises(tnl.TnlError):
                 await pending
             with pytest.raises(tnl.TnlError, match="closed"):
-                await handle
+                await handle.prepare()
             assert stop_attempts == 2
         finally:
             release.set()
@@ -84,7 +84,6 @@ def test_close_before_first_handle_joins_native_and_retains_failed_stop(
 def test_known_owner_is_retained_if_opening_its_ipc_client_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(_connections, "_sessions", {})
     binary = Path(sys.executable).resolve(strict=True)
     monkeypatch.setattr(_connections, "native_binary", lambda: binary)
     owner = str(tmp_path / "owner" / "handle.json")
@@ -114,9 +113,10 @@ def test_known_owner_is_retained_if_opening_its_ipc_client_fails(
     monkeypatch.setattr(_connections, "_command", command)
 
     async def scenario() -> None:
-        handle = _connections.connect("database", directory=tmp_path)
+        scope = _connections._Scope(str(tmp_path), None)
+        handle = _connections.ConnectionAcquisition(scope, "database")
         with pytest.raises(tnl.TnlError) as caught:
-            await handle
+            await handle.prepare()
         assert caught.value is failure
         await handle.aclose()
         assert closed == [owner]
