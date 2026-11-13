@@ -480,6 +480,8 @@ components:
       $ref: "./schemas/projects.yaml#/schemas/ProjectServiceConfiguration"
     ProjectServiceHTTP:
       $ref: "./schemas/projects.yaml#/schemas/ProjectServiceHTTP"
+    HTTPProtection:
+      $ref: "./schemas/projects.yaml#/schemas/HTTPProtection"
     ProjectServicePublicURL:
       $ref: "./schemas/projects.yaml#/schemas/ProjectServicePublicURL"
     ProjectPublicAccess:

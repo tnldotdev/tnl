@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -273,6 +274,8 @@ var typeScriptKeyMappings = map[string]string{
 	"publisher_group":      "publisherGroup",
 	"publisher_pool":       "publisherPool",
 	"max_duration":         "maxDuration",
+	"max_body_bytes":       "maxBodyBytes",
+	"rule_id":              "ruleId",
 	"team_id":              "teamId",
 	"project_id":           "projectId",
 	"team_slug":            "teamSlug",
@@ -352,36 +355,35 @@ func normalizeTypeScriptObject(object map[string]any, objectType reflect.Type) e
 			delete(object, typeScriptName)
 			object[staticName] = value
 		}
-		fieldType := field.Type
-		if fieldType.Kind() == reflect.Pointer {
-			fieldType = fieldType.Elem()
+		if err := normalizeTypeScriptValue(value, field.Type); err != nil {
+			return err
 		}
-		if fieldType.Kind() == reflect.Struct {
-			if child, ok := value.(map[string]any); ok {
-				if err := normalizeTypeScriptObject(child, fieldType); err != nil {
+	}
+	return nil
+}
+
+func normalizeTypeScriptValue(value any, typ reflect.Type) error {
+	if typ.Kind() == reflect.Pointer {
+		return normalizeTypeScriptValue(value, typ.Elem())
+	}
+	switch typ.Kind() {
+	case reflect.Struct:
+		if object, ok := value.(map[string]any); ok {
+			return normalizeTypeScriptObject(object, typ)
+		}
+	case reflect.Map:
+		if object, ok := value.(map[string]any); ok {
+			for _, name := range slices.Sorted(maps.Keys(object)) {
+				if err := normalizeTypeScriptValue(object[name], typ.Elem()); err != nil {
 					return err
 				}
 			}
-		} else if fieldType.Kind() == reflect.Map {
-			elementType := fieldType.Elem()
-			if elementType.Kind() == reflect.Pointer {
-				elementType = elementType.Elem()
-			}
-			if elementType.Kind() == reflect.Struct {
-				if children, ok := value.(map[string]any); ok {
-					childNames := make([]string, 0, len(children))
-					for childName := range children {
-						childNames = append(childNames, childName)
-					}
-					slices.Sort(childNames)
-					for _, childName := range childNames {
-						childValue := children[childName]
-						if child, ok := childValue.(map[string]any); ok {
-							if err := normalizeTypeScriptObject(child, elementType); err != nil {
-								return err
-							}
-						}
-					}
+		}
+	case reflect.Slice:
+		if array, ok := value.([]any); ok {
+			for _, item := range array {
+				if err := normalizeTypeScriptValue(item, typ.Elem()); err != nil {
+					return err
 				}
 			}
 		}

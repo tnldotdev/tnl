@@ -155,6 +155,7 @@ func publicationConfig(job Job, publicURL controlv1.PublicURL) (publisher.Config
 	}
 	cfg := publisher.Config{ControlURL: job.Server, TeamID: publicURL.TeamId, DomainID: publicURL.DomainId, PolicyRevision: uint64(publicURL.PolicyRevision), PublicURLScope: publicURL.PublicUrlScope, Purpose: publicURL.Purpose, Hostname: publicURL.CanonicalHostname, Target: job.Target, ServiceProtocol: controlv1.Http, TargetTLSName: job.TargetTLSName, TargetOptions: publisherproxy.TargetOptions{RootCAs: roots, ServerName: job.TargetTLSName}, PreserveSavedPublicURLTarget: publicURL.Target == "", InspectionMode: inspection.Mode("none")}
 	cfg.Limits = job.Limits
+	cfg.Protection = job.Protection
 	cfg.PreferredRegions = slices.Clone(job.PreferredRegions)
 	if publicURL.MembershipId != nil {
 		cfg.MembershipID = *publicURL.MembershipId

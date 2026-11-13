@@ -156,6 +156,18 @@ export interface TnlConfig {
               };
           tls?: never;
           http?: {
+            protection?: {
+              waf?: "block" | "detect" | "off";
+              /**
+               * @maxItems 32
+               */
+              exclusions?: {
+                path: string;
+                parameter?: string;
+                ruleId: number;
+              }[];
+              maxBodyBytes?: number;
+            };
             access?:
               | "restricted"
               | {
@@ -374,6 +386,18 @@ export interface TnlConfig {
               };
           tls?: never;
           http?: {
+            protection?: {
+              waf?: "block" | "detect" | "off";
+              /**
+               * @maxItems 32
+               */
+              exclusions?: {
+                path: string;
+                parameter?: string;
+                ruleId: number;
+              }[];
+              maxBodyBytes?: number;
+            };
             access?:
               | "restricted"
               | {

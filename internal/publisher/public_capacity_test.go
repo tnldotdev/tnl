@@ -181,6 +181,8 @@ func TestPublicCapacityHTTPConnectionChargedOnce(t *testing.T) {
 		t.Run(fmt.Sprint(h2), func(t *testing.T) {
 			var checks atomic.Int32
 			f := newPublicCapacityFixture(t, 1, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }), func(c *PublicURLServerConfig) {
+				// isolate connection admission from the separate inspection gate.
+				c.Protection.WAF = "off"
 				c.AdmitVisitor = func(context.Context, Visitor) error { checks.Add(1); return nil }
 			})
 			stream, err := f.open(0, false)

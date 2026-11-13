@@ -297,6 +297,7 @@ schemas:
     additionalProperties: false
     description: Local readiness and path mounts, or named-group restricted HTTP access and request limits. A group owns its endpoint and reachability.
     properties:
+      protection: { $ref: "../openapi.yaml#/components/schemas/HTTPProtection" }
       access: { $ref: "../openapi.yaml#/components/schemas/ProjectPublicAccess" }
       limits: { $ref: "../openapi.yaml#/components/schemas/ProjectHTTPApplicationLimits" }
       readiness:
@@ -316,6 +317,27 @@ schemas:
             service: { type: string }
             strip_prefix: { type: boolean }
       open: { type: boolean }
+  HTTPProtection:
+    type: object
+    additionalProperties: false
+    x-go-type: httpprotection.Settings
+    x-go-type-import:
+      name: httpprotection
+      path: github.com/tnldotdev/tnl/internal/policy/httpprotection
+    properties:
+      waf: { type: string, enum: [block, detect, off], default: block }
+      max_body_bytes: { type: integer, minimum: 1, maximum: 2097152, default: 1048576 }
+      exclusions:
+        type: array
+        maxItems: 32
+        items:
+          type: object
+          additionalProperties: false
+          required: [rule_id, path]
+          properties:
+            rule_id: { type: integer }
+            path: { type: string, minLength: 1, maxLength: 2048 }
+            parameter: { type: string, pattern: '^[a-zA-Z0-9_.\[\]-]{1,128}$' }
   ProjectServicePublicURL:
     type: object
     additionalProperties: false

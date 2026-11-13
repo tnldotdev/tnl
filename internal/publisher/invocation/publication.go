@@ -10,6 +10,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
@@ -181,6 +182,7 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 		defer stopWebhooks()
 	}
 	publisherConfig := services.config(target, policy.prefixes, flags.Limits)
+	publisherConfig.Protection = config.ServiceProtection(flags.Project.Config.Services[flags.Service])
 	publisherConfig.Telemetry = flags.Telemetry
 	publisherConfig.PreferredRegions = flags.PreferredRegions
 	publisherConfig.RequirePostQuantum = flags.RequirePostQuantum

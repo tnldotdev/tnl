@@ -678,6 +678,42 @@
                   "tls": false,
                   "http": {
                     "properties": {
+                      "protection": {
+                        "$schema": "https://json-schema.org/draft/2020-12/schema",
+                        "properties": {
+                          "waf": {
+                            "type": "string",
+                            "enum": ["block", "detect", "off"]
+                          },
+                          "max_body_bytes": {
+                            "type": "integer",
+                            "maximum": 2097152,
+                            "minimum": 1
+                          },
+                          "exclusions": {
+                            "items": {
+                              "properties": {
+                                "rule_id": {
+                                  "type": "integer"
+                                },
+                                "path": {
+                                  "type": "string"
+                                },
+                                "parameter": {
+                                  "type": "string"
+                                }
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["rule_id", "path"]
+                            },
+                            "type": "array",
+                            "maxItems": 32
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object"
+                      },
                       "access": {
                         "oneOf": [
                           {
@@ -1056,6 +1092,42 @@
                   "tls": false,
                   "http": {
                     "properties": {
+                      "protection": {
+                        "$schema": "https://json-schema.org/draft/2020-12/schema",
+                        "properties": {
+                          "waf": {
+                            "type": "string",
+                            "enum": ["block", "detect", "off"]
+                          },
+                          "max_body_bytes": {
+                            "type": "integer",
+                            "maximum": 2097152,
+                            "minimum": 1
+                          },
+                          "exclusions": {
+                            "items": {
+                              "properties": {
+                                "rule_id": {
+                                  "type": "integer"
+                                },
+                                "path": {
+                                  "type": "string"
+                                },
+                                "parameter": {
+                                  "type": "string"
+                                }
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["rule_id", "path"]
+                            },
+                            "type": "array",
+                            "maxItems": 32
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object"
+                      },
                       "access": {
                         "oneOf": [
                           {

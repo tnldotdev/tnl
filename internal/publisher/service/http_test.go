@@ -10,13 +10,16 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
 
+	protectionpolicy "github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
+	"github.com/tnldotdev/tnl/internal/publisher/httpprotection"
 	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
 
 	"github.com/tnldotdev/tnl/internal/config"
@@ -46,6 +49,16 @@ func serviceHTTPFixture(t *testing.T, target http.Handler) (*http.Client, *visit
 		t.Fatal(err)
 	}
 	frontend := HTTP{Subject: scope, RunID: header.ServiceRunID, Number: 1, Hostname: update.View.Hostname, Port: update.View.Port, Header: header, Policy: policy}
+	inspection, err := httpprotection.New(protectionpolicy.Settings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	frontend.protection = inspection
+	t.Cleanup(func() {
+		if err := inspection.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: visitorfixture.Roots(t, certificate)}, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		visitor, raw := net.Pipe()
 		server := tls.Server(raw, &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS13})
@@ -66,6 +79,24 @@ func serviceHTTPFixture(t *testing.T, target http.Handler) (*http.Client, *visit
 	}}
 	t.Cleanup(transport.CloseIdleConnections)
 	return &http.Client{Transport: transport, Timeout: 5 * time.Second}, policy, update, token
+}
+
+func TestServiceHTTPDefaultProtection(t *testing.T) {
+	var forwarded atomic.Int32
+	client, _, _, token := serviceHTTPFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded.Add(1)
+		w.WriteHeader(204)
+	}))
+	r, _ := http.NewRequestWithContext(t.Context(), "GET", "https://preview.example.test:25443/?q="+url.QueryEscape("<script>alert(1)</script>"), nil)
+	r.Header.Set(httpaccess.VisitorTokenHeader, token.Reveal())
+	response, err := client.Do(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != 403 || response.Header.Get("Tnl-Error-Code") != "TNL_HTTP_PROTECTION_REJECTED" || forwarded.Load() != 0 {
+		t.Fatal("managed service request was not rejected before target access", response.Status, forwarded.Load())
+	}
 }
 
 type serviceHTTPGrantControl struct {

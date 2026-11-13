@@ -202,6 +202,7 @@ func runSession(
 		ShareAccess:        shareRuntime,
 		Feedback:           feedback,
 		Limits:             config.Limits,
+		Protection:         config.Protection,
 		StreamCapacity:     streamCapacity,
 		ObserveSummary:     config.ObserveSummary,
 		InspectionMode:     config.InspectionMode,

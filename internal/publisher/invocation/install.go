@@ -3,6 +3,7 @@ package invocation
 import (
 	"context"
 
+	"github.com/tnldotdev/tnl/internal/config"
 	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/publisher/setup"
@@ -65,6 +66,7 @@ func InstallHTTP(ctx context.Context, flags InstallationOptions, presentation se
 		name = flags.Name
 	}
 	job := installedjobs.Job{TelemetryDisabled: flags.TelemetryDisabled, Name: name, Target: address, TargetTLSName: flags.TargetTLSName, Limits: flags.Limits, ReadinessPath: flags.ReadinessPath}
+	job.Protection = config.ServiceProtection(flags.Project.Config.Services[flags.Service])
 	job.PreferredRegions = flags.PreferredRegions
 	return setup.InstallPublication(ctx, setup.Publication{Database: database, Server: server, Route: publicURL, Control: authenticated.Control, Options: flags.Installation, Job: job, TargetCAFile: flags.TargetCAFile, ServerCAFile: flags.ServerCAFile, ProjectRoot: flags.ProjectRoot}, presentation)
 }

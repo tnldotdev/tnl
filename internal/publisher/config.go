@@ -13,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
+	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -104,6 +105,7 @@ type Config struct {
 	ObserveResponse              ResponseObserver
 	Mounts                       []publisherproxy.Mount
 	Limits                       applicationlimits.Limits
+	Protection                   httpprotection.Settings
 	ObserveSummary               inspection.Observer
 	PromoteVisitor               PromoteVisitor
 	AdmitVisitor                 AdmitVisitor

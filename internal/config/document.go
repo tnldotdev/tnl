@@ -15,6 +15,7 @@ import (
 	json "encoding/json/v2"
 
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -108,11 +109,19 @@ type TargetTLS struct {
 }
 
 type HTTPService struct {
-	Access    *Access              `json:"access,omitempty" yaml:"access,omitempty" jsonschema_description:"Restricted visitor access for a named publisher group. IP rules narrow access; group configuration owns reachability."`
-	Limits    *WorkLimits          `json:"limits,omitempty" yaml:"limits,omitempty" jsonschema_description:"HTTP request limits for a named publisher group."`
-	Readiness *Readiness           `json:"readiness,omitempty" yaml:"readiness,omitempty" jsonschema_description:"Readiness probe for a local HTTP service. Remote publisher assignments do not support readiness overrides."`
-	Paths     map[string]PathMount `json:"paths,omitempty" yaml:"paths,omitempty" jsonschema_description:"Path mounts between local HTTP services. Remote publisher assignments do not support path mounts."`
-	Open      *bool                `json:"open,omitempty" yaml:"open,omitempty"`
+	Protection *httpprotection.Settings `json:"protection,omitempty" yaml:"protection,omitempty" jsonschema_description:"Managed request inspection. Omitted settings block with OWASP CRS; authorization is unchanged."`
+	Access     *Access                  `json:"access,omitempty" yaml:"access,omitempty" jsonschema_description:"Restricted visitor access for a named publisher group. IP rules narrow access; group configuration owns reachability."`
+	Limits     *WorkLimits              `json:"limits,omitempty" yaml:"limits,omitempty" jsonschema_description:"HTTP request limits for a named publisher group."`
+	Readiness  *Readiness               `json:"readiness,omitempty" yaml:"readiness,omitempty" jsonschema_description:"Readiness probe for a local HTTP service. Remote publisher assignments do not support readiness overrides."`
+	Paths      map[string]PathMount     `json:"paths,omitempty" yaml:"paths,omitempty" jsonschema_description:"Path mounts between local HTTP services. Remote publisher assignments do not support path mounts."`
+	Open       *bool                    `json:"open,omitempty" yaml:"open,omitempty"`
+}
+
+func ServiceProtection(service Service) httpprotection.Settings {
+	if service.HTTP != nil && service.HTTP.Protection != nil {
+		return *service.HTTP.Protection
+	}
+	return httpprotection.Settings{}
 }
 
 func ServicePaths(service Service) map[string]PathMount {

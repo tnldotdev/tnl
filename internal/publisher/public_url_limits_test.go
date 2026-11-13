@@ -18,6 +18,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
+	protectionpolicy "github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
 )
@@ -366,12 +367,13 @@ func TestRouteServerCompletedBodiesAllowLongResponses(t *testing.T) {
 	}
 }
 
-// the real public URL server is used, with only its deadline shortened for tests.
+// isolate request admission and full-duplex mechanics from buffered inspection.
 func startLimitedTestPublicURL(t *testing.T, target string, limit int, timeout time.Duration) (*PublicURLServer, chan struct{}) {
 	t.Helper()
 	route, err := newTestPublicURLServer(t, PublicURLServerConfig{
 		Hostname: "route.example", Target: target, Limits: applicationlimits.Limits{Concurrency: limit},
 		Certificate: visitorfixture.Certificate(t, "route.example"),
+		Protection:  protectionpolicy.Settings{WAF: protectionpolicy.Off},
 	})
 	if err != nil {
 		t.Fatal(err)

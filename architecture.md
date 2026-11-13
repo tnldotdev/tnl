@@ -119,6 +119,7 @@ internal/
     localapi/          native app and CLI registration API
     invocation/        publication operations used by callers
     httpaccess/        shared HTTP policy and browser access
+    httpprotection/    managed request inspection and buffered-body lifetime
     requestlimit/      shared per-run HTTP request budgets
     service/           saved service runs and certificates
       stream/          visitor TLS, protocol, expiry, and target connection
@@ -197,7 +198,7 @@ manage their runs separately:
 
 ```text
 publisher (public URLs) --+
-                         +--> httpaccess + requestlimit
+                         +--> httpaccess + httpprotection + requestlimit
 publisher/service -------+
         |
         +--> service/stream
@@ -208,6 +209,9 @@ publisher/service -------+
   workers. It does not own accepted visitor connections.
 - `requestlimit` keeps one HTTP request budget per run, shared across that run's
   visitor connections.
+- `httpprotection` prepares request-only Coraza inspection per HTTP run. Both
+  frontends use its process-wide gate and owned buffers; it starts no workers
+  and depends on shared `policy/httpprotection` values, not either run owner.
 - `service/http.go` builds the service HTTP frontend. `service/stream` handles
   visitor TLS, protocol negotiation, expiry, target connections, and cleanup.
   The run supplies current admission and a shared request budget.

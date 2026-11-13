@@ -55,6 +55,9 @@ func appliedLocalTargetDescriptor(target, protocol string) (bool, error) {
 
 func normalizeAppliedProjectService(s *ProjectServiceConfiguration) error {
 	if s.HTTP != nil {
+		if s.HTTP.Protection != nil && s.HTTP.Protection.Validate() != nil {
+			return ErrProjectConfigurationInvalid
+		}
 		// remote readiness and path mounts have no group-worker execution contract.
 		// reject them before storing a declaration instead of dropping settings.
 		if s.Protocol != "http" {

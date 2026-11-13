@@ -59,6 +59,9 @@ func newManagedPrepared(preparation controlv1.ServiceRunPreparation, approved co
 			return nil, err
 		}
 	}
+	if approved.HttpProtection != nil {
+		prepared.httpProtection = *approved.HttpProtection
+	}
 	trust, err := targetTrust(approved)
 	if err != nil {
 		return nil, err
@@ -109,11 +112,11 @@ func (p *Prepared) installManagedCertificate(certificate tls.Certificate) error 
 	return nil
 }
 
-func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepared, setup controlv1.ServiceRunSetup, control ManagedControl, profile *clientstate.Store) (func() error, func(), error) {
+func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepared, setup controlv1.ServiceRunSetup, control ManagedControl, profile *clientstate.Store) (func() error, func() error, error) {
 	if profile == nil || prepared.Preparation.CertificatePlan == nil {
 		return nil, nil, ErrPrivateStream
 	}
-	closeHTTP := func() {}
+	closeHTTP := func() error { return nil }
 	var httpFrontend HTTP
 	if prepared.managedProtocol == serviceconfig.ProtocolHTTP {
 		var err error
@@ -121,6 +124,7 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 			Control: control, Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: setup.ServiceId},
 			RunID: setup.ServiceRunId, Number: setup.RunNumber, Token: credentials.ServiceRunToken(setup.RunToken),
 			Hostname: prepared.managedHostname, Port: prepared.servicePort, Requests: prepared.serviceHTTPRequests,
+			Protection: prepared.httpProtection,
 		})
 		if err != nil {
 			return nil, nil, err
@@ -165,10 +169,9 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 	}
 	cache, err := profile.CertificatesForPublisher(prepared.Preparation.TeamId, config.Identity.ClientId, *prepared.Preparation.CertificatePlan)
 	if err != nil {
-		closeHTTP()
-		return nil, nil, err
+		return nil, nil, errors.Join(err, closeHTTP())
 	}
 	certificates := Certificates{Control: control, Cache: cache, ServiceID: setup.ServiceId, RunID: setup.ServiceRunId, PublisherIdentityID: config.Identity.ClientId, RunNumber: setup.RunNumber, Token: credentials.ServiceRunToken(setup.RunToken), Hostname: prepared.managedHostname, Plan: *prepared.Preparation.CertificatePlan, Install: prepared.installManagedCertificate}
 	certificateCtx, cancel := context.WithCancel(ctx)
-	return func() error { return certificates.Maintain(certificateCtx) }, func() { cancel(); closeHTTP() }, nil
+	return func() error { return certificates.Maintain(certificateCtx) }, func() error { cancel(); return closeHTTP() }, nil
 }

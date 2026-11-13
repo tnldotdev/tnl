@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/netip"
@@ -11,9 +12,11 @@ import (
 	"strconv"
 	"strings"
 
+	protectionpolicy "github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
+	"github.com/tnldotdev/tnl/internal/publisher/httpprotection"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -35,40 +38,47 @@ type HTTPControl interface {
 // http binds each request to one trusted forwarding header. policy and
 // browser credential renewal are prepared once by the service run owner.
 type HTTP struct {
-	Control  HTTPControl
-	Subject  visitorscope.Scope
-	RunID    string
-	Number   int64
-	Token    credentials.ServiceRunToken
-	Hostname string
-	Port     uint16
-	Header   tunnelv1.ServiceForwardingHeader
-	Requests *requestlimit.HTTP
-	Policy   *visitorlease.Lease
-	browser  *httpaccess.Browser
+	Control    HTTPControl
+	Subject    visitorscope.Scope
+	RunID      string
+	Number     int64
+	Token      credentials.ServiceRunToken
+	Hostname   string
+	Port       uint16
+	Header     tunnelv1.ServiceForwardingHeader
+	Requests   *requestlimit.HTTP
+	Policy     *visitorlease.Lease
+	Protection protectionpolicy.Settings
+	protection *httpprotection.Inspector
+	browser    *httpaccess.Browser
 }
 
-func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func(), error) {
+func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func() error, error) {
 	if f.Control == nil || f.Subject.Kind != visitorscope.Service || !f.Subject.Valid() {
 		return HTTP{}, nil, servicestream.ErrEndpoint
 	}
-	policy, err := httpaccess.PreparePolicy(ctx, f.Control, f.Subject, f.RunID, f.Number, f.Token.String(), nil)
+	protection, err := httpprotection.New(f.Protection)
 	if err != nil {
 		return HTTP{}, nil, err
+	}
+	f.protection = protection
+	policy, err := httpaccess.PreparePolicy(ctx, f.Control, f.Subject, f.RunID, f.Number, f.Token.String(), nil)
+	if err != nil {
+		return HTTP{}, nil, errors.Join(err, protection.Close())
 	}
 	tokens, err := httpaccess.StartTokens(ctx, f.Control, policy.Lease(), nil)
 	if err != nil {
 		policy.Close()
-		return HTTP{}, nil, err
+		return HTTP{}, nil, errors.Join(err, protection.Close())
 	}
 	f.Policy = policy.Lease()
 	f.browser = &httpaccess.Browser{Subject: f.Subject, Client: serviceBrowserClient{f}, RunID: f.RunID, Number: uint64(f.Number), ControlURL: strings.TrimSuffix(f.Control.ControlURL(), "/"), Policy: policy, Tokens: tokens}
-	return f, func() { tokens.Close(); policy.Close() }, nil
+	return f, func() error { tokens.Close(); policy.Close(); return protection.Close() }, nil
 }
 
 func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestream.HTTPTarget) error {
 	h := f.Header
-	if f.Policy == nil || f.Subject.Kind != visitorscope.Service || !f.Subject.Valid() || h.PublicService == nil || h.ServiceID != f.Subject.ID || h.ServiceRunID != f.RunID || h.RunNumber != uint64(f.Number) || h.PublicService.DestinationPort != f.Port || f.Port < 1024 || h.Validate() != nil {
+	if f.Policy == nil || f.protection == nil || f.Subject.Kind != visitorscope.Service || !f.Subject.Valid() || h.PublicService == nil || h.ServiceID != f.Subject.ID || h.ServiceRunID != f.RunID || h.RunNumber != uint64(f.Number) || h.PublicService.DestinationPort != f.Port || f.Port < 1024 || h.Validate() != nil {
 		return servicestream.ErrEndpoint
 	}
 	source, err := netip.ParseAddr(h.SourceIP)
@@ -85,6 +95,7 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 		scheme = "https"
 	}
 	return httpstream.Serve(ctx, client, &url.URL{Scheme: scheme, Host: target.Address}, target.Dial, func(next http.Handler) http.Handler {
+		application := f.protection.Handler(next, nil)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "no-store")
 			if r.Host != authority || r.Method == http.MethodConnect || r.URL.IsAbs() || r.URL.Host != "" || client.ConnectionState().ServerName != f.Hostname {
@@ -140,7 +151,7 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 					r.Header.Del(key)
 				}
 			}
-			next.ServeHTTP(w, r)
+			application.ServeHTTP(w, r)
 		})
 	})
 }

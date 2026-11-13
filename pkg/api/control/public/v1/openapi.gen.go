@@ -19,6 +19,7 @@ import (
 
 	"github.com/oapi-codegen/runtime"
 	openapi_types "github.com/oapi-codegen/runtime/types"
+	httpprotection "github.com/tnldotdev/tnl/internal/policy/httpprotection"
 )
 
 // Defines values for AdminServerStatusRole.
@@ -2767,6 +2768,9 @@ type GuestPublisherIdentity struct {
 	TeamId      TeamID      `json:"team_id"`
 }
 
+// HTTPProtection defines model for HTTPProtection.
+type HTTPProtection = httpprotection.Settings
+
 // HashedIPPrefix defines model for HashedIPPrefix.
 type HashedIPPrefix struct {
 	Digest       string               `json:"digest"`
@@ -3045,7 +3049,8 @@ type ProjectServiceHTTP struct {
 		Service     string `json:"service"`
 		StripPrefix *bool  `json:"strip_prefix,omitempty"`
 	} `json:"paths,omitempty"`
-	Readiness *struct {
+	Protection *HTTPProtection `json:"protection,omitempty"`
+	Readiness  *struct {
 		Path string `json:"path"`
 	} `json:"readiness,omitempty"`
 }
@@ -3657,7 +3662,10 @@ type Service struct {
 
 	// HttpLimits Approved run-local HTTP request limits returned to the scoped publisher. Applies after visitor authorization on public and connector admissions.
 	HttpLimits *ProjectHTTPApplicationLimits `json:"http_limits,omitempty"`
-	Id         ServiceID                     `json:"id"`
+
+	// HttpProtection Approved protection for public HTTP endpoint access. Connector traffic is not inspected.
+	HttpProtection *HTTPProtection `json:"http_protection,omitempty"`
+	Id             ServiceID       `json:"id"`
 
 	// KubernetesAuth Approved nonsecret native client authentication hint. Contains no publisher target address, CA, or credentials.
 	KubernetesAuth *KubernetesAuth   `json:"kubernetes_auth,omitempty"`

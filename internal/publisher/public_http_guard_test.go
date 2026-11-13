@@ -110,6 +110,7 @@ func TestPublicHTTPLiveRenewalAndHTTP2Isolation(t *testing.T) {
 		client.Timeout = 0
 		request := func(id, cookie string) *http.Response {
 			r, _ := http.NewRequest("POST", "https://route.example/stream?id="+id, strings.NewReader("original body"))
+			r.Header.Set("Content-Type", "text/plain")
 			r.Header.Set("Authorization", "app-secret")
 			r.Header.Set("Cookie", "app=unchanged; "+httpaccess.VisitorTokenCookie+"="+control.Credential(t, cookie, false))
 			response, err := client.Do(r)
@@ -197,6 +198,7 @@ func TestPublicHTTPLiveOutageAndOriginalCredentialDeadline(t *testing.T) {
 				client := mixedVisitorClient(t, route, false, false)
 				client.Timeout = 0
 				r, _ := http.NewRequest("POST", "https://route.example/stream", strings.NewReader("exact body"))
+				r.Header.Set("Content-Type", "text/plain")
 				if strings.HasPrefix(mode, "share") {
 					r.Header.Set("Cookie", httpaccess.VisitorTokenCookie+"="+control.Credential(t, liveBrowserCookie, true))
 				} else {
