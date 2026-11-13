@@ -116,7 +116,7 @@ type connectionConsumer func(context.Context, func(context.Context, net.Conn) er
 func serveConnections(ctx context.Context, config Config, consume connectionConsumer) (result error) {
 	startup, finish := observability.ClientOperation(ctx, "connector.startup")
 	defer func() { finish(result) }()
-	if config.Control == nil || !opaqueid.Valid(config.ServiceID, opaqueid.ServicePrefix) || config.IdentityID != "" && !opaqueid.Valid(config.IdentityID, opaqueid.IdentityPrefix) || !validProtocol(config.Protocol) || config.TrustRevision < 1 || config.Endpoint == nil || config.Endpoint.Hostname == "" || config.Endpoint.Port < 1024 || config.Endpoint.Port > 65535 {
+	if config.Control == nil || !opaqueid.Valid(config.ServiceID, opaqueid.ServicePrefix) || config.IdentityID != "" && !opaqueid.Valid(config.IdentityID, opaqueid.IdentityPrefix) || !validProtocol(config.Protocol) || config.TrustRevision < 1 || config.Endpoint == nil || config.Endpoint.Hostname == "" || config.Endpoint.Port < 0 || config.Endpoint.Port > 65535 || config.Endpoint.Port > 0 && config.Endpoint.Port < 1024 || config.Endpoint.Public && config.Endpoint.Port == 0 {
 		return ErrServiceConnection
 	}
 	if config.TransportTLS != nil && config.TransportTLS.InsecureSkipVerify || config.ServiceTLS == nil || config.ServiceTLS.InsecureSkipVerify || len(config.ServiceTLS.Certificates) != 0 || config.ServiceTLS.GetClientCertificate != nil {

@@ -323,7 +323,11 @@ schemas:
       expires_at: { type: string, format: date-time }
       certificate_plan: { $ref: "../openapi.yaml#/components/schemas/CertificatePlan" }
       hostname: { type: string, minLength: 1, maxLength: 253 }
-      service_port: { type: integer, minimum: 1024, maximum: 65535 }
+      service_port:
+        type: integer
+        minimum: 0
+        maximum: 65535
+        description: Exact captured public reservation, or zero for a connector-only service without a reservation. Never a local listener port.
       domain_id: { $ref: "../openapi.yaml#/components/schemas/DomainID" }
   ServiceRunSetup:
     type: object

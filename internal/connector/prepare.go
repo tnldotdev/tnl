@@ -186,13 +186,15 @@ func (b *connectorConnectionBackend) prepareListener(ctx context.Context, name s
 	}
 	owner := previous
 	if owner == nil {
-		port := endpoint.Port
-		// independently verified SDK identities cannot share a local capability
-		// or compete for the same managed port. metadata retains the remote port.
-		if b.parentPID > 0 {
-			port = 0
+		var base net.Listener
+		var err error
+		if b.parentPID == 0 && b.human != nil {
+			base, err = listenConnector(ctx, b.human.store, identity, service, "")
+		} else {
+			// independent SDK/workload contexts own isolated ephemeral sockets.
+			// none competes for, or binds, the public ingress reservation.
+			base, err = net.Listen("tcp4", "127.0.0.1:0")
 		}
-		base, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 		if err != nil {
 			return nil, err
 		}
@@ -262,7 +264,10 @@ func (b *connectorConnectionBackend) prepareListener(ctx context.Context, name s
 		serving.sessionID = session.Id
 	}
 	if string(service.Protocol) == "http" || string(service.Protocol) == "kubernetes" {
-		serving.connection.URL = "https://" + net.JoinHostPort(endpoint.Hostname, strconv.Itoa(endpoint.Port))
+		serving.connection.URL = "https://" + endpoint.Hostname
+		if endpoint.Port != 0 && endpoint.Port != 443 {
+			serving.connection.URL = "https://" + net.JoinHostPort(endpoint.Hostname, strconv.Itoa(endpoint.Port))
+		}
 	}
 	kube := owner.kube
 	if string(service.Protocol) == "kubernetes" && kube.result.File == "" {

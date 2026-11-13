@@ -111,6 +111,37 @@ func TestVisitorTokensUseExactCurrentResourceAndServer(t *testing.T) {
 	}
 }
 
+func TestPrivateServiceZeroPortIsExactNotWildcard(t *testing.T) {
+	key, permission, view, now := tokenFixture(t)
+	permission.Scope = visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_" + strings.Repeat("A", 22)}
+	permission.Port = 0
+	view.Scope, view.Port = permission.Scope, 0
+	token := issueToken(t, key, permission, view, now)
+	verified, err := VerifyBearer(token, view, now)
+	if err != nil || verified.Facts().Port != 0 {
+		t.Fatal("private service identity could not authorize a connector", err)
+	}
+	for _, port := range []uint16{443, 5432, 25443} {
+		changed := view
+		changed.Port = port
+		if _, err := VerifyBearer(token, changed, now); err == nil {
+			t.Fatal("zero-port permission matched another port", port)
+		}
+		if err := CheckCurrent(verified, changed, now); err == nil {
+			t.Fatal("verified zero-port permission survived a binding change", port)
+		}
+	}
+	changed := view
+	changed.Scope.ID = "svc_" + strings.Repeat("B", 22)
+	if _, err := VerifyBearer(token, changed, now); err == nil {
+		t.Fatal("zero-port permission matched another service")
+	}
+	permission.Scope = visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}
+	if _, err := Sign(view.Issuer, "key-one", key, permission, now); err == nil {
+		t.Fatal("public URL accepted the private-service zero port")
+	}
+}
+
 func TestVisitorTokensKeepSeparateIssuancesOfIdenticalPermission(t *testing.T) {
 	key, permission, view, now := tokenFixture(t)
 	first, second := issueToken(t, key, permission, view, now), issueToken(t, key, permission, view, now)

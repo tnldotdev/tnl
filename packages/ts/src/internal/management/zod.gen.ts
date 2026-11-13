@@ -166,11 +166,11 @@ export const deploymentPublisherPageSchema = z.strictObject({
 });
 
 /**
- * Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
+ * Control-owned service TLS identity. Native clients verify this name with system roots. Port is zero when no public ingress reservation exists; a positive port remains reserved when public access is temporarily disabled. It is never a machine-local connector port. Public access requires an allocated port. Target trust is a separate publisher-side boundary.
  */
 export const serviceEndpointSchema = z.strictObject({
   hostname: z.string().min(1).max(253),
-  port: z.int().gte(1024).lte(65535),
+  port: z.int().gte(0).lte(65535),
   public: z.boolean(),
 });
 

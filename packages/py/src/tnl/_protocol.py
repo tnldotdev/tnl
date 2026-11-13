@@ -88,13 +88,15 @@ def _service_metadata(name: str, value: object) -> dict[str, object]:
     if (
         protocol not in ("http", "tcp", "postgres", "mysql", "kubernetes")
         or type(port) is not int
-        or not 1 <= port <= 65535
+        or not 0 <= port <= 65535
         or type(item.get("public")) is not bool
+        or port == 0
+        and item.get("public") is True
     ):
         raise InvalidResponse()
     url = item.get("url", "")
     if protocol in ("http", "kubernetes"):
-        if url != f"https://{host}:{port}" and not (port == 443 and url == f"https://{host}"):
+        if url != f"https://{host}:{port}" and not (port in (0, 443) and url == f"https://{host}"):
             raise InvalidResponse()
     elif url != "":
         raise InvalidResponse()

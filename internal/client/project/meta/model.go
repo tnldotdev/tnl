@@ -92,7 +92,7 @@ func NewEndpoint(namespace, hostname, protocol string, port int, public bool) (S
 	service := Service{Namespace: namespace, Hostname: hostname, Protocol: protocol, Port: port, Public: public}
 	if protocol == "http" || protocol == "kubernetes" {
 		service.URL = "https://" + hostname
-		if port != 443 {
+		if port != 0 && port != 443 {
 			service.URL = "https://" + net.JoinHostPort(hostname, strconv.Itoa(port))
 		}
 	}
@@ -109,8 +109,8 @@ func validateServiceAddress(service Service) error {
 	if err := canonicalHostname("service hostname", service.Hostname); err != nil {
 		return err
 	}
-	if !config.ValidProtocol(service.Protocol) || service.Port < 1 || service.Port > 65535 {
-		return errors.New("service metadata needs a supported protocol, allocated port, and valid public exposure")
+	if !config.ValidProtocol(service.Protocol) || service.Port < 0 || service.Port > 65535 || service.Public && service.Port == 0 {
+		return errors.New("service metadata needs a supported protocol and a reserved port for public exposure")
 	}
 	if service.Protocol != "http" && len(service.Paths) != 0 {
 		return errors.New("path metadata requires protocol http")
@@ -130,7 +130,7 @@ func validateServiceAddress(service Service) error {
 		if err != nil || port != service.Port || service.URL != "https://"+net.JoinHostPort(service.Hostname, strconv.Itoa(port)) {
 			return errors.New("service HTTP port is invalid")
 		}
-	} else if service.URL != "https://"+service.Hostname || service.Port != 443 {
+	} else if service.URL != "https://"+service.Hostname || service.Port != 0 && service.Port != 443 {
 		return errors.New("HTTP service needs its exact HTTPS URL")
 	}
 	return nil

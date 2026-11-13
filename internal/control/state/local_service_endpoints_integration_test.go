@@ -31,7 +31,7 @@ func TestIntegrationPrivateManagedLocalNamespacesAndCapturedPlans(t *testing.T) 
 		t.Fatal(err)
 	}
 	want := "orders.feature-a." + naming.MemberNamespace(domain, kind == "managed", label, slug)
-	if record.Endpoint.Hostname != want || record.Endpoint.Port < 1024 || record.DomainID == "" {
+	if record.Endpoint.Hostname != want || record.Endpoint.Port != 0 || record.DomainID == "" {
 		t.Fatalf("local namespace or endpoint capture: %+v want %s", record, want)
 	}
 	request.WorktreeKey, request.WorktreeLabel = "source-worktree-b", "feature-b"
@@ -39,8 +39,8 @@ func TestIntegrationPrivateManagedLocalNamespacesAndCapturedPlans(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if other.ServiceID == first.ServiceID || other.Metadata.Endpoint.Hostname == want || other.Metadata.Endpoint.Port == record.Endpoint.Port {
-		t.Fatal("worktrees share a service, port or certificate identity")
+	if other.ServiceID == first.ServiceID || other.Metadata.Endpoint.Hostname == want || other.Metadata.Endpoint.Port != 0 {
+		t.Fatal("worktrees share a service or certificate identity, or reserve a public port")
 	}
 	request.WorktreeKey, request.WorktreeLabel = "source-worktree-a", "feature-a"
 	if _, err = d.pool.Exec(t.Context(), `UPDATE control.teams SET default_domain_id=NULL WHERE id=$1`, r.TeamID); err != nil {

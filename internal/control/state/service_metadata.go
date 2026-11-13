@@ -31,8 +31,9 @@ type ServiceMetadata struct {
 
 type ServiceEndpoint struct {
 	Hostname string `json:"hostname"`
-	Port     int    `json:"port"`
-	Public   bool   `json:"public"`
+	// zero means no public port has been reserved, never a local listener.
+	Port   int  `json:"port"`
+	Public bool `json:"public"`
 }
 
 func (m ServiceMetadata) Validate() error {
@@ -61,7 +62,7 @@ func checkedServiceMetadata(row controlstatedb.ControlService) (ServiceMetadata,
 }
 
 func managedServiceTLS(hostname string, port int, public bool) *ServiceEndpoint {
-	if hostname == "" || port == 0 {
+	if hostname == "" || port < 0 || port > 65535 || port > 0 && port < 1024 || public && port == 0 {
 		return nil
 	}
 	return &ServiceEndpoint{Hostname: hostname, Port: port, Public: public}
