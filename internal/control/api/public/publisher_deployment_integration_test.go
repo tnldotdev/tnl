@@ -53,12 +53,12 @@ func TestIntegrationPublisherRuntimeDeployment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	group := "production"
-	applied, err := owner.ApplyProjectConfiguration(ctx, "deployment", controlv1.ApplyProjectConfigurationRequest{Deployment: group, ServiceDeclarations: controlv1.ProjectServiceDeclarations{"api": "http"}, TeamId: team, Source: &testProjectSource, Configuration: controlv1.ProjectConfiguration{Settings: &controlv1.DeploymentSettings{}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {Target: "api.internal:3000"}}}})
+	deployment := "production"
+	applied, err := owner.ApplyProjectConfiguration(ctx, "deployment", controlv1.ApplyProjectConfigurationRequest{Deployment: deployment, ServiceDeclarations: controlv1.ProjectServiceDeclarations{"api": "http"}, TeamId: team, Source: &testProjectSource, Configuration: controlv1.ProjectConfiguration{Settings: &controlv1.DeploymentSettings{}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {Target: "api.internal:3000"}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrollment, err := owner.CreateDeploymentPublisherEnrollment(ctx, team, "deployment", group, "runtime-enrollment", controlv1.CreateDeploymentPublisherEnrollmentRequest{Services: []string{"api"}, MaxMembers: new(2), ExpiresIn: new(600)})
+	enrollment, err := owner.CreateDeploymentPublisherEnrollment(ctx, team, "deployment", deployment, "runtime-enrollment", controlv1.CreateDeploymentPublisherEnrollmentRequest{Services: []string{"api"}, MaxMembers: new(2), ExpiresIn: new(600)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,22 +122,30 @@ func TestIntegrationPublisherRuntimeDeployment(t *testing.T) {
 			t.Fatal("unsigned deployment change accepted", err)
 		}
 	}
-	for _, field := range []string{"team_id", "group_id", "publisher_identity_id"} {
+	for _, test := range []struct {
+		field  string
+		status int
+	}{
+		{"team_id", http.StatusBadRequest},
+		{"publisher_identity_id", http.StatusBadRequest},
+		// deployment_id is part of the signed report, not an unknown field.
+		{"deployment_id", http.StatusUnauthorized},
+	} {
 		r := request(member, key, controlv1.RuntimeStart, runA, 0, &report)
 		data, _ := json.Marshal(r)
 		var body map[string]any
 		if json.Unmarshal(data, &body) != nil {
 			t.Fatal("fixture JSON")
 		}
-		body["deployment"].(map[string]any)[field] = "private-foreign-tenant"
+		body["deployment"].(map[string]any)[test.field] = "private-foreign-tenant"
 		data, _ = json.Marshal(body)
 		response, err := httpClient.Post(server+"/v1/publisher/runtimes/"+member.PublisherIdentityId+"/start", "application/json", bytes.NewReader(data))
 		if err != nil {
 			t.Fatal(err)
 		}
 		_ = response.Body.Close()
-		if response.StatusCode != 400 {
-			t.Fatal("payload accepted tenant authority", field, response.StatusCode)
+		if response.StatusCode != test.status {
+			t.Fatal("payload authority validation returned the wrong status", test.field, response.StatusCode)
 		}
 	}
 	firstRequest := request(member, key, controlv1.RuntimeStart, runA, 0, &report)
@@ -237,18 +245,18 @@ func TestIntegrationPublisherRuntimeDeployment(t *testing.T) {
 	wrong := request(member, key, controlv1.RuntimeRenew, runB, 2, &changed)
 	wrong.ScopeId = "dpl_foreign"
 	if _, err := client.PublisherRuntime(ctx, wrong); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
-		t.Fatal("foreign group accepted", err)
+		t.Fatal("foreign deployment accepted", err)
 	}
 	wrong = request(member, key, controlv1.RuntimeRenew, runB, 2, &changed)
 	wrong.PublisherIdentityId = other.PublisherIdentityId
 	if _, err := client.PublisherRuntime(ctx, wrong); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("another publisher identity accepted the original signing key", err)
 	}
-	if _, err := owner.RenameDeployment(ctx, "deployment", group, controlv1.RenameDeploymentRequest{TeamId: team, Name: "live", ExpectedRevision: applied.Revision}); err != nil {
+	if _, err := owner.RenameDeployment(ctx, "deployment", deployment, controlv1.RenameDeploymentRequest{TeamId: team, Name: "live", ExpectedRevision: applied.Revision}); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(replaced, read(member.PublisherIdentityId)) {
-		t.Fatal("group rename changed observed deployment")
+		t.Fatal("selector rename changed observed deployment")
 	}
 	project, err := owner.GetProjectConfiguration(ctx, team, "deployment", "live")
 	if err != nil || len(project.Members) != 2 || project.Members[0].Runtime == nil || project.Members[0].Runtime.Deployment == nil {
@@ -262,7 +270,7 @@ func TestIntegrationPublisherRuntimeDeployment(t *testing.T) {
 	if bytes.Contains(publicJSON, []byte("publisher_reported")) || bytes.Contains(publicJSON, []byte(report.TemplateSha256)) || bytes.Contains(publicJSON, []byte(report.DeploymentId)) {
 		t.Fatal("deployment report leaked into browser-safe metadata")
 	}
-	if _, err := owner.GetProjectConfiguration(ctx, "team_foreign", "deployment", group); !errors.Is(err, clientcontrol.ErrNotFound) {
+	if _, err := owner.GetProjectConfiguration(ctx, "team_foreign", "deployment", deployment); !errors.Is(err, clientcontrol.ErrNotFound) {
 		t.Fatal("foreign team read deployment", err)
 	}
 	if err := owner.RevokeDeploymentPublisher(ctx, team, "deployment", "live", member.PublisherIdentityId); err != nil {

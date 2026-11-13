@@ -10,10 +10,10 @@ import (
 )
 
 func TestApplyWorkloadCloudSelectors(t *testing.T) {
-	group := "production"
+	deployment := "production"
 	repository := "example/repository"
 	protocol := "kubernetes"
-	project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{Deployment: group, Services: config.Services{"cluster": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "eks", Region: new("us-east-1"), Cluster: new("production")}}}, Workloads: map[string]config.Workload{"test": {GitHub: &config.WorkloadGitHub{Repository: &repository, Workflow: ".github/workflows/test.yml", Branch: new("main")}, Services: []string{"cluster"}}}}}}
+	project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{Deployment: deployment, Services: config.Services{"cluster": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "eks", Region: new("us-east-1"), Cluster: new("production")}}}, Workloads: map[string]config.Workload{"test": {GitHub: &config.WorkloadGitHub{Repository: &repository, Workflow: ".github/workflows/test.yml", Branch: new("main")}, Services: []string{"cluster"}}}}}}
 	declaration, err := resolve.Declaration(t.Context(), project.Project, team.Context{}, nil)
 	if err != nil {
 		t.Fatal(err)

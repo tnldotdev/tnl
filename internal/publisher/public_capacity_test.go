@@ -35,7 +35,7 @@ func TestPublicCapacitySharedAcrossRelaysIndependentAcrossRuns(t *testing.T) {
 		case <-r.Context().Done():
 		}
 	})
-	// two runs for the same URL own independent capacity, as group members do.
+	// two runs for the same URL own independent capacity, as deployment publishers do.
 	first := newPublicCapacityFixture(t, capacity, handler)
 	second := newPublicCapacityFixture(t, capacity, handler, func(c *PublicURLServerConfig) {
 		c.PublishRunID, c.PublishRunNumber = "run-2", 2

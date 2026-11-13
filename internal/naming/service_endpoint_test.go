@@ -12,9 +12,9 @@ func TestManagedDeploymentUsesExistingNamespace(t *testing.T) {
 			t.Fatalf("namespace = %q, %v", namespace, err)
 		}
 	}
-	for _, group := range []string{"local", "Production", "a.b", "-invalid"} {
-		if _, err := DeploymentNamespace(group, "storefront", "dev.acme.com"); err == nil {
-			t.Fatalf("invalid group %q accepted", group)
+	for _, deployment := range []string{"local", "Production", "a.b", "-invalid"} {
+		if _, err := DeploymentNamespace(deployment, "storefront", "dev.acme.com"); err == nil {
+			t.Fatalf("invalid deployment %q accepted", deployment)
 		}
 	}
 	if _, err := DeploymentNamespace("production", "storefront", strings.Repeat("a.", 115)+"example.com"); err == nil {

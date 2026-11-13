@@ -125,9 +125,7 @@ func TestDeploymentIdentityRejectsAmbiguousJSONAndDifferentDeploymentScope(t *te
 		strings.Replace(valid, `"member":{`, `"member":{"extra":true,`, 1),
 		strings.Replace(valid, `"member":{`, `"member":{"team_id":null,`, 1),
 		strings.Replace(valid, `"version":1`, `"version":null`, 1),
-		strings.Replace(valid, `"deployment_id":`, `"group_id":`, 1),
-		strings.Replace(valid, `"deployment_name":`, `"group_name":`, 1),
-		strings.Replace(valid, `"dpl_`, `"pgrp_`, 1),
+		strings.Replace(valid, `"dpl_`, `"invalid_`, 1),
 		strings.Replace(valid, value.PrivateKey, base64.RawURLEncoding.EncodeToString(make([]byte, ed25519.PrivateKeySize)), 1),
 	} {
 		if _, err := ParseDeployment([]byte(invalid)); !errors.Is(err, ErrInvalid) {

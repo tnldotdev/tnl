@@ -70,6 +70,6 @@ func TestTelemetryFixedDeploymentsCaptureInvocationOptOut(t *testing.T) {
 	}
 	jobs, err := registry.List(t.Context())
 	if err != nil || len(jobs) != 1 || !jobs[0].TelemetryDisabled {
-		t.Fatalf("fixed group lost invocation choice: %+v, err=%v", jobs, err)
+		t.Fatalf("fixed deployment lost invocation choice: %+v, err=%v", jobs, err)
 	}
 }

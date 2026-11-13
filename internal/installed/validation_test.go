@@ -154,7 +154,7 @@ func TestInstallationRejectsCrossKindMetadata(t *testing.T) {
 				"server trust": func(j *Job) { j.ServerCAPEM = []byte("not a certificate") },
 			}
 			if kind != KindDeployment {
-				mutations["group metadata"] = func(j *Job) { j.DeploymentMember = &controlv1.DeploymentPublisherIdentity{} }
+				mutations["deployment metadata"] = func(j *Job) { j.DeploymentMember = &controlv1.DeploymentPublisherIdentity{} }
 			}
 			if kind != KindConnector {
 				mutations["visitor identity"] = func(j *Job) { j.IdentityID = "visitor" }
@@ -190,12 +190,12 @@ func TestInstallationRejectsCrossKindMetadata(t *testing.T) {
 				mutations["public readiness flag"] = func(j *Job) { j.VerifyReadiness = true }
 				mutations["target"] = func(j *Job) { j.Target = "127.0.0.1:5432" }
 				mutations["target trust"] = func(j *Job) { j.TargetTLSName = "target.example" }
-				mutations["group signer"] = func(j *Job) {
+				mutations["deployment signer"] = func(j *Job) {
 					member := *j.DeploymentMember
 					member.PublisherIdentityId = "other-publisher"
 					j.DeploymentMember = &member
 				}
-				mutations["group key"] = func(j *Job) {
+				mutations["deployment key"] = func(j *Job) {
 					member := *j.DeploymentMember
 					member.KeyId = "invalid-key"
 					j.DeploymentMember = &member

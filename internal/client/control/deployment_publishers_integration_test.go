@@ -80,7 +80,7 @@ func TestIntegrationDeploymentPublisherClient(t *testing.T) {
 	}
 	member, err := client.RedeemDeploymentPublisherEnrollment(t.Context(), enrollment.EnrollmentKey, public)
 	if err != nil || member.DeploymentId != selected.Id {
-		t.Fatal("existing group enrollment did not accept scoped setup", err)
+		t.Fatal("existing deployment enrollment did not accept scoped setup", err)
 	}
 	page, err := client.ListDeploymentPublishers(t.Context(), team, "shop", selected.Id, "", 1)
 	if err != nil || len(page.Publishers) != 1 || page.Publishers[0].PublisherIdentityId != member.PublisherIdentityId || len(page.Publishers[0].Services) != 1 || page.Publishers[0].Services["db"] != controlv1.Postgres {
