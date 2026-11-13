@@ -220,11 +220,11 @@ class DeploymentPublisherPage(BaseModel):
 
 
 class ServiceEndpoint(BaseModel):
-    """Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary."""
+    """Control-owned service TLS identity. Native clients verify this name with system roots. Port is zero when no public ingress reservation exists; a positive port remains reserved when public access is temporarily disabled. It is never a machine-local connector port. Public access requires an allocated port. Target trust is a separate publisher-side boundary."""
 
     model_config = ConfigDict(extra="forbid")
     hostname: Annotated[str, Field(min_length=1, max_length=253)]
-    port: Annotated[int, Field(ge=1024, le=65535)]
+    port: Annotated[int, Field(ge=0, le=65535)]
     public: bool
 
 

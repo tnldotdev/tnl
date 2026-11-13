@@ -204,7 +204,7 @@ export type PublisherRuntimeStatus = {
 export type ServiceProtocol = "http" | "tcp" | "mysql" | "postgres" | "kubernetes";
 
 /**
- * Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
+ * Control-owned service TLS identity. Native clients verify this name with system roots. Port is zero when no public ingress reservation exists; a positive port remains reserved when public access is temporarily disabled. It is never a machine-local connector port. Public access requires an allocated port. Target trust is a separate publisher-side boundary.
  */
 export type ServiceEndpoint = {
   hostname: string;

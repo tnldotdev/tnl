@@ -29,8 +29,8 @@ func TestIntegrationMigrationRejectsPreRenewalWorkloadBaseline(t *testing.T) {
 	}
 	assertPredecessor := func() {
 		t.Helper()
-		if version, err := readSchemaVersion(ctx, d.pool); err != nil || version != 1 {
-			t.Fatalf("predecessor schema version = %d, %v; want 1", version, err)
+		if version, err := readSchemaVersion(ctx, d.pool); err != nil || version != schemaVersion {
+			t.Fatalf("schema version changed while reconstructing predecessor identity: %d, %v", version, err)
 		}
 		var stored string
 		if err := d.pool.QueryRow(ctx, `SELECT baseline_id FROM control.schema_identity WHERE id=1`).Scan(&stored); err != nil || stored != previous {

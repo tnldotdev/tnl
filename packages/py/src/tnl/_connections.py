@@ -271,7 +271,13 @@ def _prepared(value: object, service: str) -> Connection:
     except TnlError as cause:
         raise _error("invalid") from cause
     port = metadata.get("port")
-    if type(port) is not int or not 1 <= port <= 65535 or type(metadata.get("public")) is not bool:
+    if (
+        type(port) is not int
+        or not 0 <= port <= 65535
+        or type(metadata.get("public")) is not bool
+        or port == 0
+        and metadata.get("public") is True
+    ):
         raise _error("invalid")
     connection = _snapshot(obj.get("connection"))
     if (

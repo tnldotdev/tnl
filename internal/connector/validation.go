@@ -68,21 +68,16 @@ func serviceConnectionProfile(service controlv1.Service, listen string) (Profile
 	profile.ConnectorRequired = true
 	profile.Authentication = connectionConnector
 	managedAddress := net.JoinHostPort(hostname, port)
-	managedOrigin := net.JoinHostPort(hostname, strconv.Itoa(endpoint.Port))
 	switch profile.Protocol {
 	case config.ProtocolKubernetes:
 		profile.TLS = "HTTPS; managed tnl hostname; system roots; independent cluster CA verification by publisher"
-		profile.URL = "https://" + managedOrigin
+		profile.URL = "https://" + managedAddress
 	case config.ProtocolHTTP:
 		profile.TLS = "HTTPS with server hostname verification"
-		profile.URL = "https://" + managedOrigin + "/"
-		profile.Command = []string{"curl", "--noproxy", hostname, "--connect-to", managedOrigin + ":" + address, profile.URL}
+		profile.URL = "https://" + managedAddress + "/"
+		profile.Command = []string{"curl", "--noproxy", hostname, "--connect-to", managedAddress + ":" + address, profile.URL}
 		profile.Instructions = []string{"curl below dials the local listener and verifies the managed TLS hostname"}
-		if profile.Port == profile.ServicePort {
-			profile.Instructions = append(profile.Instructions, "browser: map the exact managed hostname to the listener in your local hosts file before opening the HTTPS URL:", host+" "+hostname, profile.URL)
-		} else {
-			profile.Instructions = append(profile.Instructions, "browser: first run tnl connect with --listen="+net.JoinHostPort(host, strconv.Itoa(profile.ServicePort))+" and map the exact managed hostname to that loopback IP in your local hosts file; HTTP requires the allocated port in its URL")
-		}
+		profile.Instructions = append(profile.Instructions, "browser: the exact managed hostname must resolve to the local listener, not public ingress; use the curl dial override otherwise:", host+" "+hostname, profile.URL)
 	case config.ProtocolPostgres:
 		profile.TLS = "PostgreSQL SSLRequest; verify-full; system roots"
 		query := url.Values{"hostaddr": {host}, "sslmode": {"verify-full"}, "sslrootcert": {"system"}, "channel_binding": {"disable"}, "gssencmode": {"disable"}}
@@ -139,7 +134,7 @@ func ValidateService(service controlv1.Service) error {
 	}
 	endpoint := service.Endpoint
 	hostname, err := naming.CanonicalizeHostname(endpoint.Hostname)
-	if err != nil || hostname != endpoint.Hostname || endpoint.Port < 1024 || endpoint.Port > 65535 {
+	if err != nil || hostname != endpoint.Hostname || endpoint.Port < 0 || endpoint.Port > 65535 || endpoint.Port > 0 && endpoint.Port < 1024 || endpoint.Public && endpoint.Port == 0 {
 		return publisherCLIError("service returned an invalid managed TLS endpoint")
 	}
 	return nil
