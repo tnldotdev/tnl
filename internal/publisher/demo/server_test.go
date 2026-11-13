@@ -13,7 +13,7 @@ import (
 )
 
 func TestDemoUsesMintOnDarkBranding(t *testing.T) {
-	for _, want := range []string{"color-scheme: dark", "--paper: #0d1117", "--primary: #7ee787", "color: var(--primary)"} {
+	for _, want := range []string{"color-scheme: dark", "--paper: #0d1117", "--primary: #86ead4", "color: var(--primary)"} {
 		if !strings.Contains(string(page), want) {
 			t.Errorf("demo page missing %q", want)
 		}
