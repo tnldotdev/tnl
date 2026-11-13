@@ -172,10 +172,14 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 			}
 			// an OLD task keeps polling while a manager renames and re-exports its
 			// exact member. verification must not replace that task's lease/run.
+			servingRevision := applied.Revision
 			cliCall(t, t.Context(), []string{"--config", configuration, "publisher", "rename", "production", "live", "--state-dir", person})
 			applied, err = control.GetProjectConfiguration(t.Context(), team, applied.ProjectKey, "live")
 			if err != nil {
 				t.Fatal(err)
+			}
+			if applied.Revision <= servingRevision {
+				t.Fatal("selector rename did not advance the project revision")
 			}
 			if err := inspect.QueryRow(t.Context(), `SELECT token_digest FROM control.publisher_group_leases WHERE publisher_identity_id=$1`, value.Member.PublisherIdentityId).Scan(&oldLease); err != nil {
 				t.Fatal(err)
@@ -190,7 +194,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 			}
 			workflowWait(t, 12*time.Second, func() bool {
 				status, err := control.GetProjectConfiguration(t.Context(), team, applied.ProjectKey, "live")
-				return err == nil && len(status.Members) == 1 && status.Members[0].ObservedRevision == applied.Revision
+				return err == nil && len(status.Members) == 1 && status.Members[0].ObservedRevision == servingRevision && status.Members[0].CurrentRevision == servingRevision
 			})
 			var keptRun string
 			var keptLease []byte
@@ -297,7 +301,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 			return response.StatusCode == http.StatusOK && string(body) == "portable group worker"
 		})
 		status, err := control.GetProjectConfiguration(t.Context(), team, applied.ProjectKey, "live")
-		if err != nil || len(status.Members) != 1 || status.Members[0].PublisherIdentityId != value.Member.PublisherIdentityId || !status.Members[0].Healthy || status.Members[0].ObservedRevision != applied.Revision {
+		if err != nil || len(status.Members) != 1 || status.Members[0].PublisherIdentityId != value.Member.PublisherIdentityId || !status.Members[0].Healthy || status.Members[0].ObservedRevision != status.Members[0].CurrentRevision {
 			t.Fatal("replacement changed membership or did not acknowledge its assignment", err)
 		}
 		state, err := clientstate.Open(t.Context(), task)

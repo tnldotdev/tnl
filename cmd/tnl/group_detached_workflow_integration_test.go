@@ -41,6 +41,9 @@ func TestIntegrationCLIGroupDetachedHistoricalIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if renamed.Revision <= applied.Revision {
+		t.Fatal("selector rename did not advance the project revision")
+	}
 	binary := workflowExecutable(t)
 	task := f.state(t, "detached-task")
 	caFile := filepath.Join(t.TempDir(), "root.pem")
@@ -75,7 +78,7 @@ func TestIntegrationCLIGroupDetachedHistoricalIdentity(t *testing.T) {
 				return false
 			}
 			status, err := control.GetProjectConfiguration(t.Context(), team, "detached", "live")
-			return err == nil && len(status.Members) == 1 && status.Members[0].Healthy && status.Members[0].GroupName == "live" && status.Members[0].ObservedRevision == renamed.Revision
+			return err == nil && len(status.Members) == 1 && status.Members[0].Healthy && status.Members[0].GroupName == "live" && status.Members[0].ObservedRevision == applied.Revision && status.Members[0].CurrentRevision == applied.Revision
 		})
 		service, err := control.GetService(t.Context(), *applied.Services[0].ServiceId)
 		if err != nil {
