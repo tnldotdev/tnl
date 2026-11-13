@@ -1,0 +1,44 @@
+paths:
+  /v1/projects/{project_key}/deployments/{deployment}/public-urls/{service}:
+    get:
+      operationId: getDeploymentPublication
+      tags: [deployments]
+      summary: Resolve an approved saved HTTP publication
+      security: [{ publisherAuth: [] }]
+      description: Resolve one approved named HTTP publication and its saved limits without management authority. The current signed credential must independently approve publication of this logical service in this deployment. The saved hostname and visitor policy cannot be changed.
+      parameters:
+        - { name: project_key, in: path, required: true, schema: { type: string } }
+        - { name: deployment, in: path, required: true, schema: { type: string } }
+        - { name: service, in: path, required: true, schema: { type: string } }
+        - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
+      responses:
+        "200":
+          description: Approved saved publication
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/DeploymentPublication" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/projects/{project_key}/deployments/{deployment}/public-urls:
+    post:
+      operationId: allocateDeploymentPublication
+      tags: [deployments]
+      summary: Allocate an approved temporary HTTP public URL
+      security: [{ publisherAuth: [] }]
+      description: Allocate an unnamed temporary HTTP public URL in this deployment's namespace. Requires explicit temporary publication approval, independently of named services, management, and connection approval. Visitor access defaults to restricted; anonymous access additionally requires explicit approval and request. Repeating the same invocation and intent recovers only the original live allocation, never a replacement or extended deadline. Delete using the existing publisher public URL operation.
+      parameters:
+        - { name: project_key, in: path, required: true, schema: { type: string } }
+        - { name: deployment, in: path, required: true, schema: { type: string } }
+        - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              { $ref: "../openapi.yaml#/components/schemas/AllocateEphemeralPublicURLRequest" }
+      responses:
+        "201":
+          description: Original temporary public URL
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/PublicURL" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

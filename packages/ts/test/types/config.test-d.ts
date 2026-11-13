@@ -218,6 +218,35 @@ test("configuration context and arbitrary service lookups preserve absence", () 
 });
 
 test("configuration enforces service ownership and references for literals and factories", () => {
+  defineConfig({
+    services: { web: {}, api: {} },
+    deployments: {
+      production: {
+        targets: {
+          web: { publicURL: {} },
+          api: {
+            address: "https://api.internal:8443",
+            tls: {},
+            publicURL: { access: "anonymous" },
+          },
+        },
+      },
+    },
+  });
+  defineConfig({
+    services: { web: {} },
+    deployments: {
+      // @ts-expect-error named remote URLs cannot be temporary.
+      production: { targets: { web: { publicURL: { ephemeral: true } } } },
+    },
+  });
+  defineConfig({
+    services: { web: {} },
+    deployments: {
+      // @ts-expect-error named visitor policy belongs on publicURL, not http.
+      production: { targets: { web: { publicURL: {}, http: { access: "restricted" } } } },
+    },
+  });
   // @ts-expect-error service-owned target definitions have been replaced.
   defineConfig({ services: { web: { target: { type: "app" } } } });
   // @ts-expect-error public service directories are removed.

@@ -1,0 +1,8 @@
+schemas:
+  DeploymentPublication:
+    type: object
+    additionalProperties: false
+    required: [public_url]
+    properties:
+      public_url: { $ref: "../openapi.yaml#/components/schemas/PublicURL" }
+      limits: { $ref: "../openapi.yaml#/components/schemas/ProjectPublicLimits" }

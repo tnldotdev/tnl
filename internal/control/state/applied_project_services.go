@@ -31,7 +31,10 @@ func lockAppliedProjectPublications(ctx context.Context, tx pgx.Tx, team, projec
 	_, err := tx.Exec(ctx, `SELECT service.id FROM control.public_urls service
 		WHERE service.id IN (
 			SELECT public_url_id FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2
-			UNION SELECT public_url_id FROM control.local_project_services WHERE team_id=$1 AND project_key=$2)
+			UNION SELECT public_url_id FROM control.local_project_services WHERE team_id=$1 AND project_key=$2
+			UNION SELECT allocation.public_url_id FROM control.publisher_namespace_allocations allocation
+			JOIN control.deployments deployment ON deployment.id=allocation.deployment_id
+			WHERE deployment.team_id=$1 AND deployment.project_key=$2)
 		ORDER BY service.id FOR NO KEY UPDATE OF service`, team, project)
 	return err
 }
@@ -159,13 +162,34 @@ func (d *Database) reconcileAppliedPublicSettings(ctx context.Context, tx pgx.Tx
 }
 
 func (d *Database) appliedProjectTraffic(ctx context.Context, tx pgx.Tx, url string, fallback *trafficlimits.Selection) (*trafficlimits.Selection, error) {
-	var team, project, service string
-	err := tx.QueryRow(ctx, `SELECT team_id,project_key,service FROM control.applied_project_services WHERE public_url_id=$1`, url).Scan(&team, &project, &service)
+	var team, project, service, deployment string
+	err := tx.QueryRow(ctx, `SELECT team_id,project_key,service,COALESCE(deployment_id,'') FROM control.applied_project_services WHERE public_url_id=$1`, url).Scan(&team, &project, &service, &deployment)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return fallback, nil
 	}
 	if err != nil {
 		return nil, err
+	}
+	if deployment != "" {
+		// the team guard stabilizes this snapshot; do not acquire its parent
+		// after the caller has already locked the public URL.
+		row := controlstatedb.ControlDeployment{ID: deployment}
+		err := tx.QueryRow(ctx, `SELECT revision,configuration_ciphertext,storage_key_id FROM control.deployments WHERE id=$1 AND deleted_at IS NULL`, deployment).Scan(&row.Revision, &row.ConfigurationCiphertext, &row.StorageKeyID)
+		if err != nil {
+			return nil, err
+		}
+		snapshot, err := d.openDeploymentConfiguration(row)
+		if err != nil {
+			return nil, err
+		}
+		s, found := snapshot.Services[service]
+		if !found || s.PublicURL == nil {
+			return nil, ErrProjectConfigurationStale
+		}
+		if s.PublicURL.Limits == nil {
+			return nil, nil
+		}
+		return s.PublicURL.Limits.Traffic, nil
 	}
 	// the caller holds the team guard and URL lock. do not reverse the apply
 	// project's lock order by locking its project row after that URL.

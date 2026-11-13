@@ -108,6 +108,8 @@ func deploymentAssignmentIdentity(m controlv1.DeploymentPublisherIdentity, a con
 	i := authorityv1.PublisherEnrollmentResult{ClientId: m.PublisherIdentityId, KeyId: m.KeyId, GrantId: a.GrantId, TeamId: m.TeamId}
 	if a.ServiceKind == "service" && opaqueid.Valid(a.ServiceId, opaqueid.ServicePrefix) && a.TrustRevision > 0 {
 		i.Kind, i.ServiceId = "service", &a.ServiceId
+	} else if a.ServiceKind == "public_url" && opaqueid.Valid(a.ServiceId, opaqueid.PublicURLPrefix) && a.TrustRevision > 0 && a.Hostname != nil && *a.Hostname != "" {
+		i.Kind, i.PublicUrlId = authorityv1.SavedPublicUrl, &a.ServiceId
 	} else {
 		return i, ErrScope
 	}

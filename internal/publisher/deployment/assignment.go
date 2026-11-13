@@ -35,6 +35,9 @@ func (AssignmentPublisher) String() string   { return "deployment publications" 
 func (AssignmentPublisher) GoString() string { return "deployment publications" }
 
 func (p AssignmentPublisher) Publish(ctx context.Context, assignment controlv1.DeploymentPublisherServiceAssignment, health func(bool)) error {
+	if assignment.ServiceKind == "public_url" {
+		return p.publishPublicURL(ctx, assignment, health)
+	}
 	if assignment.ServiceKind != "service" || assignment.Configuration.Protocol == nil || assignment.TrustRevision < 1 || p.Member.DeploymentId == "" || p.Member.DeploymentName == "" || p.Member.DeploymentName == "local" {
 		return ErrAssignment
 	}

@@ -42,15 +42,16 @@ WHERE sessions.id = sqlc.arg(publish_run_id)
 RETURNING sessions.*;
 
 -- name: HeartbeatPublishRun :one
-UPDATE control.publish_runs
+UPDATE control.publish_runs AS run
 SET last_heartbeat_at = GREATEST(last_heartbeat_at, sqlc.arg(heartbeat_at)),
-    publisher_expires_at = GREATEST(publisher_expires_at, sqlc.arg(expires_at))
-WHERE id = sqlc.arg(publish_run_id)
-  AND public_url_id = sqlc.arg(public_url_id)
-  AND publish_run_number = sqlc.arg(publish_run_number)
-  AND closed_at IS NULL
-  AND publisher_expires_at > sqlc.arg(heartbeat_at)
-RETURNING *;
+    publisher_expires_at = LEAST(GREATEST(publisher_expires_at, sqlc.arg(expires_at)),
+        (SELECT grant_record.expires_at FROM control.publisher_grants grant_record WHERE grant_record.id=run.publisher_grant_id))
+WHERE run.id = sqlc.arg(publish_run_id)
+  AND run.public_url_id = sqlc.arg(public_url_id)
+  AND run.publish_run_number = sqlc.arg(publish_run_number)
+  AND run.closed_at IS NULL
+  AND run.publisher_expires_at > sqlc.arg(heartbeat_at)
+RETURNING run.*;
 
 -- name: ListValidReadyPublisherConnections :many
 SELECT connections.publish_run_id,

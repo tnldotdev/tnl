@@ -70,8 +70,8 @@ SELECT * FROM control.publisher_access_tokens WHERE access_token_digest = sqlc.a
 SELECT * FROM control.domains WHERE id = sqlc.arg(id) AND state = 'ready' AND released_at IS NULL AND (kind = 'managed' OR team_id = sqlc.arg(team_id));
 
 -- name: InsertPublisherAllocation :exec
-INSERT INTO control.publisher_namespace_allocations(public_url_id, publisher_identity_id, publisher_grant_id, invocation_id)
-VALUES (sqlc.arg(public_url_id), sqlc.arg(publisher_identity_id), sqlc.arg(publisher_grant_id), sqlc.arg(invocation_id));
+INSERT INTO control.publisher_namespace_allocations(public_url_id, publisher_identity_id, publisher_grant_id, invocation_id, deployment_id)
+VALUES (sqlc.arg(public_url_id), sqlc.arg(publisher_identity_id), sqlc.arg(publisher_grant_id), sqlc.arg(invocation_id), sqlc.narg(deployment_id));
 
 -- name: GetPublisherAllocation :one
 SELECT * FROM control.publisher_namespace_allocations WHERE public_url_id = sqlc.arg(public_url_id);

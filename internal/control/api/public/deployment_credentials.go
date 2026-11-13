@@ -62,10 +62,24 @@ func (h *handler) RegisterDeploymentCredential(w http.ResponseWriter, r *http.Re
 	if body.Permissions.Connect != nil {
 		permissions["connect"] = *body.Permissions.Connect
 	}
+	temporary := ""
+	if publish := body.Permissions.Publish; publish != nil {
+		if publish.Services != nil {
+			permissions["publish"] = *publish.Services
+		}
+		if publish.Temporary != nil {
+			temporary = string(*publish.Temporary)
+		}
+		if publish.Services == nil && temporary == "" {
+			writeProblem(w, 400, controlv1.InvalidRequest, "select named services or temporary publication approval")
+			return
+		}
+	}
 	request := controlstate.RegisterDeploymentCredentialRequest{
 		DeploymentScope: controlstate.DeploymentScope{TeamID: params.TeamId, ProjectKey: project, ActorID: actor},
 		Name:            body.Name, IdempotencyKey: params.IdempotencyKey, PublicKey: public, Permissions: permissions,
 		AllDeployments: body.AllDeployments != nil, Lifetime: time.Duration(body.ExpiresIn) * time.Second, Now: time.Now(),
+		TemporaryPublication: temporary,
 	}
 	if body.DeploymentIds != nil {
 		request.DeploymentIDs = *body.DeploymentIds

@@ -131,33 +131,8 @@ func (h *handler) AllocatePublisherPublicURL(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	var b controlv1.AllocateEphemeralPublicURLRequest
-	if decodeJSON(w, r, &b) != nil || !opaqueid.Valid(b.InvocationId, opaqueid.InvocationPrefix) || !validAllocationLimits(b.Limits) {
-		writeProblem(w, 400, controlv1.InvalidRequest, "invalid namespace allocation")
-		return
-	}
-	if _, err := targetsyntax.ParseCanonicalTarget(b.Target); err != nil {
-		writeProblem(w, 400, controlv1.InvalidRequest, "target must be an HTTP or HTTPS origin")
-		return
-	}
-	prefixes, err := allocationIPPolicy(b)
-	if err != nil {
-		writeProblem(w, 400, controlv1.InvalidRequest, "invalid visitor IP policy")
-		return
-	}
-	mode := controlstate.VisitorAccessRestricted
-	if b.AccessMode != nil {
-		mode = controlstate.VisitorAccessMode(*b.AccessMode)
-	}
-	if !mode.Valid() {
-		writeProblem(w, 400, controlv1.InvalidRequest, "invalid visitor access mode")
-		return
-	}
-	// retain a canonical limits binding in retries even though limits are
-	// applied by the publisher rather than stored as URL policy.
-	binding, err := json.Marshal(b.Limits)
-	if err != nil {
-		writeProblem(w, 400, controlv1.InvalidRequest, "invalid publisher limits")
+	b, prefixes, mode, binding, ok := publisherAllocationInput(w, r)
+	if !ok {
 		return
 	}
 	u, err := store.AllocatePublisherPublicURL(r.Context(), p, b.InvocationId, b.Target, prefixes, binding, time.Now(), controlstate.PublisherPublicURLOptions{AccessMode: mode, RequirePostQuantum: b.RequirePostQuantum != nil && *b.RequirePostQuantum})
@@ -168,12 +143,45 @@ func (h *handler) AllocatePublisherPublicURL(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, 201, publicURLResponse(u))
 }
 
+func publisherAllocationInput(w http.ResponseWriter, r *http.Request) (b controlv1.AllocateEphemeralPublicURLRequest, prefixes []string, mode controlstate.VisitorAccessMode, binding []byte, ok bool) {
+	if decodeJSON(w, r, &b) != nil || !opaqueid.Valid(b.InvocationId, opaqueid.InvocationPrefix) || !validAllocationLimits(b.Limits) {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid namespace allocation")
+		return b, nil, mode, nil, false
+	}
+	if _, err := targetsyntax.ParseCanonicalTarget(b.Target); err != nil {
+		writeProblem(w, 400, controlv1.InvalidRequest, "target must be an HTTP or HTTPS origin")
+		return b, nil, mode, nil, false
+	}
+	var err error
+	prefixes, err = allocationIPPolicy(b)
+	if err != nil {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid visitor IP policy")
+		return b, nil, mode, nil, false
+	}
+	mode = controlstate.VisitorAccessRestricted
+	if b.AccessMode != nil {
+		mode = controlstate.VisitorAccessMode(*b.AccessMode)
+	}
+	if !mode.Valid() {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid visitor access mode")
+		return b, nil, mode, nil, false
+	}
+	// retain a canonical limits binding in retries even though limits are
+	// applied by the publisher rather than stored as URL policy.
+	binding, err = json.Marshal(b.Limits)
+	if err != nil {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid publisher limits")
+		return b, nil, mode, nil, false
+	}
+	return b, prefixes, mode, binding, true
+}
+
 func (h *handler) DeletePublisherPublicURL(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID) {
 	store, p, ok := h.authenticatePublisher(w, r)
 	if !ok {
 		return
 	}
-	if p.Scope.Kind != "namespace" || p.GuestID != "" {
+	if p.Scope.Kind != "namespace" && p.Scope.Kind != controlstate.DeploymentCredentialGrant || p.GuestID != "" {
 		writeProblem(w, 404, controlv1.NotFound, "resource not found")
 		return
 	}
