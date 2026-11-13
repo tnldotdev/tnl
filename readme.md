@@ -118,7 +118,6 @@ First, install the package with pnpm and initialize your project:
 ```bash
 pnpm add -D @tnldotdev/tnl
 pnpm exec tnl init
-pnpm exec tnl auth login
 ```
 
 For example, with Vite, `pnpm exec tnl init` adds `tnl()` alongside your existing plugins:
@@ -150,7 +149,7 @@ export default defineConfig({
 });
 ```
 
-Start your app (e.g. with `vite dev`) and get its URL. By default, any visitor needs to sign in or have a share link.
+Start your app (e.g. with `vite dev`). It runs locally even without a tnl account or when control is offline. Sign in with `pnpm exec tnl auth login` to get a public URL; by default, visitors need a sign-in or share link.
 
 Hot reloading, WebSockets, SSE, and streaming responses are all supported.
 
