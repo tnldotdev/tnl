@@ -1002,7 +1002,7 @@ type TeamRole string
 type VerifiedOIDCTeamContext struct {
 	// AuthenticatedAt Unix seconds of actual company authentication; not token refresh time
 	AuthenticatedAt      int64  `json:"authenticated_at"`
-	ConnectionRevision   int64  `json:"connection_revision"`
+	ConnectionRevision   int64  `json:"connection_revision,string"`
 	IdentityConnectionId string `json:"identity_connection_id"`
 	SourceId             string `json:"source_id"`
 	Subject              string `json:"subject"`

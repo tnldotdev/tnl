@@ -49,7 +49,7 @@ type Identity struct {
 type TeamContext struct {
 	TeamID               string `json:"team_id"`
 	IdentityConnectionID string `json:"identity_connection_id"`
-	ConnectionRevision   int64  `json:"connection_revision"`
+	ConnectionRevision   int64  `json:"connection_revision,string"`
 	Subject              string `json:"subject"`
 	SourceID             string `json:"source_id"`
 	AuthenticatedAt      int64  `json:"authenticated_at"`

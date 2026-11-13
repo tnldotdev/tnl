@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: tnl authority API
   version: 1.0.0
-  description: "Manage identities, teams, domains, company access, and workload sessions. API revisions and renewal sequences are decimal strings in JSON, including mutation preconditions. Values range from 0 through 9223372036854775807, subject to each operation's positive-value rules. Keep them as strings in JavaScript, or use BigInt for comparison and arithmetic. Signed identity-provider claims retain their documented claim encoding."
+  description: "Manage identities, teams, domains, company access, and workload sessions. API revisions and renewal sequences are decimal strings in JSON, including mutation preconditions and the connection revision in tnl_team_contexts. Values range from 0 through 9223372036854775807, subject to each operation's positive-value rules. Keep them as strings in JavaScript, or use BigInt for comparison and arithmetic. Standard identity-provider timestamps remain numeric Unix seconds."
   license:
     name: BSD-3-Clause
     identifier: BSD-3-Clause
