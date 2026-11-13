@@ -4,7 +4,7 @@ import { mkdtemp, realpath } from "node:fs/promises";
 import { connect as connectTCP } from "node:net";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { Pool, buildConnector, fetch as transportFetch, type Dispatcher } from "undici/index.js";
+import type { Pool, Dispatcher } from "undici/index.js";
 import { TnlCleanupError, TnlError } from "../../errors.js";
 import type {
   TnlClientFactory,
@@ -426,6 +426,7 @@ export function managedFetch(
         snapshot.expires <= Date.now()
       )
         throw new TnlError("sdk.response_invalid");
+      const { Pool, buildConnector, fetch: transportFetch } = await import("undici/index.js");
       const nextKey = JSON.stringify([
         snapshot.host,
         snapshot.port,

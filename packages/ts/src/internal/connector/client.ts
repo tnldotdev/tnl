@@ -23,9 +23,9 @@ type Connection<
   Services extends ServiceFacts,
   Name extends Names<Services>,
   Local extends boolean,
-> = (Local extends true ? LocalConnectionRegistry : TnlConnectionRegistry)[
-  Services[Name]["protocol"]
-];
+> = (Local extends true
+  ? LocalConnectionRegistry
+  : TnlConnectionRegistry)[Services[Name]["protocol"]];
 
 export interface LocalPostgresConnection {
   readonly host: string;
@@ -332,17 +332,24 @@ export function createClient<const Services extends ServiceFacts = Record<never,
                   throw new TnlError("sdk.response_invalid");
                 return value;
               })
-        ).then((value): { key: string; connection: Connection<Services, Name, Selected extends "local" ? true : false> } => {
-          if (closed) throw closedError;
-          return {
-            key: value.key,
-            connection: value.connection as Connection<
-              Services,
-              Name,
-              Selected extends "local" ? true : false
-            >,
-          };
-        });
+        ).then(
+          (
+            value,
+          ): {
+            key: string;
+            connection: Connection<Services, Name, Selected extends "local" ? true : false>;
+          } => {
+            if (closed) throw closedError;
+            return {
+              key: value.key,
+              connection: value.connection as Connection<
+                Services,
+                Name,
+                Selected extends "local" ? true : false
+              >,
+            };
+          },
+        );
         pending.add(work);
         void work.then(
           () => pending.delete(work),
