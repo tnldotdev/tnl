@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -18,7 +19,7 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func TestConnectorHTTPBrowserInstructionsRequireLocalDNSAndAllocatedPort(t *testing.T) {
+func TestConnectorHTTPBrowserInstructionsSeparateLocalAndPublicPorts(t *testing.T) {
 	service := controlv1.Service{Id: "svc_0123456789ABCDEFGHIJKL", Protocol: controlv1.ServiceProtocolHTTP, Enabled: true, Endpoint: &controlv1.ServiceEndpoint{Hostname: "orders.example.test", Port: 25443, Public: true}}
 	for _, listen := range []string{"127.0.0.1:25443", "127.0.0.1:15432", "[::1]:15432"} {
 		profile, err := serviceConnectionProfile(service, listen)
@@ -26,14 +27,10 @@ func TestConnectorHTTPBrowserInstructionsRequireLocalDNSAndAllocatedPort(t *test
 			t.Fatal(err)
 		}
 		instructions := strings.Join(profile.Instructions, " ")
-		if !strings.Contains(instructions, "local hosts file") || !strings.Contains(instructions, "exact managed hostname") {
+		if !strings.Contains(instructions, "must resolve to the local listener") || !strings.Contains(instructions, "exact managed hostname") {
 			t.Fatal("browser instructions rely on public DNS", instructions)
 		}
-		if profile.Port != profile.ServicePort {
-			if strings.Contains(instructions, profile.URL) || !strings.Contains(instructions, "--listen=") || !strings.Contains(instructions, "allocated port") {
-				t.Fatal("overridden listener advertised a directly usable browser URL", instructions)
-			}
-		} else if !strings.Contains(instructions, profile.Host+" "+profile.Hostname) || !strings.Contains(instructions, profile.URL) {
+		if strings.Contains(instructions, "--listen=") || !strings.Contains(instructions, profile.Host+" "+profile.Hostname) || !strings.Contains(instructions, profile.URL) {
 			t.Fatal("browser origin omitted its exact loopback mapping", instructions)
 		}
 	}
@@ -45,9 +42,10 @@ func TestConnectorHTTPCurlDialsOverrideWithVerifiedAuthority(t *testing.T) {
 		t.Skip("curl is required to exercise the printed native command")
 	}
 	var requests atomic.Int64
+	var authority string
 	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Host != "example.com:25443" || r.TLS.ServerName != "example.com" {
-			t.Error("curl lost the allocated HTTP authority or TLS identity")
+		if r.Host != authority || r.TLS.ServerName != "example.com" {
+			t.Error("curl lost the local HTTP authority or TLS identity")
 			w.WriteHeader(http.StatusMisdirectedRequest)
 			return
 		}
@@ -55,6 +53,8 @@ func TestConnectorHTTPCurlDialsOverrideWithVerifiedAuthority(t *testing.T) {
 		_, _ = io.WriteString(w, "local connector reached")
 	}))
 	defer target.Close()
+	_, port, _ := net.SplitHostPort(target.Listener.Addr().String())
+	authority = net.JoinHostPort("example.com", port)
 	caFile := filepath.Join(t.TempDir(), "roots.pem")
 	if err := os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: target.Certificate().Raw}), 0o600); err != nil {
 		t.Fatal(err)
@@ -101,7 +101,7 @@ func TestConnectorProfileSeparatesLocalDialAndVerifiedIdentity(t *testing.T) {
 					t.Fatal("psql lost independent dial address or verified hostname", profile.Command)
 				}
 			case controlv1.ServiceProtocolHTTP:
-				if profile.URL != "https://"+approved.Hostname+":25443/" || strings.Join(profile.Command, " ") != "curl --noproxy "+approved.Hostname+" --connect-to "+approved.Hostname+":25443:127.0.0.1:15432 "+profile.URL {
+				if profile.URL != "https://"+approved.Hostname+":15432/" || strings.Join(profile.Command, " ") != "curl --noproxy "+approved.Hostname+" --connect-to "+approved.Hostname+":15432:127.0.0.1:15432 "+profile.URL {
 					t.Fatal("curl would dial public DNS or verify loopback", profile.Command)
 				}
 			case controlv1.Mysql:
@@ -128,6 +128,24 @@ func TestConnectModeMatrix(t *testing.T) {
 					t.Fatalf("public=%v protocol=%s flags=%+v: %v", public, protocol, flags, err)
 				}
 			}
+		}
+	}
+}
+
+func TestConnectorPrivateIdentityNeedsNoPublicReservation(t *testing.T) {
+	for _, protocol := range []controlv1.ServiceProtocol{"http", "tcp", "postgres", "mysql", "kubernetes"} {
+		service := controlv1.Service{Id: "svc_0123456789ABCDEFGHIJKL", Enabled: true, Protocol: protocol,
+			Endpoint: &controlv1.ServiceEndpoint{Hostname: "private.example.test"}}
+		profile, err := serviceConnectionProfile(service, "127.0.0.1:24117")
+		if err != nil || profile.Port != 24117 || profile.ServicePort != 0 || profile.Public || strings.Contains(profile.URL, ":0") {
+			t.Fatal("private identity acquired a public port or lost its local listener", profile, err)
+		}
+		if protocol == "http" && profile.URL != "https://private.example.test:24117/" {
+			t.Fatal("private HTTP URL does not use the saved local port", profile.URL)
+		}
+		service.Endpoint.Public = true
+		if ValidateService(service) == nil {
+			t.Fatal("public service accepted an unallocated port")
 		}
 	}
 }

@@ -125,7 +125,7 @@ func lockVisitorResource(ctx context.Context, tx pgx.Tx, scope visitorscope.Scop
 		if err != nil {
 			return resource, err
 		}
-		if !row.Enabled || row.DeletedAt.Valid || row.CertificateHostname == "" || !row.ServicePort.Valid || row.ServicePort.Int32 < 1024 || row.ServicePort.Int32 > 65535 {
+		if !row.Enabled || row.DeletedAt.Valid || row.CertificateHostname == "" || !row.ServicePort.Valid || row.ServicePort.Int32 < 0 || row.ServicePort.Int32 > 65535 || row.ServicePort.Int32 > 0 && row.ServicePort.Int32 < 1024 {
 			return resource, ErrVisitorPermission
 		}
 		resource.TeamID, resource.Hostname, resource.Port = row.TeamID, row.CertificateHostname, uint16(row.ServicePort.Int32)

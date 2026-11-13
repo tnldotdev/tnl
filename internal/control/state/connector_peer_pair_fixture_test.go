@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -20,13 +21,13 @@ type connectorPairFixture struct {
 	leases  map[string]RelayLease
 }
 
-func newConnectorPairFixture(t *testing.T) connectorPairFixture {
+func newConnectorPairFixture(t *testing.T, retainedPublicPort ...bool) connectorPairFixture {
 	t.Helper()
 	f := newConnectorPairRunFixture(t)
-	return connectorPairFixtureFromRun(t, f)
+	return connectorPairFixtureFromRun(t, f, retainedPublicPort...)
 }
 
-func connectorPairFixtureFromRun(t *testing.T, f publishRunFixture) connectorPairFixture {
+func connectorPairFixtureFromRun(t *testing.T, f publishRunFixture, retainedPublicPort ...bool) connectorPairFixture {
 	t.Helper()
 	d, now := f.database, f.now
 	session := newOIDCSession(t, d, now)
@@ -36,6 +37,9 @@ func connectorPairFixtureFromRun(t *testing.T, f publishRunFixture) connectorPai
 	service, err := d.CreateServiceAt(visitor, actor.TeamID, principal.IdentityID, "observations", "observations", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(retainedPublicPort) != 0 && retainedPublicPort[0] {
+		testutil.SeedServicePort(t, d.pool, service.ID, 20000, now)
 	}
 	enrollment := publisherEnrollment(t, d, actor, PublisherScope{TeamID: actor.TeamID, Kind: "service", ServiceID: service.ID}, now)
 	public, _, err := ed25519.GenerateKey(rand.Reader)

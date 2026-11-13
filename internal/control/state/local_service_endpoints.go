@@ -106,7 +106,7 @@ func (d *Database) ensureLocalServiceEndpoint(ctx context.Context, tx pgx.Tx, se
 	if err = tx.QueryRow(ctx, `INSERT INTO control.service_namespace_claims(namespace,local_source_key,membership_id,domain_id,created_at) VALUES($1,$2,$3,$4,$5) ON CONFLICT(namespace) DO UPDATE SET local_source_key=EXCLUDED.local_source_key WHERE control.service_namespace_claims.local_source_key=EXCLUDED.local_source_key AND control.service_namespace_claims.membership_id=EXCLUDED.membership_id AND control.service_namespace_claims.domain_id=EXCLUDED.domain_id AND control.service_namespace_claims.retired_at IS NULL RETURNING namespace`, hostname, sourceKey, membership, domainID, now).Scan(&claimed); err != nil {
 		return publisherLookupError(err, ErrServiceConflict)
 	}
-	port, err := allocateServicePort(ctx, tx, service, pool, now)
+	port, err := allocateServicePort(ctx, tx, service, pool, row.Public, now)
 	if err != nil {
 		return err
 	}

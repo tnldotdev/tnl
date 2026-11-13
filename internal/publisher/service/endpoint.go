@@ -35,7 +35,7 @@ type ManagedControl interface {
 }
 
 func newManagedPrepared(preparation controlv1.ServiceRunPreparation, approved controlv1.Service, cfg RunConfig) (*Prepared, error) {
-	if approved.Endpoint == nil || approved.Endpoint.Port < 1024 || approved.Endpoint.Port > 65535 || preparation.CertificatePlan == nil || preparation.ServiceId != approved.Id || preparation.TeamId != approved.TeamId || preparation.PublisherIdentityId != cfg.Identity.ClientId || preparation.PublisherGrantId != cfg.Identity.GrantId || preparation.PublisherKeyId != cfg.Identity.KeyId || preparation.RunNumber < 1 || !preparation.ExpiresAt.After(time.Now()) {
+	if approved.Endpoint == nil || approved.Endpoint.Port < 0 || approved.Endpoint.Port > 65535 || approved.Endpoint.Port > 0 && approved.Endpoint.Port < 1024 || approved.Endpoint.Public && approved.Endpoint.Port == 0 || preparation.CertificatePlan == nil || preparation.ServiceId != approved.Id || preparation.TeamId != approved.TeamId || preparation.PublisherIdentityId != cfg.Identity.ClientId || preparation.PublisherGrantId != cfg.Identity.GrantId || preparation.PublisherKeyId != cfg.Identity.KeyId || preparation.RunNumber < 1 || !preparation.ExpiresAt.After(time.Now()) {
 		return nil, ErrPrivateStream
 	}
 	if preparation.Hostname != approved.Endpoint.Hostname || preparation.ServicePort != approved.Endpoint.Port || preparation.DomainId == "" || approved.DomainId != nil && preparation.DomainId != *approved.DomainId {

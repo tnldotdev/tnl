@@ -13,7 +13,7 @@ from typing import cast
 import pytest
 
 import tnl
-from tnl import _app
+from tnl import _app, _protocol
 from tnl._native import NativeRuntime
 from tnl._protocol import Endpoint, InvalidResponse, parse_endpoint
 
@@ -73,6 +73,22 @@ def test_publication_telemetry_opt_out_survives_reprepare_and_keeps_siblings_sep
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("protocol", ["http", "postgres", "mysql", "tcp", "kubernetes"])
+def test_private_service_metadata_needs_no_ingress_reservation(protocol: str) -> None:
+    service: dict[str, object] = {
+        "protocol": protocol,
+        "hostname": "private.member.example",
+        "namespace": "member.example",
+        "port": 0,
+        "public": False,
+    }
+    if protocol in ("http", "kubernetes"):
+        service["url"] = "https://private.member.example"
+    assert _protocol._service_metadata("private", service) == service
+    with pytest.raises(InvalidResponse):
+        _protocol._service_metadata("private", {**service, "public": True})
+
+
 def test_native_assignment_is_http_only_for_selected_app(
     native_app_assignment: dict[str, object],
 ) -> None:
@@ -111,7 +127,7 @@ def test_native_assignment_is_http_only_for_selected_app(
 @pytest.mark.parametrize(
     ("path", "value"),
     [
-        (("project", "services", "database", "port"), 0),
+        (("project", "services", "database", "port"), -1),
         (("project", "services", "database", "port"), 65536),
         (("project", "services", "database", "port"), True),
         (("project", "services", "database", "port"), "15443"),

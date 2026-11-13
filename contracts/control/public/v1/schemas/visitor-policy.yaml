@@ -72,7 +72,11 @@ schemas:
     properties:
       resource: { $ref: "../openapi.yaml#/components/schemas/VisitorResourceScope" }
       hostname: { type: string, maxLength: 253 }
-      port: { type: integer, minimum: 1, maximum: 65535 }
+      port:
+        type: integer
+        minimum: 0
+        maximum: 65535
+        description: Exact resource port binding. Zero is permitted only for a service without a public reservation and is never a wildcard.
       issuer: { type: string, format: uri, maxLength: 256 }
       visitor_policy_revision:
         {

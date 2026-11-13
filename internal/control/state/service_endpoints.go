@@ -25,23 +25,39 @@ func (d *Database) ensureServiceEndpoint(ctx context.Context, tx pgx.Tx, service
 	if err != nil || canonical != hostname {
 		return ErrProjectConfigurationInvalid
 	}
-	port, err := allocateServicePort(ctx, tx, service, pool, now)
+	port, err := allocateServicePort(ctx, tx, service, pool, public, now)
 	if err != nil {
 		return err
 	}
 	if err = reconcileServiceEndpoint(ctx, tx, serviceEndpoint{ServiceID: service, DeploymentID: deployment, DomainID: domain, Hostname: hostname, Namespace: namespace, PoolID: pool, Public: public, Automation: automation}, now); err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `UPDATE control.services SET certificate_hostname=$2,certificate_scope=$3,domain_id=$4,service_port=$5,ingress_pool_id=$6,public=$7,name_scope=$8 WHERE id=$1`, service, hostname, namespace, domain, port, pool, public, deployment)
+	// first public enablement changes the exact captured binding. a prepared or
+	// serving zero-port run cannot acquire authority for the allocated port.
+	if _, err = tx.Exec(ctx, `UPDATE control.service_runs run SET state='closed',closed_at=$3
+		FROM control.services service WHERE service.id=$1 AND run.service_id=service.id
+		AND run.closed_at IS NULL AND service.certificate_hostname<>''
+		AND service.service_port IS DISTINCT FROM $2::integer`, service, port, now); err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `UPDATE control.services SET
+	    trust_revision=trust_revision+CASE WHEN certificate_hostname<>'' AND service_port IS DISTINCT FROM $5::integer THEN 1 ELSE 0 END,
+	    certificate_hostname=$2,certificate_scope=$3,domain_id=$4,service_port=$5,ingress_pool_id=$6,public=$7,name_scope=$8 WHERE id=$1`, service, hostname, namespace, domain, port, pool, public, deployment)
 	return projectConstraintError(err)
 }
 
-func allocateServicePort(ctx context.Context, tx pgx.Tx, service, pool string, now time.Time) (int, error) {
+func allocateServicePort(ctx context.Context, tx pgx.Tx, service, pool string, public bool, now time.Time) (int, error) {
 	var port int
 	err := tx.QueryRow(ctx, `SELECT port FROM control.service_port_claims WHERE service_id=$1 AND state='held'`, service).Scan(&port)
 	if errors.Is(err, pgx.ErrNoRows) {
+		// zero means no public binding. private service identity, certificates,
+		// relay placement and connector authority do not consume ingress ports.
+		// an existing reservation remains held during temporary disablement.
+		if !public {
+			return 0, nil
+		}
 		// serialize allocation within one public address pool, then reserve under
-		// a unique constraint. local connectors use exactly this port by default.
+		// a unique constraint. local connectors select their own SQLite ports.
 		if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('managed-ports/'||$1,0))`, pool); err != nil {
 			return 0, err
 		}

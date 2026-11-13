@@ -2387,7 +2387,7 @@ type ConnectorPeerPairRelay struct {
 
 // ConnectorPeerPairRenewal One authenticated authority decision for the pinned run, pair lease and signed visitor permission. All deadlines share pair.observed_at; install local bounds from request start so transit spends the interval. Publisher installation and relay claims retain their independently confirmed deadlines.
 type ConnectorPeerPairRenewal struct {
-	// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
+	// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Port is zero when no public ingress reservation exists; a positive port remains reserved when public access is temporarily disabled. It is never a machine-local connector port. Public access requires an allocated port. Target trust is a separate publisher-side boundary.
 	Endpoint          ServiceEndpoint      `json:"endpoint"`
 	Pair              ConnectorPeerPair    `json:"pair"`
 	Protocol          ServiceProtocol      `json:"protocol"`
@@ -2808,7 +2808,7 @@ type DeploymentPublisherVerification struct {
 
 // DeploymentService defines model for DeploymentService.
 type DeploymentService struct {
-	// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
+	// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Port is zero when no public ingress reservation exists; a positive port remains reserved when public access is temporarily disabled. It is never a machine-local connector port. Public access requires an allocated port. Target trust is a separate publisher-side boundary.
 	Endpoint *ServiceEndpoint `json:"endpoint,omitempty"`
 
 	// Id The bound saved service or public URL ID.
@@ -3279,7 +3279,9 @@ type ProjectPublicLimits struct {
 // ProjectPublicMetadata defines model for ProjectPublicMetadata.
 type ProjectPublicMetadata struct {
 	Services []struct {
-		Hostname    string       `json:"hostname"`
+		Hostname string `json:"hostname"`
+
+		// Port Public reservation, or zero for a connector-only service with no public reservation.
 		Port        int          `json:"port"`
 		PublicUrlId *PublicURLID `json:"public_url_id,omitempty"`
 		Service     string       `json:"service"`
@@ -3919,7 +3921,7 @@ type Service struct {
 	DomainId  *DomainID `json:"domain_id,omitempty"`
 	Enabled   bool      `json:"enabled"`
 
-	// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
+	// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Port is zero when no public ingress reservation exists; a positive port remains reserved when public access is temporarily disabled. It is never a machine-local connector port. Public access requires an allocated port. Target trust is a separate publisher-side boundary.
 	Endpoint *ServiceEndpoint `json:"endpoint,omitempty"`
 
 	// HttpLimits Approved run-local HTTP request limits returned to the scoped publisher. Applies after visitor authorization on public and connector admissions.
@@ -4019,7 +4021,7 @@ type ServiceClientCertificateDecision struct {
 	ValidUntil time.Time `json:"valid_until"`
 }
 
-// ServiceEndpoint Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
+// ServiceEndpoint Control-owned service TLS identity. Native clients verify this name with system roots. Port is zero when no public ingress reservation exists; a positive port remains reserved when public access is temporarily disabled. It is never a machine-local connector port. Public access requires an allocated port. Target trust is a separate publisher-side boundary.
 type ServiceEndpoint struct {
 	Hostname string `json:"hostname"`
 	Port     int    `json:"port"`
@@ -4099,7 +4101,7 @@ type ServiceInvitationPage struct {
 
 // ServiceMetadata defines model for ServiceMetadata.
 type ServiceMetadata struct {
-	// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
+	// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Port is zero when no public ingress reservation exists; a positive port remains reserved when public access is temporarily disabled. It is never a machine-local connector port. Public access requires an allocated port. Target trust is a separate publisher-side boundary.
 	Endpoint      *ServiceEndpoint `json:"endpoint,omitempty"`
 	Protocol      ServiceProtocol  `json:"protocol"`
 	PublisherPool bool             `json:"publisher_pool"`
@@ -4202,9 +4204,11 @@ type ServiceRunPreparation struct {
 	PublisherKeyId      ResourceID       `json:"publisher_key_id"`
 	RunNumber           int64            `json:"run_number,string"`
 	ServiceId           ServiceID        `json:"service_id"`
-	ServicePort         int              `json:"service_port"`
-	ServiceRunId        ServiceRunID     `json:"service_run_id"`
-	TeamId              TeamID           `json:"team_id"`
+
+	// ServicePort Exact captured public reservation, or zero for a connector-only service without a reservation. Never a local listener port.
+	ServicePort  int          `json:"service_port"`
+	ServiceRunId ServiceRunID `json:"service_run_id"`
+	TeamId       TeamID       `json:"team_id"`
 }
 
 // ServiceRunSetup defines model for ServiceRunSetup.
@@ -4234,7 +4238,7 @@ type ServiceRunStateState string
 
 // ServiceSelection defines model for ServiceSelection.
 type ServiceSelection struct {
-	// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
+	// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Port is zero when no public ingress reservation exists; a positive port remains reserved when public access is temporarily disabled. It is never a machine-local connector port. Public access requires an allocated port. Target trust is a separate publisher-side boundary.
 	Endpoint  *ServiceEndpoint `json:"endpoint,omitempty"`
 	ExpiresAt time.Time        `json:"expires_at"`
 
@@ -4259,7 +4263,7 @@ type ServiceSummary struct {
 	DomainId  *DomainID `json:"domain_id,omitempty"`
 	Enabled   bool      `json:"enabled"`
 
-	// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
+	// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Port is zero when no public ingress reservation exists; a positive port remains reserved when public access is temporarily disabled. It is never a machine-local connector port. Public access requires an allocated port. Target trust is a separate publisher-side boundary.
 	Endpoint *ServiceEndpoint `json:"endpoint,omitempty"`
 	Id       ServiceID        `json:"id"`
 
@@ -4524,8 +4528,10 @@ type VisitorPolicySnapshot struct {
 	KeyRevision        int64            `json:"key_revision,string"`
 
 	// MetadataRevision current service trust revision; zero for public URLs.
-	MetadataRevision    int64                       `json:"metadata_revision,string"`
-	ObservedAt          time.Time                   `json:"observed_at"`
+	MetadataRevision int64     `json:"metadata_revision,string"`
+	ObservedAt       time.Time `json:"observed_at"`
+
+	// Port Exact resource port binding. Zero is permitted only for a service without a public reservation and is never a wildcard.
 	Port                int                         `json:"port"`
 	RegisteredKeyLeases []VisitorRegisteredKeyLease `json:"registered_key_leases"`
 
@@ -4637,7 +4643,9 @@ type VisitorTokenRequest struct {
 type VisitorTokenResponse struct {
 	ExpiresAt time.Time `json:"expires_at"`
 	Hostname  string    `json:"hostname"`
-	Port      int       `json:"port"`
+
+	// Port Exact signed resource port binding. Zero is permitted only for a service without a public reservation and is never a wildcard.
+	Port int `json:"port"`
 
 	// Resource An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
 	Resource VisitorResourceScope `json:"resource"`
@@ -4739,7 +4747,7 @@ type WorkloadServiceAuthorization struct {
 // WorkloadServices defines model for WorkloadServices.
 type WorkloadServices struct {
 	Services []struct {
-		// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
+		// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Port is zero when no public ingress reservation exists; a positive port remains reserved when public access is temporarily disabled. It is never a machine-local connector port. Public access requires an allocated port. Target trust is a separate publisher-side boundary.
 		Endpoint ServiceEndpoint `json:"endpoint"`
 		Id       string          `json:"id"`
 

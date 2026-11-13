@@ -41,7 +41,7 @@ func TestIntegrationDeploymentNamespaceAndRename(t *testing.T) {
 			endpoint = candidate
 		}
 	}
-	if endpoint.Hostname != "orders."+deployment.Namespace || endpoint.Port < 20000 || endpoint.Port > 60000 || endpoint.Public {
+	if endpoint.Hostname != "orders."+deployment.Namespace || endpoint.Port != 0 || endpoint.Public {
 		t.Fatal("managed endpoint missing", endpoint)
 	}
 	var urls int
@@ -86,7 +86,7 @@ func TestIntegrationDeploymentNamespaceAndRename(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, candidate := range changed.Services {
-		if candidate.Service == "orders" && (candidate.Hostname != endpoint.Hostname || candidate.Port != endpoint.Port || !candidate.Public) {
+		if candidate.Service == "orders" && (candidate.Hostname != endpoint.Hostname || candidate.ServiceID != endpoint.ServiceID || candidate.Port < 1024 || !candidate.Public || candidate.TrustRevision != endpoint.TrustRevision+1) {
 			t.Fatal("reachability changed endpoint identity", candidate)
 		}
 	}

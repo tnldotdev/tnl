@@ -59,6 +59,8 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	testutil.SeedServicePort(t, conn, service.ID, 20000, now)
+	service.Endpoint.Port = 20000
 	visitorID, wrongEmailID, unverifiedID := newID(opaqueid.IdentityPrefix), newID(opaqueid.IdentityPrefix), newID(opaqueid.IdentityPrefix)
 	for _, row := range []struct {
 		id, email string

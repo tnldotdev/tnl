@@ -116,7 +116,7 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 		if err != nil {
 			return result, err
 		}
-		if !row.ServicePort.Valid || row.ServicePort.Int32 < 1024 || row.ServicePort.Int32 > 65535 {
+		if !row.ServicePort.Valid || row.ServicePort.Int32 < 0 || row.ServicePort.Int32 > 65535 || row.ServicePort.Int32 > 0 && row.ServicePort.Int32 < 1024 {
 			return result, ErrVisitorPolicy
 		}
 		team, policy.Hostname, policy.Port = row.TeamID, row.CertificateHostname, int(row.ServicePort.Int32)

@@ -45,7 +45,7 @@ func validateProfileService(service controlv1.Service) error {
 	}
 	endpoint := service.Endpoint
 	hostname, err := naming.CanonicalizeHostname(endpoint.Hostname)
-	if err != nil || hostname != endpoint.Hostname || endpoint.Port < 1024 || endpoint.Port > 65535 {
+	if err != nil || hostname != endpoint.Hostname || endpoint.Port < 0 || endpoint.Port > 65535 || endpoint.Port > 0 && endpoint.Port < 1024 || endpoint.Public && endpoint.Port == 0 {
 		return publisherCLIError("service returned an invalid managed TLS endpoint")
 	}
 	return nil
