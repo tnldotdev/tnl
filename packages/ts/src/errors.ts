@@ -9,7 +9,6 @@ export type TnlErrorCode =
   | "sdk.service_unprepared"
   | "sdk.connection_unavailable"
   | "sdk.local_connection_unavailable"
-  | "sdk.connection_unprepared"
   | "sdk.connection_server_only"
   | "sdk.client_closed"
   | "sdk.client_capacity"
@@ -91,11 +90,6 @@ const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; mes
     retry: "later",
     message:
       "could not resolve the local PostgreSQL listener; check the project target and Docker, then try again",
-  },
-  "sdk.connection_unprepared": {
-    class: "unavailable",
-    retry: "after_change",
-    message: "connection settings are not prepared; await deployment.connect before reading them",
   },
   "sdk.connection_server_only": {
     class: "unavailable",

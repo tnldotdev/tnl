@@ -128,11 +128,11 @@ async def select_workload(
         {
             "github_actions": environment.get("GITHUB_ACTIONS", ""),
             "github_request_url": environment.get("ACTIONS_ID_TOKEN_REQUEST_URL", ""),
-            "github_request_token": environment.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN", ""),
+            "github_request_token": os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN", ""),
             "vercel_token_file": environment.get("VERCEL_OIDC_TOKEN_FILE", ""),
-            "vercel_token": environment.get("VERCEL_OIDC_TOKEN", ""),
+            "vercel_token": os.environ.get("VERCEL_OIDC_TOKEN", ""),
             **(
-                {"token_env": token_env, "token_value": environment.get(token_env, "")}
+                {"token_env": token_env, "token_value": os.environ.get(token_env, "")}
                 if isinstance(token_env, str)
                 else {}
             ),

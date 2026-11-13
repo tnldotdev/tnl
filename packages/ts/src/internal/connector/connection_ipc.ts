@@ -6,7 +6,6 @@ import { isDeepStrictEqual } from "node:util";
 import { TnlError } from "../../errors.js";
 import { connectionHandleSchema } from "./contract.js";
 import { operation, traceHeaders } from "../tracing.js";
-import { context, type CachedIPC } from "./context.js";
 import type { SelectionOptions, WorkloadRequest } from "./workload/contract.js";
 
 export interface OwnerIPC {
@@ -25,55 +24,6 @@ type ProjectDeploymentSelection = Pick<
   NonNullable<SelectionOptions["deployment"]>,
   "project" | "name"
 >;
-
-const { external } = context;
-function retire(filename: string, entry: CachedIPC): void {
-  if (external.get(filename) === entry) external.delete(filename);
-  clearTimeout(entry.timer);
-  void entry.loading.then(
-    (ipc) => ipc.close(),
-    () => {},
-  );
-}
-
-/** retire idle agents without stopping the caller-owned native process. */
-export async function prepareExternal(filename: string, service: string): Promise<unknown> {
-  let entry = external.get(filename);
-  if (entry === undefined) {
-    if (external.size >= 32) {
-      const idle = [...external].find(([, candidate]) => candidate.active === 0);
-      if (idle === undefined) throw new TnlError("sdk.connection_unavailable");
-      retire(...idle);
-    }
-    entry = { loading: ownerIPC(filename), active: 0 };
-    external.set(filename, entry);
-  }
-  clearTimeout(entry.timer);
-  if (entry.failed === true) throw new TnlError("sdk.connection_unavailable");
-  entry.active++;
-  try {
-    const client = await entry.loading;
-    const prepared = await client.prepare(service);
-    entry.expiresAt = client.expiresAt;
-    return prepared;
-  } catch (error) {
-    entry.failed = true;
-    throw error;
-  } finally {
-    entry.active--;
-    if (entry.active === 0) {
-      if (entry.failed === true) retire(filename, entry);
-      else {
-        const selected = entry;
-        entry.timer = setTimeout(
-          () => retire(filename, selected),
-          Math.min(30_000, (entry.expiresAt ?? Date.now()) - Date.now()),
-        );
-        entry.timer.unref();
-      }
-    }
-  }
-}
 
 /** initial reads and renewal reads enforce the same private-file boundary. */
 async function readHandle(filename: string) {

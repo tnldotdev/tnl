@@ -14,10 +14,21 @@ from typing import ClassVar, Literal
 from urllib.parse import urlsplit
 
 from ._client import ClientFactory, _Factory
-from ._connections import Connection, _command, _error, _object, _Scope, _text, _TLSConnection
+from ._connections import (
+    Connection,
+    ConnectionAcquisition,
+    HTTPConnection,
+    KubernetesConnection,
+    _command,
+    _error,
+    _object,
+    _Scope,
+    _text,
+    _TLSConnection,
+)
 from ._management_client import Deployments, Management, Publishers
 from ._protocol import TnlError, hostname, service_name
-from ._workload import capture_workload, select_workload, uses_workload
+from ._workload import capture_workload, uses_workload
 
 type Protocol = Literal["http", "postgres", "mysql", "tcp", "kubernetes"]
 
@@ -125,9 +136,10 @@ class Deployment:
                 "token": token,
                 "services": list(services),
             },
-            selection=None if mounted is None else {"project": project, "name": name},
+            selection={"project": project, "name": name},
         )
         self._pid = os.getpid()
+        self._acquisitions: dict[str, ConnectionAcquisition] = {}
         self._closed = False
         self._pending: set[asyncio.Task[tuple[object, DeploymentConnection]]] = set()
         self._factories: set[ClientFactory[object]] = set()
@@ -153,20 +165,12 @@ class Deployment:
                 if self._closed:
                     raise _error("closed")
                 return value
-            selection = (
-                await select_workload(
-                    name,
-                    self._scope.workload,
-                    self._workload,
-                    {
-                        "project": self._project,
-                        "name": self._name,
-                    },
-                )
-                if self._workload is not None
-                else None
-            )
-            connection, owner = await asyncio.to_thread(self._scope.prepare, name, selection)
+            acquisition = self._acquisitions.get(name)
+            if acquisition is None:
+                acquisition = ConnectionAcquisition(self._scope, name, self._workload)
+                self._acquisitions[name] = acquisition
+            connection = await acquisition.prepare()
+            owner = acquisition._session
             if self._closed:
                 raise _error("closed")
             if connection.protocol != self._services[name]:
@@ -180,6 +184,10 @@ class Deployment:
             )
             if isinstance(connection, _TLSConnection):
                 binding += (connection.server_hostname, connection.ca)
+            if isinstance(connection, (HTTPConnection, KubernetesConnection)):
+                binding += (connection.url,)
+            if isinstance(connection, KubernetesConnection):
+                binding += (connection.kubeconfig, connection.context)
             return binding, connection
 
         work = asyncio.create_task(prepare())
@@ -328,6 +336,11 @@ class Deployment:
                     failures.append(error)
                 else:
                     self._factories.discard(factory)
+            for acquisition in self._acquisitions.values():
+                try:
+                    await acquisition.aclose()
+                except BaseException as error:
+                    failures.append(error)
             try:
                 await asyncio.to_thread(self._scope.stop)
             except BaseException as error:
@@ -337,10 +350,11 @@ class Deployment:
 
         if self._closing is None:
             self._closing = asyncio.create_task(cleanup())
+        closing = self._closing
         try:
-            await asyncio.shield(self._closing)
+            await asyncio.shield(closing)
         finally:
-            if self._closing.done():
+            if closing.done() and self._closing is closing:
                 self._closing = None
 
     async def __aenter__(self) -> Deployment:
