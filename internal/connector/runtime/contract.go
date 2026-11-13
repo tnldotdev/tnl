@@ -110,7 +110,7 @@ type Request struct {
 	Selection         *ProjectDeploymentSelection `json:"selection,omitempty"`
 }
 
-// selection narrows a borrowed capability; it never supplies visitor authority.
+// selection narrows captured visitor intent; it never supplies authority.
 type ProjectDeploymentSelection struct {
 	Project string `json:"project"`
 	Name    string `json:"name"`
@@ -138,10 +138,11 @@ func (DeploymentRequest) GoString() string { return "private deployment selectio
 
 // SDKWorkloadRequest carries application selection hints, never provider tokens.
 type SDKWorkloadRequest struct {
-	Name      string                   `json:"name,omitempty"`
-	Callback  bool                     `json:"callback,omitempty"`
-	TokenFile string                   `json:"token_file,omitempty"`
-	Runtime   workloadmanifest.Runtime `json:"runtime"`
+	Name      string                      `json:"name,omitempty"`
+	Callback  bool                        `json:"callback,omitempty"`
+	TokenFile string                      `json:"token_file,omitempty"`
+	Runtime   workloadmanifest.Runtime    `json:"runtime"`
+	Selection *ProjectDeploymentSelection `json:"selection,omitempty"`
 }
 
 // SDKWorkload describes the language callback needed after native selection.

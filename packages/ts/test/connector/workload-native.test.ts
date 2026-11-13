@@ -72,8 +72,19 @@ vi.mock("../../src/internal/connector/connection_ipc.js", async () => {
 });
 vi.mock("../../src/internal/connector/workload/provider.js", () => ({
   usesWorkload: () => true,
-  selectWorkload: async () => ({
-    sdk_workload: { name: "job", callback: true, runtime: {} },
+  captureWorkload: () => ({ configuration: undefined, environment: {} }),
+  selectWorkload: async (
+    _preview: unknown,
+    _key: unknown,
+    _source: unknown,
+    selection?: { project: string; name: string },
+  ) => ({
+    sdk_workload: {
+      name: "job",
+      callback: true,
+      runtime: {},
+      ...(selection === undefined ? {} : { selection }),
+    },
     sdk_workload_policy: "a".repeat(64),
     assertion: fixture.assertion,
   }),
@@ -221,7 +232,7 @@ function response(args: string[], input: unknown): unknown {
       },
     };
   }
-  if (operation === "stop") return { schema: 1, state: "stopped" };
+  if (operation === "stop" || operation === "sdk-stop") return { schema: 1, state: "stopped" };
   throw new Error("unexpected native operation");
 }
 
@@ -296,6 +307,48 @@ test("all protocols share a verified native identity owner and assertions travel
   await connectionHandle("db", vi.fn());
   expect(fixture.owners.size).toBe(1);
   expect(fixture.ipc.some((c) => c.assertion === "rotated")).toBe(true);
+});
+
+test("deployment handles keep all five provider protocols on native selection and joined cleanup", async () => {
+  vi.stubEnv("TNL_TOKEN", undefined);
+  vi.stubEnv("TNL_CONNECTION_HANDLE", undefined);
+  const { createClient } = await import("../../src/internal/connector/client.js");
+  const deployment = createClient({
+    project: "team/project",
+    services: {
+      api: { protocol: "http" },
+      db: { protocol: "postgres" },
+      mysql: { protocol: "mysql" },
+      raw: { protocol: "tcp" },
+      cluster: { protocol: "kubernetes" },
+    },
+  }).deployment("production");
+  try {
+    const values = await Promise.all([
+      deployment.connect("api"),
+      deployment.connect("db"),
+      deployment.connect("mysql"),
+      deployment.connect("raw"),
+      deployment.connect("cluster"),
+    ]);
+    expect(values).toHaveLength(5);
+    expect(fixture.owners.size).toBe(1);
+    for (const call of fixture.calls.filter((call) => call.args[2] === "sdk-prepare")) {
+      expect(call.input).toMatchObject({
+        sdk_workload: { selection: { project: "team/project", name: "production" } },
+        assertion: "first",
+      });
+      expect(call.input).not.toHaveProperty("deployment");
+      expect(call.args).not.toContain("first");
+    }
+    await expect(deployment.publish(() => new Response("no"))).rejects.toMatchObject({
+      code: "sdk.configuration_invalid",
+    });
+  } finally {
+    await deployment.close();
+    vi.unstubAllEnvs();
+  }
+  expect(fixture.calls.at(-1)?.args[2]).toBe("sdk-stop");
 });
 
 test("control rejection cannot select a cached owner, and one service denial leaves another usable", async () => {
