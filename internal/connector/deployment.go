@@ -43,13 +43,13 @@ func connectionDeployment(options ContextOptions) (projectConfiguration, connect
 		}
 	}
 	slices.Sort(names)
-	configuration := config.TNL{Services: config.Services{}}
+	configuration := config.TNL{Deployment: r.Name, Services: config.Services{}}
 	for i, name := range names {
 		protocol, ok := protocols[name]
 		if !ok || !naming.ValidServiceName(name) || !protocol.Valid() || i > 0 && names[i-1] == name {
 			return projectConfiguration{}, connectorruntime.Context{}, connectorruntime.ErrUnauthorized
 		}
-		configuration.Services[name] = config.Service{Protocol: new(string(protocol)), PublisherGroup: new(r.Name)}
+		configuration.Services[name] = config.Service{Protocol: new(string(protocol))}
 	}
 	directory, err := filepath.Abs(options.Directory)
 	if err == nil {
@@ -69,7 +69,7 @@ func connectionDeployment(options ContextOptions) (projectConfiguration, connect
 	digest := sha256.Sum256(encoded)
 	id := hex.EncodeToString(digest[:])
 	scope := connectorruntime.Context{Schema: 1, Directory: directory, ConfigDigest: id, Server: credential.ControlURL, Audience: credential.ControlURL, TeamID: credential.Approval.TeamId, ProjectKey: credential.Approval.ProjectKey, ProjectLabel: credential.Approval.ProjectKey, SourceID: id, WorktreeKey: "deployment", Deployment: r.Name, Services: names}
-	project := projectConfiguration{Project: clientproject.Project{Root: directory, Config: configuration}}
+	project := projectConfiguration{Project: clientproject.Project{Root: directory, Config: configuration, Deployment: r.Name}}
 	return project, scope, scope.Validate()
 }
 
@@ -133,7 +133,7 @@ func (d *deploymentConnection) selectService(ctx context.Context, name string) (
 	if err != nil {
 		return controlv1.Service{}, err
 	}
-	return controlv1.Service{Id: run.ServiceId, Name: name, TeamId: d.source.Credential.Approval.TeamId, Protocol: run.Protocol, Enabled: true, Endpoint: run.Endpoint}, nil
+	return controlv1.Service{Id: run.ServiceId, Name: name, TeamId: d.source.Credential.Approval.TeamId, Protocol: run.Protocol, Enabled: true, Endpoint: run.Endpoint, KubernetesAuth: run.KubernetesAuth}, nil
 }
 
 func (d *deploymentConnection) controlFor(name, service string) (connectorstream.Control, error) {

@@ -103,3 +103,11 @@ func TestPrivateSelectionReturnsServiceEndpointWithoutStreamCrypto(t *testing.T)
 		t.Fatalf("generated response contract = %+v: %v", parsed, err)
 	}
 }
+
+func TestPrivateSelectionRetainsApprovedKubernetesAcquisitionHints(t *testing.T) {
+	approved := &controlv1.KubernetesAuth{Provider: controlv1.KubernetesEKS, Cluster: "approved-cluster", Region: "us-east-1"}
+	selected := privateSelectionResponse(controlstate.ServiceSelection{KubernetesAuth: approved, ServiceMetadata: controlstate.ServiceMetadata{Protocol: "kubernetes", TrustRevision: 1}})
+	if selected.KubernetesAuth == nil || *selected.KubernetesAuth != *approved {
+		t.Fatal("selected connector lost approved provider acquisition")
+	}
+}

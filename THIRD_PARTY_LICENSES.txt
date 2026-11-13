@@ -1,9 +1,10 @@
 tnl third-party software licenses
 
 This file contains license terms and notices for third-party code and assets
-distributed in the tnl and tnld release binaries and the TypeScript SDK. Native
-binaries target macOS and Linux, on amd64 and arm64. Dependencies are listed by module or package, with their versions
-and upstream sources. Platform-specific dependencies may appear in only some
+distributed in the tnl and tnld release binaries and the TypeScript and Python
+SDKs. Native binaries target macOS and Linux, on amd64 and arm64. Dependencies
+are listed by module or package, with their versions and upstream sources.
+Platform-specific dependencies may appear in only some
 binaries. The Go runtime and standard library are included below.
 
 Repeated license terms are reproduced once under "shared license texts" at
@@ -23,13 +24,14 @@ The embedded catalog records the retrieved source SHA-256 and each regional
 bundle's SHA-256; preview and beta certificates are excluded. No private keys
 are included. The tnl-authored root selection library uses the project license.
 
-typescript http client support
+generated http client support
 
 --------------------------------------------------------------------------------
-Package: @hey-api/openapi-ts generated Fetch client helpers
-Version: 0.99.0
+Package: @hey-api/openapi-ts generated Fetch helpers and @hey-api/openapi-python generated models
+Versions: 0.99.0 (TypeScript), 0.0.24 (Python)
 License: MIT
 Source: https://www.npmjs.com/package/@hey-api/openapi-ts/v/0.99.0
+Source: https://www.npmjs.com/package/@hey-api/openapi-python/v/0.0.24
 
 LICENSE.md
 

@@ -3,7 +3,6 @@
 from ._app import PreparedService, Server, prepare, run
 from ._asgi import AccessPolicy, Limits, RateLimit, Tunnel, open
 from ._client import ClientFactory, client
-from ._deployments import Client, Deployment, LocalPostgresConnection, create_client
 from ._connections import (
     Connection,
     ConnectionHandle,
@@ -20,7 +19,9 @@ from ._connections import (
     TCPConnectionHandle,
     connect,
 )
+from ._deployments import Client, Deployment, LocalPostgresConnection, create_client
 from ._handler import handler
+from ._management_client import ManagementError, SavedDeployment
 from ._protocol import (
     InvalidResponse,
     NativeUnavailable,
@@ -38,6 +39,8 @@ __all__ = [
     "Deployment",
     "LocalPostgresConnection",
     "create_client",
+    "ManagementError",
+    "SavedDeployment",
     "HTTPConnection",
     "HTTPConnectionHandle",
     "KubernetesConnection",

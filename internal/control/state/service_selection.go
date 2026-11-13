@@ -39,7 +39,8 @@ type ServiceRelay struct {
 }
 
 type ServiceSelection struct {
-	Subject VisitorSubject
+	Subject        VisitorSubject
+	KubernetesAuth *controlv1.KubernetesAuth
 	ServiceMetadata
 	ServiceID, ServiceRunID, IdentityID, DeviceID string
 	RunNumber                                     int64
@@ -117,6 +118,12 @@ func (d *Database) SelectVisitorServiceRun(ctx context.Context, serviceID string
 	result.ServiceMetadata, err = checkedServiceMetadata(service)
 	if err != nil {
 		return result, err
+	}
+	if result.Protocol == "kubernetes" {
+		result.KubernetesAuth, err = d.visitorKubernetesAuth(ctx, controlstatedb.New(tx), serviceID)
+		if err != nil {
+			return result, err
+		}
 	}
 	result.PairReady, err = connectorPairReadySelection(ctx, tx, result.ServiceRunID, serviceID, result.RunNumber, now)
 	if err != nil {

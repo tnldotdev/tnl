@@ -3,18 +3,19 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import ipaddress
-import ssl
+import os
 import re
+import ssl
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 from ._client import ClientFactory, _Factory
-from ._connections import Connection, _Scope, _TLSConnection, _error, _object, _command, _text
-from ._protocol import TnlError, service_name, hostname
+from ._connections import Connection, _command, _error, _object, _Scope, _text, _TLSConnection
+from ._management_client import Deployments, Management, Publishers
+from ._protocol import TnlError, hostname, service_name
 
 type Protocol = Literal["http", "postgres", "mysql", "tcp", "kubernetes"]
 
@@ -223,6 +224,9 @@ class Client:
             raise TnlError("sdk.configuration_invalid", "select TEAM/PROJECT")
         self._project = project
         self._token = token if token is not None else os.environ.get("TNL_TOKEN")
+        management = Management(project, self._token)
+        self.deployments = Deployments(management)
+        self.publishers = Publishers(management)
         self._services: dict[str, Protocol] = {}
         for name, facts in (services or {}).items():
             service_name(name)
