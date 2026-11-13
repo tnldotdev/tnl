@@ -2,6 +2,8 @@ paths:
   /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared:
     post:
       operationId: confirmConnectorPeerPairPrepared
+      tags: [service-runs]
+      summary: Confirm an exact connector binding installed by the publisher
       description: Record the publisher's installed packet registration and inner listener under the exact run token. Recheck the delivery authority and both matching relay claims; never extend the reported binding deadline.
       security: [{ serviceRunAuth: [] }]
       parameters:
@@ -25,6 +27,8 @@ paths:
   /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs:
     get:
       operationId: listConnectorPeerPairs
+      tags: [service-runs]
+      summary: List connector pair candidates for the current service run
       description: Reconcile unexpired pair candidates for the exact publisher run, without keys, subjects, or source addresses. An installed owner may include an independent authority observation during temporary relay loss. A candidate may still lack relay claims; prepare its delivery independently before serving it.
       security: [{ serviceRunAuth: [] }]
       parameters:
@@ -46,6 +50,8 @@ paths:
   /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery:
     post:
       operationId: deliverConnectorPeerPair
+      tags: [service-runs]
+      summary: Deliver an existing connector pair to its current publisher run
       description: Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
       security: [{ serviceRunAuth: [] }]
       parameters:
@@ -78,7 +84,9 @@ paths:
   /v1/services/{service_id}/runs/{service_run_id}/start:
     post:
       operationId: startServiceRun
-      security: [{ bearerAuth: [] }]
+      tags: [service-runs]
+      summary: Start one prepared service run with its publisher grant
+      security: [{ publisherAuth: [] }]
       description: Start one exact prepared run using its authenticated publisher identity. Visitor TLS uses the approved service certificate, without an ephemeral stream key or custom TLS proof.
       parameters:
         - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
@@ -108,8 +116,10 @@ paths:
   /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate:
     post:
       operationId: authorizeServiceClientCertificate
+      tags: [service-runs]
+      summary: Check a public endpoint visitor's client certificate and admission
       description: Authenticate a public endpoint visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
-      security: [{ bearerAuth: [] }]
+      security: [{ serviceRunAuth: [] }]
       parameters:
         - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
         - {
@@ -145,7 +155,10 @@ paths:
         }
     post:
       operationId: createServiceCertificateIssuance
-      security: [{ bearerAuth: [] }]
+      tags: [certificates]
+      summary: Begin certificate issuance for one started service run
+      description: Authorize DNS-01 issuance for the service run's approved certificate plan using its exact run token and run number. Submit a CSR for the publisher's key; neither a control session nor publisher access token substitutes for the run token.
+      security: [{ serviceRunAuth: [] }]
       parameters: [{ $ref: "../openapi.yaml#/components/parameters/IdempotencyKey" }]
       requestBody:
         required: true
@@ -165,7 +178,10 @@ paths:
   /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id}:
     get:
       operationId: getServiceCertificateIssuance
-      security: [{ bearerAuth: [] }]
+      tags: [certificates]
+      summary: Read a service run's current certificate issuance
+      description: Poll the named issuance using the exact service run token. Control checks that the service, run, and issuance still match before returning certificate material.
+      security: [{ serviceRunAuth: [] }]
       parameters:
         - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
         - {
@@ -190,7 +206,10 @@ paths:
   /v1/services/{service_id}/runs/{service_run_id}/certificate-installed:
     post:
       operationId: markServiceCertificateInstalled
-      security: [{ bearerAuth: [] }]
+      tags: [certificates]
+      summary: Acknowledge the certificate installed for one service run
+      description: Record that the publisher installed the exact approved issuance for this run number using its service run token. The acknowledgement does not by itself prove that both publisher connections are ready.
+      security: [{ serviceRunAuth: [] }]
       parameters:
         - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
         - {
@@ -211,6 +230,8 @@ paths:
   /v1/services/{service_id}/runs:
     post:
       operationId: prepareServiceRun
+      tags: [service-runs]
+      summary: Reserve a service run and its approved certificate plan
       requestBody:
         required: true
         content:
@@ -226,7 +247,7 @@ paths:
       responses:
         "201":
           {
-            description: Prepared run for the publisher to sign,
+            description: Exact prepared binding for the publisher to start,
             content:
               {
                 application/json:
@@ -237,12 +258,14 @@ paths:
   /v1/services/{service_id}/runs/{service_run_id}:
     post:
       operationId: heartbeatServiceRun
+      tags: [service-runs]
+      summary: Renew a service run and report publisher health and capacity
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunHeartbeat" }
-      description: Renew only the current run under its exact publisher grant. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
+      description: Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
       security: [{ serviceRunAuth: [] }]
       parameters:
         - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
@@ -259,6 +282,8 @@ paths:
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
     delete:
       operationId: closeServiceRun
+      tags: [service-runs]
+      summary: Close one exact service run using its run token
       description: Close the exact run, reject stale admissions and publish a service tombstone. Managed certificates remain in the publisher's shared cache.
       security: [{ serviceRunAuth: [] }]
       parameters:

@@ -49,7 +49,8 @@ paths:
           required: true
           schema: { type: string, minLength: 13, maxLength: 13 }
       responses:
-        "302": { description: Redirect to the configured OIDC provider with state, nonce, and PKCE }
+        "302":
+          { description: "Redirect to the configured OIDC provider with state, nonce, and PKCE" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
     post:
       operationId: approveDeviceBrowser

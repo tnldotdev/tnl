@@ -2,6 +2,8 @@ paths:
   /v1/health:
     get:
       operationId: getHealth
+      tags: [discovery]
+      description: Check that the control HTTP handler responds. No credential is required; use getReadiness to check whether the process can serve its configured role.
       summary: Confirm that the control HTTP server is serving
       security: []
       responses:
@@ -16,6 +18,8 @@ paths:
   /v1/ready:
     get:
       operationId: getReadiness
+      tags: [discovery]
+      description: Check the configured tnld role's readiness without a credential. An unready process returns the same readiness shape with HTTP 503 rather than a successful health check.
       summary: Confirm that the tnld role is ready to serve
       security: []
       responses:
@@ -36,6 +40,8 @@ paths:
   /v1/client-ip:
     get:
       operationId: getClientIP
+      tags: [discovery]
+      description: Read the request source address observed by control, after configured trusted-proxy handling. No credential is required; a caller-provided address is not accepted as source evidence.
       summary: Return the requesting client's public IP address
       security: []
       responses:
@@ -50,6 +56,8 @@ paths:
   /v1/discovery:
     get:
       operationId: getControlDiscovery
+      tags: [discovery]
+      description: Read this server's public capabilities and authentication facts before choosing a client workflow. No credential is required; discover authority sign-in separately from publisher and visitor credentials.
       summary: Describe control and its authentication methods
       security: []
       responses:
@@ -64,6 +72,8 @@ paths:
   /v1/webhook-providers/{provider}/source:
     get:
       operationId: getWebhookProviderSource
+      tags: [discovery]
+      description: Read the selected provider's current webhook source policy without a credential. Use ETag and If-None-Match to reuse unchanged policy; this endpoint does not register a webhook or grant access to a public URL.
       summary: Read one webhook provider source policy
       security: []
       parameters:
@@ -93,6 +103,8 @@ paths:
   /v1/guest-demo:
     post:
       operationId: createGuestDemo
+      tags: [guest-demos]
+      description: Create a source-address-bound guest trial when guest demos are enabled. No existing credential is required. Network issuance limits apply; the returned credential grants only restricted demo operations, not a control session.
       summary: Create a restricted guest credential for the built-in demo
       security: []
       responses:
@@ -107,9 +119,11 @@ paths:
   /v1/guest-demo/number:
     post:
       operationId: allocateGuestDemoNumber
+      tags: [guest-demos]
+      description: Allocate the next demo hostname number using the guest credential returned by createGuestDemo. Control checks the trial deadline, source address, remaining allowance, and absence of an open demo publish run.
       summary: Allocate a new hostname number for this guest trial
       security:
-        - bearerAuth: []
+        - guestAuth: []
       responses:
         "200":
           description: Next demo number
@@ -122,6 +136,8 @@ paths:
   /v1/certificate-issuances/{issuance_id}:
     get:
       operationId: getCertificateIssuance
+      tags: [certificates]
+      description: Poll one public URL certificate issuance using its publish run token. The token must belong to the issuance's current run; a control session alone cannot retrieve the certificate.
       summary: Read one publish-run certificate issuance
       security:
         - publishRunAuth: []

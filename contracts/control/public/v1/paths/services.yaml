@@ -2,6 +2,8 @@ paths:
   /v1/projects/{project_key}/services/{service}:
     get:
       operationId: getProjectService
+      tags: [projects]
+      summary: Resolve an applied service by project source and key
       security: [{ bearerAuth: [] }]
       description: Resolve an applied service by its exact Git source and configuration key using current visitor access. Does not return targets or require project-manager permission.
       parameters:
@@ -34,6 +36,8 @@ paths:
   /v1/services:
     get:
       operationId: listServices
+      tags: [services]
+      summary: List manageable saved services in one team
       description: Team-owned saved services; never return target addresses or stream keys.
       security: [{ bearerAuth: [] }]
       parameters:
@@ -54,7 +58,9 @@ paths:
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
     post:
       operationId: createService
-      description: Create a team-scoped saved name. No DNS record, public URL, certificate or dedicated visitor port is allocated.
+      tags: [services]
+      summary: Create one saved service with approved protocol and placement
+      description: Save a team-scoped service name, protocol, target TLS trust, and optional source-bound worktree placement. This service has a separate identity and lifecycle from public URLs; creating it does not start a service run or issue a certificate.
       security: [{ bearerAuth: [] }]
       parameters: [{ $ref: "../openapi.yaml#/components/parameters/IdempotencyKey" }]
       requestBody:
@@ -80,6 +86,9 @@ paths:
   /v1/services/{service_id}:
     put:
       operationId: configureService
+      tags: [services]
+      summary: Replace a service's approved protocol and target TLS trust
+      description: Set the saved protocol, publisher pool, and target TLS trust snapshot using current service management permission. Publishers must declare matching trust when preparing later runs; this is not a target address update or a publication start.
       security: [{ bearerAuth: [] }]
       parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
       requestBody:
@@ -96,6 +105,9 @@ paths:
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
     get:
       operationId: getService
+      tags: [services]
+      summary: Read one saved service for management
+      description: Read a service's saved identity and approved protocol/TLS metadata using current management permission. For visitor-only discovery, use listAvailableServices or getProjectService instead.
       security: [{ bearerAuth: [] }]
       parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
       responses:
@@ -111,6 +123,8 @@ paths:
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
     delete:
       operationId: deleteService
+      tags: [services]
+      summary: Delete a saved service and revoke its active publication
       description: Revoke access and close any run before tombstoning its ID-keyed ingress projection.
       security: [{ bearerAuth: [] }]
       parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
@@ -120,6 +134,8 @@ paths:
   /v1/services/{service_id}/grants:
     get:
       operationId: listServiceGrants
+      tags: [visitor-access]
+      summary: List a service's visitor grants and retained history
       description: Current managers may read up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent; inventory is not proof of current visitor access.
       security: [{ bearerAuth: [] }]
       parameters:
@@ -140,6 +156,9 @@ paths:
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
     post:
       operationId: createServiceGrant
+      tags: [visitor-access]
+      summary: Grant a team or identity access to one service
+      description: Create an exact-service visitor grant using current service management permission and an idempotency key. A visitor grant permits service use under current policy; it does not grant service management or publisher authority.
       security: [{ bearerAuth: [] }]
       parameters:
         [
@@ -171,6 +190,9 @@ paths:
   /v1/services/{service_id}/grants/{grant_id}:
     delete:
       operationId: revokeServiceGrant
+      tags: [visitor-access]
+      summary: Revoke one service visitor grant
+      description: Revoke the named grant using current service management permission. Later visitor authorization checks reject access through that grant; retained history can still appear in grant inventory.
       security: [{ bearerAuth: [] }]
       parameters:
         [
@@ -188,6 +210,8 @@ paths:
   /v1/services/{service_id}/invitations:
     get:
       operationId: listServiceInvitations
+      tags: [visitor-access]
+      summary: List a service's visitor invitations without secrets
       description: Current managers may read up to 100 records ordered by ID, including accepted, expired and revoked history. Follow next_cursor until absent. Never returns secrets.
       security: [{ bearerAuth: [] }]
       parameters:
@@ -204,6 +228,8 @@ paths:
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
     post:
       operationId: inviteServiceVisitor
+      tags: [visitor-access]
+      summary: Invite a verified email identity to one service
       description: A new key creates one exact-service invitation. An exact retry by the same actor returns HTTP 200 with the original ID and current state, without a secret, after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
       security: [{ bearerAuth: [] }]
       parameters:
@@ -242,6 +268,9 @@ paths:
   /v1/services/{service_id}/invitations/{invitation_id}:
     delete:
       operationId: revokeServiceInvitation
+      tags: [visitor-access]
+      summary: Revoke a service invitation and its accepted grant
+      description: Revoke the invitation using current service management permission, including the identity grant created if it was accepted. Revocation does not remove the retained invitation history.
       security: [{ bearerAuth: [] }]
       parameters:
         - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
@@ -255,6 +284,9 @@ paths:
   /v1/service-invitations/accept:
     post:
       operationId: acceptServiceInvitation
+      tags: [visitor-access]
+      summary: Accept an invitation for the signed-in verified email identity
+      description: Exchange the one-use invitation secret under the current signed-in identity. Control verifies the recipient email and creates an exact-service identity grant; acceptance grants no management or publisher permission.
       security: [{ bearerAuth: [] }]
       requestBody:
         {

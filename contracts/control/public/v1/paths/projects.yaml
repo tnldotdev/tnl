@@ -2,6 +2,8 @@ paths:
   /v1/projects/{project_key}/public-metadata:
     get:
       operationId: getProjectPublicMetadata
+      tags: [projects]
+      summary: Read visitor-safe project service identities and hostnames
       security: [{ bearerAuth: [] }]
       description: Browser-safe project source and public service IDs/hostnames, including exact local worktree realizations before or after first apply. Returns only public services the caller may visit, or all public services for a project manager. A service key may appear more than once for separate worktree URLs. Never returns configuration, targets, trust, grants, or publisher data.
       parameters:
@@ -17,6 +19,8 @@ paths:
   /v1/projects/{project_key}/local-services/{service}:
     get:
       operationId: getLocalProjectService
+      tags: [projects]
+      summary: Resolve one existing source-bound worktree service
       security: [{ bearerAuth: [] }]
       description: Read the exact service previously realized for this team, project source, service key, and worktree. Requires current ordinary private visitor access, not project management access. Returns only immutable identity and approved visitor protocol/TLS metadata, never configuration, targets, or credentials. Does not realize or adopt a service. Missing or unauthorized bindings return not found; an authorized binding with another source fingerprint returns conflict. No other team, project, worktree, or saved name is searched.
       parameters:
@@ -54,6 +58,8 @@ paths:
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
     put:
       operationId: realizeLocalProjectService
+      tags: [projects]
+      summary: Realize one declared local service for a worktree
       security: [{ bearerAuth: [] }]
       description: Realize only one source-bound local service for one worktree. Private IDs are allocated here with worktree-scoped names, never adopted by name. Public IDs must be exact caller-owned app URLs already allocated by this runtime, bound to the caller's membership or to the caller's own personal team when current namespace authorization selects shared scope. Organization shared URLs and another member's or team's URLs are rejected. Records provenance before first apply; later apply reconciles that legitimate resource. When configuration has been applied the local declaration must match it. Does not apply remote group changes.
       parameters:
@@ -82,6 +88,8 @@ paths:
         }
     put:
       operationId: applyProjectConfiguration
+      tags: [projects]
+      summary: Apply a project's desired services and publisher groups
       security: [{ bearerAuth: [] }]
       description: Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
       requestBody:
@@ -114,6 +122,9 @@ paths:
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
     get:
       operationId: getProjectConfiguration
+      tags: [projects]
+      summary: Read a project's applied configuration and publisher status
+      description: Read the normalized desired configuration and observed publisher revisions for the selected team and project. Requires current project management permission; the response can include targets and must not be exposed as public project metadata.
       security: [{ bearerAuth: [] }]
       parameters: [{ $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }]
       responses:
