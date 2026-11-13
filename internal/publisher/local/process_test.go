@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/client/filelock"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
@@ -143,6 +144,13 @@ func TestAppWorkflowProcessShutdownReleasesOwnershipAndPendingRegistration(t *te
 	}
 	if Available(t.Context(), endpoint) {
 		t.Fatal("shutdown retained its HTTP listener")
+	}
+	lock, err := filelock.Acquire(path+".lock", filelock.Nonblocking, os.Geteuid())
+	if err != nil {
+		t.Fatalf("joined shutdown retained its ownership lock: %v", err)
+	}
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
 	}
 	assertProcessStopped(t, state, project, initial.Cursor)
 	replacement, stopReplacement := startProcess(t, project, state, snapshot, path)

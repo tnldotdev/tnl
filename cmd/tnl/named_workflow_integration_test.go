@@ -9,6 +9,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -20,8 +21,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/client/filelock"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
-	"github.com/tnldotdev/tnl/internal/publisher/local"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
@@ -36,12 +37,7 @@ func runNamedWorkflowProcess(t *testing.T, personal bool, noGit ...bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	timeout := 150 * time.Second
-	if len(noGit) != 0 && noGit[0] {
-		// three git transitions each wait for a full owner shutdown and restart.
-		timeout = 4 * time.Minute
-	}
-	args := []string{"-test.run=^TestIntegrationCLINamedInvocationSelectionAndRealization$", "-test.v", "-test.timeout=" + timeout.String(), "-tnl-test-tier=integration", "-tnl-test-postgres-url=" + flag.Lookup("tnl-test-postgres-url").Value.String(), "-tnl-cli-binary=" + *cliWorkflowBinary, "-tnl-cli-workflow-child"}
+	args := []string{"-test.run=^TestIntegrationCLINamedInvocationSelectionAndRealization$", "-test.v", "-test.timeout=150s", "-tnl-test-tier=integration", "-tnl-test-postgres-url=" + flag.Lookup("tnl-test-postgres-url").Value.String(), "-tnl-cli-binary=" + *cliWorkflowBinary, "-tnl-cli-workflow-child"}
 	if personal {
 		args = append(args, "-tnl-cli-workflow-personal-team")
 	}
@@ -150,67 +146,82 @@ func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 	}
 	defer connection.Close(context.Background())
 	var endpoint publisherprotocol.Endpoint
-	start := func(name string) func() {
+	descriptor, err := publisherprotocol.DescriptorPath(person, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selectedSnapshot := func() []byte {
 		t.Helper()
-		var stdout, stderr bytes.Buffer
-		command := exec.Command(bin, "--no-telemetry", "--config", configuration, "publish", name, "--foreground", "--output", "ndjson", "--server", f.url, "--team", team, "--state-dir", person)
-		command.Stdout, command.Stderr = &stdout, &stderr
-		command.WaitDelay = 2 * time.Second
-		if err := command.Start(); err != nil {
+		selected, err := loadProjectConfiguration(t.Context(), cli{ConfigPath: configuration}, person)
+		if err != nil {
 			t.Fatal(err)
 		}
-		joined := make(chan error, 1)
-		go func() { joined <- command.Wait() }()
-		stopped := false
-		stop := func() {
-			if stopped {
-				return
+		selected.Config.Server, selected.Config.Team = &f.url, &team
+		snapshot, _, err := selected.Snapshot()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return snapshot
+	}
+	var owner *namedWorkflowProcess
+	startOwner := func() func() {
+		t.Helper()
+		command := exec.Command(bin, "--no-telemetry", "runtime", "serve", "--directory", root, "--state-dir", person, "--snapshot-stdin")
+		command.Stdin = bytes.NewReader(selectedSnapshot())
+		process := startNamedWorkflowCommand(t, command)
+		process.wait(t, 15*time.Second, func(ctx context.Context) (bool, string) {
+			current, err := publisherprotocol.ReadEndpoint(descriptor)
+			if err == nil {
+				err = publisherprotocol.Call(ctx, current, "GET", "/v1/health", nil, nil)
 			}
-			stopped = true
-			_ = command.Process.Signal(os.Interrupt)
-			select {
-			case err := <-joined:
-				if err != nil {
-					t.Errorf("named CLI did not stop: %v\n%s\n%s", err, stdout.String(), stderr.String())
-				}
-			case <-time.After(15 * time.Second):
-				_ = command.Process.Kill()
-				<-joined
-				t.Error("named CLI did not join")
+			return err == nil, fmt.Sprint(err)
+		})
+		owner = process
+		return func() {
+			process.stop()
+			// process exit, not failed health, proves cleanup released ownership.
+			if _, err := os.Stat(descriptor); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("joined owner retained its descriptor: %v", err)
+			}
+			lock, err := filelock.Acquire(descriptor+".lock", filelock.Nonblocking, os.Geteuid())
+			if err != nil {
+				t.Fatalf("joined owner retained its ownership lock: %v", err)
+			}
+			if err := lock.Close(); err != nil {
+				t.Fatal(err)
 			}
 		}
-		t.Cleanup(stop)
-		workflowWait(t, 30*time.Second, func() bool {
-			select {
-			case err := <-joined:
-				stopped = true
-				t.Fatalf("named CLI exited before ready: %v\n%s\n%s", err, stdout.String(), stderr.String())
-			default:
-			}
-			descriptor, err := publisherprotocol.DescriptorPath(person, root)
-			if err != nil {
-				return false
-			}
+	}
+	start := func(name string) func() {
+		t.Helper()
+		command := exec.Command(bin, "--no-telemetry", "--config", configuration, "publish", name, "--foreground", "--output", "ndjson", "--server", f.url, "--team", team, "--state-dir", person)
+		process := startNamedWorkflowCommand(t, command)
+		process.wait(t, 30*time.Second, func(ctx context.Context) (bool, string) {
+			var err error
 			endpoint, err = publisherprotocol.ReadEndpoint(descriptor)
 			if err != nil {
-				return false
+				return false, err.Error()
 			}
 			var snapshot publisherapp.Snapshot
-			if err := publisherprotocol.Call(t.Context(), endpoint, "GET", "/v1/status", nil, &snapshot); err != nil {
-				return false
+			if err := publisherprotocol.Call(ctx, endpoint, "GET", "/v1/status", nil, &snapshot); err != nil {
+				return false, err.Error()
 			}
 			for _, service := range snapshot.Services {
 				if service.Name == name {
-					return service.Routable && service.Target == target.URL
+					return service.Routable && service.Target == target.URL, fmt.Sprintf("%s: registered=%t routable=%t stage=%q failure=%q target=%q", name, service.Registered, service.Routable, service.ProvisioningStage, service.Failure, service.Target)
 				}
 			}
-			return false
+			return false, "selected service is absent from owner status"
 		})
-		return stop
+		return process.stop
 	}
 	// runtime endpoint/publish can leave their automatically started owner alive
 	// after the launcher exits. keep infrastructure and state until it is reaped.
 	joinNamedWorkflowOwners(t)
+	var stopOwner func()
+	if *cliWorkflowNoGit {
+		stopOwner = startOwner()
+	}
 	firstAPI, firstWeb := start("api"), start("web")
 	if _, err := session.Authenticated().Control.GetProjectConfiguration(t.Context(), team, source.Key); !errors.Is(err, clientcontrol.ErrNotFound) {
 		t.Fatalf("local startup implicitly applied production configuration: %v", err)
@@ -229,17 +240,10 @@ func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 	if *cliWorkflowNoGit {
 		startSDK := func() func() {
 			t.Helper()
-			selected, err := loadProjectConfiguration(t.Context(), cli{ConfigPath: configuration}, person)
-			if err != nil {
-				t.Fatal(err)
-			}
-			selected.Config.Server, selected.Config.Team = &f.url, &team
-			snapshot, _, err := selected.Snapshot()
-			if err != nil {
-				t.Fatal(err)
-			}
-			command := exec.CommandContext(t.Context(), bin, "runtime", "endpoint", "--directory", root, "--state-dir", person, "--service", "sdk", "--snapshot-stdin")
-			command.Stdin = bytes.NewReader(snapshot)
+			startup, finishStartup := context.WithTimeout(t.Context(), 30*time.Second)
+			defer finishStartup()
+			command := exec.CommandContext(startup, bin, "runtime", "endpoint", "--directory", root, "--state-dir", person, "--service", "sdk", "--snapshot-stdin")
+			command.Stdin = bytes.NewReader(selectedSnapshot())
 			var stdout, stderr bytes.Buffer
 			command.Stdout, command.Stderr = &stdout, &stderr
 			if err := command.Run(); err != nil {
@@ -249,17 +253,18 @@ func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 			if err := json.Unmarshal(stdout.Bytes(), &app); err != nil {
 				t.Fatal(err)
 			}
-			owner := "0123456789abcdef0123456789abcdef"
+			appOwner := "0123456789abcdef0123456789abcdef"
 			var assignment publisherprotocol.Assignment
-			if err := publisherprotocol.Call(t.Context(), app, "POST", "/v1/prepare", publisherprotocol.Prepare{Version: 1, Directory: root, Service: "sdk", Framework: "node", Owner: owner, PID: os.Getpid()}, &assignment); err != nil {
+			if err := publisherprotocol.Call(t.Context(), app, "POST", "/v1/prepare", publisherprotocol.Prepare{Version: 1, Directory: root, Service: "sdk", Framework: "node", Owner: appOwner, PID: os.Getpid()}, &assignment); err != nil {
 				t.Fatal(err)
 			}
-			registration := publisherprotocol.Registration{Version: 1, RegistrationID: assignment.RegistrationID, Owner: owner, Target: target.URL}
+			registration := publisherprotocol.Registration{Version: 1, RegistrationID: assignment.RegistrationID, Owner: appOwner, Target: target.URL}
 			if err := publisherprotocol.Call(t.Context(), app, "POST", "/v1/register", registration, nil); err != nil {
 				t.Fatal(err)
 			}
 			ctx, cancel := context.WithCancel(t.Context())
 			done := make(chan struct{})
+			var renewalErr error
 			go func() {
 				defer close(done)
 				ticker := time.NewTicker(3 * time.Second)
@@ -269,7 +274,12 @@ func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 					case <-ctx.Done():
 						return
 					case <-ticker.C:
-						_ = publisherprotocol.Call(ctx, app, "POST", "/v1/renew", registration, nil)
+						if err := publisherprotocol.Call(ctx, app, "POST", "/v1/renew", registration, nil); err != nil {
+							if ctx.Err() == nil {
+								renewalErr = err
+							}
+							return
+						}
 					}
 				}
 			}()
@@ -281,65 +291,72 @@ func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 				stopped = true
 				cancel()
 				<-done
-				_ = publisherprotocol.Call(context.Background(), app, "POST", "/v1/unregister", registration, nil)
+				if renewalErr != nil {
+					t.Errorf("app registration renewal failed: %v", renewalErr)
+				}
+				cleanup, finish := context.WithTimeout(context.Background(), 10*time.Second)
+				defer finish()
+				if err := publisherprotocol.Call(cleanup, app, "POST", "/v1/unregister", registration, nil); err != nil {
+					t.Errorf("app registration did not stop: %v", err)
+				}
 			}
 			t.Cleanup(stop)
-			workflowWait(t, 20*time.Second, func() bool {
+			owner.wait(t, 20*time.Second, func(ctx context.Context) (bool, string) {
+				select {
+				case <-done:
+					t.Fatalf("app registration renewal stopped before ready: %v", renewalErr)
+				default:
+				}
 				var snapshot publisherapp.Snapshot
 				names := []string{"sdk"}
-				if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/check", publisherprotocol.Check{Services: &names}, &snapshot); err != nil {
-					return false
+				if err := publisherprotocol.Call(ctx, endpoint, "POST", "/v1/check", publisherprotocol.Check{Services: &names}, &snapshot); err != nil {
+					return false, err.Error()
 				}
 				for _, service := range snapshot.Services {
 					if service.Name == "sdk" {
-						return service.Registered && service.Routable && service.Ready
+						return service.Registered && service.Routable && service.Ready, fmt.Sprintf("sdk: registered=%t routable=%t ready=%t stage=%q failure=%q", service.Registered, service.Routable, service.Ready, service.ProvisioningStage, service.Failure)
 					}
 				}
-				return false
+				return false, "app service is absent from owner status"
 			})
 			return stop
 		}
 		firstSDK := startSDK()
 		assertRealized()
-		var originalIDs string
 		readIDs := func() string {
 			var ids string
-			if err := connection.QueryRow(t.Context(), `SELECT string_agg(COALESCE(service_id, public_url_id), ',' ORDER BY service) FROM control.local_project_services WHERE team_id=$1 AND project_key=$2`, team, source.Key).Scan(&ids); err != nil {
+			if err := connection.QueryRow(t.Context(), `SELECT string_agg(COALESCE(service_id, public_url_id)||':'||visitor_grant_id, ',' ORDER BY service) FROM control.local_project_services WHERE team_id=$1 AND project_key=$2`, team, source.Key).Scan(&ids); err != nil {
 				t.Fatal(err)
 			}
 			return ids
 		}
-		originalIDs = readIDs()
-		transitionsStarted := time.Now()
-		for phase := range 3 {
-			t.Logf("git transition %d: stopping the current owner after %s", phase+1, time.Since(transitionsStarted).Round(time.Millisecond))
-			firstAPI()
-			firstWeb()
-			firstSDK()
-			workflowWait(t, 15*time.Second, func() bool { return !local.Available(t.Context(), endpoint) })
-			t.Logf("git transition %d: owner stopped after %s", phase+1, time.Since(transitionsStarted).Round(time.Millisecond))
-			args := []string{"init", "--quiet", root}
-			if phase == 1 {
-				args = []string{"-C", root, "remote", "add", "origin", "https://example.test/first.git"}
-			}
-			if phase == 2 {
-				args = []string{"-C", root, "remote", "set-url", "origin", "https://elsewhere.test/second.git"}
-			}
-			if output, err := exec.CommandContext(t.Context(), "git", args...).CombinedOutput(); err != nil {
-				t.Fatalf("Git transition: %v %s", err, output)
-			}
-			firstAPI, firstWeb = start("api"), start("web")
-			firstSDK = startSDK()
-			assertRealized()
-			if ids := readIDs(); ids != originalIDs {
-				t.Fatalf("Git transition replaced local services: %s != %s", ids, originalIDs)
-			}
-			t.Logf("git transition %d: the same services are ready after %s", phase+1, time.Since(transitionsStarted).Round(time.Millisecond))
-		}
+		originalIDs := readIDs()
 		firstAPI()
 		firstWeb()
 		firstSDK()
-		t.Log("built CLI reused the same service and public URL before Git, after git init without origin, and across origin changes")
+		stopOwner()
+		// project and invocation tests cover each intermediate Git state without
+		// publications. this smoke crosses the real process boundary only once.
+		for _, args := range [][]string{
+			{"init", "--quiet", root},
+			{"-C", root, "remote", "add", "origin", "https://example.test/first.git"},
+			{"-C", root, "remote", "set-url", "origin", "https://elsewhere.test/second.git"},
+		} {
+			if output, err := exec.CommandContext(t.Context(), "git", args...).CombinedOutput(); err != nil {
+				t.Fatalf("Git transition: %v %s", err, output)
+			}
+		}
+		stopOwner = startOwner()
+		secondAPI, secondWeb, secondSDK := start("api"), start("web"), startSDK()
+		assertRealized()
+		if ids := readIDs(); ids != originalIDs {
+			t.Fatalf("owner restart replaced local resources or grants: %s != %s", ids, originalIDs)
+		}
+		secondAPI()
+		secondWeb()
+		secondSDK()
+		stopOwner()
+		t.Log("one joined owner restart preserved public, private, and app services and their team grants from a non-Git directory to a Git checkout with a changed origin")
 		return
 	}
 	assertRealized()
