@@ -20,17 +20,17 @@ import (
 func deploymentPublisherRequest(t *testing.T, d *Database, now time.Time) (ApplyProjectConfigurationRequest, CreateDeploymentPublisherEnrollmentRequest) {
 	t.Helper()
 	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}, "staging": {}}, Services: map[string]ProjectServiceConfiguration{
-		"db":    {PublisherGroup: "production", Protocol: "postgres", Target: "database.internal:5432"},
-		"web":   {PublisherGroup: "production", Target: "web.internal:3000"},
-		"stage": {PublisherGroup: "staging", Protocol: "postgres", Target: "stage.internal:5432"},
+	r.Configuration = ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{
+		"db":    {Protocol: "postgres", Target: "database.internal:5432"},
+		"web":   {Target: "web.internal:3000"},
+		"stage": {Protocol: "postgres", Target: "stage.internal:5432"},
 	}}
-	production := deploymentProjectRequest(r, "production")
+	production := projectServiceSelection(r, "production", "db", "web")
 	first, err := d.ApplyProjectConfiguration(t.Context(), production)
 	if err != nil {
 		t.Fatal(err)
 	}
-	staging := deploymentProjectRequest(r, "staging")
+	staging := projectServiceSelection(r, "staging", "stage")
 	staging.ExpectedRevision = first.Revision
 	second, err := d.ApplyProjectConfiguration(t.Context(), staging)
 	if err != nil {
@@ -88,7 +88,7 @@ func TestIntegrationDeploymentPublisherScopeRecoveryAndRevocation(t *testing.T) 
 	}
 	// target changes replace exact grants, but neither add service names nor
 	// change the captured protocol approval.
-	r.Configuration.Services["cache"] = ProjectServiceConfiguration{PublisherGroup: "production", Protocol: "tcp", Target: "cache.internal:6379"}
+	r.Configuration.Services["cache"] = ProjectServiceConfiguration{Protocol: "tcp", Target: "cache.internal:6379"}
 	r.ServiceDeclarations["cache"] = "tcp"
 	db := r.Configuration.Services["db"]
 	db.Target = "replacement.internal:5432"
