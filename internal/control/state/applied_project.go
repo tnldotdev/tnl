@@ -305,7 +305,48 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	if row.SourceFingerprint != r.SourceFingerprint {
 		return result, ErrProjectSourceConflict
 	}
-	if row.ConfigurationHash == hash {
+	old, err := d.openAppliedProject(row)
+	if err != nil {
+		return result, err
+	}
+	groups, err := q.ListProjectPublisherGroups(ctx, controlstatedb.ListProjectPublisherGroupsParams{TeamID: r.TeamID, ProjectKey: r.ProjectKey})
+	if err != nil {
+		return result, err
+	}
+	serving := map[string]ProjectServiceConfiguration{}
+	managedGroups := map[string]bool{}
+	presentGroups := map[string]bool{}
+	current := true
+	for _, g := range groups {
+		presentGroups[g.Name] = true
+		_, wasDeclared := old.PublisherGroups[g.Name]
+		_, isDeclared := c.PublisherGroups[g.Name]
+		if !wasDeclared && !isDeclared {
+			continue
+		}
+		managedGroups[g.ID] = true
+		snapshot, err := d.openDeploymentConfiguration(g)
+		if err != nil {
+			return result, err
+		}
+		if isDeclared && !reflect.DeepEqual(snapshot, projectDeploymentConfiguration(g.Namespace, g.Name, c)) {
+			current = false
+		}
+		for name, service := range snapshot.Services {
+			// legacy apply can move a binding, but never pick one of several
+			// same-named deployments implicitly.
+			if _, exists := serving[name]; exists {
+				return result, ErrServiceConflict
+			}
+			serving[name] = service
+		}
+	}
+	for name := range c.PublisherGroups {
+		if !presentGroups[name] {
+			current = false
+		}
+	}
+	if row.ConfigurationHash == hash && current {
 		if r.ExpectedRevision > row.Revision {
 			return result, ErrProjectConfigurationStale
 		}
@@ -318,17 +359,28 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	if row.Revision != r.ExpectedRevision {
 		return result, ErrProjectConfigurationStale
 	}
-	old, err := d.openAppliedProject(row)
-	if err != nil {
-		return result, err
-	}
 	next := row.Revision + 1
 	if err = lockAppliedProjectPublications(ctx, tx, r.TeamID, r.ProjectKey); err != nil {
 		return result, err
 	}
-	groups, err := q.ListProjectPublisherGroups(ctx, controlstatedb.ListProjectPublisherGroupsParams{TeamID: r.TeamID, ProjectKey: r.ProjectKey})
-	if err != nil {
-		return result, err
+	for _, name := range sortedProjectKeys(c.Services) {
+		var conflict bool
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.project_services declaration
+			JOIN control.applied_project_services binding ON binding.team_id=declaration.team_id
+			AND binding.project_key=declaration.project_key AND binding.service=declaration.name
+			WHERE declaration.team_id=$1 AND declaration.project_key=$2 AND declaration.name=$3
+			AND declaration.protocol<>$4 AND binding.group_id IS NOT NULL AND NOT(binding.group_id=ANY($5::text[])))`,
+			r.TeamID, r.ProjectKey, name, c.Services[name].Protocol, sortedProjectKeys(managedGroups)).Scan(&conflict); err != nil {
+			return result, err
+		}
+		if conflict {
+			return result, ErrProjectManaged
+		}
+		if err = q.SaveProjectServiceDeclaration(ctx, controlstatedb.SaveProjectServiceDeclarationParams{
+			TeamID: r.TeamID, ProjectKey: r.ProjectKey, Name: name, Protocol: c.Services[name].Protocol,
+		}); err != nil {
+			return result, err
+		}
 	}
 	groupIDs := map[string]string{}
 	changedGroups := map[string]bool{}
@@ -363,12 +415,21 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 		return result, err
 	}
 	saved := map[string]controlstatedb.ControlAppliedProjectService{}
+	existing = slices.DeleteFunc(existing, func(s controlstatedb.ControlAppliedProjectService) bool {
+		return s.GroupID.Valid && !managedGroups[s.GroupID.String]
+	})
 	for _, s := range existing {
+		if _, exists := saved[s.Service]; exists {
+			return result, ErrServiceConflict
+		}
 		saved[s.Service] = s
 	}
 	for _, s := range existing {
 		declared, ok := c.Services[s.Service]
 		previous := old.Services[s.Service]
+		if s.GroupID.Valid {
+			previous = serving[s.Service]
+		}
 		if !ok || !sameAppliedResource(previous, declared) {
 			if err = d.removeAppliedService(ctx, tx, q, s, r.Now); err != nil {
 				return result, err
@@ -383,7 +444,11 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	for _, key := range sortedProjectKeys(c.Services) {
 		s := c.Services[key]
 		entry, found := saved[key]
-		changed := !found || !reflect.DeepEqual(old.Services[key], s)
+		previous := old.Services[key]
+		if entry.GroupID.Valid {
+			previous = serving[key]
+		}
+		changed := !found || !reflect.DeepEqual(previous, s)
 		if !found {
 			entry = controlstatedb.ControlAppliedProjectService{TeamID: r.TeamID, ProjectKey: r.ProjectKey, Service: key}
 			if s.PublisherGroup != "local" {
@@ -402,13 +467,14 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 				return result, err
 			}
 		} else {
+			previousGroup := entry.GroupID
 			entry.GroupID = nullableText(groupIDs[s.PublisherGroup])
 			if entry.ServiceID.Valid && changed {
 				if err = d.updateAppliedService(ctx, tx, q, entry.ServiceID.String, entry.GroupID.String, s, r.Now); err != nil {
 					return result, err
 				}
 			}
-			_, err = tx.Exec(ctx, `UPDATE control.applied_project_services SET desired_revision=$4,group_id=$5 WHERE team_id=$1 AND project_key=$2 AND service=$3`, r.TeamID, r.ProjectKey, key, next, entry.GroupID)
+			_, err = tx.Exec(ctx, `UPDATE control.applied_project_services SET desired_revision=$4,group_id=$5 WHERE team_id=$1 AND project_key=$2 AND service=$3 AND group_id IS NOT DISTINCT FROM $6`, r.TeamID, r.ProjectKey, key, next, entry.GroupID, previousGroup)
 			if err != nil {
 				return result, err
 			}
@@ -442,6 +508,9 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 		}
 	}
 	for _, g := range groups {
+		if !managedGroups[g.ID] {
+			continue
+		}
 		if _, ok := c.PublisherGroups[g.Name]; !ok {
 			changedGroups[g.ID] = true
 			if err = d.removePublisherGroup(ctx, tx, q, g.ID, r.Now); err != nil {
@@ -451,6 +520,16 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	}
 	if err = d.reconcileProjectLocalRealizations(ctx, tx, q, r, old, c); err != nil {
 		return result, err
+	}
+	if err = q.RemoveProjectServiceDeclarations(ctx, controlstatedb.RemoveProjectServiceDeclarationsParams{
+		TeamID: r.TeamID, ProjectKey: r.ProjectKey, Names: sortedProjectKeys(c.Services),
+	}); err != nil {
+		return result, err
+	}
+	for _, name := range sortedProjectKeys(c.PublisherGroups) {
+		if err = d.saveDeploymentConfiguration(ctx, tx, groupIDs[name], name, c); err != nil {
+			return result, err
+		}
 	}
 	newServices, err := q.ListAppliedProjectServices(ctx, controlstatedb.ListAppliedProjectServicesParams{TeamID: r.TeamID, ProjectKey: r.ProjectKey})
 	if err != nil {
@@ -540,12 +619,23 @@ func (d *Database) GetProjectConfiguration(ctx context.Context, team, key, actor
 
 func (d *Database) appliedProjectStatus(ctx context.Context, tx pgx.Tx, row controlstatedb.ControlAppliedProject, c ProjectConfiguration) (AppliedProjectConfiguration, error) {
 	result := AppliedProjectConfiguration{TeamID: row.TeamID, ProjectKey: row.ProjectKey, SourceFingerprint: row.SourceFingerprint, Revision: row.Revision, ConfigurationHash: row.ConfigurationHash, Configuration: c, Services: []AppliedProjectService{}, Members: []PublisherGroupMemberStatus{}, Groups: []AppliedPublisherGroup{}}
+	groups, err := controlstatedb.New(tx).ListProjectPublisherGroups(ctx, controlstatedb.ListProjectPublisherGroupsParams{TeamID: row.TeamID, ProjectKey: row.ProjectKey})
+	if err != nil {
+		return result, err
+	}
+	groupNames := map[string]string{}
+	for _, group := range groups {
+		groupNames[group.ID] = group.Name
+	}
 	rows, err := controlstatedb.New(tx).ListAppliedProjectServices(ctx, controlstatedb.ListAppliedProjectServicesParams{TeamID: row.TeamID, ProjectKey: row.ProjectKey})
 	if err != nil {
 		return result, err
 	}
 	for _, s := range rows {
 		v := AppliedProjectService{Service: s.Service, PublisherGroup: c.Services[s.Service].PublisherGroup, Kind: "local", DesiredRevision: s.DesiredRevision}
+		if s.GroupID.Valid {
+			v.PublisherGroup = groupNames[s.GroupID.String]
+		}
 		if s.ServiceID.Valid {
 			v.Kind, v.ServiceID = "service", s.ServiceID.String
 			if err = tx.QueryRow(ctx, `SELECT trust_revision,certificate_hostname,COALESCE(service_port,0),public FROM control.services WHERE id=$1`, v.ServiceID).Scan(&v.TrustRevision, &v.Hostname, &v.Port, &v.Public); err != nil {
@@ -560,7 +650,6 @@ func (d *Database) appliedProjectStatus(ctx context.Context, tx pgx.Tx, row cont
 	if err != nil {
 		return result, err
 	}
-	groups, err := controlstatedb.New(tx).ListProjectPublisherGroups(ctx, controlstatedb.ListProjectPublisherGroupsParams{TeamID: row.TeamID, ProjectKey: row.ProjectKey})
 	for _, group := range groups {
 		var names []string
 		if err := tx.QueryRow(ctx, `SELECT array_agg(name ORDER BY name) FROM control.publisher_group_names WHERE group_id=$1`, group.ID).Scan(&names); err != nil {

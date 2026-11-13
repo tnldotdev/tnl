@@ -17,7 +17,7 @@ func TestIntegrationPublisherGroupHealthRuntimeReplacement(t *testing.T) {
 			r := appliedProjectRequest(t, d, now)
 			r.Configuration.PublisherGroups = map[string]ProjectPublisherGroup{"remote": {}}
 			r.Configuration.Services["web"] = ProjectServiceConfiguration{PublisherGroup: "remote", Target: "http://localhost:3000"}
-			applied, err := d.ApplyProjectConfiguration(t.Context(), r)
+			_, err := d.ApplyProjectConfiguration(t.Context(), r)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -44,7 +44,7 @@ func TestIntegrationPublisherGroupHealthRuntimeReplacement(t *testing.T) {
 				ackAt = now.Add(time.Second)
 			}
 			ack := func(ctx context.Context) error {
-				return d.AcknowledgePublisherGroupConfiguration(ctx, first.GroupLease.AccessToken, applied.Revision, applied.ConfigurationHash, true, ackAt)
+				return d.AcknowledgePublisherGroupConfiguration(ctx, first.GroupLease.AccessToken, replica.assignments.Revision, replica.assignments.ConfigurationHash, true, ackAt)
 			}
 			if err := ack(t.Context()); err != nil {
 				t.Fatal(err)
@@ -84,7 +84,7 @@ func TestIntegrationPublisherGroupHealthRuntimeReplacement(t *testing.T) {
 				query, args := `SELECT id FROM control.publisher_identities WHERE id=$1 FOR UPDATE`, []any{replica.member.PublisherIdentityID}
 				firstOp, secondOp := start, ack
 				if ordering == "ack-first" {
-					query, args = `SELECT team_id FROM control.applied_projects WHERE team_id=$1 AND project_key=$2 FOR UPDATE`, []any{r.TeamID, r.ProjectKey}
+					query, args = `SELECT id FROM control.project_publisher_groups WHERE id=$1 FOR UPDATE`, []any{replica.member.GroupID}
 					firstOp, secondOp = ack, start
 				}
 				if _, err := gate.Exec(ctx, query, args...); err != nil {
@@ -115,7 +115,7 @@ func TestIntegrationPublisherGroupHealthRuntimeReplacement(t *testing.T) {
 			status(false)
 			// a current acknowledgement may have an earlier request clock. health
 			// belongs to the serialized runtime, not its wall-clock ordering.
-			if err := d.AcknowledgePublisherGroupConfiguration(t.Context(), replacement.GroupLease.AccessToken, applied.Revision, applied.ConfigurationHash, true, now.Add(-time.Second)); err != nil {
+			if err := d.AcknowledgePublisherGroupConfiguration(t.Context(), replacement.GroupLease.AccessToken, replica.assignments.Revision, replica.assignments.ConfigurationHash, true, now.Add(-time.Second)); err != nil {
 				t.Fatal(err)
 			}
 			status(true)

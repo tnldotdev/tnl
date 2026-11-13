@@ -177,6 +177,7 @@ type Querier interface {
 	GetActivePublishRunMembership(ctx context.Context, arg GetActivePublishRunMembershipParams) (GetActivePublishRunMembershipRow, error)
 	GetActiveShareForPublicURL(ctx context.Context, arg GetActiveShareForPublicURLParams) (GetActiveShareForPublicURLRow, error)
 	GetAdminRuntimeCounts(ctx context.Context, now pgtype.Timestamptz) (GetAdminRuntimeCountsRow, error)
+	GetAppliedProject(ctx context.Context, arg GetAppliedProjectParams) (ControlAppliedProject, error)
 	GetAuthorizedPublicURLByHostname(ctx context.Context, arg GetAuthorizedPublicURLByHostnameParams) (GetAuthorizedPublicURLByHostnameRow, error)
 	GetBrowserAccessSession(ctx context.Context, tokenDigest []byte) (ControlBrowserAccessSession, error)
 	GetCertificateOrderDomainKind(ctx context.Context, publicUrlID string) (string, error)
@@ -191,6 +192,7 @@ type Querier interface {
 	GetDNSChallengeChange(ctx context.Context, arg GetDNSChallengeChangeParams) (GetDNSChallengeChangeRow, error)
 	GetDNSChallengeContext(ctx context.Context, arg GetDNSChallengeContextParams) (GetDNSChallengeContextRow, error)
 	GetDNSChallengeSubject(ctx context.Context, arg GetDNSChallengeSubjectParams) (GetDNSChallengeSubjectRow, error)
+	GetDeploymentServiceConfiguration(ctx context.Context, serviceID pgtype.Text) (GetDeploymentServiceConfigurationRow, error)
 	GetFeedbackEventByActorKey(ctx context.Context, arg GetFeedbackEventByActorKeyParams) (ControlFeedbackEvent, error)
 	GetFeedbackPublicURL(ctx context.Context, id string) (ControlPublicUrl, error)
 	GetFeedbackThread(ctx context.Context, id string) (ControlFeedbackThread, error)
@@ -328,6 +330,7 @@ type Querier interface {
 	ListConnectorPeerPairCandidates(ctx context.Context, arg ListConnectorPeerPairCandidatesParams) ([]ListConnectorPeerPairCandidatesRow, error)
 	ListCurrentDomainNames(ctx context.Context) ([]string, error)
 	ListDNSChallengePresentations(ctx context.Context, baseIdentifier string) ([]ListDNSChallengePresentationsRow, error)
+	ListDeployments(ctx context.Context, arg ListDeploymentsParams) ([]ControlProjectPublisherGroup, error)
 	ListFeedbackEventsForTeam(ctx context.Context, arg ListFeedbackEventsForTeamParams) ([]ControlFeedbackEvent, error)
 	ListFeedbackEventsForThread(ctx context.Context, arg ListFeedbackEventsForThreadParams) ([]ControlFeedbackEvent, error)
 	ListFeedbackThreadsForPage(ctx context.Context, arg ListFeedbackThreadsForPageParams) ([]ControlFeedbackThread, error)
@@ -344,6 +347,7 @@ type Querier interface {
 	ListOpenPublishRuns(ctx context.Context, publicUrlID string) ([]ControlPublishRun, error)
 	ListPreviewPublicURLs(ctx context.Context, previewID string) ([]string, error)
 	ListProjectPublisherGroups(ctx context.Context, arg ListProjectPublisherGroupsParams) ([]ControlProjectPublisherGroup, error)
+	ListProjectServiceDeclarations(ctx context.Context, arg ListProjectServiceDeclarationsParams) ([]ListProjectServiceDeclarationsRow, error)
 	ListPublishRunConnections(ctx context.Context, publishRunID string) ([]ControlPublishRunConnectionSlot, error)
 	ListPublisherCertificateCheckpoints(ctx context.Context, publisherIdentityID string) ([][]byte, error)
 	ListPublisherGrants(ctx context.Context, publisherIdentityID string) ([]ControlPublisherGrant, error)
@@ -385,6 +389,7 @@ type Querier interface {
 	LockDNSAuthority(ctx context.Context, authorityReference string) (ControlDnsAuthority, error)
 	LockDNSAuthorityLocalDomain(ctx context.Context, authorityReference pgtype.Text) error
 	LockDNSAuthorityLocalTeam(ctx context.Context, authorityReference pgtype.Text) error
+	LockDeployment(ctx context.Context, arg LockDeploymentParams) (ControlProjectPublisherGroup, error)
 	LockDeviceLoginByCode(ctx context.Context, userCode string) (ControlDeviceLogin, error)
 	LockDeviceLoginByCredential(ctx context.Context, credentialDigest []byte) (ControlDeviceLogin, error)
 	LockDeviceLoginByState(ctx context.Context, stateDigest []byte) (ControlDeviceLogin, error)
@@ -424,6 +429,7 @@ type Querier interface {
 	LockMembershipPublicURLs(ctx context.Context, arg LockMembershipPublicURLsParams) ([]ControlPublicUrl, error)
 	LockPendingServiceInvitation(ctx context.Context, arg LockPendingServiceInvitationParams) (ControlServiceInvitation, error)
 	LockPreviewForTeamAccess(ctx context.Context, id string) (LockPreviewForTeamAccessRow, error)
+	LockProjectPublisherGroup(ctx context.Context, id string) (ControlProjectPublisherGroup, error)
 	LockPublicURLCreationControl(ctx context.Context) (bool, error)
 	// serialize creators without blocking publish run and audit foreign-key checks.
 	LockPublicURLCreator(ctx context.Context, identityID string) (string, error)
@@ -525,6 +531,7 @@ type Querier interface {
 	// they must not wait for this guard while holding a row.
 	RegisterRelay(ctx context.Context, arg RegisterRelayParams) (RegisterRelayRow, error)
 	ReleaseInvitedMemberSlug(ctx context.Context, arg ReleaseInvitedMemberSlugParams) (int64, error)
+	RemoveProjectServiceDeclarations(ctx context.Context, arg RemoveProjectServiceDeclarationsParams) error
 	RemoveTeamMembership(ctx context.Context, arg RemoveTeamMembershipParams) (int64, error)
 	// only a fresh signed renewal after the last successful authorization can
 	// extend the same pair; an expired row never regains serving authority.
@@ -582,6 +589,7 @@ type Querier interface {
 	SaveConnectorPeerPairLegClaim(ctx context.Context, arg SaveConnectorPeerPairLegClaimParams) (string, error)
 	SaveDNSAuthorityWork(ctx context.Context, arg SaveDNSAuthorityWorkParams) (ControlDnsAuthority, error)
 	SaveDNSPublicURLWork(ctx context.Context, arg SaveDNSPublicURLWorkParams) (ControlPublicUrl, error)
+	SaveProjectServiceDeclaration(ctx context.Context, arg SaveProjectServiceDeclarationParams) error
 	SaveRelayCertificateOrderWork(ctx context.Context, arg SaveRelayCertificateOrderWorkParams) (ControlRelayCertificateOrder, error)
 	SaveServiceEndpointDNSWork(ctx context.Context, arg SaveServiceEndpointDNSWorkParams) (ControlServiceEndpoint, error)
 	SaveVisitorIPPolicy(ctx context.Context, arg SaveVisitorIPPolicyParams) (int64, error)
@@ -592,7 +600,6 @@ type Querier interface {
 	SelectIngressRoutingRetentionFloor(ctx context.Context, cutoff pgtype.Timestamptz) (int64, error)
 	// only an exact grant for an active team and service permits publication.
 	SelectServiceForPublisher(ctx context.Context, arg SelectServiceForPublisherParams) (ControlService, error)
-	ServiceHTTPAppliedConfiguration(ctx context.Context, serviceID pgtype.Text) (ServiceHTTPAppliedConfigurationRow, error)
 	ServiceHTTPBrowserEndpoint(ctx context.Context, arg ServiceHTTPBrowserEndpointParams) (ServiceHTTPBrowserEndpointRow, error)
 	ServiceHTTPBrowserPermission(ctx context.Context, arg ServiceHTTPBrowserPermissionParams) (ServiceHTTPBrowserPermissionRow, error)
 	ServiceHTTPTransportBinding(ctx context.Context, arg ServiceHTTPTransportBindingParams) (ServiceHTTPTransportBindingRow, error)
@@ -634,7 +641,6 @@ type Querier interface {
 	VisitorCurrentMembership(ctx context.Context, arg VisitorCurrentMembershipParams) (string, error)
 	VisitorFeedbackPolicy(ctx context.Context, id string) (string, error)
 	VisitorPermission(ctx context.Context, arg VisitorPermissionParams) (VisitorPermissionRow, error)
-	VisitorServiceConfiguration(ctx context.Context, serviceID pgtype.Text) (VisitorServiceConfigurationRow, error)
 	VisitorTokenVerificationKeys(ctx context.Context, now pgtype.Timestamptz) ([]VisitorTokenVerificationKeysRow, error)
 }
 

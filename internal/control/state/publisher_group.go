@@ -380,11 +380,11 @@ func (d *Database) GetPublisherGroupAssignments(ctx context.Context, token strin
 		return result, err
 	}
 	q := controlstatedb.New(tx)
-	row, err := q.LockAppliedProject(ctx, controlstatedb.LockAppliedProjectParams{TeamID: m.TeamID, ProjectKey: m.ProjectKey})
+	row, err := q.LockProjectPublisherGroup(ctx, m.GroupID)
 	if err != nil {
 		return result, err
 	}
-	c, err := d.openAppliedProject(row)
+	c, err := d.openDeploymentConfiguration(row)
 	if err != nil {
 		return result, err
 	}
@@ -416,7 +416,11 @@ func (d *Database) GetPublisherGroupAssignments(ctx context.Context, token strin
 			}
 			return result, publisherLookupError(err, ErrPublisherGroup)
 		}
-		a := PublisherGroupServiceAssignment{Service: s.Service, ServiceID: s.PublicURLID.String, Kind: "public_url", GrantID: grant, Configuration: c.Services[s.Service]}
+		configuration, ok := c.Services[s.Service]
+		if !ok || configuration.PublisherGroup != row.Name {
+			return result, ErrPublisherGroup
+		}
+		a := PublisherGroupServiceAssignment{Service: s.Service, ServiceID: s.PublicURLID.String, Kind: "public_url", GrantID: grant, Configuration: configuration}
 		if s.ServiceID.Valid {
 			a.ServiceID, a.Kind = s.ServiceID.String, "service"
 			if err = tx.QueryRow(ctx, `SELECT trust_revision FROM control.services WHERE id=$1 AND enabled AND deleted_at IS NULL`, a.ServiceID).Scan(&a.TrustRevision); err != nil {
@@ -440,7 +444,7 @@ func (d *Database) AcknowledgePublisherGroupConfiguration(ctx context.Context, t
 	if err != nil {
 		return err
 	}
-	row, err := controlstatedb.New(tx).LockAppliedProject(ctx, controlstatedb.LockAppliedProjectParams{TeamID: m.TeamID, ProjectKey: m.ProjectKey})
+	row, err := controlstatedb.New(tx).LockProjectPublisherGroup(ctx, m.GroupID)
 	if err != nil {
 		return err
 	}

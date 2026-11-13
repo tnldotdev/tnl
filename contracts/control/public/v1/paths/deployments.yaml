@@ -1,0 +1,119 @@
+paths:
+  /v1/projects/{project_key}/deployments:
+    parameters:
+      - { name: project_key, in: path, required: true, schema: { type: string } }
+      - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
+    post:
+      operationId: createDeployment
+      security: [{ bearerAuth: [] }]
+      description: Create a deployment using existing logical project declarations. Requires current team manager authority. The original Idempotency-Key recovers the same committed deployment; a deleted deployment is never recreated by replay. Does not grant connect or publish capabilities to a credential.
+      parameters:
+        - {
+            name: Idempotency-Key,
+            in: header,
+            required: true,
+            schema: { type: string, minLength: 1, maxLength: 128 },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/CreateDeploymentRequest" }
+      responses:
+        "201":
+          description: Created or recovered deployment
+          headers:
+            ETag:
+              {
+                schema: { type: string },
+                description: Strong revision validator for conditional updates and deletion.,
+              }
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/Deployment" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+    get:
+      operationId: listDeployments
+      security: [{ bearerAuth: [] }]
+      description: List this project's saved deployments and targets for a current team manager, in bytewise ID order. No publisher credentials or enrollment secrets are returned.
+      parameters:
+        - { name: after, in: query, schema: { type: string } }
+        - {
+            name: limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 100, default: 50 },
+          }
+      responses:
+        "200":
+          description: Authorized deployment page
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/DeploymentPage" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/projects/{project_key}/deployments/{deployment}:
+    parameters:
+      - { name: project_key, in: path, required: true, schema: { type: string } }
+      - {
+          name: deployment,
+          in: path,
+          required: true,
+          schema: { type: string },
+          description: Deployment name or ID within the selected project.,
+        }
+      - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
+    get:
+      operationId: getDeployment
+      security: [{ bearerAuth: [] }]
+      description: Read a saved deployment and its targets with current team manager authority.
+      responses:
+        "200":
+          description: Saved deployment
+          headers:
+            ETag:
+              {
+                schema: { type: string },
+                description: Strong revision validator for conditional updates and deletion.,
+              }
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/Deployment" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+    patch:
+      operationId: updateDeployment
+      security: [{ bearerAuth: [] }]
+      description: Update selected existing targets/TLS on the same records used by manager apply. Requires a current manager and the strong ETag returned by the latest read. Stale conditions fail with 412; a missing condition fails with 428.
+      parameters:
+        - {
+            name: If-Match,
+            in: header,
+            schema: { type: string },
+            description: Required by the operation; omission returns 428.,
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/UpdateDeploymentRequest" }
+      responses:
+        "200":
+          description: Updated deployment
+          headers:
+            ETag: { schema: { type: string }, description: Current strong revision validator. }
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/Deployment" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+    delete:
+      operationId: deleteDeployment
+      security: [{ bearerAuth: [] }]
+      description: Retire this deployment's saved services, enrollments, and publishers. Requires a current manager and the latest strong ETag. Sibling deployments and logical declarations are preserved.
+      parameters:
+        - {
+            name: If-Match,
+            in: header,
+            schema: { type: string },
+            description: Required by the operation; omission returns 428.,
+          }
+      responses:
+        "204": { description: Deployment retired }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

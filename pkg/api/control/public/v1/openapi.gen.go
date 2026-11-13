@@ -2246,6 +2246,13 @@ type CreateCertificateIssuanceRequest struct {
 	PublishRunNumber int64  `json:"publish_run_number"`
 }
 
+// CreateDeploymentRequest defines model for CreateDeploymentRequest.
+type CreateDeploymentRequest struct {
+	// Name Project-unique name; local is reserved for client-side selection.
+	Name    string            `json:"name"`
+	Targets DeploymentTargets `json:"targets"`
+}
+
 // CreateFeedbackReportRequest defines model for CreateFeedbackReportRequest.
 type CreateFeedbackReportRequest struct {
 	Access           FeedbackReviewerAccess `json:"access"`
@@ -2404,6 +2411,61 @@ type CreateVisitorInvitationRequest struct {
 	ExpiresAt   time.Time `json:"expires_at"`
 	TokenDigest string    `json:"token_digest"`
 }
+
+// Deployment defines model for Deployment.
+type Deployment struct {
+	Id         string                            `json:"id"`
+	Name       string                            `json:"name"`
+	ProjectKey string                            `json:"project_key"`
+	Revision   int64                             `json:"revision"`
+	Services   map[string]DeploymentService      `json:"services"`
+	Targets    map[string]DeploymentTargetStatus `json:"targets"`
+	TeamId     TeamID                            `json:"team_id"`
+}
+
+// DeploymentPage defines model for DeploymentPage.
+type DeploymentPage struct {
+	Deployments []Deployment `json:"deployments"`
+	NextCursor  *string      `json:"next_cursor,omitempty"`
+}
+
+// DeploymentService defines model for DeploymentService.
+type DeploymentService struct {
+	// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
+	Endpoint      *ServiceEndpoint `json:"endpoint,omitempty"`
+	Id            ServiceID        `json:"id"`
+	Protocol      ServiceProtocol  `json:"protocol"`
+	TrustRevision int64            `json:"trust_revision"`
+}
+
+// DeploymentTarget defines model for DeploymentTarget.
+type DeploymentTarget struct {
+	// Address Explicit host:port, or an HTTP origin for a declared HTTP service. Does not evaluate local configuration or discover cloud resources.
+	Address string `json:"address"`
+
+	// Tls Verified publisher-to-target TLS. CA is system (the default), aws-rds, or PEM-encoded CA certificates; never a path or URL. aws-rds selects only the supplied endpoint's regional roots offline and requires its hostname for verification. Reads return captured CA material, not a discovery credential.
+	Tls *DeploymentTargetTLS `json:"tls,omitempty"`
+}
+
+// DeploymentTargetStatus One saved explicit address/TLS binding or a publisher-side discovery declaration saved by manager apply. Runtime mutations accept explicit addresses only and never evaluate these discovery declarations on control.
+type DeploymentTargetStatus struct {
+	Address *string `json:"address,omitempty"`
+
+	// Discovery Exact provider selector resolved by the assigned publisher with its own AWS credentials. Control does not discover targets or credentials. EKS requires kubernetes; RDS requires postgres or mysql, verified against provider metadata.
+	Discovery *ProjectTargetDiscovery `json:"discovery,omitempty"`
+
+	// Tls Verified publisher-to-target TLS. CA is system (the default), aws-rds, or PEM-encoded CA certificates; never a path or URL. aws-rds selects only the supplied endpoint's regional roots offline and requires its hostname for verification. Reads return captured CA material, not a discovery credential.
+	Tls *DeploymentTargetTLS `json:"tls,omitempty"`
+}
+
+// DeploymentTargetTLS Verified publisher-to-target TLS. CA is system (the default), aws-rds, or PEM-encoded CA certificates; never a path or URL. aws-rds selects only the supplied endpoint's regional roots offline and requires its hostname for verification. Reads return captured CA material, not a discovery credential.
+type DeploymentTargetTLS struct {
+	Ca       *string `json:"ca,omitempty"`
+	Hostname *string `json:"hostname,omitempty"`
+}
+
+// DeploymentTargets defines model for DeploymentTargets.
+type DeploymentTargets map[string]DeploymentTarget
 
 // DomainID defines model for DomainID.
 type DomainID = ResourceID
@@ -3882,6 +3944,11 @@ type TrafficSelection struct {
 	UploadBytes *int64 `json:"upload_bytes,omitempty"`
 }
 
+// UpdateDeploymentRequest Update addresses and TLS for selected existing bindings. Omitted services, visitor policy, hostname ownership, service names/protocols, and publisher authority remain unchanged. Does not add or remove bindings.
+type UpdateDeploymentRequest struct {
+	Targets DeploymentTargets `json:"targets"`
+}
+
 // UpdatePublicURLRequest defines model for UpdatePublicURLRequest.
 type UpdatePublicURLRequest struct {
 	AllowedIpPrefixes []string `json:"allowed_ip_prefixes"`
@@ -4265,6 +4332,40 @@ type GetProjectConfigurationParams struct {
 	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
 }
 
+// ListDeploymentsParams defines parameters for ListDeployments.
+type ListDeploymentsParams struct {
+	After  *string     `form:"after,omitempty" json:"after,omitempty"`
+	Limit  *int        `form:"limit,omitempty" json:"limit,omitempty"`
+	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
+}
+
+// CreateDeploymentParams defines parameters for CreateDeployment.
+type CreateDeploymentParams struct {
+	TeamId         TeamIDQuery `form:"team_id" json:"team_id"`
+	IdempotencyKey string      `json:"Idempotency-Key"`
+}
+
+// DeleteDeploymentParams defines parameters for DeleteDeployment.
+type DeleteDeploymentParams struct {
+	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
+
+	// IfMatch Required by the operation; omission returns 428.
+	IfMatch *string `json:"If-Match,omitempty"`
+}
+
+// GetDeploymentParams defines parameters for GetDeployment.
+type GetDeploymentParams struct {
+	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
+}
+
+// UpdateDeploymentParams defines parameters for UpdateDeployment.
+type UpdateDeploymentParams struct {
+	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
+
+	// IfMatch Required by the operation; omission returns 428.
+	IfMatch *string `json:"If-Match,omitempty"`
+}
+
 // GetLocalProjectServiceParams defines parameters for GetLocalProjectService.
 type GetLocalProjectServiceParams struct {
 	TeamId            TeamIDQuery `form:"team_id" json:"team_id"`
@@ -4487,6 +4588,12 @@ type SetPreviewTeamAccessJSONRequestBody = SetPreviewTeamAccessRequest
 
 // ApplyProjectConfigurationJSONRequestBody defines body for ApplyProjectConfiguration for application/json ContentType.
 type ApplyProjectConfigurationJSONRequestBody = ApplyProjectConfigurationRequest
+
+// CreateDeploymentJSONRequestBody defines body for CreateDeployment for application/json ContentType.
+type CreateDeploymentJSONRequestBody = CreateDeploymentRequest
+
+// UpdateDeploymentJSONRequestBody defines body for UpdateDeployment for application/json ContentType.
+type UpdateDeploymentJSONRequestBody = UpdateDeploymentRequest
 
 // RealizeLocalProjectServiceJSONRequestBody defines body for RealizeLocalProjectService for application/json ContentType.
 type RealizeLocalProjectServiceJSONRequestBody = RealizeLocalProjectServiceRequest
@@ -5026,6 +5133,45 @@ type ClientInterface interface {
 	//
 	// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
 	ApplyProjectConfiguration(ctx context.Context, projectKey string, body ApplyProjectConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListDeployments performs a GET /v1/projects/{project_key}/deployments (the `ListDeployments` operationId) request.
+	//
+	// List this project's saved deployments and targets for a current team manager, in bytewise ID order. No publisher credentials or enrollment secrets are returned.
+	ListDeployments(ctx context.Context, projectKey string, params *ListDeploymentsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateDeploymentWithBody performs a POST /v1/projects/{project_key}/deployments (the `CreateDeployment` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Create a deployment using existing logical project declarations. Requires current team manager authority. The original Idempotency-Key recovers the same committed deployment; a deleted deployment is never recreated by replay. Does not grant connect or publish capabilities to a credential.
+	CreateDeploymentWithBody(ctx context.Context, projectKey string, params *CreateDeploymentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateDeployment performs a POST /v1/projects/{project_key}/deployments (the `CreateDeployment` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Create a deployment using existing logical project declarations. Requires current team manager authority. The original Idempotency-Key recovers the same committed deployment; a deleted deployment is never recreated by replay. Does not grant connect or publish capabilities to a credential.
+	CreateDeployment(ctx context.Context, projectKey string, params *CreateDeploymentParams, body CreateDeploymentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteDeployment performs a DELETE /v1/projects/{project_key}/deployments/{deployment} (the `DeleteDeployment` operationId) request.
+	//
+	// Retire this deployment's saved services, enrollments, and publishers. Requires a current manager and the latest strong ETag. Sibling deployments and logical declarations are preserved.
+	DeleteDeployment(ctx context.Context, projectKey string, deployment string, params *DeleteDeploymentParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetDeployment performs a GET /v1/projects/{project_key}/deployments/{deployment} (the `GetDeployment` operationId) request.
+	//
+	// Read a saved deployment and its targets with current team manager authority.
+	GetDeployment(ctx context.Context, projectKey string, deployment string, params *GetDeploymentParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateDeploymentWithBody performs a PATCH /v1/projects/{project_key}/deployments/{deployment} (the `UpdateDeployment` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Update selected existing targets/TLS on the same records used by manager apply. Requires a current manager and the strong ETag returned by the latest read. Stale conditions fail with 412; a missing condition fails with 428.
+	UpdateDeploymentWithBody(ctx context.Context, projectKey string, deployment string, params *UpdateDeploymentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateDeployment performs a PATCH /v1/projects/{project_key}/deployments/{deployment} (the `UpdateDeployment` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Update selected existing targets/TLS on the same records used by manager apply. Requires a current manager and the strong ETag returned by the latest read. Stale conditions fail with 412; a missing condition fails with 428.
+	UpdateDeployment(ctx context.Context, projectKey string, deployment string, params *UpdateDeploymentParams, body UpdateDeploymentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetLocalProjectService performs a GET /v1/projects/{project_key}/local-services/{service} (the `GetLocalProjectService` operationId) request.
 	//
@@ -6528,6 +6674,115 @@ func (c *Client) ApplyProjectConfigurationWithBody(ctx context.Context, projectK
 // Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
 func (c *Client) ApplyProjectConfiguration(ctx context.Context, projectKey string, body ApplyProjectConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewApplyProjectConfigurationRequest(c.Server, projectKey, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListDeployments performs a GET /v1/projects/{project_key}/deployments (the `ListDeployments` operationId) request.
+//
+// List this project's saved deployments and targets for a current team manager, in bytewise ID order. No publisher credentials or enrollment secrets are returned.
+func (c *Client) ListDeployments(ctx context.Context, projectKey string, params *ListDeploymentsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListDeploymentsRequest(c.Server, projectKey, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateDeploymentWithBody performs a POST /v1/projects/{project_key}/deployments (the `CreateDeployment` operationId) request,
+// with any type of body and a specified content type.
+//
+// Create a deployment using existing logical project declarations. Requires current team manager authority. The original Idempotency-Key recovers the same committed deployment; a deleted deployment is never recreated by replay. Does not grant connect or publish capabilities to a credential.
+func (c *Client) CreateDeploymentWithBody(ctx context.Context, projectKey string, params *CreateDeploymentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateDeploymentRequestWithBody(c.Server, projectKey, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateDeployment performs a POST /v1/projects/{project_key}/deployments (the `CreateDeployment` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Create a deployment using existing logical project declarations. Requires current team manager authority. The original Idempotency-Key recovers the same committed deployment; a deleted deployment is never recreated by replay. Does not grant connect or publish capabilities to a credential.
+func (c *Client) CreateDeployment(ctx context.Context, projectKey string, params *CreateDeploymentParams, body CreateDeploymentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateDeploymentRequest(c.Server, projectKey, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteDeployment performs a DELETE /v1/projects/{project_key}/deployments/{deployment} (the `DeleteDeployment` operationId) request.
+//
+// Retire this deployment's saved services, enrollments, and publishers. Requires a current manager and the latest strong ETag. Sibling deployments and logical declarations are preserved.
+func (c *Client) DeleteDeployment(ctx context.Context, projectKey string, deployment string, params *DeleteDeploymentParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteDeploymentRequest(c.Server, projectKey, deployment, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetDeployment performs a GET /v1/projects/{project_key}/deployments/{deployment} (the `GetDeployment` operationId) request.
+//
+// Read a saved deployment and its targets with current team manager authority.
+func (c *Client) GetDeployment(ctx context.Context, projectKey string, deployment string, params *GetDeploymentParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetDeploymentRequest(c.Server, projectKey, deployment, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateDeploymentWithBody performs a PATCH /v1/projects/{project_key}/deployments/{deployment} (the `UpdateDeployment` operationId) request,
+// with any type of body and a specified content type.
+//
+// Update selected existing targets/TLS on the same records used by manager apply. Requires a current manager and the strong ETag returned by the latest read. Stale conditions fail with 412; a missing condition fails with 428.
+func (c *Client) UpdateDeploymentWithBody(ctx context.Context, projectKey string, deployment string, params *UpdateDeploymentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateDeploymentRequestWithBody(c.Server, projectKey, deployment, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateDeployment performs a PATCH /v1/projects/{project_key}/deployments/{deployment} (the `UpdateDeployment` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Update selected existing targets/TLS on the same records used by manager apply. Requires a current manager and the strong ETag returned by the latest read. Stale conditions fail with 412; a missing condition fails with 428.
+func (c *Client) UpdateDeployment(ctx context.Context, projectKey string, deployment string, params *UpdateDeploymentParams, body UpdateDeploymentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateDeploymentRequest(c.Server, projectKey, deployment, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -10479,6 +10734,405 @@ func NewApplyProjectConfigurationRequestWithBody(server string, projectKey strin
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListDeploymentsRequest constructs an http.Request for the ListDeployments method
+func NewListDeploymentsRequest(server string, projectKey string, params *ListDeploymentsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/deployments", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.After != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "after", *params.After, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateDeploymentRequest calls the generic CreateDeployment builder with application/json body
+func NewCreateDeploymentRequest(server string, projectKey string, params *CreateDeploymentParams, body CreateDeploymentJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateDeploymentRequestWithBody(server, projectKey, params, "application/json", bodyReader)
+}
+
+// NewCreateDeploymentRequestWithBody constructs an http.Request for the CreateDeployment method, with any body, and a specified content type
+func NewCreateDeploymentRequestWithBody(server string, projectKey string, params *CreateDeploymentParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/deployments", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewDeleteDeploymentRequest constructs an http.Request for the DeleteDeployment method
+func NewDeleteDeploymentRequest(server string, projectKey string, deployment string, params *DeleteDeploymentParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "deployment", deployment, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/deployments/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.IfMatch != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "If-Match", *params.IfMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("If-Match", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewGetDeploymentRequest constructs an http.Request for the GetDeployment method
+func NewGetDeploymentRequest(server string, projectKey string, deployment string, params *GetDeploymentParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "deployment", deployment, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/deployments/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateDeploymentRequest calls the generic UpdateDeployment builder with application/json body
+func NewUpdateDeploymentRequest(server string, projectKey string, deployment string, params *UpdateDeploymentParams, body UpdateDeploymentJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateDeploymentRequestWithBody(server, projectKey, deployment, params, "application/json", bodyReader)
+}
+
+// NewUpdateDeploymentRequestWithBody constructs an http.Request for the UpdateDeployment method, with any body, and a specified content type
+func NewUpdateDeploymentRequestWithBody(server string, projectKey string, deployment string, params *UpdateDeploymentParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "deployment", deployment, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/deployments/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.IfMatch != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "If-Match", *params.IfMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("If-Match", headerParam0)
+		}
+
+	}
 
 	return req, nil
 }
@@ -16047,6 +16701,55 @@ type ClientWithResponsesInterface interface {
 	// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
 	ApplyProjectConfigurationWithResponse(ctx context.Context, projectKey string, body ApplyProjectConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*ApplyProjectConfigurationResponse, error)
 
+	// ListDeploymentsWithResponse performs a GET /v1/projects/{project_key}/deployments (the `ListDeployments` operationId) request.
+	//
+	// List this project's saved deployments and targets for a current team manager, in bytewise ID order. No publisher credentials or enrollment secrets are returned.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ListDeploymentsWithResponse(ctx context.Context, projectKey string, params *ListDeploymentsParams, reqEditors ...RequestEditorFn) (*ListDeploymentsResponse, error)
+
+	// CreateDeploymentWithBodyWithResponse performs a POST /v1/projects/{project_key}/deployments (the `CreateDeployment` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Create a deployment using existing logical project declarations. Requires current team manager authority. The original Idempotency-Key recovers the same committed deployment; a deleted deployment is never recreated by replay. Does not grant connect or publish capabilities to a credential.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CreateDeploymentWithBodyWithResponse(ctx context.Context, projectKey string, params *CreateDeploymentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDeploymentResponse, error)
+
+	// CreateDeploymentWithResponse performs a POST /v1/projects/{project_key}/deployments (the `CreateDeployment` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Create a deployment using existing logical project declarations. Requires current team manager authority. The original Idempotency-Key recovers the same committed deployment; a deleted deployment is never recreated by replay. Does not grant connect or publish capabilities to a credential.
+	CreateDeploymentWithResponse(ctx context.Context, projectKey string, params *CreateDeploymentParams, body CreateDeploymentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDeploymentResponse, error)
+
+	// DeleteDeploymentWithResponse performs a DELETE /v1/projects/{project_key}/deployments/{deployment} (the `DeleteDeployment` operationId) request.
+	//
+	// Retire this deployment's saved services, enrollments, and publishers. Requires a current manager and the latest strong ETag. Sibling deployments and logical declarations are preserved.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	DeleteDeploymentWithResponse(ctx context.Context, projectKey string, deployment string, params *DeleteDeploymentParams, reqEditors ...RequestEditorFn) (*DeleteDeploymentResponse, error)
+
+	// GetDeploymentWithResponse performs a GET /v1/projects/{project_key}/deployments/{deployment} (the `GetDeployment` operationId) request.
+	//
+	// Read a saved deployment and its targets with current team manager authority.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	GetDeploymentWithResponse(ctx context.Context, projectKey string, deployment string, params *GetDeploymentParams, reqEditors ...RequestEditorFn) (*GetDeploymentResponse, error)
+
+	// UpdateDeploymentWithBodyWithResponse performs a PATCH /v1/projects/{project_key}/deployments/{deployment} (the `UpdateDeployment` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Update selected existing targets/TLS on the same records used by manager apply. Requires a current manager and the strong ETag returned by the latest read. Stale conditions fail with 412; a missing condition fails with 428.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	UpdateDeploymentWithBodyWithResponse(ctx context.Context, projectKey string, deployment string, params *UpdateDeploymentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateDeploymentResponse, error)
+
+	// UpdateDeploymentWithResponse performs a PATCH /v1/projects/{project_key}/deployments/{deployment} (the `UpdateDeployment` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Update selected existing targets/TLS on the same records used by manager apply. Requires a current manager and the strong ETag returned by the latest read. Stale conditions fail with 412; a missing condition fails with 428.
+	UpdateDeploymentWithResponse(ctx context.Context, projectKey string, deployment string, params *UpdateDeploymentParams, body UpdateDeploymentJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateDeploymentResponse, error)
+
 	// GetLocalProjectServiceWithResponse performs a GET /v1/projects/{project_key}/local-services/{service} (the `GetLocalProjectService` operationId) request.
 	//
 	// Read the exact service previously realized for this team, project source, service key, and worktree. Requires current ordinary private visitor access, not project management access. Returns only immutable identity and approved visitor protocol/TLS metadata, never configuration, targets, or credentials. Does not realize or adopt a service. Missing or unauthorized bindings return not found; an authorized binding with another source fingerprint returns conflict. No other team, project, worktree, or saved name is searched.
@@ -18462,6 +19165,260 @@ func (r ApplyProjectConfigurationResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ApplyProjectConfigurationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListDeploymentsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DeploymentPage
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListDeploymentsResponse) GetJSON200() *DeploymentPage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListDeploymentsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListDeploymentsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListDeploymentsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListDeploymentsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListDeploymentsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// CreateDeploymentResponse201Headers the declared response headers of an HTTP 201 response for CreateDeployment
+type CreateDeploymentResponse201Headers struct {
+	ETag *string
+}
+
+type CreateDeploymentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *Deployment
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers201 the parsed response headers for an HTTP 201 response
+	Headers201 *CreateDeploymentResponse201Headers
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateDeploymentResponse) GetJSON201() *Deployment {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateDeploymentResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateDeploymentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateDeploymentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateDeploymentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateDeploymentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteDeploymentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeleteDeploymentResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteDeploymentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteDeploymentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteDeploymentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteDeploymentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetDeploymentResponse200Headers the declared response headers of an HTTP 200 response for GetDeployment
+type GetDeploymentResponse200Headers struct {
+	ETag *string
+}
+
+type GetDeploymentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Deployment
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetDeploymentResponse200Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetDeploymentResponse) GetJSON200() *Deployment {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetDeploymentResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetDeploymentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetDeploymentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetDeploymentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetDeploymentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// UpdateDeploymentResponse200Headers the declared response headers of an HTTP 200 response for UpdateDeployment
+type UpdateDeploymentResponse200Headers struct {
+	ETag *string
+}
+
+type UpdateDeploymentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Deployment
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *UpdateDeploymentResponse200Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateDeploymentResponse) GetJSON200() *Deployment {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UpdateDeploymentResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateDeploymentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateDeploymentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateDeploymentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateDeploymentResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -23961,6 +24918,97 @@ func (c *ClientWithResponses) ApplyProjectConfigurationWithResponse(ctx context.
 	return ParseApplyProjectConfigurationResponse(rsp)
 }
 
+// ListDeploymentsWithResponse performs a GET /v1/projects/{project_key}/deployments (the `ListDeployments` operationId) request.
+//
+// List this project's saved deployments and targets for a current team manager, in bytewise ID order. No publisher credentials or enrollment secrets are returned.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ListDeploymentsWithResponse(ctx context.Context, projectKey string, params *ListDeploymentsParams, reqEditors ...RequestEditorFn) (*ListDeploymentsResponse, error) {
+	rsp, err := c.ListDeployments(ctx, projectKey, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListDeploymentsResponse(rsp)
+}
+
+// CreateDeploymentWithBodyWithResponse performs a POST /v1/projects/{project_key}/deployments (the `CreateDeployment` operationId) request,
+// with any type of body and a specified content type.
+//
+// Create a deployment using existing logical project declarations. Requires current team manager authority. The original Idempotency-Key recovers the same committed deployment; a deleted deployment is never recreated by replay. Does not grant connect or publish capabilities to a credential.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreateDeploymentWithBodyWithResponse(ctx context.Context, projectKey string, params *CreateDeploymentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDeploymentResponse, error) {
+	rsp, err := c.CreateDeploymentWithBody(ctx, projectKey, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateDeploymentResponse(rsp)
+}
+
+// CreateDeploymentWithResponse performs a POST /v1/projects/{project_key}/deployments (the `CreateDeployment` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Create a deployment using existing logical project declarations. Requires current team manager authority. The original Idempotency-Key recovers the same committed deployment; a deleted deployment is never recreated by replay. Does not grant connect or publish capabilities to a credential.
+func (c *ClientWithResponses) CreateDeploymentWithResponse(ctx context.Context, projectKey string, params *CreateDeploymentParams, body CreateDeploymentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDeploymentResponse, error) {
+	rsp, err := c.CreateDeployment(ctx, projectKey, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateDeploymentResponse(rsp)
+}
+
+// DeleteDeploymentWithResponse performs a DELETE /v1/projects/{project_key}/deployments/{deployment} (the `DeleteDeployment` operationId) request.
+//
+// Retire this deployment's saved services, enrollments, and publishers. Requires a current manager and the latest strong ETag. Sibling deployments and logical declarations are preserved.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) DeleteDeploymentWithResponse(ctx context.Context, projectKey string, deployment string, params *DeleteDeploymentParams, reqEditors ...RequestEditorFn) (*DeleteDeploymentResponse, error) {
+	rsp, err := c.DeleteDeployment(ctx, projectKey, deployment, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteDeploymentResponse(rsp)
+}
+
+// GetDeploymentWithResponse performs a GET /v1/projects/{project_key}/deployments/{deployment} (the `GetDeployment` operationId) request.
+//
+// Read a saved deployment and its targets with current team manager authority.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) GetDeploymentWithResponse(ctx context.Context, projectKey string, deployment string, params *GetDeploymentParams, reqEditors ...RequestEditorFn) (*GetDeploymentResponse, error) {
+	rsp, err := c.GetDeployment(ctx, projectKey, deployment, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetDeploymentResponse(rsp)
+}
+
+// UpdateDeploymentWithBodyWithResponse performs a PATCH /v1/projects/{project_key}/deployments/{deployment} (the `UpdateDeployment` operationId) request,
+// with any type of body and a specified content type.
+//
+// Update selected existing targets/TLS on the same records used by manager apply. Requires a current manager and the strong ETag returned by the latest read. Stale conditions fail with 412; a missing condition fails with 428.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) UpdateDeploymentWithBodyWithResponse(ctx context.Context, projectKey string, deployment string, params *UpdateDeploymentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateDeploymentResponse, error) {
+	rsp, err := c.UpdateDeploymentWithBody(ctx, projectKey, deployment, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateDeploymentResponse(rsp)
+}
+
+// UpdateDeploymentWithResponse performs a PATCH /v1/projects/{project_key}/deployments/{deployment} (the `UpdateDeployment` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Update selected existing targets/TLS on the same records used by manager apply. Requires a current manager and the strong ETag returned by the latest read. Stale conditions fail with 412; a missing condition fails with 428.
+func (c *ClientWithResponses) UpdateDeploymentWithResponse(ctx context.Context, projectKey string, deployment string, params *UpdateDeploymentParams, body UpdateDeploymentJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateDeploymentResponse, error) {
+	rsp, err := c.UpdateDeployment(ctx, projectKey, deployment, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateDeploymentResponse(rsp)
+}
+
 // GetLocalProjectServiceWithResponse performs a GET /v1/projects/{project_key}/local-services/{service} (the `GetLocalProjectService` operationId) request.
 //
 // Read the exact service previously realized for this team, project source, service key, and worktree. Requires current ordinary private visitor access, not project management access. Returns only immutable identity and approved visitor protocol/TLS metadata, never configuration, targets, or credentials. Does not realize or adopt a service. Missing or unauthorized bindings return not found; an authorized binding with another source fingerprint returns conflict. No other team, project, worktree, or saved name is searched.
@@ -26991,6 +28039,206 @@ func ParseApplyProjectConfigurationResponse(rsp *http.Response) (*ApplyProjectCo
 		}
 		response.ApplicationproblemJSONDefault = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseListDeploymentsResponse parses an HTTP response from a ListDeploymentsWithResponse call
+func ParseListDeploymentsResponse(rsp *http.Response) (*ListDeploymentsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListDeploymentsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DeploymentPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateDeploymentResponse parses an HTTP response from a CreateDeploymentWithResponse call
+func ParseCreateDeploymentResponse(rsp *http.Response) (*CreateDeploymentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateDeploymentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Deployment
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 201:
+		var headers CreateDeploymentResponse201Headers
+		if values := rsp.Header.Values("ETag"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "ETag", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ETag = &value
+		}
+		response.Headers201 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseDeleteDeploymentResponse parses an HTTP response from a DeleteDeploymentWithResponse call
+func ParseDeleteDeploymentResponse(rsp *http.Response) (*DeleteDeploymentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteDeploymentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetDeploymentResponse parses an HTTP response from a GetDeploymentWithResponse call
+func ParseGetDeploymentResponse(rsp *http.Response) (*GetDeploymentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetDeploymentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Deployment
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers GetDeploymentResponse200Headers
+		if values := rsp.Header.Values("ETag"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "ETag", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ETag = &value
+		}
+		response.Headers200 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseUpdateDeploymentResponse parses an HTTP response from a UpdateDeploymentWithResponse call
+func ParseUpdateDeploymentResponse(rsp *http.Response) (*UpdateDeploymentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateDeploymentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Deployment
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers UpdateDeploymentResponse200Headers
+		if values := rsp.Header.Values("ETag"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "ETag", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ETag = &value
+		}
+		response.Headers200 = &headers
 	}
 
 	return response, nil
@@ -30571,6 +31819,21 @@ type ServerInterface interface {
 	// (PUT /v1/projects/{project_key}/configuration)
 	ApplyProjectConfiguration(w http.ResponseWriter, r *http.Request, projectKey string)
 
+	// (GET /v1/projects/{project_key}/deployments)
+	ListDeployments(w http.ResponseWriter, r *http.Request, projectKey string, params ListDeploymentsParams)
+
+	// (POST /v1/projects/{project_key}/deployments)
+	CreateDeployment(w http.ResponseWriter, r *http.Request, projectKey string, params CreateDeploymentParams)
+
+	// (DELETE /v1/projects/{project_key}/deployments/{deployment})
+	DeleteDeployment(w http.ResponseWriter, r *http.Request, projectKey string, deployment string, params DeleteDeploymentParams)
+
+	// (GET /v1/projects/{project_key}/deployments/{deployment})
+	GetDeployment(w http.ResponseWriter, r *http.Request, projectKey string, deployment string, params GetDeploymentParams)
+
+	// (PATCH /v1/projects/{project_key}/deployments/{deployment})
+	UpdateDeployment(w http.ResponseWriter, r *http.Request, projectKey string, deployment string, params UpdateDeploymentParams)
+
 	// (GET /v1/projects/{project_key}/local-services/{service})
 	GetLocalProjectService(w http.ResponseWriter, r *http.Request, projectKey string, service string, params GetLocalProjectServiceParams)
 
@@ -31794,6 +33057,336 @@ func (siw *ServerInterfaceWrapper) ApplyProjectConfiguration(w http.ResponseWrit
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ApplyProjectConfiguration(w, r, projectKey)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListDeployments operation middleware
+func (siw *ServerInterfaceWrapper) ListDeployments(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListDeploymentsParams
+
+	// ------------- Optional query parameter "after" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "after", r.URL.Query(), &params.After, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "after"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "after", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListDeployments(w, r, projectKey, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateDeployment operation middleware
+func (siw *ServerInterfaceWrapper) CreateDeployment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateDeploymentParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateDeployment(w, r, projectKey, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteDeployment operation middleware
+func (siw *ServerInterfaceWrapper) DeleteDeployment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "deployment" -------------
+	var deployment string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "deployment", r.PathValue("deployment"), &deployment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "deployment", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DeleteDeploymentParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "If-Match" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("If-Match")]; found {
+		var IfMatch string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "If-Match", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "If-Match", valueList[0], &IfMatch, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "If-Match", Err: err})
+			return
+		}
+
+		params.IfMatch = &IfMatch
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteDeployment(w, r, projectKey, deployment, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetDeployment operation middleware
+func (siw *ServerInterfaceWrapper) GetDeployment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "deployment" -------------
+	var deployment string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "deployment", r.PathValue("deployment"), &deployment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "deployment", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetDeploymentParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetDeployment(w, r, projectKey, deployment, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateDeployment operation middleware
+func (siw *ServerInterfaceWrapper) UpdateDeployment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "deployment" -------------
+	var deployment string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "deployment", r.PathValue("deployment"), &deployment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "deployment", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params UpdateDeploymentParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "If-Match" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("If-Match")]; found {
+		var IfMatch string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "If-Match", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "If-Match", valueList[0], &IfMatch, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "If-Match", Err: err})
+			return
+		}
+
+		params.IfMatch = &IfMatch
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateDeployment(w, r, projectKey, deployment, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -35584,6 +37177,11 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/deployments", wrapper.ListDeployments)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/deployments", wrapper.CreateDeployment)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/projects/{project_key}/deployments/{deployment}", wrapper.DeleteDeployment)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/deployments/{deployment}", wrapper.GetDeployment)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/v1/projects/{project_key}/deployments/{deployment}", wrapper.UpdateDeployment)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs", wrapper.ListConnectorPeerPairs)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery", wrapper.DeliverConnectorPeerPair)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared", wrapper.ConfirmConnectorPeerPairPrepared)

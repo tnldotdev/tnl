@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-deployments')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-deployment-configuration')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-deployments');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-deployment-configuration');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -2039,6 +2039,14 @@ CREATE TABLE control.applied_projects (
     PRIMARY KEY (team_id, project_key)
 );
 ALTER TABLE control.workload_sessions ADD FOREIGN KEY(team_id,project_key) REFERENCES control.applied_projects(team_id,project_key);
+CREATE TABLE control.project_services (
+    team_id text NOT NULL,
+    project_key text NOT NULL,
+    name text NOT NULL CHECK (name ~ '^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$'),
+    protocol text NOT NULL CHECK (protocol IN ('http','tcp','mysql','postgres','kubernetes')),
+    PRIMARY KEY (team_id,project_key,name),
+    FOREIGN KEY (team_id,project_key) REFERENCES control.applied_projects(team_id,project_key) ON DELETE RESTRICT
+);
 CREATE TABLE control.project_publisher_groups (
     ownership text NOT NULL DEFAULT 'team' CHECK (ownership='team'),
     id text PRIMARY KEY,
@@ -2049,7 +2057,20 @@ CREATE TABLE control.project_publisher_groups (
     domain_id text REFERENCES control.domains(id) ON DELETE RESTRICT,
     namespace text NOT NULL DEFAULT '',
     public boolean NOT NULL DEFAULT false,
+    revision bigint NOT NULL DEFAULT 0 CHECK (revision >= 0),
+    configuration_hash text NOT NULL DEFAULT '',
+    configuration_ciphertext bytea,
+    storage_key_id text,
+    create_actor_id text REFERENCES control.identities(id) ON DELETE RESTRICT,
+    create_idempotency_key text,
+    create_request_digest bytea,
     deleted_at timestamptz,
+    CHECK ((revision=0)=(configuration_ciphertext IS NULL)),
+    CHECK ((revision=0)=(configuration_hash='')),
+    CHECK ((configuration_ciphertext IS NULL)=(storage_key_id IS NULL)),
+    CHECK ((create_actor_id IS NULL)=(create_idempotency_key IS NULL)),
+    CHECK ((create_actor_id IS NULL)=(create_request_digest IS NULL)),
+    UNIQUE (team_id,project_key,create_actor_id,create_idempotency_key),
     FOREIGN KEY (team_id, project_key) REFERENCES control.applied_projects(team_id, project_key) ON DELETE RESTRICT,
     UNIQUE (id, team_id, project_key)
 );
@@ -2145,6 +2166,7 @@ CREATE TABLE control.applied_project_services (
     desired_revision bigint NOT NULL CHECK (desired_revision >= 1),
     UNIQUE NULLS NOT DISTINCT (team_id, project_key, group_id, service),
     FOREIGN KEY (team_id, project_key) REFERENCES control.applied_projects(team_id, project_key) ON DELETE RESTRICT,
+    FOREIGN KEY (team_id, project_key, service) REFERENCES control.project_services(team_id, project_key, name) ON DELETE RESTRICT,
     FOREIGN KEY (group_id, team_id, project_key) REFERENCES control.project_publisher_groups(id, team_id, project_key) ON DELETE RESTRICT,
     CHECK (service_id IS NULL OR public_url_id IS NULL)
 );

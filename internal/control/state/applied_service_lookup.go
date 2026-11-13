@@ -25,10 +25,25 @@ func (d *Database) GetProjectService(ctx context.Context, r GetProjectServiceReq
 		return result, err
 	}
 	defer rollback(ctx, tx, "read applied service", &retErr)()
+	project, err := controlstatedb.New(tx).GetAppliedProject(ctx, controlstatedb.GetAppliedProjectParams{TeamID: r.TeamID, ProjectKey: r.ProjectKey})
+	if err != nil {
+		return result, publisherLookupError(err, ErrServiceAccess)
+	}
+	if project.SourceFingerprint != r.SourceFingerprint {
+		return result, ErrServiceAccess
+	}
+	configuration, err := d.openAppliedProject(project)
+	if err != nil {
+		return result, err
+	}
+	declared, ok := configuration.Services[r.Service]
+	if !ok || declared.PublisherGroup == "local" {
+		return result, ErrServiceAccess
+	}
 	var id string
 	err = tx.QueryRow(ctx, `SELECT service.service_id FROM control.applied_project_services service JOIN control.applied_projects project USING(team_id,project_key)
 	    JOIN control.project_publisher_groups publisher_group ON publisher_group.id=service.group_id AND publisher_group.deleted_at IS NULL
-	    WHERE project.team_id=$1 AND project.project_key=$2 AND project.source_fingerprint=$3 AND service.service=$4 AND service.service_id IS NOT NULL`, r.TeamID, r.ProjectKey, r.SourceFingerprint, r.Service).Scan(&id)
+	    WHERE project.team_id=$1 AND project.project_key=$2 AND project.source_fingerprint=$3 AND service.service=$4 AND service.service_id IS NOT NULL AND publisher_group.name=$5`, r.TeamID, r.ProjectKey, r.SourceFingerprint, r.Service, declared.PublisherGroup).Scan(&id)
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}

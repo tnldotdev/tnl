@@ -9,6 +9,10 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example.com
 paths:
+  /v1/projects/{project_key}/deployments:
+    $ref: "./paths/deployments.yaml#/paths/~1v1~1projects~1{project_key}~1deployments"
+  /v1/projects/{project_key}/deployments/{deployment}:
+    $ref: "./paths/deployments.yaml#/paths/~1v1~1projects~1{project_key}~1deployments~1{deployment}"
   /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs:
     $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1connector-peer-pairs"
   /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery:
@@ -368,6 +372,24 @@ components:
       $ref: "./schemas/projects.yaml#/schemas/LocalProjectService"
     ApplyProjectConfigurationRequest:
       $ref: "./schemas/projects.yaml#/schemas/ApplyProjectConfigurationRequest"
+    DeploymentTargetTLS:
+      $ref: "./schemas/deployments.yaml#/schemas/DeploymentTargetTLS"
+    DeploymentTarget:
+      $ref: "./schemas/deployments.yaml#/schemas/DeploymentTarget"
+    DeploymentTargets:
+      $ref: "./schemas/deployments.yaml#/schemas/DeploymentTargets"
+    DeploymentTargetStatus:
+      $ref: "./schemas/deployments.yaml#/schemas/DeploymentTargetStatus"
+    CreateDeploymentRequest:
+      $ref: "./schemas/deployments.yaml#/schemas/CreateDeploymentRequest"
+    UpdateDeploymentRequest:
+      $ref: "./schemas/deployments.yaml#/schemas/UpdateDeploymentRequest"
+    DeploymentService:
+      $ref: "./schemas/deployments.yaml#/schemas/DeploymentService"
+    Deployment:
+      $ref: "./schemas/deployments.yaml#/schemas/Deployment"
+    DeploymentPage:
+      $ref: "./schemas/deployments.yaml#/schemas/DeploymentPage"
     ProjectConfiguration:
       $ref: "./schemas/projects.yaml#/schemas/ProjectConfiguration"
     ProjectPublisherGroup:

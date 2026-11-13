@@ -340,33 +340,6 @@ func (q *Queries) RotateServiceHTTPBrowserSession(ctx context.Context, arg Rotat
 	return err
 }
 
-const serviceHTTPAppliedConfiguration = `-- name: ServiceHTTPAppliedConfiguration :one
-SELECT project.team_id,project.project_key,project.configuration_ciphertext,project.storage_key_id,service.service FROM control.applied_project_services service
-JOIN control.applied_projects project ON project.team_id=service.team_id AND project.project_key=service.project_key
-WHERE service.service_id=$1
-`
-
-type ServiceHTTPAppliedConfigurationRow struct {
-	TeamID                  string
-	ProjectKey              string
-	ConfigurationCiphertext []byte
-	StorageKeyID            string
-	Service                 string
-}
-
-func (q *Queries) ServiceHTTPAppliedConfiguration(ctx context.Context, serviceID pgtype.Text) (ServiceHTTPAppliedConfigurationRow, error) {
-	row := q.db.QueryRow(ctx, serviceHTTPAppliedConfiguration, serviceID)
-	var i ServiceHTTPAppliedConfigurationRow
-	err := row.Scan(
-		&i.TeamID,
-		&i.ProjectKey,
-		&i.ConfigurationCiphertext,
-		&i.StorageKeyID,
-		&i.Service,
-	)
-	return i, err
-}
-
 const serviceHTTPBrowserEndpoint = `-- name: ServiceHTTPBrowserEndpoint :one
 SELECT s.team_id,s.certificate_hostname,s.service_port,
     ARRAY(SELECT run.id FROM control.service_runs run
