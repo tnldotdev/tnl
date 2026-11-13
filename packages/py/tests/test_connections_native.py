@@ -93,6 +93,110 @@ def assert_tls_echo(connection: tnl.PostgresConnection) -> None:
             assert stream.recv(4) == b"ping"
 
 
+def test_borrowed_deployment_selection_tls_isolation_and_connect_only_authority(
+    tmp_path: Path,
+    native_connections: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    binary, owner = native_connections
+    monkeypatch.setattr(_connections, "native_binary", lambda: binary)
+    monkeypatch.delenv("TNL_TOKEN", raising=False)
+    with subprocess.Popen(
+        [str(owner), str(tmp_path), str(binary)],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    ) as process:
+        assert process.stdout is not None
+        try:
+            with selectors.DefaultSelector() as selector:
+                selector.register(process.stdout, selectors.EVENT_READ)
+                assert selector.select(10), "connector owner did not become ready"
+            status = json.loads(process.stdout.readline())
+            file = status["connection_handle"]
+            monkeypatch.setenv("TNL_CONNECTION_HANDLE", file)
+
+            async def scenario() -> None:
+                client = tnl.create_client(
+                    project="acme/project", services={"database": {"protocol": "postgres"}}
+                )
+                first, sibling = client.deployment("production"), client.deployment("production")
+                monkeypatch.setenv("TNL_CONNECTION_HANDLE", "/wrong/job/handle.json")
+                monkeypatch.setenv("TNL_TOKEN", "wrong-tenant")
+                try:
+                    a, b = await first.connect("database"), await sibling.connect("database")
+                    assert isinstance(a, tnl.PostgresConnection) and isinstance(
+                        b, tnl.PostgresConnection
+                    )
+                    assert_tls_echo(a)
+                    assert first._scope.selected.ipc is not sibling._scope.selected.ipc
+                    with pytest.raises(tnl.TnlError) as management:
+                        await client.deployments.list()
+                    assert management.value.code == "sdk.configuration_invalid"
+                    await first.aclose()
+                    assert (
+                        first._scope.selected.ipc is not None and first._scope.selected.ipc.closed
+                    )
+                    assert (
+                        sibling._scope.selected.ipc is not None
+                        and not sibling._scope.selected.ipc.closed
+                    )
+                    assert process.poll() is None and Path(file).exists()
+                    assert_tls_echo(b)
+                    assert isinstance(await sibling.connect("database"), tnl.PostgresConnection)
+                    with pytest.raises(tnl.TnlError) as closed:
+                        await first.connect("database")
+                    assert closed.value.code == "sdk.connection_closed"
+                finally:
+                    await first.aclose()
+                    await sibling.aclose()
+
+                monkeypatch.delenv("TNL_TOKEN")
+                monkeypatch.setenv("TNL_CONNECTION_HANDLE", file)
+                for project, deployment in [
+                    ("other/project", "production"),
+                    ("acme/other", "production"),
+                    ("acme/project", "staging"),
+                ]:
+                    wrong = tnl.create_client(
+                        project=project, services={"database": {"protocol": "postgres"}}
+                    ).deployment(deployment)
+                    try:
+                        with pytest.raises(tnl.TnlError) as denied:
+                            await wrong.connect("database")
+                        assert denied.value.code == "sdk.connection_unavailable"
+                    finally:
+                        await wrong.aclose()
+
+                matching = tnl.create_client(
+                    project="tm_selected/project", services={"database": {"protocol": "postgres"}}
+                ).deployment("production")
+                try:
+                    result = await matching.connect("database")
+                    assert isinstance(result, tnl.PostgresConnection)
+                    assert_tls_echo(result)
+                finally:
+                    await matching.aclose()
+
+                explicit = tnl.create_client(
+                    project="acme/project",
+                    services={"database": {"protocol": "postgres"}},
+                    token="invalid-private",
+                ).deployment("production")
+                try:
+                    with pytest.raises(tnl.TnlError):
+                        await explicit.connect("database")
+                    assert explicit._scope.mounted is None and explicit._scope.selected.ipc is None
+                finally:
+                    await explicit.aclose()
+                assert process.poll() is None and Path(file).exists()
+
+            asyncio.run(scenario())
+        finally:
+            process.terminate()
+            process.wait(timeout=10)
+
+
 def test_owned_deadline_recovery_joins_real_native_owner_before_same_port_restart(
     tmp_path: Path,
     native_connections: tuple[Path, Path],
