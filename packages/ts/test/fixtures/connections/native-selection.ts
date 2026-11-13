@@ -1,13 +1,12 @@
 import assert from "node:assert/strict";
 import { rmSync } from "node:fs";
 import { cp, mkdtemp, readFile, rm } from "node:fs/promises";
-import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import * as z from "zod";
 import { createInterface } from "node:readline";
-import { tnl } from "@tnldotdev/tnl";
 import { configureWorkload } from "@tnldotdev/tnl/workload";
+import { connectionHandle, connectionClient } from "../../../dist/internal/connector/connection.js";
 
 const lines = createInterface({ input: process.stdin })[Symbol.asyncIterator]();
 const token = (await readFile("assertion", "utf8")).trim();
@@ -23,8 +22,10 @@ else if (!nativeProvider)
       return token;
     },
   });
-const handle = tnl.connect("api");
-const handles = nativeProvider ? Array.from({ length: 4 }, () => tnl.connect("api")) : [handle];
+const handle = connectionHandle("api", () => {});
+const handles = nativeProvider
+  ? Array.from({ length: 4 }, () => connectionHandle("api", () => {}))
+  : [handle];
 let copy: string | undefined;
 let copiedWorkload: typeof import("@tnldotdev/tnl/workload") | undefined;
 const listeners = process.listenerCount("beforeExit");
@@ -36,12 +37,6 @@ if (process.argv.includes("copies")) {
   });
   await cp(path.join(root, "dist"), path.join(copy, "dist"), { recursive: true });
   await cp(path.join(root, "package.json"), path.join(copy, "package.json"));
-  const second: typeof import("@tnldotdev/tnl") = await import(
-    pathToFileURL(path.join(copy, "dist/index.js")).href
-  );
-  const common: typeof import("@tnldotdev/tnl") = createRequire(path.join(copy, "package.json"))(
-    "@tnldotdev/tnl",
-  );
   const unbundled: typeof import("../../../src/internal/connector/connection.js") = await import(
     pathToFileURL(path.join(copy, "dist/internal/connector/connection.js")).href
   );
@@ -52,8 +47,8 @@ if (process.argv.includes("copies")) {
     { code: "sdk.workload_required" },
   );
   handles.push(
-    second.tnl.connect("api"),
-    common.tnl.connect("api"),
+    unbundled.connectionHandle("api", () => {}),
+    unbundled.connectionHandle("api", () => {}),
     unbundled.connectionHandle("api", () => {}),
   );
 }
@@ -80,16 +75,20 @@ console.log("warm");
 if (rotatingFile) {
   let created = 0;
   let closed = 0;
-  const getClient = tnl.client("api", {
-    create(connection) {
-      assert.ok("fetch" in connection);
-      created++;
-      return connection.fetch;
+  const getClient = connectionClient(
+    "api",
+    {
+      create(connection) {
+        assert.ok("fetch" in connection);
+        created++;
+        return connection.fetch;
+      },
+      close() {
+        closed++;
+      },
     },
-    close() {
-      closed++;
-    },
-  });
+    () => {},
+  );
   const client = await getClient();
   for (let i = 0; i < 3; i++) assert.equal(await getClient(), client);
   assert.equal(created, 1);
@@ -140,7 +139,7 @@ if (copiedWorkload !== undefined) {
           return token;
         },
       });
-      const current = await tnl.connect("api");
+      const current = await connectionHandle("api", () => {});
       assert.ok("fetch" in current);
       assert.equal(
         settings.some((value) => value.fetch === current.fetch),

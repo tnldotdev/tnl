@@ -219,7 +219,7 @@ export function createClient<const Services extends ServiceFacts = Record<never,
       )
         throw new TnlError("sdk.configuration_invalid");
       const directory = process.cwd();
-      const binary = resolveNativeBinary();
+      const binary = name === "local" ? resolveNativeBinary() : "";
       const environment = { ...process.env };
       const connector =
         name === "local"

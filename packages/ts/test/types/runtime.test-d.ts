@@ -1,4 +1,4 @@
-import { tnl, type TnlConnectionRegistry } from "@tnldotdev/tnl";
+import { createClient, tnl, type TnlConnectionRegistry } from "@tnldotdev/tnl";
 import { assert, assertType, expectTypeOf, test } from "vitest";
 // @ts-expect-error there is no separate server entrypoint.
 import type * as RemovedServer from "@tnldotdev/tnl/server";
@@ -22,18 +22,14 @@ test("SQL settings compose with application-owned credentials in real drivers", 
   assertType<import("mysql2").ConnectionOptions>({ ...mysql, ...credentials });
 });
 
-test("ungenerated connections require narrowing and never become any", () => {
+test("connections require declared service facts", () => {
   expectTypeOf(tnl.port).toEqualTypeOf<number>();
   expectTypeOf(tnl.dev).toEqualTypeOf<boolean>();
-  const connection = tnl.connect("any-service");
-  expectTypeOf(connection).not.toBeAny();
-  // @ts-expect-error an ungenerated service has a protocol union.
-  void connection.ssl;
-  assert("ssl" in connection);
-  assertType<string>(connection.host);
-  expectTypeOf(connection.ssl.rejectUnauthorized).toEqualTypeOf<true>();
-  // @ts-expect-error narrowing a SQL connection does not add HTTP settings.
-  void connection.fetch;
+  const deployment = createClient({ project: "team/project", token: "private" }).deployment(
+    "production",
+  );
+  // @ts-expect-error service names must come from portable service facts.
+  deployment.connect("any-service");
 });
 
 test("ungenerated metadata stays readonly, optional, and browser-safe", () => {

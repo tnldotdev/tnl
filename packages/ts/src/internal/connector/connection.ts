@@ -9,12 +9,11 @@ import { TnlCleanupError, TnlError } from "../../errors.js";
 import type {
   TnlClientFactory,
   TnlClientOptions,
-  TnlConnectionHandle,
   TnlConnectionRegistry,
   TnlFetch,
 } from "../../project.js";
 import { clientFactory } from "./client_factory.js";
-import { awaitableConnection } from "./awaitable_connection.js";
+import { awaitableConnection, type AwaitableConnection } from "./awaitable_connection.js";
 import { ownerIPC, prepareExternal, type OwnerIPC } from "./connection_ipc.js";
 import { context, contextKey, type NativeScope } from "./context.js";
 import { cancellable } from "./cancellation.js";
@@ -651,7 +650,7 @@ async function waitForPreparation<T>(operation: Promise<T>, signal?: AbortSignal
 export function connectionHandle(
   name: string,
   updateProject: (project: ProjectRuntime) => void,
-): TnlConnectionHandle<Settings> {
+): AwaitableConnection<Settings> {
   if (!isServiceName(name)) throw new TnlError("sdk.configuration_invalid");
   const externalFile = process.env.TNL_CONNECTION_HANDLE;
   const result = (prepared: Prepared) => {
@@ -733,7 +732,7 @@ export function deploymentConnector(
 ) {
   const key = `deployment:${randomUUID()}`;
   const captured = {
-    binary: resolveNativeBinary(),
+    binary: selection.handle === undefined ? resolveNativeBinary() : "",
     directory: process.cwd(),
     environment: {
       TNL_STATE_DIR: process.env.TNL_STATE_DIR,

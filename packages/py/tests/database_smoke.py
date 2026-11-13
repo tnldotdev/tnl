@@ -8,7 +8,7 @@ from pathlib import Path
 from psycopg_pool import AsyncConnectionPool
 
 import tnl
-from tnl import _connections
+from tnl import _client, _connections
 
 _connections.native_binary = lambda: Path(sys.argv[1])
 
@@ -59,7 +59,7 @@ async def main() -> None:
                 assert isinstance(row[0], int)
                 return row[0]
 
-        get = tnl.client("database", create=create, close=close)
+        get = _client.client("database", create=create, close=close)
         try:
             first = await get()
             original = await pid(first)

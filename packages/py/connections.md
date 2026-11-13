@@ -1,10 +1,10 @@
 # python connections
 
-Use `tnl.connect` from your project directory to reach a declared service.
-Start the service's publisher and run `tnl auth login` with an identity that can
-visit it. See the [AWS publisher guide](https://tnl.dev/docs/aws-publishers)
-for one way to run a publisher beside your database. The SDK uses the native tnl
-binary included in its platform wheel.
+Create a project-bound client and select a deployment to reach a declared
+service. Local HTTP, TCP, MySQL, PostgreSQL, and Kubernetes connections need
+no account. Remote access uses a registered credential, a job-owned connection
+handle, or an approved provider workload. See the [AWS publisher guide](https://tnl.dev/docs/aws-publishers)
+for one way to run a publisher beside your database.
 
 ## postgres with psycopg
 
@@ -21,9 +21,12 @@ from tnl import PostgresConnection
 
 
 async def main():
-    handle = tnl.connect("database")
-    try:
-        db = await handle
+    client = tnl.create_client(
+        project="acme/demo",
+        services={"database": {"protocol": "postgres"}},
+    )
+    async with client.deployment("production") as deployment:
+        db = await deployment.connect("database")
         assert isinstance(db, PostgresConnection)
         with NamedTemporaryFile(mode="w+") as roots:
             if db.ca:
@@ -42,8 +45,6 @@ async def main():
                 dbname=os.environ["DB_NAME"],
             ) as connection:
                 await connection.execute("select 1")
-    finally:
-        await handle.aclose()
 
 
 asyncio.run(main())
@@ -68,14 +69,14 @@ import socket
 import tnl
 from tnl import TCPConnection
 
-handle = tnl.connect("ssh")
-try:
-    stream = await handle
+client = tnl.create_client(
+    project="acme/demo", services={"ssh": {"protocol": "tcp"}}
+)
+async with client.deployment("production") as deployment:
+    stream = await deployment.connect("ssh")
     assert isinstance(stream, TCPConnection)
     with socket.create_connection((stream.host, stream.port), timeout=10) as connection:
         banner = connection.recv(256)
-finally:
-    await handle.aclose()
 ```
 
 - **Kubernetes:** Use the returned `kubeconfig` and `context`, including the
@@ -83,23 +84,23 @@ finally:
 - **MySQL:** Settings include a verified `ssl.SSLContext`, but there is no
   drop-in PyMySQL/mysqlclient adapter. A driver must dial `host` while verifying
   `server_hostname`. Passing the loopback address as the TLS name fails verification.
-- **HTTP:** There is no bundled HTTPX transport. An adapter must dial the local
-  connector while preserving the managed origin, TLS name, and request
-  authorization. Passing the returned `url` to an ordinary HTTP client is insufficient.
+- **HTTP:** There is no bundled HTTPX transport. For a remote service, an
+  adapter must dial the local connector while preserving the managed origin,
+  TLS name, and request authorization. Passing the returned `url` to an
+  ordinary HTTP client is insufficient.
+
+For local services, use `client.deployment("local")`. Its settings describe the
+local listener without starting a publisher connection or requiring sign-in.
 
 ## keep connections current
 
-Await a handle before opening a client. Returned settings are snapshots; await
-again for fresh settings when replacing a connection or pool. tnl does not update
-an existing pool or replay failed queries.
+Call `await deployment.connect("database")` for fresh settings when replacing a
+connection or pool. tnl does not update an existing pool or replay failed
+queries. Create a deployment handle inside each serving worker after a fork.
 
-After preparation, `handle.snapshot()` reads settings synchronously. It also
-works with a prepared `TNL_CONNECTION_HANDLE`; it cannot start a connector or
-sign in. Create handles inside each serving worker after a fork.
-
-Close clients before calling `handle.close()` or `await handle.aclose()`.
-Closing stops the SDK-owned connector shared by related handles. A connector
-supplied through `TNL_CONNECTION_HANDLE` remains the caller's responsibility.
+Close database clients before `await deployment.aclose()`. Closing stops only
+the connector owned by this handle. A job-owned connector supplied through
+`TNL_CONNECTION_HANDLE` remains the job's responsibility.
 
 ## typed service names
 
@@ -108,8 +109,15 @@ tnl generate
 uv add --editable ./.tnl/generated/python
 ```
 
-Replace `import tnl` with `from tnl_project import tnl`, keeping the connection
-class imports used above. YAML and JSON configurations generate
-exact service names and protocol types. TypeScript configurations return a union;
-narrow it with `isinstance`, as above. Commit `.tnl/generated/python/` and the
-dependency changes, and regenerate after changing services.
+For YAML and JSON configurations, `from tnl_project import create_client, deployment`
+supplies declared service facts and typed connection methods:
+
+```python
+client = create_client(project="acme/demo")
+production = deployment(client, "production")
+database = await production.connect("database")
+```
+
+For a TypeScript configuration, supply `services` to `create_client` explicitly;
+evaluated factory results cannot provide stable facts across worktrees. Commit
+`.tnl/generated/python/` and regenerate after changing services.

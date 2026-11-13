@@ -1,18 +1,22 @@
 import assert from "node:assert/strict";
 import { request } from "node:https";
 import { readFile } from "node:fs/promises";
-import { tnl } from "@tnldotdev/tnl";
+import { connectionHandle } from "../../../dist/internal/connector/connection.js";
+import type { ProjectRuntime } from "../../../dist/internal/project/runtime.js";
 
 const protocol = process.argv[2];
 const name = protocol === "kubernetes" ? "cluster" : "api";
-const handle = tnl.connect(name);
+let project: ProjectRuntime | undefined;
+const handle = connectionHandle(name, (value) => {
+  project = value;
+});
 const synchronous = { ...handle };
 const [first, second] = await Promise.all([handle, Promise.resolve(handle)]);
 assert.deepEqual(Object.keys(first), Object.keys(synchronous));
 assert.deepEqual(Object.keys(second), Object.keys(synchronous));
 assert.equal(Reflect.get(first, "then"), undefined);
 assert(Object.isFrozen(first));
-const metadata = tnl.services[name];
+const metadata = project?.services[name];
 assert(metadata && metadata.protocol === protocol);
 if ("fetch" in first && "fetch" in synchronous && "url" in metadata) {
   assert.equal(first.url, metadata.url);

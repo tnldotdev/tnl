@@ -39,12 +39,12 @@ async def main(binary: Path, startup: bool) -> None:
     _connections.native_binary = lambda: binary
     assertion = Path("assertion").read_text().strip()
     tnl.configure_workload("test", token=lambda: assertion)
-    failed = tnl.connect("api")
+    failed = _connections.connect("api")
     scope = failed._session.scope
     original_timeout = _connections._TIMEOUT
     registry: str | None = None
     orphan: Path | None = None
-    peer: tnl.ConnectionHandle[tnl.Connection] | None = None
+    peer: _connections.ConnectionHandle[tnl.Connection] | None = None
     try:
         # the authority stalls service preparation, after sdkOwner has registered
         # its detached child. exercise the actual command deadline and SIGKILL,
@@ -98,7 +98,7 @@ async def main(binary: Path, startup: bool) -> None:
         # a different native-verified identity shares this registry. no SDK entry
         # was returned by the first command, so this is another cold dispatch.
         assertion = Path("peer-assertion").read_text().strip()
-        peer = tnl.connect("api")
+        peer = _connections.connect("api")
         assert peer._session.scope is scope
         snapshot = await peer
         assert isinstance(snapshot, tnl.HTTPConnection)

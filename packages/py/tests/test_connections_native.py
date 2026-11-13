@@ -45,7 +45,7 @@ def test_installed_psycopg_uses_verified_hostname_and_explicit_transport_options
                 assert selector.select(10)
             status = json.loads(process.stdout.readline())
             monkeypatch.setenv("TNL_CONNECTION_HANDLE", status["connection_handle"])
-            handle = tnl.connect("database", directory=tmp_path)
+            handle = _connections.connect("database", directory=tmp_path)
             db = handle.snapshot()
             assert isinstance(db, tnl.PostgresConnection) and db.ca is not None
             root = tmp_path / "root.pem"
@@ -302,11 +302,11 @@ def test_owned_deadline_recovery_joins_real_native_owner_before_same_port_restar
         )
 
     monkeypatch.setattr(_connections, "_command", native)
-    handle = tnl.connect("database", directory=tmp_path)
-    replacements: list[tnl.ConnectionHandle[tnl.Connection]] = []
+    handle = _connections.connect("database", directory=tmp_path)
+    replacements: list[_connections.ConnectionHandle[tnl.Connection]] = []
 
     async def one() -> tnl.Connection:
-        replacement = tnl.connect("database", directory=tmp_path)
+        replacement = _connections.connect("database", directory=tmp_path)
         replacements.append(replacement)
         return await replacement
 
@@ -379,7 +379,7 @@ def test_prepared_native_cli_and_python_verified_tls(
             assert Path(handle_path).stat().st_mode & 0o777 == 0o600
             assert Path(handle_path).parent.stat().st_mode & 0o777 == 0o700
             monkeypatch.setenv("TNL_CONNECTION_HANDLE", handle_path)
-            handle = tnl.connect("database", directory=tmp_path)
+            handle = _connections.connect("database", directory=tmp_path)
             assert handle.host == "127.0.0.1"
 
             async def scenario() -> tnl.Connection:
@@ -407,18 +407,18 @@ def test_prepared_native_cli_and_python_verified_tls(
                 assert raw.recv(1) == b"S"
                 with pytest.raises(ssl.SSLCertVerificationError):
                     connection.ssl.wrap_socket(raw, server_hostname="wrong.example.test")
-            stream = tnl.connect("stream", directory=tmp_path).snapshot()
+            stream = _connections.connect("stream", directory=tmp_path).snapshot()
             assert isinstance(stream, tnl.TCPConnection) and not hasattr(stream, "ssl")
             with socket.create_connection((stream.host, stream.port), timeout=5) as raw:
                 raw.sendall(b"ping")
                 assert raw.recv(4) == b"ping"
             with pytest.raises(tnl.TnlError):
-                tnl.connect("missing", directory=tmp_path).snapshot()
+                _connections.connect("missing", directory=tmp_path).snapshot()
             handle.close()
             assert process.poll() is None  # a mounted connector owner is not SDK-owned.
             os.chmod(handle_path, 0o644)
             with pytest.raises(tnl.TnlError):
-                tnl.connect("database", directory=tmp_path).snapshot()
+                _connections.connect("database", directory=tmp_path).snapshot()
             os.chmod(handle_path, 0o600)
             original = Path(handle_path).read_bytes()
             descriptor = cast(dict[str, object], json.loads(original))
@@ -426,7 +426,7 @@ def test_prepared_native_cli_and_python_verified_tls(
             try:
                 Path(handle_path).write_text(json.dumps(descriptor))
                 with pytest.raises(tnl.TnlError):
-                    tnl.connect("database", directory=tmp_path).snapshot()
+                    _connections.connect("database", directory=tmp_path).snapshot()
                 assert process.poll() is None
             finally:
                 Path(handle_path).write_bytes(original)
