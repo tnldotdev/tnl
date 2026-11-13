@@ -22,7 +22,7 @@ type Workload struct {
 	Kubernetes  *WorkloadKubernetes `json:"kubernetes,omitempty" yaml:"kubernetes,omitempty"`
 	OIDC        *WorkloadOIDC       `json:"oidc,omitempty" yaml:"oidc,omitempty"`
 	Token       *WorkloadToken      `json:"token,omitempty" yaml:"token,omitempty"`
-	Services    []string            `json:"services" yaml:"services" jsonschema:"required,minItems=1,maxItems=32,uniqueItems=true" jsonschema_description:"exact configured service keys assigned to named publisher groups; local services cannot be workload targets."`
+	Services    []string            `json:"services" yaml:"services" jsonschema:"required,minItems=1,maxItems=32,uniqueItems=true" jsonschema_description:"Exact bound service keys in the selected remote deployment; local services cannot be workload targets."`
 	MaxDuration *Duration           `json:"max_duration,omitempty" yaml:"max_duration,omitempty" jsonschema_description:"Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof."`
 }
 
@@ -184,11 +184,11 @@ func WorkloadHTTPS(s string) bool {
 	return e == nil && u.Scheme == "https" && u.Host != "" && u.User == nil && u.RawQuery == "" && u.Fragment == "" && u.Opaque == ""
 }
 
-func ValidateWorkloads(c TNL) error {
-	if len(c.Workloads) > 32 {
+func ValidateWorkloads(services Services, workloads map[string]Workload) error {
+	if len(workloads) > 32 {
 		return errors.New("workloads may contain at most 32 policies")
 	}
-	for name, p := range c.Workloads {
+	for name, p := range workloads {
 		if !naming.ValidServiceName(name) {
 			return errors.New("workload name must be a lowercase DNS label")
 		}
@@ -287,12 +287,9 @@ func ValidateWorkloads(c TNL) error {
 		}
 		seen := map[string]bool{}
 		for _, s := range p.Services {
-			service, ok := c.Services[s]
+			_, ok := services[s]
 			if !ok || seen[s] {
 				return bad()
-			}
-			if PublisherGroupName(service) == "local" {
-				return fmt.Errorf("workloads.%s: service %q must use a named publisher group", name, s)
 			}
 			seen[s] = true
 		}

@@ -61,7 +61,7 @@ func normalizeAppliedProjectService(s *ProjectServiceConfiguration) error {
 			return ErrProjectConfigurationInvalid
 		}
 		if s.PublisherGroup != "local" {
-			if config.ValidateGroupHTTP(s.HTTP) != nil {
+			if config.ValidateRemoteHTTP(s.HTTP) != nil {
 				return ErrProjectConfigurationInvalid
 			}
 			if s.HTTP.Access != nil {

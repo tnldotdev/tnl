@@ -33,7 +33,7 @@ func prepareKubernetesConnection(ctx context.Context, session *Session, flags St
 	}
 	sourceID, projectLabel, serviceLabel := service.Id, "services", service.Name
 	if key != "" {
-		if config.PublisherGroupName(flags.project.Config.Services[key]) == "local" {
+		if config.SelectedDeployment(flags.project.Config) == "local" {
 			sourceID = flags.project.LocalPublicationIdentity().Fingerprint
 		} else {
 			source, err := flags.project.SourceIdentity(ctx)

@@ -111,7 +111,7 @@ func normalizeProjectWorkloads(c *ProjectConfiguration) error {
 		services := map[string]config.Service{}
 		for key, s := range c.Services {
 			if s.PublisherGroup != "local" {
-				services[key] = config.Service{PublisherGroup: new(s.PublisherGroup)}
+				services[key] = config.Service{}
 			}
 		}
 		policy := config.Workload{GitHub: &config.WorkloadGitHub{Repository: &g.Repository, Workflow: workflow, Events: g.Events}, Services: p.Services}
@@ -135,7 +135,7 @@ func normalizeProjectWorkloads(c *ProjectConfiguration) error {
 		if p.MaxDurationSeconds < 0 || int64(p.MaxDurationSeconds) > config.MaxWorkloadMaxDurationSeconds || len(g.WorkflowRef) > 1024 || len(g.Ref) > 512 || len(g.Environment) > 256 || len(g.JobWorkflowRef) > 1024 {
 			return ErrProjectConfigurationInvalid
 		}
-		if err := config.ValidateWorkloads(config.TNL{Services: services, Workloads: map[string]config.Workload{name: policy}}); err != nil {
+		if err := config.ValidateWorkloads(services, map[string]config.Workload{name: policy}); err != nil {
 			return errors.Join(ErrProjectConfigurationInvalid, err)
 		}
 		slices.Sort(p.Services)

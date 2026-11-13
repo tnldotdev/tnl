@@ -56,10 +56,10 @@ func (r resolver) resolve(ctx context.Context, o Options) (map[string]controlv1.
 	services := config.Services{}
 	for _, workload := range o.Workloads {
 		for _, name := range workload.Services {
-			services[name] = config.Service{PublisherGroup: new("workload")}
+			services[name] = config.Service{}
 		}
 	}
-	if err := config.ValidateWorkloads(config.TNL{Services: services, Workloads: o.Workloads}); err != nil {
+	if err := config.ValidateWorkloads(services, o.Workloads); err != nil {
 		return nil, errors.Join(ErrBinding, err)
 	}
 	result := make(map[string]controlv1.ProjectWorkload, len(o.Workloads))

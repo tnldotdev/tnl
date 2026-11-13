@@ -124,7 +124,7 @@ func serviceShareKey(project projectConfiguration, name string) (string, error) 
 	if !found || name == "" {
 		return "", serviceShareInput("select a configured service key or exact service ID")
 	}
-	if config.PublisherGroupName(definition) == "local" && config.IsPublicService(definition) {
+	if config.SelectedDeployment(project.Config) == "local" && config.IsPublicService(definition) {
 		return "", serviceShareInput("this key selects a public URL; use tnl share invite, link, or token with its public URL")
 	}
 	return name, nil
@@ -163,7 +163,7 @@ func selectServiceShare(ctx context.Context, s *clientteam.Session, project proj
 	var expectedSource *controlv1.LocalServiceSource
 	if key != "" {
 		expectedSource = &controlv1.LocalServiceSource{Service: key}
-		if config.PublisherGroupName(project.Config.Services[key]) == "local" {
+		if config.SelectedDeployment(project.Config) == "local" {
 			source := project.LocalPublicationIdentity()
 			expectedSource.ProjectKey, expectedSource.SourceFingerprint = source.Key, source.Fingerprint
 			expectedSource.WorktreeKey = project.LocalWorktreeKey()
@@ -173,7 +173,7 @@ func selectServiceShare(ctx context.Context, s *clientteam.Session, project proj
 				return controlv1.Service{}, failure.Wrap("identify service access project", failure.ProjectConfigInvalid, err)
 			}
 			expectedSource.ProjectKey, expectedSource.SourceFingerprint = source.Key, source.Fingerprint
-			deployment, err := s.Authenticated().Control.GetDeployment(ctx, team, source.Key, config.PublisherGroupName(project.Config.Services[key]))
+			deployment, err := s.Authenticated().Control.GetDeployment(ctx, team, source.Key, config.SelectedDeployment(project.Config))
 			if err != nil {
 				return controlv1.Service{}, err
 			}

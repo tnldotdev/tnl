@@ -19,8 +19,7 @@ func normalizeAppliedProjectIntegrations(c *ProjectConfiguration) error {
 	services := config.Services{}
 	for name, service := range c.Services {
 		protocol := service.Protocol
-		publisher := service.PublisherGroup
-		declared := config.Service{Protocol: &protocol, PublisherGroup: &publisher, HTTP: service.HTTP}
+		declared := config.Service{Protocol: &protocol, HTTP: service.HTTP}
 		if service.PublicURL != nil {
 			declared.Tunnel = &config.Tunnel{}
 		}

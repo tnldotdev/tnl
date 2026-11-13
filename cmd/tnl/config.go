@@ -74,7 +74,7 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 		return err
 	}
 	flags.Service = service
-	if service != "" && config.PublisherGroupName(c.Config.Services[service]) != "local" {
+	if service != "" && config.SelectedDeployment(c.Config) != "local" {
 		return publisherCLIError("this service belongs to a remote publisher group; run tnl apply and tnl publisher serve --group NAME")
 	}
 	flags.project = c
@@ -182,7 +182,7 @@ func (c projectConfiguration) applyInstalledService(flags *publishCommand) error
 	if !flags.inspectionModeFromCLI {
 		flags.InspectionMode = config.InspectionNone
 	}
-	if config.PublisherGroupName(definition) != "local" {
+	if config.SelectedDeployment(c.Config) != "local" {
 		return publisherCLIError("install the assigned publisher group with tnl publisher serve --group NAME --install")
 	}
 	flags.service = !config.IsPublicService(definition)

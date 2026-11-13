@@ -115,8 +115,8 @@ func TestServiceShareSelectionUsesSourceBindingAndManagerRead(t *testing.T) {
 		}
 	}
 	saved, group := "orders-saved", "production"
-	project := projectConfiguration{Project: clientproject.Project{Root: root, Selection: clientproject.Selection{Path: filepath.Join(root, "tnl.json")}, Worktree: clientproject.Worktree{Root: root, IsGit: true}, Config: config.TNL{PublisherGroups: map[string]config.PublisherGroup{group: {}}, Services: config.Services{
-		"orders": {Name: &saved}, "remote": {PublisherGroup: &group, HTTP: &config.HTTPService{}, Target: &config.ServiceTarget{Type: "address", Address: new(config.Target("http://app.internal:3000"))}}, "web": {Tunnel: &config.Tunnel{}},
+	project := projectConfiguration{Project: clientproject.Project{Root: root, Selection: clientproject.Selection{Path: filepath.Join(root, "tnl.json")}, Worktree: clientproject.Worktree{Root: root, IsGit: true}, Config: config.TNL{Services: config.Services{
+		"orders": {Name: &saved}, "remote": {HTTP: &config.HTTPService{}, Target: &config.ServiceTarget{Type: "address", Address: new(config.Target("http://app.internal:3000"))}}, "web": {Tunnel: &config.Tunnel{}},
 	}}}}
 	source, err := project.SourceIdentity(t.Context())
 	if err != nil {
@@ -165,7 +165,14 @@ func TestServiceShareSelectionUsesSourceBindingAndManagerRead(t *testing.T) {
 				}
 			})
 			s := clientteam.NewSession(nil, nil, &auth.Client{Control: control}, authorityv1.IdentityContext{Memberships: []authorityv1.Membership{{TeamId: shareTestTeam}}}, clientteam.Options{SelectedTeam: shareTestTeam})
-			service, err := selectServiceShare(t.Context(), s, project, selector)
+			selectedProject := project
+			if selector == "remote" {
+				selectedProject.Config.Deployment = group
+				selectedProject.Config.Services = config.Services{"remote": project.Config.Services["remote"]}
+			} else {
+				selectedProject.Config.Services = config.Services{"orders": project.Config.Services["orders"], "web": project.Config.Services["web"]}
+			}
+			service, err := selectServiceShare(t.Context(), s, selectedProject, selector)
 			valid := selector == "orders" || selector == "remote" || selector == shareTestService
 			if valid {
 				wantLookups := 0

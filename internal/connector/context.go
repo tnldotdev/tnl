@@ -99,7 +99,7 @@ func connectionProject(ctx context.Context, options ContextOptions) (projectConf
 	services := slices.Clone(options.Service)
 	if options.Workload == "" && len(services) == 0 {
 		for name, service := range project.Config.Services {
-			if !isConnectPublicURL(service) {
+			if !isConnectPublicURL(project.Config, service) {
 				services = append(services, name)
 			}
 		}
@@ -123,7 +123,7 @@ func connectionProject(ctx context.Context, options ContextOptions) (projectConf
 	}
 	slices.Sort(services)
 	for _, name := range services {
-		if service, ok := project.Config.Services[name]; !ok || isConnectPublicURL(service) {
+		if service, ok := project.Config.Services[name]; !ok || isConnectPublicURL(project.Config, service) {
 			return projectConfiguration{}, connectorruntime.Context{}, connectorruntime.ErrInvalid
 		}
 		effective, err := project.EffectiveService(name)
@@ -198,14 +198,14 @@ func connectionManifest(options ContextOptions) (projectConfiguration, connector
 	}
 	b, _ := json.Marshal(m)
 	digest := sha256.Sum256(b)
-	configuration := config.TNL{Server: &m.Server, Team: &m.Team, Services: config.Services{}, Workloads: map[string]config.Workload{options.Workload: {Services: w.Services, MaxDuration: new(config.Duration(time.Duration(w.MaxDurationSeconds) * time.Second))}}}
+	configuration := config.TNL{Deployment: w.Deployment, Server: &m.Server, Team: &m.Team, Services: config.Services{}, Workloads: map[string]config.Workload{options.Workload: {Services: w.Services, MaxDuration: new(config.Duration(time.Duration(w.MaxDurationSeconds) * time.Second))}}}
 	if w.MaxDurationSeconds == 0 {
 		policy := configuration.Workloads[options.Workload]
 		policy.MaxDuration = nil
 		configuration.Workloads[options.Workload] = policy
 	}
 	for _, s := range services {
-		configuration.Services[s] = config.Service{Protocol: new(m.Services[s]), PublisherGroup: new(w.Deployment)}
+		configuration.Services[s] = config.Service{Protocol: new(m.Services[s])}
 	}
 	scope := connectorruntime.Context{Schema: 1, Directory: directory, ConfigDigest: hex.EncodeToString(digest[:]), Server: m.Server, Audience: m.Server, TeamID: m.Team, ProjectKey: m.ProjectKey, SourceID: m.SourceFingerprint, WorktreeKey: "deployment", ProjectLabel: m.ProjectLabel, Workload: options.Workload, Services: services}
 	return projectConfiguration{Project: clientproject.Project{Root: directory, Config: configuration, Deployment: w.Deployment}}, scope, scope.Validate()

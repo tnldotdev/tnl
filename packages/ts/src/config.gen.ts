@@ -1045,7 +1045,7 @@ export interface TnlConfig {
           kubernetes?: never;
           gitlab?: never;
           /**
-           * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
+           * Exact bound service keys in the selected remote deployment; local services cannot be workload targets.
            *
            * @minItems 1
            * @maxItems 32
@@ -1186,7 +1186,7 @@ export interface TnlConfig {
           kubernetes?: never;
           gitlab?: never;
           /**
-           * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
+           * Exact bound service keys in the selected remote deployment; local services cannot be workload targets.
            *
            * @minItems 1
            * @maxItems 32
@@ -1226,7 +1226,7 @@ export interface TnlConfig {
           kubernetes?: never;
           gitlab?: never;
           /**
-           * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
+           * Exact bound service keys in the selected remote deployment; local services cannot be workload targets.
            *
            * @minItems 1
            * @maxItems 32
@@ -1266,7 +1266,7 @@ export interface TnlConfig {
           kubernetes?: never;
           gitlab?: never;
           /**
-           * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
+           * Exact bound service keys in the selected remote deployment; local services cannot be workload targets.
            *
            * @minItems 1
            * @maxItems 32
@@ -1309,7 +1309,7 @@ export interface TnlConfig {
           kubernetes?: never;
           gitlab?: never;
           /**
-           * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
+           * Exact bound service keys in the selected remote deployment; local services cannot be workload targets.
            *
            * @minItems 1
            * @maxItems 32
@@ -1348,7 +1348,7 @@ export interface TnlConfig {
           google?: never;
           gitlab?: never;
           /**
-           * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
+           * Exact bound service keys in the selected remote deployment; local services cannot be workload targets.
            *
            * @minItems 1
            * @maxItems 32
@@ -1392,7 +1392,7 @@ export interface TnlConfig {
           google?: never;
           kubernetes?: never;
           /**
-           * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
+           * Exact bound service keys in the selected remote deployment; local services cannot be workload targets.
            *
            * @minItems 1
            * @maxItems 32

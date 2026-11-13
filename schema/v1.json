@@ -2988,7 +2988,7 @@
                     "maxItems": 32,
                     "minItems": 1,
                     "uniqueItems": true,
-                    "description": "exact configured service keys assigned to named publisher groups; local services cannot be workload targets."
+                    "description": "Exact bound service keys in the selected remote deployment; local services cannot be workload targets."
                   },
                   "max_duration": {
                     "type": "string",
@@ -3202,7 +3202,7 @@
                     "maxItems": 32,
                     "minItems": 1,
                     "uniqueItems": true,
-                    "description": "exact configured service keys assigned to named publisher groups; local services cannot be workload targets."
+                    "description": "Exact bound service keys in the selected remote deployment; local services cannot be workload targets."
                   },
                   "max_duration": {
                     "type": "string",
@@ -3287,7 +3287,7 @@
                     "maxItems": 32,
                     "minItems": 1,
                     "uniqueItems": true,
-                    "description": "exact configured service keys assigned to named publisher groups; local services cannot be workload targets."
+                    "description": "Exact bound service keys in the selected remote deployment; local services cannot be workload targets."
                   },
                   "max_duration": {
                     "type": "string",
@@ -3370,7 +3370,7 @@
                     "maxItems": 32,
                     "minItems": 1,
                     "uniqueItems": true,
-                    "description": "exact configured service keys assigned to named publisher groups; local services cannot be workload targets."
+                    "description": "Exact bound service keys in the selected remote deployment; local services cannot be workload targets."
                   },
                   "max_duration": {
                     "type": "string",
@@ -3460,7 +3460,7 @@
                     "maxItems": 32,
                     "minItems": 1,
                     "uniqueItems": true,
-                    "description": "exact configured service keys assigned to named publisher groups; local services cannot be workload targets."
+                    "description": "Exact bound service keys in the selected remote deployment; local services cannot be workload targets."
                   },
                   "max_duration": {
                     "type": "string",
@@ -3541,7 +3541,7 @@
                     "maxItems": 32,
                     "minItems": 1,
                     "uniqueItems": true,
-                    "description": "exact configured service keys assigned to named publisher groups; local services cannot be workload targets."
+                    "description": "Exact bound service keys in the selected remote deployment; local services cannot be workload targets."
                   },
                   "max_duration": {
                     "type": "string",
@@ -3629,7 +3629,7 @@
                     "maxItems": 32,
                     "minItems": 1,
                     "uniqueItems": true,
-                    "description": "exact configured service keys assigned to named publisher groups; local services cannot be workload targets."
+                    "description": "Exact bound service keys in the selected remote deployment; local services cannot be workload targets."
                   },
                   "max_duration": {
                     "type": "string",

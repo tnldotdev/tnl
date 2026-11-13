@@ -25,16 +25,18 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 	if err := config.ValidateTNL(project.Config); err != nil {
 		return declaration, err
 	}
-	for name, group := range project.Config.PublisherGroups {
-		entry := controlv1.ProjectPublisherGroup{Description: group.Description, Public: &group.Public}
-		if group.Domain != nil {
-			domain, err := current.ReadyDomain(*group.Domain)
+	deployment := config.SelectedDeployment(project.Config)
+	if deployment != "local" {
+		settings := project.Config.DeploymentSettings
+		entry := controlv1.ProjectPublisherGroup{Description: settings.Description, Public: &settings.Public}
+		if settings.Domain != nil {
+			domain, err := current.ReadyDomain(*settings.Domain)
 			if err != nil {
 				return declaration, err
 			}
 			entry.DomainId = &domain.Id
 		}
-		declaration.PublisherGroups[name] = entry
+		declaration.PublisherGroups[deployment] = entry
 	}
 	for name, webhook := range project.Config.Webhooks {
 		delivery := webhook.DeliveryMode()
@@ -57,11 +59,11 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 	}
 	for _, name := range names {
 		service := project.Config.Services[name]
-		publisher, savedName, protocol := config.PublisherGroupName(service), config.ServiceName(name, service), controlv1.ServiceProtocol(config.Protocol(service))
-		entry := controlv1.ProjectServiceConfiguration{PublisherGroup: &publisher, Name: &savedName, Protocol: &protocol}
+		savedName, protocol := config.ServiceName(name, service), controlv1.ServiceProtocol(config.Protocol(service))
+		entry := controlv1.ProjectServiceConfiguration{PublisherGroup: &deployment, Name: &savedName, Protocol: &protocol}
 		httpSettings := service.HTTP
-		if publisher != "local" {
-			resolved, err := config.ResolveGroupHTTP(project.Config.Tunnel, service.HTTP)
+		if deployment != "local" {
+			resolved, err := config.ResolveRemoteHTTP(project.Config.Tunnel, service.HTTP)
 			if err != nil {
 				return declaration, err
 			}
@@ -85,7 +87,7 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 				endpoint := controlv1.ProjectTargetDiscoveryEndpoint(*t.Endpoint)
 				entry.TargetDiscovery.Endpoint = &endpoint
 			}
-		} else if publisher == "local" {
+		} else if deployment == "local" {
 			// local discovery stays local. this declarative descriptor contains no
 			// checkout path, discovered container address or running app listener.
 			entry.Target = config.TargetType(service)
@@ -146,7 +148,7 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 			if err != nil {
 				return declaration, err
 			}
-			if publisher == "local" {
+			if deployment == "local" {
 				if effective.Tunnel.PublicURL != nil {
 					hostname, _ := naming.ParseExactPublicURL(*effective.Tunnel.PublicURL)
 					entry.PublicUrl.Hostname = &hostname

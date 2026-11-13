@@ -16,13 +16,13 @@ func appliedTestContext() team.Context {
 	return team.NewContext(authorityv1.Team{Id: "team_1", DefaultDomainId: "domain_1"}, authorityv1.Membership{Id: "membership_1", TeamId: "team_1", ManagedLabel: "member", MemberSlug: "member"}, []authorityv1.Domain{{Id: "domain_1", CanonicalDomain: "tnl.dev", Kind: authorityv1.Managed, State: authorityv1.DomainStateReady}}, "")
 }
 
-func TestGroupHTTPSettingsInheritDefaultsWithoutCreatingPublicURL(t *testing.T) {
+func TestRemoteHTTPSettingsInheritDefaultsWithoutCreatingPublicURL(t *testing.T) {
 	group, address := "production", config.Target("http://app.internal:3000")
 	total, concurrency := 100, 2
 	project := clientproject.Project{Config: config.TNL{
-		PublisherGroups: map[string]config.PublisherGroup{group: {}},
-		Tunnel:          &config.Tunnel{Access: &config.Access{Mode: "restricted", IP: []string{"192.0.2.1"}}, Limits: &config.Limits{HTTP: &config.WorkLimits{Total: &total}}},
-		Services:        config.Services{"api": {PublisherGroup: &group, Target: &config.ServiceTarget{Type: "address", Address: &address}, HTTP: &config.HTTPService{Limits: &config.WorkLimits{Concurrency: &concurrency}}}},
+		Deployment: group,
+		Tunnel:     &config.Tunnel{Access: &config.Access{Mode: "restricted", IP: []string{"192.0.2.1"}}, Limits: &config.Limits{HTTP: &config.WorkLimits{Total: &total}}},
+		Services:   config.Services{"api": {Target: &config.ServiceTarget{Type: "address", Address: &address}, HTTP: &config.HTTPService{Limits: &config.WorkLimits{Concurrency: &concurrency}}}},
 	}}
 	declaration, err := Declaration(t.Context(), project, appliedTestContext(), nil)
 	if err != nil {
@@ -30,11 +30,11 @@ func TestGroupHTTPSettingsInheritDefaultsWithoutCreatingPublicURL(t *testing.T) 
 	}
 	service := declaration.Services["api"]
 	if service.PublicUrl != nil || service.Http == nil || service.Http.Access == nil || service.Http.Access.Mode == nil || *service.Http.Access.Mode != "restricted" || service.Http.Limits == nil || *service.Http.Limits.Total != total || *service.Http.Limits.Concurrency != concurrency || len(*service.Http.Access.Ip) != 1 {
-		t.Fatalf("group HTTP defaults or reachability changed: %+v", service)
+		t.Fatalf("remote HTTP defaults or reachability changed: %+v", service)
 	}
 	project.Config.Tunnel.Access.Mode = "anonymous"
 	if _, err := Declaration(t.Context(), project, appliedTestContext(), nil); err == nil {
-		t.Fatal("group HTTP inherited anonymous access")
+		t.Fatal("remote HTTP inherited anonymous access")
 	}
 }
 
@@ -45,12 +45,10 @@ func TestProjectDeclarationUsesPublicURLPresenceAndPreservesPolicyLimitsAndGrant
 	period := config.Duration(2 * time.Minute)
 	upload := int64(1 << 20)
 	project := clientproject.Project{Root: t.TempDir(), Config: config.TNL{
-		PublisherGroups: map[string]config.PublisherGroup{group: {}},
-		Tunnel:          &config.Tunnel{Access: &config.Access{Mode: "anonymous", IP: []string{"198.51.100.1", "192.0.2.1"}}, Limits: &config.Limits{HTTP: &config.WorkLimits{Total: &total, Rate: &config.Rate{Count: &count, Per: &period}}, Traffic: &config.TrafficLimits{Connections: &connections, UploadBytes: &upload}}},
+		Tunnel: &config.Tunnel{Access: &config.Access{Mode: "anonymous", IP: []string{"198.51.100.1", "192.0.2.1"}}, Limits: &config.Limits{HTTP: &config.WorkLimits{Total: &total, Rate: &config.Rate{Count: &count, Per: &period}}, Traffic: &config.TrafficLimits{Connections: &connections, UploadBytes: &upload}}},
 		Services: config.Services{
 			"web":      {Tunnel: &config.Tunnel{RequirePostQuantum: new(true)}, Access: &config.ServiceAccess{Team: true}, HTTP: &config.HTTPService{Readiness: &config.Readiness{Path: "/health"}, Paths: map[string]config.PathMount{"/api": {Service: "internal", StripPrefix: true}}}},
 			"internal": {Access: &config.ServiceAccess{Team: true}},
-			"remote":   {PublisherGroup: &group, Target: &config.ServiceTarget{Type: "address", Address: &remote}, Access: &config.ServiceAccess{Team: true}},
 		},
 	}}
 	declaration, err := Declaration(t.Context(), project, appliedTestContext(), nil)
@@ -71,9 +69,16 @@ func TestProjectDeclarationUsesPublicURLPresenceAndPreservesPolicyLimitsAndGrant
 	if web.Http == nil || web.Http.Readiness == nil || web.Http.Readiness.Path != "/health" || web.Http.Paths == nil || (*web.Http.Paths)["/api"].Service != "internal" || (*web.Http.Paths)["/api"].StripPrefix == nil || !*(*web.Http.Paths)["/api"].StripPrefix {
 		t.Fatalf("apply dropped local HTTP behavior: %+v", web.Http)
 	}
-	remoteService := declaration.Services["remote"]
+	remoteProject := project
+	remoteProject.Config.Deployment = group
+	remoteProject.Config.Services = config.Services{"remote": {Target: &config.ServiceTarget{Type: "address", Address: &remote}, Access: &config.ServiceAccess{Team: true}}}
+	remoteDeclaration, err := Declaration(t.Context(), remoteProject, appliedTestContext(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remoteService := remoteDeclaration.Services["remote"]
 	if remoteService.PublicUrl != nil || remoteService.Access == nil || !bool(remoteService.Access.Team) {
-		t.Fatalf("group HTTP inherited public URL defaults: %+v", remoteService)
+		t.Fatalf("remote HTTP inherited public URL defaults: %+v", remoteService)
 	}
 	limits, traffic := web.PublicUrl.Limits.Http, web.PublicUrl.Limits.Traffic
 	if limits == nil || *limits.Total != 100 || limits.Rate.Count != 5 || limits.Rate.Per != "2m0s" || traffic == nil || *traffic.Connections != 8 || *traffic.UploadBytes != 1<<20 {

@@ -30,7 +30,7 @@ func TestDeploymentConfigurationSeparatesDeclarationsAndBindings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if Protocol(local.Services["web"]) != "http" || TargetType(local.Services["web"]) != "app" || TargetType(local.Services["db"]) != "compose" || len(production.Services) != 1 || Protocol(production.Services["db"]) != "postgres" || TargetType(production.Services["db"]) != "address" || PublisherGroupName(production.Services["db"]) != "production" {
+	if Protocol(local.Services["web"]) != "http" || TargetType(local.Services["web"]) != "app" || TargetType(local.Services["db"]) != "compose" || len(production.Services) != 1 || Protocol(production.Services["db"]) != "postgres" || TargetType(production.Services["db"]) != "address" || SelectedDeployment(production) != "production" {
 		t.Fatal("selected configuration mixed service declarations or deployment targets")
 	}
 	production.Services["db"].Target.Type = "changed"
@@ -108,5 +108,55 @@ func TestDeploymentConfigurationCapturesWorkloadSelection(t *testing.T) {
 	project.Workloads["app"] = policy
 	if err := ValidateProject(project); err == nil {
 		t.Fatal("provider policy selected an unbound logical service")
+	}
+}
+
+func TestResolvedDeploymentOwnsSettingsAndRejectsGroupSelectors(t *testing.T) {
+	project := deploymentProjectFixture()
+	description, domain := "production database", "example.test"
+	settings := project.Deployments["production"]
+	settings.Description, settings.Domain, settings.Public = &description, &domain, true
+	project.Deployments["production"] = settings
+	production, err := ResolveDeployment(project, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	local, err := ResolveDeployment(project, "local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if SelectedDeployment(production) != "production" || production.DeploymentSettings.Description == nil || *production.DeploymentSettings.Description != description || production.DeploymentSettings.Domain == nil || *production.DeploymentSettings.Domain != domain || !production.DeploymentSettings.Public {
+		t.Fatal("selection lost its deployment settings")
+	}
+	if local.DeploymentSettings.Description != nil || local.DeploymentSettings.Domain != nil || local.DeploymentSettings.Public {
+		t.Fatal("local selection inherited saved deployment settings")
+	}
+	for _, retired := range []string{
+		`{"publisher_groups":{"production":{}}}`,
+		`{"services":{"db":{"publisher_group":"production"}}}`,
+	} {
+		var selected TNL
+		if err := json.Unmarshal([]byte(retired), &selected, json.RejectUnknownMembers(true)); err == nil {
+			t.Fatal("resolved configuration accepted a retired group selector")
+		}
+	}
+}
+
+func TestWorkloadSelectionIsCheckedAtTheDeploymentBoundary(t *testing.T) {
+	selected := TNL{
+		Services: Services{"db": {Protocol: new("postgres"), Target: &ServiceTarget{Type: "address", Address: new(Target("localhost:5432"))}}},
+		Workloads: map[string]Workload{"worker": {
+			GitHub: &WorkloadGitHub{Workflow: ".github/workflows/test.yml"}, Services: []string{"db"},
+		}},
+	}
+	if err := ValidateWorkloads(selected.Services, selected.Workloads); err != nil {
+		t.Fatal("provider validation required unrelated deployment state", err)
+	}
+	if err := ValidateTNL(selected); err == nil {
+		t.Fatal("local selection accepted a workload policy")
+	}
+	selected.Deployment = "production"
+	if err := ValidateTNL(selected); err != nil {
+		t.Fatal("remote selection rejected a valid workload policy", err)
 	}
 }

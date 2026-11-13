@@ -25,7 +25,7 @@ func TestDeploymentSelectionDoesNotDiscoverOrChangeSiblingBindings(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if staging.Deployment != "staging" || len(staging.Config.Services) != 1 || len(staging.Config.Workloads) != 0 || production.Deployment != "production" || len(production.Config.Workloads) != 1 || config.PublisherGroupName(production.Config.Services["db"]) != "production" {
+	if staging.Deployment != "staging" || len(staging.Config.Services) != 1 || len(staging.Config.Workloads) != 0 || production.Deployment != "production" || len(production.Config.Workloads) != 1 || config.SelectedDeployment(production.Config) != "production" {
 		t.Fatal("selected deployment borrowed a sibling's services or workloads")
 	}
 	production.Config.Services["db"].Target.Address = new(config.Target("changed.internal:5432"))

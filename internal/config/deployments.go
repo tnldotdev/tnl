@@ -126,7 +126,7 @@ func ResolveDeployment(project Project, name string) (TNL, error) {
 
 func resolveProjectDeployment(project Project, name string) (TNL, error) {
 	deployment := project.Deployments[name]
-	resolved := TNL{Name: project.Name, Server: project.Server, Team: project.Team, Tunnel: project.Tunnel, Services: Services{}, PublisherGroups: map[string]PublisherGroup{}, Workloads: map[string]Workload{}}
+	resolved := TNL{Name: project.Name, Server: project.Server, Team: project.Team, Tunnel: project.Tunnel, Services: Services{}, Deployment: name, Workloads: map[string]Workload{}}
 	if name == "local" {
 		if deployment.Description != nil || deployment.Domain != nil || deployment.Public {
 			return TNL{}, errors.New("local is client-side selection and has no server domain, description, or reachability")
@@ -134,7 +134,7 @@ func resolveProjectDeployment(project Project, name string) (TNL, error) {
 		resolved.Feedback, resolved.OAuth, resolved.Inspection = project.Feedback, project.OAuth, project.Inspection
 		resolved.Webhooks, resolved.Aliases = project.Webhooks, project.Aliases
 	} else {
-		resolved.PublisherGroups[name] = PublisherGroup{Description: deployment.Description, Domain: deployment.Domain, Public: deployment.Public}
+		resolved.DeploymentSettings = DeploymentSettings{Description: deployment.Description, Domain: deployment.Domain, Public: deployment.Public}
 	}
 	for service, binding := range deployment.Targets {
 		declaration, found := project.Services[service]
@@ -148,8 +148,8 @@ func resolveProjectDeployment(project Project, name string) (TNL, error) {
 				target.Type = "address"
 			}
 		}
-		group, protocol := name, DeclaredProtocol(declaration)
-		resolved.Services[service] = Service{Name: binding.Name, Protocol: &protocol, PublisherGroup: &group, Target: &target, Access: binding.Access, Inspection: binding.Inspection, Tunnel: binding.Tunnel, HTTP: binding.HTTP}
+		protocol := DeclaredProtocol(declaration)
+		resolved.Services[service] = Service{Name: binding.Name, Protocol: &protocol, Target: &target, Access: binding.Access, Inspection: binding.Inspection, Tunnel: binding.Tunnel, HTTP: binding.HTTP}
 	}
 	for policy, entry := range project.Workloads {
 		if entry.Deployment == name {

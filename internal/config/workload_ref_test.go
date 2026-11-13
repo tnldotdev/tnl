@@ -46,11 +46,11 @@ func TestWorkloadRefsAllowLiteralAtAndBrace(t *testing.T) {
 	for _, selector := range []struct{ branch, tag *string }{
 		{branch: new("release@canary")}, {tag: new("release@canary")},
 	} {
-		c := TNL{Services: Services{"db": {PublisherGroup: new("production")}}, Workloads: map[string]Workload{"deploy": {
+		c := TNL{Deployment: "production", Services: Services{"db": {}}, Workloads: map[string]Workload{"deploy": {
 			GitHub:   &WorkloadGitHub{Repository: new("shop/storefront"), Workflow: ".github/workflows/deploy.yml", Branch: selector.branch, Tag: selector.tag},
 			Services: []string{"db"},
 		}}}
-		if err := ValidateWorkloads(c); err != nil {
+		if err := ValidateWorkloads(c.Services, c.Workloads); err != nil {
 			t.Errorf("GitHub selector with a literal @ rejected: %v", err)
 		}
 	}

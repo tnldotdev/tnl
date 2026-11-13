@@ -48,7 +48,7 @@ func (d *Database) serviceHTTPSettings(ctx context.Context, q *controlstatedb.Qu
 	if !ok {
 		return nil, ErrServiceAccess
 	}
-	if err := config.ValidateGroupHTTP(s.HTTP); err != nil {
+	if err := config.ValidateRemoteHTTP(s.HTTP); err != nil {
 		return nil, errors.Join(ErrServiceAccess, err)
 	}
 	return s.HTTP, nil

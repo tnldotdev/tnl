@@ -194,23 +194,21 @@ func TestResolvedServiceSelectsOnlyApplicableProjectDefaults(t *testing.T) {
 	}
 }
 
-func TestPublisherGroupIsExplicitAndDefaultsToLocal(t *testing.T) {
-	group, protocol := "cloud", "postgres"
+func TestSelectedDeploymentIsExplicitAndDefaultsToLocal(t *testing.T) {
+	protocol := "postgres"
 	target := config.Target("db.internal:5432")
 	project := Project{Config: config.TNL{
-		PublisherGroups: map[string]config.PublisherGroup{"cloud": {}},
 		Services: config.Services{
 			"default": {},
-			"db":      {PublisherGroup: &group, Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target}},
 		},
 	}}
-	for _, test := range []struct {
-		name     string
-		expected string
-	}{{"default", "local"}, {"db", "cloud"}} {
-		if actual := config.PublisherGroupName(project.Config.Services[test.name]); actual != test.expected {
-			t.Fatalf("service %q group=%s", test.name, actual)
-		}
+	if actual := config.SelectedDeployment(project.Config); actual != "local" {
+		t.Fatalf("default deployment=%s", actual)
+	}
+	project.Config.Deployment = "cloud"
+	project.Config.Services = config.Services{"db": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target}}}
+	if actual := config.SelectedDeployment(project.Config); actual != "cloud" || config.Protocol(project.Config.Services["db"]) != protocol || *project.Config.Services["db"].Target.Address != target {
+		t.Fatal("selected deployment lost its binding")
 	}
 }
 
