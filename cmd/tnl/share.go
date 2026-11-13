@@ -2,10 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -284,11 +280,6 @@ func createShare(ctx context.Context, flags shareCreateCommand, project projectC
 	if selected.ServiceProtocol != controlv1.Http {
 		return failure.Wrap("select share public URL", failure.ShareInputInvalid, errors.New("share links and tokens require an HTTP public URL"))
 	}
-	secret := make([]byte, 32)
-	if _, err := rand.Read(secret); err != nil {
-		return fmt.Errorf("generate share secret: %w", err)
-	}
-	fingerprint := sha256.Sum256(secret)
 	key, err := opaqueid.New(opaqueid.IdempotencyPrefix)
 	if err != nil {
 		return err
@@ -298,24 +289,27 @@ func createShare(ctx context.Context, flags shareCreateCommand, project projectC
 		ids = anonymousPreviewPublicURLIDs(routes)
 	}
 	request := controlv1.CreateShareRequest{
-		PublicUrlIds: ids, ExpiresAt: time.Now().UTC().Add(lifetime), SecretFingerprint: hex.EncodeToString(fingerprint[:]),
+		PublicUrlIds: ids, EntryPublicUrlId: selected.Id, ExpiresAt: time.Now().UTC().Add(lifetime),
 		Label: &flags.Name,
 	}
-	var share controlv1.Share
+	var creation controlv1.ShareCreation
 	if flags.Preview {
-		share, err = session.Authenticated().Control.CreateShare(ctx, preview.Id, key, request)
+		creation, err = session.Authenticated().Control.CreateShare(ctx, preview.Id, key, request)
 	} else {
-		share, err = session.Authenticated().Control.CreateURLShare(ctx, key, request)
+		creation, err = session.Authenticated().Control.CreateURLShare(ctx, key, request)
 	}
 	if err != nil {
 		return err
 	}
-	if share.Id == "" || !slices.Equal(share.PublicUrlIds, ids) || flags.Preview && (share.PreviewId == nil || *share.PreviewId != preview.Id) || !flags.Preview && share.PreviewId != nil {
+	share := creation.Share
+	entryURL, entryErr := url.Parse(creation.Link)
+	if share.Id == "" || !slices.Equal(share.PublicUrlIds, ids) || flags.Preview && (share.PreviewId == nil || *share.PreviewId != preview.Id) || !flags.Preview && share.PreviewId != nil ||
+		creation.TokenSource.Kind != controlv1.VisitorTokenShare || creation.TokenSource.ShareId != share.Id || len(creation.TokenSource.Secret) != 43 ||
+		entryErr != nil || entryURL.Scheme != "https" || entryURL.Host != selected.CanonicalHostname || entryURL.User != nil {
 		return failure.Wrap("create share", failure.ServerResponseInvalid, errors.New("server returned a share with different public URLs"))
 	}
-	encodedSecret := base64.RawURLEncoding.EncodeToString(secret)
 	if token {
-		source, err := json.Marshal(controlv1.VisitorTokenShareSource{Kind: controlv1.VisitorTokenShare, ShareId: share.Id, Secret: encodedSecret})
+		source, err := json.Marshal(creation.TokenSource)
 		if err != nil {
 			return err
 		}
@@ -339,7 +333,7 @@ func createShare(ctx context.Context, flags shareCreateCommand, project projectC
 		_, err = fmt.Fprintln(output, permission.VisitorToken)
 		return failure.Wrap("write share token", failure.OutputUnavailable, err)
 	}
-	entry := "https://" + selected.CanonicalHostname + "/__tnl/share/" + share.Id + "." + encodedSecret
+	entry := creation.Link
 	if flags.Output == statusOutputJSON {
 		return failure.Wrap("write share URL", failure.OutputUnavailable, json.NewEncoder(output).Encode(struct {
 			SchemaVersion int                           `json:"schema_version"`

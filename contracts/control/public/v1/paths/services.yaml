@@ -230,7 +230,7 @@ paths:
       operationId: inviteServiceVisitor
       tags: [visitor-access]
       summary: Invite a verified email identity to one service
-      description: A new key creates one exact-service invitation. An exact retry by the same actor returns HTTP 200 with the original ID and current state, without a secret, after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
+      description: A new key creates one exact-service invitation with a one-time credential. An exact retry by the same actor returns HTTP 409 credential_delivery_unavailable with details.resource_id after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
       security: [{ bearerAuth: [] }]
       parameters:
         [
@@ -250,18 +250,21 @@ paths:
             },
         }
       responses:
-        "200":
-          description: Existing invitation without its secret; explicitly revoke and reissue if delivery was lost
+        "409":
+          description: Exact retry cannot redeliver the credential, or changed input conflicts
           content:
-            application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/ServiceInvitation" }
+            application/problem+json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/Problem" }
         "201":
           {
             description: One-use verified-email invitation,
             content:
               {
                 application/json:
-                  { schema: { $ref: "../openapi.yaml#/components/schemas/ServiceInvitation" } },
+                  {
+                    schema:
+                      { $ref: "../openapi.yaml#/components/schemas/ServiceInvitationCreation" },
+                  },
               },
           }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }

@@ -52,6 +52,7 @@ func TestIntegrationVisitorTokenAPIHasOneSourceAndNoManagementAuthority(t *testi
 			r.Header.Set("Authorization", "Bearer "+token)
 		}
 		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Idempotency-Key", "server-issued")
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, r)
 		return w
@@ -91,5 +92,27 @@ func TestIntegrationVisitorTokenAPIHasOneSourceAndNoManagementAuthority(t *testi
 	response = request("/v1/visitor-tokens", `{"resource":{"kind":"public_url","id":"`+url.ID+`"},"source":{"kind":"browser_session","secret":"`+secret+`"}}`, session.AccessToken.String())
 	if response.Code != 400 || bytes.Contains(response.Body.Bytes(), []byte(secret)) {
 		t.Fatal("mixed authority sources were accepted or exposed")
+	}
+	invitationBody := `{"email":"visitor@example.test","expires_at":"` + now.Add(time.Hour).UTC().Format(time.RFC3339Nano) + `"}`
+	path := "/v1/public-urls/" + url.ID + "/visitor-invitations"
+	created := request(path, invitationBody, session.AccessToken.String())
+	var invitation controlv1.VisitorInvitationCreation
+	if created.Code != http.StatusCreated || json.Unmarshal(created.Body.Bytes(), &invitation) != nil || invitation.Credential == "" || created.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("invitation did not deliver a complete credential")
+	}
+	retry := request(path, invitationBody, session.AccessToken.String())
+	if retry.Code != http.StatusConflict || !strings.Contains(retry.Body.String(), invitation.Invitation.Id) || strings.Contains(retry.Body.String(), invitation.Credential) {
+		t.Fatal("retry did not identify the existing invitation without its credential")
+	}
+	recipient, err := d.CreateOIDCControlSession(t.Context(), "example.test", controlstate.OIDCIdentity{
+		Issuer: "https://identity.fixture.test", Subject: "recipient", DisplayName: "recipient", NormalizedEmail: "visitor@example.test", EmailVerified: true,
+		AssertionDigest: sha256.Sum256([]byte("recipient")), AssertionExpiry: now.Add(time.Hour),
+	}, time.Hour, 24*time.Hour, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted := request("/v1/visitor-invitations/accept", `{"secret":"`+invitation.Credential+`"}`, recipient.AccessToken.String())
+	if accepted.Code != http.StatusOK || strings.Contains(accepted.Body.String(), invitation.Credential) {
+		t.Fatal("recipient could not accept the server-issued credential")
 	}
 }

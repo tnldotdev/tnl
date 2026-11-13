@@ -375,6 +375,30 @@ func (e FeedbackEventActor) Valid() bool {
 	}
 }
 
+// Defines values for FeedbackEventInputType.
+const (
+	FeedbackInputReopened FeedbackEventInputType = "thread.reopened"
+	FeedbackInputReply    FeedbackEventInputType = "reply"
+	FeedbackInputResolved FeedbackEventInputType = "thread.resolved"
+	FeedbackInputUpdate   FeedbackEventInputType = "update"
+)
+
+// Valid indicates whether the value is a known member of the FeedbackEventInputType enum.
+func (e FeedbackEventInputType) Valid() bool {
+	switch e {
+	case FeedbackInputReopened:
+		return true
+	case FeedbackInputReply:
+		return true
+	case FeedbackInputResolved:
+		return true
+	case FeedbackInputUpdate:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for FeedbackEventType.
 const (
 	Reply          FeedbackEventType = "reply"
@@ -545,34 +569,37 @@ func (e OIDCAuthenticationFactsLoginFlow) Valid() bool {
 
 // Defines values for ProblemCode.
 const (
-	Conflict                    ProblemCode = "conflict"
-	DnsSetupPending             ProblemCode = "dns_setup_pending"
-	Forbidden                   ProblemCode = "forbidden"
-	GuestDemoOnly               ProblemCode = "guest_demo_only"
-	GuestIpChanged              ProblemCode = "guest_ip_changed"
-	GuestIssuanceLimited        ProblemCode = "guest_issuance_limited"
-	GuestTrialExhausted         ProblemCode = "guest_trial_exhausted"
-	Internal                    ProblemCode = "internal"
-	InvalidRequest              ProblemCode = "invalid_request"
-	IssuanceRetry               ProblemCode = "issuance_retry"
-	MemberHostnameDepthExceeded ProblemCode = "member_hostname_depth_exceeded"
-	NameUnavailable             ProblemCode = "name_unavailable"
-	NotFound                    ProblemCode = "not_found"
-	PlacementUnavailable        ProblemCode = "placement_unavailable"
-	PolicyRevisionStale         ProblemCode = "policy_revision_stale"
-	ProjectManaged              ProblemCode = "project_managed"
-	PublishRunOpen              ProblemCode = "publish_run_open"
-	RateLimited                 ProblemCode = "rate_limited"
-	StaleNetworkBinding         ProblemCode = "stale_network_binding"
-	TrafficSelectionInvalid     ProblemCode = "traffic_selection_invalid"
-	Unauthenticated             ProblemCode = "unauthenticated"
-	Unavailable                 ProblemCode = "unavailable"
+	Conflict                      ProblemCode = "conflict"
+	CredentialDeliveryUnavailable ProblemCode = "credential_delivery_unavailable"
+	DnsSetupPending               ProblemCode = "dns_setup_pending"
+	Forbidden                     ProblemCode = "forbidden"
+	GuestDemoOnly                 ProblemCode = "guest_demo_only"
+	GuestIpChanged                ProblemCode = "guest_ip_changed"
+	GuestIssuanceLimited          ProblemCode = "guest_issuance_limited"
+	GuestTrialExhausted           ProblemCode = "guest_trial_exhausted"
+	Internal                      ProblemCode = "internal"
+	InvalidRequest                ProblemCode = "invalid_request"
+	IssuanceRetry                 ProblemCode = "issuance_retry"
+	MemberHostnameDepthExceeded   ProblemCode = "member_hostname_depth_exceeded"
+	NameUnavailable               ProblemCode = "name_unavailable"
+	NotFound                      ProblemCode = "not_found"
+	PlacementUnavailable          ProblemCode = "placement_unavailable"
+	PolicyRevisionStale           ProblemCode = "policy_revision_stale"
+	ProjectManaged                ProblemCode = "project_managed"
+	PublishRunOpen                ProblemCode = "publish_run_open"
+	RateLimited                   ProblemCode = "rate_limited"
+	StaleNetworkBinding           ProblemCode = "stale_network_binding"
+	TrafficSelectionInvalid       ProblemCode = "traffic_selection_invalid"
+	Unauthenticated               ProblemCode = "unauthenticated"
+	Unavailable                   ProblemCode = "unavailable"
 )
 
 // Valid indicates whether the value is a known member of the ProblemCode enum.
 func (e ProblemCode) Valid() bool {
 	switch e {
 	case Conflict:
+		return true
+	case CredentialDeliveryUnavailable:
 		return true
 	case DnsSetupPending:
 		return true
@@ -1101,6 +1128,27 @@ func (e ReadinessResponseStatus) Valid() bool {
 	case ReadinessResponseStatusNotReady:
 		return true
 	case ReadinessResponseStatusReady:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReviewerFeedbackEventInputType.
+const (
+	ReviewerFeedbackInputReopened ReviewerFeedbackEventInputType = "thread.reopened"
+	ReviewerFeedbackInputReply    ReviewerFeedbackEventInputType = "reply"
+	ReviewerFeedbackInputResolved ReviewerFeedbackEventInputType = "thread.resolved"
+)
+
+// Valid indicates whether the value is a known member of the ReviewerFeedbackEventInputType enum.
+func (e ReviewerFeedbackEventInputType) Valid() bool {
+	switch e {
+	case ReviewerFeedbackInputReopened:
+		return true
+	case ReviewerFeedbackInputReply:
+		return true
+	case ReviewerFeedbackInputResolved:
 		return true
 	default:
 		return false
@@ -1775,9 +1823,9 @@ type AppendFeedbackEventRequest struct {
 	Evidence *FeedbackEvidence `json:"evidence,omitempty"`
 
 	// SourceState Bounded Git identifiers for the source present in one project directory. Compare HEAD, project_path, and changed_files only when both records are complete. Branch names and index state do not affect matching. Source bytes and absolute paths are not stored. Ignored files are outside this comparison; an unsupported or truncated capture is incomplete.
-	SourceState *SourceState      `json:"source_state,omitempty"`
-	Text        *string           `json:"text,omitempty"`
-	Type        FeedbackEventType `json:"type"`
+	SourceState *SourceState           `json:"source_state,omitempty"`
+	Text        *string                `json:"text,omitempty"`
+	Type        FeedbackEventInputType `json:"type"`
 }
 
 // AppendReviewerFeedbackEventRequest defines model for AppendReviewerFeedbackEventRequest.
@@ -1787,9 +1835,9 @@ type AppendReviewerFeedbackEventRequest struct {
 	PublishRunNumber int64                  `json:"publish_run_number"`
 
 	// SourceState Bounded Git identifiers for the source present in one project directory. Compare HEAD, project_path, and changed_files only when both records are complete. Branch names and index state do not affect matching. Source bytes and absolute paths are not stored. Ignored files are outside this comparison; an unsupported or truncated capture is incomplete.
-	SourceState *SourceState      `json:"source_state,omitempty"`
-	Text        *string           `json:"text,omitempty"`
-	Type        FeedbackEventType `json:"type"`
+	SourceState *SourceState                   `json:"source_state,omitempty"`
+	Text        *string                        `json:"text,omitempty"`
+	Type        ReviewerFeedbackEventInputType `json:"type"`
 }
 
 // AppliedProjectConfiguration defines model for AppliedProjectConfiguration.
@@ -2375,10 +2423,10 @@ type CreateServiceRequest struct {
 
 // CreateShareRequest defines model for CreateShareRequest.
 type CreateShareRequest struct {
-	ExpiresAt         time.Time     `json:"expires_at"`
-	Label             *string       `json:"label,omitempty"`
-	PublicUrlIds      []PublicURLID `json:"public_url_ids"`
-	SecretFingerprint string        `json:"secret_fingerprint"`
+	EntryPublicUrlId PublicURLID   `json:"entry_public_url_id"`
+	ExpiresAt        time.Time     `json:"expires_at"`
+	Label            *string       `json:"label,omitempty"`
+	PublicUrlIds     []PublicURLID `json:"public_url_ids"`
 }
 
 // CreateTeamVisitorGrantRequest defines model for CreateTeamVisitorGrantRequest.
@@ -2390,9 +2438,6 @@ type CreateTeamVisitorGrantRequest struct {
 type CreateVisitorCredentialRequest struct {
 	ExpiresAt time.Time                          `json:"expires_at"`
 	Kind      CreateVisitorCredentialRequestKind `json:"kind"`
-
-	// Resource An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
-	Resource VisitorResourceScope `json:"resource"`
 }
 
 // CreateVisitorCredentialRequestKind defines model for CreateVisitorCredentialRequest.Kind.
@@ -2400,9 +2445,8 @@ type CreateVisitorCredentialRequestKind string
 
 // CreateVisitorInvitationRequest defines model for CreateVisitorInvitationRequest.
 type CreateVisitorInvitationRequest struct {
-	Email       string    `json:"email"`
-	ExpiresAt   time.Time `json:"expires_at"`
-	TokenDigest string    `json:"token_digest"`
+	Email     string    `json:"email"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 // DomainID defines model for DomainID.
@@ -2469,6 +2513,9 @@ type FeedbackEvent struct {
 
 // FeedbackEventActor defines model for FeedbackEvent.Actor.
 type FeedbackEventActor string
+
+// FeedbackEventInputType defines model for FeedbackEventInputType.
+type FeedbackEventInputType string
 
 // FeedbackEventPage defines model for FeedbackEventPage.
 type FeedbackEventPage struct {
@@ -3403,6 +3450,9 @@ type ResourceID = string
 // ReviewSchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
 type ReviewSchemaVersion = int
 
+// ReviewerFeedbackEventInputType defines model for ReviewerFeedbackEventInputType.
+type ReviewerFeedbackEventInputType string
+
 // ReviewerFeedbackReadRequest defines model for ReviewerFeedbackReadRequest.
 type ReviewerFeedbackReadRequest struct {
 	Access           FeedbackReviewerAccess `json:"access"`
@@ -3572,10 +3622,13 @@ type ServiceInvitation struct {
 	ExpiresAt  time.Time           `json:"expires_at"`
 	Id         ServiceInvitationID `json:"id"`
 	RevokedAt  *time.Time          `json:"revoked_at,omitempty"`
+	ServiceId  ServiceID           `json:"service_id"`
+}
 
-	// Secret Returned only for a new creation (HTTP 201). Exact creation retries (HTTP 200) and lists omit it. If delivery was lost, revoke the returned ID and create with a new key; secrets cannot be recovered.
-	Secret    *string   `json:"secret,omitempty"`
-	ServiceId ServiceID `json:"service_id"`
+// ServiceInvitationCreation One-time credential for POST /v1/service-invitations/accept using {secret} after verified-email sign-in. No invitation UI origin is configured by this API. Give the recipient this credential and the control URL; tnl share service invite accept accepts it. Exact creation retries return credential_delivery_unavailable with details.resource_id; revoke and reissue with a new key if delivery was lost. Acceptance is one-use; revocation also revokes the accepted grant.
+type ServiceInvitationCreation struct {
+	Credential string            `json:"credential"`
+	Invitation ServiceInvitation `json:"invitation"`
 }
 
 // ServiceInvitationCredential defines model for ServiceInvitationCredential.
@@ -3806,6 +3859,13 @@ type Share struct {
 // ShareScope defines model for Share.Scope.
 type ShareScope string
 
+// ShareCreation One-time delivery. Save the complete link or token_source before discarding this response. Control retains only a digest; an exact retry returns credential_delivery_unavailable with details.resource_id after current authorization. Revoke that ID and create with a new key if delivery was lost. Expiry and captured public URLs never change on retry.
+type ShareCreation struct {
+	Link        string                  `json:"link"`
+	Share       Share                   `json:"share"`
+	TokenSource VisitorTokenShareSource `json:"token_source"`
+}
+
 // ShareID defines model for ShareID.
 type ShareID = ResourceID
 
@@ -3977,6 +4037,12 @@ type VisitorInvitation struct {
 	Id                 string      `json:"id"`
 	PublicUrlId        PublicURLID `json:"public_url_id"`
 	RevokedAt          *time.Time  `json:"revoked_at,omitempty"`
+}
+
+// VisitorInvitationCreation One-time credential for POST /v1/visitor-invitations/accept using {secret} after signing in with the current verified recipient email. No invitation UI origin is configured by this API. Give the recipient the complete credential and control URL; tnl share invite accept accepts it. Exact creation retries return credential_delivery_unavailable with details.resource_id; revoke and reissue with a new key if delivery was lost.
+type VisitorInvitationCreation struct {
+	Credential string            `json:"credential"`
+	Invitation VisitorInvitation `json:"invitation"`
 }
 
 // VisitorPolicyIP defines model for VisitorPolicyIP.
@@ -6200,7 +6266,7 @@ type ClientInterface interface {
 
 	// InviteServiceVisitorWithBody Invite a verified email identity to one service
 	//
-	// A new key creates one exact-service invitation. An exact retry by the same actor returns HTTP 200 with the original ID and current state, without a secret, after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
+	// A new key creates one exact-service invitation with a one-time credential. An exact retry by the same actor returns HTTP 409 credential_delivery_unavailable with details.resource_id after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6209,7 +6275,7 @@ type ClientInterface interface {
 
 	// InviteServiceVisitor Invite a verified email identity to one service
 	//
-	// A new key creates one exact-service invitation. An exact retry by the same actor returns HTTP 200 with the original ID and current state, without a secret, after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
+	// A new key creates one exact-service invitation with a one-time credential. An exact retry by the same actor returns HTTP 409 credential_delivery_unavailable with details.resource_id after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6480,7 +6546,7 @@ type ClientInterface interface {
 
 	// ListTeamShares List manageable shares for one team
 	//
-	// Read a cursor-paginated share inventory under current team management authorization. Responses omit share secrets; use the original secret to construct a share link.
+	// Read a cursor-paginated share inventory under current team management authorization. Responses omit share secrets; retain the original creation link or token_source for visitor access.
 	//
 	// Corresponds with GET /v1/shares (the `ListTeamShares` operationId).
 	ListTeamShares(ctx context.Context, params *ListTeamSharesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -9593,7 +9659,7 @@ func (c *Client) ListServiceInvitations(ctx context.Context, serviceId ServiceID
 
 // InviteServiceVisitorWithBody Invite a verified email identity to one service
 //
-// A new key creates one exact-service invitation. An exact retry by the same actor returns HTTP 200 with the original ID and current state, without a secret, after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
+// A new key creates one exact-service invitation with a one-time credential. An exact retry by the same actor returns HTTP 409 credential_delivery_unavailable with details.resource_id after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
 //
 // Takes any type of body and a specified content type.
 //
@@ -9612,7 +9678,7 @@ func (c *Client) InviteServiceVisitorWithBody(ctx context.Context, serviceId Ser
 
 // InviteServiceVisitor Invite a verified email identity to one service
 //
-// A new key creates one exact-service invitation. An exact retry by the same actor returns HTTP 200 with the original ID and current state, without a secret, after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
+// A new key creates one exact-service invitation with a one-time credential. An exact retry by the same actor returns HTTP 409 credential_delivery_unavailable with details.resource_id after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -10193,7 +10259,7 @@ func (c *Client) SelectServiceRun(ctx context.Context, serviceId ServiceID, body
 
 // ListTeamShares List manageable shares for one team
 //
-// Read a cursor-paginated share inventory under current team management authorization. Responses omit share secrets; use the original secret to construct a share link.
+// Read a cursor-paginated share inventory under current team management authorization. Responses omit share secrets; retain the original creation link or token_source for visitor access.
 //
 // Corresponds with GET /v1/shares (the `ListTeamShares` operationId).
 func (c *Client) ListTeamShares(ctx context.Context, params *ListTeamSharesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -18804,7 +18870,7 @@ type ClientWithResponsesInterface interface {
 
 	// InviteServiceVisitorWithBodyWithResponse Invite a verified email identity to one service
 	//
-	// A new key creates one exact-service invitation. An exact retry by the same actor returns HTTP 200 with the original ID and current state, without a secret, after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
+	// A new key creates one exact-service invitation with a one-time credential. An exact retry by the same actor returns HTTP 409 credential_delivery_unavailable with details.resource_id after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18813,7 +18879,7 @@ type ClientWithResponsesInterface interface {
 
 	// InviteServiceVisitorWithResponse Invite a verified email identity to one service
 	//
-	// A new key creates one exact-service invitation. An exact retry by the same actor returns HTTP 200 with the original ID and current state, without a secret, after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
+	// A new key creates one exact-service invitation with a one-time credential. An exact retry by the same actor returns HTTP 409 credential_delivery_unavailable with details.resource_id after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -19092,7 +19158,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListTeamSharesWithResponse List manageable shares for one team
 	//
-	// Read a cursor-paginated share inventory under current team management authorization. Responses omit share secrets; use the original secret to construct a share link.
+	// Read a cursor-paginated share inventory under current team management authorization. Responses omit share secrets; retain the original creation link or token_source for visitor access.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -20433,14 +20499,21 @@ type CreateShareResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *Share
+	JSON201 *ShareCreation
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreateShareResponse) GetJSON201() *Share {
+func (r CreateShareResponse) GetJSON201() *ShareCreation {
 	return r.JSON201
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r CreateShareResponse) GetApplicationproblemJSON409() *Problem {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
@@ -21564,14 +21637,21 @@ type CreateVisitorInvitationResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *VisitorInvitation
+	JSON201 *VisitorInvitationCreation
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreateVisitorInvitationResponse) GetJSON201() *VisitorInvitation {
+func (r CreateVisitorInvitationResponse) GetJSON201() *VisitorInvitationCreation {
 	return r.JSON201
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r CreateVisitorInvitationResponse) GetApplicationproblemJSON409() *Problem {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
@@ -24133,22 +24213,22 @@ func (r ListServiceInvitationsResponse) ContentType() string {
 type InviteServiceVisitorResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ServiceInvitation
 	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *ServiceInvitation
+	JSON201 *ServiceInvitationCreation
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r InviteServiceVisitorResponse) GetJSON200() *ServiceInvitation {
-	return r.JSON200
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r InviteServiceVisitorResponse) GetJSON201() *ServiceInvitationCreation {
+	return r.JSON201
 }
 
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r InviteServiceVisitorResponse) GetJSON201() *ServiceInvitation {
-	return r.JSON201
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r InviteServiceVisitorResponse) GetApplicationproblemJSON409() *Problem {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
@@ -25018,14 +25098,21 @@ type CreateURLShareResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *Share
+	JSON201 *ShareCreation
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreateURLShareResponse) GetJSON201() *Share {
+func (r CreateURLShareResponse) GetJSON201() *ShareCreation {
 	return r.JSON201
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r CreateURLShareResponse) GetApplicationproblemJSON409() *Problem {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
@@ -28170,7 +28257,7 @@ func (c *ClientWithResponses) ListServiceInvitationsWithResponse(ctx context.Con
 
 // InviteServiceVisitorWithBodyWithResponse Invite a verified email identity to one service
 //
-// A new key creates one exact-service invitation. An exact retry by the same actor returns HTTP 200 with the original ID and current state, without a secret, after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
+// A new key creates one exact-service invitation with a one-time credential. An exact retry by the same actor returns HTTP 409 credential_delivery_unavailable with details.resource_id after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28185,7 +28272,7 @@ func (c *ClientWithResponses) InviteServiceVisitorWithBodyWithResponse(ctx conte
 
 // InviteServiceVisitorWithResponse Invite a verified email identity to one service
 //
-// A new key creates one exact-service invitation. An exact retry by the same actor returns HTTP 200 with the original ID and current state, without a secret, after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
+// A new key creates one exact-service invitation with a one-time credential. An exact retry by the same actor returns HTTP 409 credential_delivery_unavailable with details.resource_id after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28650,7 +28737,7 @@ func (c *ClientWithResponses) SelectServiceRunWithResponse(ctx context.Context, 
 
 // ListTeamSharesWithResponse List manageable shares for one team
 //
-// Read a cursor-paginated share inventory under current team management authorization. Responses omit share secrets; use the original secret to construct a share link.
+// Read a cursor-paginated share inventory under current team management authorization. Responses omit share secrets; retain the original creation link or token_source for visitor access.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -29788,11 +29875,18 @@ func ParseCreateShareResponse(rsp *http.Response) (*CreateShareResponse, error) 
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest Share
+		var dest ShareCreation
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -30568,11 +30662,18 @@ func ParseCreateVisitorInvitationResponse(rsp *http.Response) (*CreateVisitorInv
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest VisitorInvitation
+		var dest VisitorInvitationCreation
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -32345,19 +32446,19 @@ func ParseInviteServiceVisitorResponse(rsp *http.Response) (*InviteServiceVisito
 	}
 
 	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ServiceInvitation
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest ServiceInvitation
+		var dest ServiceInvitationCreation
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -32960,11 +33061,18 @@ func ParseCreateURLShareResponse(rsp *http.Response) (*CreateURLShareResponse, e
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest Share
+		var dest ShareCreation
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem

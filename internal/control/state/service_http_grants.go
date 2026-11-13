@@ -14,7 +14,7 @@ import (
 
 func (d *Database) CreateServiceHTTPGrant(ctx context.Context, service, actor string, input controlv1.CreateVisitorCredentialRequest, now time.Time) (result controlv1.VisitorCredential, retErr error) {
 	kind := string(input.Kind)
-	if input.Resource.Kind != "service" || input.Resource.Id != service || (kind != "token" && kind != "share") || !input.ExpiresAt.After(now) || input.ExpiresAt.After(now.Add(7*24*time.Hour)) {
+	if (kind != "token" && kind != "share") || !input.ExpiresAt.After(now) || input.ExpiresAt.After(now.Add(7*24*time.Hour)) {
 		return result, ErrServiceAccess
 	}
 	tx, err := d.beginServiceAccess(ctx, pgx.TxOptions{})

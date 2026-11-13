@@ -190,10 +190,10 @@ func visitorInvitationFromRow(row controlstatedb.ControlVisitorInvitation) Visit
 		AcceptedIdentityID: row.AcceptedIdentityID.String, RevokedAt: optionalTime(row.RevokedAt)}
 }
 
-// the client generates the secret; control stores only its digest.
+// the serving owner generates the secret; state stores only its digest.
 func (d *Database) CreateVisitorInvitation(ctx context.Context, urlID, actorID, key, email string, tokenDigest [32]byte, expires, now time.Time) (result VisitorInvitation, retErr error) {
 	email, err := normalizeEmailRestriction(email)
-	if err != nil || email == "" || tokenDigest == ([32]byte{}) || !validFeedbackKey(key) || !expires.After(now) || expires.After(now.Add(maximumShareLifetime)) {
+	if err != nil || email == "" || tokenDigest == ([32]byte{}) || !validFeedbackKey(key) || expires.IsZero() {
 		return result, ErrShareInvalid
 	}
 	tx, err := d.pool.Begin(ctx)
@@ -218,17 +218,32 @@ func (d *Database) CreateVisitorInvitation(ctx context.Context, urlID, actorID, 
 	}
 	encoded, _ := json.Marshal(struct {
 		URL, Email string
-		Digest     [32]byte
 		Expires    time.Time
-	}{urlID, email, tokenDigest, expires})
+	}{urlID, email, expires.UTC().Truncate(time.Microsecond)})
 	digest := sha256.Sum256(encoded)
+	existing, err := q.FindVisitorInvitationRequest(ctx, controlstatedb.FindVisitorInvitationRequestParams{CreatedByIdentityID: actorID, IdempotencyKey: key})
+	if err == nil {
+		if subtle.ConstantTimeCompare(existing.RequestDigest, digest[:]) != 1 {
+			return result, ErrShareIdempotency
+		}
+		return result, &CredentialDeliveryUnavailable{ResourceID: existing.ID}
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return result, err
+	}
+	if !expires.After(now) || expires.After(now.Add(maximumShareLifetime)) {
+		return result, ErrShareInvalid
+	}
 	row, err := q.CreateVisitorInvitation(ctx, controlstatedb.CreateVisitorInvitationParams{ID: id, PublicURLID: urlID, TeamID: url.TeamID,
 		NormalizedEmail: email, TokenDigest: tokenDigest[:], CreatedByIdentityID: actorID, IdempotencyKey: key, RequestDigest: digest[:], CreatedAt: timestamptz(now), ExpiresAt: timestamptz(expires)})
 	if err != nil {
 		return result, err
 	}
-	if row.RevokedAt.Valid || row.AcceptedAt.Valid || subtle.ConstantTimeCompare(row.RequestDigest, digest[:]) != 1 {
+	if subtle.ConstantTimeCompare(row.RequestDigest, digest[:]) != 1 {
 		return result, ErrShareIdempotency
+	}
+	if row.ID != id {
+		return result, &CredentialDeliveryUnavailable{ResourceID: row.ID}
 	}
 	if err = auditPublicMutation(ctx, tx, urlID, actorID, "invitation.create", row.ID, row.CreatedAt.Time); err != nil {
 		return result, err

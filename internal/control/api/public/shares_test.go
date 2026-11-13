@@ -3,7 +3,8 @@ package public
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -39,6 +40,9 @@ type shareRoutesStub struct {
 }
 
 func (*shareRoutesStub) GetPublicURLForAuthorization(_ context.Context, id string) (controlstate.PublicURL, error) {
+	if id == "url_missing" {
+		return controlstate.PublicURL{}, controlstate.ErrPublicURLNotFound
+	}
 	return controlstate.PublicURL{
 		ID: id, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
 		CanonicalHostname: "web.example.test", Target: "http://127.0.0.1:3000",
@@ -70,6 +74,9 @@ func (s *shareStoreStub) CreateShare(_ context.Context, request controlstate.Cre
 }
 
 func (s *shareStoreStub) CreateGuestShare(_ context.Context, guestID, urlID, _, label string, _ [32]byte, expiresAt, now time.Time) (controlstate.Share, error) {
+	if urlID != "url_guest" {
+		return controlstate.Share{}, controlstate.ErrShareStale
+	}
 	s.guestID, s.guestURL = guestID, urlID
 	s.share = controlstate.Share{SchemaVersion: 1, ID: "shr_guest", Scope: "guest", Label: label, TeamID: "team_guest", PublicURLIDs: []string{urlID},
 		CreatedByIdentityID: guestID, CreatedAt: now, ExpiresAt: expiresAt}
@@ -96,7 +103,7 @@ func (s *shareStoreStub) RevokeShare(_ context.Context, _, _ string, now time.Ti
 	return s.share, nil
 }
 
-func TestShareCreateAuthorizesEachIncludedURLAndHidesSecretFingerprint(t *testing.T) {
+func TestShareCreateAuthorizesEachIncludedURLAndDeliversCredentialOnce(t *testing.T) {
 	preview := &previewStoreStub{preview: controlstate.Preview{
 		ID: "pv_preview", TeamID: "team_1", CreatedByIdentityID: "identity_1", PublicURLIDs: []string{"url_1"},
 	}}
@@ -114,10 +121,8 @@ func TestShareCreateAuthorizesEachIncludedURLAndHidesSecretFingerprint(t *testin
 	}}
 	shares := &shareStoreStub{}
 	h := &handler{store: routes, previews: preview, shares: shares, authorizer: authorizer}
-	secretSum := sha256.Sum256([]byte("preview-secret"))
-	secret := hex.EncodeToString(secretSum[:])
 	create := func(ids string) *httptest.ResponseRecorder {
-		request := httptest.NewRequest(http.MethodPost, "/v1/previews/pv_preview/shares", strings.NewReader(fmt.Sprintf(`{"public_url_ids":%s,"expires_at":"%s","secret_fingerprint":"%s"}`, ids, time.Now().UTC().Add(24*time.Hour).Format(time.RFC3339), secret)))
+		request := httptest.NewRequest(http.MethodPost, "/v1/previews/pv_preview/shares", strings.NewReader(fmt.Sprintf(`{"public_url_ids":%s,"entry_public_url_id":"url_1","expires_at":"%s"}`, ids, time.Now().UTC().Add(24*time.Hour).Format(time.RFC3339))))
 		request.Header.Set("Authorization", "Bearer access-token")
 		request.Header.Set("Idempotency-Key", "first-share")
 		response := httptest.NewRecorder()
@@ -131,14 +136,22 @@ func TestShareCreateAuthorizesEachIncludedURLAndHidesSecretFingerprint(t *testin
 	if response.Code != http.StatusCreated || shares.created.PreviewID != "pv_preview" ||
 		shares.created.ActingIdentityID != "identity_1" || shares.created.PublicURLs[0].ExpectedMutationRevision != 3 ||
 		len(authorizer.requests) != 1 || authorizer.requests[0].Operation != authorization.OperationShareCreate ||
-		strings.Contains(response.Body.String(), "fingerprint") || strings.Contains(response.Body.String(), secret) {
+		strings.Contains(response.Body.String(), "fingerprint") || response.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("share creation = %d %s, request=%+v, authorization=%v", response.Code, response.Body.String(), shares.created, authorizer.requests)
+	}
+	var creation controlv1.ShareCreation
+	if err := json.Unmarshal(response.Body.Bytes(), &creation); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(creation.TokenSource.Secret)
+	if err != nil || len(raw) != 32 || sha256.Sum256(raw) != shares.created.SecretFingerprint || creation.TokenSource.ShareId != shares.share.ID || creation.Link != "https://web.example.test/__tnl/share/"+shares.share.ID+"."+creation.TokenSource.Secret {
+		t.Fatal("creation did not deliver a complete credential for the saved digest")
 	}
 	read := httptest.NewRequest(http.MethodGet, "/v1/shares/shr_example", nil)
 	read.Header.Set("Authorization", "Bearer access-token")
 	list := httptest.NewRecorder()
 	h.ListShares(list, read, "pv_preview", controlv1.ListSharesParams{})
-	if list.Code != http.StatusOK || !strings.Contains(list.Body.String(), `"id":"shr_example"`) {
+	if list.Code != http.StatusOK || !strings.Contains(list.Body.String(), `"id":"shr_example"`) || strings.Contains(list.Body.String(), creation.TokenSource.Secret) || strings.Contains(list.Body.String(), "token_source") {
 		t.Fatalf("share list = %d %s", list.Code, list.Body.String())
 	}
 	teamRequest := httptest.NewRequest(http.MethodGet, "/v1/shares?team_id=team_1", nil)
@@ -177,8 +190,7 @@ func TestShareCreationDoesNotStorePartiallyAuthorizedSnapshot(t *testing.T) {
 	authorizer := &selectiveShareAuthorizer{principal: testPublicURLReadPrincipal()}
 	shares := &shareStoreStub{}
 	h := &handler{store: &shareRoutesStub{}, previews: preview, shares: shares, authorizer: authorizer}
-	secretSum := sha256.Sum256([]byte("preview-secret"))
-	body := fmt.Sprintf(`{"public_url_ids":["url_1","url_2"],"expires_at":"%s","secret_fingerprint":"%s"}`, time.Now().UTC().Add(24*time.Hour).Format(time.RFC3339), hex.EncodeToString(secretSum[:]))
+	body := fmt.Sprintf(`{"public_url_ids":["url_1","url_2"],"entry_public_url_id":"url_1","expires_at":"%s"}`, time.Now().UTC().Add(24*time.Hour).Format(time.RFC3339))
 	request := httptest.NewRequest(http.MethodPost, "/v1/previews/pv_preview/shares", strings.NewReader(body))
 	request.Header.Set("Authorization", "Bearer access-token")
 	request.Header.Set("Idempotency-Key", "two-services")
@@ -194,9 +206,8 @@ func TestDirectShareCreationAuthorizesOneURLWithoutPreview(t *testing.T) {
 	shares := &shareStoreStub{}
 	authorizer := &selectiveShareAuthorizer{principal: testPublicURLReadPrincipal()}
 	h := &handler{store: &shareRoutesStub{}, shares: shares, authorizer: authorizer}
-	secret := sha256.Sum256([]byte("exact URL share"))
-	body := fmt.Sprintf(`{"public_url_ids":["url_1"],"expires_at":"%s","secret_fingerprint":"%s","label":"ci"}`,
-		time.Now().UTC().Add(time.Hour).Format(time.RFC3339), hex.EncodeToString(secret[:]))
+	body := fmt.Sprintf(`{"public_url_ids":["url_1"],"entry_public_url_id":"url_1","expires_at":"%s","label":"ci"}`,
+		time.Now().UTC().Add(time.Hour).Format(time.RFC3339))
 	request := httptest.NewRequest(http.MethodPost, "/v1/shares", strings.NewReader(body))
 	request.Header.Set("Authorization", "Bearer access-token")
 	request.Header.Set("Idempotency-Key", "exact-url")
@@ -222,9 +233,8 @@ func TestGuestShareChecksTrialCredentialAndSourceBeforeMinting(t *testing.T) {
 	fallback := &selectiveShareAuthorizer{principal: testPublicURLReadPrincipal()}
 	authorizer := guestAuthorizer{fallback: fallback, store: guestStoreStub{guest: guest.guest}}
 	h := &handler{config: Config{GuestDemoEnabled: true}, guests: guest, shares: shares, authorizer: authorizer, store: &shareRoutesStub{}}
-	secret := sha256.Sum256([]byte("guest share"))
-	body := fmt.Sprintf(`{"public_url_ids":["url_guest"],"expires_at":"%s","secret_fingerprint":"%s","label":"trial"}`,
-		guest.guest.ExpiresAt.UTC().Format(time.RFC3339Nano), hex.EncodeToString(secret[:]))
+	body := fmt.Sprintf(`{"public_url_ids":["url_guest"],"entry_public_url_id":"url_guest","expires_at":"%s","label":"trial"}`,
+		guest.guest.ExpiresAt.UTC().Format(time.RFC3339Nano))
 	for _, test := range []struct {
 		ip     string
 		status int
@@ -242,9 +252,22 @@ func TestGuestShareChecksTrialCredentialAndSourceBeforeMinting(t *testing.T) {
 			t.Fatalf("guest share from %s = %d %s", test.ip, response.Code, response.Body.String())
 		}
 		if test.status == http.StatusForbidden && shares.guestID != "" ||
-			test.status == http.StatusCreated && (shares.guestID != "gst_guest" || shares.guestURL != "url_guest" || shares.share.Label != "trial" || strings.Contains(response.Body.String(), hex.EncodeToString(secret[:]))) || len(fallback.requests) != 0 {
+			test.status == http.StatusCreated && (shares.guestID != "gst_guest" || shares.guestURL != "url_guest" || shares.share.Label != "trial") || len(fallback.requests) != 0 {
 			t.Fatalf("guest share leaked or bypassed source check: response=%s, store=%+v", response.Body.String(), shares)
 		}
+	}
+	rejected := func(id string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPost, "/v1/shares", strings.NewReader(strings.ReplaceAll(body, "url_guest", id)))
+		request.RemoteAddr = "192.0.2.7:1234"
+		request.Header.Set("Authorization", "Bearer guest-token")
+		request.Header.Set("Idempotency-Key", id)
+		response := httptest.NewRecorder()
+		h.CreateURLShare(response, request, controlv1.CreateURLShareParams{})
+		return response
+	}
+	unrelated, missing := rejected("url_unrelated"), rejected("url_missing")
+	if unrelated.Code != http.StatusConflict || missing.Code != unrelated.Code {
+		t.Fatal("guest share responses revealed whether an unowned public URL exists")
 	}
 	h.authorizer = guestAuthorizer{fallback: fallback, store: guestStoreStub{lookupErr: errors.New("guest database unavailable")}}
 	request := httptest.NewRequest(http.MethodPost, "/v1/shares", strings.NewReader(body))
@@ -262,9 +285,8 @@ func TestUnrecognizedGuestCredentialUsesSignedInShareAuthorization(t *testing.T)
 	authorizer := &selectiveShareAuthorizer{principal: testPublicURLReadPrincipal()}
 	h := &handler{config: Config{GuestDemoEnabled: true}, guests: &guestCreationStoreStub{},
 		shares: shares, authorizer: guestAuthorizer{fallback: authorizer, store: guestStoreStub{}}, store: &shareRoutesStub{}}
-	secret := sha256.Sum256([]byte("signed-in share"))
-	body := fmt.Sprintf(`{"public_url_ids":["url_1"],"expires_at":"%s","secret_fingerprint":"%s"}`,
-		time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano), hex.EncodeToString(secret[:]))
+	body := fmt.Sprintf(`{"public_url_ids":["url_1"],"entry_public_url_id":"url_1","expires_at":"%s"}`,
+		time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano))
 	request := httptest.NewRequest(http.MethodPost, "/v1/shares", strings.NewReader(body))
 	request.Header.Set("Authorization", "Bearer signed-in-token")
 	request.Header.Set("Idempotency-Key", "signed-in-share")

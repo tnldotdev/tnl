@@ -2,10 +2,6 @@ package daemon
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
 	"errors"
 	"io"
 	"net/http"
@@ -93,21 +89,16 @@ func testIntegrationPublicStreamTransports(t *testing.T, restricted bool) {
 						t.Fatalf("restricted visitor reached target: %v, %v", response, err)
 					}
 					visitor.transport.CloseIdleConnections()
-					secret := make([]byte, 32)
-					if _, err := rand.Read(secret); err != nil {
-						t.Fatal(err)
-					}
-					fingerprint := sha256.Sum256(secret)
-					share, err := identity.routes.CreateURLShare(t.Context(), "stream-promotion", controlv1.CreateShareRequest{PublicUrlIds: []string{event.PublicURLID}, ExpiresAt: time.Now().Add(time.Minute), SecretFingerprint: hex.EncodeToString(fingerprint[:])})
+					share, err := identity.routes.CreateURLShare(t.Context(), "stream-promotion", controlv1.CreateShareRequest{PublicUrlIds: []string{event.PublicURLID}, EntryPublicUrlId: event.PublicURLID, ExpiresAt: time.Now().Add(time.Minute)})
 					if err != nil {
 						t.Fatal(err)
 					}
-					shareID = share.Id
+					shareID = share.Share.Id
 					// redeem the share through the publisher so its signed permission
 					// and current policy are prepared before application requests.
 					redeemer := *visitor.client
 					redeemer.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-					redemption, err := redeemer.Get(event.PublicURL + "/__tnl/share/" + share.Id + "." + base64.RawURLEncoding.EncodeToString(secret))
+					redemption, err := redeemer.Get(share.Link)
 					if err != nil {
 						t.Fatal("share redemption failed")
 					}

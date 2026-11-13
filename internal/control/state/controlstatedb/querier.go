@@ -165,6 +165,8 @@ type Querier interface {
 	FindSeedTeam(ctx context.Context, displayName string) (ControlTeam, error)
 	// the caller rechecks current management before recovering metadata, never secrets.
 	FindServiceInvitationRequest(ctx context.Context, arg FindServiceInvitationRequestParams) (ControlServiceInvitation, error)
+	FindShareRequest(ctx context.Context, arg FindShareRequestParams) (ControlShare, error)
+	FindVisitorInvitationRequest(ctx context.Context, arg FindVisitorInvitationRequestParams) (ControlVisitorInvitation, error)
 	FinishGuestPublishRun(ctx context.Context, arg FinishGuestPublishRunParams) (int64, error)
 	FinishInvitationEmail(ctx context.Context, arg FinishInvitationEmailParams) (int64, error)
 	ForgetExpiredGuestCredentials(ctx context.Context, arg ForgetExpiredGuestCredentialsParams) (int64, error)

@@ -305,7 +305,7 @@ func TestIntegrationWorkloadTransportHTTPNoFallback(t *testing.T) {
 		t.Fatal("workload inventory", err)
 	}
 	s := inventory.Services[0]
-	grant, err := f.identity.routes.CreateServiceHTTPGrant(t.Context(), s.Id, controlv1.CreateVisitorCredentialRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: s.Id}, Kind: "token", ExpiresAt: time.Now().Add(time.Minute)})
+	grant, err := f.identity.routes.CreateServiceHTTPGrant(t.Context(), s.Id, controlv1.CreateVisitorCredentialRequest{Kind: "token", ExpiresAt: time.Now().Add(time.Minute)})
 	if err != nil {
 		t.Fatal(err)
 	}

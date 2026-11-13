@@ -12,12 +12,27 @@ import (
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type feedbackStoreStub struct {
 	FeedbackStore
 	thread  controlstate.FeedbackThread
 	pageURL string
+}
+
+func TestFeedbackInputsExcludeOutputOnlyAndReviewerUpdateEvents(t *testing.T) {
+	h := &handler{}
+	owner := httptest.NewRecorder()
+	h.AppendFeedbackEvent(owner, httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"type":"thread.created"}`)), "fb_example", controlv1.AppendFeedbackEventParams{})
+	if owner.Code != http.StatusBadRequest {
+		t.Fatal("owner accepted an output-only event")
+	}
+	reviewer := httptest.NewRecorder()
+	h.AppendReviewerFeedbackEvent(reviewer, httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"publish_run_number":1,"type":"update","access":{}}`)), "pr_example", "fb_example", controlv1.AppendReviewerFeedbackEventParams{})
+	if reviewer.Code != http.StatusBadRequest {
+		t.Fatal("reviewer accepted an implementer update")
+	}
 }
 
 func (s *feedbackStoreStub) GetFeedback(_ context.Context, _ string) (controlstate.FeedbackThread, error) {

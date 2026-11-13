@@ -2,13 +2,16 @@ package public
 
 import (
 	"context"
-	"encoding/hex"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"net/netip"
 	"time"
 
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	"github.com/tnldotdev/tnl/internal/control/api/serviceaccess"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
@@ -122,6 +125,7 @@ func (h *handler) RevokeVisitorGrant(w http.ResponseWriter, r *http.Request, id 
 	visitorResult(r.Context(), w, "revoke visitor grant", nil, err, 204)
 }
 func (h *handler) CreateVisitorInvitation(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID, p controlv1.CreateVisitorInvitationParams) {
+	w.Header().Set("Cache-Control", "no-store")
 	actor, ok := h.visitorActor(w, r)
 	if !ok {
 		return
@@ -131,15 +135,22 @@ func (h *handler) CreateVisitorInvitation(w http.ResponseWriter, r *http.Request
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid visitor invitation")
 		return
 	}
-	raw, err := hex.DecodeString(body.TokenDigest)
-	if err != nil || len(raw) != 32 {
-		writeProblem(w, 400, controlv1.InvalidRequest, "invalid invitation digest")
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		writeControlStateProblem(r.Context(), w, "generate invitation credential", err)
 		return
 	}
-	var digest [32]byte
-	copy(digest[:], raw)
+	digest := sha256.Sum256(raw[:])
 	result, err := h.visitorState.CreateVisitorInvitation(r.Context(), id, actor, p.IdempotencyKey, body.Email, digest, body.ExpiresAt, time.Now())
-	visitorResult(r.Context(), w, "create visitor invitation", result, err, 201)
+	if err != nil {
+		if !serviceaccess.WriteCredentialDeliveryProblem(w, err) {
+			visitorResult(r.Context(), w, "create visitor invitation", nil, err, 201)
+		}
+		return
+	}
+	writeJSON(w, http.StatusCreated, controlv1.VisitorInvitationCreation{Invitation: controlv1.VisitorInvitation{
+		Id: result.ID, PublicUrlId: result.PublicURLID, Email: result.Email, ExpiresAt: result.ExpiresAt},
+		Credential: result.ID + "." + base64.RawURLEncoding.EncodeToString(raw[:])})
 }
 func (h *handler) ListVisitorInvitations(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID) {
 	actor, ok := h.visitorActor(w, r)

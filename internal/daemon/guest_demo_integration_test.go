@@ -6,10 +6,8 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -483,22 +481,17 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 	if err := native.SelectPublicURL(publicURL); err != nil {
 		t.Fatal(err)
 	}
-	secret := make([]byte, 32)
-	if _, err := rand.Read(secret); err != nil {
-		t.Fatal(err)
-	}
-	fingerprint := sha256.Sum256(secret)
-	createShare := func() controlv1.Share {
+	createShare := func() controlv1.ShareCreation {
 		t.Helper()
 		share, err := authenticated.Control.CreateURLShare(t.Context(), "guest-reviewer-share", controlv1.CreateShareRequest{
-			PublicUrlIds: []string{publicURL.Id}, ExpiresAt: issued.ExpiresAt, SecretFingerprint: hex.EncodeToString(fingerprint[:]),
+			PublicUrlIds: []string{publicURL.Id}, EntryPublicUrlId: publicURL.Id, ExpiresAt: issued.ExpiresAt,
 		})
-		if err != nil || share.Scope != controlv1.ShareScopeGuest {
+		if err != nil || share.Share.Scope != controlv1.ShareScopeGuest {
 			t.Fatalf("guest trial share = %+v, %v", share, err)
 		}
 		return share
 	}
-	var share controlv1.Share
+	var share controlv1.ShareCreation
 	shareRedeems := make(chan error, 1)
 	var heartbeats, policyRevision atomic.Int64
 	controlAdapter := integrationGuestPublisherControl{Client: authenticated.Control, native: native, shareRedeems: shareRedeems, heartbeats: &heartbeats, policyRevision: &policyRevision}
@@ -570,7 +563,11 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 			waitForIntegrationCondition(t, 10*time.Second, func(context.Context) (bool, error) {
 				return heartbeats.Load() >= before+int64(renewal), nil
 			})
-			for _, path := range []string{"/state", "/__tnl/share/" + share.Id + "." + base64.RawURLEncoding.EncodeToString(secret)} {
+			entry, err := url.Parse(share.Link)
+			if err != nil {
+				t.Fatal("invalid share link")
+			}
+			for _, path := range []string{"/state", entry.Path} {
 				ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 				request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+hostname+path, nil)
 				if err != nil {
@@ -620,7 +617,7 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 	visitor.client.Jar = jar
 	shareClient := *visitor.client
 	shareClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	entry := redeemIntegrationGuestShare(t, &shareClient, ready.PublicURL+"/__tnl/share/"+share.Id+"."+base64.RawURLEncoding.EncodeToString(secret))
+	entry := redeemIntegrationGuestShare(t, &shareClient, share.Link)
 	if entry.StatusCode != http.StatusSeeOther || entry.Header.Get("Location") != ready.PublicURL+"/" {
 		entry.Body.Close()
 		select {

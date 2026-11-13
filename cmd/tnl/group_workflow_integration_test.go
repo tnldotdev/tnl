@@ -417,7 +417,7 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 		t.Fatal("public group lost service HTTP endpoint")
 	}
 	f.connectDirectListener(t, publicService.Endpoint)
-	grant, err := control.CreateServiceHTTPGrant(t.Context(), publicService.Id, controlv1.CreateVisitorCredentialRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: publicService.Id}, Kind: "token", ExpiresAt: time.Now().Add(time.Hour)})
+	grant, err := control.CreateServiceHTTPGrant(t.Context(), publicService.Id, controlv1.CreateVisitorCredentialRequest{Kind: "token", ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}

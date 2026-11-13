@@ -23,6 +23,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/httpclient"
 	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -130,15 +131,15 @@ func (c *Client) AddPreviewPublicURL(ctx context.Context, id, publicURLID string
 	})
 }
 
-func (c *Client) CreateShare(ctx context.Context, previewID, key string, body controlv1.CreateShareRequest) (controlv1.Share, error) {
+func (c *Client) CreateShare(ctx context.Context, previewID, key string, body controlv1.CreateShareRequest) (controlv1.ShareCreation, error) {
 	params := &controlv1.CreateShareParams{IdempotencyKey: key}
-	return requestWithAccess[controlv1.Share](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+	return requestWithAccess[controlv1.ShareCreation](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.CreateShare(ctx, previewID, params, body, editors...)
 	})
 }
 
-func (c *Client) CreateURLShare(ctx context.Context, key string, body controlv1.CreateShareRequest) (controlv1.Share, error) {
-	return requestWithAccess[controlv1.Share](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+func (c *Client) CreateURLShare(ctx context.Context, key string, body controlv1.CreateShareRequest) (controlv1.ShareCreation, error) {
+	return requestWithAccess[controlv1.ShareCreation](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.CreateURLShare(ctx, &controlv1.CreateURLShareParams{IdempotencyKey: key}, body, editors...)
 	})
 }
@@ -455,6 +456,8 @@ func responseError(status int, header http.Header, payload []byte) error {
 		return failure.Wrap("request control API", failure.ServerResponseInvalid, fmt.Errorf("controlclient: HTTP %d", status))
 	}
 	switch problem.Code {
+	case controlv1.CredentialDeliveryUnavailable:
+		return &ProblemError{Status: status, Problem: problem}
 	case controlv1.ProjectManaged:
 		return fmt.Errorf("%w: %w", ErrProjectManaged, &ProblemError{Status: status, Problem: problem})
 	case controlv1.MemberHostnameDepthExceeded:
@@ -510,5 +513,18 @@ type ProblemError struct {
 }
 
 func (e *ProblemError) Error() string {
+	if id, ok := e.CredentialDeliveryResourceID(); ok {
+		return "credential delivery unavailable for " + id + "; revoke it, then create with a new key"
+	}
 	return "controlclient: HTTP " + strconv.Itoa(e.Status) + ": " + e.Problem.Title
+}
+
+func (e *ProblemError) CredentialDeliveryResourceID() (string, bool) {
+	if e.Problem.Code == controlv1.CredentialDeliveryUnavailable && e.Problem.Details != nil {
+		id, _ := (*e.Problem.Details)["resource_id"].(string)
+		if opaqueid.Valid(id, opaqueid.SharePrefix) || opaqueid.Valid(id, opaqueid.ServiceInvitationPrefix) {
+			return id, true
+		}
+	}
+	return "", false
 }

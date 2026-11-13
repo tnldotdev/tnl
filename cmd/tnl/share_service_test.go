@@ -275,7 +275,7 @@ func TestServiceShareInvitationResponsesCannotWidenScopeOrLeakSecrets(t *testing
 		control := serviceShareTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 			switch operation {
 			case "create":
-				_ = json.NewEncoder(w).Encode(controlv1.ServiceInvitation{Id: shareTestInvite, ServiceId: "svc_abcdefghijkl0123456789", Email: "visitor@example.test", ExpiresAt: at, Secret: &secret})
+				_ = json.NewEncoder(w).Encode(controlv1.ServiceInvitationCreation{Invitation: controlv1.ServiceInvitation{Id: shareTestInvite, ServiceId: "svc_abcdefghijkl0123456789", Email: "visitor@example.test", ExpiresAt: at}, Credential: secret})
 			case "accept":
 				_ = json.NewEncoder(w).Encode(controlv1.ServiceGrant{Id: shareTestGrant, ServiceId: shareTestService, Kind: "team", ExpiresAt: &at})
 			case "list":
@@ -283,7 +283,7 @@ func TestServiceShareInvitationResponsesCannotWidenScopeOrLeakSecrets(t *testing
 					_, _ = io.WriteString(w, `{"grants":[]}`)
 					return
 				}
-				_ = json.NewEncoder(w).Encode(controlv1.ServiceInvitationPage{Invitations: []controlv1.ServiceInvitation{{Id: shareTestInvite, ServiceId: shareTestService, Email: "visitor@example.test", ExpiresAt: at, Secret: &secret}}})
+				_ = json.NewEncoder(w).Encode(map[string]any{"invitations": []any{map[string]any{"id": shareTestInvite, "service_id": shareTestService, "email": "visitor@example.test", "expires_at": at, "secret": secret}}})
 			}
 		})
 		var output bytes.Buffer
@@ -309,7 +309,7 @@ func TestServiceShareInvitationResponsesCannotWidenScopeOrLeakSecrets(t *testing
 func TestServiceShareInvitationLifecycleUsesExactAPI(t *testing.T) {
 	at := time.Now().Add(time.Hour).UTC().Truncate(time.Microsecond)
 	secret := shareTestInvite + "." + strings.Repeat("A", 43)
-	invite := controlv1.ServiceInvitation{Id: shareTestInvite, ServiceId: shareTestService, Email: "visitor@example.test", ExpiresAt: at, Secret: &secret}
+	invite := controlv1.ServiceInvitation{Id: shareTestInvite, ServiceId: shareTestService, Email: "visitor@example.test", ExpiresAt: at}
 	grant := controlv1.ServiceGrant{Id: shareTestGrant, ServiceId: shareTestService, Kind: "identity", IdentityId: new(shareTestPerson), InvitationId: new(shareTestInvite), ExpiresAt: &at}
 	calls := map[string]int{}
 	control := serviceShareTestClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -324,7 +324,7 @@ func TestServiceShareInvitationLifecycleUsesExactAPI(t *testing.T) {
 				t.Error("invitation lost its deadline, email, or idempotency key", err)
 			}
 			w.WriteHeader(201)
-			_ = json.NewEncoder(w).Encode(invite)
+			_ = json.NewEncoder(w).Encode(controlv1.ServiceInvitationCreation{Invitation: invite, Credential: secret})
 		case "POST /v1/service-invitations/accept":
 			var body controlv1.AcceptServiceInvitationJSONRequestBody
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Secret != secret {
@@ -335,7 +335,7 @@ func TestServiceShareInvitationLifecycleUsesExactAPI(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(controlv1.ServiceGrantPage{Grants: []controlv1.ServiceGrant{grant}})
 		case "GET /v1/services/" + shareTestService + "/invitations":
 			listed := invite
-			listed.Secret, listed.AcceptedAt = nil, new(time.Now())
+			listed.AcceptedAt = new(time.Now())
 			_ = json.NewEncoder(w).Encode(controlv1.ServiceInvitationPage{Invitations: []controlv1.ServiceInvitation{listed}})
 		case "GET /v1/services/" + shareTestService + "/http-grants":
 			_ = json.NewEncoder(w).Encode([]controlv1.ServiceHTTPGrantSummary{{Id: shareTestHTTP, Subject: controlv1.VisitorResourceScope{Kind: "service", Id: shareTestService}, Kind: "token", ExpiresAt: at}})
@@ -462,7 +462,7 @@ func TestServiceShareServiceHTTPUsesExplicitSubjectAndOneTimeOutput(t *testing.T
 						t.Errorf("service HTTP used a public URL or group grant: %s %s", r.Method, r.URL)
 					}
 					var body controlv1.CreateVisitorCredentialRequest
-					if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Resource != permission.Resource || body.Kind != kind || !body.ExpiresAt.Equal(at) {
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Kind != kind || !body.ExpiresAt.Equal(at) {
 						t.Error("service HTTP grant changed kind or deadline", err)
 					}
 					grant := controlv1.VisitorCredential{GrantId: shareTestHTTP, Kind: controlv1.VisitorCredentialKind(kind), RefreshCredential: secret, Permission: permission, ExpiresAt: at}
@@ -530,16 +530,18 @@ func TestServiceShareInvitationRetryGivesExplicitRecovery(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Email != "visitor@example.test" || !body.ExpiresAt.Equal(at) {
 			t.Error("retry changed its exact email or deadline", err)
 		}
-		_ = json.NewEncoder(w).Encode(controlv1.ServiceInvitation{Id: shareTestInvite, ServiceId: shareTestService, Email: body.Email, ExpiresAt: at})
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": "credential_delivery_unavailable", "title": "credential delivery unavailable", "details": map[string]string{"resource_id": shareTestInvite}})
 	})
 	for _, mode := range []statusOutputMode{statusOutputHuman, statusOutputJSON} {
 		var output bytes.Buffer
 		err := createServiceShareInvitation(t.Context(), control, shareTestService, serviceShareInviteCreateCommand{Email: "visitor@example.test", IdempotencyKey: "retained-key", Output: mode}, at, &output)
-		if err != nil || !strings.Contains(output.String(), shareTestInvite) || strings.Contains(output.String(), `"secret"`) {
-			t.Fatal("retry did not identify the recoverable invitation", err)
+		if err == nil || output.Len() != 0 || !strings.Contains(err.Error(), shareTestInvite) || !strings.Contains(err.Error(), "revoke") || !strings.Contains(err.Error(), "new key") {
+			t.Fatal("retry omitted explicit revoke/reissue instructions", err)
 		}
-		if mode == statusOutputHuman && (!strings.Contains(output.String(), "secret unavailable") || !strings.Contains(output.String(), "revoke") || !strings.Contains(output.String(), "new key")) {
-			t.Fatal("human retry omitted explicit revoke/reissue instructions")
+		writeCommandError(&output, err)
+		if !strings.Contains(output.String(), shareTestInvite) || !strings.Contains(output.String(), "revoke") {
+			t.Fatal("rendered retry omitted the resource to revoke")
 		}
 	}
 }

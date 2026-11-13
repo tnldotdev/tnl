@@ -275,6 +275,7 @@ func (h *handler) RevokeServiceGrant(w http.ResponseWriter, r *http.Request, id 
 }
 
 func (h *handler) InviteServiceVisitor(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID, _ controlv1.InviteServiceVisitorParams) {
+	w.Header().Set("Cache-Control", "no-store")
 	var body controlv1.CreateServiceInvitationRequest
 	if decodeJSON(w, r, &body) != nil || r.Header.Get("Idempotency-Key") == "" {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid service invitation")
@@ -286,15 +287,14 @@ func (h *handler) InviteServiceVisitor(w http.ResponseWriter, r *http.Request, i
 	}
 	invitation, err := store.InviteServiceVisitor(r.Context(), id, identity, r.Header.Get("Idempotency-Key"), string(body.Email), body.ExpiresAt, time.Now())
 	if err != nil {
+		if serviceaccess.WriteCredentialDeliveryProblem(w, err) {
+			return
+		}
 		serviceVisitorError(r.Context(), w, "invite service visitor", err)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	status := http.StatusCreated
-	if invitation.Secret == "" {
-		status = http.StatusOK
-	}
-	writeJSON(w, status, serviceaccess.Invitation(invitation))
+	writeJSON(w, http.StatusCreated, controlv1.ServiceInvitationCreation{Invitation: serviceaccess.Invitation(invitation), Credential: invitation.Secret})
 }
 
 func (h *handler) ListServiceInvitations(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID, params controlv1.ListServiceInvitationsParams) {

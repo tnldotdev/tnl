@@ -10,8 +10,8 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func (c *Client) InviteServiceVisitor(ctx context.Context, service, key string, body controlv1.CreateServiceInvitationRequest) (controlv1.ServiceInvitation, error) {
-	return requestWithAccess[controlv1.ServiceInvitation](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
+func (c *Client) InviteServiceVisitor(ctx context.Context, service, key string, body controlv1.CreateServiceInvitationRequest) (controlv1.ServiceInvitationCreation, error) {
+	return requestWithAccess[controlv1.ServiceInvitationCreation](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.InviteServiceVisitor(ctx, service, &controlv1.InviteServiceVisitorParams{IdempotencyKey: key}, body, e...)
 	})
 }
@@ -34,7 +34,7 @@ func (c *Client) ListServiceInvitations(ctx context.Context, service string) ([]
 		}
 		ids := make([]string, 0, len(page.Invitations))
 		for _, row := range page.Invitations {
-			if row.ServiceId != service || row.Secret != nil {
+			if row.ServiceId != service {
 				return nil, invalidServiceAccessPage()
 			}
 			ids = append(ids, row.Id)

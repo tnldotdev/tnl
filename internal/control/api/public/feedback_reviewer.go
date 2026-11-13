@@ -180,7 +180,7 @@ func optionalFeedbackString[T ~string](value *T) string {
 
 func (h *handler) AppendReviewerFeedbackEvent(response http.ResponseWriter, request *http.Request, runID controlv1.PublishRunID, feedbackID controlv1.FeedbackID, _ controlv1.AppendReviewerFeedbackEventParams) {
 	var body controlv1.AppendReviewerFeedbackEventRequest
-	if err := decodeJSONLimited(response, request, &body, 64<<10); err != nil || body.PublishRunNumber < 1 {
+	if err := decodeJSONLimited(response, request, &body, 64<<10); err != nil || body.PublishRunNumber < 1 || !body.Type.Valid() {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid reviewer feedback")
 		return
 	}
@@ -206,7 +206,7 @@ func (h *handler) AppendReviewerFeedbackEvent(response http.ResponseWriter, requ
 	if !authorized {
 		return
 	}
-	write, err := feedbackEventWrite(body.Type, body.Text, body.Evidence, body.SourceState)
+	write, err := feedbackEventWrite(controlv1.FeedbackEventType(body.Type), body.Text, body.Evidence, body.SourceState)
 	if err != nil {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid reviewer feedback")
 		return

@@ -98,7 +98,7 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 		return visitor, port
 	}
 	visitor, port := admit(a)
-	grant, err := d.CreateServiceHTTPGrant(t.Context(), a.Subject.ID, r.ActorID, controlv1.CreateVisitorCredentialRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: a.Subject.ID}, Kind: "token", ExpiresAt: now.Add(time.Hour)}, now)
+	grant, err := d.CreateServiceHTTPGrant(t.Context(), a.Subject.ID, r.ActorID, controlv1.CreateVisitorCredentialRequest{Kind: "token", ExpiresAt: now.Add(time.Hour)}, now)
 	if err != nil {
 		t.Fatal(err)
 	}

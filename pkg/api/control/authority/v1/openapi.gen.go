@@ -261,28 +261,31 @@ func (e InvitationState) Valid() bool {
 
 // Defines values for ProblemCode.
 const (
-	Conflict              ProblemCode = "conflict"
-	CustomDomainsDisabled ProblemCode = "custom_domains_disabled"
-	DnsSetupPending       ProblemCode = "dns_setup_pending"
-	Forbidden             ProblemCode = "forbidden"
-	Internal              ProblemCode = "internal"
-	InvalidRequest        ProblemCode = "invalid_request"
-	ManagerRequired       ProblemCode = "manager_required"
-	NameUnavailable       ProblemCode = "name_unavailable"
-	NotFound              ProblemCode = "not_found"
-	PolicyRevisionStale   ProblemCode = "policy_revision_stale"
-	ProjectManaged        ProblemCode = "project_managed"
-	RateLimited           ProblemCode = "rate_limited"
-	SourceSignInRequired  ProblemCode = "source_sign_in_required"
-	Unauthenticated       ProblemCode = "unauthenticated"
-	Unavailable           ProblemCode = "unavailable"
-	VerifiedEmailRequired ProblemCode = "verified_email_required"
+	Conflict                      ProblemCode = "conflict"
+	CredentialDeliveryUnavailable ProblemCode = "credential_delivery_unavailable"
+	CustomDomainsDisabled         ProblemCode = "custom_domains_disabled"
+	DnsSetupPending               ProblemCode = "dns_setup_pending"
+	Forbidden                     ProblemCode = "forbidden"
+	Internal                      ProblemCode = "internal"
+	InvalidRequest                ProblemCode = "invalid_request"
+	ManagerRequired               ProblemCode = "manager_required"
+	NameUnavailable               ProblemCode = "name_unavailable"
+	NotFound                      ProblemCode = "not_found"
+	PolicyRevisionStale           ProblemCode = "policy_revision_stale"
+	ProjectManaged                ProblemCode = "project_managed"
+	RateLimited                   ProblemCode = "rate_limited"
+	SourceSignInRequired          ProblemCode = "source_sign_in_required"
+	Unauthenticated               ProblemCode = "unauthenticated"
+	Unavailable                   ProblemCode = "unavailable"
+	VerifiedEmailRequired         ProblemCode = "verified_email_required"
 )
 
 // Valid indicates whether the value is a known member of the ProblemCode enum.
 func (e ProblemCode) Valid() bool {
 	switch e {
 	case Conflict:
+		return true
+	case CredentialDeliveryUnavailable:
 		return true
 	case CustomDomainsDisabled:
 		return true
@@ -1825,13 +1828,13 @@ type ClientInterface interface {
 	// InviteWebsiteServiceVisitorWithBody performs a POST /v1/service/services/{service_id}/invitations (the `InviteWebsiteServiceVisitor` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Keep the same key and exact request when retrying with a fresh signed assertion. Current manager and company source checks run again. An exact retry returns HTTP 200 with the original ID and current state but no secret. If delivery was lost, explicitly revoke that ID and create with a new key and deadline. A changed service, email or deadline with the same actor/key returns conflict. No secret is retained for recovery.
+	// Keep the same key and exact request when retrying with a fresh signed assertion. Current manager and company source checks run again. An exact retry returns HTTP 409 credential_delivery_unavailable with details.resource_id. If delivery was lost, explicitly revoke that ID and create with a new key and deadline. A changed service, email or deadline with the same actor/key returns conflict. No secret is retained for recovery.
 	InviteWebsiteServiceVisitorWithBody(ctx context.Context, serviceId ServiceID, params *InviteWebsiteServiceVisitorParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// InviteWebsiteServiceVisitor performs a POST /v1/service/services/{service_id}/invitations (the `InviteWebsiteServiceVisitor` operationId) request.
 	// Takes a body of the `application/json` content type.
 	//
-	// Keep the same key and exact request when retrying with a fresh signed assertion. Current manager and company source checks run again. An exact retry returns HTTP 200 with the original ID and current state but no secret. If delivery was lost, explicitly revoke that ID and create with a new key and deadline. A changed service, email or deadline with the same actor/key returns conflict. No secret is retained for recovery.
+	// Keep the same key and exact request when retrying with a fresh signed assertion. Current manager and company source checks run again. An exact retry returns HTTP 409 credential_delivery_unavailable with details.resource_id. If delivery was lost, explicitly revoke that ID and create with a new key and deadline. A changed service, email or deadline with the same actor/key returns conflict. No secret is retained for recovery.
 	InviteWebsiteServiceVisitor(ctx context.Context, serviceId ServiceID, params *InviteWebsiteServiceVisitorParams, body InviteWebsiteServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RevokeWebsiteServiceInvitation performs a DELETE /v1/service/services/{service_id}/invitations/{invitation_id} (the `RevokeWebsiteServiceInvitation` operationId) request.
@@ -2875,7 +2878,7 @@ func (c *Client) ListWebsiteServiceInvitations(ctx context.Context, serviceId Se
 // InviteWebsiteServiceVisitorWithBody performs a POST /v1/service/services/{service_id}/invitations (the `InviteWebsiteServiceVisitor` operationId) request,
 // with any type of body and a specified content type.
 //
-// Keep the same key and exact request when retrying with a fresh signed assertion. Current manager and company source checks run again. An exact retry returns HTTP 200 with the original ID and current state but no secret. If delivery was lost, explicitly revoke that ID and create with a new key and deadline. A changed service, email or deadline with the same actor/key returns conflict. No secret is retained for recovery.
+// Keep the same key and exact request when retrying with a fresh signed assertion. Current manager and company source checks run again. An exact retry returns HTTP 409 credential_delivery_unavailable with details.resource_id. If delivery was lost, explicitly revoke that ID and create with a new key and deadline. A changed service, email or deadline with the same actor/key returns conflict. No secret is retained for recovery.
 func (c *Client) InviteWebsiteServiceVisitorWithBody(ctx context.Context, serviceId ServiceID, params *InviteWebsiteServiceVisitorParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewInviteWebsiteServiceVisitorRequestWithBody(c.Server, serviceId, params, contentType, body)
 	if err != nil {
@@ -2891,7 +2894,7 @@ func (c *Client) InviteWebsiteServiceVisitorWithBody(ctx context.Context, servic
 // InviteWebsiteServiceVisitor performs a POST /v1/service/services/{service_id}/invitations (the `InviteWebsiteServiceVisitor` operationId) request.
 // Takes a body of the `application/json` content type.
 //
-// Keep the same key and exact request when retrying with a fresh signed assertion. Current manager and company source checks run again. An exact retry returns HTTP 200 with the original ID and current state but no secret. If delivery was lost, explicitly revoke that ID and create with a new key and deadline. A changed service, email or deadline with the same actor/key returns conflict. No secret is retained for recovery.
+// Keep the same key and exact request when retrying with a fresh signed assertion. Current manager and company source checks run again. An exact retry returns HTTP 409 credential_delivery_unavailable with details.resource_id. If delivery was lost, explicitly revoke that ID and create with a new key and deadline. A changed service, email or deadline with the same actor/key returns conflict. No secret is retained for recovery.
 func (c *Client) InviteWebsiteServiceVisitor(ctx context.Context, serviceId ServiceID, params *InviteWebsiteServiceVisitorParams, body InviteWebsiteServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewInviteWebsiteServiceVisitorRequest(c.Server, serviceId, params, body)
 	if err != nil {
@@ -7035,7 +7038,7 @@ type ClientWithResponsesInterface interface {
 	// InviteWebsiteServiceVisitorWithBodyWithResponse performs a POST /v1/service/services/{service_id}/invitations (the `InviteWebsiteServiceVisitor` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Keep the same key and exact request when retrying with a fresh signed assertion. Current manager and company source checks run again. An exact retry returns HTTP 200 with the original ID and current state but no secret. If delivery was lost, explicitly revoke that ID and create with a new key and deadline. A changed service, email or deadline with the same actor/key returns conflict. No secret is retained for recovery.
+	// Keep the same key and exact request when retrying with a fresh signed assertion. Current manager and company source checks run again. An exact retry returns HTTP 409 credential_delivery_unavailable with details.resource_id. If delivery was lost, explicitly revoke that ID and create with a new key and deadline. A changed service, email or deadline with the same actor/key returns conflict. No secret is retained for recovery.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	InviteWebsiteServiceVisitorWithBodyWithResponse(ctx context.Context, serviceId ServiceID, params *InviteWebsiteServiceVisitorParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*InviteWebsiteServiceVisitorResponse, error)
@@ -7043,7 +7046,7 @@ type ClientWithResponsesInterface interface {
 	// InviteWebsiteServiceVisitorWithResponse performs a POST /v1/service/services/{service_id}/invitations (the `InviteWebsiteServiceVisitor` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Keep the same key and exact request when retrying with a fresh signed assertion. Current manager and company source checks run again. An exact retry returns HTTP 200 with the original ID and current state but no secret. If delivery was lost, explicitly revoke that ID and create with a new key and deadline. A changed service, email or deadline with the same actor/key returns conflict. No secret is retained for recovery.
+	// Keep the same key and exact request when retrying with a fresh signed assertion. Current manager and company source checks run again. An exact retry returns HTTP 409 credential_delivery_unavailable with details.resource_id. If delivery was lost, explicitly revoke that ID and create with a new key and deadline. A changed service, email or deadline with the same actor/key returns conflict. No secret is retained for recovery.
 	InviteWebsiteServiceVisitorWithResponse(ctx context.Context, serviceId ServiceID, params *InviteWebsiteServiceVisitorParams, body InviteWebsiteServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*InviteWebsiteServiceVisitorResponse, error)
 
 	// RevokeWebsiteServiceInvitationWithResponse performs a DELETE /v1/service/services/{service_id}/invitations/{invitation_id} (the `RevokeWebsiteServiceInvitation` operationId) request.
@@ -8769,22 +8772,22 @@ func (r ListWebsiteServiceInvitationsResponse) ContentType() string {
 type InviteWebsiteServiceVisitorResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *externalRef0.ServiceInvitation
 	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *externalRef0.ServiceInvitation
+	JSON201 *externalRef0.ServiceInvitationCreation
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r InviteWebsiteServiceVisitorResponse) GetJSON200() *externalRef0.ServiceInvitation {
-	return r.JSON200
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r InviteWebsiteServiceVisitorResponse) GetJSON201() *externalRef0.ServiceInvitationCreation {
+	return r.JSON201
 }
 
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r InviteWebsiteServiceVisitorResponse) GetJSON201() *externalRef0.ServiceInvitation {
-	return r.JSON201
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r InviteWebsiteServiceVisitorResponse) GetApplicationproblemJSON409() *Problem {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
@@ -10892,7 +10895,7 @@ func (c *ClientWithResponses) ListWebsiteServiceInvitationsWithResponse(ctx cont
 // InviteWebsiteServiceVisitorWithBodyWithResponse performs a POST /v1/service/services/{service_id}/invitations (the `InviteWebsiteServiceVisitor` operationId) request,
 // with any type of body and a specified content type.
 //
-// Keep the same key and exact request when retrying with a fresh signed assertion. Current manager and company source checks run again. An exact retry returns HTTP 200 with the original ID and current state but no secret. If delivery was lost, explicitly revoke that ID and create with a new key and deadline. A changed service, email or deadline with the same actor/key returns conflict. No secret is retained for recovery.
+// Keep the same key and exact request when retrying with a fresh signed assertion. Current manager and company source checks run again. An exact retry returns HTTP 409 credential_delivery_unavailable with details.resource_id. If delivery was lost, explicitly revoke that ID and create with a new key and deadline. A changed service, email or deadline with the same actor/key returns conflict. No secret is retained for recovery.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) InviteWebsiteServiceVisitorWithBodyWithResponse(ctx context.Context, serviceId ServiceID, params *InviteWebsiteServiceVisitorParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*InviteWebsiteServiceVisitorResponse, error) {
@@ -10906,7 +10909,7 @@ func (c *ClientWithResponses) InviteWebsiteServiceVisitorWithBodyWithResponse(ct
 // InviteWebsiteServiceVisitorWithResponse performs a POST /v1/service/services/{service_id}/invitations (the `InviteWebsiteServiceVisitor` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Keep the same key and exact request when retrying with a fresh signed assertion. Current manager and company source checks run again. An exact retry returns HTTP 200 with the original ID and current state but no secret. If delivery was lost, explicitly revoke that ID and create with a new key and deadline. A changed service, email or deadline with the same actor/key returns conflict. No secret is retained for recovery.
+// Keep the same key and exact request when retrying with a fresh signed assertion. Current manager and company source checks run again. An exact retry returns HTTP 409 credential_delivery_unavailable with details.resource_id. If delivery was lost, explicitly revoke that ID and create with a new key and deadline. A changed service, email or deadline with the same actor/key returns conflict. No secret is retained for recovery.
 func (c *ClientWithResponses) InviteWebsiteServiceVisitorWithResponse(ctx context.Context, serviceId ServiceID, params *InviteWebsiteServiceVisitorParams, body InviteWebsiteServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*InviteWebsiteServiceVisitorResponse, error) {
 	rsp, err := c.InviteWebsiteServiceVisitor(ctx, serviceId, params, body, reqEditors...)
 	if err != nil {
@@ -12502,19 +12505,19 @@ func ParseInviteWebsiteServiceVisitorResponse(rsp *http.Response) (*InviteWebsit
 	}
 
 	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest externalRef0.ServiceInvitation
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest externalRef0.ServiceInvitation
+		var dest externalRef0.ServiceInvitationCreation
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem

@@ -220,11 +220,14 @@ schemas:
       expires_at: { type: string, format: date-time }
       accepted_at: { type: string, format: date-time }
       revoked_at: { type: string, format: date-time }
-      secret:
-        type: string
-        minLength: 32
-        maxLength: 128
-        description: Returned only for a new creation (HTTP 201). Exact creation retries (HTTP 200) and lists omit it. If delivery was lost, revoke the returned ID and create with a new key; secrets cannot be recovered.
+  ServiceInvitationCreation:
+    type: object
+    additionalProperties: false
+    description: One-time credential for POST /v1/service-invitations/accept using {secret} after verified-email sign-in. No invitation UI origin is configured by this API. Give the recipient this credential and the control URL; tnl share service invite accept accepts it. Exact creation retries return credential_delivery_unavailable with details.resource_id; revoke and reissue with a new key if delivery was lost. Acceptance is one-use; revocation also revokes the accepted grant.
+    required: [invitation, credential]
+    properties:
+      invitation: { $ref: "../openapi.yaml#/components/schemas/ServiceInvitation" }
+      credential: { type: string, minLength: 32, maxLength: 128 }
   ServiceInvitationPage:
     type: object
     additionalProperties: false

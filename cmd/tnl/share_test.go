@@ -68,6 +68,9 @@ func TestHTTPShareGrantsUseSessionAndIdempotencyKey(t *testing.T) {
 				if _, exists := body["ssh_user"]; exists {
 					t.Error("HTTP request included removed ssh_user field")
 				}
+				if _, exists := body["token_digest"]; exists {
+					t.Error("caller sent an invitation digest")
+				}
 				if r.Header.Get("Idempotency-Key") == "" {
 					t.Error("missing idempotency key")
 				}
@@ -76,6 +79,7 @@ func TestHTTPShareGrantsUseSessionAndIdempotencyKey(t *testing.T) {
 					response["kind"] = "team"
 				} else {
 					response["email"] = body["email"]
+					response = map[string]any{"invitation": response, "credential": "server-issued-credential"}
 				}
 				w.WriteHeader(http.StatusCreated)
 				_ = json.NewEncoder(w).Encode(response)
@@ -94,6 +98,9 @@ func TestHTTPShareGrantsUseSessionAndIdempotencyKey(t *testing.T) {
 			}
 			if err != nil || posts != 1 {
 				t.Fatalf("grant creation: err=%v, posts=%d", err, posts)
+			}
+			if kind == "invite" && output.String() != "server-issued-credential\n" {
+				t.Fatal("caller did not use the complete server-issued credential")
 			}
 		})
 	}

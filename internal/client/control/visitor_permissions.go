@@ -42,8 +42,8 @@ func (c *Client) RevokeVisitorGrant(ctx context.Context, id, grantID string) err
 	})
 	return err
 }
-func (c *Client) CreateVisitorInvitation(ctx context.Context, id, key string, body controlv1.CreateVisitorInvitationRequest) (controlv1.VisitorInvitation, error) {
-	return requestWithAccess[controlv1.VisitorInvitation](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
+func (c *Client) CreateVisitorInvitation(ctx context.Context, id, key string, body controlv1.CreateVisitorInvitationRequest) (controlv1.VisitorInvitationCreation, error) {
+	return requestWithAccess[controlv1.VisitorInvitationCreation](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.CreateVisitorInvitation(ctx, id, &controlv1.CreateVisitorInvitationParams{IdempotencyKey: key}, body, e...)
 	})
 }

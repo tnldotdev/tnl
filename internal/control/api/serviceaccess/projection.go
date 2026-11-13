@@ -75,8 +75,5 @@ func Invitation(invitation controlstate.ServiceInvitation) controlv1.ServiceInvi
 	result := controlv1.ServiceInvitation{Id: invitation.ID, ServiceId: invitation.ServiceID,
 		Email: openapi_types.Email(invitation.Email), ExpiresAt: invitation.ExpiresAt,
 		AcceptedAt: invitation.AcceptedAt, RevokedAt: invitation.RevokedAt}
-	if invitation.Secret != "" {
-		result.Secret = &invitation.Secret
-	}
 	return result
 }

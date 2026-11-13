@@ -45,14 +45,19 @@ func TestIntegrationSharesSnapshotAndRevoke(t *testing.T) {
 	if err != nil || share.ID == "" || share.PreviewID != preview.ID || !slices.Equal(share.PublicURLIDs, []string{publicURL.ID}) || share.RevokedAt != nil {
 		t.Fatalf("created share = %+v, %v", share, err)
 	}
-	retry, err := database.CreateShare(t.Context(), request, now)
-	if err != nil || retry.ID != share.ID {
-		t.Fatalf("idempotent share = %+v, %v", retry, err)
+	assertRetry := func(at time.Time) {
+		t.Helper()
+		_, err := database.CreateShare(t.Context(), request, at)
+		var delivery *CredentialDeliveryUnavailable
+		if !errors.As(err, &delivery) || delivery.ResourceID != share.ID {
+			t.Fatalf("retry did not identify the original share: %v", err)
+		}
 	}
+	assertRetry(now)
 	changed := request
-	changed.SecretFingerprint = sha256.Sum256([]byte("different secret"))
+	changed.Label = "different label"
 	if _, err := database.CreateShare(t.Context(), changed, now); !errors.Is(err, ErrShareIdempotency) {
-		t.Fatalf("same key with different secret: %v", err)
+		t.Fatalf("same key with different input: %v", err)
 	}
 	newRouteRequest := routeRequest
 	newRouteRequest.IdempotencyKey = "new-service"
@@ -93,9 +98,8 @@ func TestIntegrationSharesSnapshotAndRevoke(t *testing.T) {
 	if err != nil || again.RevokedAt == nil || !again.RevokedAt.Equal(*revoked.RevokedAt) {
 		t.Fatalf("repeated revoke = %+v, %v", again, err)
 	}
-	if _, err := database.CreateShare(t.Context(), request, now); !errors.Is(err, ErrShareIdempotency) {
-		t.Fatalf("reused key revived a revoked share: %v", err)
-	}
+	assertRetry(now)
+	assertRetry(request.ExpiresAt.Add(time.Minute))
 }
 
 func TestIntegrationShareRejectsStaleOrUnrelatedURLs(t *testing.T) {

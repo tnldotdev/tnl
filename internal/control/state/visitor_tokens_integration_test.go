@@ -151,7 +151,7 @@ func TestIntegrationConcurrentVisitorGrantAndCertificatePreparation(t *testing.T
 	for range 4 {
 		workers.Go(func() {
 			<-start
-			issued, err := d.CreateServiceHTTPGrant(ctx, service.ID, principal.IdentityID, controlv1.CreateVisitorCredentialRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service.ID}, Kind: "token", ExpiresAt: now.Add(time.Hour)}, now)
+			issued, err := d.CreateServiceHTTPGrant(ctx, service.ID, principal.IdentityID, controlv1.CreateVisitorCredentialRequest{Kind: "token", ExpiresAt: now.Add(time.Hour)}, now)
 			if err != nil || issued.Permission.VisitorToken == "" {
 				t.Errorf("concurrent grant preparation failed: %v", err)
 			}
@@ -231,11 +231,11 @@ func TestIntegrationVisitorTokenNativeAndExplicitCredentialsNeedOneScopedGrantMo
 		t.Fatal("permission issuance depended on selecting a run", err)
 	}
 	expires := now.Add(48 * time.Hour)
-	credentials, err := d.CreateServiceHTTPGrant(t.Context(), service.ID, principal.IdentityID, controlv1.CreateVisitorCredentialRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service.ID}, Kind: "token", ExpiresAt: expires}, now)
+	credentials, err := d.CreateServiceHTTPGrant(t.Context(), service.ID, principal.IdentityID, controlv1.CreateVisitorCredentialRequest{Kind: "token", ExpiresAt: expires}, now)
 	if err != nil || !credentials.Permission.ExpiresAt.Equal(expires.Truncate(time.Second)) {
 		t.Fatal("explicit credential lifetime was replaced by renewable token lifetime", err)
 	}
-	parentBound, err := d.CreateServiceHTTPGrant(ctx, service.ID, principal.IdentityID, controlv1.CreateVisitorCredentialRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service.ID}, Kind: "token", ExpiresAt: expires}, now)
+	parentBound, err := d.CreateServiceHTTPGrant(ctx, service.ID, principal.IdentityID, controlv1.CreateVisitorCredentialRequest{Kind: "token", ExpiresAt: expires}, now)
 	if err != nil || !parentBound.Permission.ExpiresAt.Equal(session.AccessExpiresAt.Truncate(time.Second)) {
 		t.Fatal("explicit credential outlived its parent session", err)
 	}

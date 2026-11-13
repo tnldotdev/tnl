@@ -167,6 +167,7 @@ schemas:
             verified_email_required,
             not_found,
             conflict,
+            credential_delivery_unavailable,
             project_managed,
             rate_limited,
             unavailable,

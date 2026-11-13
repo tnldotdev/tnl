@@ -212,7 +212,7 @@ func (f *feedbackRuntime) reply(response http.ResponseWriter, request *http.Requ
 		return
 	}
 	body := controlv1.AppendReviewerFeedbackEventRequest{
-		Access: access, PublishRunNumber: int64(f.version), Type: controlv1.FeedbackEventType(input.Type),
+		Access: access, PublishRunNumber: int64(f.version), Type: controlv1.ReviewerFeedbackEventInputType(input.Type),
 	}
 	if input.Text != nil && *input.Text != "" {
 		body.Text = input.Text

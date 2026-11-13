@@ -451,7 +451,7 @@ schemas:
     required: [type]
     properties:
       type:
-        $ref: "../openapi.yaml#/components/schemas/FeedbackEventType"
+        $ref: "../openapi.yaml#/components/schemas/FeedbackEventInputType"
       text:
         type: string
       evidence:
@@ -468,7 +468,7 @@ schemas:
         format: int64
         minimum: 1
       type:
-        $ref: "../openapi.yaml#/components/schemas/FeedbackEventType"
+        $ref: "../openapi.yaml#/components/schemas/ReviewerFeedbackEventInputType"
       text:
         type: string
       evidence:
@@ -477,6 +477,16 @@ schemas:
         $ref: "../openapi.yaml#/components/schemas/SourceState"
       access:
         $ref: "../openapi.yaml#/components/schemas/FeedbackReviewerAccess"
+  FeedbackEventInputType:
+    type: string
+    enum: [reply, update, thread.resolved, thread.reopened]
+    x-enum-varnames:
+      [FeedbackInputReply, FeedbackInputUpdate, FeedbackInputResolved, FeedbackInputReopened]
+  ReviewerFeedbackEventInputType:
+    type: string
+    enum: [reply, thread.resolved, thread.reopened]
+    x-enum-varnames:
+      [ReviewerFeedbackInputReply, ReviewerFeedbackInputResolved, ReviewerFeedbackInputReopened]
   ReviewerFeedbackReadRequest:
     type: object
     additionalProperties: false

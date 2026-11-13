@@ -10,9 +10,8 @@ schemas:
   CreateVisitorCredentialRequest:
     type: object
     additionalProperties: false
-    required: [resource, kind, expires_at]
+    required: [kind, expires_at]
     properties:
-      resource: { $ref: "../openapi.yaml#/components/schemas/VisitorResourceScope" }
       kind: { type: string, enum: [token, share] }
       expires_at: { type: string, format: date-time }
   VisitorCredential:
@@ -82,11 +81,18 @@ schemas:
   CreateVisitorInvitationRequest:
     type: object
     additionalProperties: false
-    required: [email, token_digest, expires_at]
+    required: [email, expires_at]
     properties:
       email: { type: string, maxLength: 320 }
-      token_digest: { type: string, pattern: "^[0-9a-f]{64}$" }
       expires_at: { type: string, format: date-time }
+  VisitorInvitationCreation:
+    type: object
+    additionalProperties: false
+    description: One-time credential for POST /v1/visitor-invitations/accept using {secret} after signing in with the current verified recipient email. No invitation UI origin is configured by this API. Give the recipient the complete credential and control URL; tnl share invite accept accepts it. Exact creation retries return credential_delivery_unavailable with details.resource_id; revoke and reissue with a new key if delivery was lost.
+    required: [invitation, credential]
+    properties:
+      invitation: { $ref: "../openapi.yaml#/components/schemas/VisitorInvitation" }
+      credential: { type: string, minLength: 32, maxLength: 128 }
   VisitorInvitation:
     type: object
     additionalProperties: false
