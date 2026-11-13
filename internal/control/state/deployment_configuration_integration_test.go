@@ -104,8 +104,8 @@ func TestIntegrationDeploymentConfigurationRejectsInvalidShape(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, data := range map[string][]byte{
-		"retired settings": []byte(`{"publisher_groups":{"production":{}},"services":{}}`),
-		"retired binding":  []byte(`{"namespace":"` + row.Namespace + `","settings":{},"services":{"db":{"publisher_group":"production","protocol":"postgres","target":"database.internal:5432"}}}`),
+		"unknown settings": []byte(`{"namespace":"` + row.Namespace + `","settings":{"unknown":true},"services":{}}`),
+		"unknown binding":  []byte(`{"namespace":"` + row.Namespace + `","settings":{},"services":{"db":{"unknown":true,"protocol":"postgres","target":"database.internal:5432"}}}`),
 		"trailing value":   []byte(`{"namespace":"` + row.Namespace + `","settings":{},"services":{}} {}`),
 	} {
 		t.Run(name, func(t *testing.T) {

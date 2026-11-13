@@ -219,10 +219,10 @@ func TestIntegrationAppliedProjectManagedDeploymentGrantsAndSafeMetadata(t *test
 	replica := enrollAppliedDeployment(t, d, r, e, now)
 	a := replica.assignments.Services[0]
 	if err = d.RevokePublisherGrant(t.Context(), r.TeamID, replica.member.PublisherIdentityID, a.GrantID, r.ActorID, now); !errors.Is(err, ErrProjectManaged) {
-		t.Fatal("managed group grant revoked directly", err)
+		t.Fatal("managed deployment grant revoked directly", err)
 	}
 	if current, e := d.GetDeploymentPublisherAssignments(t.Context(), replica.lease.AccessToken, now); e != nil || len(current.Services) != 2 {
-		t.Fatal("guard disturbed group poll", e)
+		t.Fatal("guard disturbed deployment poll", e)
 	}
 	// legacy or exceptional revoked state must not be silently recreated by an
 	// unrelated apply, and must not turn healthy sibling assignments into 401.

@@ -34,26 +34,6 @@ func TestDeploymentPublisherEnrollmentHasBoundedIndependentTaskBudget(t *testing
 	}
 }
 
-func TestRetiredPublisherGroupCommandsAreNotParsed(t *testing.T) {
-	for _, args := range [][]string{
-		{"publisher", "enroll", "--deployment", "production"},
-		{"publisher", "enroll", "--group", "production"},
-		{"publisher", "provision", "--group", "production", "--output-file", "unused.json"},
-		{"publisher", "serve", "--group", "production"},
-		{"publisher", "rename", "production", "live"},
-		{"publisher", "namespace", "rename", "production", "live"},
-	} {
-		var flags cli
-		parser, err := kong.New(&flags)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := parser.Parse(args); err == nil {
-			t.Fatalf("retired command remained accepted: %v", args)
-		}
-	}
-}
-
 func TestPublisherProvisionKeepsSavedServiceIDSeparateFromDeploymentNames(t *testing.T) {
 	for _, test := range []struct {
 		name, serviceID, deployment string

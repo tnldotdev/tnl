@@ -42,7 +42,7 @@ func TestDeploymentConfigurationSeparatesDeclarationsAndBindings(t *testing.T) {
 	}
 }
 
-func TestDeploymentConfigurationStaticFormatsAndOldShapeRejection(t *testing.T) {
+func TestDeploymentConfigurationStaticFormatsAndUnknownFields(t *testing.T) {
 	for _, fixture := range []struct{ name, source string }{
 		{"tnl.json", `{"version":1,"tnl":{"services":{"db":{"protocol":"postgres"}},"deployments":{"local":{"targets":{"db":{"address":"127.0.0.1:5432"}}}}}}`},
 		{"tnl.yml", "version: 1\ntnl:\n  services:\n    db:\n      protocol: postgres\n  deployments:\n    local:\n      targets:\n        db:\n          address: 127.0.0.1:5432\n"},
@@ -62,14 +62,13 @@ func TestDeploymentConfigurationStaticFormatsAndOldShapeRejection(t *testing.T) 
 			}
 		})
 	}
-	for _, old := range []string{
+	for _, invalid := range []string{
 		`{"services":{"db":{"protocol":"postgres","target":{"type":"address","address":"localhost:5432"}}}}`,
-		`{"publisher_groups":{"production":{}},"services":{"db":{"publisher_group":"production"}}}`,
 		`{"services":{"db":{"protocol":"postgres"}},"deployments":{"production":{"targets":{"db":{"protocol":"mysql","address":"localhost:3306"}}}}}`,
 	} {
 		var project Project
-		if err := json.Unmarshal([]byte(old), &project, json.RejectUnknownMembers(true)); err == nil {
-			t.Fatal("replaced or duplicated service definition remained supported")
+		if err := json.Unmarshal([]byte(invalid), &project, json.RejectUnknownMembers(true)); err == nil {
+			t.Fatal("configuration accepted fields outside their declaration or binding")
 		}
 	}
 }
@@ -111,7 +110,7 @@ func TestDeploymentConfigurationCapturesWorkloadSelection(t *testing.T) {
 	}
 }
 
-func TestResolvedDeploymentOwnsSettingsAndRejectsDeploymentSelectors(t *testing.T) {
+func TestResolvedDeploymentOwnsSettings(t *testing.T) {
 	project := deploymentProjectFixture()
 	description, domain := "production database", "example.test"
 	settings := project.Deployments["production"]
@@ -130,15 +129,6 @@ func TestResolvedDeploymentOwnsSettingsAndRejectsDeploymentSelectors(t *testing.
 	}
 	if local.DeploymentSettings.Description != nil || local.DeploymentSettings.Domain != nil || local.DeploymentSettings.Public {
 		t.Fatal("local selection inherited saved deployment settings")
-	}
-	for _, retired := range []string{
-		`{"publisher_groups":{"production":{}}}`,
-		`{"services":{"db":{"publisher_group":"production"}}}`,
-	} {
-		var selected TNL
-		if err := json.Unmarshal([]byte(retired), &selected, json.RejectUnknownMembers(true)); err == nil {
-			t.Fatal("resolved configuration accepted a retired group selector")
-		}
 	}
 }
 

@@ -41,7 +41,7 @@ func TestIntegrationServiceAuditActualDeploymentRemovalAndSafeAdminNormalization
 	}
 	scope := DeploymentScope{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID}
 	if err = d.DeleteDeployment(t.Context(), scope, "production", applied.Services[0].DesiredRevision, now); err != nil {
-		t.Fatal("actual group removal hit audit trigger ambiguity", err)
+		t.Fatal("actual deployment removal hit audit trigger ambiguity", err)
 	}
 	kept, err := d.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, r.ActorID, "local")
 	if err != nil || len(kept.Services) != 1 || kept.Services[0].Service != "keep" {
@@ -49,7 +49,7 @@ func TestIntegrationServiceAuditActualDeploymentRemovalAndSafeAdminNormalization
 	}
 	var revoked int
 	if err = d.pool.QueryRow(t.Context(), `SELECT count(DISTINCT service_id) FROM control.service_audit_events WHERE publisher_identity_id=$1 AND event_type='publisher.revoke'`, replica.member.PublisherIdentityID).Scan(&revoked); err != nil || revoked != 2 {
-		t.Fatalf("removed group not audited across both kinds: %d %v", revoked, err)
+		t.Fatalf("removed deployment not audited across both kinds: %d %v", revoked, err)
 	}
 	page, err := d.ListServiceAudit(t.Context(), r.TeamID, r.ActorID, ServiceAuditFilter{}, now)
 	if err != nil {

@@ -18,7 +18,7 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-// use the real supervisor, group loop and HTTP client error adapter. a synthetic
+// use the real supervisor, deployment loop and HTTP client error adapter. a synthetic
 // error returned directly by Engine.Deployment would not test the retry boundary.
 func TestInstalledDeploymentRuntimeConflictBlocksWithoutReclaim(t *testing.T) {
 	options := testOptions(t)
@@ -82,7 +82,7 @@ func TestInstalledDeploymentRuntimeConflictBlocksWithoutReclaim(t *testing.T) {
 			return err
 		}
 		return (publisherdeployment.Runtime{Control: client, Member: current, Private: private, Observe: observe, PollInterval: 5 * time.Millisecond, Publish: func(context.Context, controlv1.DeploymentPublisherServiceAssignment, func(bool)) error {
-			t.Error("empty group published a service")
+			t.Error("empty deployment published a service")
 			return ErrScope
 		}}).Serve(ctx)
 	}}
@@ -92,7 +92,7 @@ func TestInstalledDeploymentRuntimeConflictBlocksWithoutReclaim(t *testing.T) {
 		t.Helper()
 		jobs, err := r.List(t.Context())
 		if err != nil || len(jobs) != 1 {
-			t.Fatal("read installed group", err)
+			t.Fatal("read installed deployment", err)
 		}
 		return jobs[0].Status
 	}
@@ -105,7 +105,7 @@ func TestInstalledDeploymentRuntimeConflictBlocksWithoutReclaim(t *testing.T) {
 	// allow many supervisor polls and minimum-backoff windows after blocking.
 	time.Sleep(100 * time.Millisecond)
 	if attempts.Load() != 1 {
-		t.Fatal("supervisor restarted a fenced group")
+		t.Fatal("supervisor restarted a fenced deployment")
 	}
 	mu.Lock()
 	defer mu.Unlock()

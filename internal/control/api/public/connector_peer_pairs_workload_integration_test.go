@@ -45,7 +45,7 @@ func exerciseWorkloadConnectorPeerPair(t *testing.T, d *controlstate.Database, j
 		Selector:        deployment.ID, Services: services, MaxMembers: 1, Lifetime: time.Hour, Now: now, IdempotencyKey: "connector-publisher",
 	})
 	if err != nil {
-		t.Fatal("group enrollment", err)
+		t.Fatal("deployment enrollment", err)
 	}
 	pub, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -53,7 +53,7 @@ func exerciseWorkloadConnectorPeerPair(t *testing.T, d *controlstate.Database, j
 	}
 	member, err := d.RedeemDeploymentPublisherEnrollment(ctx, enrollment.Key, pub, now)
 	if err != nil {
-		t.Fatal("redeem group", err)
+		t.Fatal("redeem deployment enrollment", err)
 	}
 	leaseProof, err := publisherproof.Sign(member.PublisherIdentityID, member.KeyID, member.DeploymentID, server.URL+"/v1/publisher/deployments/lease", key, now)
 	if err != nil {
@@ -61,11 +61,11 @@ func exerciseWorkloadConnectorPeerPair(t *testing.T, d *controlstate.Database, j
 	}
 	lease, err := d.AcquireDeploymentPublisherLease(ctx, member.PublisherIdentityID, member.DeploymentID, leaseProof, server.URL+"/v1/publisher/deployments/lease", now)
 	if err != nil {
-		t.Fatal("group lease", err)
+		t.Fatal("deployment lease", err)
 	}
 	assignments, err := d.GetDeploymentPublisherAssignments(ctx, lease.AccessToken, now)
 	if err != nil {
-		t.Fatal("group assignments", err)
+		t.Fatal("deployment assignments", err)
 	}
 	var grant controlstate.DeploymentPublisherServiceAssignment
 	for _, candidate := range assignments.Services {

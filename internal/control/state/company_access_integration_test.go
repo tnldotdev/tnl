@@ -571,12 +571,12 @@ func TestIntegrationCompanyOffboardingClosesMemberPublicAndServiceRuns(t *testin
 	}
 	memberPrivate, memberPrivateKey := servicePublisher("member")
 	teamPrivate, teamPrivateKey := servicePublisher("team")
-	groupRequest := ApplyProjectConfigurationRequest{TeamID: team, ActorID: f.member.IdentityID, ProjectKey: "company-publishers", SourceFingerprint: strings.Repeat("a", 64), Configuration: ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{"group-database": {Protocol: "postgres", Target: "localhost:5432"}}}, Now: now}
-	groupRequest = selectedProjectRequest(groupRequest, "production")
-	if _, err = d.ApplyProjectConfiguration(t.Context(), groupRequest); err != nil {
+	deploymentRequest := ApplyProjectConfigurationRequest{TeamID: team, ActorID: f.member.IdentityID, ProjectKey: "company-publishers", SourceFingerprint: strings.Repeat("a", 64), Configuration: ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{"database": {Protocol: "postgres", Target: "localhost:5432"}}}, Now: now}
+	deploymentRequest = selectedProjectRequest(deploymentRequest, "production")
+	if _, err = d.ApplyProjectConfiguration(t.Context(), deploymentRequest); err != nil {
 		t.Fatal(err)
 	}
-	groupEnrollment, err := testDeploymentPublisherEnrollment(d, t.Context(), team, groupRequest.ProjectKey, "production", f.member.IdentityID, 1, time.Hour, now)
+	deploymentEnrollment, err := testDeploymentPublisherEnrollment(d, t.Context(), team, deploymentRequest.ProjectKey, "production", f.member.IdentityID, 1, time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -631,10 +631,10 @@ func TestIntegrationCompanyOffboardingClosesMemberPublicAndServiceRuns(t *testin
 	if _, err = d.HeartbeatServiceRun(t.Context(), service.ID, serviceRun.RunID, serviceRun.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64}); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("offboarded member private run renewed", err)
 	}
-	replica := enrollAppliedDeployment(t, d, groupRequest, groupEnrollment, now)
-	var groupOwnership string
-	if err = d.pool.QueryRow(t.Context(), `SELECT ownership FROM control.publisher_identities WHERE id=$1`, replica.member.PublisherIdentityID).Scan(&groupOwnership); err != nil || groupOwnership != "team" {
-		t.Fatal("group creator remained runtime owner", groupOwnership, err)
+	replica := enrollAppliedDeployment(t, d, deploymentRequest, deploymentEnrollment, now)
+	var deploymentOwnership string
+	if err = d.pool.QueryRow(t.Context(), `SELECT ownership FROM control.publisher_identities WHERE id=$1`, replica.member.PublisherIdentityID).Scan(&deploymentOwnership); err != nil || deploymentOwnership != "team" {
+		t.Fatal("deployment creator remained runtime owner", deploymentOwnership, err)
 	}
 	auth := PublishRunAuthentication{PublishRunID: teamRun.PublishRunID, PublicURLID: shared.ID, PublishRunNumber: teamRun.PublishRunNumber, PublishRunToken: teamRun.PublishRunToken}
 	if _, err = d.HeartbeatPublishRun(t.Context(), auth, now, time.Hour, time.Hour); err != nil {
