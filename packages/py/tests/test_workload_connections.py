@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import threading
+from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -254,6 +255,56 @@ class NativeFixture:
             },
             "prepared": prepared(name, self.deadline),
         }
+
+
+def test_deployment_captures_provider_source_but_acquires_each_request_assertion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    native = NativeFixture(tmp_path, monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("TNL_TOKEN", raising=False)
+    identity: ContextVar[str] = ContextVar("assertion")
+    tnl.configure_workload("job", token=identity.get)
+    client = tnl.create_client(project="team/project", services={"db": {"protocol": "postgres"}})
+    deployment = client.deployment("production")
+    monkeypatch.setattr(_workload, "_configuration", ("wrong", lambda: "wrong", None))
+    monkeypatch.setenv("TNL_WORKLOAD", "wrong")
+    monkeypatch.setenv("TNL_CONNECTION_HANDLE", "/wrong/job/handle")
+    preview = native.preview
+
+    def check_preview(service: str, request: object) -> object:
+        assert isinstance(request, dict)
+        workload = request["sdk_workload"]
+        assert isinstance(workload, dict)
+        assert workload["selection"] == {"project": "team/project", "name": "production"}
+        assert workload["name"] == "job"
+        assert workload["runtime"]["workload"] == "job"
+        return preview(service, request)
+
+    monkeypatch.setattr(native, "preview", check_preview)
+
+    async def scenario() -> None:
+        async def one(assertion: str) -> tnl.Connection | tnl.LocalPostgresConnection:
+            identity.set(assertion)
+            return await deployment.connect("db")
+
+        try:
+            results = await asyncio.gather(one("first"), one("other"), one("rotated"))
+            assert all(isinstance(value, tnl.PostgresConnection) for value in results)
+            assert sorted(
+                assertion for _, assertion in native.requests if assertion is not None
+            ) == ["first", "other", "rotated"]
+            assert len(native.owners) == 2
+            with pytest.raises(tnl.TnlError) as publish:
+                await deployment.publish("web")
+            assert publish.value.code == "sdk.configuration_invalid"
+        finally:
+            await deployment.aclose()
+        assert "sdk-stop" in native.calls
+        assert set(native.closed) == set(native.owners.values())
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("peer_owner", [False, True])

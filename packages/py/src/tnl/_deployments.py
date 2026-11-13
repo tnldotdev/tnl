@@ -19,6 +19,7 @@ from ._client import ClientFactory, _Factory
 from ._connections import Connection, _command, _error, _object, _Scope, _text, _TLSConnection
 from ._management_client import Deployments, Management, Publishers
 from ._protocol import TnlError, hostname, service_name
+from ._workload import capture_workload, select_workload, uses_workload
 
 type Protocol = Literal["http", "postgres", "mysql", "tcp", "kubernetes"]
 
@@ -50,14 +51,20 @@ class Deployment:
             if token is None and not self._local
             else None
         )
-        if not self._local and token is None and mounted is None:
+        source = capture_workload()
+        self._workload = (
+            source
+            if not self._local and token is None and mounted is None and uses_workload(source)
+            else None
+        )
+        if not self._local and token is None and mounted is None and self._workload is None:
             raise TnlError("sdk.configuration_invalid", "supply an approved deployment credential")
         self._services = dict(services)
         self._scope = _Scope(
             str(Path.cwd().resolve()),
             mounted,
             deployment=None
-            if mounted is not None
+            if token is None
             else {
                 "project": project,
                 "name": name,
@@ -93,7 +100,20 @@ class Deployment:
                 if self._closed:
                     raise _error("closed")
                 return value
-            connection, owner = await asyncio.to_thread(self._scope.prepare, name, None)
+            selection = (
+                await select_workload(
+                    name,
+                    self._scope.workload,
+                    self._workload,
+                    {
+                        "project": self._project,
+                        "name": self._name,
+                    },
+                )
+                if self._workload is not None
+                else None
+            )
+            connection, owner = await asyncio.to_thread(self._scope.prepare, name, selection)
             if self._closed:
                 raise _error("closed")
             if connection.protocol != self._services[name]:
@@ -177,7 +197,7 @@ class Deployment:
             raise _error("closed")
         if not self._local and self._token is None:
             raise TnlError(
-                "sdk.configuration_invalid", "a borrowed visitor capability cannot publish"
+                "sdk.configuration_invalid", "visitor-only authority cannot publish"
             )
         if len(self._publications) + len(self._publication_tasks) >= 64:
             raise TnlError("sdk.client_capacity", "close an unused publication")

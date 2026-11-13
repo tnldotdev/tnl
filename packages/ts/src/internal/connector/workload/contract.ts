@@ -2,6 +2,7 @@ import * as z from "zod";
 import { digestSchema, pathTextSchema, serviceNameSchema } from "../../values.js";
 
 export interface WorkloadRequest {
+  selection?: { project: string; name: string };
   name?: string;
   callback?: boolean;
   token_file?: string;
