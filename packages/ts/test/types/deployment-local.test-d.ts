@@ -13,11 +13,11 @@ test("local service names and ordinary PostgreSQL settings are inferred", async 
   assertType<PoolConfig>({ ...database, user: "local", database: "orders" });
   expectTypeOf(database).toEqualTypeOf<LocalPostgresConnection>();
   local.client("db", { create: (connection) => ({ port: connection.port }), close: () => {} });
-  // @ts-expect-error only implemented local database protocols are selectable.
-  await local.connect("app");
   // @ts-expect-error generated service names are exact.
   await local.connect("missing");
-  // @ts-expect-error remote deployments are not implemented by the local slice.
-  createClient({ services }).deployment("production");
+  const remote = createClient({ project: "acme/shop", token: "private", services }).deployment(
+    "production",
+  );
+  assertType<string>((await remote.connect("app")).url);
   await local.close();
 });

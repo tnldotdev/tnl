@@ -8,14 +8,13 @@ export type { TnlRuntime, TnlProjectConfig } from "./index.js";
 export { TnlError, type TnlErrorCode } from "./errors.js";
 export type {
   ServiceFacts,
-  LocalDeployment,
+  Deployment,
   LocalPostgresConnection,
-} from "./internal/connector/local_client.js";
+} from "./internal/connector/client.js";
 
-export const createClient: typeof import("./internal/connector/local_client.js").createClient =
-  () => {
-    throw new TnlError("sdk.connection_server_only");
-  };
+export const createClient: typeof import("./internal/connector/client.js").createClient = () => {
+  throw new TnlError("sdk.connection_server_only");
+};
 
 declare const process: { readonly env?: { readonly TNL_PROJECT_RUNTIME?: string } } | undefined;
 

@@ -142,7 +142,7 @@ func launchOwner(ctx context.Context, options OwnerStartOptions, request connect
 	child.Stdin = bytes.NewReader(data)
 	// keep runner tracking; retain no GitHub assertion-request bearer in owner env.
 	for _, value := range os.Environ() {
-		if !strings.HasPrefix(value, "ACTIONS_ID_TOKEN_REQUEST_TOKEN=") && !strings.HasPrefix(value, "ACTIONS_ID_TOKEN_REQUEST_URL=") && !strings.HasPrefix(value, "VERCEL_OIDC_TOKEN=") && !strings.HasPrefix(value, "VERCEL_TOKEN=") {
+		if !strings.HasPrefix(value, "TNL_TOKEN=") && !strings.HasPrefix(value, "ACTIONS_ID_TOKEN_REQUEST_TOKEN=") && !strings.HasPrefix(value, "ACTIONS_ID_TOKEN_REQUEST_URL=") && !strings.HasPrefix(value, "VERCEL_OIDC_TOKEN=") && !strings.HasPrefix(value, "VERCEL_TOKEN=") {
 			child.Env = append(child.Env, value)
 		}
 	}

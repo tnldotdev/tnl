@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { createClient } from "../../src/internal/connector/local_client.js";
+import { createClient } from "../../src/internal/connector/client.js";
 
 const native = vi.hoisted(() => ({
   reply: {

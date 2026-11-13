@@ -10,6 +10,24 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
+func (c *Client) PrepareSourceConnectorPeerPair(ctx context.Context, service string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error) {
+	return visitorSourceRequest[controlv1.ConnectorPeerPair](ctx, c, body.Source, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.PrepareConnectorPeerPair(ctx, service, body, editors...)
+	})
+}
+
+func (c *Client) RenewSourceConnectorPeerPair(ctx context.Context, service, pair string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error) {
+	return visitorSourceRequest[controlv1.ConnectorPeerPairRenewal](ctx, c, body.Source, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.RenewConnectorPeerPair(ctx, service, pair, body, editors...)
+	})
+}
+
+func (c *Client) RebindSourceConnectorPeerPair(ctx context.Context, service, pair string, body controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error) {
+	return visitorSourceRequest[controlv1.ConnectorPeerPairRebindState](ctx, c, body.Source, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.RebindConnectorPeerPair(ctx, service, pair, body, editors...)
+	})
+}
+
 // Connector pair requests carry an already signed Go v1 proof. the source is
 // selected here so a workload request cannot accidentally send a control bearer.
 // callers retain the signed IdempotencyKey as the owner key through replacement;

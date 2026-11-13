@@ -1,19 +1,26 @@
 import { execFile } from "node:child_process";
 import * as z from "zod";
 import { TnlError } from "../../errors.js";
-import type { TnlClientFactory, TnlClientOptions, TnlNativeTLSOptions } from "../../project.js";
+import type {
+  TnlClientFactory,
+  TnlClientOptions,
+  TnlNativeTLSOptions,
+  TnlConnectionRegistry,
+} from "../../project.js";
 import { clientFactory } from "./client_factory.js";
 import { resolveNativeBinary } from "../native/launcher.js";
 import { protocolSchema, serviceNameSchema } from "../values.js";
 import type { ServiceProtocol } from "../project/runtime.js";
+import { deploymentConnector } from "./connection.js";
+import { boundManagement } from "./management.js";
 
 export type ServiceFacts = Readonly<Record<string, Readonly<{ protocol: ServiceProtocol }>>>;
-type PostgresNames<Services extends ServiceFacts> = Extract<
-  {
-    [Name in keyof Services]: "postgres" extends Services[Name]["protocol"] ? Name : never;
-  }[keyof Services],
-  string
->;
+type Names<Services extends ServiceFacts> = Extract<keyof Services, string>;
+type Connections = Omit<TnlConnectionRegistry, "postgres"> & { postgres: LocalPostgresConnection };
+type Connection<
+  Services extends ServiceFacts,
+  Name extends Names<Services>,
+> = Connections[Services[Name]["protocol"]];
 
 export interface LocalPostgresConnection {
   readonly host: string;
@@ -21,11 +28,11 @@ export interface LocalPostgresConnection {
   readonly ssl: false | TnlNativeTLSOptions;
 }
 
-export interface LocalDeployment<Services extends ServiceFacts> {
-  connect(name: PostgresNames<Services>): Promise<LocalPostgresConnection>;
-  client<Client>(
-    name: PostgresNames<Services>,
-    options: TnlClientOptions<LocalPostgresConnection, Client>,
+export interface Deployment<Services extends ServiceFacts> {
+  connect<Name extends Names<Services>>(name: Name): Promise<Connection<Services, Name>>;
+  client<Name extends Names<Services>, Client>(
+    name: Name,
+    options: TnlClientOptions<Connection<Services, Name>, Client>,
   ): TnlClientFactory<Client>;
   close(): Promise<void>;
 }
@@ -97,24 +104,55 @@ async function localConnection(
 }
 
 /** construct explicit deployment handles from portable service names and protocols. */
-export function createClient<const Services extends ServiceFacts>(options: { services: Services }) {
+export function createClient<const Services extends ServiceFacts = Record<never, never>>(options: {
+  project?: string;
+  services?: Services;
+  token?: string;
+}) {
   const parsed = z
     .strictObject({
+      project: z
+        .string()
+        .regex(/^[^/]+\/[^/]+$/)
+        .exactOptional(),
+      token: z
+        .string()
+        .min(1)
+        .max(32 << 10)
+        .exactOptional(),
       services: z
         .record(serviceNameSchema, z.strictObject({ protocol: protocolSchema }))
-        .refine((value) => Object.keys(value).length <= 32),
+        .refine((value) => Object.keys(value).length <= 32)
+        .exactOptional(),
     })
+    .refine((value) => value.services !== undefined || value.project !== undefined)
     .safeParse(options);
   if (!parsed.success) throw new TnlError("sdk.configuration_invalid");
   const protocols = new Map(
-    Object.entries(parsed.data.services).map(([name, service]) => [name, service.protocol]),
+    Object.entries(parsed.data.services ?? {}).map(([name, service]) => [name, service.protocol]),
   );
+  const project = parsed.data.project;
+  const token = parsed.data.token ?? process.env.TNL_TOKEN;
+  const management = boundManagement(project, token);
   return Object.freeze({
-    deployment(name: "local"): LocalDeployment<Services> {
-      if (name !== "local") throw new TnlError("sdk.configuration_invalid");
+    ...management,
+    deployment(name: string): Deployment<Services> {
+      if (!serviceNameSchema.safeParse(name).success && !/^pgrp_[a-z0-9]{22}$/.test(name))
+        throw new TnlError("sdk.configuration_invalid");
+      if (name !== "local" && (project === undefined || token === undefined))
+        throw new TnlError("sdk.configuration_invalid");
       const directory = process.cwd();
       const binary = resolveNativeBinary();
       const environment = { ...process.env };
+      const connector =
+        name === "local"
+          ? undefined
+          : deploymentConnector({
+              project: project ?? "",
+              token: token ?? "",
+              name,
+              services: [...protocols.keys()],
+            });
       const closedError = new TnlError("sdk.client_closed");
       const pending = new Set<Promise<unknown>>();
       const factories = new Set<{ close(): Promise<void> }>();
@@ -122,12 +160,21 @@ export function createClient<const Services extends ServiceFacts>(options: { ser
       let closing: Promise<void> | undefined;
       const validate = (service: string) => {
         if (closed) throw closedError;
-        if (protocols.get(service) !== "postgres") throw new TnlError("sdk.configuration_invalid");
+        if (!protocols.has(service) || (name === "local" && protocols.get(service) !== "postgres"))
+          throw new TnlError("sdk.configuration_invalid");
       };
       const acquire = (service: string) => {
         validate(service);
         if (pending.size >= 64) throw new TnlError("sdk.connection_unavailable");
-        const work = localConnection(binary, directory, service, environment).then((value) => {
+        const work = (
+          connector === undefined
+            ? localConnection(binary, directory, service, environment)
+            : connector.acquire(service).then((value) => {
+                if (value.protocol !== protocols.get(service))
+                  throw new TnlError("sdk.response_invalid");
+                return value;
+              })
+        ).then((value) => {
           if (closed) throw closedError;
           return value;
         });
@@ -139,16 +186,21 @@ export function createClient<const Services extends ServiceFacts>(options: { ser
         return work;
       };
       return Object.freeze({
-        async connect(service: PostgresNames<Services>) {
-          return (await acquire(service)).connection;
+        async connect<Name extends Names<Services>>(
+          service: Name,
+        ): Promise<Connection<Services, Name>> {
+          return (await acquire(service)).connection as Connection<Services, Name>;
         },
-        client<Client>(
-          service: PostgresNames<Services>,
-          driver: TnlClientOptions<LocalPostgresConnection, Client>,
+        client<Name extends Names<Services>, Client>(
+          service: Name,
+          driver: TnlClientOptions<Connection<Services, Name>, Client>,
         ) {
           validate(service);
           if (factories.size >= 64) throw new TnlError("sdk.client_capacity");
-          const factory = clientFactory(() => acquire(service), driver);
+          const factory = clientFactory(async () => {
+            const value = await acquire(service);
+            return { key: value.key, connection: value.connection as Connection<Services, Name> };
+          }, driver);
           const close = factory.close.bind(factory);
           factory.close = async () => {
             await close();
@@ -176,6 +228,11 @@ export function createClient<const Services extends ServiceFacts>(options: { ser
                 ),
               ),
             ];
+            try {
+              await connector?.close();
+            } catch (error) {
+              errors.push(error);
+            }
             if (errors.length === 1) throw errors[0];
             if (errors.length > 1) throw new AggregateError(errors, "deployment cleanup failed");
           })().finally(() => {

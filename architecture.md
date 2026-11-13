@@ -252,6 +252,13 @@ control state need not import ingress just to name that pool.
 by publisher discovery and control target approval. It depends on neither owner;
 control must not import publisher discovery to approve a supplied endpoint.
 
+`client/auth` packages deployment signing credentials and acquires their short-lived
+tokens through the existing publisher proof exchange. `connector` composes that
+registered-key source into its existing owner and stream engine; neither a human
+device nor a provider workload is substituted for the registered key. Language
+bindings give each explicit deployment handle an independent native registry and
+join its driver factories and native cleanup without stopping sibling handles.
+
 For shared behavior, define a small interface where it is used and have the
 caller supply the implementation. Do not copy permission checks or run-management
 code to avoid an import, or leave forwarding wrappers after moving code.
