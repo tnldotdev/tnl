@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { createInterface } from "node:readline";
-import { tnl } from "@tnldotdev/tnl";
+import { connectionHandle } from "../../../dist/internal/connector/connection.js";
 import { ownerIPC } from "../../../dist/internal/connector/connection_ipc.js";
 
 const lines = createInterface({ input: process.stdin })[Symbol.asyncIterator]();
-const handle = tnl.connect("api");
+const handle = connectionHandle("api", () => {});
 const first = await handle;
 assert.ok("fetch" in first);
 console.log("cold");

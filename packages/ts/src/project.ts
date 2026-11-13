@@ -39,18 +39,6 @@ export interface TnlConnectionRegistry {
   };
 }
 
-/** prototype method typing keeps the non-enumerable then out of object spreads. */
-declare abstract class ConnectionPreparation<Settings> implements PromiseLike<Settings> {
-  // oxlint-disable-next-line unicorn/no-thenable -- preparation is intentionally awaitable, but not enumerable.
-  abstract then<Result = Settings, Rejected = never>(
-    fulfilled?: ((value: Settings) => Result | PromiseLike<Result>) | null,
-    rejected?: ((reason: unknown) => Rejected | PromiseLike<Rejected>) | null,
-  ): PromiseLike<Result | Rejected>;
-}
-
-/** await to prepare; synchronous workload reads require an explicit prepared handle. */
-export type TnlConnectionHandle<Settings> = Settings & ConnectionPreparation<Settings>;
-
 /** callbacks adapt ordinary drivers without adding a driver-specific tnl wrapper. */
 export type TnlClientOptions<Connection, Client> = Readonly<{
   create(connection: Connection): Client | PromiseLike<Client>;
@@ -122,14 +110,6 @@ export type TnlServices<Config> = Config extends unknown
     : undefined extends Field<Config, "services", {}>
       ? Partial<ServiceEntries<Config, Services<Config>>>
       : ServiceEntries<Config, Services<Config>>
-  : never;
-export type TnlServiceNames<Config> = Config extends unknown
-  ? Extract<keyof Services<Config>, string>
-  : never;
-export type TnlConnection<Config, Name extends TnlServiceNames<Config>> = Config extends unknown
-  ? Name extends keyof Services<Config>
-    ? TnlConnectionRegistry[Protocol<NonNullable<Services<Config>[Name]>>]
-    : never
   : never;
 type Origins<Values> = {
   readonly [Name in keyof Values]: DeepReadonly<

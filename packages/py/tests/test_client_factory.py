@@ -32,7 +32,7 @@ class NativeClientFactory:
         self.get = connection_client(self.select, create=self.create, close=self.closed.append)
 
     def select(self) -> _connections.ConnectionHandle[_connections.Connection]:
-        handle = tnl.connect("db", directory=self.directory)
+        handle = _connections.connect("db", directory=self.directory)
         self.handles.append(handle)
         return handle
 
@@ -66,7 +66,7 @@ def test_connection_client_failed_acquisition_releases_failure_for_a_fresh_facto
 
     async def scenario() -> None:
         nonlocal current
-        peer = tnl.connect("db", directory=tmp_path)
+        peer = _connections.connect("db", directory=tmp_path)
         await peer
         scope = peer._session.scope
         current = "first"
@@ -247,7 +247,7 @@ def test_connection_client_failed_human_acquisition_does_not_close_its_current_o
     monkeypatch.setattr(_connections, "_command", command)
 
     async def scenario() -> None:
-        peer = tnl.connect("db", directory=tmp_path)
+        peer = _connections.connect("db", directory=tmp_path)
         await peer
         owner = peer._session
         try:

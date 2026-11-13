@@ -244,18 +244,12 @@ describe("private connection snapshots", () => {
       parseConnectionSnapshot({ ...database, protocol: "tcp", host: "127.0.0.1" }),
     ).toThrow();
   });
-  test("browser connect rejects with an owned server-only diagnostic", async () => {
-    const { tnl } = await import("../../src/index.browser.js");
-    const handle = tnl.connect("database");
-    expect(Object.getOwnPropertyDescriptor(handle, "then")?.enumerable).toBe(false);
-    expect(() => ({ ...handle })).toThrow(
+  test("browser deployment clients reject without loading native code", async () => {
+    const { tnl, createClient } = await import("../../src/index.browser.js");
+    expect(Reflect.has(tnl, "connect")).toBe(false);
+    expect(Reflect.has(tnl, "client")).toBe(false);
+    expect(() => createClient({ project: "team/project" })).toThrow(
       expect.objectContaining({ code: "sdk.connection_server_only" }),
     );
-    await expect(handle).rejects.toMatchObject({
-      code: "sdk.connection_server_only",
-    });
-    await expect(Promise.resolve(handle)).rejects.toMatchObject({
-      code: "sdk.connection_server_only",
-    });
   });
 });

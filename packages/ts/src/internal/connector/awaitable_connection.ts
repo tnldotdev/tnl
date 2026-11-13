@@ -1,11 +1,20 @@
-import type { TnlConnectionHandle } from "../../project.js";
+/** legacy internal tests use preparation handles; deployment clients return plain settings. */
+declare abstract class ConnectionPreparation<Settings> implements PromiseLike<Settings> {
+  // oxlint-disable-next-line unicorn/no-thenable -- internal preparation remains awaitable.
+  abstract then<Result = Settings, Rejected = never>(
+    fulfilled?: ((value: Settings) => Result | PromiseLike<Result>) | null,
+    rejected?: ((reason: unknown) => Rejected | PromiseLike<Rejected>) | null,
+  ): PromiseLike<Result | Rejected>;
+}
+
+export type AwaitableConnection<Settings> = Settings & ConnectionPreparation<Settings>;
 
 /** one enumeration uses one snapshot, even if the owner rotates between reads. */
 export function awaitableConnection<Settings extends object>(
   read: () => Settings,
   prepare: () => Promise<Settings>,
   lazy?: Readonly<Partial<Settings>>,
-): TnlConnectionHandle<Settings> {
+): AwaitableConnection<Settings> {
   const target = Object.create(null) as object;
   const then: PromiseLike<Settings>["then"] = (fulfilled, rejected) =>
     prepare().then(fulfilled, rejected);
@@ -54,5 +63,5 @@ export function awaitableConnection<Settings extends object>(
     deleteProperty: () => false,
     setPrototypeOf: () => false,
     preventExtensions: () => false,
-  }) as TnlConnectionHandle<Settings>;
+  }) as AwaitableConnection<Settings>;
 }

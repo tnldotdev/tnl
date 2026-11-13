@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import cast
 
 import tnl
-from tnl import _connection_ipc, _connections, _native
+from tnl import _client, _connection_ipc, _connections, _native
 from tnl._protocol import Endpoint
 
 
@@ -212,14 +212,16 @@ def fork_probe(root: Path, binary: Path, owner: Path, *, locked: bool, busy: boo
         return original_command(binary, *args, input_value=input_value)
 
     _connections._command = command
-    handle = tnl.connect("database", directory=root)
+    handle = _connections.connect("database", directory=root)
 
     class Client:
         def __init__(self, connection: tnl.Connection) -> None:
             self.port = connection.port
 
     closed_clients: list[Client] = []
-    get_client = tnl.client("database", directory=root, create=Client, close=closed_clients.append)
+    get_client = _client.client(
+        "database", directory=root, create=Client, close=closed_clients.append
+    )
     client_runner = asyncio.Runner()
 
     async def prepare() -> tnl.Connection:
@@ -340,7 +342,7 @@ def fork_probe(root: Path, binary: Path, owner: Path, *, locked: bool, busy: boo
                 assert error.code == "sdk.connection_closed"
             else:
                 raise AssertionError("inherited handle remained usable")
-            fresh = tnl.connect("database", directory=root)
+            fresh = _connections.connect("database", directory=root)
             assert fresh._session is not handle._session
             try:
                 fresh.snapshot()

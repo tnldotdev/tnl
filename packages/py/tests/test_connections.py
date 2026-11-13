@@ -99,8 +99,8 @@ def test_sync_properties_require_preparation_without_discovery(
         pytest.fail("a sync read started native discovery")
 
     monkeypatch.setattr(_connections, "native_binary", unavailable)
-    db = tnl.connect("database", directory=tmp_path)
-    with pytest.raises(tnl.TnlError, match="prepare connections first") as caught:
+    db = _connections.connect("database", directory=tmp_path)
+    with pytest.raises(tnl.TnlError, match="await the deployment connection") as caught:
         _ = db.port
     assert caught.value.code == "sdk.connection_not_prepared"
     assert "database" not in repr(db)
@@ -131,11 +131,11 @@ def test_sync_sibling_read_never_dispatches_prepare(
     monkeypatch.setattr(_connections, "_command", command)
 
     async def scenario() -> None:
-        db = tnl.connect("database", directory=tmp_path)
+        db = _connections.connect("database", directory=tmp_path)
         await db
         before = calls.count("prepare")
         with pytest.raises(tnl.TnlError):
-            _ = tnl.connect("sibling", directory=tmp_path).port
+            _ = _connections.connect("sibling", directory=tmp_path).port
         assert calls.count("prepare") == before
         assert calls == ["start", "prepare", "read"]
         await db.aclose()
@@ -190,7 +190,7 @@ def test_mounted_sync_reads_are_fresh_and_await_is_a_coherent_nonawaitable_snaps
         return prepared(port=34566 + len(calls))
 
     monkeypatch.setattr(_connections, "_command", command)
-    handle = tnl.connect("database", directory=tmp_path)
+    handle = _connections.connect("database", directory=tmp_path)
     assert handle.port == 34567
     assert handle.port == 34568
 
@@ -256,8 +256,8 @@ def test_concurrent_threads_and_awaiters_share_one_lazy_native_owner(
         )
 
     monkeypatch.setattr(_connections, "_command", command)
-    first = tnl.connect("database", directory=tmp_path)
-    second = tnl.connect("database", directory=tmp_path)
+    first = _connections.connect("database", directory=tmp_path)
+    second = _connections.connect("database", directory=tmp_path)
 
     async def one() -> tnl.Connection:
         return await second
@@ -306,7 +306,7 @@ def test_native_retained_failure_preserves_exception_identity_and_private_causes
     )
     binary.chmod(0o700)
     monkeypatch.setattr(_connections, "native_binary", lambda: binary)
-    handle = tnl.connect("database", directory=tmp_path)
+    handle = _connections.connect("database", directory=tmp_path)
 
     async def one() -> tnl.Connection:
         return await handle
@@ -354,7 +354,7 @@ def test_failed_initial_service_snapshot_retains_the_shared_native_owner(
 
     async def scenario() -> None:
         with pytest.raises(tnl.TnlError) as caught:
-            await tnl.connect("database", directory=tmp_path)
+            await _connections.connect("database", directory=tmp_path)
         assert caught.value.code == "sdk.connection_expired"
 
     asyncio.run(scenario())
@@ -409,11 +409,11 @@ def test_known_owned_expiry_requires_await_and_coalesces_joined_replacement(
         return prepared(expires_at=deadline.isoformat())
 
     monkeypatch.setattr(_connections, "_command", command)
-    handle = tnl.connect("database", directory=tmp_path)
-    replacements: list[tnl.ConnectionHandle[tnl.Connection]] = []
+    handle = _connections.connect("database", directory=tmp_path)
+    replacements: list[_connections.ConnectionHandle[tnl.Connection]] = []
 
     async def one() -> tnl.Connection:
-        replacement = tnl.connect("database", directory=tmp_path)
+        replacement = _connections.connect("database", directory=tmp_path)
         replacements.append(replacement)
         return await replacement
 
@@ -480,7 +480,7 @@ def test_expiry_cleanup_must_acknowledge_join_before_replacement(
         return prepared()
 
     monkeypatch.setattr(_connections, "_command", command)
-    handle = tnl.connect("database", directory=tmp_path)
+    handle = _connections.connect("database", directory=tmp_path)
 
     async def scenario() -> None:
         nonlocal joined, expired
@@ -536,7 +536,7 @@ def test_expiry_restart_preserves_native_retained_denial_identity(
         return prepared()
 
     monkeypatch.setattr(_connections, "_command", command)
-    handle = tnl.connect("database", directory=tmp_path)
+    handle = _connections.connect("database", directory=tmp_path)
 
     async def one() -> tnl.Connection:
         return await handle
@@ -573,7 +573,7 @@ def test_expired_external_snapshots_never_stop_or_replace_the_owner(
         return prepared(expires_at="2020-01-01T00:00:00Z")
 
     monkeypatch.setattr(_connections, "_command", command)
-    handle = tnl.connect("database", directory=tmp_path)
+    handle = _connections.connect("database", directory=tmp_path)
 
     async def scenario() -> None:
         with pytest.raises(tnl.TnlError) as caught:
@@ -618,7 +618,7 @@ def test_snapshot_expiry_and_transient_reads_do_not_replace_a_live_owned_session
         return prepared()
 
     monkeypatch.setattr(_connections, "_command", command)
-    handle = tnl.connect("database", directory=tmp_path)
+    handle = _connections.connect("database", directory=tmp_path)
 
     async def scenario() -> None:
         nonlocal fail
@@ -638,7 +638,7 @@ def test_snapshot_expiry_and_transient_reads_do_not_replace_a_live_owned_session
 @pytest.mark.parametrize("service", ["", "Database", "../secret", "db;env", "a" * 33])
 def test_invalid_names_fail_before_native(service: str, tmp_path: Path) -> None:
     with pytest.raises(tnl.TnlError) as caught:
-        tnl.connect(service, directory=tmp_path)
+        _connections.connect(service, directory=tmp_path)
     assert caught.value.code == "sdk.connection_input"
     assert service not in str(caught.value) or service == ""
 
@@ -727,7 +727,7 @@ def test_http_keeps_managed_origin_and_project_protocol_drift_is_rejected(
     monkeypatch.setattr(
         _connections, "_command", lambda *args: prepared(protocol="http", url=connection.url)
     )
-    project = tnl.Project({"database": "postgres"})
+    project = _connections.Project({"database": "postgres"})
     with pytest.raises(tnl.TnlError):
         project.connect("missing", directory=tmp_path)
     with pytest.raises(tnl.TnlError):

@@ -95,13 +95,13 @@ const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; mes
   "sdk.connection_unprepared": {
     class: "unavailable",
     retry: "after_change",
-    message:
-      "connection settings are not prepared; await tnl.connect first or set TNL_CONNECTION_HANDLE to a prepared native handle",
+    message: "connection settings are not prepared; await deployment.connect before reading them",
   },
   "sdk.connection_server_only": {
     class: "unavailable",
     retry: "after_change",
-    message: "connector connections require Node.js or Bun; call tnl.connect from server code",
+    message:
+      "connector connections require Node.js or Bun; create a deployment client in server code",
   },
   "sdk.client_closed": {
     class: "invalid",
@@ -116,8 +116,7 @@ const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; mes
   "sdk.workload_required": {
     class: "invalid",
     retry: "after_change",
-    message:
-      "select one saved workload with TNL_WORKLOAD or configureWorkload before calling tnl.connect",
+    message: "select one saved workload with TNL_WORKLOAD or configureWorkload before connecting",
   },
   "sdk.workload_manifest_invalid": {
     class: "invalid",

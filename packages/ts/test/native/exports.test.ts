@@ -5,7 +5,7 @@ import { expect, test } from "vitest";
 
 const directory = fileURLToPath(new URL("../../", import.meta.url));
 
-test("import and require share errors, workload configuration, and lazy handles", () => {
+test("import and require share errors, workload configuration, and deployment clients", () => {
   execFileSync(
     process.execPath,
     [
@@ -23,10 +23,10 @@ test("import and require share errors, workload configuration, and lazy handles"
     assert.equal(esm.tnl.port, 3000);
     assert.equal(esm.tnl.dev, false);
     assert.throws(() => esm.tnl.services, e => e instanceof esm.TnlError && e.code === 'sdk.service_unprepared');
-    const handle = esm.tnl.connect('database');
-    assert.equal(typeof handle.then, 'function');
-    assert.equal(Object.getOwnPropertyDescriptor(handle, 'then').enumerable, false);
-    assert.throws(() => ({...handle}), e => e instanceof esm.TnlError && e.code === 'sdk.connection_unprepared');
+    assert.equal(cjs.createClient, esm.createClient);
+    assert.equal(typeof esm.createClient, 'function');
+    assert.equal('connect' in esm.tnl, false);
+    assert.equal('client' in esm.tnl, false);
     const token = async () => 'request-scoped-assertion';
     workload.configureWorkload({name:'worker', token});
     require('@tnldotdev/tnl/workload').configureWorkload({name:'worker', token});
@@ -53,9 +53,9 @@ test("browser exports reject connections without loading native or provider modu
     import * as esm from '@tnldotdev/tnl';
     const cjs = createRequire(import.meta.url)('@tnldotdev/tnl');
     assert.equal(cjs.tnl, esm.tnl);
-    const handle = esm.tnl.connect('database');
-    assert.throws(() => ({...handle}), e => e instanceof esm.TnlError && e.code === 'sdk.connection_server_only');
-    await assert.rejects(Promise.resolve(handle), e => e instanceof esm.TnlError && e.code === 'sdk.connection_server_only');
+    assert.equal('connect' in esm.tnl, false);
+    assert.equal('client' in esm.tnl, false);
+    assert.throws(() => esm.createClient({project:'team/project'}), e => e instanceof esm.TnlError && e.code === 'sdk.connection_server_only');
   `,
     ],
     { cwd: directory },
@@ -74,7 +74,7 @@ test("browser exports reject connections without loading native or provider modu
     });
     expect(
       Object.keys(result.metafile.inputs).filter((input) =>
-        /internal\/(?:connector\/(?!awaitable_connection\.)|native\/)|@vercel|undici/.test(input),
+        /internal\/(?:connector\/|native\/)|@vercel|undici/.test(input),
       ),
     ).toEqual([]);
   }
