@@ -2036,6 +2036,7 @@ CREATE TABLE control.applied_projects (
     storage_key_id text NOT NULL,
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     updated_at timestamptz NOT NULL,
+    retired_at timestamptz,
     PRIMARY KEY (team_id, project_key)
 );
 ALTER TABLE control.workload_sessions ADD FOREIGN KEY(team_id,project_key) REFERENCES control.applied_projects(team_id,project_key);

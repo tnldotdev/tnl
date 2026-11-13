@@ -116,6 +116,7 @@ type ControlAppliedProject struct {
 	StorageKeyID            string
 	CreatedByIdentityID     string
 	UpdatedAt               pgtype.Timestamptz
+	RetiredAt               pgtype.Timestamptz
 }
 
 type ControlAppliedProjectService struct {

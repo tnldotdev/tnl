@@ -9,6 +9,7 @@ import (
 )
 
 type ProjectStatus struct {
+	RetiredAt    *time.Time                 `json:"retired_at,omitempty"`
 	TeamID       string                     `json:"team_id"`
 	ProjectKey   string                     `json:"project_key"`
 	ProjectLabel string                     `json:"project_label"`
@@ -66,6 +67,7 @@ func (d *Database) GetProjectStatus(ctx context.Context, team, project, actor, c
 		return result, err
 	}
 	result = ProjectStatus{TeamID: team, ProjectKey: project, ProjectLabel: projectRow.ProjectLabel, Revision: projectRow.Revision, ObservedAt: now, Publications: make([]ProjectPublicationStatus, 0, min(len(rows), 100))}
+	result.RetiredAt = optionalTime(projectRow.RetiredAt)
 	for i, row := range rows {
 		if i == 100 {
 			result.NextCursor = encodeDiscoveryCursor(discoveryCursor{Kind: kind, Team: team, Actor: actor, After: rows[i-1].CursorKey})

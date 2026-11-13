@@ -55,6 +55,8 @@ tags:
   - name: service-audit
     description: Read the team's bounded service access and lifecycle audit history.
 paths:
+  /v1/projects/{project_key}/retire:
+    $ref: "./paths/projects.yaml#/paths/~1v1~1projects~1{project_key}~1retire"
   /v1/projects/{project_key}/status:
     $ref: "./paths/projects.yaml#/paths/~1v1~1projects~1{project_key}~1status"
   /v1/projects/resolve-source:

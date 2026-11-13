@@ -182,7 +182,7 @@ func (q *Queries) ListDiscoverablePreviews(ctx context.Context, arg ListDiscover
 
 const listDiscoverableProjects = `-- name: ListDiscoverableProjects :many
 SELECT project_key, project_label, revision, updated_at FROM control.applied_projects
-WHERE team_id=$1 AND project_key>$2
+WHERE team_id=$1 AND project_key>$2 AND retired_at IS NULL
 ORDER BY project_key LIMIT 101
 `
 
@@ -326,7 +326,7 @@ func (q *Queries) ListPublisherGroupMemberStatus(ctx context.Context, arg ListPu
 }
 
 const lockAppliedProject = `-- name: LockAppliedProject :one
-SELECT team_id, project_key, source_fingerprint, project_label, revision, configuration_hash, configuration_ciphertext, storage_key_id, created_by_identity_id, updated_at FROM control.applied_projects WHERE team_id=$1 AND project_key=$2 FOR UPDATE
+SELECT team_id, project_key, source_fingerprint, project_label, revision, configuration_hash, configuration_ciphertext, storage_key_id, created_by_identity_id, updated_at, retired_at FROM control.applied_projects WHERE team_id=$1 AND project_key=$2 FOR UPDATE
 `
 
 type LockAppliedProjectParams struct {
@@ -348,6 +348,7 @@ func (q *Queries) LockAppliedProject(ctx context.Context, arg LockAppliedProject
 		&i.StorageKeyID,
 		&i.CreatedByIdentityID,
 		&i.UpdatedAt,
+		&i.RetiredAt,
 	)
 	return i, err
 }

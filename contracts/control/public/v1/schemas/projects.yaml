@@ -403,6 +403,12 @@ schemas:
         members,
       ]
     properties:
+      retired_at:
+        {
+          type: string,
+          format: date-time,
+          description: "Present after retirement. The saved source and revision remain; an apply with this exact current revision reactivates the project.",
+        }
       team_id: { type: string }
       project_key: { type: string }
       source_fingerprint: { type: string }

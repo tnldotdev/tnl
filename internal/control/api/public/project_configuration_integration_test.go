@@ -359,4 +359,24 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	if _, err = anonymous.GetPublisherGroupAssignments(ctx, lease.AccessToken); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("revoked group member retained HTTP lease", err)
 	}
+	retirement := controlv1.RetireProjectJSONRequestBody{TeamId: team, ExpectedRevision: renamed.Revision}
+	if _, err = anonymous.RetireProject(ctx, project, retirement); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+		t.Fatal("anonymous project retirement", err)
+	}
+	retired, err := owner.RetireProject(ctx, project, retirement)
+	if err != nil || retired.RetiredAt == nil || retired.Revision != renamed.Revision+1 || len(retired.Services) != 0 {
+		t.Fatal("HTTP retirement lost its revision or retained resources", retired, err)
+	}
+	if retry, err := owner.RetireProject(ctx, project, retirement); err != nil || retry.Revision != retired.Revision {
+		t.Fatal("HTTP retirement retry changed state", retry, err)
+	}
+	if page, err := owner.ListProjects(ctx, controlv1.ListProjectsParams{TeamId: team}); err != nil || len(page.Projects) != 0 {
+		t.Fatal("retired HTTP project remained discoverable", page, err)
+	}
+	if detail, err := owner.GetProjectConfiguration(ctx, team, project); err != nil || detail.RetiredAt == nil || detail.SourceFingerprint != resolved.SourceFingerprint {
+		t.Fatal("retired HTTP project lost source identity", detail, err)
+	}
+	if _, err := owner.RetireProject(ctx, "missing", retirement); !errors.Is(err, clientcontrol.ErrNotFound) {
+		t.Fatal("retiring a missing project did not return not found", err)
+	}
 }

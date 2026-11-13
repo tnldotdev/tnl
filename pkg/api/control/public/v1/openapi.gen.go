@@ -1935,10 +1935,13 @@ type AppliedProjectConfiguration struct {
 	Groups            *[]AppliedPublisherGroup     `json:"groups,omitempty"`
 	Members           []PublisherGroupMemberStatus `json:"members"`
 	ProjectKey        string                       `json:"project_key"`
-	Revision          int64                        `json:"revision,string"`
-	Services          []AppliedProjectService      `json:"services"`
-	SourceFingerprint string                       `json:"source_fingerprint"`
-	TeamId            string                       `json:"team_id"`
+
+	// RetiredAt Present after retirement. The saved source and revision remain; an apply with this exact current revision reactivates the project.
+	RetiredAt         *time.Time              `json:"retired_at,omitempty"`
+	Revision          int64                   `json:"revision,string"`
+	Services          []AppliedProjectService `json:"services"`
+	SourceFingerprint string                  `json:"source_fingerprint"`
+	TeamId            string                  `json:"team_id"`
 }
 
 // AppliedProjectService defines model for AppliedProjectService.
@@ -3073,6 +3076,7 @@ type ProjectStatus struct {
 	ProjectKey   string                     `json:"project_key"`
 	ProjectLabel string                     `json:"project_label"`
 	Publications []ProjectPublicationStatus `json:"publications"`
+	RetiredAt    *time.Time                 `json:"retired_at,omitempty"`
 	Revision     int64                      `json:"revision,string"`
 	TeamId       string                     `json:"team_id"`
 }
@@ -4575,6 +4579,12 @@ type RevokePublisherGroupMemberParams struct {
 	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
 }
 
+// RetireProjectJSONBody defines parameters for RetireProject.
+type RetireProjectJSONBody struct {
+	ExpectedRevision int64  `json:"expected_revision,string"`
+	TeamId           string `json:"team_id"`
+}
+
 // GetProjectServiceParams defines parameters for GetProjectService.
 type GetProjectServiceParams struct {
 	TeamId            TeamID `form:"team_id" json:"team_id"`
@@ -4803,6 +4813,9 @@ type RenamePublisherNamespaceJSONRequestBody = RenamePublisherNamespaceRequest
 
 // RenamePublisherGroupJSONRequestBody defines body for RenamePublisherGroup for application/json ContentType.
 type RenamePublisherGroupJSONRequestBody = RenamePublisherGroupRequest
+
+// RetireProjectJSONRequestBody defines body for RetireProject for application/json ContentType.
+type RetireProjectJSONRequestBody RetireProjectJSONBody
 
 // CreatePublicURLJSONRequestBody defines body for CreatePublicURL for application/json ContentType.
 type CreatePublicURLJSONRequestBody = CreatePublicURLRequest
@@ -5408,7 +5421,7 @@ type ClientInterface interface {
 
 	// ListProjects List applied projects
 	//
-	// List applied projects the current team manager may manage, ordered by project_key. Summaries omit configuration, targets, and checkout paths. Read a project's configuration for its groups, members, and editable declarations. Follow next_cursor unchanged; each page checks current access.
+	// List active applied projects the current team manager may manage, ordered by project_key. Retired projects are omitted but remain readable by key. Summaries omit configuration, targets, and checkout paths. Read a project's configuration for its groups, members, and editable declarations. Follow next_cursor unchanged; each page checks current access.
 	//
 	// Corresponds with GET /v1/projects (the `ListProjects` operationId).
 	ListProjects(ctx context.Context, params *ListProjectsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5548,6 +5561,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId).
 	RenamePublisherGroup(ctx context.Context, projectKey string, groupName string, body RenamePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RetireProjectWithBody Retire an applied project and its configuration-owned resources
+	//
+	// Require current team manager access and the current revision. Atomically remove declared services and worktree realizations, close their runs, revoke their publisher and visitor grants, retire publisher groups, revoke workload sessions, and omit the project from active discovery. Keep its source binding, saved label, and incremented revision. An exact retry returns the retired record. Reads by project key still work; applying with the retired record's exact revision reactivates it under normal allocation rules. Previews, shares, feedback, and independently managed OAuth or webhook public URLs are separate lifecycles and are not deleted. This does not stop local applications or installed operating-system jobs.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/projects/{project_key}/retire (the `RetireProject` operationId).
+	RetireProjectWithBody(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RetireProject Retire an applied project and its configuration-owned resources
+	//
+	// Require current team manager access and the current revision. Atomically remove declared services and worktree realizations, close their runs, revoke their publisher and visitor grants, retire publisher groups, revoke workload sessions, and omit the project from active discovery. Keep its source binding, saved label, and incremented revision. An exact retry returns the retired record. Reads by project key still work; applying with the retired record's exact revision reactivates it under normal allocation rules. Previews, shares, feedback, and independently managed OAuth or webhook public URLs are separate lifecycles and are not deleted. This does not stop local applications or installed operating-system jobs.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/projects/{project_key}/retire (the `RetireProject` operationId).
+	RetireProject(ctx context.Context, projectKey string, body RetireProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetProjectService Resolve an applied service by project source and key
 	//
@@ -7610,7 +7641,7 @@ func (c *Client) SetPreviewTeamAccess(ctx context.Context, previewId PreviewID, 
 
 // ListProjects List applied projects
 //
-// List applied projects the current team manager may manage, ordered by project_key. Summaries omit configuration, targets, and checkout paths. Read a project's configuration for its groups, members, and editable declarations. Follow next_cursor unchanged; each page checks current access.
+// List active applied projects the current team manager may manage, ordered by project_key. Retired projects are omitted but remain readable by key. Summaries omit configuration, targets, and checkout paths. Read a project's configuration for its groups, members, and editable declarations. Follow next_cursor unchanged; each page checks current access.
 //
 // Corresponds with GET /v1/projects (the `ListProjects` operationId).
 func (c *Client) ListProjects(ctx context.Context, params *ListProjectsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -7911,6 +7942,44 @@ func (c *Client) RenamePublisherGroupWithBody(ctx context.Context, projectKey st
 // Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId).
 func (c *Client) RenamePublisherGroup(ctx context.Context, projectKey string, groupName string, body RenamePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRenamePublisherGroupRequest(c.Server, projectKey, groupName, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RetireProjectWithBody Retire an applied project and its configuration-owned resources
+//
+// Require current team manager access and the current revision. Atomically remove declared services and worktree realizations, close their runs, revoke their publisher and visitor grants, retire publisher groups, revoke workload sessions, and omit the project from active discovery. Keep its source binding, saved label, and incremented revision. An exact retry returns the retired record. Reads by project key still work; applying with the retired record's exact revision reactivates it under normal allocation rules. Previews, shares, feedback, and independently managed OAuth or webhook public URLs are separate lifecycles and are not deleted. This does not stop local applications or installed operating-system jobs.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/projects/{project_key}/retire (the `RetireProject` operationId).
+func (c *Client) RetireProjectWithBody(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRetireProjectRequestWithBody(c.Server, projectKey, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RetireProject Retire an applied project and its configuration-owned resources
+//
+// Require current team manager access and the current revision. Atomically remove declared services and worktree realizations, close their runs, revoke their publisher and visitor grants, retire publisher groups, revoke workload sessions, and omit the project from active discovery. Keep its source binding, saved label, and incremented revision. An exact retry returns the retired record. Reads by project key still work; applying with the retired record's exact revision reactivates it under normal allocation rules. Previews, shares, feedback, and independently managed OAuth or webhook public URLs are separate lifecycles and are not deleted. This does not stop local applications or installed operating-system jobs.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/projects/{project_key}/retire (the `RetireProject` operationId).
+func (c *Client) RetireProject(ctx context.Context, projectKey string, body RetireProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRetireProjectRequest(c.Server, projectKey, body)
 	if err != nil {
 		return nil, err
 	}
@@ -12897,6 +12966,53 @@ func NewRenamePublisherGroupRequestWithBody(server string, projectKey string, gr
 	}
 
 	operationPath := fmt.Sprintf("/v1/projects/%s/publisher-groups/%s/rename", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRetireProjectRequest calls the generic RetireProject builder with application/json body
+func NewRetireProjectRequest(server string, projectKey string, body RetireProjectJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRetireProjectRequestWithBody(server, projectKey, "application/json", bodyReader)
+}
+
+// NewRetireProjectRequestWithBody constructs an http.Request for the RetireProject method, with any body, and a specified content type
+func NewRetireProjectRequestWithBody(server string, projectKey string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/retire", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -18337,7 +18453,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListProjectsWithResponse List applied projects
 	//
-	// List applied projects the current team manager may manage, ordered by project_key. Summaries omit configuration, targets, and checkout paths. Read a project's configuration for its groups, members, and editable declarations. Follow next_cursor unchanged; each page checks current access.
+	// List active applied projects the current team manager may manage, ordered by project_key. Retired projects are omitted but remain readable by key. Summaries omit configuration, targets, and checkout paths. Read a project's configuration for its groups, members, and editable declarations. Follow next_cursor unchanged; each page checks current access.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -18487,6 +18603,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId).
 	RenamePublisherGroupWithResponse(ctx context.Context, projectKey string, groupName string, body RenamePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*RenamePublisherGroupResponse, error)
+
+	// RetireProjectWithBodyWithResponse Retire an applied project and its configuration-owned resources
+	//
+	// Require current team manager access and the current revision. Atomically remove declared services and worktree realizations, close their runs, revoke their publisher and visitor grants, retire publisher groups, revoke workload sessions, and omit the project from active discovery. Keep its source binding, saved label, and incremented revision. An exact retry returns the retired record. Reads by project key still work; applying with the retired record's exact revision reactivates it under normal allocation rules. Previews, shares, feedback, and independently managed OAuth or webhook public URLs are separate lifecycles and are not deleted. This does not stop local applications or installed operating-system jobs.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/projects/{project_key}/retire (the `RetireProject` operationId).
+	RetireProjectWithBodyWithResponse(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RetireProjectResponse, error)
+
+	// RetireProjectWithResponse Retire an applied project and its configuration-owned resources
+	//
+	// Require current team manager access and the current revision. Atomically remove declared services and worktree realizations, close their runs, revoke their publisher and visitor grants, retire publisher groups, revoke workload sessions, and omit the project from active discovery. Keep its source binding, saved label, and incremented revision. An exact retry returns the retired record. Reads by project key still work; applying with the retired record's exact revision reactivates it under normal allocation rules. Previews, shares, feedback, and independently managed OAuth or webhook public URLs are separate lifecycles and are not deleted. This does not stop local applications or installed operating-system jobs.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/projects/{project_key}/retire (the `RetireProject` operationId).
+	RetireProjectWithResponse(ctx context.Context, projectKey string, body RetireProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*RetireProjectResponse, error)
 
 	// GetProjectServiceWithResponse Resolve an applied service by project source and key
 	//
@@ -21799,6 +21933,54 @@ func (r RenamePublisherGroupResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RenamePublisherGroupResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RetireProjectResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AppliedProjectConfiguration
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RetireProjectResponse) GetJSON200() *AppliedProjectConfiguration {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RetireProjectResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RetireProjectResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RetireProjectResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RetireProjectResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RetireProjectResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -27227,7 +27409,7 @@ func (c *ClientWithResponses) SetPreviewTeamAccessWithResponse(ctx context.Conte
 
 // ListProjectsWithResponse List applied projects
 //
-// List applied projects the current team manager may manage, ordered by project_key. Summaries omit configuration, targets, and checkout paths. Read a project's configuration for its groups, members, and editable declarations. Follow next_cursor unchanged; each page checks current access.
+// List active applied projects the current team manager may manage, ordered by project_key. Retired projects are omitted but remain readable by key. Summaries omit configuration, targets, and checkout paths. Read a project's configuration for its groups, members, and editable declarations. Follow next_cursor unchanged; each page checks current access.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -27478,6 +27660,36 @@ func (c *ClientWithResponses) RenamePublisherGroupWithResponse(ctx context.Conte
 		return nil, err
 	}
 	return ParseRenamePublisherGroupResponse(rsp)
+}
+
+// RetireProjectWithBodyWithResponse Retire an applied project and its configuration-owned resources
+//
+// Require current team manager access and the current revision. Atomically remove declared services and worktree realizations, close their runs, revoke their publisher and visitor grants, retire publisher groups, revoke workload sessions, and omit the project from active discovery. Keep its source binding, saved label, and incremented revision. An exact retry returns the retired record. Reads by project key still work; applying with the retired record's exact revision reactivates it under normal allocation rules. Previews, shares, feedback, and independently managed OAuth or webhook public URLs are separate lifecycles and are not deleted. This does not stop local applications or installed operating-system jobs.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/projects/{project_key}/retire (the `RetireProject` operationId).
+func (c *ClientWithResponses) RetireProjectWithBodyWithResponse(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RetireProjectResponse, error) {
+	rsp, err := c.RetireProjectWithBody(ctx, projectKey, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRetireProjectResponse(rsp)
+}
+
+// RetireProjectWithResponse Retire an applied project and its configuration-owned resources
+//
+// Require current team manager access and the current revision. Atomically remove declared services and worktree realizations, close their runs, revoke their publisher and visitor grants, retire publisher groups, revoke workload sessions, and omit the project from active discovery. Keep its source binding, saved label, and incremented revision. An exact retry returns the retired record. Reads by project key still work; applying with the retired record's exact revision reactivates it under normal allocation rules. Previews, shares, feedback, and independently managed OAuth or webhook public URLs are separate lifecycles and are not deleted. This does not stop local applications or installed operating-system jobs.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/projects/{project_key}/retire (the `RetireProject` operationId).
+func (c *ClientWithResponses) RetireProjectWithResponse(ctx context.Context, projectKey string, body RetireProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*RetireProjectResponse, error) {
+	rsp, err := c.RetireProject(ctx, projectKey, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRetireProjectResponse(rsp)
 }
 
 // GetProjectServiceWithResponse Resolve an applied service by project source and key
@@ -31240,6 +31452,39 @@ func ParseRenamePublisherGroupResponse(rsp *http.Response) (*RenamePublisherGrou
 	return response, nil
 }
 
+// ParseRetireProjectResponse parses an HTTP response from a RetireProjectWithResponse call
+func ParseRetireProjectResponse(rsp *http.Response) (*RetireProjectResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RetireProjectResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AppliedProjectConfiguration
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetProjectServiceResponse parses an HTTP response from a GetProjectServiceWithResponse call
 func ParseGetProjectServiceResponse(rsp *http.Response) (*GetProjectServiceResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -34763,6 +35008,9 @@ type ServerInterface interface {
 	// RenamePublisherGroup Rename a group's configuration selector without changing endpoints
 	// (POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename)
 	RenamePublisherGroup(w http.ResponseWriter, r *http.Request, projectKey string, groupName string)
+	// RetireProject Retire an applied project and its configuration-owned resources
+	// (POST /v1/projects/{project_key}/retire)
+	RetireProject(w http.ResponseWriter, r *http.Request, projectKey string)
 	// GetProjectService Resolve an applied service by project source and key
 	// (GET /v1/projects/{project_key}/services/{service})
 	GetProjectService(w http.ResponseWriter, r *http.Request, projectKey string, service ServiceName, params GetProjectServiceParams)
@@ -36403,6 +36651,32 @@ func (siw *ServerInterfaceWrapper) RenamePublisherGroup(w http.ResponseWriter, r
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RenamePublisherGroup(w, r, projectKey, groupName)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RetireProject operation middleware
+func (siw *ServerInterfaceWrapper) RetireProject(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RetireProject(w, r, projectKey)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -40019,6 +40293,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/retire", wrapper.RetireProject)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/status", wrapper.GetProjectStatus)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/resolve-source", wrapper.ResolveProjectSource)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects", wrapper.ListProjects)

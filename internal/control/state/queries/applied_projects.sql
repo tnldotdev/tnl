@@ -3,7 +3,7 @@ SELECT * FROM control.applied_projects WHERE team_id=sqlc.arg(team_id) AND proje
 
 -- name: ListDiscoverableProjects :many
 SELECT project_key, project_label, revision, updated_at FROM control.applied_projects
-WHERE team_id=sqlc.arg(team_id) AND project_key>sqlc.arg(after_key)
+WHERE team_id=sqlc.arg(team_id) AND project_key>sqlc.arg(after_key) AND retired_at IS NULL
 ORDER BY project_key LIMIT 101;
 
 -- name: ListDiscoverablePreviews :many
