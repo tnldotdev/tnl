@@ -19,11 +19,11 @@ type DeploymentRuntimeStore interface {
 	AcknowledgeDeploymentPublisherConfiguration(context.Context, string, int64, string, bool, time.Time) error
 }
 
-func (h *handler) RenameDeploymentNamespace(w http.ResponseWriter, r *http.Request, project, group string) {
+func (h *handler) RenameDeploymentNamespace(w http.ResponseWriter, r *http.Request, project, deployment string) {
 	w.Header().Set("Cache-Control", "no-store")
 	var body controlv1.RenameDeploymentNamespaceRequest
 	if decodeJSON(w, r, &body) != nil {
-		writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, "invalid publisher DNS namespace rename")
+		writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, "invalid deployment DNS namespace rename")
 		return
 	}
 	actor, ok := h.projectManager(w, r, body.TeamId)
@@ -32,18 +32,18 @@ func (h *handler) RenameDeploymentNamespace(w http.ResponseWriter, r *http.Reque
 	}
 	store, ok := h.dependencies.Deployments, h.dependencies.Deployments != nil
 	if !ok {
-		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "publisher DNS namespace rename is unavailable")
+		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "deployment DNS namespace rename is unavailable")
 		return
 	}
-	result, err := store.RenameDeploymentNamespace(r.Context(), controlstate.RenameDeploymentNamespaceRequest{TeamID: body.TeamId, ProjectKey: project, Deployment: group, NamespaceLabel: body.NamespaceLabel, ExpectedRevision: body.ExpectedRevision, IdempotencyKey: body.IdempotencyKey, ActorID: actor, DNSAutomation: h.config.DNSAutomation, Now: time.Now()})
+	result, err := store.RenameDeploymentNamespace(r.Context(), controlstate.RenameDeploymentNamespaceRequest{TeamID: body.TeamId, ProjectKey: project, Deployment: deployment, NamespaceLabel: body.NamespaceLabel, ExpectedRevision: body.ExpectedRevision, IdempotencyKey: body.IdempotencyKey, ActorID: actor, DNSAutomation: h.config.DNSAutomation, Now: time.Now()})
 	if err != nil {
-		projectConfigurationProblem(r.Context(), w, "rename publisher DNS namespace", err)
+		projectConfigurationProblem(r.Context(), w, "rename deployment DNS namespace", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
 }
 
-func (h *handler) RenameDeployment(w http.ResponseWriter, r *http.Request, project, group string) {
+func (h *handler) RenameDeployment(w http.ResponseWriter, r *http.Request, project, deployment string) {
 	w.Header().Set("Cache-Control", "no-store")
 	var body controlv1.RenameDeploymentRequest
 	if decodeJSON(w, r, &body) != nil {
@@ -59,7 +59,7 @@ func (h *handler) RenameDeployment(w http.ResponseWriter, r *http.Request, proje
 		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "deployment rename is unavailable")
 		return
 	}
-	result, err := store.RenameDeployment(r.Context(), body.TeamId, project, group, body.Name, actor, body.ExpectedRevision, time.Now())
+	result, err := store.RenameDeployment(r.Context(), body.TeamId, project, deployment, body.Name, actor, body.ExpectedRevision, time.Now())
 	if err != nil {
 		projectConfigurationProblem(r.Context(), w, "rename deployment", err)
 		return

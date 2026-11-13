@@ -13,7 +13,7 @@ import (
 func TestIntegrationDeploymentPublisherHealthRuntimeReplacement(t *testing.T) {
 	for _, ordering := range []string{"equal", "reversed", "ack-first", "start-first"} {
 		t.Run(ordering, func(t *testing.T) {
-			d, now := newControlStateIntegrationDatabase(t, "group_health_"+ordering)
+			d, now := newControlStateIntegrationDatabase(t, "deployment_health_"+ordering)
 			r := appliedProjectRequest(t, d, now)
 			r.Configuration.Settings = &DeploymentSettings{}
 			r.Configuration.Services["web"] = ProjectServiceConfiguration{Target: "http://localhost:3000"}

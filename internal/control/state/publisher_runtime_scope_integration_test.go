@@ -146,10 +146,10 @@ func TestIntegrationPublisherRuntimeDeploymentUsesEnrolledKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := d.PublisherRuntime(t.Context(), request("start", strings.Repeat("c", 32), kid, 1, key)); !errors.Is(err, ErrPublisherIdentity) {
-		t.Fatal("non-enrolled group key acquired runtime authority", err)
+		t.Fatal("non-enrolled deployment key acquired runtime authority", err)
 	}
 	after, err := q.GetPublisherRuntime(t.Context(), m.PublisherIdentityID)
 	if err != nil || !reflect.DeepEqual(before, after) {
-		t.Fatal("rejected group key changed runtime", err)
+		t.Fatal("rejected deployment key changed runtime", err)
 	}
 }

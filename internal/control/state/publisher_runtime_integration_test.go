@@ -116,7 +116,7 @@ func TestIntegrationPublisherRuntimeLifecycle(t *testing.T) {
 			}
 			if kind == "deployment" {
 				if r.DeploymentLease == nil {
-					t.Fatal("no runtime group lease")
+					t.Fatal("no runtime deployment lease")
 				}
 				a, err := d.GetDeploymentPublisherAssignments(ctx, r.DeploymentLease.AccessToken, now)
 				if err != nil || len(a.Services) != 2 {

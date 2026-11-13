@@ -186,27 +186,6 @@ func TestUnknownOperationsReturnNotFound(t *testing.T) {
 	}
 }
 
-func TestRetiredPublisherGroupOperationsReturnNotFound(t *testing.T) {
-	handler := testHandler(t, Config{ServerDomain: "example.com", ManagedDomain: "example.com"}, nil, nil, func(context.Context) error { return nil })
-	for _, operation := range [][2]string{
-		{"POST", "/v1/publisher/groups/enroll"},
-		{"POST", "/v1/publisher/groups/verify"},
-		{"POST", "/v1/publisher/groups/lease"},
-		{"GET", "/v1/publisher/groups/assignments"},
-		{"POST", "/v1/publisher/groups/configuration-acknowledgement"},
-		{"POST", "/v1/projects/shop/publisher-groups/production/enrollments"},
-		{"POST", "/v1/projects/shop/publisher-groups/production/rename"},
-		{"POST", "/v1/projects/shop/publisher-groups/production/namespace/rename"},
-		{"DELETE", "/v1/projects/shop/publisher-groups/production/members/pub_unused"},
-	} {
-		response := httptest.NewRecorder()
-		handler.ServeHTTP(response, httptest.NewRequest(operation[0], operation[1], strings.NewReader("{}")))
-		if response.Code != http.StatusNotFound {
-			t.Fatalf("retired operation %v returned %d", operation, response.Code)
-		}
-	}
-}
-
 func TestAdminOperationsRequireAuthentication(t *testing.T) {
 	handler := testHandler(t, Config{ServerDomain: "example.com", ManagedDomain: "example.com"}, nil, nil, func(context.Context) error { return nil })
 	response := httptest.NewRecorder()

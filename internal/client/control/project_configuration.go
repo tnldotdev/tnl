@@ -62,15 +62,15 @@ func (c *Client) ListPreviews(ctx context.Context, params controlv1.ListPreviews
 	})
 }
 
-func (c *Client) RenameDeploymentNamespace(ctx context.Context, project, group string, body controlv1.RenameDeploymentNamespaceRequest) (controlv1.AppliedProjectConfiguration, error) {
+func (c *Client) RenameDeploymentNamespace(ctx context.Context, project, deployment string, body controlv1.RenameDeploymentNamespaceRequest) (controlv1.AppliedProjectConfiguration, error) {
 	return requestWithAccess[controlv1.AppliedProjectConfiguration](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.RenameDeploymentNamespace(ctx, project, group, body, editors...)
+		return c.api.RenameDeploymentNamespace(ctx, project, deployment, body, editors...)
 	})
 }
 
-func (c *Client) RenameDeployment(ctx context.Context, project, group string, body controlv1.RenameDeploymentRequest) (controlv1.AppliedProjectConfiguration, error) {
+func (c *Client) RenameDeployment(ctx context.Context, project, deployment string, body controlv1.RenameDeploymentRequest) (controlv1.AppliedProjectConfiguration, error) {
 	return requestWithAccess[controlv1.AppliedProjectConfiguration](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.RenameDeployment(ctx, project, group, body, editors...)
+		return c.api.RenameDeployment(ctx, project, deployment, body, editors...)
 	})
 }
 

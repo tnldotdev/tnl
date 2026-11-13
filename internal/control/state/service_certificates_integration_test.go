@@ -80,7 +80,7 @@ func TestIntegrationManagedCertificateRunAuthority(t *testing.T) {
 	_, sibling := start(a, "api")
 	plan := prep.CertificatePlan
 	if plan.Scope != applied.Deployments[0].Namespace || !slices.Equal(plan.Identifiers, []string{"*." + applied.Deployments[0].Namespace}) || plan.ChallengeMethod != "dns-01" {
-		t.Fatal("private run did not capture its exact group plan", plan)
+		t.Fatal("private run did not capture its exact deployment plan", plan)
 	}
 	const directory = "https://acme.example.test/directory"
 	if _, err = d.EnsureACMEAccount(t.Context(), directory, "operator@example.test", now); err != nil {
@@ -269,7 +269,7 @@ func testServiceNamespaceCertificateRetirement(t *testing.T, d *Database, r Appl
 		t.Fatal(err)
 	}
 	if renamed.Deployments[0].ID != oldDeployment.ID || renamed.Deployments[0].Namespace == oldDeployment.Namespace {
-		t.Fatal("namespace operation replaced the group")
+		t.Fatal("namespace operation replaced the deployment")
 	}
 	// settle the DNS retirement receipts introduced by the direct-exposure test
 	// before checking the independent certificate quarantine deadline.
