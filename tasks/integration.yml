@@ -13,7 +13,7 @@ tasks:
     vars:
       RUN: '{{default "^TestIntegration" .RUN}}'
     cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/api/authority ./internal/control/api/public ./internal/control/state/controlstatedb ./internal/control/certificates ./internal/control/dns ./internal/relay ./internal/publisher/group -run='{{.RUN}}' -count=1 -timeout=8m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/client/control ./internal/control/api/authority ./internal/control/api/public ./internal/control/state/controlstatedb ./internal/control/certificates ./internal/control/dns ./internal/relay ./internal/publisher/group -run='{{.RUN}}' -count=1 -timeout=8m -args -tnl-test-tier=integration
 
   state:shard:
     desc: Check control state with disposable PostgreSQL (optional SHARD=1/4)
@@ -128,6 +128,12 @@ tasks:
     deps: [":js:build"]
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./tests/integration/connector -run='^TestPostgresLocalDeployment$' -count=1 -timeout=3m -args -tnl-test-tier=integration
+
+  management-sdk:
+    desc: Check the generated HTTP management SDK against real control and disposable PostgreSQL
+    deps: [":js:build"]
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./packages/ts/test/http -run='^TestIntegrationGeneratedManagementHTTP$' -count=1 -timeout=3m -args -tnl-test-tier=integration
 
   tcp-clients:
     desc: Check both SDKs against disposable PostgreSQL and MySQL with verified TLS

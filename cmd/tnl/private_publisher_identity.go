@@ -42,7 +42,7 @@ func managedService(ctx context.Context, session *clientteam.Session, id string)
 }
 
 func runPrivatePublisherSetup(ctx context.Context, flags publisherSetupCommand, output, diagnostics io.Writer) error {
-	if !opaqueid.Valid(flags.ServiceID, opaqueid.ServicePrefix) {
+	if len(flags.Services) != 1 || !opaqueid.Valid(flags.Services[0], opaqueid.ServicePrefix) {
 		return publisherCLIError("pass an exact service ID")
 	}
 	session, err := openTeamSession(ctx, flags.selection(), "tnl publisher setup", diagnostics)
@@ -50,7 +50,7 @@ func runPrivatePublisherSetup(ctx context.Context, flags publisherSetupCommand, 
 		return err
 	}
 	defer session.Close()
-	service, err := managedService(ctx, session, flags.ServiceID)
+	service, err := managedService(ctx, session, flags.Services[0])
 	if err != nil {
 		return err
 	}

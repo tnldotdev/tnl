@@ -3,6 +3,7 @@ version: "3"
 vars:
   GENERATED_PATHS: >-
     pkg/api
+    packages/ts/src/internal/management
     internal/client/state/clientstatedb
     internal/control/state/controlstatedb
     internal/failure/diagnostic/codes.gen.go
@@ -24,6 +25,7 @@ tasks:
       - node scripts/generate/api-contracts.ts
       - node scripts/generate/telemetry.ts
       - node scripts/generate/browser-api-schemas.ts
+      - node scripts/generate/management-sdk.ts
       - sqlc generate -f internal/client/state/sqlc.yaml
       - sqlc generate -f internal/control/state/sqlc.yaml
       - go run ./scripts/installer/generate.go -root .
