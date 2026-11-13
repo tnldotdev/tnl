@@ -11,7 +11,7 @@ func TestIntegrationServiceEndpointDNSRevisions(t *testing.T) {
 	ctx := t.Context()
 	r := appliedProjectRequest(t, d, now)
 	r.DNSAutomation = true
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"api": {PublisherGroup: "production", Target: "localhost:3000"}}}
+	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{"api": {Target: "localhost:3000"}}}
 	r = selectedProjectRequest(r, "production")
 	applied, err := d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {
@@ -31,7 +31,7 @@ func TestIntegrationServiceEndpointDNSRevisions(t *testing.T) {
 	private := claim(false, PublicURLDNSPending)
 	r.ExpectedRevision = applied.Revision
 	r.Now = now.Add(time.Second)
-	r.Configuration.PublisherGroups["production"] = ProjectPublisherGroup{Public: true}
+	r.Configuration.Settings = &DeploymentSettings{Public: true}
 	applied, err = d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {
 		t.Fatal(err)
@@ -48,7 +48,7 @@ func TestIntegrationServiceEndpointDNSRevisions(t *testing.T) {
 	}
 	r.ExpectedRevision = applied.Revision
 	r.Now = now.Add(2 * time.Second)
-	r.Configuration.PublisherGroups["production"] = ProjectPublisherGroup{}
+	r.Configuration.Settings = &DeploymentSettings{}
 	applied, err = d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {
 		t.Fatal(err)

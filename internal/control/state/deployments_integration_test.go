@@ -18,9 +18,9 @@ func TestIntegrationDeploymentCRUDSharesSavedBindingsWithApply(t *testing.T) {
 	ctx := t.Context()
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = ProjectConfiguration{
-		PublisherGroups: map[string]ProjectPublisherGroup{"production": {}},
+		Settings: &DeploymentSettings{},
 		Services: map[string]ProjectServiceConfiguration{"db": {
-			PublisherGroup: "production", Protocol: "postgres", Target: "production.internal:5432",
+			Protocol: "postgres", Target: "production.internal:5432",
 			Access: &ProjectServiceAccess{Team: true},
 		}},
 	}
@@ -117,7 +117,7 @@ func TestIntegrationDeploymentCRUDSharesSavedBindingsWithApply(t *testing.T) {
 		t.Fatal("apply changed a sibling deployment's protocol", err)
 	}
 	r.ServiceDeclarations["db"] = "postgres"
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}}
+	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}}
 	if _, err = d.ApplyProjectConfiguration(ctx, r); err != nil {
 		t.Fatal("removing apply-owned services touched a customer declaration", err)
 	}
@@ -160,10 +160,10 @@ func TestIntegrationDeploymentSavedConfigurationConsumers(t *testing.T) {
 	r := appliedProjectRequest(t, d, now)
 	cluster := "orders"
 	r.Configuration = ProjectConfiguration{
-		PublisherGroups: map[string]ProjectPublisherGroup{"production": {}},
+		Settings: &DeploymentSettings{},
 		Services: map[string]ProjectServiceConfiguration{
-			"web":  {PublisherGroup: "production", Target: "localhost:3000", HTTP: &config.HTTPService{Access: &config.Access{Mode: "restricted", IP: []string{"192.0.2.0/24"}}}},
-			"kube": {PublisherGroup: "production", Protocol: "kubernetes", TargetDiscovery: &ProjectTargetDiscovery{Type: "eks", Region: "us-east-1", Cluster: &cluster}},
+			"web":  {Target: "localhost:3000", HTTP: &config.HTTPService{Access: &config.Access{Mode: "restricted", IP: []string{"192.0.2.0/24"}}}},
+			"kube": {Protocol: "kubernetes", TargetDiscovery: &ProjectTargetDiscovery{Type: "eks", Region: "us-east-1", Cluster: &cluster}},
 		},
 	}
 	r = selectedProjectRequest(r, "production")

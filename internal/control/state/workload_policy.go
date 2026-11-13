@@ -56,17 +56,12 @@ func (p ProjectWorkloadGitHub) matches(c oidc.GitHubExecution) bool {
 }
 
 func normalizeProjectWorkloads(c *ProjectConfiguration) error {
-	if len(c.Workloads) > 32 {
+	if len(c.Workloads) > 32 || c.Settings == nil && len(c.Workloads) != 0 {
 		return ErrProjectConfigurationInvalid
 	}
 	for name, p := range c.Workloads {
 		if !naming.ValidServiceName(p.Deployment) || p.Deployment == "local" {
 			return ErrProjectConfigurationInvalid
-		}
-		for _, key := range p.Services {
-			if c.Services[key].PublisherGroup != p.Deployment {
-				return ErrProjectConfigurationInvalid
-			}
 		}
 		if (p.Provider == "google") != (p.Google != nil) {
 			return ErrProjectConfigurationInvalid
@@ -89,8 +84,8 @@ func normalizeProjectWorkloads(c *ProjectConfiguration) error {
 			}
 			seen := map[string]bool{}
 			for _, key := range p.Services {
-				s, ok := c.Services[key]
-				if !ok || s.PublisherGroup == "local" || seen[key] {
+				_, ok := c.Services[key]
+				if !ok || seen[key] {
 					return ErrProjectConfigurationInvalid
 				}
 				seen[key] = true
@@ -109,10 +104,8 @@ func normalizeProjectWorkloads(c *ProjectConfiguration) error {
 			return ErrWorkloadBinding
 		}
 		services := map[string]config.Service{}
-		for key, s := range c.Services {
-			if s.PublisherGroup != "local" {
-				services[key] = config.Service{}
-			}
+		for key := range c.Services {
+			services[key] = config.Service{}
 		}
 		policy := config.Workload{GitHub: &config.WorkloadGitHub{Repository: &g.Repository, Workflow: workflow, Events: g.Events}, Services: p.Services}
 		if !config.ValidWorkloadRef(g.Ref) {

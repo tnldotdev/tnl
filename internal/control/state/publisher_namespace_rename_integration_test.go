@@ -13,15 +13,15 @@ func TestIntegrationPublisherNamespaceRenameAtomicAuthority(t *testing.T) {
 	r := appliedProjectRequest(t, d, now)
 	r.ProjectLabel = "storefront"
 	r.DNSAutomation = true
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}, "staging": {}}, Services: map[string]ProjectServiceConfiguration{
-		"api": {PublisherGroup: "production", Target: "api.internal:3000", Access: &ProjectServiceAccess{Team: true}},
+	r.Configuration = ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{
+		"api": {Target: "api.internal:3000", Access: &ProjectServiceAccess{Team: true}},
 	}}
-	staging := deploymentProjectRequest(r, "staging")
+	staging := projectServiceSelection(r, "staging")
 	first, err := d.ApplyProjectConfiguration(t.Context(), staging)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r = deploymentProjectRequest(r, "production")
+	r = projectServiceSelection(r, "production", "api")
 	r.ExpectedRevision = first.Revision
 	applied, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {

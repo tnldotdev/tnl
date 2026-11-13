@@ -15,16 +15,16 @@ func TestIntegrationServiceMetadataCorruptionRollsBackCallers(t *testing.T) {
 	d, now, _, leases := newPublishRunPrerequisites(t)
 	ctx := t.Context()
 	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{
-		"orders": {PublisherGroup: "production", Protocol: "tcp", Target: "orders.internal:5432"},
+	r.Configuration = ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{
+		"orders": {Protocol: "tcp", Target: "orders.internal:5432"},
 		"local":  {Protocol: "tcp", Target: "local.internal:5432"},
 	}}
-	localSelection := deploymentProjectRequest(r, "local")
+	localSelection := projectServiceSelection(r, "local", "local")
 	localApplied, err := d.ApplyProjectConfiguration(ctx, localSelection)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r = deploymentProjectRequest(r, "production")
+	r = projectServiceSelection(r, "production", "orders")
 	r.ExpectedRevision = localApplied.Revision
 	applied, err := d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {

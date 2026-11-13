@@ -102,7 +102,7 @@ func (d *Database) RenamePublisherNamespace(ctx context.Context, r RenamePublish
 	if _, err = tx.Exec(ctx, `UPDATE control.project_publisher_groups SET namespace='' WHERE id=$1`, id); err != nil {
 		return result, err
 	}
-	if err = d.ensureGroupNamespace(ctx, tx, ApplyProjectConfigurationRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, Now: r.Now}, id, name, snapshot.Settings, r.NamespaceLabel); err != nil {
+	if err = d.ensureDeploymentNamespace(ctx, tx, ApplyProjectConfigurationRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, Now: r.Now}, id, name, snapshot.Settings, r.NamespaceLabel); err != nil {
 		return result, err
 	}
 	services, err := q.ListPublisherGroupServices(ctx, id)

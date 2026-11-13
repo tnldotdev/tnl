@@ -48,10 +48,10 @@ func TestIntegrationAppliedProjectRootIntegrationsAndRemoteGroups(t *testing.T) 
 	}
 	r.ExpectedRevision = 2
 	r.Configuration = appliedWebhookConfiguration()
-	r.Configuration.PublisherGroups = map[string]ProjectPublisherGroup{"eks": {Description: "externally operated replicas"}}
-	r.Configuration.Services["remote"] = ProjectServiceConfiguration{PublisherGroup: "eks", Target: "https://eks.internal:8443", TargetTLS: appliedTargetTrust(t, "eks.internal")}
-	remote := deploymentProjectRequest(r, "eks")
-	r = deploymentProjectRequest(r, "local")
+	r.Configuration.Services["remote"] = ProjectServiceConfiguration{Target: "https://eks.internal:8443", TargetTLS: appliedTargetTrust(t, "eks.internal")}
+	remote := projectServiceSelection(r, "eks", "remote")
+	remote.Configuration.Settings.Description = "externally operated replicas"
+	r = projectServiceSelection(r, "local", "app")
 	configured, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
 		t.Fatal(err)

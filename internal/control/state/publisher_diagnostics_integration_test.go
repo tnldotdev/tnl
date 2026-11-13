@@ -21,7 +21,7 @@ func TestIntegrationPublisherDiagnosticsFreshness(t *testing.T) {
 	d.Instrument(m)
 	ctx = observability.WithMetrics(ctx, m)
 	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"remote": {}}, Services: map[string]ProjectServiceConfiguration{"api": {PublisherGroup: "remote", Target: "localhost:3000"}}}
+	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{"api": {Target: "localhost:3000"}}}
 	r = selectedProjectRequest(r, "remote")
 	project, err := d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {
@@ -80,7 +80,7 @@ func TestIntegrationPublisherDiagnosticsFreshness(t *testing.T) {
 		t.Fatal("replacement runtime inherited its predecessor's healthy acknowledgement", status)
 	}
 	r.ExpectedRevision = project.Revision
-	r.Configuration.PublisherGroups["remote"] = ProjectPublisherGroup{Description: "changed"}
+	r.Configuration.Settings = &DeploymentSettings{Description: "changed"}
 	if _, err := d.ApplyProjectConfiguration(ctx, r); err != nil {
 		t.Fatal(err)
 	}

@@ -98,7 +98,7 @@ func TestIntegrationPublisherRuntimeResourceAvailability(t *testing.T) {
 func TestIntegrationPublisherRuntimeGroupUsesEnrolledKey(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "runtime_group_key")
 	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"remote": {}}, Services: map[string]ProjectServiceConfiguration{"api": {PublisherGroup: "remote", Target: "api.internal:3000"}}}
+	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{"api": {Target: "api.internal:3000"}}}
 	r = selectedProjectRequest(r, "remote")
 	if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
 		t.Fatal(err)

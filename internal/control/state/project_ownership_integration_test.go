@@ -170,9 +170,9 @@ func TestIntegrationAppliedProjectManagedGroupGrantsAndSafeMetadata(t *testing.T
 	d, now := newControlStateIntegrationDatabase(t, "managed_projection")
 	d.managedURLMode = naming.ManagedURLModeSimple
 	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{
-		"public": {PublisherGroup: "production", Target: "http://secret.internal:3000", Access: &ProjectServiceAccess{Team: true}},
-		"db":     {PublisherGroup: "production", Protocol: "postgres", Target: "db.internal:5432"},
+	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{
+		"public": {Target: "http://secret.internal:3000", Access: &ProjectServiceAccess{Team: true}},
+		"db":     {Protocol: "postgres", Target: "db.internal:5432"},
 	}}
 	r = selectedProjectRequest(r, "production")
 	status, err := d.ApplyProjectConfiguration(t.Context(), r)
@@ -231,7 +231,7 @@ func TestIntegrationAppliedProjectManagedGroupGrantsAndSafeMetadata(t *testing.T
 	}
 	r.ExpectedRevision = status.Revision
 	r.Configuration = status.Configuration
-	r.Configuration.PublisherGroups["production"] = ProjectPublisherGroup{Description: "updated description"}
+	r.Configuration.Settings = &DeploymentSettings{Description: "updated description"}
 	if _, err = d.ApplyProjectConfiguration(t.Context(), r); err != nil {
 		t.Fatal(err)
 	}

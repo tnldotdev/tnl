@@ -2,6 +2,7 @@ package state
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"testing"
@@ -15,18 +16,18 @@ func TestIntegrationDeploymentConfigurationRevisionIsIsolated(t *testing.T) {
 	ctx := t.Context()
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = ProjectConfiguration{
-		PublisherGroups: map[string]ProjectPublisherGroup{"production": {}, "staging": {}},
+		Settings: &DeploymentSettings{},
 		Services: map[string]ProjectServiceConfiguration{
-			"database": {PublisherGroup: "production", Protocol: "postgres", Target: "production.internal:5432"},
-			"stage":    {PublisherGroup: "staging", Protocol: "postgres", Target: "staging.internal:5432"},
+			"database": {Protocol: "postgres", Target: "production.internal:5432"},
+			"stage":    {Protocol: "postgres", Target: "staging.internal:5432"},
 		},
 	}
-	production := deploymentProjectRequest(r, "production")
+	production := projectServiceSelection(r, "production", "database")
 	first, err := d.ApplyProjectConfiguration(ctx, production)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r = deploymentProjectRequest(r, "staging")
+	r = projectServiceSelection(r, "staging", "stage")
 	r.ExpectedRevision = first.Revision
 	project, err := d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {
@@ -86,5 +87,38 @@ func TestIntegrationDeploymentConfigurationRevisionIsIsolated(t *testing.T) {
 				t.Fatal("service used another deployment's revision", service)
 			}
 		}
+	}
+}
+
+func TestIntegrationDeploymentConfigurationRejectsInvalidShape(t *testing.T) {
+	d, now := newControlStateIntegrationDatabase(t, "deployment_configuration_shape")
+	r := appliedProjectRequest(t, d, now)
+	r.Configuration.Services = map[string]ProjectServiceConfiguration{"db": {Protocol: "postgres", Target: "database.internal:5432"}}
+	r = selectedProjectRequest(r, "production")
+	applied, err := d.ApplyProjectConfiguration(t.Context(), r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, err := controlstatedb.New(d.pool).LockProjectPublisherGroup(t.Context(), applied.Groups[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range map[string][]byte{
+		"retired settings": []byte(`{"publisher_groups":{"production":{}},"services":{}}`),
+		"retired binding":  []byte(`{"namespace":"` + row.Namespace + `","settings":{},"services":{"db":{"publisher_group":"production","protocol":"postgres","target":"database.internal:5432"}}}`),
+		"trailing value":   []byte(`{"namespace":"` + row.Namespace + `","settings":{},"services":{}} {}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if name != "trailing value" && !json.Valid(data) {
+				t.Fatal("invalid fixture JSON")
+			}
+			row.ConfigurationCiphertext, err = d.storageKey.Seal(deploymentConfigurationContext(row.ID), data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := d.openDeploymentConfiguration(row); err == nil {
+				t.Fatal("stored configuration accepted an invalid shape")
+			}
+		})
 	}
 }

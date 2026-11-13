@@ -54,7 +54,7 @@ func TestIntegrationPublisherRuntimeDeployment(t *testing.T) {
 		t.Fatal(err)
 	}
 	group := "production"
-	applied, err := owner.ApplyProjectConfiguration(ctx, "deployment", controlv1.ApplyProjectConfigurationRequest{Deployment: group, ServiceDeclarations: controlv1.ProjectServiceDeclarations{"api": "http"}, TeamId: team, Source: &testProjectSource, Configuration: controlv1.ProjectConfiguration{PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {PublisherGroup: &group, Target: "api.internal:3000"}}}})
+	applied, err := owner.ApplyProjectConfiguration(ctx, "deployment", controlv1.ApplyProjectConfigurationRequest{Deployment: group, ServiceDeclarations: controlv1.ProjectServiceDeclarations{"api": "http"}, TeamId: team, Source: &testProjectSource, Configuration: controlv1.ProjectConfiguration{Settings: &controlv1.DeploymentSettings{}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {Target: "api.internal:3000"}}}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -86,13 +86,13 @@ func TestIntegrationWorkloadHTTPPublicTLS(t *testing.T) {
 	short.MaxDurationSeconds = 8
 	policies["short"] = short
 	declarations := controlv1.ProjectServiceDeclarations{"api": protocol, "other": protocol, "private": protocol}
-	sibling, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{Deployment: private, ServiceDeclarations: declarations, TeamId: f.identity.teamID, Source: &testProjectSource, Configuration: controlv1.ProjectConfiguration{PublisherGroups: map[string]controlv1.ProjectPublisherGroup{private: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"private": {PublisherGroup: &private, Protocol: &protocol, Target: target.URL, TargetTls: &targetTrust}}, Webhooks: map[string]controlv1.ProjectWebhook{}}})
+	sibling, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{Deployment: private, ServiceDeclarations: declarations, TeamId: f.identity.teamID, Source: &testProjectSource, Configuration: controlv1.ProjectConfiguration{Settings: &controlv1.DeploymentSettings{}, Services: map[string]controlv1.ProjectServiceConfiguration{"private": {Protocol: &protocol, Target: target.URL, TargetTls: &targetTrust}}, Webhooks: map[string]controlv1.ProjectWebhook{}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	configuration := controlv1.ProjectConfiguration{Workloads: &policies, PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {Public: new(true)}}, Services: map[string]controlv1.ProjectServiceConfiguration{
-		"api":   {PublisherGroup: &group, Protocol: &protocol, Target: target.URL, TargetTls: &targetTrust},
-		"other": {PublisherGroup: &group, Protocol: &protocol, Target: target.URL, TargetTls: &targetTrust},
+	configuration := controlv1.ProjectConfiguration{Workloads: &policies, Settings: &controlv1.DeploymentSettings{Public: new(true)}, Services: map[string]controlv1.ProjectServiceConfiguration{
+		"api":   {Protocol: &protocol, Target: target.URL, TargetTls: &targetTrust},
+		"other": {Protocol: &protocol, Target: target.URL, TargetTls: &targetTrust},
 	}, Webhooks: map[string]controlv1.ProjectWebhook{}}
 	applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{Deployment: group, ServiceDeclarations: declarations, ExpectedRevision: sibling.Revision, TeamId: f.identity.teamID, Source: &testProjectSource, Configuration: configuration})
 	if err != nil {

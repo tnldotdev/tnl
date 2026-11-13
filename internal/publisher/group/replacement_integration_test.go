@@ -48,8 +48,8 @@ func TestIntegrationPublisherIdentitySurvivesTaskStateDeletion(t *testing.T) {
 	team, actor := session.Identity.PersonalTeamID, session.Identity.Identity.ID
 	const project, group, instance = "shop", "production", "replica-1"
 	_, err = database.ApplyProjectConfiguration(ctx, controlstate.ApplyProjectConfigurationRequest{Deployment: group, ServiceDeclarations: map[string]string{"api": "http"}, TeamID: team, ActorID: actor, ProjectKey: project, SourceFingerprint: strings.Repeat("a", 64), Now: now, Configuration: controlstate.ProjectConfiguration{
-		PublisherGroups: map[string]controlstate.ProjectPublisherGroup{group: {}},
-		Services:        map[string]controlstate.ProjectServiceConfiguration{"api": {PublisherGroup: group, Target: "api.internal:3000"}},
+		Settings: &controlstate.DeploymentSettings{},
+		Services: map[string]controlstate.ProjectServiceConfiguration{"api": {Target: "api.internal:3000"}},
 	}})
 	if err != nil {
 		t.Fatal(err)

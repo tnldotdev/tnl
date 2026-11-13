@@ -293,7 +293,7 @@ func newWorkloadExchangeRetryFixture(t *testing.T) *workloadExchangeRetryFixture
 		policy.Deployment = group
 		policies[name] = policy
 	}
-	f := &workloadExchangeRetryFixture{server: server, issuer: issuer, inspect: inspect, owner: owner, team: team, body: controlv1.ApplyProjectConfigurationRequest{Deployment: group, ServiceDeclarations: controlv1.ProjectServiceDeclarations{"api": "http", "db": "http"}, TeamId: team, Source: &testProjectSource, Configuration: controlv1.ProjectConfiguration{Workloads: &policies, PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {PublisherGroup: &group, Target: "api.internal:3000"}, "db": {PublisherGroup: &group, Target: "db.internal:5432"}}, Webhooks: map[string]controlv1.ProjectWebhook{}}}}
+	f := &workloadExchangeRetryFixture{server: server, issuer: issuer, inspect: inspect, owner: owner, team: team, body: controlv1.ApplyProjectConfigurationRequest{Deployment: group, ServiceDeclarations: controlv1.ProjectServiceDeclarations{"api": "http", "db": "http"}, TeamId: team, Source: &testProjectSource, Configuration: controlv1.ProjectConfiguration{Workloads: &policies, Settings: &controlv1.DeploymentSettings{}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {Target: "api.internal:3000"}, "db": {Target: "db.internal:5432"}}, Webhooks: map[string]controlv1.ProjectWebhook{}}}}
 	f.apply(t)
 	return f
 }

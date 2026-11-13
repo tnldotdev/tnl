@@ -44,14 +44,6 @@ func (d *Database) RenamePublisherGroup(ctx context.Context, team, project, old,
 		return result, err
 	}
 	c, declared := record.Deployments[current]
-	deployment, err := q.LockProjectPublisherGroup(ctx, id)
-	if err != nil {
-		return result, err
-	}
-	snapshot, err := d.openDeploymentConfiguration(deployment)
-	if err != nil {
-		return result, err
-	}
 	if current == name {
 		result, err = d.appliedProjectStatus(ctx, tx, row, current, c)
 		if err != nil {
@@ -65,22 +57,8 @@ func (d *Database) RenamePublisherGroup(ctx context.Context, team, project, old,
 	if _, exists := record.Deployments[name]; exists {
 		return result, ErrServiceConflict
 	}
-	if err = claimPublisherGroupName(ctx, tx, team, project, name, id, now); err != nil {
+	if err = claimDeploymentName(ctx, tx, team, project, name, id, now); err != nil {
 		return result, err
-	}
-	if _, declared := c.PublisherGroups[old]; declared {
-		c.PublisherGroups[name] = c.PublisherGroups[old]
-		delete(c.PublisherGroups, old)
-		for key, service := range c.Services {
-			if service.PublisherGroup == old {
-				service.PublisherGroup = name
-				c.Services[key] = service
-			}
-		}
-	}
-	for key, service := range snapshot.Services {
-		service.PublisherGroup = name
-		snapshot.Services[key] = service
 	}
 	if declared {
 		for key, policy := range c.Workloads {
@@ -106,9 +84,6 @@ func (d *Database) RenamePublisherGroup(ctx context.Context, team, project, old,
 	}
 	if _, err = tx.Exec(ctx, `UPDATE control.project_publisher_groups SET name=$2 WHERE id=$1`, id, name); err != nil {
 		return result, projectConstraintError(err)
-	}
-	if err = d.writeDeploymentConfiguration(ctx, tx, deployment, snapshot); err != nil {
-		return result, err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE control.applied_projects SET revision=revision+1,configuration_hash=$3,configuration_ciphertext=$4,storage_key_id=$5,updated_at=$6 WHERE team_id=$1 AND project_key=$2`, team, project, hash, sealed, d.storageKey.CurrentID(), now); err != nil {
 		return result, err

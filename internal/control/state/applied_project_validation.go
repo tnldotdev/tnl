@@ -53,14 +53,13 @@ func appliedLocalTargetDescriptor(target, protocol string) (bool, error) {
 	return true, nil
 }
 
-func normalizeAppliedProjectService(s *ProjectServiceConfiguration) error {
+func normalizeAppliedProjectService(s *ProjectServiceConfiguration, local bool) error {
 	if s.HTTP != nil {
-		// remote readiness and path mounts have no group-worker execution contract.
-		// reject them before storing a declaration instead of dropping settings.
+		// remote publishers do not run local readiness checks or path mounts.
 		if s.Protocol != "http" {
 			return ErrProjectConfigurationInvalid
 		}
-		if s.PublisherGroup != "local" {
+		if !local {
 			if config.ValidateRemoteHTTP(s.HTTP) != nil {
 				return ErrProjectConfigurationInvalid
 			}
@@ -90,7 +89,7 @@ func normalizeAppliedProjectService(s *ProjectServiceConfiguration) error {
 	descriptor := s.TargetDiscovery != nil
 	var err error
 	if descriptor {
-		if s.Target != "" || s.TargetTLS != nil || s.PublisherGroup == "local" {
+		if s.Target != "" || s.TargetTLS != nil || local {
 			return ErrProjectConfigurationInvalid
 		}
 		s.TargetDiscovery, err = s.TargetDiscovery.Normalize(s.Protocol)
@@ -100,14 +99,14 @@ func normalizeAppliedProjectService(s *ProjectServiceConfiguration) error {
 	} else {
 		descriptor, err = appliedLocalTargetDescriptor(s.Target, s.Protocol)
 	}
-	if err != nil || descriptor && s.TargetDiscovery == nil && s.PublisherGroup != "local" {
+	if err != nil || descriptor && s.TargetDiscovery == nil && !local {
 		return ErrProjectConfigurationInvalid
 	}
-	if s.PublicURL != nil && (s.Protocol != "http" || s.PublisherGroup != "local") {
+	if s.PublicURL != nil && (s.Protocol != "http" || !local) {
 		return ErrProjectConfigurationInvalid
 	}
 	if !descriptor {
-		if s.PublicURL != nil && s.PublisherGroup == "local" {
+		if s.PublicURL != nil && local {
 			canonical, err := targetsyntax.NormalizeTarget(s.Target)
 			if err != nil {
 				return ErrProjectConfigurationInvalid

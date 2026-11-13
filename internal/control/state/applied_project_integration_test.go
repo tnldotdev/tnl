@@ -28,13 +28,22 @@ import (
 func appliedProjectRequest(t *testing.T, d *Database, now time.Time) ApplyProjectConfigurationRequest {
 	t.Helper()
 	r := oidcRouteRequest(t, d, now)
-	return ApplyProjectConfigurationRequest{Deployment: "local", ServiceDeclarations: map[string]string{"web": "http"}, TeamID: r.TeamID, ActorID: r.ActingIdentityID, ProjectKey: "example", SourceFingerprint: strings.Repeat("a", 64), Configuration: ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{}, Services: map[string]ProjectServiceConfiguration{"web": {Target: "http://localhost:3000"}}}, Now: now}
+	return ApplyProjectConfigurationRequest{Deployment: "local", ServiceDeclarations: map[string]string{"web": "http"}, TeamID: r.TeamID, ActorID: r.ActingIdentityID, ProjectKey: "example", SourceFingerprint: strings.Repeat("a", 64), Configuration: ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"web": {Target: "http://localhost:3000"}}}, Now: now}
 }
 
 // fixture builders keep logical protocols explicit while reusing target and
 // provider setup. this does not select or discard any binding from the input.
 func selectedProjectRequest(r ApplyProjectConfigurationRequest, deployment string) ApplyProjectConfigurationRequest {
 	r.Deployment = deployment
+	if deployment == "local" {
+		r.Configuration.Settings = nil
+	} else {
+		settings := DeploymentSettings{}
+		if r.Configuration.Settings != nil {
+			settings = *r.Configuration.Settings
+		}
+		r.Configuration.Settings = &settings
+	}
 	r.ServiceDeclarations = map[string]string{}
 	for name, service := range r.Configuration.Services {
 		protocol := service.Protocol
@@ -51,32 +60,24 @@ func selectedProjectRequest(r ApplyProjectConfigurationRequest, deployment strin
 	return r
 }
 
-func deploymentProjectRequest(r ApplyProjectConfigurationRequest, deployment string) ApplyProjectConfigurationRequest {
+func projectServiceSelection(r ApplyProjectConfigurationRequest, deployment string, names ...string) ApplyProjectConfigurationRequest {
 	r = selectedProjectRequest(r, deployment)
-	r.Configuration.Services = maps.Clone(r.Configuration.Services)
-	for name, service := range r.Configuration.Services {
-		group := service.PublisherGroup
-		if group == "" {
-			group = "local"
-		}
-		if group != deployment {
-			delete(r.Configuration.Services, name)
-		}
+	services := map[string]ProjectServiceConfiguration{}
+	for _, name := range names {
+		services[name] = r.Configuration.Services[name]
 	}
-	groups := map[string]ProjectPublisherGroup{}
+	r.Configuration.Services = services
 	if deployment != "local" {
-		groups[deployment] = r.Configuration.PublisherGroups[deployment]
 		r.Configuration.OAuth, r.Configuration.Webhooks = false, nil
 	}
-	r.Configuration.PublisherGroups = groups
 	return r
 }
 
 func TestIntegrationAppliedProjectConcurrencyRollbackAndSource(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "applied_concurrency")
 	r := appliedProjectRequest(t, d, now)
-	r.Configuration.PublisherGroups = map[string]ProjectPublisherGroup{"production": {}}
-	r.Configuration.Services["web"] = ProjectServiceConfiguration{PublisherGroup: "production", Target: "http://localhost:3000"}
+	r.Configuration.Settings = &DeploymentSettings{}
+	r.Configuration.Services["web"] = ProjectServiceConfiguration{Target: "http://localhost:3000"}
 	r = selectedProjectRequest(r, "production")
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
@@ -107,7 +108,7 @@ func TestIntegrationAppliedProjectConcurrencyRollbackAndSource(t *testing.T) {
 		workers.Go(func() {
 			c := r
 			c.ExpectedRevision = 1
-			c.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"web": {PublisherGroup: "production", Target: fmt.Sprintf("http://localhost:%d", 4000+index)}}}
+			c.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{"web": {Target: fmt.Sprintf("http://localhost:%d", 4000+index)}}}
 			v, e := d.ApplyProjectConfiguration(ctx, c)
 			done <- outcome{v, e}
 		})
@@ -139,8 +140,8 @@ func TestIntegrationAppliedProjectConcurrencyRollbackAndSource(t *testing.T) {
 	bad := r
 	bad.ExpectedRevision = current.Revision
 	bad.Configuration = current.Configuration
-	bad.Configuration.Services["a-new"] = ProjectServiceConfiguration{PublisherGroup: "production", Target: "http://localhost:7000"}
-	bad.Configuration.Services["z-conflict"] = ProjectServiceConfiguration{PublisherGroup: "production", Name: "web", Target: "http://localhost:8000"}
+	bad.Configuration.Services["a-new"] = ProjectServiceConfiguration{Target: "http://localhost:7000"}
+	bad.Configuration.Services["z-conflict"] = ProjectServiceConfiguration{Name: "web", Target: "http://localhost:8000"}
 	bad = selectedProjectRequest(bad, "production")
 	if _, err = d.ApplyProjectConfiguration(ctx, bad); !errors.Is(err, ErrServiceConflict) {
 		t.Fatalf("expected atomic name conflict: %v", err)
@@ -233,17 +234,17 @@ func TestIntegrationAppliedProjectGroupAssignmentsRunsAndRevocation(t *testing.T
 	d, now, _, leases := newPublishRunPrerequisites(t)
 	d.managedURLMode = naming.ManagedURLModeSimple
 	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}, "staging": {}}, Services: map[string]ProjectServiceConfiguration{
-		"web":   {PublisherGroup: "production", Name: "production", Target: "http://app.internal:3000", HTTP: &config.HTTPService{Access: &config.Access{Mode: "restricted", IP: []string{"192.0.2.0/24"}}}, Access: &ProjectServiceAccess{Team: true}},
-		"db":    {PublisherGroup: "production", Protocol: "postgres", Target: "db.internal:5432", Access: &ProjectServiceAccess{Team: true}},
-		"stage": {PublisherGroup: "staging", Target: "http://staging.internal:3000"},
+	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{
+		"web":   {Name: "production", Target: "http://app.internal:3000", HTTP: &config.HTTPService{Access: &config.Access{Mode: "restricted", IP: []string{"192.0.2.0/24"}}}, Access: &ProjectServiceAccess{Team: true}},
+		"db":    {Protocol: "postgres", Target: "db.internal:5432", Access: &ProjectServiceAccess{Team: true}},
+		"stage": {Target: "http://staging.internal:3000"},
 	}}
-	stageRequest := deploymentProjectRequest(r, "staging")
+	stageRequest := projectServiceSelection(r, "staging", "stage")
 	stageApplied, err := d.ApplyProjectConfiguration(t.Context(), stageRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r = deploymentProjectRequest(r, "production")
+	r = projectServiceSelection(r, "production", "web", "db")
 	r.ExpectedRevision = stageApplied.Revision
 	status, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
@@ -352,7 +353,7 @@ func TestIntegrationAppliedProjectGroupAssignmentsRunsAndRevocation(t *testing.T
 	// a trust change keeps the saved service ID, closes old runs, and replaces
 	// exact grants before any replica can acknowledge or run the new revision.
 	r.ExpectedRevision = status.Revision
-	r.Configuration.PublisherGroups["production"] = ProjectPublisherGroup{Description: "updated production group"}
+	r.Configuration.Settings = &DeploymentSettings{Description: "updated production deployment"}
 	db := r.Configuration.Services["db"]
 	digest := sha256.Sum256([]byte("tnl-target-tls/v1\x00database.internal\x00"))
 	db.TargetTLS = &ProjectTargetTLS{Hostname: "database.internal", Digest: hex.EncodeToString(digest[:])}
@@ -452,17 +453,17 @@ func TestIntegrationAppliedProjectGroupAssignmentsRunsAndRevocation(t *testing.T
 func TestIntegrationAppliedProjectGroupReassignmentKeepsSavedService(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "applied_move")
 	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}, "staging": {}}, Services: map[string]ProjectServiceConfiguration{"api": {PublisherGroup: "production", Target: "https://api.internal:8443", Access: &ProjectServiceAccess{Team: true}}}}
+	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{"api": {Target: "https://api.internal:8443", Access: &ProjectServiceAccess{Team: true}}}}
 	digest := sha256.Sum256([]byte("tnl-target-tls/v1\x00api.internal\x00"))
 	service := r.Configuration.Services["api"]
 	service.TargetTLS = &ProjectTargetTLS{Hostname: "api.internal", Digest: hex.EncodeToString(digest[:])}
 	r.Configuration.Services["api"] = service
-	stageRequest := deploymentProjectRequest(r, "staging")
+	stageRequest := projectServiceSelection(r, "staging")
 	stageApplied, err := d.ApplyProjectConfiguration(t.Context(), stageRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r = deploymentProjectRequest(r, "production")
+	r = projectServiceSelection(r, "production", "api")
 	r.ExpectedRevision = stageApplied.Revision
 	initial, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
@@ -477,10 +478,9 @@ func TestIntegrationAppliedProjectGroupReassignmentKeepsSavedService(t *testing.
 		replicas = append(replicas, enrollAppliedGroup(t, d, r, e, now))
 	}
 	old := groupAssignmentAccess(t, d, replicas[0], replicas[0].assignments.Services[0], now)
-	service.PublisherGroup = "staging"
 	service.Access = nil
 	r.Deployment = "staging"
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"staging": {}}, Services: map[string]ProjectServiceConfiguration{"api": service}}
+	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{"api": service}}
 	r.ExpectedRevision = initial.Revision
 	updated, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
@@ -491,7 +491,7 @@ func TestIntegrationAppliedProjectGroupReassignmentKeepsSavedService(t *testing.
 	}
 	retire := r
 	retire.Deployment, retire.ExpectedRevision = "production", updated.Revision
-	retire.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{}}
+	retire.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{}}
 	retired, err := d.ApplyProjectConfiguration(t.Context(), retire)
 	if err != nil {
 		t.Fatal(err)
@@ -533,14 +533,13 @@ func TestIntegrationAppliedProjectGroupReassignmentKeepsSavedService(t *testing.
 func TestIntegrationAppliedProjectStorageRotation(t *testing.T) {
 	d, databaseURL, now := newControlStateIntegrationDatabaseWithURL(t, "applied_rotation")
 	r := appliedProjectRequest(t, d, now)
-	r.Configuration.PublisherGroups["remote"] = ProjectPublisherGroup{}
-	r.Configuration.Services["database"] = ProjectServiceConfiguration{PublisherGroup: "remote", Protocol: "postgres", Target: "private.internal:5432"}
-	localRequest := deploymentProjectRequest(r, "local")
+	r.Configuration.Services["database"] = ProjectServiceConfiguration{Protocol: "postgres", Target: "private.internal:5432"}
+	localRequest := projectServiceSelection(r, "local", "web")
 	localApplied, err := d.ApplyProjectConfiguration(t.Context(), localRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	remoteRequest := deploymentProjectRequest(r, "remote")
+	remoteRequest := projectServiceSelection(r, "remote", "database")
 	remoteRequest.ExpectedRevision = localApplied.Revision
 	if _, err := d.ApplyProjectConfiguration(t.Context(), remoteRequest); err != nil {
 		t.Fatal(err)
@@ -615,8 +614,8 @@ func TestIntegrationAppliedProjectHTTPSettingsAndTargetTrust(t *testing.T) {
 	r := appliedProjectRequest(t, d, now)
 	trust := appliedTargetTrust(t, "upstream.internal")
 	total := 100
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"web": {
-		PublisherGroup: "production", Name: "application", Target: "https://192.0.2.8:8443", TargetTLS: trust,
+	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{"web": {
+		Name: "application", Target: "https://192.0.2.8:8443", TargetTLS: trust,
 		HTTP: &config.HTTPService{Access: &config.Access{Mode: "restricted", IP: []string{"192.0.2.10"}}, Limits: &config.WorkLimits{Total: &total}},
 	}}}
 	r = selectedProjectRequest(r, "production")

@@ -37,7 +37,7 @@ func TestIntegrationAppliedDeploymentSelectionPreservesSiblings(t *testing.T) {
 	for _, name := range []string{"staging", "production"} {
 		r.Deployment = name
 		r.ExpectedRevision = local.Revision
-		r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{name: {}}, Services: map[string]ProjectServiceConfiguration{"db": {PublisherGroup: name, Protocol: "postgres", Target: name + ".internal:5432"}}}
+		r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{"db": {Protocol: "postgres", Target: name + ".internal:5432"}}}
 		selected, err := d.ApplyProjectConfiguration(ctx, r)
 		if err != nil {
 			t.Fatal(err)
@@ -53,7 +53,7 @@ func TestIntegrationAppliedDeploymentSelectionPreservesSiblings(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.Deployment = "staging"
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"staging": {}}, Services: map[string]ProjectServiceConfiguration{}}
+	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{}}
 	r.ExpectedRevision = local.Revision
 	removed, err := d.ApplyProjectConfiguration(ctx, r)
 	if err != nil || len(removed.Services) != 0 {
@@ -109,7 +109,7 @@ func TestIntegrationAppliedDeploymentWorkloadRightsStaySelected(t *testing.T) {
 		t.Fatal(before, err)
 	}
 	r.Deployment, r.ExpectedRevision = "staging", applied.Revision
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"staging": {}}, Services: map[string]ProjectServiceConfiguration{"db": {PublisherGroup: "staging", Protocol: "postgres", Target: "staging.internal:5432"}}}
+	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{"db": {Protocol: "postgres", Target: "staging.internal:5432"}}}
 	staging, err := d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {
 		t.Fatal(err)
@@ -124,11 +124,7 @@ func TestIntegrationAppliedDeploymentWorkloadRightsStaySelected(t *testing.T) {
 	// the same project-wide policy name cannot silently move deployments.
 	r.ExpectedRevision = staging.Revision
 	r.Configuration = workloadConfiguration()
-	r.Configuration.PublisherGroups = map[string]ProjectPublisherGroup{"staging": {}}
-	for name, service := range r.Configuration.Services {
-		service.PublisherGroup = "staging"
-		r.Configuration.Services[name] = service
-	}
+	r.Configuration.Settings = &DeploymentSettings{}
 	p.Deployment = "staging"
 	r.Configuration.Workloads["test"] = p
 	if _, err := d.ApplyProjectConfiguration(ctx, r); !errors.Is(err, ErrProjectConfigurationInvalid) {
@@ -145,11 +141,7 @@ func TestIntegrationAppliedDeploymentWorkloadRightsStaySelected(t *testing.T) {
 	}
 	r.Deployment, r.ExpectedRevision = "staging", removed.Revision
 	r.Configuration = workloadConfiguration()
-	r.Configuration.PublisherGroups = map[string]ProjectPublisherGroup{"staging": {}}
-	for name, service := range r.Configuration.Services {
-		service.PublisherGroup = "staging"
-		r.Configuration.Services[name] = service
-	}
+	r.Configuration.Settings = &DeploymentSettings{}
 	r.Configuration.Workloads["test"] = p
 	if _, err := d.ApplyProjectConfiguration(ctx, r); err != nil {
 		t.Fatal(err)

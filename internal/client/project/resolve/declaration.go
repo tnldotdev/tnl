@@ -21,14 +21,14 @@ import (
 // paths that a remote publisher would need to reopen. discover is needed only
 // when capturing target trust for a local Docker or Compose target.
 func Declaration(ctx context.Context, project clientproject.Project, current team.Context, discover func(context.Context, string) (string, error), selected ...string) (controlv1.ProjectConfiguration, error) {
-	declaration := controlv1.ProjectConfiguration{Oauth: project.Config.OAuth, Webhooks: map[string]controlv1.ProjectWebhook{}, PublisherGroups: map[string]controlv1.ProjectPublisherGroup{}, Services: map[string]controlv1.ProjectServiceConfiguration{}}
+	declaration := controlv1.ProjectConfiguration{Oauth: project.Config.OAuth, Webhooks: map[string]controlv1.ProjectWebhook{}, Services: map[string]controlv1.ProjectServiceConfiguration{}}
 	if err := config.ValidateTNL(project.Config); err != nil {
 		return declaration, err
 	}
 	deployment := config.SelectedDeployment(project.Config)
 	if deployment != "local" {
 		settings := project.Config.DeploymentSettings
-		entry := controlv1.ProjectPublisherGroup{Description: settings.Description, Public: &settings.Public}
+		entry := controlv1.DeploymentSettings{Description: settings.Description, Public: &settings.Public}
 		if settings.Domain != nil {
 			domain, err := current.ReadyDomain(*settings.Domain)
 			if err != nil {
@@ -36,7 +36,7 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 			}
 			entry.DomainId = &domain.Id
 		}
-		declaration.PublisherGroups[deployment] = entry
+		declaration.Settings = &entry
 	}
 	for name, webhook := range project.Config.Webhooks {
 		delivery := webhook.DeliveryMode()
@@ -60,7 +60,7 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 	for _, name := range names {
 		service := project.Config.Services[name]
 		savedName, protocol := config.ServiceName(name, service), controlv1.ServiceProtocol(config.Protocol(service))
-		entry := controlv1.ProjectServiceConfiguration{PublisherGroup: &deployment, Name: &savedName, Protocol: &protocol}
+		entry := controlv1.ProjectServiceConfiguration{Name: &savedName, Protocol: &protocol}
 		httpSettings := service.HTTP
 		if deployment != "local" {
 			resolved, err := config.ResolveRemoteHTTP(project.Config.Tunnel, service.HTTP)

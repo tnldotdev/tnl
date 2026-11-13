@@ -206,10 +206,10 @@ func TestIntegrationStateLockOrderCompanyDecision(t *testing.T) {
 func TestIntegrationStateLockOrderApplyExpiration(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "apply_expiration_order")
 	r := appliedProjectRequest(t, d, now)
-	r.Configuration.PublisherGroups = map[string]ProjectPublisherGroup{"production": {}}
+	r.Configuration.Settings = &DeploymentSettings{}
 	r.Configuration.Services = map[string]ProjectServiceConfiguration{
-		"a": {PublisherGroup: "production", Protocol: "tcp", Target: "localhost:5001"},
-		"b": {PublisherGroup: "production", Protocol: "tcp", Target: "localhost:5002"},
+		"a": {Protocol: "tcp", Target: "localhost:5001"},
+		"b": {Protocol: "tcp", Target: "localhost:5002"},
 	}
 	r = selectedProjectRequest(r, "production")
 	applied, err := d.ApplyProjectConfiguration(t.Context(), r)

@@ -15,8 +15,8 @@ func TestIntegrationPublisherGroupHealthRuntimeReplacement(t *testing.T) {
 		t.Run(ordering, func(t *testing.T) {
 			d, now := newControlStateIntegrationDatabase(t, "group_health_"+ordering)
 			r := appliedProjectRequest(t, d, now)
-			r.Configuration.PublisherGroups = map[string]ProjectPublisherGroup{"remote": {}}
-			r.Configuration.Services["web"] = ProjectServiceConfiguration{PublisherGroup: "remote", Target: "http://localhost:3000"}
+			r.Configuration.Settings = &DeploymentSettings{}
+			r.Configuration.Services["web"] = ProjectServiceConfiguration{Target: "http://localhost:3000"}
 			r = selectedProjectRequest(r, "remote")
 			_, err := d.ApplyProjectConfiguration(t.Context(), r)
 			if err != nil {

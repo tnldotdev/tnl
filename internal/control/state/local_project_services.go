@@ -101,7 +101,7 @@ func (d *Database) updateLocalService(ctx context.Context, tx pgx.Tx, q *control
 			return err
 		}
 	}
-	return d.updateAppliedService(ctx, tx, q, row.ID, row.NameScope, s, now)
+	return d.updateAppliedService(ctx, tx, q, row.ID, row.NameScope, s, false, now)
 }
 
 func checkLocalProjectSource(ctx context.Context, tx pgx.Tx, team, project, source string) error {
@@ -140,7 +140,7 @@ func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLoca
 		return result, err
 	}
 	s := c.Services[r.Service]
-	if s.PublisherGroup != "local" || (s.PublicURL != nil) != (r.PublicURLID != "") {
+	if (s.PublicURL != nil) != (r.PublicURLID != "") {
 		return result, ErrProjectConfigurationInvalid
 	}
 	tx, err := d.pool.Begin(ctx)
@@ -211,7 +211,7 @@ func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLoca
 			// scope saved names too, so two worktrees cannot share a private run.
 			local := s
 			local.Name = localProjectPrivateName(r, s.Name)
-			id, e := d.createAppliedService(ctx, tx, q, ApplyProjectConfigurationRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, Now: r.Now}, r.Service, "local/"+r.ProjectKey+"/"+r.WorktreeKey, local)
+			id, e := d.createAppliedService(ctx, tx, q, ApplyProjectConfigurationRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, Now: r.Now}, r.Service, "local/"+r.ProjectKey+"/"+r.WorktreeKey, local, false)
 			if e != nil {
 				return result, e
 			}
@@ -341,11 +341,11 @@ func (d *Database) reconcileProjectLocalRealizations(ctx context.Context, tx pgx
 	}
 	for _, key := range keys {
 		var declared *ProjectServiceConfiguration
-		if s, found := current.Services[key]; found && s.PublisherGroup == "local" {
+		if s, found := current.Services[key]; found {
 			declared = &s
 		}
 		previous, hadPrevious := old.Services[key]
-		reset := hadPrevious && declared != nil && previous.PublicURL != nil && declared.PublicURL != nil && (!sameAppliedResource(previous, *declared) || previous.Name != declared.Name || previous.PublicURL.Ephemeral != declared.PublicURL.Ephemeral)
+		reset := hadPrevious && declared != nil && previous.PublicURL != nil && declared.PublicURL != nil && (!sameAppliedResource(previous, *declared, true) || previous.Name != declared.Name || previous.PublicURL.Ephemeral != declared.PublicURL.Ephemeral)
 		if err = d.reconcileLocalProjectServices(ctx, tx, q, r, key, declared, !reflect.DeepEqual(previous.PublicURL, current.Services[key].PublicURL), reset); err != nil {
 			return err
 		}

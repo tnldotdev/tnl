@@ -131,12 +131,12 @@ func (d *Database) CreateDeployment(ctx context.Context, r CreateDeploymentReque
 		return result, err
 	}
 	q := controlstatedb.New(tx)
-	snapshot, err := deploymentTargets(ctx, q, r.DeploymentScope, r.Name, r.Targets)
+	snapshot, err := deploymentTargets(ctx, q, r.DeploymentScope, r.Targets)
 	if err != nil {
 		return result, err
 	}
-	c := ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{r.Name: {}}, Services: snapshot.Services}
-	c, err = resolveManagedGroupDomains(ctx, tx, r.TeamID, r.ProjectKey, c)
+	c := ProjectConfiguration{Settings: &DeploymentSettings{}, Services: snapshot.Services}
+	c, err = resolveDeploymentDomain(ctx, tx, r.TeamID, r.ProjectKey, r.Name, c)
 	if err != nil {
 		return result, err
 	}
@@ -153,11 +153,11 @@ func (d *Database) CreateDeployment(ctx context.Context, r CreateDeploymentReque
 		return result, projectConstraintError(err)
 	}
 	apply := ApplyProjectConfigurationRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ProjectLabel: project.ProjectLabel, ActorID: r.ActorID, Now: r.Now, DNSAutomation: r.DNSAutomation}
-	if err = d.ensureGroupNamespace(ctx, tx, apply, id, r.Name, c.PublisherGroups[r.Name]); err != nil {
+	if err = d.ensureDeploymentNamespace(ctx, tx, apply, id, r.Name, *c.Settings, r.Name); err != nil {
 		return result, err
 	}
 	for _, name := range sortedProjectKeys(c.Services) {
-		serviceID, err := d.createAppliedService(ctx, tx, q, apply, name, id, c.Services[name])
+		serviceID, err := d.createAppliedService(ctx, tx, q, apply, name, id, c.Services[name], true)
 		if err != nil {
 			return result, err
 		}
@@ -168,7 +168,7 @@ func (d *Database) CreateDeployment(ctx context.Context, r CreateDeploymentReque
 			return result, err
 		}
 	}
-	if err = d.saveDeploymentConfiguration(ctx, tx, id, r.Name, c); err != nil {
+	if err = d.saveDeploymentConfiguration(ctx, tx, id, c); err != nil {
 		return result, err
 	}
 	if err = recordPublisherGroupUpdate(ctx, tx, id, r.ActorID, "", "deployment/create/"+id, r.Now); err != nil {
@@ -185,7 +185,7 @@ func (d *Database) CreateDeployment(ctx context.Context, r CreateDeploymentReque
 	return result, commitDeployment(ctx, tx, r.DeploymentScope)
 }
 
-func deploymentTargets(ctx context.Context, q *controlstatedb.Queries, scope DeploymentScope, group string, targets map[string]DeploymentTarget) (deploymentConfiguration, error) {
+func deploymentTargets(ctx context.Context, q *controlstatedb.Queries, scope DeploymentScope, targets map[string]DeploymentTarget) (deploymentConfiguration, error) {
 	result := deploymentConfiguration{Services: map[string]ProjectServiceConfiguration{}}
 	declarations, err := q.ListProjectServiceDeclarations(ctx, controlstatedb.ListProjectServiceDeclarationsParams{TeamID: scope.TeamID, ProjectKey: scope.ProjectKey})
 	if err != nil {
@@ -200,7 +200,7 @@ func deploymentTargets(ctx context.Context, q *controlstatedb.Queries, scope Dep
 		if protocol == "" {
 			return result, ErrProjectConfigurationInvalid
 		}
-		s, err := normalizeDeploymentTarget(ctx, name, protocol, group, targets[name])
+		s, err := normalizeDeploymentTarget(ctx, name, protocol, targets[name])
 		if err != nil {
 			return result, err
 		}
@@ -235,7 +235,7 @@ func (d *Database) UpdateDeployment(ctx context.Context, r UpdateDeploymentReque
 	if err != nil {
 		return result, err
 	}
-	requested, err := deploymentTargets(ctx, q, r.DeploymentScope, row.Name, r.Targets)
+	requested, err := deploymentTargets(ctx, q, r.DeploymentScope, r.Targets)
 	if err != nil {
 		return result, err
 	}
@@ -269,7 +269,7 @@ func (d *Database) UpdateDeployment(ctx context.Context, r UpdateDeploymentReque
 		if err = d.revokeAppliedServicePublishers(ctx, tx, q, binding, r.Now); err != nil {
 			return result, err
 		}
-		if err = d.updateAppliedService(ctx, tx, q, binding.ServiceID.String, row.ID, previous, r.Now); err != nil {
+		if err = d.updateAppliedService(ctx, tx, q, binding.ServiceID.String, row.ID, previous, true, r.Now); err != nil {
 			return result, err
 		}
 		if err = d.reconcileAppliedPublisherGrants(ctx, tx, q, binding, r.ActorID, r.Now); err != nil {

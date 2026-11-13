@@ -16,17 +16,17 @@ func TestIntegrationDeploymentServiceBindingsAndRemovalAreIsolated(t *testing.T)
 	ctx := t.Context()
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = ProjectConfiguration{
-		PublisherGroups: map[string]ProjectPublisherGroup{"production": {}, "staging": {}},
+		Settings: &DeploymentSettings{},
 		Services: map[string]ProjectServiceConfiguration{
-			"db": {PublisherGroup: "production", Name: "db", Protocol: "postgres", Target: "production.internal:5432"},
+			"db": {Name: "db", Protocol: "postgres", Target: "production.internal:5432"},
 		},
 	}
-	stagingRequest := deploymentProjectRequest(r, "staging")
+	stagingRequest := projectServiceSelection(r, "staging")
 	first, err := d.ApplyProjectConfiguration(ctx, stagingRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r = deploymentProjectRequest(r, "production")
+	r = projectServiceSelection(r, "production", "db")
 	r.ExpectedRevision = first.Revision
 	status, err := d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {
@@ -59,8 +59,8 @@ func TestIntegrationDeploymentServiceBindingsAndRemovalAreIsolated(t *testing.T)
 		GroupID: text(groups["staging"]), DesiredRevision: status.Revision,
 	}
 	id, err := d.createAppliedService(ctx, tx, q, r, "db", staging.GroupID.String, ProjectServiceConfiguration{
-		PublisherGroup: "staging", Name: "db", Protocol: "postgres", Target: "staging.internal:5432",
-	})
+		Name: "db", Protocol: "postgres", Target: "staging.internal:5432",
+	}, true)
 	if err != nil {
 		t.Fatal(err)
 	}

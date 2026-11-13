@@ -27,8 +27,8 @@ type DeploymentTargetStatus struct {
 
 // runtime input is an address and portable trust, never a file, bundle URL,
 // discovery instruction, declaration, visitor policy, or caller-supplied digest.
-func normalizeDeploymentTarget(ctx context.Context, name, protocol, group string, input DeploymentTarget) (ProjectServiceConfiguration, error) {
-	s := ProjectServiceConfiguration{Name: name, Protocol: protocol, PublisherGroup: group}
+func normalizeDeploymentTarget(ctx context.Context, name, protocol string, input DeploymentTarget) (ProjectServiceConfiguration, error) {
+	s := ProjectServiceConfiguration{Name: name, Protocol: protocol}
 	if len(input.Address) > 8192 {
 		return s, ErrProjectConfigurationInvalid
 	}
@@ -55,7 +55,7 @@ func normalizeDeploymentTarget(ctx context.Context, name, protocol, group string
 		}
 		s.TargetTLS = &ProjectTargetTLS{Hostname: declaration.Hostname, CAPEM: string(declaration.CAPEM), Digest: declaration.Digest}
 	}
-	if err = normalizeAppliedProjectService(&s); err != nil {
+	if err = normalizeAppliedProjectService(&s, false); err != nil {
 		return s, err
 	}
 	return s, nil

@@ -13,17 +13,17 @@ func TestIntegrationServiceAuditActualGroupRemovalAndSafeAdminNormalization(t *t
 	d, now := newControlStateIntegrationDatabase(t, "audit_group_remove")
 	d.managedURLMode = naming.ManagedURLModeSimple
 	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{
-		"web":  {PublisherGroup: "production", Target: "http://audit-private-app.internal:3000"},
-		"db":   {PublisherGroup: "production", Protocol: "postgres", Target: "audit-private-db.internal:5432"},
+	r.Configuration = ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{
+		"web":  {Target: "http://audit-private-app.internal:3000"},
+		"db":   {Protocol: "postgres", Target: "audit-private-db.internal:5432"},
 		"keep": {Target: "http://localhost:4000"},
 	}}
-	localSelection := deploymentProjectRequest(r, "local")
+	localSelection := projectServiceSelection(r, "local", "keep")
 	localApplied, err := d.ApplyProjectConfiguration(t.Context(), localSelection)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r = deploymentProjectRequest(r, "production")
+	r = projectServiceSelection(r, "production", "web", "db")
 	r.ExpectedRevision = localApplied.Revision
 	applied, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {

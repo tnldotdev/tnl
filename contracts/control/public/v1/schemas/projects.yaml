@@ -146,9 +146,9 @@ schemas:
     additionalProperties: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
   ProjectConfiguration:
     type: object
-    description: Normalized bindings for exactly one selected deployment, at most 512 KiB encoded. Local selection has no publisher groups or workloads; a remote selection contains only its named group and policies. Logical declarations are sent separately. All local bindings defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
+    description: Normalized bindings for one selected deployment, at most 512 KiB encoded. Remote selections include settings; local selection omits settings and workloads. Logical declarations are sent separately. Local bindings allocate resources through source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
     additionalProperties: false
-    required: [publisher_groups, services, oauth, webhooks]
+    required: [services, oauth, webhooks]
     properties:
       workloads:
         type: object
@@ -157,19 +157,14 @@ schemas:
       oauth:
         type: boolean
         default: false
-        description: Desired local app-led OAuth integration URL declaration. Applying it does not provision a handler on a named publisher group.
+        description: Desired local app-led OAuth integration URL declaration. Applying it does not provision a handler on a saved deployment.
       webhooks:
         type: object
         maxProperties: 32
         additionalProperties: { $ref: "../openapi.yaml#/components/schemas/ProjectWebhook" }
         description: Desired exact endpoints for the existing local webhook integration handler. Each endpoint names a declared local HTTP service with public_url enabled, including app, address, compose, and docker targets. Control does not fetch provider catalogs or provision remote webhook handlers during apply.
-      publisher_groups:
-        {
-          type: object,
-          maxProperties: 32,
-          additionalProperties:
-            { $ref: "../openapi.yaml#/components/schemas/ProjectPublisherGroup" },
-        }
+      settings:
+        $ref: "../openapi.yaml#/components/schemas/DeploymentSettings"
       services:
         {
           type: object,
@@ -177,7 +172,7 @@ schemas:
           additionalProperties:
             { $ref: "../openapi.yaml#/components/schemas/ProjectServiceConfiguration" },
         }
-  ProjectPublisherGroup:
+  DeploymentSettings:
     type: object
     additionalProperties: false
     properties:
@@ -290,7 +285,6 @@ schemas:
     additionalProperties: false
     required: [target]
     properties:
-      publisher_group: { type: string, default: local }
       name: { type: string, maxLength: 32 }
       protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
       target:
@@ -305,7 +299,7 @@ schemas:
   ProjectServiceHTTP:
     type: object
     additionalProperties: false
-    description: Local readiness and path mounts, or named-group restricted HTTP access and request limits. A group owns its endpoint and reachability.
+    description: Local readiness and path mounts, or restricted HTTP access and request limits for a saved deployment. The deployment owns its endpoint and reachability.
     properties:
       access: { $ref: "../openapi.yaml#/components/schemas/ProjectPublicAccess" }
       limits: { $ref: "../openapi.yaml#/components/schemas/ProjectHTTPApplicationLimits" }
@@ -339,7 +333,7 @@ schemas:
         type: boolean
         default: false
         description: Local declarations may request an ephemeral worktree URL.
-    description: Enables a local service's public URL. Named publisher groups use http settings and reject this block.
+    description: Enables a local service's public URL. Saved deployments use http settings and reject this block.
   ProjectPublicAccess:
     type: object
     additionalProperties: false

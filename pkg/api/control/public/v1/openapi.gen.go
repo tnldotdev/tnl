@@ -1929,7 +1929,7 @@ type AppendReviewerFeedbackEventRequest struct {
 
 // AppliedProjectConfiguration defines model for AppliedProjectConfiguration.
 type AppliedProjectConfiguration struct {
-	// Configuration Normalized bindings for exactly one selected deployment, at most 512 KiB encoded. Local selection has no publisher groups or workloads; a remote selection contains only its named group and policies. Logical declarations are sent separately. All local bindings defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
+	// Configuration Normalized bindings for one selected deployment, at most 512 KiB encoded. Remote selections include settings; local selection omits settings and workloads. Logical declarations are sent separately. Local bindings allocate resources through source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
 	Configuration     ProjectConfiguration         `json:"configuration"`
 	ConfigurationHash string                       `json:"configuration_hash"`
 	Deployment        string                       `json:"deployment"`
@@ -1976,7 +1976,7 @@ type AppliedPublisherGroup struct {
 
 // ApplyProjectConfigurationRequest defines model for ApplyProjectConfigurationRequest.
 type ApplyProjectConfigurationRequest struct {
-	// Configuration Normalized bindings for exactly one selected deployment, at most 512 KiB encoded. Local selection has no publisher groups or workloads; a remote selection contains only its named group and policies. Logical declarations are sent separately. All local bindings defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
+	// Configuration Normalized bindings for one selected deployment, at most 512 KiB encoded. Remote selections include settings; local selection omits settings and workloads. Logical declarations are sent separately. Local bindings allocate resources through source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
 	Configuration    ProjectConfiguration `json:"configuration"`
 	Deployment       string               `json:"deployment"`
 	ExpectedRevision int64                `json:"expected_revision,string"`
@@ -2580,6 +2580,13 @@ type DeploymentService struct {
 	TrustRevision int64            `json:"trust_revision"`
 }
 
+// DeploymentSettings defines model for DeploymentSettings.
+type DeploymentSettings struct {
+	Description *string `json:"description,omitempty"`
+	DomainId    *string `json:"domain_id,omitempty"`
+	Public      *bool   `json:"public,omitempty"`
+}
+
 // DeploymentTarget defines model for DeploymentTarget.
 type DeploymentTarget struct {
 	// Address Explicit host:port, or an HTTP origin for a declared HTTP service. Does not evaluate local configuration or discover cloud resources.
@@ -2981,12 +2988,12 @@ type ProjectApplicationRate struct {
 	Per   string `json:"per"`
 }
 
-// ProjectConfiguration Normalized bindings for exactly one selected deployment, at most 512 KiB encoded. Local selection has no publisher groups or workloads; a remote selection contains only its named group and policies. Logical declarations are sent separately. All local bindings defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
+// ProjectConfiguration Normalized bindings for one selected deployment, at most 512 KiB encoded. Remote selections include settings; local selection omits settings and workloads. Logical declarations are sent separately. Local bindings allocate resources through source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
 type ProjectConfiguration struct {
-	// Oauth Desired local app-led OAuth integration URL declaration. Applying it does not provision a handler on a named publisher group.
-	Oauth           bool                                   `json:"oauth"`
-	PublisherGroups map[string]ProjectPublisherGroup       `json:"publisher_groups"`
-	Services        map[string]ProjectServiceConfiguration `json:"services"`
+	// Oauth Desired local app-led OAuth integration URL declaration. Applying it does not provision a handler on a saved deployment.
+	Oauth    bool                                   `json:"oauth"`
+	Services map[string]ProjectServiceConfiguration `json:"services"`
+	Settings *DeploymentSettings                    `json:"settings,omitempty"`
 
 	// Webhooks Desired exact endpoints for the existing local webhook integration handler. Each endpoint names a declared local HTTP service with public_url enabled, including app, address, compose, and docker targets. Control does not fetch provider catalogs or provision remote webhook handlers during apply.
 	Webhooks  map[string]ProjectWebhook   `json:"webhooks"`
@@ -3064,13 +3071,6 @@ type ProjectPublicationStatusReason string
 // ProjectPublicationStatusServiceKind defines model for ProjectPublicationStatus.ServiceKind.
 type ProjectPublicationStatusServiceKind string
 
-// ProjectPublisherGroup defines model for ProjectPublisherGroup.
-type ProjectPublisherGroup struct {
-	Description *string `json:"description,omitempty"`
-	DomainId    *string `json:"domain_id,omitempty"`
-	Public      *bool   `json:"public,omitempty"`
-}
-
 // ProjectServiceAccess defines model for ProjectServiceAccess.
 type ProjectServiceAccess struct {
 	Team ProjectServiceAccessTeam `json:"team"`
@@ -3083,14 +3083,13 @@ type ProjectServiceAccessTeam bool
 type ProjectServiceConfiguration struct {
 	Access *ProjectServiceAccess `json:"access,omitempty"`
 
-	// Http Local readiness and path mounts, or named-group restricted HTTP access and request limits. A group owns its endpoint and reachability.
+	// Http Local readiness and path mounts, or restricted HTTP access and request limits for a saved deployment. The deployment owns its endpoint and reachability.
 	Http     *ProjectServiceHTTP `json:"http,omitempty"`
 	Name     *string             `json:"name,omitempty"`
 	Protocol *ServiceProtocol    `json:"protocol,omitempty"`
 
-	// PublicUrl Enables a local service's public URL. Named publisher groups use http settings and reject this block.
-	PublicUrl      *ProjectServicePublicURL `json:"public_url,omitempty"`
-	PublisherGroup *string                  `json:"publisher_group,omitempty"`
+	// PublicUrl Enables a local service's public URL. Saved deployments use http settings and reject this block.
+	PublicUrl *ProjectServicePublicURL `json:"public_url,omitempty"`
 
 	// Target Public URL targets are HTTP/HTTPS origins with an explicit port and no trailing slash. Service targets normalize to host:port with separate target_tls trust. Only local declarations may use deferred app, compose:SERVICE:PORT, or docker:CONTAINER:PORT descriptors; control does not discover targets.
 	Target string `json:"target"`
@@ -3105,7 +3104,7 @@ type ProjectServiceConfiguration struct {
 // ProjectServiceDeclarations defines model for ProjectServiceDeclarations.
 type ProjectServiceDeclarations map[string]ServiceProtocol
 
-// ProjectServiceHTTP Local readiness and path mounts, or named-group restricted HTTP access and request limits. A group owns its endpoint and reachability.
+// ProjectServiceHTTP Local readiness and path mounts, or restricted HTTP access and request limits for a saved deployment. The deployment owns its endpoint and reachability.
 type ProjectServiceHTTP struct {
 	Access *ProjectPublicAccess          `json:"access,omitempty"`
 	Limits *ProjectHTTPApplicationLimits `json:"limits,omitempty"`
@@ -3119,7 +3118,7 @@ type ProjectServiceHTTP struct {
 	} `json:"readiness,omitempty"`
 }
 
-// ProjectServicePublicURL Enables a local service's public URL. Named publisher groups use http settings and reject this block.
+// ProjectServicePublicURL Enables a local service's public URL. Saved deployments use http settings and reject this block.
 type ProjectServicePublicURL struct {
 	Access   *ProjectPublicAccess `json:"access,omitempty"`
 	DomainId *string              `json:"domain_id,omitempty"`

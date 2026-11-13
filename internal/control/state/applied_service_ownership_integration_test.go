@@ -41,10 +41,10 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 	outsider := finalVisitorIdentity(t, d, now, "ownership-outsider@example.test")
 	digest := sha256.Sum256([]byte("tnl-target-tls/v1\x00database.internal\x00"))
 	local := ProjectServiceConfiguration{Name: "database", Protocol: "postgres", Target: "localhost:5432", TargetTLS: &ProjectTargetTLS{Hostname: "database.internal", Digest: hex.EncodeToString(digest[:])}, Access: &ProjectServiceAccess{Team: true}}
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"db": local}}
-	emptyRemote := deploymentProjectRequest(r, "production")
+	r.Configuration = ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"db": local}}
+	emptyRemote := projectServiceSelection(r, "production")
 	remoteApplied := applyPrivateOwnershipRevision(t, d, emptyRemote)
-	r = deploymentProjectRequest(r, "local")
+	r = projectServiceSelection(r, "local", "db")
 	r.ExpectedRevision = remoteApplied.Revision
 	initial := applyPrivateOwnershipRevision(t, d, r)
 	assertPrivateOwnershipEntry(t, d, r, initial, "local")
@@ -108,7 +108,7 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 	}
 	locals := realize()
 	remote := local
-	remote.PublisherGroup, remote.Target = "production", "database.internal:5432"
+	remote.Target = "database.internal:5432"
 	r.ExpectedRevision = initial.Revision
 	removeLocal := r
 	removeLocal.Configuration = ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{}}
@@ -118,7 +118,7 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 	}
 	removedLocal := applyPrivateOwnershipRevision(t, d, removeLocal)
 	r.Deployment, r.ExpectedRevision = "production", removedLocal.Revision
-	r.Configuration.PublisherGroups = map[string]ProjectPublisherGroup{"production": {}}
+	r.Configuration.Settings = &DeploymentSettings{}
 	r.Configuration.Services["db"] = remote
 	// exercise rollback after remote allocation/grants, and after remote retirement
 	// on the reverse transition. the conflicting name belongs to another definition.
@@ -173,13 +173,13 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 	applyPrivateOwnershipRevision(t, d, r)
 	r.ExpectedRevision = group.Revision
 	removeRemote := r
-	removeRemote.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{}}
+	removeRemote.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{}}
 	if rollback {
 		assertPrivateOwnershipRollback(t, d, removeRemote)
 	}
 	removedRemote := applyPrivateOwnershipRevision(t, d, removeRemote)
 	r.Deployment, r.ExpectedRevision = "local", removedRemote.Revision
-	r.Configuration.PublisherGroups = map[string]ProjectPublisherGroup{}
+	r.Configuration.Settings = nil
 	r.Configuration.Services["db"] = local
 	deferred := applyPrivateOwnershipRevision(t, d, r)
 	assertPrivateOwnershipEntry(t, d, r, deferred, "local")
@@ -207,7 +207,7 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 	removeLocal.Configuration = ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{}}
 	removedLocal = applyPrivateOwnershipRevision(t, d, removeLocal)
 	r.Deployment, r.ExpectedRevision = "production", removedLocal.Revision
-	r.Configuration.PublisherGroups = map[string]ProjectPublisherGroup{"production": {}}
+	r.Configuration.Settings = &DeploymentSettings{}
 	r.Configuration.Services["db"] = remote
 	regrouped := applyPrivateOwnershipRevision(t, d, r)
 	assertPrivateOwnershipEntry(t, d, r, regrouped, "production")
@@ -462,7 +462,7 @@ func assertPrivateOwnershipRollback(t *testing.T, d *Database, r ApplyProjectCon
 	}
 	before := privateOwnershipSnapshot(t, d)
 	if r.Deployment != "local" {
-		r.Configuration.Services["z-conflict"] = ProjectServiceConfiguration{PublisherGroup: r.Deployment, Name: "conflict", Target: "localhost:9000"}
+		r.Configuration.Services["z-conflict"] = ProjectServiceConfiguration{Name: "conflict", Target: "localhost:9000"}
 		r.Configuration.Services["zz-conflict"] = r.Configuration.Services["z-conflict"]
 		conflict := selectedProjectRequest(r, r.Deployment)
 		for range 2 {

@@ -80,8 +80,8 @@ func TestIntegrationProjectStatusKeepsSameNamedDeploymentBindings(t *testing.T) 
 	}
 	r.ExpectedRevision = local.Revision
 	r.Deployment = "staging"
-	r.Configuration.PublisherGroups = map[string]ProjectPublisherGroup{"staging": {}}
-	r.Configuration.Services["db"] = ProjectServiceConfiguration{PublisherGroup: "staging", Protocol: "postgres", Target: "staging.internal:5432"}
+	r.Configuration.Settings = &DeploymentSettings{}
+	r.Configuration.Services["db"] = ProjectServiceConfiguration{Protocol: "postgres", Target: "staging.internal:5432"}
 	staging, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
 		t.Fatal(err)

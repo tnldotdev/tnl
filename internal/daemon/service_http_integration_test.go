@@ -115,7 +115,7 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	group := "production"
 	public := true
 	protocol := controlv1.ServiceProtocolHTTP
-	configuration := controlv1.ProjectConfiguration{PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {Public: &public}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {PublisherGroup: &group, Protocol: &protocol, Target: target.URL, TargetTls: &trust, Http: &controlv1.ProjectServiceHTTP{Limits: &controlv1.ProjectHTTPApplicationLimits{Concurrency: new(1)}}}}, Webhooks: map[string]controlv1.ProjectWebhook{}}
+	configuration := controlv1.ProjectConfiguration{Settings: &controlv1.DeploymentSettings{Public: &public}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {Protocol: &protocol, Target: target.URL, TargetTls: &trust, Http: &controlv1.ProjectServiceHTTP{Limits: &controlv1.ProjectHTTPApplicationLimits{Concurrency: new(1)}}}}, Webhooks: map[string]controlv1.ProjectWebhook{}}
 	applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "http-auth", controlv1.ApplyProjectConfigurationRequest{Deployment: group, ServiceDeclarations: controlv1.ProjectServiceDeclarations{"api": protocol}, TeamId: f.identity.teamID, Source: &testProjectSource, Configuration: configuration})
 	if err != nil {
 		t.Fatal(err)
@@ -464,9 +464,7 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	closeResponse(request(mtls, "/", "", "", 403))
 	// stale public DNS cannot override current private reachability, and neither
 	// the stable hostname nor allocated port changes during the transition.
-	g := applied.Configuration.PublisherGroups[group]
-	g.Public = new(false)
-	applied.Configuration.PublisherGroups[group] = g
+	applied.Configuration.Settings.Public = new(false)
 	updated, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "http-auth", controlv1.ApplyProjectConfigurationRequest{Deployment: applied.Deployment, ServiceDeclarations: applied.ServiceDeclarations, TeamId: f.identity.teamID, Source: &testProjectSource, ExpectedRevision: applied.Revision, Configuration: applied.Configuration})
 	if err != nil {
 		t.Fatal(err)
@@ -479,8 +477,7 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 		_ = response.Body.Close()
 		t.Fatal("stale DNS admitted service directly")
 	}
-	g.Public = new(true)
-	updated.Configuration.PublisherGroups[group] = g
+	updated.Configuration.Settings.Public = new(true)
 	if _, err = f.identity.routes.ApplyProjectConfiguration(t.Context(), "http-auth", controlv1.ApplyProjectConfigurationRequest{Deployment: updated.Deployment, ServiceDeclarations: updated.ServiceDeclarations, TeamId: f.identity.teamID, Source: &testProjectSource, ExpectedRevision: updated.Revision, Configuration: updated.Configuration}); err != nil {
 		t.Fatal(err)
 	}

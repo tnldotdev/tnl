@@ -417,7 +417,7 @@ func (d *Database) GetPublisherGroupAssignments(ctx context.Context, token strin
 			return result, publisherLookupError(err, ErrPublisherGroup)
 		}
 		configuration, ok := c.Services[s.Service]
-		if !ok || configuration.PublisherGroup != row.Name {
+		if !ok {
 			return result, ErrPublisherGroup
 		}
 		a := PublisherGroupServiceAssignment{Service: s.Service, ServiceID: s.PublicURLID.String, Kind: "public_url", GrantID: grant, Configuration: configuration}

@@ -73,19 +73,19 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	if before, err := owner.ListProjects(ctx, controlv1.ListProjectsParams{TeamId: team}); err != nil || len(before.Projects) != 0 {
 		t.Fatal("source resolution created project state", err)
 	}
-	body := controlv1.ApplyProjectConfigurationRequest{TeamId: team, Source: &testProjectSource, ExpectedRevision: 0, Configuration: controlv1.ProjectConfiguration{PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"web": {PublisherGroup: &group, Target: "http://app.internal:3000"}}}}
+	body := controlv1.ApplyProjectConfigurationRequest{TeamId: team, Source: &testProjectSource, ExpectedRevision: 0, Configuration: controlv1.ProjectConfiguration{Settings: &controlv1.DeploymentSettings{}, Services: map[string]controlv1.ProjectServiceConfiguration{"web": {Target: "http://app.internal:3000"}}}}
 	body.Configuration.Oauth = true
 	body.Configuration.Services["local-app"] = controlv1.ProjectServiceConfiguration{Target: "app", PublicUrl: &controlv1.ProjectServicePublicURL{}}
 	body.Configuration.Services["local-private"] = controlv1.ProjectServiceConfiguration{Target: "app"}
 	body.Configuration.Webhooks = map[string]controlv1.ProjectWebhook{"payments": {Service: "local-app", Path: "/hooks/payments", Provider: controlv1.Custom}}
 	name, hostname, mode := "website", "upstream.internal", controlv1.Restricted
 	digest := sha256.Sum256([]byte("tnl-target-tls/v1\x00" + hostname + "\x00"))
-	body.Configuration.Services["public"] = controlv1.ProjectServiceConfiguration{PublisherGroup: &group, Name: &name, Target: "https://192.0.2.5:8443", TargetTls: &controlv1.ProjectTargetTLS{Hostname: hostname, Digest: hex.EncodeToString(digest[:])}, Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectPublicAccess{Mode: &mode}}}
+	body.Configuration.Services["public"] = controlv1.ProjectServiceConfiguration{Name: &name, Target: "https://192.0.2.5:8443", TargetTls: &controlv1.ProjectTargetTLS{Hostname: hostname, Digest: hex.EncodeToString(digest[:])}, Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectPublicAccess{Mode: &mode}}}
 	body.Deployment = group
 	body.ServiceDeclarations = controlv1.ProjectServiceDeclarations{"web": "http", "public": "http", "local-app": "http", "local-private": "http"}
 	localBody := body
 	localBody.Deployment = "local"
-	localBody.Configuration = controlv1.ProjectConfiguration{Oauth: true, Webhooks: body.Configuration.Webhooks, PublisherGroups: map[string]controlv1.ProjectPublisherGroup{}, Services: map[string]controlv1.ProjectServiceConfiguration{"local-app": body.Configuration.Services["local-app"], "local-private": body.Configuration.Services["local-private"]}}
+	localBody.Configuration = controlv1.ProjectConfiguration{Oauth: true, Webhooks: body.Configuration.Webhooks, Services: map[string]controlv1.ProjectServiceConfiguration{"local-app": body.Configuration.Services["local-app"], "local-private": body.Configuration.Services["local-private"]}}
 	body.Configuration.Oauth = false
 	body.Configuration.Webhooks = map[string]controlv1.ProjectWebhook{}
 	delete(body.Configuration.Services, "local-app")
@@ -180,6 +180,26 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	encoded, err := json.Marshal(body)
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, field := range []string{"publisher_groups", "publisher_group"} {
+		var retired map[string]any
+		if err := json.Unmarshal(encoded, &retired); err != nil {
+			t.Fatal(err)
+		}
+		configuration := retired["configuration"].(map[string]any)
+		if field == "publisher_groups" {
+			configuration[field] = map[string]any{group: map[string]any{}}
+		} else {
+			configuration["services"].(map[string]any)["web"].(map[string]any)[field] = group
+		}
+		data, err := json.Marshal(retired)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response, err := rawAPI.ApplyProjectConfigurationWithBodyWithResponse(ctx, project, "application/json", bytes.NewReader(data), auth)
+		if err != nil || response.StatusCode() != http.StatusBadRequest {
+			t.Fatal("apply accepted a retired group field", field, err)
+		}
 	}
 	var missing map[string]any
 	if err = json.Unmarshal(encoded, &missing); err != nil {

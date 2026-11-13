@@ -478,8 +478,8 @@ components:
       $ref: "./schemas/projects.yaml#/schemas/ProjectConfiguration"
     ProjectServiceDeclarations:
       $ref: "./schemas/projects.yaml#/schemas/ProjectServiceDeclarations"
-    ProjectPublisherGroup:
-      $ref: "./schemas/projects.yaml#/schemas/ProjectPublisherGroup"
+    DeploymentSettings:
+      $ref: "./schemas/projects.yaml#/schemas/DeploymentSettings"
     ProjectWorkload:
       $ref: "./schemas/projects.yaml#/schemas/ProjectWorkload"
     WorkloadProvider:

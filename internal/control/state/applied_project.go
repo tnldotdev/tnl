@@ -30,7 +30,7 @@ var (
 	fingerprintPattern             = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
 
-type ProjectPublisherGroup struct {
+type DeploymentSettings struct {
 	Description string `json:"description,omitempty"`
 	DomainID    string `json:"domain_id,omitempty"`
 	Public      bool   `json:"public,omitempty"`
@@ -71,7 +71,6 @@ type ProjectServiceAccess struct {
 }
 type ProjectServiceConfiguration struct {
 	TargetDiscovery *ProjectTargetDiscovery  `json:"target_discovery,omitempty"`
-	PublisherGroup  string                   `json:"publisher_group,omitempty"`
 	Name            string                   `json:"name,omitempty"`
 	Protocol        string                   `json:"protocol,omitempty"`
 	Target          string                   `json:"target"`
@@ -81,11 +80,12 @@ type ProjectServiceConfiguration struct {
 	HTTP            *config.HTTPService      `json:"http,omitempty"`
 }
 type ProjectConfiguration struct {
-	Workloads       map[string]ProjectWorkload             `json:"workloads,omitempty"`
-	PublisherGroups map[string]ProjectPublisherGroup       `json:"publisher_groups"`
-	Services        map[string]ProjectServiceConfiguration `json:"services"`
-	OAuth           bool                                   `json:"oauth"`
-	Webhooks        map[string]ProjectWebhook              `json:"webhooks"`
+	Workloads map[string]ProjectWorkload `json:"workloads,omitempty"`
+	// local selection omits settings; saved deployments supply them, even when empty.
+	Settings *DeploymentSettings                    `json:"settings,omitempty"`
+	Services map[string]ProjectServiceConfiguration `json:"services"`
+	OAuth    bool                                   `json:"oauth"`
+	Webhooks map[string]ProjectWebhook              `json:"webhooks"`
 }
 type ProjectWebhook struct {
 	Service   string   `json:"service"`
@@ -162,31 +162,20 @@ func NormalizeProjectConfiguration(input ProjectConfiguration) (ProjectConfigura
 	if err = json.Unmarshal(data, &c); err != nil {
 		return c, "", err
 	}
-	if len(c.PublisherGroups) > 32 || len(c.Services) > 128 {
+	if len(c.Services) > 128 {
 		return c, "", ErrProjectConfigurationInvalid
-	}
-	if c.PublisherGroups == nil {
-		c.PublisherGroups = map[string]ProjectPublisherGroup{}
 	}
 	if c.Services == nil {
 		c.Services = map[string]ProjectServiceConfiguration{}
 	}
-	for name, g := range c.PublisherGroups {
-		if name == "local" || !serviceName.MatchString(name) || len(g.Description) > 1024 || strings.ContainsAny(g.Description, "\x00\r") {
+	if c.Settings != nil {
+		if len(c.Settings.Description) > 1024 || strings.ContainsAny(c.Settings.Description, "\x00\r") {
 			return c, "", ErrProjectConfigurationInvalid
 		}
 	}
 	for key, s := range c.Services {
 		if !serviceName.MatchString(key) {
 			return c, "", ErrProjectConfigurationInvalid
-		}
-		if s.PublisherGroup == "" {
-			s.PublisherGroup = "local"
-		}
-		if s.PublisherGroup != "local" {
-			if _, ok := c.PublisherGroups[s.PublisherGroup]; !ok {
-				return c, "", ErrProjectConfigurationInvalid
-			}
 		}
 		if s.Name == "" {
 			s.Name = key
@@ -200,7 +189,7 @@ func NormalizeProjectConfiguration(input ProjectConfiguration) (ProjectConfigura
 		if (ServiceMetadata{Protocol: s.Protocol}).Validate() != nil || s.Access != nil && !s.Access.Team || (len(s.Target) == 0 && s.TargetDiscovery == nil) || len(s.Target) > 8192 || strings.ContainsAny(s.Target, "\x00\r\n") {
 			return c, "", ErrProjectConfigurationInvalid
 		}
-		if err := normalizeAppliedProjectService(&s); err != nil {
+		if err := normalizeAppliedProjectService(&s, c.Settings == nil); err != nil {
 			return c, "", err
 		}
 		c.Services[key] = s
@@ -248,19 +237,14 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 		return result, err
 	}
 	if r.Deployment == "local" {
-		if len(c.PublisherGroups) != 0 || len(c.Workloads) != 0 {
+		if c.Settings != nil || len(c.Workloads) != 0 {
 			return result, ErrProjectConfigurationInvalid
 		}
-	} else if len(c.PublisherGroups) != 1 || c.OAuth || len(c.Webhooks) != 0 {
+	} else if c.Settings == nil || c.OAuth || len(c.Webhooks) != 0 {
 		return result, ErrProjectConfigurationInvalid
 	}
-	for name := range c.PublisherGroups {
-		if name != r.Deployment {
-			return result, ErrProjectConfigurationInvalid
-		}
-	}
 	for name, service := range c.Services {
-		if service.PublisherGroup != r.Deployment || r.ServiceDeclarations[name] != service.Protocol {
+		if r.ServiceDeclarations[name] != service.Protocol {
 			return result, ErrProjectConfigurationInvalid
 		}
 	}
@@ -303,15 +287,11 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	if !validProjectDNSLabel(r.ProjectLabel) {
 		return result, ErrProjectConfigurationInvalid
 	}
-	c, err = resolveManagedGroupDomains(ctx, tx, r.TeamID, r.ProjectKey, c)
+	c, err = resolveDeploymentDomain(ctx, tx, r.TeamID, r.ProjectKey, r.Deployment, c)
 	if err != nil {
 		return result, err
 	}
 	if err = SetServiceAuditActor(ctx, tx, r.ActorID); err != nil {
-		return result, err
-	}
-	c, _, err = NormalizeProjectConfiguration(c)
-	if err != nil {
 		return result, err
 	}
 	defaults, ceiling := r.TrafficDefaults, r.TrafficCeiling
@@ -381,24 +361,19 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	}
 	serving := map[string]ProjectServiceConfiguration{}
 	managedGroups := map[string]bool{}
-	presentGroups := map[string]bool{}
+	present := false
 	current := true
 	for _, g := range groups {
 		if g.Name != r.Deployment && !r.retire {
 			continue
 		}
-		presentGroups[g.Name] = true
-		_, wasDeclared := old.PublisherGroups[g.Name]
-		_, isDeclared := c.PublisherGroups[g.Name]
-		if !wasDeclared && !isDeclared && !r.retire {
-			continue
-		}
+		present = present || g.Name == r.Deployment
 		managedGroups[g.ID] = true
 		snapshot, err := d.openDeploymentConfiguration(g)
 		if err != nil {
 			return result, err
 		}
-		if isDeclared && !reflect.DeepEqual(snapshot, projectDeploymentConfiguration(g.Namespace, g.Name, c)) {
+		if c.Settings != nil && !reflect.DeepEqual(snapshot, projectDeploymentConfiguration(g.Namespace, c)) {
 			current = false
 		}
 		for name, service := range snapshot.Services {
@@ -408,10 +383,8 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 			serving[name] = service
 		}
 	}
-	for name := range c.PublisherGroups {
-		if !presentGroups[name] {
-			current = false
-		}
+	if c.Settings != nil && !present {
+		current = false
 	}
 	if reflect.DeepEqual(old, c) && reflect.DeepEqual(record.ServiceDeclarations, r.ServiceDeclarations) && current && !r.retire && !row.RetiredAt.Valid {
 		if r.ExpectedRevision > row.Revision {
@@ -461,31 +434,33 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 			return result, err
 		}
 	}
-	groupIDs := map[string]string{}
+	groupID := ""
 	changedGroups := map[string]bool{}
 	for _, g := range groups {
-		groupIDs[g.Name] = g.ID
+		if g.Name == r.Deployment {
+			groupID = g.ID
+		}
 	}
-	for _, name := range sortedProjectKeys(c.PublisherGroups) {
-		id := groupIDs[name]
+	if c.Settings != nil {
+		name := r.Deployment
+		id := groupID
 		if id == "" {
 			id, err = opaqueid.New("pgrp_")
 			if err != nil {
 				return result, err
 			}
-			_, err = tx.Exec(ctx, `INSERT INTO control.project_publisher_groups(id,team_id,project_key,name,description) VALUES($1,$2,$3,$4,$5)`, id, r.TeamID, r.ProjectKey, name, c.PublisherGroups[name].Description)
+			_, err = tx.Exec(ctx, `INSERT INTO control.project_publisher_groups(id,team_id,project_key,name,description) VALUES($1,$2,$3,$4,$5)`, id, r.TeamID, r.ProjectKey, name, c.Settings.Description)
 		} else {
-			_, err = tx.Exec(ctx, `UPDATE control.project_publisher_groups SET description=$2 WHERE id=$1`, id, c.PublisherGroups[name].Description)
+			_, err = tx.Exec(ctx, `UPDATE control.project_publisher_groups SET description=$2 WHERE id=$1`, id, c.Settings.Description)
 		}
 		if err != nil {
 			return result, err
 		}
-		groupIDs[name] = id
-		if err = d.ensureGroupNamespace(ctx, tx, r, id, name, c.PublisherGroups[name]); err != nil {
+		groupID = id
+		if err = d.ensureDeploymentNamespace(ctx, tx, r, id, name, *c.Settings, name); err != nil {
 			return result, err
 		}
-		oldGroup, found := old.PublisherGroups[name]
-		if !found || oldGroup != c.PublisherGroups[name] {
+		if old.Settings == nil || *old.Settings != *c.Settings {
 			changedGroups[id] = true
 		}
 	}
@@ -509,7 +484,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 		if s.GroupID.Valid {
 			previous = serving[s.Service]
 		}
-		if !ok || !sameAppliedResource(previous, declared) {
+		if !ok || !sameAppliedResource(previous, declared, r.Deployment == "local") {
 			if err = d.removeAppliedService(ctx, tx, q, s, r.Now); err != nil {
 				return result, err
 			}
@@ -530,12 +505,12 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 		changed := !found || !reflect.DeepEqual(previous, s)
 		if !found {
 			entry = controlstatedb.ControlAppliedProjectService{TeamID: r.TeamID, ProjectKey: r.ProjectKey, Service: key}
-			if s.PublisherGroup != "local" {
-				entry.GroupID = text(groupIDs[s.PublisherGroup])
+			if r.Deployment != "local" {
+				entry.GroupID = text(groupID)
 			}
 			// local resources are created by the normal per-worktree runtime.
-			if s.PublisherGroup != "local" {
-				id, e := d.createAppliedService(ctx, tx, q, r, key, entry.GroupID.String, s)
+			if r.Deployment != "local" {
+				id, e := d.createAppliedService(ctx, tx, q, r, key, entry.GroupID.String, s, true)
 				if e != nil {
 					return result, e
 				}
@@ -547,9 +522,9 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 			}
 		} else {
 			previousGroup := entry.GroupID
-			entry.GroupID = nullableText(groupIDs[s.PublisherGroup])
+			entry.GroupID = nullableText(groupID)
 			if entry.ServiceID.Valid && changed {
-				if err = d.updateAppliedService(ctx, tx, q, entry.ServiceID.String, entry.GroupID.String, s, r.Now); err != nil {
+				if err = d.updateAppliedService(ctx, tx, q, entry.ServiceID.String, entry.GroupID.String, s, entry.GroupID.Valid, r.Now); err != nil {
 					return result, err
 				}
 			}
@@ -590,7 +565,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 		if !managedGroups[g.ID] {
 			continue
 		}
-		if _, ok := c.PublisherGroups[g.Name]; !ok {
+		if c.Settings == nil {
 			changedGroups[g.ID] = true
 			if err = d.removePublisherGroup(ctx, tx, q, g.ID, r.Now); err != nil {
 				return result, err
@@ -607,8 +582,8 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	}); err != nil {
 		return result, err
 	}
-	for _, name := range sortedProjectKeys(c.PublisherGroups) {
-		if err = d.saveDeploymentConfiguration(ctx, tx, groupIDs[name], name, c); err != nil {
+	if c.Settings != nil {
+		if err = d.saveDeploymentConfiguration(ctx, tx, groupID, c); err != nil {
 			return result, err
 		}
 	}
@@ -671,12 +646,12 @@ func sortedProjectKeys[V any](m map[string]V) []string {
 	return keys
 }
 
-func sameAppliedResource(a, b ProjectServiceConfiguration) bool {
-	// local resources belong to individual worktrees; named groups share one ID.
-	if a.PublisherGroup != "local" && b.PublisherGroup != "local" {
+func sameAppliedResource(a, b ProjectServiceConfiguration, local bool) bool {
+	// target changes preserve a saved deployment binding's service ID.
+	if !local {
 		return true
 	}
-	if (a.PublisherGroup == "local") != (b.PublisherGroup == "local") || (a.PublicURL == nil) != (b.PublicURL == nil) {
+	if (a.PublicURL == nil) != (b.PublicURL == nil) {
 		return false
 	}
 	if a.PublicURL == nil {

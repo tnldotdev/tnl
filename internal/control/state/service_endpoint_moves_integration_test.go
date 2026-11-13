@@ -15,8 +15,8 @@ func TestIntegrationServiceGroupMove(t *testing.T) {
 	r := appliedProjectRequest(t, d, now)
 	r.Deployment = "production"
 	r.ServiceDeclarations = map[string]string{"orders": "postgres", "testdb": "postgres"}
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{
-		"orders": {PublisherGroup: "production", Name: "database", Protocol: "postgres", Target: "orders.internal:5432", Access: &ProjectServiceAccess{Team: true}},
+	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{
+		"orders": {Name: "database", Protocol: "postgres", Target: "orders.internal:5432", Access: &ProjectServiceAccess{Team: true}},
 	}}
 	first, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
@@ -25,8 +25,8 @@ func TestIntegrationServiceGroupMove(t *testing.T) {
 	old := first.Services[0]
 	staging := r
 	staging.Deployment, staging.ExpectedRevision = "staging", first.Revision
-	staging.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"staging": {}}, Services: map[string]ProjectServiceConfiguration{
-		"testdb": {PublisherGroup: "staging", Name: "database", Protocol: "postgres", Target: "staging.internal:5432"},
+	staging.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{
+		"testdb": {Name: "database", Protocol: "postgres", Target: "staging.internal:5432"},
 	}}
 	second, err := d.ApplyProjectConfiguration(t.Context(), staging)
 	if err != nil {
@@ -42,7 +42,6 @@ func TestIntegrationServiceGroupMove(t *testing.T) {
 	// a colliding destination must roll back the complete apply.
 	staging.ExpectedRevision = second.Revision
 	s := r.Configuration.Services["orders"]
-	s.PublisherGroup = "staging"
 	staging.Configuration.Services["orders"] = s
 	if _, err = d.ApplyProjectConfiguration(t.Context(), staging); !errors.Is(err, ErrServiceConflict) {
 		t.Fatal("accepted a conflicting destination", err)

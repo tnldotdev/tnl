@@ -10,14 +10,14 @@ import (
 func TestIntegrationAppliedPrivateLookupIsSourceBound(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "applied_private_lookup")
 	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}, "staging": {}}, Services: map[string]ProjectServiceConfiguration{
-		"orders": {PublisherGroup: "production", Name: "database", Protocol: "postgres", Target: "do-not-return.internal:5432"},
-		"other":  {PublisherGroup: "staging", Name: "database", Protocol: "postgres", Target: "other.internal:5432"},
+	r.Configuration = ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{
+		"orders": {Name: "database", Protocol: "postgres", Target: "do-not-return.internal:5432"},
+		"other":  {Name: "database", Protocol: "postgres", Target: "other.internal:5432"},
 		"local":  {Protocol: "http", Target: "app"},
 	}}
 	var applied AppliedProjectConfiguration
-	for _, deployment := range []string{"local", "staging", "production"} {
-		request := deploymentProjectRequest(r, deployment)
+	for _, selection := range []struct{ deployment, service string }{{"local", "local"}, {"staging", "other"}, {"production", "orders"}} {
+		request := projectServiceSelection(r, selection.deployment, selection.service)
 		request.ExpectedRevision = applied.Revision
 		var err error
 		applied, err = d.ApplyProjectConfiguration(t.Context(), request)

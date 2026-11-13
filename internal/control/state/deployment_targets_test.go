@@ -11,7 +11,7 @@ import (
 
 func TestDeploymentTargetUsesCapturedTrustWithoutDiscovery(t *testing.T) {
 	for _, protocol := range []string{"postgres", "mysql"} {
-		service, err := normalizeDeploymentTarget(t.Context(), "db", protocol, "customer", DeploymentTarget{
+		service, err := normalizeDeploymentTarget(t.Context(), "db", protocol, DeploymentTarget{
 			Address: "orders.abc.us-east-1.rds.amazonaws.com:5432", TLS: &DeploymentTargetTLS{CA: "aws-rds"},
 		})
 		if err != nil || service.TargetDiscovery != nil || service.TargetTLS == nil || service.TargetTLS.Hostname != "orders.abc.us-east-1.rds.amazonaws.com" {
@@ -39,7 +39,7 @@ func TestDeploymentTargetUsesCapturedTrustWithoutDiscovery(t *testing.T) {
 		{Address: "db.internal:5432", TLS: &DeploymentTargetTLS{CA: "/private/roots.pem"}},
 		{Address: "rds:orders"},
 	} {
-		if _, err := normalizeDeploymentTarget(t.Context(), "db", "postgres", "customer", target); err == nil {
+		if _, err := normalizeDeploymentTarget(t.Context(), "db", "postgres", target); err == nil {
 			t.Fatal("invalid target or remote/local trust source accepted", target.Address)
 		}
 	}

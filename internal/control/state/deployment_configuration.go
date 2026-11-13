@@ -1,11 +1,13 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
@@ -15,32 +17,26 @@ import (
 // not another deployment's targets or the project's apply revision.
 type deploymentConfiguration struct {
 	Namespace string                                 `json:"namespace"`
-	Settings  ProjectPublisherGroup                  `json:"settings"`
+	Settings  DeploymentSettings                     `json:"settings"`
 	Services  map[string]ProjectServiceConfiguration `json:"services"`
 }
 
 func deploymentConfigurationContext(id string) string { return "deployment-configuration/" + id }
 
-func (d *Database) saveDeploymentConfiguration(ctx context.Context, tx pgx.Tx, id, name string, c ProjectConfiguration) error {
+func (d *Database) saveDeploymentConfiguration(ctx context.Context, tx pgx.Tx, id string, c ProjectConfiguration) error {
 	row, err := controlstatedb.New(tx).LockProjectPublisherGroup(ctx, id)
 	if err != nil {
 		return err
 	}
-	return d.writeDeploymentConfiguration(ctx, tx, row, projectDeploymentConfiguration(row.Namespace, name, c))
+	return d.writeDeploymentConfiguration(ctx, tx, row, projectDeploymentConfiguration(row.Namespace, c))
 }
 
-func projectDeploymentConfiguration(namespace, name string, c ProjectConfiguration) deploymentConfiguration {
-	snapshot := deploymentConfiguration{
+func projectDeploymentConfiguration(namespace string, c ProjectConfiguration) deploymentConfiguration {
+	return deploymentConfiguration{
 		Namespace: namespace,
-		Settings:  c.PublisherGroups[name],
-		Services:  map[string]ProjectServiceConfiguration{},
+		Settings:  *c.Settings,
+		Services:  c.Services,
 	}
-	for key, service := range c.Services {
-		if service.PublisherGroup == name {
-			snapshot.Services[key] = service
-		}
-	}
-	return snapshot
 }
 
 func (d *Database) writeDeploymentConfiguration(ctx context.Context, tx pgx.Tx, row controlstatedb.ControlProjectPublisherGroup, snapshot deploymentConfiguration) error {
@@ -81,8 +77,13 @@ func (d *Database) openDeploymentConfiguration(row controlstatedb.ControlProject
 	if err != nil {
 		return c, err
 	}
-	if err = json.Unmarshal(data, &c); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err = decoder.Decode(&c); err != nil {
 		return c, fmt.Errorf("decode deployment configuration: %w", err)
+	}
+	if decoder.Decode(new(any)) != io.EOF {
+		return c, fmt.Errorf("decode deployment configuration: expected one JSON value")
 	}
 	return c, nil
 }

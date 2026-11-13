@@ -17,10 +17,6 @@ type projectNumberStore struct {
 	calls    int
 }
 
-func (s *projectNumberStore) ResolveProjectConfiguration(_ context.Context, _, _ string, c controlstate.ProjectConfiguration) (controlstate.ProjectConfiguration, error) {
-	return c, nil
-}
-
 func (s *projectNumberStore) ApplyProjectConfiguration(_ context.Context, r controlstate.ApplyProjectConfigurationRequest) (controlstate.AppliedProjectConfiguration, error) {
 	s.calls++
 	s.revision = r.ExpectedRevision
