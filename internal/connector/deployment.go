@@ -69,7 +69,7 @@ func connectionDeployment(options ContextOptions) (projectConfiguration, connect
 	digest := sha256.Sum256(encoded)
 	id := hex.EncodeToString(digest[:])
 	scope := connectorruntime.Context{Schema: 1, Directory: directory, ConfigDigest: id, Server: credential.ControlURL, Audience: credential.ControlURL, TeamID: credential.Approval.TeamId, ProjectKey: credential.Approval.ProjectKey, ProjectLabel: credential.Approval.ProjectKey, SourceID: id, WorktreeKey: "deployment", Deployment: r.Name, Services: names}
-	project := projectConfiguration{Project: clientproject.Project{Root: directory, Config: configuration, Deployment: r.Name}}
+	project := projectConfiguration{Project: clientproject.Project{Root: directory, Config: configuration}}
 	return project, scope, scope.Validate()
 }
 
