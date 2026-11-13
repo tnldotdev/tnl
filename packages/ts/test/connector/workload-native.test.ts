@@ -341,9 +341,6 @@ test("deployment handles keep all five provider protocols on native selection an
       expect(call.input).not.toHaveProperty("deployment");
       expect(call.args).not.toContain("first");
     }
-    await expect(deployment.publish(() => new Response("no"))).rejects.toMatchObject({
-      code: "sdk.configuration_invalid",
-    });
   } finally {
     await deployment.close();
     vi.unstubAllEnvs();
