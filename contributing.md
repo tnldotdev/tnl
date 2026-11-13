@@ -133,7 +133,7 @@ baseline, including provider-qualified ingress and relay regions and saved run
 preferences. Logical project declarations, deployment-scoped bindings, and
 encrypted serving snapshots, captured publisher setup approvals, and scoped
 independent deployment manage/connect approvals also require this fresh baseline.
-Deployment URL ownership uses `tnl-control-fresh-v1-deployment-public-urls`;
+Deployment publication uses `tnl-control-fresh-v1-deployment-publication`;
 each apply reconciles only its selected deployment against the project revision.
 Use a fresh database, run `tnld migrate`, and start matching server,
 publisher, and connector binaries. Databases from previous baselines are rejected.

@@ -9,6 +9,10 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example.com
 paths:
+  /v1/projects/{project_key}/deployments/{deployment}/public-urls/{service}:
+    $ref: "./paths/deployment-publication.yaml#/paths/~1v1~1projects~1{project_key}~1deployments~1{deployment}~1public-urls~1{service}"
+  /v1/projects/{project_key}/deployments/{deployment}/public-urls:
+    $ref: "./paths/deployment-publication.yaml#/paths/~1v1~1projects~1{project_key}~1deployments~1{deployment}~1public-urls"
   /v1/projects/{project_key}/deployment-credentials:
     $ref: "./paths/deployment-credentials.yaml#/paths/~1v1~1projects~1{project_key}~1deployment-credentials"
   /v1/projects/{project_key}/deployments/{deployment}/services/{service}/select:
@@ -396,6 +400,14 @@ components:
       $ref: "./schemas/deployment-credentials.yaml#/schemas/DeploymentCredentialServiceSelection"
     DeploymentCredentialServiceProtocols:
       $ref: "./schemas/deployment-credentials.yaml#/schemas/DeploymentCredentialServiceProtocols"
+    DeploymentPublishSelection:
+      $ref: "./schemas/deployment-credentials.yaml#/schemas/DeploymentPublishSelection"
+    DeploymentPublication:
+      $ref: "./schemas/deployment-publication.yaml#/schemas/DeploymentPublication"
+    DeploymentPublishApproval:
+      $ref: "./schemas/deployment-credentials.yaml#/schemas/DeploymentPublishApproval"
+    DeploymentTemporaryPublication:
+      $ref: "./schemas/deployment-credentials.yaml#/schemas/DeploymentTemporaryPublication"
     CreateDeploymentPublisherEnrollmentRequest:
       $ref: "./schemas/deployment-publishers.yaml#/schemas/CreateDeploymentPublisherEnrollmentRequest"
     DeploymentPublisherEnrollment:

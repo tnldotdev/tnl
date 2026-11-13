@@ -31,7 +31,10 @@ func lockAppliedProjectPublications(ctx context.Context, tx pgx.Tx, team, projec
 	_, err := tx.Exec(ctx, `SELECT service.id FROM control.public_urls service
 		WHERE service.id IN (
 			SELECT public_url_id FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2
-			UNION SELECT public_url_id FROM control.local_project_services WHERE team_id=$1 AND project_key=$2)
+			UNION SELECT public_url_id FROM control.local_project_services WHERE team_id=$1 AND project_key=$2
+			UNION SELECT allocation.public_url_id FROM control.publisher_namespace_allocations allocation
+			JOIN control.project_publisher_groups deployment ON deployment.id=allocation.deployment_id
+			WHERE deployment.team_id=$1 AND deployment.project_key=$2)
 		ORDER BY service.id FOR NO KEY UPDATE OF service`, team, project)
 	return err
 }

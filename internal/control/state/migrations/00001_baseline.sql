@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-deployment-public-urls')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-deployment-publication')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-deployment-public-urls');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-deployment-publication');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -2084,6 +2084,7 @@ CREATE TABLE control.deployment_management_grants (
     team_id text NOT NULL,
     project_key text NOT NULL,
     all_deployments boolean NOT NULL,
+    temporary_publication text NOT NULL DEFAULT '' CHECK (temporary_publication IN ('','restricted','anonymous')),
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     idempotency_key text NOT NULL,
     request_digest bytea NOT NULL CHECK (octet_length(request_digest)=32),
@@ -2105,13 +2106,15 @@ CREATE TABLE control.deployment_management_services (
     grant_id text NOT NULL,
     team_id text NOT NULL,
     project_key text NOT NULL,
-    capability text NOT NULL CHECK (capability IN ('manage','connect')),
+    capability text NOT NULL CHECK (capability IN ('manage','connect','publish')),
     service text NOT NULL,
     protocol text NOT NULL CHECK (protocol IN ('http','tcp','mysql','postgres','kubernetes')),
     revoked_at timestamptz,
     PRIMARY KEY (grant_id,capability,service),
     FOREIGN KEY (grant_id,team_id,project_key) REFERENCES control.deployment_management_grants(grant_id,team_id,project_key)
 );
+ALTER TABLE control.publisher_namespace_allocations ADD COLUMN deployment_id text
+    REFERENCES control.project_publisher_groups(id) ON DELETE RESTRICT;
 -- +goose StatementBegin
 CREATE FUNCTION control.retire_deployment_management_service() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -2287,7 +2290,8 @@ CREATE TABLE control.publisher_group_members (
 );
 -- +goose StatementBegin
 CREATE FUNCTION control.deployment_credential_available(approval text) RETURNS boolean LANGUAGE sql STABLE AS $$
-    SELECT EXISTS(SELECT 1 FROM control.deployment_management_services scope WHERE scope.grant_id=approval)
+    SELECT (EXISTS(SELECT 1 FROM control.deployment_management_services scope WHERE scope.grant_id=approval)
+        OR EXISTS(SELECT 1 FROM control.deployment_management_grants grant_record WHERE grant_record.grant_id=approval AND grant_record.temporary_publication<>''))
     AND NOT EXISTS(SELECT 1 FROM control.deployment_management_services scope
         LEFT JOIN control.project_services declaration ON declaration.team_id=scope.team_id AND declaration.project_key=scope.project_key
         AND declaration.name=scope.service AND declaration.protocol=scope.protocol

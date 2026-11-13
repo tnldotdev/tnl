@@ -270,6 +270,13 @@ team/project/deployment, not the creator's membership. Installed explicit target
 use the existing public URL run owner; an `app` target waits for its application's
 bound-listener owner rather than inventing an address for an installed worker.
 
+Deployment credentials independently approve management, connection, and HTTP
+publication. Named publication resolves a saved URL and limits; temporary
+publication records its deployment in the existing namespace allocation record.
+Both use the original signed identity and public URL run owner. The native
+identity adapter narrows itself to one selected URL without issuing another grant.
+Run leases cannot outlive the stored grant deadline.
+
 For shared behavior, define a small interface where it is used and have the
 caller supply the implementation. Do not copy permission checks or run-management
 code to avoid an import, or leave forwarding wrappers after moving code.

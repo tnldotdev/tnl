@@ -488,6 +488,29 @@ func listPublisherGroupMemberStatus(ctx context.Context, tx pgx.Tx, team, projec
 }
 
 func (d *Database) removePublisherGroup(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, group string, now time.Time) error {
+	rows, err := tx.Query(ctx, `SELECT allocation.public_url_id FROM control.publisher_namespace_allocations allocation JOIN control.public_urls url ON url.id=allocation.public_url_id WHERE allocation.deployment_id=$1 AND url.lifecycle_state<>'deleted' ORDER BY allocation.public_url_id`, group)
+	if err != nil {
+		return err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err = d.retireProjectResource(ctx, tx, q, controlstatedb.ControlAppliedProjectService{PublicURLID: text(id)}, now); err != nil {
+			return err
+		}
+	}
 	if err := retireServiceNamespace(ctx, tx, group, now); err != nil {
 		return err
 	}
@@ -502,6 +525,6 @@ func (d *Database) removePublisherGroup(ctx context.Context, tx pgx.Tx, q *contr
 	if _, err := tx.Exec(ctx, `UPDATE control.publisher_group_enrollments SET revoked_at=COALESCE(revoked_at,$2) WHERE group_id=$1`, group, now); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `UPDATE control.project_publisher_groups SET deleted_at=$2 WHERE id=$1`, group, now)
+	_, err = tx.Exec(ctx, `UPDATE control.project_publisher_groups SET deleted_at=$2 WHERE id=$1`, group, now)
 	return err
 }
