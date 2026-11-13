@@ -714,24 +714,12 @@ def test_transport_identity_is_private_native_metadata() -> None:
     assert not hasattr(connection, "transport_id")
 
 
-def test_http_keeps_managed_origin_and_project_protocol_drift_is_rejected(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_http_keeps_managed_origin_separate_from_local_port() -> None:
     value = snapshot(protocol="http", url="https://database.example.test:15443")
     connection = _connections._snapshot(value)
     assert isinstance(connection, tnl.HTTPConnection)
     assert connection.url == "https://database.example.test:15443"
     assert connection.port == 34567  # local port is independent of the managed origin.
-    monkeypatch.setenv("TNL_CONNECTION_HANDLE", str(tmp_path / "handle"))
-    monkeypatch.setattr(_connections, "native_binary", lambda: Path(sys.executable))
-    monkeypatch.setattr(
-        _connections, "_command", lambda *args: prepared(protocol="http", url=connection.url)
-    )
-    project = _connections.Project({"database": "postgres"})
-    with pytest.raises(tnl.TnlError):
-        project.connect("missing", directory=tmp_path)
-    with pytest.raises(tnl.TnlError):
-        project.connect("database", directory=tmp_path).snapshot()
 
 
 @pytest.mark.parametrize(

@@ -15,21 +15,18 @@ import threading
 import time
 import uuid
 import weakref
-from collections.abc import Awaitable, Callable, Generator, Mapping
+from collections.abc import Generator
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, Literal, cast
+from typing import ClassVar, Literal, cast
 from urllib.parse import urlsplit
 
 from ._connection_ipc import OwnerIPC, _InterruptedError
 from ._native import native_binary
 from ._protocol import TnlError, hostname, service_name
 from ._workload import Selection, select_workload, uses_workload
-
-if TYPE_CHECKING:
-    from ._client import ClientFactory
 
 _MAX_BYTES = 128 << 10
 _TIMEOUT = 65.0
@@ -1151,52 +1148,6 @@ class ConnectionHandle[C: Connection]:
         await asyncio.to_thread(self.close)
 
 
-class PostgresConnectionHandle(ConnectionHandle[PostgresConnection]):
-    @property
-    def protocol(self) -> Literal["postgres"]:
-        return self.snapshot().protocol
-
-
-class MySQLConnectionHandle(ConnectionHandle[MySQLConnection]):
-    @property
-    def protocol(self) -> Literal["mysql"]:
-        return self.snapshot().protocol
-
-
-class TCPConnectionHandle(ConnectionHandle[TCPConnection]):
-    @property
-    def protocol(self) -> Literal["tcp"]:
-        return self.snapshot().protocol
-
-
-class HTTPConnectionHandle(ConnectionHandle[HTTPConnection]):
-    @property
-    def protocol(self) -> Literal["http"]:
-        return self.snapshot().protocol
-
-    @property
-    def url(self) -> str:
-        return self.snapshot().url
-
-
-class KubernetesConnectionHandle(ConnectionHandle[KubernetesConnection]):
-    @property
-    def protocol(self) -> Literal["kubernetes"]:
-        return self.snapshot().protocol
-
-    @property
-    def url(self) -> str:
-        return self.snapshot().url
-
-    @property
-    def kubeconfig(self) -> str:
-        return self.snapshot().kubeconfig
-
-    @property
-    def context(self) -> str:
-        return self.snapshot().context
-
-
 def connect(
     service: str, *, directory: str | os.PathLike[str] | None = None
 ) -> ConnectionHandle[Connection]:
@@ -1222,48 +1173,3 @@ def connect(
                 scope.selected = _Session(scope, mounted)
             session = scope.selected
     return ConnectionHandle(session, service=name)
-
-
-class Project:
-    """runtime name/protocol validation for the generated project-local facade."""
-
-    def __init__(self, services: Mapping[str, str] | None = None) -> None:
-        self._services = None if services is None else dict(services)
-
-    def connect(
-        self, service: str, *, directory: str | os.PathLike[str] | None = None
-    ) -> ConnectionHandle[Connection]:
-        handle = connect(service, directory=directory)
-        if self._services is not None and service not in self._services:
-            raise _error("input")
-        if self._services is not None:
-            protocol = self._services[service]
-            handles: dict[str, type[ConnectionHandle[Connection]]] = {
-                "postgres": PostgresConnectionHandle,
-                "mysql": MySQLConnectionHandle,
-                "tcp": TCPConnectionHandle,
-                "http": HTTPConnectionHandle,
-                "kubernetes": KubernetesConnectionHandle,
-            }
-            if protocol not in handles:
-                raise _error("input")
-            handle = handles[protocol](handle._session, protocol, service)
-        return handle
-
-    def client[C: Connection, T](
-        self,
-        service: str,
-        *,
-        create: Callable[[C], T | Awaitable[T]],
-        close: Callable[[T], None | Awaitable[None]],
-        directory: str | os.PathLike[str] | None = None,
-    ) -> ClientFactory[T]:
-        from ._client import connection_client
-
-        self.connect(service, directory=directory)
-
-        def selected() -> ConnectionHandle[C]:
-            # generated names bind C to the project's validated protocol.
-            return cast(ConnectionHandle[C], self.connect(service, directory=directory))
-
-        return connection_client(selected, create=create, close=close)
