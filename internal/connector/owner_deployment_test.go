@@ -24,6 +24,7 @@ import (
 type deploymentOwnerFixture struct {
 	backend      *connectorConnectionBackend
 	credential   auth.DeploymentCredential
+	httpClient   *http.Client
 	denied       atomic.Bool
 	selections   atomic.Int64
 	blockToken   atomic.Bool
@@ -83,6 +84,7 @@ func newDeploymentOwnerFixture(t *testing.T, duration time.Duration, selectRun f
 		}
 	}))
 	t.Cleanup(server.Close)
+	f.httpClient = server.Client()
 	f.credential.ControlURL = server.URL
 	token, err := f.credential.Encode()
 	if err != nil {

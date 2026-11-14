@@ -786,7 +786,10 @@ func (b *connectorConnectionBackend) prepareKube(ctx context.Context, name strin
 		return serviceKubeconfig{}, err
 	}
 	var plan kubeconfig.Plan
-	if b.scope.Workload != "" {
+	// workload and deployment connections share only their owner's private file,
+	// never a kubeconfig context whose helper can be replaced by another owner.
+	private := b.scope.Workload != "" || b.deployment != nil
+	if private {
 		if b.sessionKubePlan.Path == "" {
 			b.sessionKubePlan, err = kubeconfig.PlanSession(b.directory, "session")
 		}
@@ -806,10 +809,8 @@ func (b *connectorConnectionBackend) prepareKube(ctx context.Context, name strin
 	}
 	owner := kubeconfig.Owner{ControlURL: b.scope.Server, TeamID: b.teamID, SourceID: b.scope.SourceID, ServiceID: service.Id}
 	result, err := plan.Prepare(ctx, kubeconfig.Options{Owner: owner, ProjectLabel: b.scope.ProjectLabel, Service: name, Namespace: b.kubeOptions.Namespace, Server: "https://" + net.JoinHostPort(connection.Host, strconv.Itoa(connection.Port)), TLSServerName: service.Endpoint.Hostname, Helper: b.executable, Profile: filepath.Join(b.directory, "handle.json"), CredentialArgs: []string{"runtime", "connections", "kube-credential", "--handle", filepath.Join(b.directory, "handle.json"), "--service", name}})
-	if err == nil {
-		if b.scope.Workload != "" {
-			b.sessionKubeResult = result
-		}
+	if err == nil && private {
+		b.sessionKubeResult = result
 	}
 	return serviceKubeconfig{source: source, result: result}, err
 }
