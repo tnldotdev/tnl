@@ -5,9 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"net"
 	"slices"
-	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -15,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -61,10 +60,10 @@ func (d *Database) lockServiceHTTPRun(ctx context.Context, tx pgx.Tx, auth Servi
 }
 
 func serviceHTTPOrigin(endpoint controlstatedb.ServiceHTTPBrowserEndpointRow) (string, error) {
-	if endpoint.CertificateHostname == "" || !endpoint.ServicePort.Valid || endpoint.ServicePort.Int32 < 1024 || endpoint.ServicePort.Int32 > 65535 {
+	if !endpoint.ServicePort.Valid || !serviceendpoint.Valid("http", endpoint.CertificateHostname, int(endpoint.ServicePort.Int32), false) {
 		return "", ErrServiceAccess
 	}
-	return "https://" + net.JoinHostPort(endpoint.CertificateHostname, strconv.Itoa(int(endpoint.ServicePort.Int32))), nil
+	return "https://" + endpoint.CertificateHostname, nil
 }
 
 func (d *Database) ServiceHTTPBrowserTeam(ctx context.Context, subject visitorscope.Scope, now time.Time) (string, error) {

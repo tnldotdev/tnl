@@ -219,7 +219,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	source := netip.MustParseAddr("192.0.2.10")
 	admit := func() controlstate.PublicServiceVisitorAdmission {
 		t.Helper()
-		a, err := d.AdmitPublicServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, newID(opaqueid.VisitorConnectionPrefix), prepared.ServicePort, source, now)
+		a, err := d.AdmitPublicServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, newID(opaqueid.VisitorConnectionPrefix), "", prepared.ServicePort, source, now)
 		if err != nil {
 			t.Fatal("direct admission", err)
 		}
@@ -434,7 +434,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	if _, err = d.HeartbeatServiceRun(ctx, service.ID, prepared.RunID, retried.Token, now, controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("revoked publisher grant renewed run: %v", err)
 	}
-	if _, err = d.AdmitPublicServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, newID(opaqueid.VisitorConnectionPrefix), prepared.ServicePort, source, now); !errors.Is(err, controlstate.ErrServiceAccess) {
+	if _, err = d.AdmitPublicServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, newID(opaqueid.VisitorConnectionPrefix), "", prepared.ServicePort, source, now); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("revoked publisher grant admitted a new stream: %v", err)
 	}
 	exec(`UPDATE control.publisher_grants SET revoked_at=NULL WHERE id=$1`, publisherGrantID)
@@ -496,7 +496,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	if recheckVisitor(ownerVisitor.ConnectionID, now) {
 		t.Fatal("zero ready slots kept owner visitor")
 	}
-	if _, err = d.AdmitPublicServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, newID(opaqueid.VisitorConnectionPrefix), prepared.ServicePort, source, now); !errors.Is(err, controlstate.ErrServiceAccess) {
+	if _, err = d.AdmitPublicServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, newID(opaqueid.VisitorConnectionPrefix), "", prepared.ServicePort, source, now); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("zero live relays accepted visitor before forwarding: %v", err)
 	}
 	recovering, err := d.HeartbeatServiceRun(ctx, service.ID, prepared.RunID, retried.Token, now, controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0})
@@ -539,7 +539,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	if _, err = d.PrepareServiceRun(ctx, service.ID, p, "after-revoke", now.Add(2*time.Second), controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1}); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("revoked exact publisher grant prepared another run: %v", err)
 	}
-	if _, err = d.AdmitPublicServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, newID(opaqueid.VisitorConnectionPrefix), prepared.ServicePort, source, now.Add(2*time.Second)); !errors.Is(err, controlstate.ErrServiceAccess) {
+	if _, err = d.AdmitPublicServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, newID(opaqueid.VisitorConnectionPrefix), "", prepared.ServicePort, source, now.Add(2*time.Second)); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatal("publisher revocation retained direct admission", err)
 	}
 }

@@ -112,9 +112,11 @@ func (d *Database) ValidateServiceEndpointDNSWork(ctx context.Context, work Serv
 		          AND relay.relay_lease_revision=slot.relay_lease_revision AND relay.relay_service_id=slot.relay_service_id
 		        WHERE slot.service_run_id=run.id AND slot.state='ready' AND slot.session_open AND NOT relay.draining AND relay.lease_expires_at>$2)
 		      AND EXISTS(SELECT 1 FROM control.ingress_leases ingress WHERE ingress.ingress_pool_id=service.ingress_pool_id
-		        AND service.service_port=ANY(ingress.service_ports) AND NOT ingress.draining AND ingress.lease_expires_at>$2)
+		        AND (CASE WHEN service.protocol='http' THEN ingress.https ELSE service.service_port=ANY(ingress.service_ports) END)
+		        AND NOT ingress.draining AND ingress.lease_expires_at>$2)
 		      AND NOT EXISTS(SELECT 1 FROM control.ingress_leases ingress WHERE ingress.ingress_pool_id=service.ingress_pool_id
-		        AND NOT (service.service_port=ANY(ingress.service_ports)) AND NOT ingress.draining AND ingress.lease_expires_at>$2))`, work.ServiceID, now).Scan(&current); err != nil {
+		        AND NOT (CASE WHEN service.protocol='http' THEN ingress.https ELSE service.service_port=ANY(ingress.service_ports) END)
+		        AND NOT ingress.draining AND ingress.lease_expires_at>$2))`, work.ServiceID, now).Scan(&current); err != nil {
 			return err
 		}
 		if !current {

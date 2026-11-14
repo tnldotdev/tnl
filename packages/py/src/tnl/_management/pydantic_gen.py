@@ -220,7 +220,7 @@ class DeploymentPublisherPage(BaseModel):
 
 
 class ServiceEndpoint(BaseModel):
-    """Control-owned service TLS identity. Native clients verify this name with system roots. Port is zero when no public ingress reservation exists; a positive port remains reserved when public access is temporarily disabled. It is never a machine-local connector port. Public access requires an allocated port. Target trust is a separate publisher-side boundary."""
+    """Control-owned service TLS identity. HTTP uses shared port 443 without an exclusive ingress reservation, including when public access is disabled. Other protocols use zero when no public ingress port is reserved; an allocated port remains reserved during temporary disablement. Only public enables ingress access. This port is never a machine-local connector port. Target trust is a separate publisher-side boundary."""
 
     model_config = ConfigDict(extra="forbid")
     hostname: Annotated[str, Field(min_length=1, max_length=253)]

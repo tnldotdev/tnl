@@ -17,7 +17,7 @@ test("installed deployment clients use verified HTTP transport on Node and Bun",
   const visits: string[] = [];
   const names: string[] = [];
   const tls = createTLSServer({ key, cert }, (request, response) => {
-    expect(request.headers.host).toBe("localhost:8443");
+    expect(request.headers.host).toBe("localhost");
     const chunks: Buffer[] = [];
     request.on("data", (chunk: Buffer) => chunks.push(chunk));
     request.on("end", () => {
@@ -43,9 +43,9 @@ test("installed deployment clients use verified HTTP transport on Node and Bun",
         protocol: "http",
         namespace: "team.example",
         hostname: "localhost",
-        port: 8443,
+        port: 443,
         public: false,
-        url: "https://localhost:8443",
+        url: "https://localhost",
       },
     },
   };
@@ -61,7 +61,7 @@ test("installed deployment clients use verified HTTP transport on Node and Bun",
             protocol: "http",
             host: "127.0.0.1",
             port: address.port,
-            url: "https://localhost:8443",
+            url: "https://localhost",
             ssl: { servername: "localhost", rejectUnauthorized: true, ca: cert },
             expires_at: new Date(Date.now() + 60_000).toISOString(),
             transport_id: `ctg_${"a".repeat(22)}`,
@@ -142,9 +142,9 @@ test("installed deployment clients use verified HTTP transport on Node and Bun",
          try {
          const settings = await deployment.connect('api');
          assert.equal(settings.then, undefined);
-         assert.equal(settings.url, 'https://localhost:8443');
+         assert.equal(settings.url, 'https://localhost');
          const response = await settings.fetch('/echo', {method:'POST', body:new ReadableStream({start(c){c.enqueue(new TextEncoder().encode('once')); c.close()}})});
-        assert.equal(response.url, 'https://localhost:8443/echo');
+         assert.equal(response.url, 'https://localhost/echo');
         assert.equal(await response.text(), 'once');
         const redirect = await settings.fetch('/redirect', {redirect:'follow'});
         assert.equal(redirect.status, 302);

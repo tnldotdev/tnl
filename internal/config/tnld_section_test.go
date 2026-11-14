@@ -46,7 +46,7 @@ func TestTNLDYAMLPresenceDefaultsAndPrecedence(t *testing.T) {
 	if value.MetricsListen != "" || value.CustomDomainsEnabled || value.RelayStreamCapacity != 0 || len(value.InitialAdministrators) != 0 || len(value.InitialTeamOwners) != 0 || value.ServicePortRanges == nil || value.QUICIdleTimeout != -1500*time.Millisecond || value.DrainTimeout != time.Minute {
 		t.Fatal("presence was lost", value)
 	}
-	if _, err := value.ServicePortInventory(); err == nil {
+	if inventory, err := value.ServicePortInventory(); err != nil || len(inventory.Ports()) != 0 {
 		t.Fatal("explicit empty inventory fell back to defaults")
 	}
 	omitted, err := loadTNLDYAML(t, "  metrics_listen: \"\"\n")

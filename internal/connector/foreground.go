@@ -169,16 +169,12 @@ func (o Operations) Start(ctx context.Context, flags StartOptions, input *os.Fil
 		}
 	}
 	var listener net.Listener
-	portProtocol := flags.Protocol
-	if portProtocol == "http" || portProtocol == "kubernetes" {
-		portProtocol = "tcp"
-	}
 	if flags.Install {
 		override := flags.Listen
 		if override == "" {
 			override = listenAddress
 		}
-		listenAddress, err = session.store.ServiceListenAddress(ctx, identity, service.Id, portProtocol, override)
+		listenAddress, err = session.store.ServiceListenAddress(ctx, identity, service.Id, flags.Protocol, override)
 		if err != nil {
 			return err
 		}

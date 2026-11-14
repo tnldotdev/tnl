@@ -49,9 +49,10 @@ func TestEndpointPreservesPortAndExposureForEveryProtocol(t *testing.T) {
 			for _, port := range []int{0, 1, 443, 15432, 65535} {
 				t.Run(fmt.Sprintf("%s/public=%t/port=%d", protocol, public, port), func(t *testing.T) {
 					service, err := NewEndpoint("member.example", "app.member.example", protocol, port, public)
-					if port == 0 && public {
+					valid := protocol == "http" && port == 443 || protocol != "http" && (port >= 1024 || port == 0 && !public)
+					if !valid {
 						if err == nil {
-							t.Fatal("public endpoint has no reservation")
+							t.Fatal("endpoint accepted a port that does not match its protocol and exposure")
 						}
 						return
 					}

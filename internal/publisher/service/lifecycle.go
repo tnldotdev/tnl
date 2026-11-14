@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/http"
 	"time"
 
 	quic "github.com/quic-go/quic-go"
@@ -53,6 +54,7 @@ type RunConfig struct {
 	Identity          authorityv1.PublisherEnrollmentResult
 	ServiceID         string
 	Target            string
+	Handler           http.Handler
 	TargetResolver    TargetResolver
 	resolvedTargetTLS *tls.Config
 	HeartbeatInterval time.Duration
@@ -121,8 +123,14 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		}
 		config.resolvedTargetTLS = discoveredTLS
 	}
-	if _, err := tcptarget.Normalize(config.Target); err != nil {
-		return err
+	if config.Handler != nil {
+		if config.Metadata.Protocol != controlv1.ServiceProtocolHTTP || config.Target != "" || config.TargetResolver != nil || config.Metadata.TargetTls != nil {
+			return ErrPrivateStream
+		}
+	} else {
+		if _, err := tcptarget.Normalize(config.Target); err != nil {
+			return err
+		}
 	}
 	if config.HeartbeatInterval == 0 {
 		config.HeartbeatInterval = 10 * time.Second
@@ -191,6 +199,9 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	}
 	if config.Healthy == nil {
 		config.Healthy = func(ctx context.Context) bool {
+			if config.Handler != nil {
+				return true
+			}
 			probe, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
 			target, current := config.Target, transport

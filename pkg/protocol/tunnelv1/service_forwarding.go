@@ -39,7 +39,7 @@ type PublicServiceAdmission struct {
 }
 
 func (a PublicServiceAdmission) valid() bool {
-	return validIdentifier(a.IngressID) && opaqueid.Valid(a.IngressRunID, opaqueid.IngressRunPrefix) && a.IngressLeaseRevision > 0 && a.DestinationPort >= 1024
+	return validIdentifier(a.IngressID) && opaqueid.Valid(a.IngressRunID, opaqueid.IngressRunPrefix) && a.IngressLeaseRevision > 0 && (a.DestinationPort == 443 || a.DestinationPort >= 1024)
 }
 
 func (h ServiceStreamHeader) validate() error {

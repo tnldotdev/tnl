@@ -124,7 +124,7 @@ func TestControlDevicePersistsRetryKeyAndRejectsChangedEnrollment(t *testing.T) 
 func TestControlSelectionBindsDeviceServiceProtocolAndRevision(t *testing.T) {
 	identity, device, service := connectorID(t, opaqueid.IdentityPrefix), connectorID(t, "vdev_"), connectorID(t, opaqueid.ServicePrefix)
 	selected := controlv1.ServiceSelection{Subject: visitorsubject.Wire(tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, DeviceID: device, IdentityID: identity}), ServiceId: service, ServiceRunId: connectorID(t, opaqueid.ServiceRunPrefix),
-		Protocol: controlv1.ServiceProtocol("http"), TrustRevision: 4, RunNumber: 9, Endpoint: &controlv1.ServiceEndpoint{Hostname: "service.example.test", Port: 25443}, ExpiresAt: time.Now().Add(time.Minute)}
+		Protocol: controlv1.ServiceProtocol("http"), TrustRevision: 4, RunNumber: 9, Endpoint: &controlv1.ServiceEndpoint{Hostname: "service.example.test", Port: 443}, ExpiresAt: time.Now().Add(time.Minute)}
 	var mu sync.Mutex
 	control, _ := adapterFixture(t, identity, func(_ *clientstate.Store, w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/visitor-devices" {

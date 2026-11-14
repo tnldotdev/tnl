@@ -190,7 +190,7 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	if _, err := inspect.Exec(ctx, `UPDATE control.services SET public=true WHERE id=$1`, service.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := inspect.Exec(ctx, `UPDATE control.ingress_leases SET ingress_pool_id=$2,service_ports=ARRAY[$3::int] WHERE ingress_id=$1`, lease.IngressID, controlstate.PrimaryIngressPoolID, prepared.ServicePort); err != nil {
+	if _, err := inspect.Exec(ctx, `UPDATE control.ingress_leases SET ingress_pool_id=$2,https=true,service_ports='{}' WHERE ingress_id=$1`, lease.IngressID, controlstate.PrimaryIngressPoolID); err != nil {
 		t.Fatal(err)
 	}
 	// a pending HTTP transport has no person/device identity. only actual
@@ -199,7 +199,7 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	if err != nil {
 		t.Fatal(err)
 	}
-	pending, err := d.AdmitPublicServiceVisitor(ctx, lease.IngressLeaseIdentity, controlstate.PrimaryIngressPoolID, pendingID, prepared.ServicePort, netip.MustParseAddr("127.0.0.1"), now)
+	pending, err := d.AdmitPublicServiceVisitor(ctx, lease.IngressLeaseIdentity, controlstate.PrimaryIngressPoolID, pendingID, prepared.Hostname, prepared.ServicePort, netip.MustParseAddr("127.0.0.1"), now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +285,7 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	forwarded := make(chan error, 1)
 	go func() {
 		defer accepted.Close()
-		forwarded <- connector.AcceptPublic(ctx, accepted, netip.MustParseAddrPort("127.0.0.1:40000"), netip.AddrPortFrom(netip.MustParseAddr("203.0.113.1"), uint16(prepared.ServicePort)))
+		forwarded <- connector.AcceptPublic(ctx, accepted, netip.MustParseAddrPort("127.0.0.1:40000"), netip.AddrPortFrom(netip.MustParseAddr("203.0.113.1"), uint16(prepared.ServicePort)), "")
 	}()
 	_ = valid.SetDeadline(time.Now().Add(5 * time.Second))
 	const secretPayload = "private-query-target-and-command-never-audit"

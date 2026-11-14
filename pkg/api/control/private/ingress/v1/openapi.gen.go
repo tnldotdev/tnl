@@ -234,16 +234,19 @@ type IngressPublicRunObservation struct {
 
 // IngressRegistration defines model for IngressRegistration.
 type IngressRegistration struct {
-	ConnectionCapacity int64      `json:"connection_capacity"`
-	IngressId          Identifier `json:"ingress_id"`
-	IngressPoolId      Identifier `json:"ingress_pool_id"`
-	IngressRunId       Identifier `json:"ingress_run_id"`
-	ProtocolVersion    int64      `json:"protocol_version"`
+	ConnectionCapacity int64 `json:"connection_capacity"`
+
+	// Https This process serves the shared HTTPS listener on public port 443, independently of allocated non-HTTP service ports.
+	Https           bool       `json:"https"`
+	IngressId       Identifier `json:"ingress_id"`
+	IngressPoolId   Identifier `json:"ingress_pool_id"`
+	IngressRunId    Identifier `json:"ingress_run_id"`
+	ProtocolVersion int64      `json:"protocol_version"`
 
 	// Region Exact catalog provider:region identity, such as aws:us-west-2 or fly:sjc. local makes no geographic claim.
 	Region string `json:"region"`
 
-	// ServicePorts Sorted managed ports bound before registration or exposed by the trusted destination-metadata proxy.
+	// ServicePorts Sorted allocated non-HTTP ports bound before registration or exposed by the trusted destination-metadata proxy. Shared HTTPS 443 is advertised separately.
 	ServicePorts []int `json:"service_ports"`
 }
 
@@ -398,7 +401,10 @@ type PublicServiceVisitorAdmission struct {
 
 // PublicServiceVisitorClaim defines model for PublicServiceVisitorClaim.
 type PublicServiceVisitorClaim struct {
-	DestinationPort      int                 `json:"destination_port"`
+	DestinationPort int `json:"destination_port"`
+
+	// Hostname Required exact inspected TLS hostname for shared HTTPS port 443. Must be absent on allocated non-HTTP service ports.
+	Hostname             *string             `json:"hostname,omitempty"`
 	IngressLeaseRevision int64               `json:"ingress_lease_revision"`
 	IngressPoolId        string              `json:"ingress_pool_id"`
 	IngressRunId         Identifier          `json:"ingress_run_id"`

@@ -2389,7 +2389,7 @@ type ConnectorPeerPairRelay struct {
 
 // ConnectorPeerPairRenewal One authenticated authority decision for the pinned run, pair lease and signed visitor permission. All deadlines share pair.observed_at; install local bounds from request start so transit spends the interval. Publisher installation and relay claims retain their independently confirmed deadlines.
 type ConnectorPeerPairRenewal struct {
-	// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Port is zero when no public ingress reservation exists; a positive port remains reserved when public access is temporarily disabled. It is never a machine-local connector port. Public access requires an allocated port. Target trust is a separate publisher-side boundary.
+	// Endpoint Control-owned service TLS identity. HTTP uses shared port 443 without an exclusive ingress reservation, including when public access is disabled. Other protocols use zero when no public ingress port is reserved; an allocated port remains reserved during temporary disablement. Only public enables ingress access. This port is never a machine-local connector port. Target trust is a separate publisher-side boundary.
 	Endpoint          ServiceEndpoint      `json:"endpoint"`
 	Pair              ConnectorPeerPair    `json:"pair"`
 	Protocol          ServiceProtocol      `json:"protocol"`
@@ -2810,7 +2810,7 @@ type DeploymentPublisherVerification struct {
 
 // DeploymentService defines model for DeploymentService.
 type DeploymentService struct {
-	// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Port is zero when no public ingress reservation exists; a positive port remains reserved when public access is temporarily disabled. It is never a machine-local connector port. Public access requires an allocated port. Target trust is a separate publisher-side boundary.
+	// Endpoint Control-owned service TLS identity. HTTP uses shared port 443 without an exclusive ingress reservation, including when public access is disabled. Other protocols use zero when no public ingress port is reserved; an allocated port remains reserved during temporary disablement. Only public enables ingress access. This port is never a machine-local connector port. Target trust is a separate publisher-side boundary.
 	Endpoint *ServiceEndpoint `json:"endpoint,omitempty"`
 
 	// Id The bound saved service or public URL ID.
@@ -3335,7 +3335,7 @@ type ProjectServiceAccessTeam bool
 type ProjectServiceConfiguration struct {
 	Access *ProjectServiceAccess `json:"access,omitempty"`
 
-	// Http Restricted HTTP access and request limits for local and remote services, independent of public endpoint access. Only local bindings support readiness, path mounts, and browser opening. Public URL records retain their access and limits in public_url.
+	// Http HTTP visitor access and request limits for local and remote services, independent of public endpoint access. Visitor access defaults to restricted; anonymous access does not enable a public endpoint or grant connector access. Only local bindings support readiness, path mounts, and browser opening.
 	Http     *ProjectServiceHTTP `json:"http,omitempty"`
 	Name     *string             `json:"name,omitempty"`
 	Protocol *ServiceProtocol    `json:"protocol,omitempty"`
@@ -3359,7 +3359,7 @@ type ProjectServiceConfiguration struct {
 // ProjectServiceDeclarations defines model for ProjectServiceDeclarations.
 type ProjectServiceDeclarations map[string]ServiceProtocol
 
-// ProjectServiceHTTP Restricted HTTP access and request limits for local and remote services, independent of public endpoint access. Only local bindings support readiness, path mounts, and browser opening. Public URL records retain their access and limits in public_url.
+// ProjectServiceHTTP HTTP visitor access and request limits for local and remote services, independent of public endpoint access. Visitor access defaults to restricted; anonymous access does not enable a public endpoint or grant connector access. Only local bindings support readiness, path mounts, and browser opening.
 type ProjectServiceHTTP struct {
 	Access *ProjectPublicAccess          `json:"access,omitempty"`
 	Limits *ProjectHTTPApplicationLimits `json:"limits,omitempty"`
@@ -3931,7 +3931,7 @@ type Service struct {
 	DomainId  *DomainID `json:"domain_id,omitempty"`
 	Enabled   bool      `json:"enabled"`
 
-	// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Port is zero when no public ingress reservation exists; a positive port remains reserved when public access is temporarily disabled. It is never a machine-local connector port. Public access requires an allocated port. Target trust is a separate publisher-side boundary.
+	// Endpoint Control-owned service TLS identity. HTTP uses shared port 443 without an exclusive ingress reservation, including when public access is disabled. Other protocols use zero when no public ingress port is reserved; an allocated port remains reserved during temporary disablement. Only public enables ingress access. This port is never a machine-local connector port. Target trust is a separate publisher-side boundary.
 	Endpoint *ServiceEndpoint `json:"endpoint,omitempty"`
 
 	// HttpLimits Approved run-local HTTP request limits returned to the scoped publisher. Applies after visitor authorization on public and connector admissions.
@@ -4031,7 +4031,7 @@ type ServiceClientCertificateDecision struct {
 	ValidUntil time.Time `json:"valid_until"`
 }
 
-// ServiceEndpoint Control-owned service TLS identity. Native clients verify this name with system roots. Port is zero when no public ingress reservation exists; a positive port remains reserved when public access is temporarily disabled. It is never a machine-local connector port. Public access requires an allocated port. Target trust is a separate publisher-side boundary.
+// ServiceEndpoint Control-owned service TLS identity. HTTP uses shared port 443 without an exclusive ingress reservation, including when public access is disabled. Other protocols use zero when no public ingress port is reserved; an allocated port remains reserved during temporary disablement. Only public enables ingress access. This port is never a machine-local connector port. Target trust is a separate publisher-side boundary.
 type ServiceEndpoint struct {
 	Hostname string `json:"hostname"`
 	Port     int    `json:"port"`
@@ -4111,7 +4111,7 @@ type ServiceInvitationPage struct {
 
 // ServiceMetadata defines model for ServiceMetadata.
 type ServiceMetadata struct {
-	// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Port is zero when no public ingress reservation exists; a positive port remains reserved when public access is temporarily disabled. It is never a machine-local connector port. Public access requires an allocated port. Target trust is a separate publisher-side boundary.
+	// Endpoint Control-owned service TLS identity. HTTP uses shared port 443 without an exclusive ingress reservation, including when public access is disabled. Other protocols use zero when no public ingress port is reserved; an allocated port remains reserved during temporary disablement. Only public enables ingress access. This port is never a machine-local connector port. Target trust is a separate publisher-side boundary.
 	Endpoint      *ServiceEndpoint `json:"endpoint,omitempty"`
 	Protocol      ServiceProtocol  `json:"protocol"`
 	PublisherPool bool             `json:"publisher_pool"`
@@ -4248,7 +4248,7 @@ type ServiceRunStateState string
 
 // ServiceSelection defines model for ServiceSelection.
 type ServiceSelection struct {
-	// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Port is zero when no public ingress reservation exists; a positive port remains reserved when public access is temporarily disabled. It is never a machine-local connector port. Public access requires an allocated port. Target trust is a separate publisher-side boundary.
+	// Endpoint Control-owned service TLS identity. HTTP uses shared port 443 without an exclusive ingress reservation, including when public access is disabled. Other protocols use zero when no public ingress port is reserved; an allocated port remains reserved during temporary disablement. Only public enables ingress access. This port is never a machine-local connector port. Target trust is a separate publisher-side boundary.
 	Endpoint  *ServiceEndpoint `json:"endpoint,omitempty"`
 	ExpiresAt time.Time        `json:"expires_at"`
 
@@ -4273,7 +4273,7 @@ type ServiceSummary struct {
 	DomainId  *DomainID `json:"domain_id,omitempty"`
 	Enabled   bool      `json:"enabled"`
 
-	// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Port is zero when no public ingress reservation exists; a positive port remains reserved when public access is temporarily disabled. It is never a machine-local connector port. Public access requires an allocated port. Target trust is a separate publisher-side boundary.
+	// Endpoint Control-owned service TLS identity. HTTP uses shared port 443 without an exclusive ingress reservation, including when public access is disabled. Other protocols use zero when no public ingress port is reserved; an allocated port remains reserved during temporary disablement. Only public enables ingress access. This port is never a machine-local connector port. Target trust is a separate publisher-side boundary.
 	Endpoint *ServiceEndpoint `json:"endpoint,omitempty"`
 	Id       ServiceID        `json:"id"`
 
@@ -4757,7 +4757,7 @@ type WorkloadServiceAuthorization struct {
 // WorkloadServices defines model for WorkloadServices.
 type WorkloadServices struct {
 	Services []struct {
-		// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Port is zero when no public ingress reservation exists; a positive port remains reserved when public access is temporarily disabled. It is never a machine-local connector port. Public access requires an allocated port. Target trust is a separate publisher-side boundary.
+		// Endpoint Control-owned service TLS identity. HTTP uses shared port 443 without an exclusive ingress reservation, including when public access is disabled. Other protocols use zero when no public ingress port is reserved; an allocated port remains reserved during temporary disablement. Only public enables ingress access. This port is never a machine-local connector port. Target trust is a separate publisher-side boundary.
 		Endpoint ServiceEndpoint `json:"endpoint"`
 		Id       string          `json:"id"`
 

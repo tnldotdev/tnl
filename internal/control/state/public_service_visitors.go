@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 )
@@ -19,10 +20,19 @@ type PublicServiceVisitorAdmission struct {
 	Relays                         []ServiceRelay
 }
 
-// AdmitPublicServiceVisitor reserves only bounded pre-authentication capacity.
-// the destination comes from a trusted socket or outer PROXY header, never SNI.
-func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressLeaseIdentity, pool, visitor string, port int, source netip.Addr, now time.Time) (result PublicServiceVisitorAdmission, retErr error) {
-	if validateIngressLeaseIdentity(lease) != nil || !opaqueid.Valid(visitor, opaqueid.VisitorConnectionPrefix) || !tcpport.ValidNetwork(port) || port < 1024 || !source.IsValid() || source.Zone() != "" {
+// AdmitPublicServiceVisitor reserves bounded pre-authentication capacity. HTTP
+// selects an exact inspected hostname on 443; other protocols select a trusted
+// destination port without inspecting their native negotiation.
+func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressLeaseIdentity, pool, visitor, hostname string, port int, source netip.Addr, now time.Time) (result PublicServiceVisitorAdmission, retErr error) {
+	if validateIngressLeaseIdentity(lease) != nil || !opaqueid.Valid(visitor, opaqueid.VisitorConnectionPrefix) || !tcpport.ValidNetwork(port) || port != 443 && port < 1024 || !source.IsValid() || source.Zone() != "" {
+		return result, ErrServiceAccess
+	}
+	if port == 443 {
+		canonical, err := naming.CanonicalizeHostname(hostname)
+		if err != nil || hostname != canonical {
+			return result, ErrServiceAccess
+		}
+	} else if hostname != "" {
 		return result, ErrServiceAccess
 	}
 	tx, err := d.pool.Begin(ctx)
@@ -32,7 +42,8 @@ func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressL
 	defer rollback(ctx, tx, "admit public service visitor", &retErr)()
 	// select the service before the admission lock, then revalidate everything
 	// under that lock. an old DNS answer cannot authorize a private endpoint.
-	err = tx.QueryRow(ctx, `SELECT id FROM control.services WHERE ingress_pool_id=$1 AND service_port=$2 AND public AND enabled AND deleted_at IS NULL`, pool, port).Scan(&result.ServiceID)
+	err = tx.QueryRow(ctx, `SELECT id FROM control.services WHERE ingress_pool_id=$1 AND service_port=$2 AND public AND enabled AND deleted_at IS NULL
+	    AND ((protocol='http' AND $2=443 AND certificate_hostname=$3) OR (protocol<>'http' AND $2>=1024 AND $3=''))`, pool, port, hostname).Scan(&result.ServiceID)
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}
@@ -41,7 +52,9 @@ func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressL
 	}
 	q := controlstatedb.New(tx)
 	service, err := q.GetService(ctx, result.ServiceID)
-	if err != nil || !service.Public || service.IngressPoolID != pool || int(service.ServicePort.Int32) != port {
+	if err != nil || !service.Public || service.IngressPoolID != pool || int(service.ServicePort.Int32) != port ||
+		service.Protocol == "http" && (port != 443 || hostname != service.CertificateHostname) ||
+		service.Protocol != "http" && (port < 1024 || hostname != "") {
 		return result, errors.Join(ErrServiceAccess, err)
 	}
 	current, err := lockCurrentIngressLease(ctx, q, lease, now)
@@ -49,7 +62,8 @@ func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressL
 		return result, errors.Join(ErrServiceAccess, err)
 	}
 	var supported bool
-	if err = tx.QueryRow(ctx, `SELECT ingress_pool_id=$2 AND $3=ANY(service_ports) FROM control.ingress_leases WHERE ingress_id=$1`, lease.IngressID, pool, port).Scan(&supported); err != nil || !supported {
+	if err = tx.QueryRow(ctx, `SELECT ingress_pool_id=$2 AND (CASE WHEN $3=443 THEN https ELSE $3=ANY(service_ports) END)
+	    FROM control.ingress_leases WHERE ingress_id=$1`, lease.IngressID, pool, port).Scan(&supported); err != nil || !supported {
 		return result, errors.Join(ErrServiceAccess, err)
 	}
 	var existing bool

@@ -34,7 +34,7 @@ describe("root runtime", () => {
         protocol,
         hostname: "private.member.example",
         namespace: "member.example",
-        port: 0,
+        port: protocol === "http" ? 443 : 0,
         public: false,
         ...(["http", "kubernetes"].includes(protocol)
           ? { url: "https://private.member.example" }
@@ -42,11 +42,12 @@ describe("root runtime", () => {
       };
       const payload = { ...project, services: { private: service }, dev: false };
       expect(parseRuntimePayload(JSON.stringify(payload))?.services.private).toEqual(service);
-      expect(() =>
+      const exposed = () =>
         parseRuntimePayload(
           JSON.stringify({ ...payload, services: { private: { ...service, public: true } } }),
-        ),
-      ).toThrow();
+        );
+      if (protocol === "http") expect(exposed()?.services.private?.public).toBe(true);
+      else expect(exposed).toThrow();
     },
   );
 
@@ -139,10 +140,10 @@ describe("root runtime", () => {
         protocol,
         hostname: "database.member.example",
         namespace: "member.example",
-        port: 15432,
+        port: protocol === "http" ? 443 : 15432,
         public: protocol !== "http",
         ...(["http", "kubernetes"].includes(protocol)
-          ? { url: "https://database.member.example:15432" }
+          ? { url: `https://database.member.example${protocol === "http" ? "" : ":15432"}` }
           : {}),
       };
       vi.stubEnv(
@@ -157,7 +158,7 @@ describe("root runtime", () => {
       const runtime = await import("@tnldotdev/tnl");
       expect(runtime.tnl.services.database).toEqual(service);
       expect(runtime.tnl.services.database?.hostname).toBe(service.hostname);
-      expect(runtime.tnl.services.database?.port).toBe(15432);
+      expect(runtime.tnl.services.database?.port).toBe(service.port);
       expect(runtime.tnl.services.database?.protocol).toBe(protocol);
       expect(runtime.tnl.services.database?.public).toBe(service.public);
       expect(runtime.tnl.services.database).not.toHaveProperty("metadata");

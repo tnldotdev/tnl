@@ -204,7 +204,7 @@ export type PublisherRuntimeStatus = {
 export type ServiceProtocol = "http" | "tcp" | "mysql" | "postgres" | "kubernetes";
 
 /**
- * Control-owned service TLS identity. Native clients verify this name with system roots. Port is zero when no public ingress reservation exists; a positive port remains reserved when public access is temporarily disabled. It is never a machine-local connector port. Public access requires an allocated port. Target trust is a separate publisher-side boundary.
+ * Control-owned service TLS identity. HTTP uses shared port 443 without an exclusive ingress reservation, including when public access is disabled. Other protocols use zero when no public ingress port is reserved; an allocated port remains reserved during temporary disablement. Only public enables ingress access. This port is never a machine-local connector port. Target trust is a separate publisher-side boundary.
  */
 export type ServiceEndpoint = {
   hostname: string;

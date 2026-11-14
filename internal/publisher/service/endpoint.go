@@ -15,6 +15,7 @@ import (
 
 	serviceconfig "github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/policy/tcptarget"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
@@ -35,7 +36,7 @@ type ManagedControl interface {
 }
 
 func newManagedPrepared(preparation controlv1.ServiceRunPreparation, approved controlv1.Service, cfg RunConfig) (*Prepared, error) {
-	if approved.Endpoint == nil || approved.Endpoint.Port < 0 || approved.Endpoint.Port > 65535 || approved.Endpoint.Port > 0 && approved.Endpoint.Port < 1024 || approved.Endpoint.Public && approved.Endpoint.Port == 0 || preparation.CertificatePlan == nil || preparation.ServiceId != approved.Id || preparation.TeamId != approved.TeamId || preparation.PublisherIdentityId != cfg.Identity.ClientId || preparation.PublisherGrantId != cfg.Identity.GrantId || preparation.PublisherKeyId != cfg.Identity.KeyId || preparation.RunNumber < 1 || !preparation.ExpiresAt.After(time.Now()) {
+	if approved.Endpoint == nil || !serviceendpoint.Valid(string(approved.Protocol), approved.Endpoint.Hostname, approved.Endpoint.Port, approved.Endpoint.Public) || preparation.CertificatePlan == nil || preparation.ServiceId != approved.Id || preparation.TeamId != approved.TeamId || preparation.PublisherIdentityId != cfg.Identity.ClientId || preparation.PublisherGrantId != cfg.Identity.GrantId || preparation.PublisherKeyId != cfg.Identity.KeyId || preparation.RunNumber < 1 || !preparation.ExpiresAt.After(time.Now()) {
 		return nil, ErrPrivateStream
 	}
 	if preparation.Hostname != approved.Endpoint.Hostname || preparation.ServicePort != approved.Endpoint.Port || preparation.DomainId == "" || approved.DomainId != nil && preparation.DomainId != *approved.DomainId {
@@ -45,11 +46,18 @@ func newManagedPrepared(preparation controlv1.ServiceRunPreparation, approved co
 	if err != nil || !certificateidentity.Covers(plan.Identifiers, approved.Endpoint.Hostname) || plan.ChallengeMethod != controlv1.Dns01 {
 		return nil, ErrPrivateStream
 	}
-	target, err := tcptarget.Normalize(cfg.Target)
-	if err != nil {
-		return nil, err
+	target := ""
+	if cfg.Handler != nil {
+		if approved.Protocol != controlv1.ServiceProtocolHTTP || cfg.Target != "" || cfg.TargetResolver != nil || approved.TargetTls != nil {
+			return nil, ErrPrivateStream
+		}
+	} else {
+		target, err = tcptarget.Normalize(cfg.Target)
+		if err != nil {
+			return nil, err
+		}
 	}
-	prepared := &Prepared{Preparation: preparation, target: target, managedHostname: approved.Endpoint.Hostname, servicePort: uint16(approved.Endpoint.Port), managedProtocol: serviceconfig.ProtocolName(approved.Protocol), clock: time.Now, preparedCertificate: &preparedCertificate{}}
+	prepared := &Prepared{Preparation: preparation, target: target, handler: cfg.Handler, managedHostname: approved.Endpoint.Hostname, servicePort: uint16(approved.Endpoint.Port), managedProtocol: serviceconfig.ProtocolName(approved.Protocol), clock: time.Now, preparedCertificate: &preparedCertificate{}}
 	prepared.managedPublic = approved.Endpoint.Public
 	prepared.metadataRevision = approved.TrustRevision
 	prepared.targetResolver = cfg.TargetResolver

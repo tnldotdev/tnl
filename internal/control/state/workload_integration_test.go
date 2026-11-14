@@ -412,7 +412,7 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 		t.Fatal("certificate used a human subject", subject, err)
 	}
 	direct := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
-	if _, err = d.AdmitPublicServiceVisitor(ctx, lease.IngressLeaseIdentity, PrimaryIngressPoolID, direct, port, source, now); err != nil {
+	if _, err = d.AdmitPublicServiceVisitor(ctx, lease.IngressLeaseIdentity, PrimaryIngressPoolID, direct, "", port, source, now); err != nil {
 		t.Fatal(err)
 	}
 	decision, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, run.RunID, run.Token, direct, run.RunNumber, source, block.Bytes, now)

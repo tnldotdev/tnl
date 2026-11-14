@@ -35,7 +35,7 @@ func (i Inventory) Contains(port int) bool {
 }
 
 func ParseInventory(values []string) (Inventory, error) {
-	if len(values) == 0 || len(values) > MaxInventoryDeclarations {
+	if len(values) > MaxInventoryDeclarations {
 		return Inventory{}, ErrInventory
 	}
 	ranges := make([]Range, 0, len(values))
@@ -55,10 +55,11 @@ func ParseInventory(values []string) (Inventory, error) {
 	return NewInventory(ranges)
 }
 
-// NewInventory copies and validates in-memory ranges. the declaration limit
-// belongs to the textual format; in-memory inventories may have 256 singletons.
+// NewInventory copies and validates in-memory ranges. empty inventories serve
+// shared HTTPS without allocated non-HTTP ports. the textual declaration limit
+// does not apply to in-memory inventories, which may have 256 singletons.
 func NewInventory(ranges []Range) (Inventory, error) {
-	if len(ranges) == 0 || len(ranges) > MaxInventoryPorts {
+	if len(ranges) > MaxInventoryPorts {
 		return Inventory{}, ErrInventory
 	}
 	ranges = slices.Clone(ranges)

@@ -257,10 +257,10 @@ function project() {
       protocol,
       hostname: `${name}.example.test`,
       namespace: "example.test",
-      port: 15443,
+      port: protocol === "http" ? 443 : 15443,
       public: false,
       ...(["http", "kubernetes"].includes(protocol)
-        ? { url: `https://${name}.example.test:15443` }
+        ? { url: `https://${name}.example.test${protocol === "http" ? "" : ":15443"}` }
         : {}),
     };
   return { dev: false, namespace: "example.test", services };

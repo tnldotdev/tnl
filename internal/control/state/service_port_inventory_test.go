@@ -9,7 +9,7 @@ import (
 
 func TestManagedInventoryRejectsInvalidBeforeDatabaseIO(t *testing.T) {
 	database := new(Database)
-	for _, ranges := range [][]tcpport.Range{nil, {}, {{First: 1023, Last: 1024}}, {{First: 20000, Last: 20256}}, {{First: 20000, Last: 20001}, {First: 20001, Last: 20002}}} {
+	for _, ranges := range [][]tcpport.Range{{{First: 1023, Last: 1024}}, {{First: 20000, Last: 20256}}, {{First: 20000, Last: 20001}, {First: 20001, Last: 20002}}} {
 		if err := database.ConfigureIngressServicePorts(t.Context(), "ingress-a", ranges); !errors.Is(err, tcpport.ErrInventory) {
 			t.Fatal("invalid control inventory", ranges, err)
 		}

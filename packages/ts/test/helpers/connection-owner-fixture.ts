@@ -100,7 +100,7 @@ export async function runConnectionOwnerFixture(root: string): Promise<void> {
         });
       const lifetimeMs = (await plan()).lifetimeMs;
       const expires_at = new Date(Date.now() + lifetimeMs).toISOString();
-      const url = "https://database.team.example:15443";
+      const url = `https://database.team.example${protocol === "http" ? "" : ":15443"}`;
       const project = {
         dev: false,
         namespace: "team.example",
@@ -110,7 +110,7 @@ export async function runConnectionOwnerFixture(root: string): Promise<void> {
             hostname: "database.team.example",
             namespace: "team.example",
             public: true,
-            port: 15443,
+            port: protocol === "http" ? 443 : 15443,
             url,
           },
         },

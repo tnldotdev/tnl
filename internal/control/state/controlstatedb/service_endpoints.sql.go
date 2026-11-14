@@ -28,9 +28,11 @@ WITH candidate AS (
               WHERE slot.service_run_id=run.id AND slot.state='ready' AND slot.session_open
                 AND NOT relay.draining AND relay.lease_expires_at>$3)
             AND EXISTS (SELECT 1 FROM control.ingress_leases ingress WHERE ingress.ingress_pool_id=work.ingress_pool_id
-              AND service.service_port=ANY(ingress.service_ports) AND NOT ingress.draining AND ingress.lease_expires_at>$3)
+              AND (CASE WHEN service.protocol='http' THEN ingress.https ELSE service.service_port=ANY(ingress.service_ports) END)
+              AND NOT ingress.draining AND ingress.lease_expires_at>$3)
             AND NOT EXISTS (SELECT 1 FROM control.ingress_leases ingress WHERE ingress.ingress_pool_id=work.ingress_pool_id
-              AND NOT (service.service_port=ANY(ingress.service_ports)) AND NOT ingress.draining AND ingress.lease_expires_at>$3)
+              AND NOT (CASE WHEN service.protocol='http' THEN ingress.https ELSE service.service_port=ANY(ingress.service_ports) END)
+              AND NOT ingress.draining AND ingress.lease_expires_at>$3)
       ))
     ORDER BY work.dns_available_at,work.hostname FOR UPDATE SKIP LOCKED LIMIT 1
 )

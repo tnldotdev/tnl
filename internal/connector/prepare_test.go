@@ -23,7 +23,7 @@ import (
 
 func connectionPreparationFixture(t *testing.T) (*connectorConnectionBackend, controlv1.Service) {
 	t.Helper()
-	service := controlv1.Service{Id: "svc_" + strings.Repeat("s", 22), Enabled: true, Protocol: controlv1.ServiceProtocolHTTP, Endpoint: &controlv1.ServiceEndpoint{Hostname: "api.example.test", Port: 15443}}
+	service := controlv1.Service{Id: "svc_" + strings.Repeat("s", 22), Enabled: true, Protocol: controlv1.ServiceProtocolHTTP, Endpoint: &controlv1.ServiceEndpoint{Hostname: "api.example.test", Port: 443}}
 	lifetime, cancel := context.WithCancel(t.Context())
 	b := &connectorConnectionBackend{
 		scope: connectorruntime.Context{Services: []string{"api"}}, parentPID: 1,

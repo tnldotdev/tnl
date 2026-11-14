@@ -33,8 +33,9 @@ func TestRemoteHTTPSettingsInheritDefaultsWithoutCreatingPublicURL(t *testing.T)
 		t.Fatalf("remote HTTP defaults or reachability changed: %+v", service)
 	}
 	project.Config.Tunnel.Access.Mode = "anonymous"
-	if _, err := Declaration(t.Context(), project, appliedTestContext(), nil); err == nil {
-		t.Fatal("remote HTTP inherited anonymous access")
+	anonymous, err := Declaration(t.Context(), project, appliedTestContext(), nil)
+	if err != nil || anonymous.Services["api"].Http.Access.Mode == nil || *anonymous.Services["api"].Http.Access.Mode != "anonymous" || anonymous.Services["api"].Public != nil || anonymous.Services["api"].PublicUrl != nil {
+		t.Fatal("anonymous HTTP access changed reachability or selected another publication kind", err)
 	}
 }
 

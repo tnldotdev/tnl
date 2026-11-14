@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"net"
+	"net/http"
 	"reflect"
 	"time"
 
@@ -27,6 +28,7 @@ type HTTPFrontend interface {
 
 type HTTPTarget struct {
 	Address   string
+	Handler   http.Handler
 	Transport targettransport.Transport
 	connector ConnectorAdmission
 	lifetime  context.Context
