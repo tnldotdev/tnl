@@ -3,6 +3,7 @@ package connector
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
@@ -85,6 +86,11 @@ func ConfiguredService(project clientproject.Project, name string) (string, erro
 	}
 	if publicMatch {
 		return "", publisherCLIError("configured name selects a public URL service; use its HTTPS URL or --no-config with an exact service ID")
+	}
+	if selected == "" && project.Declared != nil {
+		if _, declared := project.Declared.Services[name]; declared {
+			return "", publisherCLIError(fmt.Sprintf("service %q has no binding in deployment %q", name, config.SelectedDeployment(project.Config)))
+		}
 	}
 	return selected, nil
 }

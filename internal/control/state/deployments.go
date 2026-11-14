@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"time"
 
@@ -285,7 +286,7 @@ func (d *Database) UpdateDeployment(ctx context.Context, r UpdateDeploymentReque
 		return result, err
 	}
 	if row.Revision != r.ExpectedRevision {
-		if err = recordPublisherGroupUpdate(ctx, tx, row.ID, r.ActorID, "", "deployment/update/"+row.ConfigurationHash, r.Now); err != nil {
+		if err = recordPublisherGroupUpdate(ctx, tx, row.ID, r.ActorID, "", fmt.Sprintf("deployment/update/%d/%s", row.Revision, row.ConfigurationHash), r.Now); err != nil {
 			return result, err
 		}
 	}

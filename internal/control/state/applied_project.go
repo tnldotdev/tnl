@@ -403,12 +403,27 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	if err = lockAppliedProjectPublications(ctx, tx, r.TeamID, r.ProjectKey); err != nil {
 		return result, err
 	}
-	// project-wide declarations cannot contradict retained sibling bindings.
-	for deployment, saved := range record.Deployments {
-		if deployment == r.Deployment || r.retire {
-			continue
+	// live serving snapshots protect remote bindings, including runtime-created
+	// siblings. local desired input protects deferred local bindings. deleted
+	// deployments' desired snapshots remain history, not retained bindings.
+	var retained []map[string]ProjectServiceConfiguration
+	if !r.retire {
+		if r.Deployment != "local" {
+			retained = append(retained, record.Deployments["local"].Services)
 		}
-		for name, service := range saved.Services {
+		for _, g := range groups {
+			if managedGroups[g.ID] {
+				continue
+			}
+			snapshot, err := d.openDeploymentConfiguration(g)
+			if err != nil {
+				return result, err
+			}
+			retained = append(retained, snapshot.Services)
+		}
+	}
+	for _, services := range retained {
+		for name, service := range services {
 			if r.ServiceDeclarations[name] != service.Protocol {
 				return result, ErrProjectManaged
 			}
