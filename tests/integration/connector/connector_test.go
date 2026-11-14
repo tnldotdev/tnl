@@ -260,21 +260,19 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 	application.TLS = &tls.Config{MinVersion: tls.VersionTLS12, ClientAuth: tls.NoClientCert, Certificates: []tls.Certificate{pair}}
 	application.StartTLS()
 	defer application.Close()
-	_, portString, _ := net.SplitHostPort(application.Listener.Addr().String())
-	port, _ := strconv.Atoi(portString)
 	providerAddress := application.Listener.Addr().String()
 	team, _ := opaqueid.New(opaqueid.TeamPrefix)
 	service, _ := opaqueid.New(opaqueid.ServicePrefix)
 	trustRevision := int64(1)
 	sessionID, _ := opaqueid.New("wls_")
 	serviceRun, _ := opaqueid.New(opaqueid.ServiceRunPrefix)
-	allocated, err := net.Listen("tcp4", "127.0.0.1:0")
+	publicReservation, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	port = allocated.Addr().(*net.TCPAddr).Port
-	defer allocated.Close()
-	var releasePort sync.Once
+	// keep the public port occupied so local listeners cannot reuse it.
+	publicPort := publicReservation.Addr().(*net.TCPAddr).Port
+	defer publicReservation.Close()
 	native := connectorfixture.NewConnector(t, ca, caKey, service, serviceRun, sessionID, managedHostname, providerAddress)
 	var revoked atomic.Bool
 	renewed := make(chan struct{})
@@ -588,14 +586,11 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 			}
 			_ = json.NewEncoder(w).Encode(current)
 		case r.URL.Path == "/v1/workload/services":
-			_ = json.NewEncoder(w).Encode(map[string]any{"services": []any{map[string]any{"id": service, "service": serviceName, "protocol": protocol, "endpoint": map[string]any{"hostname": managedHostname, "port": port, "public": true}}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"services": []any{map[string]any{"id": service, "service": serviceName, "protocol": protocol, "endpoint": map[string]any{"hostname": managedHostname, "port": publicPort, "public": true}}}})
 		case strings.HasSuffix(r.URL.Path, "/run"):
-			// retain the managed port through fixture and owner IPC startup.
-			// the native owner binds it immediately after resolving this run.
-			releasePort.Do(func() { _ = allocated.Close() })
 			_ = json.NewEncoder(w).Encode(controlv1.ServiceSelection{ServiceId: service, ServiceRunId: serviceRun, RunNumber: 1,
 				Protocol: controlv1.ServiceProtocol(protocol), TrustRevision: trustRevision, ExpiresAt: time.Now().Add(time.Minute), Subject: current.Subject,
-				Endpoint: &controlv1.ServiceEndpoint{Hostname: managedHostname, Port: port, Public: true}, PairReady: &native.Ready})
+				Endpoint: &controlv1.ServiceEndpoint{Hostname: managedHostname, Port: publicPort, Public: true}, PairReady: &native.Ready})
 		case strings.Contains(r.URL.Path, "/connector-peer-pairs"):
 			var requested controlv1.ConnectorPeerPairRequest
 			var source controlv1.VisitorTokenWorkloadSource
@@ -620,9 +615,9 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 			if requested.Action == "renew" {
 				_ = json.NewEncoder(w).Encode(controlv1.ConnectorPeerPairRenewal{Pair: pair, RunValidUntil: pair.ExpiresAt,
 					Protocol: controlv1.ServiceProtocol(protocol), TrustRevision: trustRevision,
-					Endpoint: controlv1.ServiceEndpoint{Hostname: managedHostname, Port: port, Public: true},
+					Endpoint: controlv1.ServiceEndpoint{Hostname: managedHostname, Port: publicPort, Public: true},
 					VisitorPermission: controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKindService, Id: service},
-						Hostname: managedHostname, Port: port, ServiceTrustRevision: &trustRevision, VisitorPolicyRevision: 1, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: pair.ExpiresAt}})
+						Hostname: managedHostname, Port: publicPort, ServiceTrustRevision: &trustRevision, VisitorPolicyRevision: 1, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: pair.ExpiresAt}})
 				renewedOnce.Do(func() { close(renewed) })
 				return
 			}
@@ -639,7 +634,7 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(controlv1.VisitorTokenResponse{Resource: requested.Resource, Hostname: managedHostname, Port: port, ServiceTrustRevision: &trustRevision, VisitorPolicyRevision: 1, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: minTimeForFixture(time.Now().Add(time.Minute), current.LeaseExpiresAt)})
+			_ = json.NewEncoder(w).Encode(controlv1.VisitorTokenResponse{Resource: requested.Resource, Hostname: managedHostname, Port: publicPort, ServiceTrustRevision: &trustRevision, VisitorPolicyRevision: 1, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: minTimeForFixture(time.Now().Add(time.Minute), current.LeaseExpiresAt)})
 		case strings.HasSuffix(r.URL.Path, "/client-certificate"):
 			certificateRequests.Add(1)
 			w.WriteHeader(403)
@@ -1343,7 +1338,18 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 	if data, err := os.ReadFile(state.ConnectionHandle); err != nil || bytes.Contains(data, []byte("traceparent")) || bytes.Contains(data, []byte("1111111111111111")) {
 		t.Fatal("launch parent persisted in handle")
 	}
-	if probe, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(port))); err == nil {
+	var prepared connectorruntime.Prepared
+	if err := connectorruntime.ReadJSON(bytes.NewReader(call(nil, "read", "--handle", state.ConnectionHandle, "--service", serviceName)), &prepared); err != nil {
+		t.Fatal(err)
+	}
+	if err := connectorruntime.ValidatePrepared(prepared, serviceName); err != nil {
+		t.Fatal(err)
+	}
+	localPort := prepared.Connection.Port
+	if localPort == publicPort {
+		t.Fatal("connector listener reused the public endpoint port")
+	}
+	if probe, err := net.Listen("tcp4", net.JoinHostPort(prepared.Connection.Host, strconv.Itoa(localPort))); err == nil {
 		_ = probe.Close()
 		t.Fatal("caller-prepared CLI readiness left its selected service listener unbound")
 	}
@@ -1359,9 +1365,11 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 	if err := os.RemoveAll(filepath.Join(root, ".git")); err != nil {
 		t.Fatal(err)
 	}
-	var prepared connectorruntime.Prepared
 	if err := connectorruntime.ReadJSON(bytes.NewReader(call(nil, "read", "--handle", state.ConnectionHandle, "--service", serviceName)), &prepared); err != nil {
 		t.Fatal(err)
+	}
+	if prepared.Connection.Port != localPort {
+		t.Fatal("prepared read replaced the owner's local listener")
 	}
 	if strings.HasPrefix(startup, "action-") {
 		qualifyActionBackgroundRefresh(t, actionRefreshFixture{
@@ -1420,10 +1428,10 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 		time.Sleep(10 * time.Millisecond)
 	}
 	snapshot := prepared.Connection
-	if prepared.Schema != 1 || prepared.ProjectRuntime.Services[serviceName].Hostname != managedHostname || !prepared.ProjectRuntime.Services[serviceName].Public {
+	if prepared.Schema != 1 || prepared.ProjectRuntime.Services[serviceName].Hostname != managedHostname || prepared.ProjectRuntime.Services[serviceName].Port != publicPort || !prepared.ProjectRuntime.Services[serviceName].Public {
 		t.Fatal("prepared read did not preserve the owner's public metadata")
 	}
-	if snapshot.Schema != 1 || snapshot.Host != "127.0.0.1" || snapshot.Port != port || snapshot.SSL == nil || snapshot.SSL.ServerName != managedHostname || !snapshot.SSL.RejectUnauthorized {
+	if snapshot.Schema != 1 || snapshot.Host != "127.0.0.1" || snapshot.Port != localPort || snapshot.SSL == nil || snapshot.SSL.ServerName != managedHostname || !snapshot.SSL.RejectUnauthorized {
 		t.Fatal("prepared snapshot lost local dialing, managed TLS identity, or credential-free admission")
 	}
 	preparedJSON, _ := json.Marshal(snapshot)
@@ -1469,7 +1477,7 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 		if err != nil || bytes.Contains(data, []byte("PRIVATE KEY")) || bytes.Contains(data, []byte("fixture-cluster-token")) {
 			t.Fatal("session kubeconfig persisted credential material")
 		}
-		if !bytes.Contains(data, []byte("https://127.0.0.1:"+strconv.Itoa(port))) || !bytes.Contains(data, []byte("tls-server-name: "+managedHostname)) {
+		if !bytes.Contains(data, []byte("https://127.0.0.1:"+strconv.Itoa(localPort))) || !bytes.Contains(data, []byte("tls-server-name: "+managedHostname)) {
 			t.Fatal("kubeconfig lost separate dial host and TLS identity", string(data))
 		}
 	}
