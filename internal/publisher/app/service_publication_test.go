@@ -121,10 +121,13 @@ func TestServicePublicationJournalsProvisioningBeforeManagerObservations(t *test
 		protocol controlv1.ServiceProtocol
 		target   string
 		url      string
+		prepared string
 	}{
-		{"public_http", controlv1.ServiceProtocolHTTP, "http://127.0.0.1:3000", "https://public.example"},
-		{"connector_http", controlv1.ServiceProtocolHTTP, "http://127.0.0.1:3000", ""},
-		{"connector_tcp", controlv1.Tcp, "127.0.0.1:15432", ""},
+		{"public_http", controlv1.ServiceProtocolHTTP, "http://127.0.0.1:3000", "https://public.example", ""},
+		{"prepared_http", controlv1.ServiceProtocolHTTP, "http://127.0.0.1:3000", "https://public.example", "https://public.example"},
+		{"changed_endpoint", controlv1.ServiceProtocolHTTP, "http://127.0.0.1:3000", "https://public.example", "https://previous.example"},
+		{"connector_http", controlv1.ServiceProtocolHTTP, "http://127.0.0.1:3000", "", ""},
+		{"connector_tcp", controlv1.Tcp, "127.0.0.1:15432", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w, _ := testWorkers(t)
@@ -159,12 +162,12 @@ func TestServicePublicationJournalsProvisioningBeforeManagerObservations(t *test
 				}}, nil
 			}
 			cursor := w.Manager.Snapshot().Cursor
-			id := registerServicePublication(t, w, tc.target, tc.url)
+			id := registerServicePublication(t, w, tc.target, tc.prepared)
 			if err := receiveServicePublication(t, provisioned); err != nil {
 				t.Fatal(err)
 			}
 			starting := assertServicePublication(t, w, tc.protocol, tc.target, clientstate.TunnelStateProvisioning, 7, "")
-			if starting.Services[0].Routable || starting.Services[0].Ready {
+			if starting.Services[0].Routable || starting.Services[0].Ready || starting.Services[0].PublicURL != tc.prepared {
 				t.Fatal("provisioning was reported as routable or checked", starting)
 			}
 			close(promote)
@@ -172,7 +175,7 @@ func TestServicePublicationJournalsProvisioningBeforeManagerObservations(t *test
 				t.Fatal(err)
 			}
 			routable := assertServicePublication(t, w, tc.protocol, tc.target, clientstate.TunnelStateReady, 7, tc.url)
-			if routable.Services[0].TunnelID != starting.Services[0].TunnelID || !routable.Services[0].Routable || routable.Services[0].Ready {
+			if routable.Services[0].TunnelID != starting.Services[0].TunnelID || !routable.Services[0].Routable || routable.Services[0].Ready || routable.Services[0].PublicURL != tc.url {
 				t.Fatal("ready publication lost its identity or invented readiness", routable)
 			}
 			events, err := EventsAfterFrom(t.Context(), w.Database, routable.Project, cursor)
@@ -194,6 +197,11 @@ func TestServicePublicationJournalsProvisioningBeforeManagerObservations(t *test
 					state := "provisioning"
 					if event.Service.Routable {
 						state = "ready"
+						if event.Service.PublicURL != tc.url {
+							t.Fatal("ready observation omitted the realized endpoint", event)
+						}
+					} else if event.Service.PublicURL != tc.prepared {
+						t.Fatal("provisioning changed the preparation endpoint", event)
 					}
 					transitions = append(transitions, "service."+state)
 				}
@@ -206,6 +214,101 @@ func TestServicePublicationJournalsProvisioningBeforeManagerObservations(t *test
 				t.Fatal(err)
 			}
 			assertNoServicePublications(t, w)
+		})
+	}
+}
+
+func TestServicePublicationEndpointUsesBoundTargetAndRun(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		target      string
+		run         uint64
+		wrongTunnel bool
+	}{
+		{"current", "http://127.0.0.1:3000", 7, false},
+		{"other_target", "http://127.0.0.1:4000", 7, false},
+		{"other_run", "http://127.0.0.1:3000", 6, false},
+		{"other_tunnel", "http://127.0.0.1:3000", 7, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w, _ := testWorkers(t)
+			callbacks := make(chan func(PublicationUpdate) error, 1)
+			w.Manager.run = func(ctx context.Context, _ Service, observe func(PublicationUpdate) error) error {
+				callbacks <- observe
+				<-ctx.Done()
+				return ctx.Err()
+			}
+			target := "http://127.0.0.1:3000"
+			id := registerServicePublication(t, w, target, "https://prepared.example")
+			observe := receiveServicePublication(t, callbacks)
+			bound, err := w.Database.BeginTunnel(t.Context(), servicePublicationOptions(w, Service{Name: "web", Target: target}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := bound.Finish(t.Context(), nil); err != nil {
+					t.Error(err)
+				}
+			}()
+			if err := w.Manager.BindTunnel("web", id, target, bound.ID()); err != nil {
+				t.Fatal(err)
+			}
+			if err := bound.SetProvisioning(t.Context(), 7); err != nil {
+				t.Fatal(err)
+			}
+			if err := observe(PublicationUpdate{RunNumber: 7, TunnelID: bound.ID(), Target: target}); err != nil {
+				t.Fatal(err)
+			}
+			if err := bound.SetReady(t.Context(), "https://current.example", 7); err != nil {
+				t.Fatal(err)
+			}
+			sibling, err := w.Database.BeginTunnel(t.Context(), servicePublicationOptions(w, Service{Name: "other", Target: target}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := sibling.Finish(t.Context(), nil); err != nil {
+					t.Error(err)
+				}
+			}()
+			if err := sibling.SetReady(t.Context(), "https://sibling.example", 7); err != nil {
+				t.Fatal(err)
+			}
+			before := w.Manager.Snapshot()
+			update := PublicationUpdate{RunNumber: tc.run, Routable: true, TunnelID: bound.ID(), Target: tc.target, PublicURL: "https://current.example"}
+			if tc.wrongTunnel {
+				update.TunnelID, update.PublicURL = sibling.ID(), "https://sibling.example"
+			}
+			stale := tc.target != target || tc.run != 7 || tc.wrongTunnel
+			if err := observe(update); stale && !errors.Is(err, ErrRegistrationStale) || !stale && err != nil {
+				t.Fatal("publication accepted mismatched completed facts", err)
+			}
+			after := w.Manager.Snapshot()
+			want := "https://current.example"
+			if stale {
+				want = "https://prepared.example"
+				if after.Cursor != before.Cursor || !reflect.DeepEqual(after.Services, before.Services) {
+					t.Fatal("rejected publication changed the journal", after)
+				}
+			}
+			if service := after.Services[0]; service.PublicURL != want || service.Routable == stale || service.Ready {
+				t.Fatal("publication adopted another endpoint or conflated readiness", service)
+			}
+			before = after
+			update.RunNumber = 6
+			if err := observe(update); !errors.Is(err, ErrRegistrationStale) {
+				t.Fatal("older run replaced the endpoint", err)
+			}
+			if after := w.Manager.Snapshot(); after.Cursor != before.Cursor || !reflect.DeepEqual(after.Services, before.Services) {
+				t.Fatal("older run changed the endpoint observation", after)
+			}
+			if err := w.Manager.UnregisterTarget(id, "owner", target); err != nil {
+				t.Fatal(err)
+			}
+			update.RunNumber = 9
+			if err := observe(update); !errors.Is(err, ErrRegistrationStale) {
+				t.Fatal("released registration accepted an endpoint", err)
+			}
 		})
 	}
 }
@@ -396,7 +499,7 @@ func TestServicePublicationFailedBindingClosesUnboundJournal(t *testing.T) {
 				}, nil
 			}
 			cursor := w.Manager.Snapshot().Cursor
-			err := w.Run(t.Context(), Service{Name: "web", ServiceProtocol: "http", RegistrationID: "stale", Target: "http://127.0.0.1:3000"}, func(uint64, bool) error { return nil })
+			err := w.Run(t.Context(), Service{Name: "web", ServiceProtocol: "http", RegistrationID: "stale", Target: "http://127.0.0.1:3000"}, func(PublicationUpdate) error { return nil })
 			if !errors.Is(err, ErrRegistrationStale) || operationCalled || cleanupCalls != 1 {
 				t.Fatalf("failed binding ran the operation or skipped cleanup: err=%v operation=%v cleanup calls=%d", err, operationCalled, cleanupCalls)
 			}
@@ -506,10 +609,10 @@ func TestServicePublicationRejectsOlderRunBeforeJournalMutation(t *testing.T) {
 			var releaseOnce sync.Once
 			t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
 			if concurrent {
-				w.Manager.run = func(ctx context.Context, service Service, observe func(uint64, bool) error) error {
-					return w.Run(ctx, service, func(run uint64, ready bool) error {
-						err := observe(run, ready)
-						if run == 2 && !ready {
+				w.Manager.run = func(ctx context.Context, service Service, observe func(PublicationUpdate) error) error {
+					return w.Run(ctx, service, func(update PublicationUpdate) error {
+						err := observe(update)
+						if update.RunNumber == 2 && !update.Routable {
 							close(entered)
 							<-release
 						}

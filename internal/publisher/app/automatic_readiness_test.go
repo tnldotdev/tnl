@@ -433,7 +433,12 @@ func TestAutomaticReadinessReplacementBeforeAcceptanceRejectsOldSuccess(t *testi
 	})
 	accepted := make(chan bool, 1)
 	w.acceptReadiness = func(observation Observation) bool {
-		if err := w.Manager.Published(observation.RegistrationID, 2, true); err != nil {
+		service, current := w.Manager.ServiceForRun("web", observation.RegistrationID, observation.Target, observation.RunNumber)
+		if !current {
+			t.Error("probe lost its current registration before replacement")
+			return false
+		}
+		if err := w.Manager.Published(observation.RegistrationID, PublicationUpdate{RunNumber: 2, Routable: true, Target: service.Target, TunnelID: service.TunnelID, PublicURL: service.PublicURL}); err != nil {
 			t.Error(err)
 		}
 		ok := w.Manager.Observe(observation)

@@ -61,11 +61,11 @@ func serveInvocations(cleanupReplyLoss string) error {
 		return err
 	}
 	defer database.Close()
-	manager, err := publisherapp.New(ctx, root, database, nil, func(worker context.Context, service publisherapp.Service, publish func(uint64, bool) error) error {
+	manager, err := publisherapp.New(ctx, root, database, nil, func(worker context.Context, service publisherapp.Service, publish func(publisherapp.PublicationUpdate) error) error {
 		if err := os.WriteFile(filepath.Join(root, "worker-"+service.RegistrationID), nil, 0600); err != nil {
 			return err
 		}
-		if err := publish(1, true); err != nil {
+		if err := publish(publisherapp.PublicationUpdate{RunNumber: 1, Routable: true, Target: service.Target, TunnelID: service.TunnelID, PublicURL: service.PublicURL}); err != nil {
 			return err
 		}
 		<-worker.Done()

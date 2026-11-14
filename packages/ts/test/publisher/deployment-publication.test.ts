@@ -45,7 +45,7 @@ async function visit(target: string): Promise<string> {
     request.end();
   });
 }
-function fixture() {
+function fixture({ unrealized = false, publicEndpoint = true, runNumber = 1 } = {}) {
   const sessions = new Map<
     string,
     {
@@ -53,6 +53,7 @@ function fixture() {
       body?: z.output<typeof payload>;
       registration: string;
       publicURL: string;
+      runNumber: number;
       stopped: boolean;
     }
   >();
@@ -64,6 +65,7 @@ function fixture() {
         selection,
         registration: `reg_${key}`,
         publicURL: `https://app-${key}.example.test`,
+        runNumber,
         stopped: false,
       });
       return {
@@ -90,21 +92,23 @@ function fixture() {
         version: 1,
         registration_id: session.registration,
         service: session.selection.service,
-        hostname: new URL(session.publicURL).hostname,
-        public_url: session.publicURL,
+        hostname: unrealized ? "" : new URL(session.publicURL).hostname,
+        public_url: unrealized ? "" : session.publicURL,
         project: {
           namespace: "example.test",
           dev: true,
-          services: {
-            web: {
-              protocol: "http",
-              namespace: "example.test",
-              hostname: new URL(session.publicURL).hostname,
-              port: 443,
-              public: true,
-              url: session.publicURL,
-            },
-          },
+          services: unrealized
+            ? {}
+            : {
+                web: {
+                  protocol: "http",
+                  namespace: "example.test",
+                  hostname: new URL(session.publicURL).hostname,
+                  port: 443,
+                  public: true,
+                  url: session.publicURL,
+                },
+              },
         },
       };
     if (operation === "publications/register" || operation === "register") {
@@ -136,8 +140,8 @@ function fixture() {
             routable: true,
             ready: false,
             readiness: { path: "/" },
-            public_url: session.publicURL,
-            run_number: 1,
+            ...(publicEndpoint ? { public_url: session.publicURL } : {}),
+            run_number: session.runNumber,
           },
         ],
       };
@@ -210,29 +214,79 @@ test("local named publication uses framework registration and rejects policy ove
 });
 
 test.each(["node", "fetch"])(
-  "private HTTP prepare releases its acknowledgment and leaves %s listener ownership intact",
+  "named publication waits for its first endpoint and preserves %s listener ownership",
   async (kind) => {
-    const { request, calls, sessions } = fixture();
+    const { request, calls, sessions } = fixture({ unrealized: true });
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
     native.request.mockImplementation(async (endpoint, operation, body) => {
-      const value = await request(endpoint, operation, body);
-      if (operation !== "prepare") return value;
-      return {
-        version: 1,
-        registration_id: z.looseObject({ registration_id: z.string() }).parse(value)
-          .registration_id,
-        service: "web",
-        hostname: "",
-        public_url: "",
-        project: { dev: true, namespace: "", services: {} },
-      };
+      if (operation === "status") {
+        entered.resolve();
+        await release.promise;
+      }
+      return request(endpoint, operation, body);
     });
+    const local = createClient({ services: { web: { protocol: "http" } } }).deployment("local");
+    const server = kind === "node" ? await listener() : undefined;
+    let returned = false;
+    const pending = local.publish("web", server ?? (() => new Response("owned"))).then((value) => {
+      returned = true;
+      return value;
+    });
+    try {
+      await entered.promise;
+      expect(returned).toBe(false);
+      expect(calls.filter((call) => call.operation === "prepare")).toHaveLength(1);
+      expect(calls.filter((call) => call.operation === "register")).toHaveLength(1);
+      const target = payload.parse(
+        calls.find((call) => call.operation === "register")?.body,
+      ).target;
+      expect(await visit(target)).toBe(server === undefined ? "owned" : "application owned");
+      release.resolve();
+      const publication = await pending;
+      expect(publication.url).toBe([...sessions.values()][0]?.publicURL);
+      await publication.close();
+      expect(calls.filter((call) => call.operation === "unregister")).toHaveLength(1);
+      if (server !== undefined) expect(server.listening).toBe(true);
+      else await expect(fetch(target)).rejects.toThrow();
+    } finally {
+      release.resolve();
+      await local.close();
+    }
+  },
+);
+
+test.each(["url", "run"])("late named endpoint retains its %s fence", async (changed) => {
+  const { sessions, calls } = fixture({ unrealized: true, runNumber: 2 });
+  const local = createClient({ services: { web: { protocol: "http" } } }).deployment("local");
+  const server = await listener();
+  const publication = await local.publish("web", server);
+  try {
+    const session = [...sessions.values()][0];
+    if (session === undefined) throw new Error("missing publication session");
+    if (changed === "url") session.publicURL = "https://another.example.test";
+    else session.runNumber = 1;
+    const failure = await publication.wait().catch((cause: unknown) => cause);
+    expect(failure).toMatchObject({ code: "sdk.response_invalid" });
+    await expect(publication.close()).rejects.toBe(failure);
+  } finally {
+    await local.close();
+  }
+  expect(server.listening).toBe(true);
+  expect(calls.filter((call) => call.operation === "unregister")).toHaveLength(1);
+});
+
+test.each(["node", "fetch"])(
+  "connector-only HTTP releases its registration and leaves %s listener ownership intact",
+  async (kind) => {
+    const { calls, sessions } = fixture({ unrealized: true, publicEndpoint: false });
     const local = createClient({ services: { web: { protocol: "http" } } }).deployment("local");
     const server = kind === "node" ? await listener() : undefined;
     await expect(
       local.publish("web", server ?? (() => new Response("owned"))),
     ).rejects.toMatchObject({ code: "sdk.response_invalid" });
     expect(calls.filter((call) => call.operation === "prepare")).toHaveLength(1);
-    expect(calls.filter((call) => call.operation === "register")).toHaveLength(0);
+    expect(calls.filter((call) => call.operation === "register")).toHaveLength(1);
     const unregistered = calls.filter((call) => call.operation === "unregister");
     expect(unregistered).toHaveLength(1);
     expect([...sessions.values()][0]?.stopped).toBe(true);

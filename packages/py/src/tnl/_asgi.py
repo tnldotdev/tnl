@@ -249,7 +249,6 @@ class Publication:
         self._service = service
         self._on_close = on_close
         self._environment = dict(os.environ if environment is None else environment)
-        self._assigned_url: str | None = None
         self._pid = os.getpid()
         self._loop = asyncio.get_running_loop()
         self._server = server
@@ -359,11 +358,10 @@ class Publication:
                 }
                 # prepare acknowledged this reservation before url validation.
                 self._registration_uncertain = False
-                if not assignment.public_url or (
-                    self._assigned_url is not None and self._assigned_url != assignment.public_url
-                ):
-                    raise InvalidResponse()
-                self._assigned_url = assignment.public_url
+                if assignment.public_url:
+                    if self._url is not None and self._url != assignment.public_url:
+                        raise InvalidResponse()
+                    self._url = assignment.public_url
                 self._registration_uncertain = True
                 await self._native.request(self._endpoint, "register", self._registration)
                 self._registration_uncertain = False
@@ -438,15 +436,15 @@ class Publication:
 
     def _observe(self, status: Status) -> None:
         if status.public_url is not None:
-            if (self._url is not None and status.public_url != self._url) or (
-                self._assigned_url is not None and status.public_url != self._assigned_url
-            ):
+            if self._url is not None and status.public_url != self._url:
                 raise InvalidResponse()
             self._url = status.public_url
         if status.publish_run_number is not None:
             if status.publish_run_number < self._run:
                 raise InvalidResponse()
             self._run = status.publish_run_number
+        if status.routable and status.public_url is None:
+            raise InvalidResponse()
         if status.routable and not self._ready.done():
             self._ready.set_result(None)
         elif status.failure:

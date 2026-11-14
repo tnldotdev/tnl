@@ -212,7 +212,7 @@ async function publishServerUntraced(
   };
   let endpoint = await runtime.start(directory, undefined, selection);
   if (options.signal?.aborted) throw aborted();
-  let assignedURL: `https://${string}` | undefined;
+  let currentURL: `https://${string}` | undefined;
   let registration: z.output<typeof registrationSchema> | undefined;
   let uncertain = false;
   let unregisterReplyLost = false;
@@ -252,11 +252,12 @@ async function publishServerUntraced(
         endpoint.scope !== "app" ||
         assignment.service !== localService ||
         endpoint.service !== localService ||
-        assignment.publicURL === undefined ||
-        (assignedURL !== undefined && assignedURL !== assignment.publicURL)
+        (assignment.publicURL !== undefined &&
+          currentURL !== undefined &&
+          currentURL !== assignment.publicURL)
       )
         throw new TnlError("sdk.response_invalid");
-      assignedURL = assignment.publicURL;
+      if (assignment.publicURL !== undefined) currentURL = assignment.publicURL;
       uncertain = true;
       await runtime.request(endpoint, "register", registration);
       uncertain = false;
@@ -333,7 +334,6 @@ async function publishServerUntraced(
     }
     throw cause;
   }
-  let currentURL: `https://${string}` | undefined;
   let closed = false;
   let resolveClosing!: () => void;
   const closingSignal = new Promise<void>((resolve) => {
@@ -421,10 +421,7 @@ async function publishServerUntraced(
   let lastRun = 0;
   const observe = (status: NonNullable<ReturnType<typeof parseStatus>>) => {
     if (status.publicURL !== undefined) {
-      if (
-        (currentURL !== undefined && currentURL !== status.publicURL) ||
-        (assignedURL !== undefined && assignedURL !== status.publicURL)
-      )
+      if (currentURL !== undefined && currentURL !== status.publicURL)
         throw new TnlError("sdk.response_invalid");
       currentURL = status.publicURL;
     }
@@ -433,6 +430,7 @@ async function publishServerUntraced(
       lastRun = status.publishRunNumber;
     }
     if (status.routable) {
+      if (status.publicURL === undefined) throw new TnlError("sdk.response_invalid");
       if (!readyReached) {
         readyReached = true;
         resolveReady(handle);

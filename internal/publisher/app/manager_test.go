@@ -32,7 +32,7 @@ func TestWorkerCancellationRetainsIndependentFailures(t *testing.T) {
 func TestUnregisterJoinsWorkerBeforeRetryableExactCleanup(t *testing.T) {
 	operation, cleanup := errors.New("worker failed"), errors.New("cleanup failed")
 	canceled, release, joined := make(chan struct{}), make(chan struct{}), make(chan struct{})
-	manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "web"}}, func(ctx context.Context, _ Service, _ func(uint64, bool) error) error {
+	manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "web"}}, func(ctx context.Context, _ Service, _ func(PublicationUpdate) error) error {
 		defer close(joined)
 		<-ctx.Done()
 		close(canceled)
@@ -92,7 +92,7 @@ func TestPermanentCleanupRetiresJoinedRegistrationAndPreservesFailures(t *testin
 		t.Run(stopped, func(t *testing.T) {
 			operation, cleanup := errors.New("worker failed independently"), errors.New("deletion authority was revoked")
 			canceled, release, joined := make(chan struct{}), make(chan struct{}), make(chan struct{})
-			manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "web"}}, func(ctx context.Context, _ Service, _ func(uint64, bool) error) error {
+			manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "web"}}, func(ctx context.Context, _ Service, _ func(PublicationUpdate) error) error {
 				defer close(joined)
 				<-ctx.Done()
 				close(canceled)
@@ -353,9 +353,9 @@ func newTestManager(t *testing.T, project, root string, services []Service, run 
 func TestListenerOwnershipPublicationAndReplacementRejectsStaleRuns(t *testing.T) {
 	var runs atomic.Uint64
 	started := make(chan uint64, 4)
-	manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "web", Directory: "."}, {Name: "api", Directory: "api"}}, func(ctx context.Context, service Service, observe func(uint64, bool) error) error {
+	manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "web", Directory: "."}, {Name: "api", Directory: "api"}}, func(ctx context.Context, service Service, observe func(PublicationUpdate) error) error {
 		run := runs.Add(1)
-		if err := observe(run, true); err != nil {
+		if err := observe(PublicationUpdate{RunNumber: run, Routable: true, Target: service.Target, TunnelID: service.TunnelID, PublicURL: service.PublicURL}); err != nil {
 			return err
 		}
 		started <- run
@@ -428,7 +428,7 @@ func TestListenerOwnershipPublicationAndReplacementRejectsStaleRuns(t *testing.T
 }
 
 func TestCurrentRegistrationAndExactRunKeepLivenessAndReadinessSeparate(t *testing.T) {
-	manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "web"}}, func(ctx context.Context, _ Service, _ func(uint64, bool) error) error {
+	manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "web"}}, func(ctx context.Context, _ Service, _ func(PublicationUpdate) error) error {
 		<-ctx.Done()
 		return ctx.Err()
 	})
@@ -450,10 +450,10 @@ func TestCurrentRegistrationAndExactRunKeepLivenessAndReadinessSeparate(t *testi
 	if !manager.CurrentRegistration("web", id, target) || manager.CurrentRun("web", id, target, 0) || manager.CurrentRun("web", id, target, 0) {
 		t.Fatal("registration ownership granted run-zero authority")
 	}
-	if err := manager.Published(id, 0, true); !errors.Is(err, ErrRegistrationStale) {
+	if err := manager.Published(id, PublicationUpdate{Target: target, Routable: true}); !errors.Is(err, ErrRegistrationStale) {
 		t.Fatal("run zero became routable", err)
 	}
-	if err := manager.Published(id, 7, false); err != nil {
+	if err := manager.Published(id, PublicationUpdate{RunNumber: 7, Target: target}); err != nil {
 		t.Fatal(err)
 	}
 	service, current := manager.ServiceForRun("web", id, target, 7)
@@ -464,7 +464,7 @@ func TestCurrentRegistrationAndExactRunKeepLivenessAndReadinessSeparate(t *testi
 	if manager.Observe(observation) {
 		t.Fatal("unroutable run accepted readiness")
 	}
-	if err := manager.Published(id, 7, true); err != nil || !manager.Observe(observation) {
+	if err := manager.Published(id, PublicationUpdate{RunNumber: 7, Routable: true, Target: target, PublicURL: service.PublicURL}); err != nil || !manager.Observe(observation) {
 		t.Fatal("routable current run rejected readiness", err)
 	}
 	alive.Store(false)
@@ -475,7 +475,7 @@ func TestCurrentRegistrationAndExactRunKeepLivenessAndReadinessSeparate(t *testi
 
 func TestRegistrationAckDoesNotWaitForProvisioning(t *testing.T) {
 	blocked := make(chan struct{})
-	manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "web"}}, func(ctx context.Context, _ Service, _ func(uint64, bool) error) error {
+	manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "web"}}, func(ctx context.Context, _ Service, _ func(PublicationUpdate) error) error {
 		close(blocked)
 		<-ctx.Done()
 		return ctx.Err()
@@ -502,9 +502,9 @@ func TestRegisteredListenerSurvivesPublicationFailureAndCanRetry(t *testing.T) {
 	fail := make(chan struct{})
 	retried := make(chan struct{})
 	var attempts atomic.Uint64
-	manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "web"}}, func(ctx context.Context, _ Service, observe func(uint64, bool) error) error {
+	manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "web"}}, func(ctx context.Context, service Service, observe func(PublicationUpdate) error) error {
 		run := attempts.Add(1)
-		if err := observe(run, true); err != nil {
+		if err := observe(PublicationUpdate{RunNumber: run, Routable: true, Target: service.Target, TunnelID: service.TunnelID, PublicURL: service.PublicURL}); err != nil {
 			return err
 		}
 		if run != 1 {
@@ -574,15 +574,15 @@ func TestRegistrationInvalidationFencesCallbacksBeforeJoining(t *testing.T) {
 			canceled, release := make(chan struct{}), make(chan struct{})
 			late := make(chan error, 1)
 			var attempts atomic.Uint64
-			manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "web"}}, func(ctx context.Context, _ Service, observe func(uint64, bool) error) error {
+			manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "web"}}, func(ctx context.Context, service Service, observe func(PublicationUpdate) error) error {
 				run := attempts.Add(1)
-				if err := observe(run, true); err != nil {
+				if err := observe(PublicationUpdate{RunNumber: run, Routable: true, Target: service.Target, TunnelID: service.TunnelID, PublicURL: service.PublicURL}); err != nil {
 					return err
 				}
 				started <- struct{}{}
 				<-ctx.Done()
 				if run == 1 {
-					late <- observe(run+1, true)
+					late <- observe(PublicationUpdate{RunNumber: run + 1, Routable: true, Target: service.Target, TunnelID: service.TunnelID, PublicURL: service.PublicURL})
 					close(canceled)
 					<-release
 				}
@@ -679,7 +679,7 @@ func TestRegistrationInvalidationFencesCallbacksBeforeJoining(t *testing.T) {
 
 func TestPublisherWarningsStayWithRunAndClearWhenRoutable(t *testing.T) {
 	started := make(chan struct{})
-	manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "web"}}, func(ctx context.Context, _ Service, _ func(uint64, bool) error) error {
+	manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "web"}}, func(ctx context.Context, _ Service, _ func(PublicationUpdate) error) error {
 		close(started)
 		<-ctx.Done()
 		return ctx.Err()
@@ -696,7 +696,7 @@ func TestPublisherWarningsStayWithRunAndClearWhenRoutable(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-started
-	if err := manager.Published(id, 1, false); err != nil {
+	if err := manager.Published(id, PublicationUpdate{RunNumber: 1, Target: "http://127.0.0.1:1234"}); err != nil {
 		t.Fatal(err)
 	}
 	manager.SetProvisioningStage("web", id, 1, "publisher_connections")
@@ -714,7 +714,7 @@ func TestPublisherWarningsStayWithRunAndClearWhenRoutable(t *testing.T) {
 	if manager.Snapshot().Cursor != first.Cursor {
 		t.Fatal("repeated or stale warning advanced the event cursor")
 	}
-	if err := manager.Published(id, 1, true); err != nil {
+	if err := manager.Published(id, PublicationUpdate{RunNumber: 1, Routable: true, Target: "http://127.0.0.1:1234", PublicURL: "https://web.example"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := manager.Snapshot().Services[0]; got.Failure != "" || !got.Routable || got.ProvisioningStage != "" {
@@ -763,8 +763,8 @@ func TestJournalResumeAndManagerRestartCursor(t *testing.T) {
 
 func TestConfigurationReconciliationPreservesLiveAppsAndJoinsRemovedPublishers(t *testing.T) {
 	started, stopped := make(chan struct{}), make(chan struct{})
-	manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "api", Readiness: Readiness{Path: "/"}}}, func(ctx context.Context, _ Service, observe func(uint64, bool) error) error {
-		if err := observe(1, true); err != nil {
+	manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "api", Readiness: Readiness{Path: "/"}}}, func(ctx context.Context, service Service, observe func(PublicationUpdate) error) error {
+		if err := observe(PublicationUpdate{RunNumber: 1, Routable: true, Target: service.Target, TunnelID: service.TunnelID, PublicURL: service.PublicURL}); err != nil {
 			return err
 		}
 		close(started)

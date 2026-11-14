@@ -40,7 +40,7 @@ func testLostUnregisterReply(t *testing.T, prepared, permanent bool) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	manager, err := publisherapp.New(t.Context(), root, database, []publisherapp.Service{{Name: "web"}, {Name: "api"}}, func(ctx context.Context, _ publisherapp.Service, _ func(uint64, bool) error) error {
+	manager, err := publisherapp.New(t.Context(), root, database, []publisherapp.Service{{Name: "web"}, {Name: "api"}}, func(ctx context.Context, _ publisherapp.Service, _ func(publisherapp.PublicationUpdate) error) error {
 		<-ctx.Done()
 		return ctx.Err()
 	})
@@ -187,7 +187,7 @@ func TestAppCapabilityCannotReplaceAnotherServiceOrSubmitReadiness(t *testing.T)
 		t.Fatal(err)
 	}
 	defer database.Close()
-	manager, err := publisherapp.New(t.Context(), root, database, []publisherapp.Service{{Name: "web"}, {Name: "api"}}, func(ctx context.Context, _ publisherapp.Service, _ func(uint64, bool) error) error {
+	manager, err := publisherapp.New(t.Context(), root, database, []publisherapp.Service{{Name: "web"}, {Name: "api"}}, func(ctx context.Context, _ publisherapp.Service, _ func(publisherapp.PublicationUpdate) error) error {
 		<-ctx.Done()
 		return ctx.Err()
 	})
