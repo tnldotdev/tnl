@@ -30,6 +30,11 @@ The SDK renews the registration while the app is running. `publisher/app` manage
 registrations and stops the old publication before replacing it.
 `publisher/local` runs that manager and the local API.
 
+Service-backed app workers use the same local publication journal for every
+protocol. The worker joins publication work, drains inspection, and includes
+configuration cleanup failures before writing the terminal local observation.
+Local readiness does not require a public hostname or consume an ingress port.
+
 ## how visitors reach the app
 
 A public visitor connects through ingress and a relay. Visitor TLS passes

@@ -224,7 +224,7 @@ func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection Enrol
 			return err
 		}
 	}
-	tunnel, err := database.BeginTunnel(ctx, clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, Server: server, Target: target, ServiceProtocol: publicURL.ServiceProtocol, Project: flags.ProjectRoot, Service: flags.Service})
+	tunnel, err := database.BeginTunnel(ctx, clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, Server: server, Target: target, ServiceProtocol: controlv1.ServiceProtocol(publicURL.ServiceProtocol), Project: flags.ProjectRoot, Service: flags.Service})
 	if err != nil {
 		return err
 	}

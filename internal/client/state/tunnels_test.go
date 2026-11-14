@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -148,23 +150,141 @@ func TestTunnelRequiresPublicationAndTarget(t *testing.T) {
 	}
 }
 
-func TestPrivateDatabaseLabelsCannotAcquirePublicTunnelPorts(t *testing.T) {
+func TestServiceProtocolsShareLocalPublicationJournalWithoutPublicEndpoints(t *testing.T) {
 	database, err := Open(t.Context(), filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	for _, protocol := range []controlv1.PublicURLServiceProtocol{"postgres", "mysql", "tcp", "redis", "ssh"} {
-		if _, err := database.BeginTunnel(t.Context(), BeginTunnelOptions{
-			Command: TunnelCommandPublish, Server: "https://server.example", Target: "127.0.0.1:5432",
-			Project: t.TempDir(), Service: "orders", ServiceProtocol: protocol,
-		}); err == nil {
-			t.Fatalf("%s was accepted as a public URL tunnel", protocol)
+	for _, protocol := range []controlv1.ServiceProtocol{controlv1.ServiceProtocolHTTP, controlv1.Postgres, controlv1.Mysql, controlv1.Tcp, controlv1.Kubernetes} {
+		t.Run(string(protocol), func(t *testing.T) {
+			project := t.TempDir()
+			target, canonical := "15432", "127.0.0.1:15432"
+			if protocol == controlv1.ServiceProtocolHTTP {
+				target, canonical = "3000", "http://127.0.0.1:3000"
+			} else if protocol == controlv1.Kubernetes {
+				target, canonical = "https://127.0.0.1:16443", "https://127.0.0.1:16443"
+			}
+			runtime, err := database.ReadRuntimeSnapshot(t.Context(), project)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tunnel, err := database.BeginTunnel(t.Context(), BeginTunnelOptions{
+				Command: TunnelCommandPublish, Server: "https://server.example", Target: target,
+				Project: project, Service: "orders", ServiceProtocol: protocol,
+			})
+			if err != nil {
+				t.Fatal("service publication could not join the local journal", protocol, err)
+			}
+			t.Cleanup(func() { _ = tunnel.Finish(context.Background(), nil) })
+			assertTunnelSnapshot(t, database, TunnelStateStarting, TunnelSummary{Total: 1, Starting: 1})
+			if err := tunnel.SetProvisioning(t.Context(), 7); err != nil {
+				t.Fatal(err)
+			}
+			assertTunnelSnapshot(t, database, TunnelStateProvisioning, TunnelSummary{Total: 1, Provisioning: 1})
+			if err := tunnel.SetReady(t.Context(), "", 7); err != nil {
+				t.Fatal(err)
+			}
+			snapshot := assertTunnelSnapshot(t, database, TunnelStateReady, TunnelSummary{Total: 1, Ready: 1})
+			saved := snapshot.Tunnels[0]
+			if saved.ID != tunnel.ID() || saved.ServiceProtocol != protocol || saved.Target != canonical || saved.Project != project || saved.Service != "orders" ||
+				saved.PublicURL != "" || saved.Hostname != "" || saved.PublicURLID != "" || saved.PublishRunNumber != 7 {
+				t.Fatal("local publication invented a public endpoint or lost its protocol/run", saved)
+			}
+			if err := tunnel.Finish(t.Context(), nil); err != nil {
+				t.Fatal(err)
+			}
+			events, err := database.RuntimeEventsAfter(t.Context(), project, runtime.Cursor)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var states []TunnelState
+			for _, event := range events {
+				var payload struct {
+					Publication TunnelInfo `json:"publication"`
+				}
+				if err := json.Unmarshal(event.Payload, &payload); err != nil {
+					t.Fatal(err)
+				}
+				publication := payload.Publication
+				if publication.ID != tunnel.ID() || publication.ServiceProtocol != protocol || publication.Target != canonical ||
+					publication.PublicURL != "" || publication.Hostname != "" || publication.PublicURLID != "" {
+					t.Fatal("journal event lost the protocol or invented an endpoint", publication)
+				}
+				states = append(states, publication.State)
+			}
+			if want := []TunnelState{TunnelStateStarting, TunnelStateProvisioning, TunnelStateReady, TunnelStateStopped}; !reflect.DeepEqual(states, want) {
+				t.Fatalf("service publication journal states=%v, want %v", states, want)
+			}
+		})
+	}
+	for _, protocol := range []controlv1.ServiceProtocol{"redis", "ssh", "HTTP", "unknown"} {
+		if _, err := database.BeginTunnel(t.Context(), BeginTunnelOptions{Command: TunnelCommandPublish,
+			Server: "https://server.example", Target: "127.0.0.1:15432", Project: t.TempDir(), ServiceProtocol: protocol}); err == nil {
+			t.Fatal("journal accepted an unsupported service protocol", protocol)
 		}
 	}
 	snapshot, err := database.Snapshot(t.Context())
 	if err != nil || len(snapshot.Tunnels) != 0 {
 		t.Fatalf("invalid service left a public tunnel: %#v, %v", snapshot, err)
+	}
+}
+
+func TestTunnelCancellationDoesNotHideIndependentFailure(t *testing.T) {
+	database, err := Open(t.Context(), filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	failed := failure.Wrap("close service run", failure.ServerUnavailable, errors.New("private-operation-cause"))
+	for _, tc := range []struct {
+		name  string
+		err   error
+		state TunnelState
+		code  string
+	}{
+		{"success", nil, TunnelStateStopped, ""},
+		{"canceled", context.Canceled, TunnelStateStopped, ""},
+		{"wrapped_canceled", fmt.Errorf("stop: %w", context.Canceled), TunnelStateStopped, ""},
+		{"joined_canceled", errors.Join(context.Canceled, fmt.Errorf("join: %w", context.Canceled)), TunnelStateStopped, ""},
+		{"failure", failed, TunnelStateFailed, string(failure.ServerUnavailable)},
+		{"joined_failure", errors.Join(context.Canceled, failed), TunnelStateFailed, string(failure.ServerUnavailable)},
+		{"wrapped_joined_failure", fmt.Errorf("stop: %w", errors.Join(context.Canceled, failed)), TunnelStateFailed, string(failure.ServerUnavailable)},
+		{"untyped_cleanup_failure", errors.Join(context.Canceled, errors.New("private-cleanup-cause")), TunnelStateFailed, string(failure.Unexpected)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tunnel, err := database.BeginTunnel(t.Context(), BeginTunnelOptions{Command: TunnelCommandPublish,
+				Server: "https://server.example", Target: "3000", Project: t.TempDir()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = tunnel.Finish(context.Background(), nil) })
+			if err := tunnel.Finish(t.Context(), tc.err); err != nil {
+				t.Fatal(err)
+			}
+			if err := tunnel.Finish(t.Context(), nil); err != nil {
+				t.Fatal("repeated finish failed", err)
+			}
+			select {
+			case <-tunnel.done:
+			default:
+				t.Fatal("finish did not join lease maintenance")
+			}
+			if tunnel.Context().Err() == nil {
+				t.Fatal("finish retained a live publication context")
+			}
+			if err := tunnel.SetReady(t.Context(), "", 9); err == nil {
+				t.Fatal("finished publication accepted a late readiness mutation")
+			}
+			var state, code string
+			if err := database.db.QueryRowContext(t.Context(), `SELECT state,COALESCE(failure_code,'') FROM local_tunnels WHERE id=?`, tunnel.ID()).Scan(&state, &code); err != nil || state != string(tc.state) || code != tc.code {
+				t.Fatalf("terminal outcome=%q/%q, want %q/%q: %v", state, code, tc.state, tc.code, err)
+			}
+			snapshot, err := database.Snapshot(t.Context())
+			if err != nil || len(snapshot.Tunnels) != 0 || snapshot.Summary.Total != 0 {
+				t.Fatalf("finished publication retained an active journal row: %+v, %v", snapshot, err)
+			}
+		})
 	}
 }
 

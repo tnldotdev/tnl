@@ -70,7 +70,7 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 		}
 	}
 	tunnel, err := state.BeginTunnel(ctx, clientstate.BeginTunnelOptions{
-		Command: clientstate.TunnelCommandPublish, Server: serverURL, Target: target, ServiceProtocol: protocol,
+		Command: clientstate.TunnelCommandPublish, Server: serverURL, Target: target, ServiceProtocol: controlv1.ServiceProtocol(protocol),
 		Project: flags.ProjectRoot, Service: flags.Service,
 	})
 	if err != nil {

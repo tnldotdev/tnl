@@ -18,7 +18,7 @@ func TestIntegrationScopeRejectsMalformedComponentsAtStateBoundaries(t *testing.
 	const server = "https://control.example.test"
 	project := t.TempDir()
 	tunnel, err := database.BeginTunnel(t.Context(), BeginTunnelOptions{
-		Command: TunnelCommandPublish, Server: server, Target: "3000", Project: project, ServiceProtocol: controlv1.Http,
+		Command: TunnelCommandPublish, Server: server, Target: "3000", Project: project, ServiceProtocol: controlv1.ServiceProtocolHTTP,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -47,7 +47,7 @@ func TestIntegrationScopeRejectsMalformedComponentsAtStateBoundaries(t *testing.
 			assertInvalid(scope.Validate())
 			if !scope.IsZero() {
 				_, err := database.BeginTunnel(t.Context(), BeginTunnelOptions{Command: TunnelCommandPublish, Server: server,
-					Target: "3000", Project: project, ServiceProtocol: controlv1.Http, IntegrationScope: scope})
+					Target: "3000", Project: project, ServiceProtocol: controlv1.ServiceProtocolHTTP, IntegrationScope: scope})
 				assertInvalid(err)
 			}
 			assertInvalid(tunnel.SetIntegrationScope(t.Context(), scope))
@@ -108,7 +108,7 @@ func TestIntegrationScopeMatchesBothComponentsAndServer(t *testing.T) {
 			t.Fatal(err)
 		}
 		tunnel, err := database.BeginTunnel(t.Context(), BeginTunnelOptions{Command: TunnelCommandPublish, Server: fixture.server,
-			Target: "3000", Project: t.TempDir(), Service: "api", ServiceProtocol: controlv1.Http, IntegrationScope: fixture.scope})
+			Target: "3000", Project: t.TempDir(), Service: "api", ServiceProtocol: controlv1.ServiceProtocolHTTP, IntegrationScope: fixture.scope})
 		if err != nil {
 			t.Fatal(err)
 		}
