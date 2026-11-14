@@ -65,9 +65,9 @@ test("saved services select exposure independently of protocol and placement", (
   });
   expectTypeOf(project.deployments.production.targets.api.public).toEqualTypeOf<true>();
   expectTypeOf(project.deployments.production.targets.db.public).toEqualTypeOf<false>();
-  // @ts-expect-error app-owned exposure has not switched to the service endpoint lifecycle yet.
   defineConfig({
     services: { app: {} },
+    // @ts-expect-error app-owned exposure has not switched to the service endpoint lifecycle yet.
     deployments: { local: { targets: { app: { public: true } } } },
   });
 });
