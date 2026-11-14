@@ -19,6 +19,7 @@ import (
 
 type Control interface {
 	CreateDeploymentPublisherEnrollment(context.Context, string, string, string, string, controlv1.CreateDeploymentPublisherEnrollmentRequest) (controlv1.DeploymentPublisherEnrollment, error)
+	GetDeploymentPublisher(context.Context, string, string, string, string) (controlv1.DeploymentPublisher, error)
 }
 
 type Client interface {
@@ -104,17 +105,22 @@ func Ensure(ctx context.Context, store *clientstate.Store, control Control, clie
 			return credentialfile.DeploymentFile{}, err
 		} else if found {
 			j.Key = pending.SigningKey
-			if len(pending.ResultJSON) != 0 {
-				j.Member = &controlv1.DeploymentPublisherIdentity{}
-				if json.Unmarshal(pending.ResultJSON, j.Member, json.RejectUnknownMembers(true)) != nil {
-					return credentialfile.DeploymentFile{}, credentialfile.ErrInvalid
-				}
+			j.Member = &controlv1.DeploymentPublisherIdentity{}
+			if json.Unmarshal(pending.ResultJSON, j.Member, json.RejectUnknownMembers(true)) != nil {
+				// finish the original enrollment before provisioning; a pending
+				// key is not permission to issue replacement approval.
+				return credentialfile.DeploymentFile{}, credentialfile.ErrInvalid
 			}
 		} else {
 			_, j.Key, err = ed25519.GenerateKey(rand.Reader)
 			if err != nil {
 				return credentialfile.DeploymentFile{}, err
 			}
+		}
+		if j.Member != nil {
+			// reject a different scope without pinning that failed request in
+			// a new journal or changing the established identity.
+			return importApproved(ctx, store, control, client, scope, services, *j.Member, j.Key)
 		}
 		j.RequestKey, err = opaqueid.New(opaqueid.IdempotencyPrefix)
 		if err != nil {
@@ -173,12 +179,30 @@ func Ensure(ctx context.Context, store *clientstate.Store, control Control, clie
 			return credentialfile.DeploymentFile{}, err
 		}
 	}
-	if !matches(*j.Member, scope) {
+	return importApproved(ctx, store, control, client, scope, services, *j.Member, private)
+}
+
+func importApproved(ctx context.Context, store *clientstate.Store, control Control, client Client, scope Scope, services []string, member controlv1.DeploymentPublisherIdentity, private ed25519.PrivateKey) (credentialfile.DeploymentFile, error) {
+	if !matches(member, scope) {
 		return credentialfile.DeploymentFile{}, credentialfile.ErrInvalid
 	}
-	value, err := credentialfile.NewDeployment(scope.Server, scope.Instance, *j.Member, private)
+	value, err := credentialfile.NewDeployment(scope.Server, scope.Instance, member, private)
 	if err != nil {
 		return credentialfile.DeploymentFile{}, err
+	}
+	// authenticated status owns captured approval. membership verification below
+	// still proves this exact signing key without acquiring a lease or enrolling.
+	publisher, err := control.GetDeploymentPublisher(ctx, scope.Team, scope.Project, scope.DeploymentID, member.PublisherIdentityId)
+	if err != nil {
+		return credentialfile.DeploymentFile{}, err
+	}
+	if publisher.TeamId != member.TeamId || publisher.ProjectKey != member.ProjectKey || publisher.DeploymentId != member.DeploymentId || publisher.PublisherIdentityId != member.PublisherIdentityId || publisher.KeyId != member.KeyId || publisher.RevokedAt != nil || len(publisher.Services) != len(services) {
+		return credentialfile.DeploymentFile{}, credentialfile.ErrInvalid
+	}
+	for _, service := range services {
+		if !publisher.Services[service].Valid() {
+			return credentialfile.DeploymentFile{}, credentialfile.ErrInvalid
+		}
 	}
 	return Import(ctx, store, client, value, scope)
 }

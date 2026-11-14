@@ -59,6 +59,13 @@ type publisherProvisionCommand struct {
 	OutputFile      string   `name:"output-file" type:"path" required:"" help:"New private file for deployment; never overwrites an existing file."`
 }
 
+func (f publisherProvisionCommand) Validate() error {
+	if len(f.Services) != 0 && f.Deployment == "" {
+		return publisherCLIError("--service requires --deployment; use --service-id for one exact saved service")
+	}
+	return nil
+}
+
 func runPublisherSetup(ctx context.Context, f publisherSetupCommand, project projectConfiguration, output, diagnostics io.Writer) error {
 	if f.Deployment != "" {
 		return runDeploymentPublisherSetup(ctx, f, project, output, diagnostics)
@@ -131,6 +138,9 @@ func runPublisherSetup(ctx context.Context, f publisherSetupCommand, project pro
 }
 
 func runPublisherProvision(ctx context.Context, f publisherProvisionCommand, project projectConfiguration, output, diagnostics io.Writer) error {
+	if err := f.Validate(); err != nil {
+		return err
+	}
 	if f.Deployment != "" {
 		if f.Namespace || f.URL != "" || f.ServiceID != "" || f.Domain != "" || len(f.Services) == 0 {
 			return publisherCLIError("select --deployment, --namespace, --url, or --service")

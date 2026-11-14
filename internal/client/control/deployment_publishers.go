@@ -23,6 +23,12 @@ func (c *Client) ListDeploymentPublishers(ctx context.Context, team, project, de
 	})
 }
 
+func (c *Client) GetDeploymentPublisher(ctx context.Context, team, project, deployment, publisher string) (controlv1.DeploymentPublisher, error) {
+	return requestWithAccess[controlv1.DeploymentPublisher](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.GetDeploymentPublisher(ctx, project, deployment, publisher, &controlv1.GetDeploymentPublisherParams{TeamId: team}, editors...)
+	})
+}
+
 func (c *Client) RevokeDeploymentPublisher(ctx context.Context, team, project, deployment, publisher string) error {
 	_, err := requestWithAccess[struct{}](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.RevokeDeploymentPublisher(ctx, project, deployment, publisher, &controlv1.RevokeDeploymentPublisherParams{TeamId: team}, editors...)

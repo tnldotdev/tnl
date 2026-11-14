@@ -31,6 +31,10 @@ func TestDeploymentPublisherClientCapturesEnrollmentAndExactScope(t *testing.T) 
 			w.WriteHeader(201)
 			_ = json.NewEncoder(w).Encode(controlv1.DeploymentPublisherEnrollment{EnrollmentId: "same-enrollment", EnrollmentKey: "same-secret", ExpiresAt: expires})
 		case http.MethodGet:
+			if r.URL.Path == "/v1/projects/shop/deployments/selected/publishers/exact-publisher" {
+				_ = json.NewEncoder(w).Encode(controlv1.DeploymentPublisher{PublisherIdentityId: "exact-publisher", Services: map[string]controlv1.ServiceProtocol{"db": controlv1.Postgres}})
+				return
+			}
 			if r.URL.Path != "/v1/projects/shop/deployments/selected/publishers" || r.URL.Query().Get("after") != "previous" || r.URL.Query().Get("limit") != "1" {
 				t.Error("publisher list changed selection or pagination")
 			}
@@ -61,6 +65,10 @@ func TestDeploymentPublisherClientCapturesEnrollmentAndExactScope(t *testing.T) 
 	}
 	if _, err := client.ListDeploymentPublishers(t.Context(), "team-selected", "shop", "selected", "previous", 1); err != nil {
 		t.Fatal(err)
+	}
+	publisher, err := client.GetDeploymentPublisher(t.Context(), "team-selected", "shop", "selected", "exact-publisher")
+	if err != nil || publisher.PublisherIdentityId != "exact-publisher" || len(publisher.Services) != 1 || publisher.Services["db"] != controlv1.Postgres {
+		t.Fatal("publisher read lost exact captured approval", err)
 	}
 	err = client.RevokeDeploymentPublisher(t.Context(), "team-selected", "shop", "selected", "exact-publisher")
 	var problem *ProblemError
