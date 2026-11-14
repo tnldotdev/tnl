@@ -83,8 +83,12 @@ func (p *PublicServices) AcceptPublic(ctx context.Context, connection net.Conn, 
 		return err
 	}
 	current, leaseErr := p.lease(time.Now())
-	if leaseErr != nil || !samePrivateLease(current, lease) || claimed.VisitorConnectionId != visitor || validatePublicServiceAdmission(claimed, time.Now()) != nil || !admission.selectService(claimed.ServiceId) {
+	if leaseErr != nil || !samePrivateLease(current, lease) || claimed.VisitorConnectionId != visitor || validatePublicServiceAdmission(claimed, time.Now()) != nil {
 		outcome = observability.VisitorInvalidProjection
+		return ErrServiceAdmission
+	}
+	if !admission.selectService(claimed.ServiceId) {
+		outcome = observability.VisitorCapacityDenied
 		return ErrServiceAdmission
 	}
 	outcome = observability.VisitorOpenFailed
