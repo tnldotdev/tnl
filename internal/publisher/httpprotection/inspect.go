@@ -6,6 +6,7 @@ package httpprotection
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -19,6 +20,7 @@ import (
 	coreruleset "github.com/corazawaf/coraza-coreruleset/v4"
 	"github.com/corazawaf/coraza/v3"
 	"github.com/corazawaf/coraza/v3/debuglog"
+	"github.com/corazawaf/coraza/v3/experimental"
 	"github.com/corazawaf/coraza/v3/types"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -118,15 +120,23 @@ func directiveString(value string) string {
 }
 
 func (p *Inspector) Close() error {
-	if p == nil || p.dir == "" {
+	if p == nil {
 		return nil
+	}
+	var result error
+	if p.waf != nil {
+		// the pinned engine owns process-wide compiled-pattern cache entries.
+		result = p.waf.(experimental.WAFCloser).Close()
+	}
+	if p.dir == "" {
+		return result
 	}
 	// transactions remove their files first. do not conceal leaked buffers.
 	err := os.Remove(p.dir)
 	if os.IsNotExist(err) {
-		return nil
+		err = nil
 	}
-	return err
+	return errors.Join(result, err)
 }
 
 // Inspect returns an owned request and cleanup even on failure. the caller

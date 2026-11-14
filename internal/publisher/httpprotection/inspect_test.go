@@ -3,6 +3,7 @@ package httpprotection
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -10,12 +11,64 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/corazawaf/coraza/v3"
+	"github.com/corazawaf/coraza/v3/experimental"
 	policy "github.com/tnldotdev/tnl/internal/policy/httpprotection"
 )
+
+type closingWAF struct {
+	coraza.WAF
+	close func() error
+}
+
+func (w closingWAF) Close() error { return w.close() }
+
+func TestInspectorClosesOwnedWAF(t *testing.T) {
+	p := inspector(t, policy.Settings{})
+	owned := p.waf.(experimental.WAFCloser)
+	calls := 0
+	p.waf = closingWAF{WAF: p.waf, close: func() error {
+		calls++
+		return owned.Close()
+	}}
+	if err := p.Close(); err != nil || calls != 1 {
+		t.Fatal("inspector did not release its engine", calls, err)
+	}
+	if _, err := os.Stat(p.dir); !os.IsNotExist(err) {
+		t.Fatal("inspector retained its temporary directory", err)
+	}
+}
+
+func TestInspectorClosePreservesIndependentFailures(t *testing.T) {
+	engineErr := errors.New("engine cleanup failed")
+	for _, leaked := range []bool{false, true} {
+		t.Run(fmt.Sprint(leaked), func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "inspection")
+			if err := os.Mkdir(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if leaked {
+				if err := os.WriteFile(filepath.Join(dir, "buffer"), nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			p := &Inspector{dir: dir, waf: closingWAF{close: func() error { return engineErr }}}
+			err := p.Close()
+			var storageErr *os.PathError
+			if !errors.Is(err, engineErr) || errors.As(err, &storageErr) != leaked {
+				t.Fatal("inspector lost an independent cleanup failure", err)
+			}
+			if _, err := os.Stat(dir); !leaked && !os.IsNotExist(err) {
+				t.Fatal("engine failure skipped directory cleanup", err)
+			}
+		})
+	}
+}
 
 func inspector(t testing.TB, settings policy.Settings) *Inspector {
 	t.Helper()
