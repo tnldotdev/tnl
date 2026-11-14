@@ -57,6 +57,13 @@ func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressL
 		service.Protocol != "http" && (port < 1024 || hostname != "") {
 		return result, errors.Join(ErrServiceAccess, err)
 	}
+	// reject disallowed HTTP sources before opening TLS or reserving pending
+	// capacity. the publisher still enforces the current policy on each request.
+	if service.Protocol == "http" {
+		if err = d.serviceHTTPSourceAllowed(ctx, q, service.ID, source); err != nil {
+			return result, err
+		}
+	}
 	current, err := lockCurrentIngressLease(ctx, q, lease, now)
 	if err != nil || current.Draining {
 		return result, errors.Join(ErrServiceAccess, err)

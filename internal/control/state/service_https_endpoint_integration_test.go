@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 )
@@ -78,7 +79,7 @@ func TestIntegrationServiceHTTPSRequiresIngressCapabilityForDNSAndVisitors(t *te
 	r := appliedProjectRequest(t, d, now)
 	r.DNSAutomation = true
 	r.Configuration = ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{
-		"web": {Target: "localhost:3000", Public: new(true)},
+		"web": {Target: "localhost:3000", Public: new(true), HTTP: &config.HTTPService{Access: &config.Access{IP: []string{"192.0.2.10"}}}},
 	}}
 	r = selectedProjectRequest(r, "production")
 	applied, err := d.ApplyProjectConfiguration(ctx, r)
@@ -142,6 +143,15 @@ func TestIntegrationServiceHTTPSRequiresIngressCapabilityForDNSAndVisitors(t *te
 	}
 	if err := admit(withHTTPS); err != nil {
 		t.Fatal("shared HTTPS required an allocated port listener", err)
+	}
+	deniedVisitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
+	if _, err := d.AdmitPublicServiceVisitor(ctx, withHTTPS.IngressLeaseIdentity, PrimaryIngressPoolID,
+		deniedVisitor, service.Endpoint.Hostname, 443, netip.MustParseAddr("203.0.113.10"), now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("disallowed HTTP source reached TLS setup admission", err)
+	}
+	var reserved bool
+	if err := d.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.public_service_visitors WHERE visitor_connection_id=$1)`, deniedVisitor).Scan(&reserved); err != nil || reserved {
+		t.Fatal("disallowed source retained pending visitor capacity", reserved, err)
 	}
 	work := claim(true)
 	if err := d.ValidateServiceEndpointDNSWork(ctx, work, now); err != nil {
