@@ -49,10 +49,12 @@ func TestIntegrationPublicRunCapacity(t *testing.T) {
 					listeners := runtimeListeners{ingress: serviceRuntimeListener(t, owner), metrics: serviceRuntimeListener(t, owner)}
 					second.IngressID = "capacity-second-ingress"
 					second.IngressListen, second.MetricsListen = listeners.ingress.Addr().String(), listeners.metrics.Addr().String()
+					publicListener := serviceRuntimeListener(t, owner)
+					startSplitIngressProxy(t, owner, publicListener, second.IngressListen)
 					process := startIntegrationProcessWithOptions(t, second, integrationProcessOptions{serviceHTTPClient: f.serviceHTTP,
 						relayClientTLS: f.roots, owner: owner, listeners: listeners})
 					waitForProcessReady(t, process)
-					visitors = []*integrationVisitor{f.visitor, newIntegrationVisitor(t, f.pebble.roots, second.IngressListen, owner)}
+					visitors = []*integrationVisitor{f.visitor, newIntegrationVisitor(t, f.pebble.roots, publicListener.Addr().String(), owner)}
 					ready = func(t *testing.T, handle *integrationPublisher) publisher.Event {
 						event := waitForPublisherReady(t, handle)
 						if event.Hostname != f.identity.hostname || event.PublicURL != "https://"+f.identity.hostname {

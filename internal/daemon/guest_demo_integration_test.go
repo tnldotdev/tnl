@@ -294,11 +294,15 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 	databaseURL, inspect := standaloneTestDatabase(t)
 	owner := newRuntimeTopology(t)
 	publicListener := serviceRuntimeListener(t, owner)
+	ingressListener := serviceRuntimeListener(t, owner)
 	relayUDP := integrationPacketListener(t, owner)
 	publicAddress, relayUDPAddress := publicListener.Addr().String(), relayUDP.LocalAddr().String()
 	dns := newPrivateFixtureDNS(t, owner)
 	pebble := startIntegrationPebble(t, integrationPort(t, publicAddress), dns.address, owner)
-	cfg, listeners := standalonePublishConfig(t, databaseURL, publicListener, relayUDP, pebble.directoryURL, owner)
+	cfg, listeners := standalonePublishConfig(t, databaseURL, ingressListener, relayUDP, pebble.directoryURL, owner)
+	cfg.RequireProxyHeader = true
+	cfg.IngressTrustedProxies = []string{"127.0.0.1/32"}
+	startSplitIngressProxy(t, owner, publicListener, ingressListener.Addr().String())
 	cfg.GuestDemoEnabled = true
 	if deadlineProof {
 		// keep process leases longer than guest authority, so their expiry cannot
@@ -385,7 +389,7 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 			t.Fatal(err)
 		}
 	}
-	clientstate, err := clientstate.Open(t.Context(), filepath.Join(t.TempDir(), "state"))
+	clientstate, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
 	if err != nil {
 		t.Fatal(err)
 	}

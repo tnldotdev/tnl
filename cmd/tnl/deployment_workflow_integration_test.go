@@ -19,6 +19,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -53,6 +54,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/oidctest"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -1029,26 +1031,63 @@ func (f *cliWorkflow) ingress(t *testing.T, database *controlstate.Database, id 
 	}
 	t.Cleanup(func() { _ = direct.Close() })
 	publicListener := workflowListen(t)
+	ingressListener := workflowListen(t)
 	if f.publicAddress == "" {
 		f.publicAddress = publicListener.Addr().String()
 	}
-	publicServer, err := ingress.New(publicListener, ingress.Config{MaxConnections: 128, Lookup: func(host string) ([]ingress.PublicURL, ingress.LookupReason) {
-		entries, reason := controller.Lookup(host, time.Now())
-		if reason != ingress.LookupCurrent {
-			return nil, reason
-		}
-		result, err := forwarder.PublicURLs(entries)
+	// preserve the advertised HTTPS destination through a trusted disposable
+	// front instead of substituting the backend's ephemeral listener port.
+	f.serve(t, publicListener, func(visitor net.Conn) error {
+		dialCtx, cancel := context.WithTimeout(f.ctx, 5*time.Second)
+		upstream, err := (&net.Dialer{}).DialContext(dialCtx, "tcp", ingressListener.Addr().String())
+		cancel()
 		if err != nil {
-			return nil, ingress.LookupInvalidProjection
+			return err
 		}
-		return result, ingress.LookupCurrent
-	}})
+		defer upstream.Close()
+		stop := context.AfterFunc(f.ctx, func() { _ = visitor.Close(); _ = upstream.Close() })
+		defer stop()
+		source := visitor.RemoteAddr().(*net.TCPAddr).AddrPort()
+		header, err := proxyproto.Encode(proxyproto.Header{
+			Source:      netip.AddrPortFrom(source.Addr().Unmap(), source.Port()),
+			Destination: netip.MustParseAddrPort("127.0.0.1:443"),
+		})
+		if err != nil {
+			return err
+		}
+		if _, err := upstream.Write(header); err != nil {
+			return err
+		}
+		done := make(chan struct{})
+		go func() {
+			_, _ = io.Copy(visitor, upstream)
+			_ = visitor.(*net.TCPConn).CloseWrite()
+			close(done)
+		}()
+		_, _ = io.Copy(upstream, visitor)
+		_ = upstream.(*net.TCPConn).CloseWrite()
+		<-done
+		return nil
+	})
+	publicServer, err := ingress.New(ingressListener, ingress.Config{MaxConnections: 128,
+		RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")},
+		Lookup: func(host string) ([]ingress.PublicURL, ingress.LookupReason) {
+			entries, reason := controller.Lookup(host, time.Now())
+			if reason != ingress.LookupCurrent {
+				return nil, reason
+			}
+			result, err := forwarder.PublicURLs(entries)
+			if err != nil {
+				return nil, ingress.LookupInvalidProjection
+			}
+			return result, ingress.LookupCurrent
+		}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	context.AfterFunc(f.ctx, func() { _ = publicListener.Close() })
+	context.AfterFunc(f.ctx, func() { _ = ingressListener.Close() })
 	t.Cleanup(func() {
-		_ = publicListener.Close()
+		_ = ingressListener.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		_ = publicServer.Drain(ctx)
