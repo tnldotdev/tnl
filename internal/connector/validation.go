@@ -74,10 +74,9 @@ func serviceConnectionProfile(service controlv1.Service, listen string) (Profile
 		profile.URL = "https://" + managedAddress
 	case config.ProtocolHTTP:
 		profile.TLS = "HTTPS with server hostname verification"
-		profile.URL = "https://" + managedAddress + "/"
-		profile.Command = []string{"curl", "--noproxy", hostname, "--connect-to", managedAddress + ":" + address, profile.URL}
-		profile.Instructions = []string{"curl below dials the local listener and verifies the managed TLS hostname"}
-		profile.Instructions = append(profile.Instructions, "browser: the exact managed hostname must resolve to the local listener, not public ingress; use the curl dial override otherwise:", host+" "+hostname, profile.URL)
+		profile.URL = "https://" + hostname + "/"
+		profile.Command = []string{"curl", "--noproxy", hostname, "--connect-to", net.JoinHostPort(hostname, "443") + ":" + address, profile.URL}
+		profile.Instructions = []string{"curl below dials the local listener while keeping the service's HTTPS authority", "a browser uses the public endpoint when enabled; connector access needs a client-specific dial override"}
 	case config.ProtocolPostgres:
 		profile.TLS = "PostgreSQL SSLRequest; verify-full; system roots"
 		query := url.Values{"hostaddr": {host}, "sslmode": {"verify-full"}, "sslrootcert": {"system"}, "channel_binding": {"disable"}, "gssencmode": {"disable"}}
@@ -88,10 +87,11 @@ func serviceConnectionProfile(service controlv1.Service, listen string) (Profile
 		if err != nil {
 			return profile, err
 		}
-		profile.TLS = "MySQL SSLRequest; VERIFY_IDENTITY; system CA bundle"
+		profile.TLS = "MySQL SSLRequest; verified service hostname; system CA bundle"
 		profile.ServerCAFile = roots
-		profile.Instructions = []string{"before running mysql, map the exact managed hostname to the listener in /etc/hosts:", host + " " + hostname, "mysql verifies the managed hostname; --host=localhost would verify the wrong identity"}
-		profile.Command = []string{"mysql", "--protocol=TCP", "--host=" + hostname, "--port=" + port, "--ssl-mode=VERIFY_IDENTITY", "--ssl-ca=" + roots}
+		profile.Instructions = []string{"use a MySQL driver that dials " + address + " while verifying the TLS server as " + hostname,
+			"the mysql CLI cannot separate its dial address from its verified hostname; use the SDK mysql2 connection factory instead",
+			"keep certificate and hostname verification enabled"}
 	case config.ProtocolTCP:
 		profile.TLS = "tnl verifies the service hostname before opaque bytes"
 		profile.Command = []string{"nc", host, port}
