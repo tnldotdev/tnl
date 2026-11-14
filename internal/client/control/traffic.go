@@ -11,11 +11,15 @@ import (
 
 // create a signed publisher run with the selected traffic limits; nil uses
 // control's defaults.
-func (c *Client) CreatePublisherRun(ctx context.Context, id, retry, token, proof string, selection *trafficlimits.Selection, preferred ...string) (controlv1.PublishRunSetup, error) {
+func (c *Client) CreatePublisherRun(ctx context.Context, id, retry, token, proof string, selection *trafficlimits.Selection, protection controlv1.HTTPProtection, preferred ...string) (controlv1.PublishRunSetup, error) {
+	if err := protection.Validate(); err != nil {
+		return controlv1.PublishRunSetup{}, err
+	}
 	body, err := publishRunRequest(selection, preferred)
 	if err != nil {
 		return controlv1.PublishRunSetup{}, err
 	}
+	body.HttpProtection = &protection
 	params := &controlv1.CreatePublishRunParams{IdempotencyKey: retry, PublisherRunProof: proof}
 	return request[controlv1.PublishRunSetup](ctx, c, token, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.CreatePublishRun(ctx, id, params, body, e...)

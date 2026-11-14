@@ -2440,6 +2440,8 @@ type CreatePublicURLRequest struct {
 
 // CreatePublishRunRequest defines model for CreatePublishRunRequest.
 type CreatePublishRunRequest struct {
+	HttpProtection *HTTPProtection `json:"http_protection,omitempty"`
+
 	// PreferredRegions Ordered provider-qualified preferences, not hard placement constraints. Control uses nearby eligible capacity when preferred regions are unavailable. Omission preserves load-based placement.
 	PreferredRegions *[]string `json:"preferred_regions,omitempty"`
 
@@ -2770,6 +2772,12 @@ type GuestPublisherIdentity struct {
 
 // HTTPProtection defines model for HTTPProtection.
 type HTTPProtection = httpprotection.Settings
+
+// HTTPProtectionRejections defines model for HTTPProtectionRejections.
+type HTTPProtectionRejections = httpprotection.Rejections
+
+// HTTPTemporaryBlock defines model for HTTPTemporaryBlock.
+type HTTPTemporaryBlock = httpprotection.TemporaryBlock
 
 // HashedIPPrefix defines model for HashedIPPrefix.
 type HashedIPPrefix struct {
@@ -3634,6 +3642,16 @@ type ReplaceVisitorAccessRequest struct {
 	Mode             VisitorAccessMode `json:"mode"`
 }
 
+// ReportHTTPProtectionRejectionsRequest defines model for ReportHTTPProtectionRejectionsRequest.
+type ReportHTTPProtectionRejectionsRequest struct {
+	Evidence HTTPProtectionRejections `json:"evidence"`
+
+	// Resource An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
+	Resource  VisitorResourceScope `json:"resource"`
+	RunId     string               `json:"run_id"`
+	RunNumber int64                `json:"run_number,string"`
+}
+
 // ResourceID defines model for ResourceID.
 type ResourceID = string
 
@@ -4275,6 +4293,7 @@ type VisitorPolicyUpdate struct {
 	Policy           VisitorPolicySnapshot `json:"policy"`
 	Revisions        RevisionList          `json:"revisions"`
 	SnapshotRequired bool                  `json:"snapshot_required"`
+	TemporaryBlocks  []HTTPTemporaryBlock  `json:"temporary_blocks,omitempty"`
 
 	// VisitorSourceAuthority Opaque tunnelv1 source authority for the exact ingress process and public run. Present only in ingress preparation responses; it supplies neither visitor permission nor capacity.
 	VisitorSourceAuthority *[]byte `json:"visitor_source_authority,omitempty"`
@@ -4791,6 +4810,9 @@ type AppendFeedbackEventJSONRequestBody = AppendFeedbackEventRequest
 
 // EnrollGuestPublisherJSONRequestBody defines body for EnrollGuestPublisher for application/json ContentType.
 type EnrollGuestPublisherJSONRequestBody = EnrollGuestPublisherRequest
+
+// ReportHTTPProtectionRejectionsJSONRequestBody defines body for ReportHTTPProtectionRejections for application/json ContentType.
+type ReportHTTPProtectionRejectionsJSONRequestBody = ReportHTTPProtectionRejectionsRequest
 
 // CreatePreviewJSONRequestBody defines body for CreatePreview for application/json ContentType.
 type CreatePreviewJSONRequestBody = CreatePreviewRequest
@@ -5333,6 +5355,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/health (the `GetHealth` operationId).
 	GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReportHTTPProtectionRejectionsWithBody Request a short resource-scoped source block
+	//
+	// Best-effort mitigation requested by the current publisher run. Requires explicit temporary-block settings and eligible fresh rejections. Retries cannot extend a block.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/http-protection/rejections (the `ReportHTTPProtectionRejections` operationId).
+	ReportHTTPProtectionRejectionsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReportHTTPProtectionRejections Request a short resource-scoped source block
+	//
+	// Best-effort mitigation requested by the current publisher run. Requires explicit temporary-block settings and eligible fresh rejections. Retries cannot extend a block.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/http-protection/rejections (the `ReportHTTPProtectionRejections` operationId).
+	ReportHTTPProtectionRejections(ctx context.Context, body ReportHTTPProtectionRejectionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListPreviews List the caller's previews
 	//
@@ -7434,6 +7474,44 @@ func (c *Client) EnrollGuestPublisher(ctx context.Context, body EnrollGuestPubli
 // Corresponds with GET /v1/health (the `GetHealth` operationId).
 func (c *Client) GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetHealthRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReportHTTPProtectionRejectionsWithBody Request a short resource-scoped source block
+//
+// Best-effort mitigation requested by the current publisher run. Requires explicit temporary-block settings and eligible fresh rejections. Retries cannot extend a block.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/http-protection/rejections (the `ReportHTTPProtectionRejections` operationId).
+func (c *Client) ReportHTTPProtectionRejectionsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReportHTTPProtectionRejectionsRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReportHTTPProtectionRejections Request a short resource-scoped source block
+//
+// Best-effort mitigation requested by the current publisher run. Requires explicit temporary-block settings and eligible fresh rejections. Retries cannot extend a block.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/http-protection/rejections (the `ReportHTTPProtectionRejections` operationId).
+func (c *Client) ReportHTTPProtectionRejections(ctx context.Context, body ReportHTTPProtectionRejectionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReportHTTPProtectionRejectionsRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -11995,6 +12073,46 @@ func NewGetHealthRequest(server string) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewReportHTTPProtectionRejectionsRequest calls the generic ReportHTTPProtectionRejections builder with application/json body
+func NewReportHTTPProtectionRejectionsRequest(server string, body ReportHTTPProtectionRejectionsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReportHTTPProtectionRejectionsRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewReportHTTPProtectionRejectionsRequestWithBody constructs an http.Request for the ReportHTTPProtectionRejections method, with any body, and a specified content type
+func NewReportHTTPProtectionRejectionsRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/http-protection/rejections")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -18360,6 +18478,24 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/health (the `GetHealth` operationId).
 	GetHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetHealthResponse, error)
 
+	// ReportHTTPProtectionRejectionsWithBodyWithResponse Request a short resource-scoped source block
+	//
+	// Best-effort mitigation requested by the current publisher run. Requires explicit temporary-block settings and eligible fresh rejections. Retries cannot extend a block.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/http-protection/rejections (the `ReportHTTPProtectionRejections` operationId).
+	ReportHTTPProtectionRejectionsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReportHTTPProtectionRejectionsResponse, error)
+
+	// ReportHTTPProtectionRejectionsWithResponse Request a short resource-scoped source block
+	//
+	// Best-effort mitigation requested by the current publisher run. Requires explicit temporary-block settings and eligible fresh rejections. Retries cannot extend a block.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/http-protection/rejections (the `ReportHTTPProtectionRejections` operationId).
+	ReportHTTPProtectionRejectionsWithResponse(ctx context.Context, body ReportHTTPProtectionRejectionsJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportHTTPProtectionRejectionsResponse, error)
+
 	// ListPreviewsWithResponse List the caller's previews
 	//
 	// List previews created by the signed-in identity in this team. Team visitor access does not grant access to another creator's preview records. Read each preview for its public URLs. Follow next_cursor unchanged; each page checks current access.
@@ -21077,6 +21213,47 @@ func (r GetHealthResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetHealthResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ReportHTTPProtectionRejectionsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ReportHTTPProtectionRejectionsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ReportHTTPProtectionRejectionsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReportHTTPProtectionRejectionsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReportHTTPProtectionRejectionsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReportHTTPProtectionRejectionsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -27250,6 +27427,36 @@ func (c *ClientWithResponses) GetHealthWithResponse(ctx context.Context, reqEdit
 	return ParseGetHealthResponse(rsp)
 }
 
+// ReportHTTPProtectionRejectionsWithBodyWithResponse Request a short resource-scoped source block
+//
+// Best-effort mitigation requested by the current publisher run. Requires explicit temporary-block settings and eligible fresh rejections. Retries cannot extend a block.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/http-protection/rejections (the `ReportHTTPProtectionRejections` operationId).
+func (c *ClientWithResponses) ReportHTTPProtectionRejectionsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReportHTTPProtectionRejectionsResponse, error) {
+	rsp, err := c.ReportHTTPProtectionRejectionsWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReportHTTPProtectionRejectionsResponse(rsp)
+}
+
+// ReportHTTPProtectionRejectionsWithResponse Request a short resource-scoped source block
+//
+// Best-effort mitigation requested by the current publisher run. Requires explicit temporary-block settings and eligible fresh rejections. Retries cannot extend a block.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/http-protection/rejections (the `ReportHTTPProtectionRejections` operationId).
+func (c *ClientWithResponses) ReportHTTPProtectionRejectionsWithResponse(ctx context.Context, body ReportHTTPProtectionRejectionsJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportHTTPProtectionRejectionsResponse, error) {
+	rsp, err := c.ReportHTTPProtectionRejections(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReportHTTPProtectionRejectionsResponse(rsp)
+}
+
 // ListPreviewsWithResponse List the caller's previews
 //
 // List previews created by the signed-in identity in this team. Team visitor access does not grant access to another creator's preview records. Read each preview for its public URLs. Follow next_cursor unchanged; each page checks current access.
@@ -30850,6 +31057,35 @@ func ParseGetHealthResponse(rsp *http.Response) (*GetHealthResponse, error) {
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReportHTTPProtectionRejectionsResponse parses an HTTP response from a ReportHTTPProtectionRejectionsWithResponse call
+func ParseReportHTTPProtectionRejectionsResponse(rsp *http.Response) (*ReportHTTPProtectionRejectionsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReportHTTPProtectionRejectionsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -34962,6 +35198,9 @@ type ServerInterface interface {
 	// GetHealth Confirm that the control HTTP server is serving
 	// (GET /v1/health)
 	GetHealth(w http.ResponseWriter, r *http.Request)
+	// ReportHTTPProtectionRejections Request a short resource-scoped source block
+	// (POST /v1/http-protection/rejections)
+	ReportHTTPProtectionRejections(w http.ResponseWriter, r *http.Request)
 	// ListPreviews List the caller's previews
 	// (GET /v1/previews)
 	ListPreviews(w http.ResponseWriter, r *http.Request, params ListPreviewsParams)
@@ -35947,6 +36186,20 @@ func (siw *ServerInterfaceWrapper) GetHealth(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetHealth(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReportHTTPProtectionRejections operation middleware
+func (siw *ServerInterfaceWrapper) ReportHTTPProtectionRejections(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReportHTTPProtectionRejections(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -40301,6 +40554,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/http-protection/rejections", wrapper.ReportHTTPProtectionRejections)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/retire", wrapper.RetireProject)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/status", wrapper.GetProjectStatus)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/resolve-source", wrapper.ResolveProjectSource)

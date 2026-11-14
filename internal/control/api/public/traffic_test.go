@@ -23,13 +23,19 @@ func TestPublishRunTrafficInputBoundary(t *testing.T) {
 		{`{"traffic":{"connections":0}}`, 400}, {`{"traffic":{"rate_per":"1ns"}}`, 400},
 		{`{"traffic":{"upload_bytes":1}}`, 400}, {`{"traffic":{"unknown":1}}`, 400}, {`{"unknown":1}`, 400},
 		{`{} {}`, 400}, {`null`, 400}, {`{"traffic":null}`, 400},
+		{`{"http_protection":{"temporary_blocks":true}}`, 0},
+		{`{"http_protection":{"waf":"off","temporary_blocks":true}}`, 0},
+		{`{"http_protection":{"waf":"invalid"}}`, 400},
+		{`{"http_protection":{"temporary_blocks":"yes"}}`, 400},
+		{`{"http_protection":null}`, 400},
+		{`{"http_protection":{"temporary_blocks":null}}`, 400},
 		{`{"preferred_regions":["fly:sjc","aws:us-west-1"]}`, 0},
 		{`{"preferred_regions":["sjc"]}`, 400}, {`{"preferred_regions":["aws:sjc"]}`, 400},
 		{`{"preferred_regions":["fly:sjc","FLY:SJC"]}`, 400},
 	} {
 		r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(tc.body))
 		w := httptest.NewRecorder()
-		selection, _, ok := publishRunTrafficSelection(w, r)
+		selection, _, _, ok := publishRunTrafficSelection(w, r)
 		if ok != (tc.status == 0) || !ok && w.Code != tc.status {
 			t.Fatalf("body %s: %+v %t %d", tc.body, selection, ok, w.Code)
 		}

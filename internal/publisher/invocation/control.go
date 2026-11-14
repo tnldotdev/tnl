@@ -14,7 +14,7 @@ import (
 // browser and feedback operations.
 // saved URL operations and signed run creation remain owned by Native.
 type publicationVisitors interface {
-	httpaccess.PolicyClient
+	publisher.VisitorControlClient
 	publisher.BrowserControlClient
 	httpaccess.ShareClient
 	publisher.PreviewClient

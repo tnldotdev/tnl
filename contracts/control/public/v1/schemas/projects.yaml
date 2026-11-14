@@ -326,6 +326,7 @@ schemas:
       path: github.com/tnldotdev/tnl/internal/policy/httpprotection
     properties:
       waf: { type: string, enum: [block, detect, off], default: block }
+      temporary_blocks: { type: boolean, default: false }
       max_body_bytes: { type: integer, minimum: 1, maximum: 2097152, default: 1048576 }
       exclusions:
         type: array

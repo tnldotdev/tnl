@@ -290,6 +290,7 @@ func routingTableEntry(projection controlstate.IngressRoutingTableProjection) in
 		protocol = &value
 	}
 	return ingressv1.IngressRoutingTableEntry{
+		TemporaryBlocks:   projection.TemporaryBlocks,
 		PublishRunReadyAt: projection.PublishRunReadyAt,
 		PublishRunClosed:  &projection.PublishRunClosed,
 		PublishRunId:      projection.PublishRunID, PublicUrlId: projection.PublicURLID,

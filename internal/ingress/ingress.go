@@ -19,6 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -39,6 +40,7 @@ type PublicURL struct {
 	PublishRunNumber  uint64
 	RecoveryEpisodeID uint64
 	HashedIPPolicy    *ippolicy.Policy
+	TemporaryBlocks   httpprotection.Blocks
 	AllowAll          bool
 	Backends          []Backend
 	PublishRunID      string
@@ -512,6 +514,9 @@ func addressPort(address net.Addr) (netip.AddrPort, error) {
 }
 
 func (route PublicURL) allowsIP(source netip.Addr) bool {
+	if route.TemporaryBlocks.Blocked(source, time.Now()) {
+		return false
+	}
 	if route.HashedIPPolicy != nil {
 		return route.HashedIPPolicy.Allows(source)
 	}

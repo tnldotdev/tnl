@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
+	publisherprotection "github.com/tnldotdev/tnl/internal/publisher/httpprotection"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
@@ -27,7 +28,7 @@ const defaultProvisioningStalledDelay = 2 * time.Minute
 type PublicURLControlClient interface {
 	GetPublicURLByHostname(context.Context, string, string) (controlv1.PublicURL, error)
 	DeletePublicURL(context.Context, string) error
-	CreatePublishRun(context.Context, string, string, ...string) (controlv1.PublishRunSetup, error)
+	CreatePublishRun(context.Context, string, string, controlv1.HTTPProtection, ...string) (controlv1.PublishRunSetup, error)
 	ClosePublishRun(context.Context, string, credentials.PublishRunToken) error
 	MarkPublishRunReady(context.Context, string, uint64, credentials.PublishRunToken) error
 	HeartbeatPublishRun(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error)
@@ -62,6 +63,11 @@ type VisitorAccessManagementClient interface {
 	ReplaceVisitorAccess(context.Context, string, controlv1.ReplaceVisitorAccessRequest) (controlv1.PublicURL, error)
 }
 
+type VisitorControlClient interface {
+	httpaccess.PolicyClient
+	publisherprotection.ReportClient
+}
+
 type Config struct {
 	Telemetry                    *clienttelemetry.Collector
 	TelemetryFramework           telemetryv1.PublicationReadyFramework
@@ -72,7 +78,7 @@ type Config struct {
 	Control                      PublicURLControlClient
 	Identity                     PublisherIdentityClient
 	Audit                        PublisherAuditClient
-	VisitorControl               httpaccess.PolicyClient
+	VisitorControl               VisitorControlClient
 	BrowserControl               BrowserControlClient
 	Shares                       httpaccess.ShareClient
 	Previews                     PreviewClient

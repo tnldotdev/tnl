@@ -348,7 +348,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 		t.Fatal("stale runtime lost its owned fence diagnostic", err)
 	}
 	scoped.WithRuntime(staleOwner)
-	if _, err := scoped.CreatePublishRun(t.Context(), urlID, "stale-epoch-proof"); err == nil {
+	if _, err := scoped.CreatePublishRun(t.Context(), urlID, "stale-epoch-proof", controlv1.HTTPProtection{}); err == nil {
 		t.Fatal("stale publisher epoch created another public URL run")
 	} else if classified, ok := failure.Of(err); !ok || classified.Reason() != failure.ServerConflict {
 		t.Fatal("stale run creation lost its fence diagnostic", err)

@@ -2,6 +2,7 @@ package control
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	policyfixture "github.com/tnldotdev/tnl/internal/testutil/visitorpolicy"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -27,6 +29,9 @@ func TestPublisherVisitorPolicyHTTPClientMaximum(t *testing.T) {
 	body.Revisions = make([]int64, 256)
 	for i := range body.Revisions {
 		body.Revisions[i] = body.AfterRevision + int64(i) + 1
+	}
+	for n := range httpprotection.MaxBlocks {
+		body.TemporaryBlocks = append(body.TemporaryBlocks, httpprotection.TemporaryBlock{SourceIP: fmt.Sprintf("2001:db8:ffff:ffff:ffff:ffff:ffff:%x", n), ExpiresAt: body.Policy.ObservedAt.Add(time.Minute)})
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
@@ -57,6 +62,9 @@ func TestPublisherVisitorPolicyHTTPClientMaximum(t *testing.T) {
 	}
 	if _, err := visitorlease.Decode(result); err != nil {
 		t.Fatal("maximum combined response did not reach local policy decoding", err)
+	}
+	if _, err := httpprotection.DecodeBlocks(result.TemporaryBlocks); err != nil {
+		t.Fatal("maximum block projection was not valid", err)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 // control client is wrapped by the signing adapter. these operations use an
 // explicit publish run token; team and saved-URL management are not exposed.
 type RunControl interface {
+	ReportHTTPProtectionRejections(context.Context, controlv1.ReportHTTPProtectionRejectionsRequest, string) error
 	ReadPublisherVisitorPolicy(context.Context, controlv1.PublisherVisitorPolicyRequest, string) (controlv1.VisitorPolicyUpdate, error)
 	IssueVisitorToken(context.Context, controlv1.VisitorTokenRequest) (controlv1.VisitorTokenResponse, error)
 	CreatePublishRunPreview(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.Preview, error)

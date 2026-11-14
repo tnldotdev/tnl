@@ -26,7 +26,7 @@ func TestRunPreservesExpiredRunWhenReplacementCanceled(t *testing.T) {
 			config.Control = replacementTestControl{certificateTestControl: control, createRun: func(ctx context.Context, id, key string) (controlv1.PublishRunSetup, error) {
 				attempts++
 				if attempts == 1 {
-					return control.CreatePublishRun(ctx, id, key)
+					return control.CreatePublishRun(ctx, id, key, controlv1.HTTPProtection{})
 				}
 				cancel(stop)
 				if retry {
@@ -78,7 +78,7 @@ func TestRunDoesNotClassifyUnrelatedCreateFailureAsCancellation(t *testing.T) {
 			config.Control = replacementTestControl{certificateTestControl: control, createRun: func(ctx context.Context, id, key string) (controlv1.PublishRunSetup, error) {
 				attempts++
 				if attempts < failAt {
-					return control.CreatePublishRun(ctx, id, key)
+					return control.CreatePublishRun(ctx, id, key, controlv1.HTTPProtection{})
 				}
 				cancel()
 				return controlv1.PublishRunSetup{}, failure
@@ -96,6 +96,6 @@ type replacementTestControl struct {
 	createRun func(context.Context, string, string) (controlv1.PublishRunSetup, error)
 }
 
-func (c replacementTestControl) CreatePublishRun(ctx context.Context, id, key string, _ ...string) (controlv1.PublishRunSetup, error) {
+func (c replacementTestControl) CreatePublishRun(ctx context.Context, id, key string, _ controlv1.HTTPProtection, _ ...string) (controlv1.PublishRunSetup, error) {
 	return c.createRun(ctx, id, key)
 }

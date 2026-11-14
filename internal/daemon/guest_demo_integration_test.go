@@ -52,11 +52,11 @@ type integrationGuestPublisherControl struct {
 	policyRevision *atomic.Int64
 }
 
-func (c integrationGuestPublisherControl) CreatePublishRun(ctx context.Context, id, retry string, preferred ...string) (controlv1.PublishRunSetup, error) {
+func (c integrationGuestPublisherControl) CreatePublishRun(ctx context.Context, id, retry string, protection controlv1.HTTPProtection, preferred ...string) (controlv1.PublishRunSetup, error) {
 	if c.createRun != nil {
 		return c.createRun(ctx, id, retry)
 	}
-	return c.native.CreatePublishRun(ctx, id, retry, preferred...)
+	return c.native.CreatePublishRun(ctx, id, retry, protection, preferred...)
 }
 
 func (c integrationGuestPublisherControl) MarkPublishRunReady(ctx context.Context, run string, number uint64, token credentials.PublishRunToken) error {
@@ -501,7 +501,7 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 		started := false
 		controlAdapter.createRun = func(ctx context.Context, id, retry string) (controlv1.PublishRunSetup, error) {
 			if !started {
-				setup, err := native.CreatePublishRun(ctx, id, retry)
+				setup, err := native.CreatePublishRun(ctx, id, retry, controlv1.HTTPProtection{})
 				started = err == nil
 				return setup, err
 			}

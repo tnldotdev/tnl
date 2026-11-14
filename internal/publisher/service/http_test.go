@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"strings"
 	"sync/atomic"
@@ -35,6 +36,11 @@ import (
 
 func serviceHTTPFixture(t *testing.T, target http.Handler) (*http.Client, *visitorlease.Lease, visitorlease.Update, visitortoken.Token) {
 	t.Helper()
+	return serviceHTTPFixtureWithInspector(t, target, nil)
+}
+
+func serviceHTTPFixtureWithInspector(t *testing.T, target http.Handler, inspection *httpprotection.Inspector) (*http.Client, *visitorlease.Lease, visitorlease.Update, visitortoken.Token) {
+	t.Helper()
 	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_" + strings.Repeat("A", 22)}
 	policy, update, token := visitorfixture.ScopePolicy(t, scope, "preview.example.test", 25443, false)
 	upstream := httptest.NewServer(target)
@@ -49,9 +55,12 @@ func serviceHTTPFixture(t *testing.T, target http.Handler) (*http.Client, *visit
 		t.Fatal(err)
 	}
 	frontend := HTTP{Subject: scope, RunID: header.ServiceRunID, Number: 1, Hostname: update.View.Hostname, Port: update.View.Port, Header: header, Policy: policy}
-	inspection, err := httpprotection.New(protectionpolicy.Settings{})
-	if err != nil {
-		t.Fatal(err)
+	if inspection == nil {
+		var err error
+		inspection, err = httpprotection.New(protectionpolicy.Settings{})
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	frontend.protection = inspection
 	t.Cleanup(func() {
@@ -79,6 +88,40 @@ func serviceHTTPFixture(t *testing.T, target http.Handler) (*http.Client, *visit
 	}}
 	t.Cleanup(transport.CloseIdleConnections)
 	return &http.Client{Transport: transport, Timeout: 5 * time.Second}, policy, update, token
+}
+
+func TestTemporaryBlocksSavedHTTPFrontend(t *testing.T) {
+	reports := make(chan protectionpolicy.Rejections, 1)
+	inspection, err := httpprotection.Prepare(t.Context(), protectionpolicy.Settings{TemporaryBlocks: true}, func(_ context.Context, r protectionpolicy.Rejections) error { reports <- r; return nil }, func(netip.Addr, time.Time) bool { return false })
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, _, _, token := serviceHTTPFixtureWithInspector(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("blocked service request reached target") }), inspection)
+	for n := range protectionpolicy.BlockThreshold + 1 {
+		path := "https://preview.example.test:25443/"
+		if n < protectionpolicy.BlockThreshold {
+			path += "?q=" + url.QueryEscape("<script>alert(1)</script>")
+		}
+		r, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
+		r.Header.Set(httpaccess.VisitorTokenHeader, token.Reveal())
+		r.Header.Set("X-Forwarded-For", "203.0.113.1")
+		response, err := client.Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != 403 {
+			t.Fatal("saved service frontend missed rejection or local source block", response.StatusCode)
+		}
+	}
+	select {
+	case report := <-reports:
+		if report.SourceIP != "192.0.2.1" || report.Validate(time.Now()) != nil {
+			t.Fatal("saved service reported untrusted source metadata", report)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("saved service rejections did not reach reporting worker")
+	}
 }
 
 func TestServiceHTTPDefaultProtection(t *testing.T) {

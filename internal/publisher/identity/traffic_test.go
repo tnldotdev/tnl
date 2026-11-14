@@ -37,7 +37,7 @@ func TestNativeTrafficClonePreservesOptionalValues(t *testing.T) {
 	}
 }
 
-func (s *trafficControlStub) CreatePublisherRun(_ context.Context, id, retry, token, proof string, selection *trafficlimits.Selection, _ ...string) (controlv1.PublishRunSetup, error) {
+func (s *trafficControlStub) CreatePublisherRun(_ context.Context, id, retry, token, proof string, selection *trafficlimits.Selection, _ controlv1.HTTPProtection, _ ...string) (controlv1.PublishRunSetup, error) {
 	s.url, s.retry, s.token, s.proof, s.selection = id, retry, token, proof, selection
 	return controlv1.PublishRunSetup{}, nil
 }
@@ -59,7 +59,7 @@ func TestNativeTrafficSelectionKeepsSignedRunBoundary(t *testing.T) {
 				t.Fatal(err)
 			}
 			for range 2 {
-				if _, err := selected.CreatePublishRun(t.Context(), "url", "retry"); err != nil {
+				if _, err := selected.CreatePublishRun(t.Context(), "url", "retry", controlv1.HTTPProtection{}); err != nil {
 					t.Fatal(err)
 				}
 				if control.url != "url" || control.retry != "retry" || control.token != "access" || !reflect.DeepEqual(control.selection, test.selection) || n.traffic != nil {
@@ -79,7 +79,7 @@ func TestNativeTrafficSelectionKeepsSignedRunBoundary(t *testing.T) {
 					*control.selection.Connections = 1
 				}
 			}
-			if _, err := selected.CreatePublishRun(t.Context(), "other", "retry"); !errors.Is(err, ErrScope) {
+			if _, err := selected.CreatePublishRun(t.Context(), "other", "retry", controlv1.HTTPProtection{}); !errors.Is(err, ErrScope) {
 				t.Fatalf("unscoped run: %v", err)
 			}
 		})

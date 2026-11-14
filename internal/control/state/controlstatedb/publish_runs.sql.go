@@ -43,7 +43,7 @@ func (q *Queries) GetActivePublishRunMembership(ctx context.Context, arg GetActi
 }
 
 const getOpenPublishRun = `-- name: GetOpenPublishRun :one
-SELECT preferred_regions, id, public_url_id, team_id, membership_id, acting_identity_id, publisher_identity_id, publisher_grant_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
+SELECT preferred_regions, id, public_url_id, team_id, membership_id, acting_identity_id, publisher_identity_id, publisher_grant_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open, http_protection
 FROM control.publish_runs
 WHERE public_url_id = $1
   AND closed_at IS NULL ORDER BY publish_run_number DESC LIMIT 1
@@ -85,12 +85,13 @@ func (q *Queries) GetOpenPublishRun(ctx context.Context, publicUrlID string) (Co
 		&i.ClosedAt,
 		&i.CloseReason,
 		&i.AssignmentsOpen,
+		&i.HttpProtection,
 	)
 	return i, err
 }
 
 const getPublishRunByIdempotency = `-- name: GetPublishRunByIdempotency :one
-SELECT preferred_regions, id, public_url_id, team_id, membership_id, acting_identity_id, publisher_identity_id, publisher_grant_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
+SELECT preferred_regions, id, public_url_id, team_id, membership_id, acting_identity_id, publisher_identity_id, publisher_grant_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open, http_protection
 FROM control.publish_runs
 WHERE public_url_id = $1
   AND idempotency_key = $2
@@ -137,6 +138,7 @@ func (q *Queries) GetPublishRunByIdempotency(ctx context.Context, arg GetPublish
 		&i.ClosedAt,
 		&i.CloseReason,
 		&i.AssignmentsOpen,
+		&i.HttpProtection,
 	)
 	return i, err
 }
@@ -146,10 +148,10 @@ WITH version AS (
 UPDATE control.public_urls
 SET next_publish_run_number = next_publish_run_number + 1,
     mutation_revision = mutation_revision + 1,
-    updated_at = $20
+    updated_at = $21
 WHERE id = $3
   AND next_publish_run_number < 9223372036854775807
-  AND mutation_revision = $23
+  AND mutation_revision = $24
   AND mutation_revision < 9223372036854775807
   AND lifecycle_state = 'enabled'
 RETURNING (next_publish_run_number - 1)::bigint AS publish_run_number, service_protocol
@@ -175,6 +177,7 @@ INSERT INTO control.publish_runs (
     certificate_identifiers,
     certificate_challenge_method,
     traffic_limits,
+    http_protection,
     state,
     created_at,
     last_heartbeat_at,
@@ -200,12 +203,13 @@ INSERT INTO control.publish_runs (
     $17::text[],
     $18::text,
     convert_from($19::bytea, 'UTF8')::jsonb,
+    convert_from($20::bytea, 'UTF8')::jsonb,
     'starting',
-    $20,
     $21,
-    $22
+    $22,
+    $23
 FROM version
-RETURNING preferred_regions, id, public_url_id, team_id, membership_id, acting_identity_id, publisher_identity_id, publisher_grant_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
+RETURNING preferred_regions, id, public_url_id, team_id, membership_id, acting_identity_id, publisher_identity_id, publisher_grant_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open, http_protection
 `
 
 type InsertPublishRunParams struct {
@@ -228,6 +232,7 @@ type InsertPublishRunParams struct {
 	CertificateIdentifiers     []string
 	CertificateChallengeMethod string
 	TrafficLimits              []byte
+	HttpProtection             []byte
 	CreatedAt                  pgtype.Timestamptz
 	LastHeartbeatAt            pgtype.Timestamptz
 	PublisherExpiresAt         pgtype.Timestamptz
@@ -255,6 +260,7 @@ func (q *Queries) InsertPublishRun(ctx context.Context, arg InsertPublishRunPara
 		arg.CertificateIdentifiers,
 		arg.CertificateChallengeMethod,
 		arg.TrafficLimits,
+		arg.HttpProtection,
 		arg.CreatedAt,
 		arg.LastHeartbeatAt,
 		arg.PublisherExpiresAt,
@@ -294,6 +300,7 @@ func (q *Queries) InsertPublishRun(ctx context.Context, arg InsertPublishRunPara
 		&i.ClosedAt,
 		&i.CloseReason,
 		&i.AssignmentsOpen,
+		&i.HttpProtection,
 	)
 	return i, err
 }
@@ -440,7 +447,7 @@ func (q *Queries) InsertPublishRunConnections(ctx context.Context, arg InsertPub
 }
 
 const listOpenPublishRuns = `-- name: ListOpenPublishRuns :many
-SELECT preferred_regions, id, public_url_id, team_id, membership_id, acting_identity_id, publisher_identity_id, publisher_grant_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open FROM control.publish_runs WHERE public_url_id=$1
+SELECT preferred_regions, id, public_url_id, team_id, membership_id, acting_identity_id, publisher_identity_id, publisher_grant_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open, http_protection FROM control.publish_runs WHERE public_url_id=$1
   AND closed_at IS NULL ORDER BY publish_run_number FOR UPDATE
 `
 
@@ -486,6 +493,7 @@ func (q *Queries) ListOpenPublishRuns(ctx context.Context, publicUrlID string) (
 			&i.ClosedAt,
 			&i.CloseReason,
 			&i.AssignmentsOpen,
+			&i.HttpProtection,
 		); err != nil {
 			return nil, err
 		}

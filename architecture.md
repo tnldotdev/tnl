@@ -210,8 +210,9 @@ publisher/service -------+
 - `requestlimit` keeps one HTTP request budget per run, shared across that run's
   visitor connections.
 - `httpprotection` prepares request-only Coraza inspection per HTTP run. Both
-  frontends use its process-wide gate and owned buffers; it starts no workers
-  and depends on shared `policy/httpprotection` values, not either run owner.
+  frontends use its process-wide gate and owned buffers. Opt-in temporary
+  blocks add one bounded reporting worker, joined by the run owner. It depends
+  on shared `policy/httpprotection` values, not either run owner.
 - `service/http.go` builds the service HTTP frontend. `service/stream` handles
   visitor TLS, protocol negotiation, expiry, target connections, and cleanup.
   The run supplies current admission and a shared request budget.

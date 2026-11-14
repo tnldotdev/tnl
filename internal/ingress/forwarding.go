@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
@@ -162,7 +163,12 @@ func (f *Forwarder) PublicURL(entry ingressv1.IngressRoutingTableEntry) (PublicU
 	} else if entry.IpPolicy != ingressv1.AllowAll || len(entry.AllowedIpHashes) != 0 || entry.IpPolicyKey != nil {
 		return PublicURL{}, errors.New("ingress: routing-table IP policy is inconsistent")
 	}
+	blocks, err := httpprotection.DecodeBlocks(entry.TemporaryBlocks)
+	if err != nil {
+		return PublicURL{}, err
+	}
 	route := PublicURL{
+		TemporaryBlocks: blocks,
 		AttestSource: func(visitorID string, source, destination netip.AddrPort) (string, error) {
 			if f.signVisitorSource == nil {
 				return "", visitortoken.ErrVisitorSource

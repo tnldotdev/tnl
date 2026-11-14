@@ -167,6 +167,7 @@ export interface TnlConfig {
                 ruleId: number;
               }[];
               maxBodyBytes?: number;
+              temporaryBlocks?: boolean;
             };
             access?:
               | "restricted"
@@ -397,6 +398,7 @@ export interface TnlConfig {
                 ruleId: number;
               }[];
               maxBodyBytes?: number;
+              temporaryBlocks?: boolean;
             };
             access?:
               | "restricted"

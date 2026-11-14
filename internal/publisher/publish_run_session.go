@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
+	"github.com/tnldotdev/tnl/internal/publisher/httpprotection"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -203,6 +204,8 @@ func runSession(
 		Feedback:           feedback,
 		Limits:             config.Limits,
 		Protection:         config.Protection,
+		ReportRejections:   httpprotection.RunReporter(config.VisitorControl, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: setup.PublicUrl.Id}, setup.PublishRun.Id, int64(version), publishRunToken.String()),
+		SourceBlocked:      policy.SourceBlocked,
 		StreamCapacity:     streamCapacity,
 		ObserveSummary:     config.ObserveSummary,
 		InspectionMode:     config.InspectionMode,

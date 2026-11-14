@@ -12,8 +12,30 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 )
+
+func TestTemporaryBlocksRejectBeforeOpeningRelay(t *testing.T) {
+	backend := newTLSBackend(t)
+	blocks, err := httpprotection.DecodeBlocks([]httpprotection.TemporaryBlock{{SourceIP: "198.51.100.1", ExpiresAt: time.Now().Add(time.Minute)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := Config{RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, Lookup: func(string) ([]PublicURL, LookupReason) {
+		return []PublicURL{{ID: "public_url_test", PublishRunID: "publish_run_test", PublishRunNumber: 1, Backends: []Backend{backend}, TemporaryBlocks: blocks, AllowAll: true, AttestSource: testBackendSourceProof}}, LookupCurrent
+	}}
+	_, address := startIngress(t, config)
+	denied := ingressClient(t, address, "route.example", "198.51.100.1:40001")
+	if err := denied.Handshake(); err == nil || backend.opens.Load() != 0 {
+		t.Fatal("blocked source opened a relay stream")
+	}
+	allowed := ingressClient(t, address, "route.example", "198.51.100.2:40002")
+	exchangePing(t, allowed)
+	if result := ingressAwait(t, backend.result); result.err != nil || backend.opens.Load() != 1 {
+		t.Fatal("temporary block widened to neighboring IP", result.err)
+	}
+}
 
 func TestIngressRoutesTLSWithProxyMetadata(t *testing.T) {
 	backend := newTLSBackend(t)

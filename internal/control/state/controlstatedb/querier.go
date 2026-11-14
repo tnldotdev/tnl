@@ -100,6 +100,7 @@ type Querier interface {
 	CountActiveSharesForPublicURL(ctx context.Context, arg CountActiveSharesForPublicURLParams) (int64, error)
 	CountConnectorPeerPairOwners(ctx context.Context, arg CountConnectorPeerPairOwnersParams) (int64, error)
 	CountGuestCurrentPublicURLs(ctx context.Context, guestID string) (int64, error)
+	CountHTTPTemporaryBlocks(ctx context.Context, arg CountHTTPTemporaryBlocksParams) (int64, error)
 	// diagnostic/test oracle only; placement reads trigger-maintained totals.
 	CountOpenPublishRunAssignmentsByRelayService(ctx context.Context) ([]CountOpenPublishRunAssignmentsByRelayServiceRow, error)
 	CountRecentGuestTrialsByIP(ctx context.Context, arg CountRecentGuestTrialsByIPParams) (int64, error)
@@ -337,6 +338,7 @@ type Querier interface {
 	ListFeedbackEventsForThread(ctx context.Context, arg ListFeedbackEventsForThreadParams) ([]ControlFeedbackEvent, error)
 	ListFeedbackThreadsForPage(ctx context.Context, arg ListFeedbackThreadsForPageParams) ([]ControlFeedbackThread, error)
 	ListFeedbackThreadsForTeam(ctx context.Context, arg ListFeedbackThreadsForTeamParams) ([]ControlFeedbackThread, error)
+	ListHTTPTemporaryBlocks(ctx context.Context, arg ListHTTPTemporaryBlocksParams) ([]ListHTTPTemporaryBlocksRow, error)
 	ListIdentityMembershipContexts(ctx context.Context, identityID string) ([]ListIdentityMembershipContextsRow, error)
 	ListIdentityPublicURLs(ctx context.Context, arg ListIdentityPublicURLsParams) ([]ListIdentityPublicURLsRow, error)
 	ListIdentityTeamDomains(ctx context.Context, arg ListIdentityTeamDomainsParams) ([]ListIdentityTeamDomainsRow, error)
@@ -492,6 +494,8 @@ type Querier interface {
 	// a retry with the same idempotency key returns the same prepared row.
 	PrepareServiceRun(ctx context.Context, arg PrepareServiceRunParams) (ControlServiceRun, error)
 	PreviewInvitation(ctx context.Context, arg PreviewInvitationParams) (PreviewInvitationRow, error)
+	PruneHTTPResourceBlocks(ctx context.Context, arg PruneHTTPResourceBlocksParams) error
+	PruneHTTPTemporaryBlocks(ctx context.Context, before pgtype.Timestamptz) error
 	// bound candidates scanned, even when an anchor cannot be removed. retain the
 	// latest hostname/category projection, including tombstones and expired rows,
 	// and each publish run number's latest revision. concurrent publication can
@@ -510,6 +514,7 @@ type Querier interface {
 	ReadConnectorPeerClaimBounds(ctx context.Context, pairID string) ([]ReadConnectorPeerClaimBoundsRow, error)
 	// relay leases are current-state recheck deadlines, not pair renewals.
 	ReadConnectorPeerObservationRelayBounds(ctx context.Context, arg ReadConnectorPeerObservationRelayBoundsParams) ([]ReadConnectorPeerObservationRelayBoundsRow, error)
+	ReadHTTPTemporaryBlock(ctx context.Context, arg ReadHTTPTemporaryBlockParams) (ControlHttpTemporaryBlock, error)
 	ReadIngressRoutingTableClock(ctx context.Context) (ControlIngressRoutingTableClock, error)
 	ReadPublishRunPreparationRouting(ctx context.Context, arg ReadPublishRunPreparationRoutingParams) (ControlIngressRoutingTableEvent, error)
 	ReadVisitorPolicyEvents(ctx context.Context, arg ReadVisitorPolicyEventsParams) ([]ReadVisitorPolicyEventsRow, error)
@@ -618,6 +623,7 @@ type Querier interface {
 	SetVisitorFeedbackPolicy(ctx context.Context, arg SetVisitorFeedbackPolicyParams) error
 	StartPublisherRuntime(ctx context.Context, arg StartPublisherRuntimeParams) (ControlPublisherRuntime, error)
 	StopPublisherRuntime(ctx context.Context, arg StopPublisherRuntimeParams) (ControlPublisherRuntime, error)
+	StoreHTTPTemporaryBlock(ctx context.Context, arg StoreHTTPTemporaryBlockParams) error
 	StoreRelayTransportCertificate(ctx context.Context, arg StoreRelayTransportCertificateParams) (ControlRelayService, error)
 	SuspendAuthorityPublicURL(ctx context.Context, arg SuspendAuthorityPublicURLParams) (int64, error)
 	TeamMemberSlugReserved(ctx context.Context, arg TeamMemberSlugReservedParams) (bool, error)

@@ -51,6 +51,8 @@ schemas:
     type: object
     additionalProperties: false
     properties:
+      http_protection:
+        $ref: "../openapi.yaml#/components/schemas/HTTPProtection"
       preferred_regions:
         $ref: "./common.yaml#/schemas/PreferredRegions"
       traffic:

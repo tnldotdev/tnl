@@ -28,7 +28,7 @@ import (
 
 const certificateTestPublicURLID = "url_0123456789abcdefghijkl"
 
-func (c *certificateTestControl) CreatePublishRun(_ context.Context, publicURLID, key string, _ ...string) (controlv1.PublishRunSetup, error) {
+func (c *certificateTestControl) CreatePublishRun(_ context.Context, publicURLID, key string, _ controlv1.HTTPProtection, _ ...string) (controlv1.PublishRunSetup, error) {
 	if publicURLID != c.setup.PublicUrl.Id || key == "" {
 		return controlv1.PublishRunSetup{}, errors.New("unexpected publish run request")
 	}
@@ -107,6 +107,10 @@ func newCertificateTestControl(t *testing.T, hostname string, plan controlv1.Cer
 			PublishRunToken: token.String(), CertificatePlan: plan,
 		},
 	}
+}
+
+func (*certificateTestControl) ReportHTTPProtectionRejections(context.Context, controlv1.ReportHTTPProtectionRejectionsRequest, string) error {
+	return errors.New("unexpected HTTP protection report")
 }
 
 func (c *certificateTestControl) ReadPublisherVisitorPolicy(_ context.Context, body controlv1.PublisherVisitorPolicyRequest, token string) (controlv1.VisitorPolicyUpdate, error) {

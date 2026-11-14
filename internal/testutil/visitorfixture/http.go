@@ -24,6 +24,11 @@ import (
 const PublicURLID = "url_0123456789abcdefghijkl"
 
 type HTTPSource struct{ BrowserCookieSecret, ShareId, ShareCookieSecret *string }
+
+func (*HTTPControl) ReportHTTPProtectionRejections(context.Context, controlv1.ReportHTTPProtectionRejectionsRequest, string) error {
+	return errors.New("unexpected HTTP protection report")
+}
+
 type HTTPDecision struct {
 	VisitAllowed bool
 	ValidUntil   *time.Time

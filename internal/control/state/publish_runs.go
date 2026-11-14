@@ -2,7 +2,9 @@ package state
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -17,6 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
@@ -65,6 +68,7 @@ type PublishRunRequest struct {
 	TrafficSelection         *trafficlimits.Selection
 	TrafficDefaults          trafficlimits.Limits
 	TrafficCeiling           trafficlimits.Limits
+	HTTPProtection           httpprotection.Settings
 }
 
 // ConnectionAssignment is one of the two independently assigned publisher
@@ -124,6 +128,9 @@ func (d *Database) CreatePublishRun(
 	}()
 	if err := validatePublishRunRequest(request, publisherLeaseDuration, connectionCredentialDuration); err != nil {
 		return PublishRunSetup{}, err
+	}
+	if err := request.HTTPProtection.Validate(); err != nil {
+		return result, ErrProjectConfigurationInvalid
 	}
 	if request.TrafficSelection != nil {
 		if err := request.TrafficSelection.Validate(); err != nil {
@@ -196,6 +203,15 @@ func (d *Database) createPublishRun(
 		return result, err
 	}
 	request.RequestDigest = regionRequestDigest(request.RequestDigest, request.PreferredRegions)
+	protection, err := json.Marshal(request.HTTPProtection.Defaults())
+	if err != nil {
+		return result, err
+	}
+	// settings participate in the existing idempotency digest, not a new revision.
+	request.RequestDigest = sha256.Sum256(append(request.RequestDigest[:], protection...))
+	if route.ServiceProtocol != "http" && request.HTTPProtection.BlocksSources() {
+		return result, ErrProjectConfigurationInvalid
+	}
 	if request.PublisherIdentityID != "" {
 		secret, err := d.authorizePublisherRun(ctx, queries, route, request, now)
 		if err != nil {
@@ -332,7 +348,8 @@ func (d *Database) createPublishRun(
 		CertificateScope: request.CertificateScope, CertificateIdentifiers: request.CertificateIdentifiers,
 		CertificateChallengeMethod: string(request.CertificateChallenge), CreatedAt: timestamptz(now),
 		LastHeartbeatAt: timestamptz(now), PublisherExpiresAt: timestamptz(now.Add(publisherLeaseDuration)),
-		TrafficLimits: traffic,
+		TrafficLimits:  traffic,
+		HttpProtection: protection,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		if route.NextPublishRunNumber == math.MaxInt64 || route.MutationRevision == math.MaxInt64 {
