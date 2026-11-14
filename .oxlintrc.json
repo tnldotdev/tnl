@@ -1,7 +1,15 @@
 {
   "ignorePatterns": [
     "internal/publisher/toolbar/toolbar.js",
-    "internal/publisher/browserapi/model.gen.ts"
+    "internal/publisher/browserapi/model.gen.ts",
+    "packages/ts/src/internal/management/client/**",
+    "packages/ts/src/internal/management/core/**"
+  ],
+  "overrides": [
+    {
+      "files": ["packages/ts/src/internal/management/zod.gen.ts"],
+      "rules": { "no-useless-escape": "off" }
+    }
   ],
   "rules": {
     "typescript/no-explicit-any": "error",

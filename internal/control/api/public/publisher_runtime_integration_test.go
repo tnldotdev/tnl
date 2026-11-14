@@ -22,7 +22,7 @@ import (
 	controlProxy "github.com/tnldotdev/tnl/internal/control/proxy"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming"
-	publishergroup "github.com/tnldotdev/tnl/internal/publisher/group"
+	publisherdeployment "github.com/tnldotdev/tnl/internal/publisher/deployment"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	processidentity "github.com/tnldotdev/tnl/internal/publisher/processidentity"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -120,12 +120,12 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	group := "remote"
-	applied, err := owner.ApplyProjectConfiguration(ctx, "egress", controlv1.ApplyProjectConfigurationRequest{Deployment: group, ServiceDeclarations: controlv1.ProjectServiceDeclarations{"api": "http", "db": "postgres"}, TeamId: m.TeamID, Source: &testProjectSource, Configuration: controlv1.ProjectConfiguration{Settings: &controlv1.DeploymentSettings{}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {Target: "api.internal:3000"}, "db": {Target: "db.internal:5432", Protocol: new(controlv1.Postgres)}}}})
+	deployment := "remote"
+	applied, err := owner.ApplyProjectConfiguration(ctx, "egress", controlv1.ApplyProjectConfigurationRequest{Deployment: deployment, ServiceDeclarations: controlv1.ProjectServiceDeclarations{"api": "http", "db": "postgres"}, TeamId: m.TeamID, Source: &testProjectSource, Configuration: controlv1.ProjectConfiguration{Settings: &controlv1.DeploymentSettings{}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {Target: "api.internal:3000"}, "db": {Target: "db.internal:5432", Protocol: new(controlv1.Postgres)}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := owner.CreatePublisherGroupEnrollment(ctx, "egress", group, controlv1.CreatePublisherGroupEnrollmentRequest{TeamId: m.TeamID, MaxMembers: 2, ExpiresIn: 600})
+	e, err := owner.CreateDeploymentPublisherEnrollment(ctx, m.TeamID, "egress", deployment, "runtime-enrollment", controlv1.CreateDeploymentPublisherEnrollmentRequest{Services: []string{"api", "db"}, MaxMembers: new(2), ExpiresIn: new(600)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	member, err := client.RedeemPublisherGroupEnrollment(ctx, e.EnrollmentKey, public)
+	member, err := client.RedeemDeploymentPublisherEnrollment(ctx, e.EnrollmentKey, public)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	if read(member.PublisherIdentityId) != nil {
 		t.Fatal("enrollment recorded operator egress")
 	}
-	runtime, err := processidentity.New(client, server, member.PublisherIdentityId, member.KeyId, member.GroupId, key)
+	runtime, err := processidentity.New(client, server, member.PublisherIdentityId, member.KeyId, member.DeploymentId, key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,20 +166,20 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 		t.Fatalf("proxy source: %+v", first)
 	}
 	transport.set(proxy, "10.0.0.2:1234", "8.8.4.4")
-	groupClient, err := publishergroup.NewClient(server, httpClient)
+	deploymentClient, err := publisherdeployment.NewClient(server, httpClient)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = groupClient.Verify(ctx, member, key); err != nil {
+	if _, err = deploymentClient.Verify(ctx, member, key); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = groupClient.Lease(ctx, member, key); err != nil {
+	if _, err = deploymentClient.Lease(ctx, member, key); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(read(member.PublisherIdentityId), first) {
 		t.Fatal("operator verification/preflight overwrote replica")
 	}
-	if _, err = owner.RenamePublisherGroup(ctx, "egress", group, controlv1.RenamePublisherGroupRequest{TeamId: m.TeamID, Name: "live", ExpectedRevision: applied.Revision}); err != nil {
+	if _, err = owner.RenameDeployment(ctx, "egress", deployment, controlv1.RenameDeploymentRequest{TeamId: m.TeamID, Name: "live", ExpectedRevision: applied.Revision}); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(read(member.PublisherIdentityId), first) {
@@ -224,7 +224,7 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	if _, err = owner.ListPublisherIdentities(ctx, "team_other", ""); !errors.Is(err, clientcontrol.ErrNotFound) {
 		t.Fatal("cross-team status", err)
 	}
-	if _, err = client.GetProjectConfiguration(ctx, m.TeamID, "egress", group); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+	if _, err = client.GetProjectConfiguration(ctx, m.TeamID, "egress", deployment); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("anonymous project status", err)
 	}
 	project, err := owner.GetProjectConfiguration(ctx, m.TeamID, "egress", "live")
@@ -240,8 +240,8 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 		t.Fatal("runtime leaked into project metadata")
 	}
 	// a publication proof cannot start or replace a runtime, even for this identity.
-	proof, _ := publisherproof.Sign(member.PublisherIdentityId, member.KeyId, member.GroupId, server+"/v1/publisher/groups/verify", key, time.Now())
-	if _, err = client.PublisherRuntime(ctx, controlv1.PublisherRuntimeRequest{PublisherIdentityId: member.PublisherIdentityId, ScopeId: member.GroupId, ProcessRunId: strings.Repeat("e", 32), ExpectedEpoch: 1, Action: controlv1.RuntimeStart, Assertion: proof}); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+	proof, _ := publisherproof.Sign(member.PublisherIdentityId, member.KeyId, member.DeploymentId, server+"/v1/publisher/deployments/verify", key, time.Now())
+	if _, err = client.PublisherRuntime(ctx, controlv1.PublisherRuntimeRequest{PublisherIdentityId: member.PublisherIdentityId, ScopeId: member.DeploymentId, ProcessRunId: strings.Repeat("e", 32), ExpectedEpoch: 1, Action: controlv1.RuntimeStart, Assertion: proof}); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("verification proof started runtime", err)
 	}
 	if err = runtime.Stop(ctx); err != nil {
@@ -250,54 +250,54 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	if s := read(member.PublisherIdentityId); s.Active || s.StoppedAt == nil {
 		t.Fatal("stop not visible", s)
 	}
-	// actual multi-service group loop owns one runtime and orderly stop.
+	// the deployment publisher owns one runtime for its services and joins their shutdown.
 	transport.set(proxy, "10.0.0.2:1234", "8.8.8.8")
-	groupCtx, cancel := context.WithCancel(ctx)
+	deploymentCtx, cancel := context.WithCancel(ctx)
 	started := make(chan struct{}, 2)
 	observed := make(chan struct{}, 1)
 	done := make(chan error, 1)
 	go func() {
-		done <- (publishergroup.Runtime{Control: groupClient, Member: member, Private: key, PollInterval: time.Second, Observe: func(int64, bool) error {
+		done <- (publisherdeployment.Runtime{Control: deploymentClient, Member: member, Private: key, PollInterval: time.Second, Observe: func(int64, bool) error {
 			select {
 			case observed <- struct{}{}:
 			default:
 			}
 			return nil
-		}, Publish: func(ctx context.Context, _ controlv1.PublisherGroupServiceAssignment, health func(bool)) error {
+		}, Publish: func(ctx context.Context, _ controlv1.DeploymentPublisherServiceAssignment, health func(bool)) error {
 			started <- struct{}{}
 			health(true)
 			<-ctx.Done()
 			return nil
-		}}).Serve(groupCtx)
+		}}).Serve(deploymentCtx)
 	}()
 	for range 2 {
 		select {
 		case <-started:
 		case <-time.After(10 * time.Second):
 			cancel()
-			t.Fatal("group did not start both assignments")
+			t.Fatal("deployment publisher did not start both assignments")
 		}
 	}
-	groupStatus := read(member.PublisherIdentityId)
-	if groupStatus.Epoch != 2 || !groupStatus.Active {
+	deploymentStatus := read(member.PublisherIdentityId)
+	if deploymentStatus.Epoch != 2 || !deploymentStatus.Active {
 		cancel()
-		t.Fatal("group did not own one replacement epoch")
+		t.Fatal("deployment publisher did not own one replacement epoch")
 	}
 	select {
 	case <-observed:
 	case <-time.After(10 * time.Second):
 		cancel()
-		t.Fatal("group did not acknowledge its assignments")
+		t.Fatal("deployment publisher did not acknowledge its assignments")
 	}
 	cancel()
 	if err = <-done; err != nil {
 		t.Fatal(err)
 	}
 	if s := read(member.PublisherIdentityId); s.Active || s.Epoch != 2 {
-		t.Fatal("group stop", s)
+		t.Fatal("deployment publisher stop", s)
 	}
 
-	// non-group installed identity uses the exact same signed lifecycle. the
+	// a public URL's installed identity uses the same signed lifecycle. the
 	// existing native heartbeat performs renewal, not token exchange/preflight.
 	domains, err := d.ListTeamDomains(ctx, session.Identity.Identity.ID, m.TeamID)
 	if err != nil {

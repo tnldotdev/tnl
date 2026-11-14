@@ -44,15 +44,15 @@ func TestNormalizeProjectConfiguration(t *testing.T) {
 			}
 		})
 	}
-	for _, retired := range []string{
-		`{"publisher_groups":{"local":{}}}`,
-		`{"services":{"db":{"publisher_group":"missing"}}}`,
+	for _, invalid := range []string{
+		`{"unknown":{}}`,
+		`{"services":{"db":{"unknown":true}}}`,
 	} {
 		var c ProjectConfiguration
-		decoder := json.NewDecoder(strings.NewReader(retired))
+		decoder := json.NewDecoder(strings.NewReader(invalid))
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&c); err == nil {
-			t.Fatal("retired group configuration remained readable")
+			t.Fatal("configuration accepted an unknown field")
 		}
 	}
 }

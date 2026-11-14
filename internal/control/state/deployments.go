@@ -125,14 +125,14 @@ func (d *Database) CreateDeployment(ctx context.Context, r CreateDeploymentReque
 	var id string
 	var savedDigest []byte
 	var deleted bool
-	err = tx.QueryRow(ctx, `SELECT id,create_request_digest,deleted_at IS NOT NULL FROM control.project_publisher_groups
+	err = tx.QueryRow(ctx, `SELECT id,create_request_digest,deleted_at IS NOT NULL FROM control.deployments
 		WHERE team_id=$1 AND project_key=$2 AND create_principal_id=$3 AND create_idempotency_key=$4`,
 		r.TeamID, r.ProjectKey, access.principalID, r.IdempotencyKey).Scan(&id, &savedDigest, &deleted)
 	if err == nil {
 		if deleted || !bytes.Equal(digest[:], savedDigest) {
 			return result, ErrServiceConflict
 		}
-		row, err := controlstatedb.New(tx).LockProjectPublisherGroup(ctx, id)
+		row, err := controlstatedb.New(tx).LockDeploymentByID(ctx, id)
 		if err != nil {
 			return result, err
 		}
@@ -149,7 +149,7 @@ func (d *Database) CreateDeployment(ctx context.Context, r CreateDeploymentReque
 		return result, err
 	}
 	q := controlstatedb.New(tx)
-	deployments, err := q.ListProjectPublisherGroups(ctx, controlstatedb.ListProjectPublisherGroupsParams{TeamID: r.TeamID, ProjectKey: r.ProjectKey})
+	deployments, err := q.ListProjectDeployments(ctx, controlstatedb.ListProjectDeploymentsParams{TeamID: r.TeamID, ProjectKey: r.ProjectKey})
 	if err != nil {
 		return result, err
 	}
@@ -165,14 +165,14 @@ func (d *Database) CreateDeployment(ctx context.Context, r CreateDeploymentReque
 	if err != nil {
 		return result, err
 	}
-	id, err = opaqueid.New("pgrp_")
+	id, err = opaqueid.New("dpl_")
 	if err != nil {
 		return result, err
 	}
 	if err = access.setAuditActor(ctx, tx); err != nil {
 		return result, err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO control.project_publisher_groups(id,team_id,project_key,name,create_principal_id,create_idempotency_key,create_request_digest)
+	_, err = tx.Exec(ctx, `INSERT INTO control.deployments(id,team_id,project_key,name,create_principal_id,create_idempotency_key,create_request_digest)
 		VALUES($1,$2,$3,$4,$5,$6,$7)`, id, r.TeamID, r.ProjectKey, r.Name, access.principalID, r.IdempotencyKey, digest[:])
 	if err != nil {
 		return result, projectConstraintError(err)
@@ -186,7 +186,7 @@ func (d *Database) CreateDeployment(ctx context.Context, r CreateDeploymentReque
 		if err != nil {
 			return result, err
 		}
-		if _, err = tx.Exec(ctx, `INSERT INTO control.applied_project_services(team_id,project_key,service,group_id,service_id,desired_revision) VALUES($1,$2,$3,$4,$5,1)`, r.TeamID, r.ProjectKey, name, id, serviceID); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO control.applied_project_services(team_id,project_key,service,deployment_id,service_id,desired_revision) VALUES($1,$2,$3,$4,$5,1)`, r.TeamID, r.ProjectKey, name, id, serviceID); err != nil {
 			return result, err
 		}
 		if err = d.ensureServiceEndpoint(ctx, tx, serviceID, id, r.DNSAutomation, r.Now); err != nil {
@@ -199,7 +199,7 @@ func (d *Database) CreateDeployment(ctx context.Context, r CreateDeploymentReque
 	if err = access.recordUpdate(ctx, tx, id, "deployment/create/"+id, r.Now); err != nil {
 		return result, err
 	}
-	row, err := q.LockProjectPublisherGroup(ctx, id)
+	row, err := q.LockDeploymentByID(ctx, id)
 	if err != nil {
 		return result, err
 	}
@@ -272,7 +272,7 @@ func (d *Database) UpdateDeployment(ctx context.Context, r UpdateDeploymentReque
 	if err != nil {
 		return result, err
 	}
-	bindings, err := q.ListPublisherGroupServices(ctx, row.ID)
+	bindings, err := q.ListDeploymentPublisherServices(ctx, row.ID)
 	if err != nil {
 		return result, err
 	}
@@ -316,7 +316,7 @@ func (d *Database) UpdateDeployment(ctx context.Context, r UpdateDeploymentReque
 	if err = d.writeDeploymentConfiguration(ctx, tx, row, snapshot); err != nil {
 		return result, err
 	}
-	row, err = q.LockProjectPublisherGroup(ctx, row.ID)
+	row, err = q.LockDeploymentByID(ctx, row.ID)
 	if err != nil {
 		return result, err
 	}
@@ -357,7 +357,7 @@ func (d *Database) GetDeployment(ctx context.Context, scope DeploymentScope, sel
 }
 
 func (d *Database) ListDeployments(ctx context.Context, scope DeploymentScope, after string, limit int) (result []Deployment, retErr error) {
-	if limit < 1 || limit > 100 || after != "" && !opaqueid.Valid(after, "pgrp_") {
+	if limit < 1 || limit > 100 || after != "" && !opaqueid.Valid(after, "dpl_") {
 		return nil, ErrProjectConfigurationInvalid
 	}
 	tx, err := d.pool.Begin(ctx)
@@ -370,7 +370,7 @@ func (d *Database) ListDeployments(ctx context.Context, scope DeploymentScope, a
 		return nil, err
 	}
 	q := controlstatedb.New(tx)
-	var rows []controlstatedb.ControlProjectPublisherGroup
+	var rows []controlstatedb.ControlDeployment
 	if access.grantID == "" {
 		rows, err = q.ListDeployments(ctx, controlstatedb.ListDeploymentsParams{TeamID: scope.TeamID, ProjectKey: scope.ProjectKey, AfterID: after, PageLimit: int32(limit)})
 	} else {
@@ -415,7 +415,7 @@ func (d *Database) DeleteDeployment(ctx context.Context, scope DeploymentScope, 
 	if row.Revision != expected {
 		return ErrDeploymentStale
 	}
-	bindings, err := q.ListPublisherGroupServices(ctx, row.ID)
+	bindings, err := q.ListDeploymentPublisherServices(ctx, row.ID)
 	if err != nil {
 		return err
 	}
@@ -441,19 +441,19 @@ func (d *Database) DeleteDeployment(ctx context.Context, scope DeploymentScope, 
 			return err
 		}
 	}
-	if err = d.removePublisherGroup(ctx, tx, q, row.ID, now); err != nil {
+	if err = d.removeDeploymentPublisher(ctx, tx, q, row.ID, now); err != nil {
 		return err
 	}
 	return d.commitDeploymentAccess(ctx, tx, access)
 }
 
-func (d *Database) deploymentStatus(ctx context.Context, tx pgx.Tx, row controlstatedb.ControlProjectPublisherGroup, access deploymentAccess) (Deployment, error) {
+func (d *Database) deploymentStatus(ctx context.Context, tx pgx.Tx, row controlstatedb.ControlDeployment, access deploymentAccess) (Deployment, error) {
 	result := Deployment{ID: row.ID, TeamID: row.TeamID, ProjectKey: row.ProjectKey, Name: row.Name, Revision: row.Revision, Targets: map[string]DeploymentTargetStatus{}, Services: map[string]DeploymentService{}}
 	snapshot, err := d.openDeploymentConfiguration(row)
 	if err != nil {
 		return result, err
 	}
-	bindings, err := controlstatedb.New(tx).ListPublisherGroupServices(ctx, row.ID)
+	bindings, err := controlstatedb.New(tx).ListDeploymentPublisherServices(ctx, row.ID)
 	if err != nil {
 		return result, err
 	}

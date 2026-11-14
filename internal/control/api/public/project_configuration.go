@@ -85,10 +85,10 @@ func projectConfigurationProblem(ctx context.Context, w http.ResponseWriter, ope
 		writeProblem(w, 409, controlv1.Conflict, "a declared service name or public hostname is already in use")
 	case errors.Is(err, controlstate.ErrServiceAccess), errors.Is(err, controlstate.ErrPublicURLAccess):
 		writeProblem(w, 403, controlv1.Forbidden, "project configuration requires current team manager access")
-	case errors.Is(err, controlstate.ErrPublisherGroup):
+	case errors.Is(err, controlstate.ErrDeploymentPublisher):
 		writeBearerProblem(w)
 	case errors.Is(err, pgx.ErrNoRows):
-		writeProblem(w, 404, controlv1.NotFound, "project or publisher group not found")
+		writeProblem(w, 404, controlv1.NotFound, "project or deployment not found")
 	default:
 		writeControlStateProblem(ctx, w, operation, err)
 	}

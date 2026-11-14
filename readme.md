@@ -140,11 +140,9 @@ import { defineConfig } from "@tnldotdev/tnl/config";
 
 export default defineConfig({
   feedback: true,
-  services: {
-    app: {
-      publicURL: {},
-      target: { type: "app" },
-    },
+  services: { app: {} },
+  deployments: {
+    local: { targets: { app: { publicURL: {} } } },
   },
 });
 ```
@@ -277,28 +275,37 @@ For example, connect to a private PostgreSQL instance in Amazon RDS:
 ```ts
 export default defineConfig({
   // ...existing config
-  publisherGroups: {
-    production: {},
-  },
   services: {
-    orders: {
-      publisherGroup: "production",
-      protocol: "postgres",
-      target: {
-        type: "rds",
-        instance: "orders",
-        region: "us-east-1",
+    orders: { protocol: "postgres" },
+  },
+  deployments: {
+    production: {
+      targets: {
+        orders: {
+          address: {
+            type: "rds",
+            instance: "orders",
+            region: "us-east-1",
+          },
+          access: { team: true },
+        },
       },
-      access: { team: true },
     },
   },
 });
 ```
 
-Use your RDS instance name and region. Apply it with `pnpm exec tnl apply`, then run a `production` publisher in your VPC. From your laptop:
+Use your RDS instance name and region. Save the deployment and approve a publisher for this service:
 
 ```bash
-pnpm exec tnl connect orders
+pnpm exec tnl apply --deployment production
+pnpm exec tnl publisher setup --deployment production --service orders
+```
+
+Deliver the enrollment key privately to a `production` publisher in your VPC. From your laptop:
+
+```bash
+pnpm exec tnl connect orders --deployment production
 ```
 
 Team members use the printed connection settings with `psql` or their database driver and their normal database credentials. Kubernetes works with `kubectl` and your cluster's existing credentials.
@@ -315,6 +322,7 @@ export default defineConfig({
   workloads: {
     migrate: {
       provider: "github",
+      deployment: "production",
       services: ["orders"],
       github: {
         // your GitHub repo details
@@ -327,7 +335,7 @@ export default defineConfig({
 });
 ```
 
-Apply the config, then add the action to your deploy job. For example, with Drizzle:
+Apply with `pnpm exec tnl apply --deployment production`, then add the action to your deploy job. For example, with Drizzle:
 
 ```yaml
 # .github/workflows/deploy.yml

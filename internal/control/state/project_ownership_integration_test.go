@@ -166,7 +166,7 @@ func TestIntegrationAppliedProjectLocalEphemeralRealizationAfterExpiry(t *testin
 	}
 }
 
-func TestIntegrationAppliedProjectManagedGroupGrantsAndSafeMetadata(t *testing.T) {
+func TestIntegrationAppliedProjectManagedDeploymentGrantsAndSafeMetadata(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "managed_projection")
 	d.managedURLMode = naming.ManagedURLModeSimple
 	r := appliedProjectRequest(t, d, now)
@@ -212,17 +212,17 @@ func TestIntegrationAppliedProjectManagedGroupGrantsAndSafeMetadata(t *testing.T
 	if _, err = d.GetProjectPublicMetadata(t.Context(), r.TeamID, r.ProjectKey, outsider, now); !errors.Is(err, ErrPublicURLAccess) {
 		t.Fatal("ungranted visitor read project source", err)
 	}
-	e, err := d.IssuePublisherGroupEnrollment(t.Context(), r.TeamID, r.ProjectKey, "production", r.ActorID, 1, time.Hour, now)
+	e, err := testDeploymentPublisherEnrollment(d, t.Context(), r.TeamID, r.ProjectKey, "production", r.ActorID, 1, time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replica := enrollAppliedGroup(t, d, r, e, now)
+	replica := enrollAppliedDeployment(t, d, r, e, now)
 	a := replica.assignments.Services[0]
 	if err = d.RevokePublisherGrant(t.Context(), r.TeamID, replica.member.PublisherIdentityID, a.GrantID, r.ActorID, now); !errors.Is(err, ErrProjectManaged) {
-		t.Fatal("managed group grant revoked directly", err)
+		t.Fatal("managed deployment grant revoked directly", err)
 	}
-	if current, e := d.GetPublisherGroupAssignments(t.Context(), replica.lease.AccessToken, now); e != nil || len(current.Services) != 2 {
-		t.Fatal("guard disturbed group poll", e)
+	if current, e := d.GetDeploymentPublisherAssignments(t.Context(), replica.lease.AccessToken, now); e != nil || len(current.Services) != 2 {
+		t.Fatal("guard disturbed deployment poll", e)
 	}
 	// legacy or exceptional revoked state must not be silently recreated by an
 	// unrelated apply, and must not turn healthy sibling assignments into 401.
@@ -235,18 +235,18 @@ func TestIntegrationAppliedProjectManagedGroupGrantsAndSafeMetadata(t *testing.T
 	if _, err = d.ApplyProjectConfiguration(t.Context(), r); err != nil {
 		t.Fatal(err)
 	}
-	current, err := d.GetPublisherGroupAssignments(t.Context(), replica.lease.AccessToken, now)
+	current, err := d.GetDeploymentPublisherAssignments(t.Context(), replica.lease.AccessToken, now)
 	if err != nil || len(current.Services) != 1 {
 		t.Fatal("one revoked grant broke sibling poll", current, err)
 	}
 	var grant string
-	if err = d.pool.QueryRow(t.Context(), `SELECT grant_id FROM control.publisher_group_service_grants WHERE publisher_identity_id=$1 AND service=$2`, replica.member.PublisherIdentityID, a.Service).Scan(&grant); err != nil || grant != a.GrantID {
+	if err = d.pool.QueryRow(t.Context(), `SELECT grant_id FROM control.deployment_publisher_service_grants WHERE publisher_identity_id=$1 AND service=$2`, replica.member.PublisherIdentityID, a.Service).Scan(&grant); err != nil || grant != a.GrantID {
 		t.Fatal("unrelated apply recreated revoked grant", err)
 	}
-	if err = d.RevokePublisherGroupMember(t.Context(), r.TeamID, r.ProjectKey, "production", replica.member.PublisherIdentityID, r.ActorID, now); err != nil {
+	if err = d.RevokeDeploymentPublisher(t.Context(), DeploymentScope{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID}, "production", replica.member.PublisherIdentityID, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.GetPublisherGroupAssignments(t.Context(), replica.lease.AccessToken, now); !errors.Is(err, ErrPublisherGroup) {
+	if _, err = d.GetDeploymentPublisherAssignments(t.Context(), replica.lease.AccessToken, now); !errors.Is(err, ErrDeploymentPublisher) {
 		t.Fatal("operational revoke was not immediate", err)
 	}
 }

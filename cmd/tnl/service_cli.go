@@ -262,12 +262,12 @@ func runServiceServeWithUserJobs(ctx context.Context, flags serviceServeCommand,
 	engine := installedjobs.Engine{Registry: registry, UserJobs: runners, Telemetry: flags.telemetry}
 	if options.User {
 		engine.Connect = runInstalledConnector
-		engine.Group = func(ctx context.Context, job installedjobs.Job, telemetry *clienttelemetry.Collector, observe func(int64, bool) error) error {
-			_, private, profile, err := registry.GroupIdentity(ctx, job)
+		engine.Deployment = func(ctx context.Context, job installedjobs.Job, telemetry *clienttelemetry.Collector, observe func(int64, bool) error) error {
+			_, private, profile, err := registry.DeploymentIdentity(ctx, job)
 			if err != nil {
 				return err
 			}
-			return servePublisherGroup(ctx, job, profile, private, telemetry, observe)
+			return serveDeploymentPublisher(ctx, job, profile, private, telemetry, observe)
 		}
 	}
 	return engine.Serve(ctx)
@@ -279,15 +279,15 @@ func writeSystemJobs(ctx context.Context, registry *installedjobs.Registry, outp
 		return err
 	}
 	for i := range jobs {
-		if jobs[i].Kind != installedjobs.KindGroup {
+		if jobs[i].Kind != installedjobs.KindDeployment {
 			continue
 		}
-		member, _, _, err := registry.GroupIdentity(ctx, jobs[i])
+		member, _, _, err := registry.DeploymentIdentity(ctx, jobs[i])
 		if err != nil {
 			return err
 		}
-		jobs[i].GroupMember = &member
-		jobs[i].Name = member.GroupName + "-" + jobs[i].GroupInstance
+		jobs[i].DeploymentMember = &member
+		jobs[i].Name = member.DeploymentName + "-" + jobs[i].DeploymentInstance
 	}
 	return renderSystemJobs(output, command, jobs, selected)
 }
@@ -308,8 +308,8 @@ func renderSystemJobs(output io.Writer, command string, jobs []installedjobs.Job
 			desired = "running"
 		}
 		fields := []clioutput.Field{{Label: "name", Value: displayJobName(job)}, {Label: "job ID", Value: job.ID}, {Label: "server", Value: job.Server}, {Label: "protocol", Value: string(job.Protocol)}, {Label: "desired", Value: desired}, {Label: "state", Value: string(job.Status.State)}}
-		if job.Kind == "group" && job.GroupMember != nil {
-			fields = append(fields, clioutput.Field{Label: "group", Value: job.GroupMember.GroupName}, clioutput.Field{Label: "project key", Value: job.GroupMember.ProjectKey}, clioutput.Field{Label: "observed revision", Value: strconv.FormatInt(job.Status.ObservedRevision, 10)})
+		if job.Kind == "deployment" && job.DeploymentMember != nil {
+			fields = append(fields, clioutput.Field{Label: "deployment", Value: job.DeploymentMember.DeploymentName}, clioutput.Field{Label: "project key", Value: job.DeploymentMember.ProjectKey}, clioutput.Field{Label: "observed revision", Value: strconv.FormatInt(job.Status.ObservedRevision, 10)})
 		} else if job.Kind == "private" || job.Kind == "connector" {
 			fields = append(fields, clioutput.Field{Label: "service ID", Value: job.ServiceID})
 		} else {

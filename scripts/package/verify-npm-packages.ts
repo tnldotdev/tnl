@@ -70,11 +70,14 @@ for (const manager of ["npm", "pnpm"]) {
       import {defineConfig} from '@tnldotdev/tnl/config';
       import {withTnl} from '@tnldotdev/tnl/next';
       import vite from '@tnldotdev/tnl/vite';
-      import {configureWorkload} from '@tnldotdev/tnl/workload';
+       import {configureWorkload} from '@tnldotdev/tnl/workload';
+       import {createClient as createHttpClient, deployments, publishers} from '@tnldotdev/tnl/http';
       const cjs = createRequire(import.meta.url)('@tnldotdev/tnl');
       assert.equal(cjs.tnl, tnl);
       assert.equal(typeof TnlError, 'function');
-      for (const value of [tnl.prepare, tnl.open, tnl.connect, tnl.client, defineConfig, withTnl, vite, configureWorkload]) assert.equal(typeof value, 'function');
+       for (const value of [tnl.prepare, tnl.open, tnl.connect, tnl.client, defineConfig, withTnl, vite, configureWorkload]) assert.equal(typeof value, 'function');
+       assert.equal(typeof createHttpClient, 'function');
+       for (const value of [deployments.create, deployments.list, deployments.get, deployments.update, deployments.delete, publishers.createEnrollment, publishers.list, publishers.get, publishers.revoke]) assert.equal(typeof value, 'function');
       for (const root of [{tnl, TnlError}, cjs]) {
         const getClient = root.tnl.client('database', {
           create() { throw new Error('factory creation must remain lazy'); },

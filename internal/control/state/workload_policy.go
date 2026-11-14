@@ -176,7 +176,7 @@ func reconcileWorkloadPolicies(ctx context.Context, tx pgx.Tx, r ApplyProjectCon
 			}
 			continue
 		}
-		if _, err = tx.Exec(ctx, `DELETE FROM control.workload_session_services right_ WHERE right_.workload_session_id=$1 AND NOT EXISTS(SELECT 1 FROM control.applied_project_services applied JOIN control.project_publisher_groups deployment ON deployment.id=applied.group_id AND deployment.deleted_at IS NULL WHERE applied.team_id=$2 AND applied.project_key=$3 AND applied.service=ANY($4::text[]) AND applied.service_id=right_.service_id AND deployment.name=$5)`, s.id, r.TeamID, r.ProjectKey, p.Services, p.Deployment); err != nil {
+		if _, err = tx.Exec(ctx, `DELETE FROM control.workload_session_services right_ WHERE right_.workload_session_id=$1 AND NOT EXISTS(SELECT 1 FROM control.applied_project_services applied JOIN control.deployments deployment ON deployment.id=applied.deployment_id AND deployment.deleted_at IS NULL WHERE applied.team_id=$2 AND applied.project_key=$3 AND applied.service=ANY($4::text[]) AND applied.service_id=right_.service_id AND deployment.name=$5)`, s.id, r.TeamID, r.ProjectKey, p.Services, p.Deployment); err != nil {
 			return err
 		}
 		if p.MaxDurationSeconds > 0 {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 
@@ -12,6 +13,16 @@ import (
 
 func startTestService(ctx context.Context, service string) ([]string, func() error, error) {
 	switch service {
+	case "deployment-database":
+		flags, closeControl, err := startTestService(ctx, "postgres")
+		if err != nil {
+			return flags, closeControl, err
+		}
+		target, err := startDatabaseTLS(ctx, "postgres-tls")
+		if err != nil {
+			return nil, closeControl, err
+		}
+		return append(flags, target.Flags...), func() error { return errors.Join(target.Close(), closeControl()) }, nil
 	case "connections":
 		return nil, nil, nil
 	case "postgres-tls", "mysql", "mysql-tls":

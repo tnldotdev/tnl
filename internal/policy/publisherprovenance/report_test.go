@@ -62,7 +62,7 @@ func TestPublisherDeploymentProofBindsEveryFieldAndPresence(t *testing.T) {
 	r := testReport()
 	now := time.Now()
 	scope := func(report *controlv1.PublisherDeploymentReport) string {
-		return publisherproof.RuntimeScope("group", "start", strings.Repeat("a", 32), 7, Digest(report))
+		return publisherproof.RuntimeScope("deployment", "start", strings.Repeat("a", 32), 7, Digest(report))
 	}
 	if Digest(nil) != "" || scope(nil) == scope(&r) {
 		t.Fatal("absent and reported deployments did not retain distinct scope bindings")

@@ -95,7 +95,7 @@ func TestIntegrationPublisherRuntimeResourceAvailability(t *testing.T) {
 	}
 }
 
-func TestIntegrationPublisherRuntimeGroupUsesEnrolledKey(t *testing.T) {
+func TestIntegrationPublisherRuntimeDeploymentUsesEnrolledKey(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "runtime_group_key")
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{"api": {Target: "api.internal:3000"}}}
@@ -103,18 +103,18 @@ func TestIntegrationPublisherRuntimeGroupUsesEnrolledKey(t *testing.T) {
 	if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
 		t.Fatal(err)
 	}
-	e, err := d.IssuePublisherGroupEnrollment(t.Context(), r.TeamID, r.ProjectKey, "remote", r.ActorID, 1, time.Hour, now)
+	e, err := testDeploymentPublisherEnrollment(d, t.Context(), r.TeamID, r.ProjectKey, "remote", r.ActorID, 1, time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replica := enrollAppliedGroup(t, d, r, e, now)
+	replica := enrollAppliedDeployment(t, d, r, e, now)
 	m := replica.member
 	request := func(action, run, kid string, epoch int64, key ed25519.PrivateKey) PublisherRuntimeRequest {
-		proof, err := publisherproof.Sign(m.PublisherIdentityID, kid, publisherproof.RuntimeScope(m.GroupID, action, run, epoch, ""), "https://control.example/v1/publisher-runtime", key, now)
+		proof, err := publisherproof.Sign(m.PublisherIdentityID, kid, publisherproof.RuntimeScope(m.DeploymentID, action, run, epoch, ""), "https://control.example/v1/publisher-runtime", key, now)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return PublisherRuntimeRequest{PublisherIdentityID: m.PublisherIdentityID, ScopeID: m.GroupID, ProcessRunID: run, Action: action, Assertion: proof, Audience: "https://control.example/v1/publisher-runtime", SourceIP: "8.8.8.8", ExpectedEpoch: epoch, Now: now}
+		return PublisherRuntimeRequest{PublisherIdentityID: m.PublisherIdentityID, ScopeID: m.DeploymentID, ProcessRunID: run, Action: action, Assertion: proof, Audience: "https://control.example/v1/publisher-runtime", SourceIP: "8.8.8.8", ExpectedEpoch: epoch, Now: now}
 	}
 	run := strings.Repeat("b", 32)
 	if _, err := d.PublisherRuntime(t.Context(), request("start", run, m.KeyID, 0, replica.private)); err != nil {
@@ -146,10 +146,10 @@ func TestIntegrationPublisherRuntimeGroupUsesEnrolledKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := d.PublisherRuntime(t.Context(), request("start", strings.Repeat("c", 32), kid, 1, key)); !errors.Is(err, ErrPublisherIdentity) {
-		t.Fatal("non-enrolled group key acquired runtime authority", err)
+		t.Fatal("non-enrolled deployment key acquired runtime authority", err)
 	}
 	after, err := q.GetPublisherRuntime(t.Context(), m.PublisherIdentityID)
 	if err != nil || !reflect.DeepEqual(before, after) {
-		t.Fatal("rejected group key changed runtime", err)
+		t.Fatal("rejected deployment key changed runtime", err)
 	}
 }

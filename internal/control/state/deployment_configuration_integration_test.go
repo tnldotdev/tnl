@@ -37,15 +37,15 @@ func TestIntegrationDeploymentConfigurationRevisionIsIsolated(t *testing.T) {
 	if err != nil || len(declarations) != 2 || declarations[0].Name != "database" || declarations[0].Protocol != "postgres" || declarations[1].Name != "stage" || declarations[1].Protocol != "postgres" {
 		t.Fatal("logical declarations lost service names or protocols", declarations, err)
 	}
-	replicas := map[string]enrolledGroupReplica{}
+	replicas := map[string]enrolledDeploymentReplica{}
 	for _, name := range []string{"production", "staging"} {
-		enrollment, err := d.IssuePublisherGroupEnrollment(ctx, r.TeamID, r.ProjectKey, name, r.ActorID, 1, time.Hour, now)
+		enrollment, err := testDeploymentPublisherEnrollment(d, ctx, r.TeamID, r.ProjectKey, name, r.ActorID, 1, time.Hour, now)
 		if err != nil {
 			t.Fatal(err)
 		}
-		replica := enrollAppliedGroup(t, d, r, enrollment, now)
+		replica := enrollAppliedDeployment(t, d, r, enrollment, now)
 		replicas[name] = replica
-		if err = d.AcknowledgePublisherGroupConfiguration(ctx, replica.lease.AccessToken, replica.assignments.Revision, replica.assignments.ConfigurationHash, true, now); err != nil {
+		if err = d.AcknowledgeDeploymentPublisherConfiguration(ctx, replica.lease.AccessToken, replica.assignments.Revision, replica.assignments.ConfigurationHash, true, now); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -59,7 +59,7 @@ func TestIntegrationDeploymentConfigurationRevisionIsIsolated(t *testing.T) {
 	}
 	for _, name := range []string{"production", "staging"} {
 		replica := replicas[name]
-		current, err := d.GetPublisherGroupAssignments(ctx, replica.lease.AccessToken, now)
+		current, err := d.GetDeploymentPublisherAssignments(ctx, replica.lease.AccessToken, now)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -67,23 +67,23 @@ func TestIntegrationDeploymentConfigurationRevisionIsIsolated(t *testing.T) {
 			if !reflect.DeepEqual(current, replica.assignments) {
 				t.Fatal("staging update changed production assignments or acknowledgement facts", current)
 			}
-			if err = d.AcknowledgePublisherGroupConfiguration(ctx, replica.lease.AccessToken, replica.assignments.Revision, replica.assignments.ConfigurationHash, true, now); err != nil {
+			if err = d.AcknowledgeDeploymentPublisherConfiguration(ctx, replica.lease.AccessToken, replica.assignments.Revision, replica.assignments.ConfigurationHash, true, now); err != nil {
 				t.Fatal("staging invalidated production acknowledgement", err)
 			}
 		} else {
 			if current.Revision != replica.assignments.Revision+1 || current.ConfigurationHash == replica.assignments.ConfigurationHash || len(current.Services) != 1 || current.Services[0].Configuration.Target != stage.Target {
 				t.Fatal("staging retained old targets or configuration facts", current)
 			}
-			if err = d.AcknowledgePublisherGroupConfiguration(ctx, replica.lease.AccessToken, replica.assignments.Revision, replica.assignments.ConfigurationHash, true, now); !errors.Is(err, ErrProjectConfigurationStale) {
+			if err = d.AcknowledgeDeploymentPublisherConfiguration(ctx, replica.lease.AccessToken, replica.assignments.Revision, replica.assignments.ConfigurationHash, true, now); !errors.Is(err, ErrProjectConfigurationStale) {
 				t.Fatal("staging accepted an old acknowledgement", err)
 			}
 		}
 		var ciphertext []byte
-		if err = d.pool.QueryRow(ctx, `SELECT configuration_ciphertext FROM control.project_publisher_groups WHERE id=$1`, replica.member.GroupID).Scan(&ciphertext); err != nil || len(ciphertext) == 0 || bytes.Contains(ciphertext, []byte("internal:5432")) {
+		if err = d.pool.QueryRow(ctx, `SELECT configuration_ciphertext FROM control.deployments WHERE id=$1`, replica.member.DeploymentID).Scan(&ciphertext); err != nil || len(ciphertext) == 0 || bytes.Contains(ciphertext, []byte("internal:5432")) {
 			t.Fatal("deployment targets were not encrypted", err)
 		}
 		for _, service := range project.Services {
-			if service.PublisherGroup == name && service.DesiredRevision != current.Revision {
+			if service.Deployment == name && service.DesiredRevision != current.Revision {
 				t.Fatal("service used another deployment's revision", service)
 			}
 		}
@@ -99,13 +99,13 @@ func TestIntegrationDeploymentConfigurationRejectsInvalidShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	row, err := controlstatedb.New(d.pool).LockProjectPublisherGroup(t.Context(), applied.Groups[0].ID)
+	row, err := controlstatedb.New(d.pool).LockDeploymentByID(t.Context(), applied.Deployments[0].ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for name, data := range map[string][]byte{
-		"retired settings": []byte(`{"publisher_groups":{"production":{}},"services":{}}`),
-		"retired binding":  []byte(`{"namespace":"` + row.Namespace + `","settings":{},"services":{"db":{"publisher_group":"production","protocol":"postgres","target":"database.internal:5432"}}}`),
+		"unknown settings": []byte(`{"namespace":"` + row.Namespace + `","settings":{"unknown":true},"services":{}}`),
+		"unknown binding":  []byte(`{"namespace":"` + row.Namespace + `","settings":{},"services":{"db":{"unknown":true,"protocol":"postgres","target":"database.internal:5432"}}}`),
 		"trailing value":   []byte(`{"namespace":"` + row.Namespace + `","settings":{},"services":{}} {}`),
 	} {
 		t.Run(name, func(t *testing.T) {

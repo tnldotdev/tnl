@@ -5,16 +5,16 @@ import (
 	"testing"
 )
 
-func TestManagedGroupUsesExistingNamespace(t *testing.T) {
+func TestManagedDeploymentUsesExistingNamespace(t *testing.T) {
 	for _, owner := range []string{"chase.studio.example.com", "studio.example.com", "ecstatic-penguin.tnl.dev"} {
 		namespace, err := DeploymentNamespace("production", "storefront", owner)
 		if err != nil || namespace != "production.storefront."+owner || PublicURLWildcard("orders."+namespace, owner) != "*."+namespace {
 			t.Fatalf("namespace = %q, %v", namespace, err)
 		}
 	}
-	for _, group := range []string{"local", "Production", "a.b", "-invalid"} {
-		if _, err := DeploymentNamespace(group, "storefront", "dev.acme.com"); err == nil {
-			t.Fatalf("invalid group %q accepted", group)
+	for _, deployment := range []string{"local", "Production", "a.b", "-invalid"} {
+		if _, err := DeploymentNamespace(deployment, "storefront", "dev.acme.com"); err == nil {
+			t.Fatalf("invalid deployment %q accepted", deployment)
 		}
 	}
 	if _, err := DeploymentNamespace("production", "storefront", strings.Repeat("a.", 115)+"example.com"); err == nil {

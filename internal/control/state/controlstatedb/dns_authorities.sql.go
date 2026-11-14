@@ -118,8 +118,8 @@ SELECT
           AND routes.dns_state NOT IN ('unmanaged', 'removed')
     )
     AND NOT EXISTS (
-        SELECT 1 FROM control.project_publisher_groups publisher_group
-        WHERE publisher_group.domain_id=$1 AND publisher_group.deleted_at IS NULL
+        SELECT 1 FROM control.deployments deployment
+        WHERE deployment.domain_id=$1 AND deployment.deleted_at IS NULL
     )
     AND NOT EXISTS (
         SELECT 1 FROM control.services service

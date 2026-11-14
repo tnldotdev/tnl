@@ -28,8 +28,8 @@ func (*publisherByteConn) Write(p []byte) (int, error) { return len(p), nil }
 
 func publisherByteContext(ctx context.Context) context.Context {
 	ctx = ReplaceIdentity(ctx, Identity{
-		TeamID: "team", PublisherGroupID: "group", PublisherIdentityID: "publisher",
-		DeploymentID: "deployment", ReplicaKey: "replica", ServiceID: "service",
+		TeamID: "team", DeploymentID: "deployment", PublisherIdentityID: "publisher",
+		ReportedDeploymentID: "deployment", ReplicaKey: "replica", ServiceID: "service",
 	})
 	return WithFields(ctx, Fields{Component: "publisher", ServiceProtocol: ProtocolPostgres, AccessPath: "connector", Exposure: "private"})
 }
@@ -45,8 +45,8 @@ func TestPublisherConnBytesKeepScopeDirectionAndAllowlist(t *testing.T) {
 	})
 	want := map[string]map[string]string{
 		"service": {
-			"tnl_team_id": "team", "tnl_publisher_group_id": "group", "tnl_publisher_identity_id": "publisher",
-			"tnl_deployment_id": "deployment", "tnl_replica_key": "replica", "tnl_service_id": "service", "tnl_service_kind": "service",
+			"tnl_team_id": "team", "tnl_deployment_id": "deployment", "tnl_publisher_identity_id": "publisher",
+			"tnl_reported_deployment_id": "deployment", "tnl_replica_key": "replica", "tnl_service_id": "service", "tnl_service_kind": "service",
 			"tnl_component": "publisher", "tnl_service_protocol": "postgres", "tnl_access_path": "connector", "tnl_exposure": "private",
 		},
 		"url": {

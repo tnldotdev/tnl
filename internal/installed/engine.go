@@ -57,12 +57,12 @@ type Engine struct {
 	Registry  *Registry
 	// UserJobs lets the user-login supervisor host another job kind with its
 	// own registry and credentials. the system publisher service leaves it empty.
-	UserJobs []UserJobRunner
-	Clients  ClientFactory
-	Publish  func(context.Context, publisher.Config) error
-	Connect  func(context.Context, Job, *clienttelemetry.Collector, func() error) error
-	Group    func(context.Context, Job, *clienttelemetry.Collector, func(int64, bool) error) error
-	Observe  func(Job, Status) error
+	UserJobs   []UserJobRunner
+	Clients    ClientFactory
+	Publish    func(context.Context, publisher.Config) error
+	Connect    func(context.Context, Job, *clienttelemetry.Collector, func() error) error
+	Deployment func(context.Context, Job, *clienttelemetry.Collector, func(int64, bool) error) error
+	Observe    func(Job, Status) error
 	// Initialize runs local desired-state setup while holding service.lock,
 	// before any worker starts. it must not contact remote services.
 	Initialize   func(context.Context) error
@@ -291,12 +291,12 @@ func (e Engine) attempt(ctx context.Context, job Job, attempts uint64, runtime *
 	if err := validateJob(&job); err != nil {
 		return false, err
 	}
-	if job.Kind == KindGroup {
-		if e.Group == nil || !e.Registry.groups {
+	if job.Kind == KindDeployment {
+		if e.Deployment == nil || !e.Registry.deployments {
 			return false, ErrScope
 		}
 		var ready atomic.Bool
-		err := e.Group(ctx, job, e.Telemetry, func(revision int64, healthy bool) error {
+		err := e.Deployment(ctx, job, e.Telemetry, func(revision int64, healthy bool) error {
 			ready.Store(healthy)
 			state := JobReconciling
 			if healthy {

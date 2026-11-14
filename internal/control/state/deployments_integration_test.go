@@ -64,15 +64,15 @@ func TestIntegrationDeploymentCRUDSharesSavedBindingsWithApply(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(selected, customer) {
 		t.Fatal("ID selection did not read the same deployment", err)
 	}
-	enrollment, err := d.IssuePublisherGroupEnrollment(ctx, r.TeamID, r.ProjectKey, "customer", r.ActorID, 1, time.Hour, now)
+	enrollment, err := testDeploymentPublisherEnrollment(d, ctx, r.TeamID, r.ProjectKey, "customer", r.ActorID, 1, time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replica := enrollAppliedGroup(t, d, r, enrollment, now)
+	replica := enrollAppliedDeployment(t, d, r, enrollment, now)
 	if len(replica.assignments.Services) != 1 || replica.assignments.Services[0].ServiceID != customer.Services["db"].ID {
 		t.Fatal("publisher enrolled for another deployment's binding", replica.assignments)
 	}
-	if err = d.AcknowledgePublisherGroupConfiguration(ctx, replica.lease.AccessToken, replica.assignments.Revision, replica.assignments.ConfigurationHash, true, now); err != nil {
+	if err = d.AcknowledgeDeploymentPublisherConfiguration(ctx, replica.lease.AccessToken, replica.assignments.Revision, replica.assignments.ConfigurationHash, true, now); err != nil {
 		t.Fatal(err)
 	}
 	update := UpdateDeploymentRequest{DeploymentScope: scope, Selector: "production", ExpectedRevision: 1, Now: now,
@@ -100,11 +100,11 @@ func TestIntegrationDeploymentCRUDSharesSavedBindingsWithApply(t *testing.T) {
 	if err != nil || production.Targets["db"].Address != "production.internal:5432" || production.Revision != 3 {
 		t.Fatal("manager apply did not restore its selected saved target", production, err)
 	}
-	assignments, err := d.GetPublisherGroupAssignments(ctx, replica.lease.AccessToken, now)
+	assignments, err := d.GetDeploymentPublisherAssignments(ctx, replica.lease.AccessToken, now)
 	if err != nil || !reflect.DeepEqual(assignments, replica.assignments) {
 		t.Fatal("manager apply swept a same-named customer binding", err)
 	}
-	if err = d.AcknowledgePublisherGroupConfiguration(ctx, replica.lease.AccessToken, replica.assignments.Revision, replica.assignments.ConfigurationHash, true, now); err != nil {
+	if err = d.AcknowledgeDeploymentPublisherConfiguration(ctx, replica.lease.AccessToken, replica.assignments.Revision, replica.assignments.ConfigurationHash, true, now); err != nil {
 		t.Fatal("manager apply invalidated customer acknowledgement", err)
 	}
 	// declarations used by another deployment cannot silently change protocol.
@@ -130,7 +130,7 @@ func TestIntegrationDeploymentCRUDSharesSavedBindingsWithApply(t *testing.T) {
 		t.Fatal("apply removal changed the customer deployment", err)
 	}
 	var ciphertext []byte
-	if err = d.pool.QueryRow(ctx, `SELECT configuration_ciphertext FROM control.project_publisher_groups WHERE id=$1`, customer.ID).Scan(&ciphertext); err != nil || bytes.Contains(ciphertext, []byte("orders.abc123")) {
+	if err = d.pool.QueryRow(ctx, `SELECT configuration_ciphertext FROM control.deployments WHERE id=$1`, customer.ID).Scan(&ciphertext); err != nil || bytes.Contains(ciphertext, []byte("orders.abc123")) {
 		t.Fatal("customer targets were not encrypted", err)
 	}
 	wire, err := json.Marshal(customer)
@@ -143,7 +143,7 @@ func TestIntegrationDeploymentCRUDSharesSavedBindingsWithApply(t *testing.T) {
 	if err = d.DeleteDeployment(ctx, scope, customer.ID, customer.Revision, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.GetPublisherGroupAssignments(ctx, replica.lease.AccessToken, now); !errors.Is(err, ErrPublisherGroup) {
+	if _, err = d.GetDeploymentPublisherAssignments(ctx, replica.lease.AccessToken, now); !errors.Is(err, ErrDeploymentPublisher) {
 		t.Fatal("deleted deployment retained a live publisher", err)
 	}
 	if _, err = d.GetDeployment(ctx, scope, customer.ID); !errors.Is(err, ErrDeploymentNotFound) {
@@ -203,7 +203,7 @@ func TestIntegrationDeploymentSavedConfigurationConsumers(t *testing.T) {
 	if err != nil || approved != nil {
 		t.Fatal("visitor retained replaced EKS discovery metadata", approved, err)
 	}
-	renamed, err := d.RenamePublisherGroup(ctx, r.TeamID, r.ProjectKey, "customer", "tenant", r.ActorID, project.Revision, now)
+	renamed, err := d.RenameDeployment(ctx, r.TeamID, r.ProjectKey, customer.ID, "tenant", r.ActorID, project.Revision, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +211,7 @@ func TestIntegrationDeploymentSavedConfigurationConsumers(t *testing.T) {
 	if err != nil || current.Name != "tenant" || !reflect.DeepEqual(current.Targets, customer.Targets) || current.Services["web"].ID != customer.Services["web"].ID {
 		t.Fatal("selector rename replaced customer targets or identities", current, err)
 	}
-	_, err = d.RenamePublisherNamespace(ctx, RenamePublisherNamespaceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, Group: "tenant", NamespaceLabel: "private", ActorID: r.ActorID, IdempotencyKey: "namespace-customer", ExpectedRevision: renamed.Revision, Now: now})
+	_, err = d.RenameDeploymentNamespace(ctx, RenameDeploymentNamespaceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, Deployment: "tenant", NamespaceLabel: "private", ActorID: r.ActorID, IdempotencyKey: "namespace-customer", ExpectedRevision: renamed.Revision, Now: now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +244,7 @@ func TestIntegrationDeploymentLockWaitRechecksCurrentManager(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer rollbackTestTransaction(t, gate)
-			if _, err = controlstatedb.New(gate).LockProjectPublisherGroup(ctx, created.ID); err != nil {
+			if _, err = controlstatedb.New(gate).LockDeploymentByID(ctx, created.ID); err != nil {
 				t.Fatal(err)
 			}
 			workers := newIntegrationWorkers(t, cancel)
@@ -277,7 +277,7 @@ func TestIntegrationDeploymentLockWaitRechecksCurrentManager(t *testing.T) {
 				t.Fatal("operation escaped revocation during a lock wait", err)
 			}
 			var target string
-			row, err := controlstatedb.New(d.pool).LockProjectPublisherGroup(ctx, created.ID)
+			row, err := controlstatedb.New(d.pool).LockDeploymentByID(ctx, created.ID)
 			if err != nil {
 				t.Fatal("denied deletion committed", err)
 			}

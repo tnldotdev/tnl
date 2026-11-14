@@ -438,32 +438,29 @@ schemas:
       members:
         {
           type: array,
-          items: { $ref: "../openapi.yaml#/components/schemas/PublisherGroupMemberStatus" },
+          items: { $ref: "../openapi.yaml#/components/schemas/DeploymentPublisherStatus" },
         }
-      groups:
-        {
-          type: array,
-          items: { $ref: "../openapi.yaml#/components/schemas/AppliedPublisherGroup" },
-        }
-  AppliedPublisherGroup:
+      deployments:
+        { type: array, items: { $ref: "../openapi.yaml#/components/schemas/AppliedDeployment" } }
+  AppliedDeployment:
     type: object
-    required: [id, name, group_names, namespace, domain_id, public]
+    required: [id, name, deployment_names, namespace, domain_id, public]
     properties:
       id: { type: string }
       name: { type: string }
-      group_names:
+      deployment_names:
         type: array
-        description: Authoritative current and historical selectors permanently bound to this group ID.
+        description: Authoritative current and historical selectors permanently bound to this deployment ID.
         items: { type: string }
       namespace: { type: string }
       domain_id: { type: string }
       public: { type: boolean }
   AppliedProjectService:
     type: object
-    required: [service, publisher_group, service_kind, desired_revision, trust_revision]
+    required: [service, deployment, service_kind, desired_revision, trust_revision]
     properties:
       service: { type: string }
-      publisher_group: { type: string }
+      deployment: { type: string }
       service_kind: { type: string, enum: [public_url, service, local] }
       service_id: { type: string }
       hostname: { type: string }

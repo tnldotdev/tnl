@@ -66,13 +66,17 @@ func TestIntegrationCLIConnectSSHStdio(t *testing.T) {
 		t.Fatal(err)
 	}
 	var applied controlv1.AppliedProjectConfiguration
-	for _, group := range []string{"internal", "production"} {
-		if err := json.Unmarshal(cliCall(t, t.Context(), []string{"--config", configuration, "apply", "--deployment", group, "--state-dir", person, "--output=json"}), &applied); err != nil {
+	for _, deployment := range []string{"internal", "production"} {
+		if err := json.Unmarshal(cliCall(t, t.Context(), []string{"--config", configuration, "apply", "--deployment", deployment, "--state-dir", person, "--output=json"}), &applied); err != nil {
 			t.Fatal(err)
 		}
-		bootstrap := strings.TrimSpace(string(cliCall(t, t.Context(), []string{"--config", configuration, "publisher", "enroll", "--group", group, "--members=1", "--expires-in=1h", "--state-dir", person})))
+		service := "shell"
+		if deployment == "internal" {
+			service = "internal"
+		}
+		bootstrap := strings.TrimSpace(string(cliCall(t, t.Context(), []string{"--config", configuration, "publisher", "setup", "--deployment", deployment, "--service", service, "--members=1", "--expires-in=1h", "--state-dir", person})))
 		ctx, cancel := context.WithCancel(t.Context())
-		f.command(t, ctx, cancel, []string{"--no-config", "publisher", "serve", "--group", group, "--project-key", applied.ProjectKey, "--instance", "one", "--enroll-key", bootstrap, "--server", f.url, "--state-dir", f.state(t, group)})
+		f.command(t, ctx, cancel, []string{"--no-config", "publisher", "serve", "--deployment", deployment, "--project-key", applied.ProjectKey, "--instance", "one", "--enroll-key", bootstrap, "--server", f.url, "--state-dir", f.state(t, deployment)})
 	}
 	inspect, err := pgx.Connect(t.Context(), f.databaseURL)
 	if err != nil {

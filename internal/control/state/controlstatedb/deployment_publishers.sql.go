@@ -27,30 +27,61 @@ func (q *Queries) DeploymentManagementPublisherAllowed(ctx context.Context, arg 
 	return column_1, err
 }
 
-const findPublisherGroupEnrollmentRequest = `-- name: FindPublisherGroupEnrollmentRequest :one
-SELECT id, group_id, secret_digest, max_members, created_by_identity_id, expires_at, revoked_at, scoped, create_principal_id, idempotency_key, request_digest, secret_ciphertext, storage_key_id FROM control.publisher_group_enrollments
-WHERE group_id=$1 AND create_principal_id=$2::text
+const deploymentPublisherServiceAllowed = `-- name: DeploymentPublisherServiceAllowed :one
+SELECT EXISTS(SELECT 1 FROM control.deployment_publisher_members member
+JOIN control.deployment_publisher_enrollments enrollment ON enrollment.id=member.enrollment_id
+WHERE member.publisher_identity_id=$1 AND member.deployment_id=$2::text
+AND EXISTS(SELECT 1 FROM control.deployment_publisher_enrollment_services scope
+    WHERE scope.enrollment_id=enrollment.id AND scope.service=$3
+    AND scope.service_id IS NOT DISTINCT FROM $4::text
+    AND scope.public_url_id IS NOT DISTINCT FROM $5::text
+    AND scope.revoked_at IS NULL AND scope.protocol=COALESCE((SELECT protocol FROM control.services WHERE id=scope.service_id),'http')))::boolean
+`
+
+type DeploymentPublisherServiceAllowedParams struct {
+	PublisherID  string
+	DeploymentID string
+	Service      string
+	ServiceID    pgtype.Text
+	PublicURLID  pgtype.Text
+}
+
+func (q *Queries) DeploymentPublisherServiceAllowed(ctx context.Context, arg DeploymentPublisherServiceAllowedParams) (bool, error) {
+	row := q.db.QueryRow(ctx, deploymentPublisherServiceAllowed,
+		arg.PublisherID,
+		arg.DeploymentID,
+		arg.Service,
+		arg.ServiceID,
+		arg.PublicURLID,
+	)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const findDeploymentPublisherEnrollmentRequest = `-- name: FindDeploymentPublisherEnrollmentRequest :one
+SELECT id, deployment_id, secret_digest, max_members, created_by_identity_id, expires_at, revoked_at, create_principal_id, idempotency_key, request_digest, secret_ciphertext, storage_key_id FROM control.deployment_publisher_enrollments
+WHERE deployment_id=$1 AND create_principal_id=$2::text
 AND idempotency_key=$3::text FOR UPDATE
 `
 
-type FindPublisherGroupEnrollmentRequestParams struct {
-	GroupID        string
+type FindDeploymentPublisherEnrollmentRequestParams struct {
+	DeploymentID   string
 	PrincipalID    string
 	IdempotencyKey string
 }
 
-func (q *Queries) FindPublisherGroupEnrollmentRequest(ctx context.Context, arg FindPublisherGroupEnrollmentRequestParams) (ControlPublisherGroupEnrollment, error) {
-	row := q.db.QueryRow(ctx, findPublisherGroupEnrollmentRequest, arg.GroupID, arg.PrincipalID, arg.IdempotencyKey)
-	var i ControlPublisherGroupEnrollment
+func (q *Queries) FindDeploymentPublisherEnrollmentRequest(ctx context.Context, arg FindDeploymentPublisherEnrollmentRequestParams) (ControlDeploymentPublisherEnrollment, error) {
+	row := q.db.QueryRow(ctx, findDeploymentPublisherEnrollmentRequest, arg.DeploymentID, arg.PrincipalID, arg.IdempotencyKey)
+	var i ControlDeploymentPublisherEnrollment
 	err := row.Scan(
 		&i.ID,
-		&i.GroupID,
+		&i.DeploymentID,
 		&i.SecretDigest,
 		&i.MaxMembers,
 		&i.CreatedByIdentityID,
 		&i.ExpiresAt,
 		&i.RevokedAt,
-		&i.Scoped,
 		&i.CreatePrincipalID,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
@@ -61,62 +92,91 @@ func (q *Queries) FindPublisherGroupEnrollmentRequest(ctx context.Context, arg F
 }
 
 const getDeploymentPublisherStatus = `-- name: GetDeploymentPublisherStatus :one
-SELECT member.publisher_identity_id, member.group_id, member.enrollment_id, member.public_key, member.key_id, member.observed_revision, member.acknowledged_at, member.healthy, member.lease_expires_at, publisher.revoked_at, enrollment.scoped,
-    deployment.team_id,deployment.project_key,deployment.name AS group_name,deployment.revision AS current_revision
-FROM control.publisher_group_members member
+SELECT member.publisher_identity_id, member.deployment_id, member.enrollment_id, member.public_key, member.key_id, member.observed_revision, member.acknowledged_at, member.healthy, member.lease_expires_at, publisher.revoked_at,
+    deployment.team_id,deployment.project_key,deployment.name AS deployment_name,deployment.revision AS current_revision
+FROM control.deployment_publisher_members member
 JOIN control.publisher_identities publisher ON publisher.id=member.publisher_identity_id
-JOIN control.publisher_group_enrollments enrollment ON enrollment.id=member.enrollment_id
-JOIN control.project_publisher_groups deployment ON deployment.id=member.group_id AND deployment.deleted_at IS NULL
-WHERE member.group_id=$1 AND member.publisher_identity_id=$2
+JOIN control.deployment_publisher_enrollments enrollment ON enrollment.id=member.enrollment_id
+JOIN control.deployments deployment ON deployment.id=member.deployment_id AND deployment.deleted_at IS NULL
+WHERE member.deployment_id=$1 AND member.publisher_identity_id=$2
 `
 
 type GetDeploymentPublisherStatusParams struct {
-	GroupID     string
-	PublisherID string
+	DeploymentID string
+	PublisherID  string
 }
 
 type GetDeploymentPublisherStatusRow struct {
-	ControlPublisherGroupMember ControlPublisherGroupMember
-	RevokedAt                   pgtype.Timestamptz
-	Scoped                      bool
-	TeamID                      string
-	ProjectKey                  string
-	GroupName                   string
-	CurrentRevision             int64
+	ControlDeploymentPublisherMember ControlDeploymentPublisherMember
+	RevokedAt                        pgtype.Timestamptz
+	TeamID                           string
+	ProjectKey                       string
+	DeploymentName                   string
+	CurrentRevision                  int64
 }
 
 func (q *Queries) GetDeploymentPublisherStatus(ctx context.Context, arg GetDeploymentPublisherStatusParams) (GetDeploymentPublisherStatusRow, error) {
-	row := q.db.QueryRow(ctx, getDeploymentPublisherStatus, arg.GroupID, arg.PublisherID)
+	row := q.db.QueryRow(ctx, getDeploymentPublisherStatus, arg.DeploymentID, arg.PublisherID)
 	var i GetDeploymentPublisherStatusRow
 	err := row.Scan(
-		&i.ControlPublisherGroupMember.PublisherIdentityID,
-		&i.ControlPublisherGroupMember.GroupID,
-		&i.ControlPublisherGroupMember.EnrollmentID,
-		&i.ControlPublisherGroupMember.PublicKey,
-		&i.ControlPublisherGroupMember.KeyID,
-		&i.ControlPublisherGroupMember.ObservedRevision,
-		&i.ControlPublisherGroupMember.AcknowledgedAt,
-		&i.ControlPublisherGroupMember.Healthy,
-		&i.ControlPublisherGroupMember.LeaseExpiresAt,
+		&i.ControlDeploymentPublisherMember.PublisherIdentityID,
+		&i.ControlDeploymentPublisherMember.DeploymentID,
+		&i.ControlDeploymentPublisherMember.EnrollmentID,
+		&i.ControlDeploymentPublisherMember.PublicKey,
+		&i.ControlDeploymentPublisherMember.KeyID,
+		&i.ControlDeploymentPublisherMember.ObservedRevision,
+		&i.ControlDeploymentPublisherMember.AcknowledgedAt,
+		&i.ControlDeploymentPublisherMember.Healthy,
+		&i.ControlDeploymentPublisherMember.LeaseExpiresAt,
 		&i.RevokedAt,
-		&i.Scoped,
 		&i.TeamID,
 		&i.ProjectKey,
-		&i.GroupName,
+		&i.DeploymentName,
 		&i.CurrentRevision,
 	)
 	return i, err
 }
 
+const listDeploymentPublisherEnrollmentServices = `-- name: ListDeploymentPublisherEnrollmentServices :many
+SELECT enrollment_id, service, protocol, service_id, public_url_id, revoked_at FROM control.deployment_publisher_enrollment_services WHERE enrollment_id=$1 ORDER BY service
+`
+
+func (q *Queries) ListDeploymentPublisherEnrollmentServices(ctx context.Context, enrollmentID string) ([]ControlDeploymentPublisherEnrollmentService, error) {
+	rows, err := q.db.Query(ctx, listDeploymentPublisherEnrollmentServices, enrollmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ControlDeploymentPublisherEnrollmentService
+	for rows.Next() {
+		var i ControlDeploymentPublisherEnrollmentService
+		if err := rows.Scan(
+			&i.EnrollmentID,
+			&i.Service,
+			&i.Protocol,
+			&i.ServiceID,
+			&i.PublicURLID,
+			&i.RevokedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDeploymentPublisherIDs = `-- name: ListDeploymentPublisherIDs :many
-SELECT member.publisher_identity_id FROM control.publisher_group_members member
-WHERE member.group_id=$1 AND member.publisher_identity_id COLLATE "C">$2::text COLLATE "C"
+SELECT member.publisher_identity_id FROM control.deployment_publisher_members member
+WHERE member.deployment_id=$1 AND member.publisher_identity_id COLLATE "C">$2::text COLLATE "C"
 AND ($3::text='' OR control.deployment_management_publisher_allowed($3,member.publisher_identity_id))
 ORDER BY member.publisher_identity_id COLLATE "C" LIMIT $4
 `
 
 type ListDeploymentPublisherIDsParams struct {
-	GroupID         string
+	DeploymentID    string
 	AfterID         string
 	ManagementGrant string
 	PageLimit       int32
@@ -124,7 +184,7 @@ type ListDeploymentPublisherIDsParams struct {
 
 func (q *Queries) ListDeploymentPublisherIDs(ctx context.Context, arg ListDeploymentPublisherIDsParams) ([]string, error) {
 	rows, err := q.db.Query(ctx, listDeploymentPublisherIDs,
-		arg.GroupID,
+		arg.DeploymentID,
 		arg.AfterID,
 		arg.ManagementGrant,
 		arg.PageLimit,
@@ -147,53 +207,21 @@ func (q *Queries) ListDeploymentPublisherIDs(ctx context.Context, arg ListDeploy
 	return items, nil
 }
 
-const listPublisherGroupEnrollmentServices = `-- name: ListPublisherGroupEnrollmentServices :many
-SELECT enrollment_id, service, protocol, service_id, public_url_id, revoked_at FROM control.publisher_group_enrollment_services WHERE enrollment_id=$1 ORDER BY service
+const lockDeploymentPublisherEnrollment = `-- name: LockDeploymentPublisherEnrollment :one
+SELECT id, deployment_id, secret_digest, max_members, created_by_identity_id, expires_at, revoked_at, create_principal_id, idempotency_key, request_digest, secret_ciphertext, storage_key_id FROM control.deployment_publisher_enrollments WHERE id=$1 FOR UPDATE
 `
 
-func (q *Queries) ListPublisherGroupEnrollmentServices(ctx context.Context, enrollmentID string) ([]ControlPublisherGroupEnrollmentService, error) {
-	rows, err := q.db.Query(ctx, listPublisherGroupEnrollmentServices, enrollmentID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ControlPublisherGroupEnrollmentService
-	for rows.Next() {
-		var i ControlPublisherGroupEnrollmentService
-		if err := rows.Scan(
-			&i.EnrollmentID,
-			&i.Service,
-			&i.Protocol,
-			&i.ServiceID,
-			&i.PublicURLID,
-			&i.RevokedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const lockPublisherGroupEnrollment = `-- name: LockPublisherGroupEnrollment :one
-SELECT id, group_id, secret_digest, max_members, created_by_identity_id, expires_at, revoked_at, scoped, create_principal_id, idempotency_key, request_digest, secret_ciphertext, storage_key_id FROM control.publisher_group_enrollments WHERE id=$1 FOR UPDATE
-`
-
-func (q *Queries) LockPublisherGroupEnrollment(ctx context.Context, id string) (ControlPublisherGroupEnrollment, error) {
-	row := q.db.QueryRow(ctx, lockPublisherGroupEnrollment, id)
-	var i ControlPublisherGroupEnrollment
+func (q *Queries) LockDeploymentPublisherEnrollment(ctx context.Context, id string) (ControlDeploymentPublisherEnrollment, error) {
+	row := q.db.QueryRow(ctx, lockDeploymentPublisherEnrollment, id)
+	var i ControlDeploymentPublisherEnrollment
 	err := row.Scan(
 		&i.ID,
-		&i.GroupID,
+		&i.DeploymentID,
 		&i.SecretDigest,
 		&i.MaxMembers,
 		&i.CreatedByIdentityID,
 		&i.ExpiresAt,
 		&i.RevokedAt,
-		&i.Scoped,
 		&i.CreatePrincipalID,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
@@ -201,36 +229,4 @@ func (q *Queries) LockPublisherGroupEnrollment(ctx context.Context, id string) (
 		&i.StorageKeyID,
 	)
 	return i, err
-}
-
-const publisherGroupServiceAllowed = `-- name: PublisherGroupServiceAllowed :one
-SELECT EXISTS(SELECT 1 FROM control.publisher_group_members member
-JOIN control.publisher_group_enrollments enrollment ON enrollment.id=member.enrollment_id
-WHERE member.publisher_identity_id=$1 AND member.group_id=$2::text
-AND (NOT enrollment.scoped OR EXISTS(SELECT 1 FROM control.publisher_group_enrollment_services scope
-    WHERE scope.enrollment_id=enrollment.id AND scope.service=$3
-    AND scope.service_id IS NOT DISTINCT FROM $4::text
-    AND scope.public_url_id IS NOT DISTINCT FROM $5::text
-    AND scope.revoked_at IS NULL AND scope.protocol=COALESCE((SELECT protocol FROM control.services WHERE id=scope.service_id),'http'))))::boolean
-`
-
-type PublisherGroupServiceAllowedParams struct {
-	PublisherID string
-	GroupID     string
-	Service     string
-	ServiceID   pgtype.Text
-	PublicURLID pgtype.Text
-}
-
-func (q *Queries) PublisherGroupServiceAllowed(ctx context.Context, arg PublisherGroupServiceAllowedParams) (bool, error) {
-	row := q.db.QueryRow(ctx, publisherGroupServiceAllowed,
-		arg.PublisherID,
-		arg.GroupID,
-		arg.Service,
-		arg.ServiceID,
-		arg.PublicURLID,
-	)
-	var column_1 bool
-	err := row.Scan(&column_1)
-	return column_1, err
 }
