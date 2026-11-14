@@ -444,11 +444,12 @@ class Deployment:
                     await publication.aclose()
                 except BaseException as error:
                     failures.append(error)
-                else:
+                if publication._close_complete:
                     try:
                         await publication.wait()
                     except BaseException as error:
-                        failures.append(error)
+                        if error not in failures:
+                            failures.append(error)
             operations = tuple(self._pending)
             pending = await asyncio.gather(*operations, return_exceptions=True)
             self._pending.difference_update(operations)

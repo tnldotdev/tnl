@@ -15,6 +15,7 @@ from ._protocol import (
     Endpoint,
     InvalidResponse,
     NativeUnavailable,
+    PublicationCleanupFailed,
     RegistrationLost,
     TnlError,
     parse_endpoint,
@@ -210,6 +211,10 @@ class NativeRuntime:
                         raise InvalidResponse()
                     if value["code"] in {"runtime.registration_stale", "runtime.unauthorized"}:
                         raise RegistrationLost()
+                    if value["code"] == "runtime.publication_cleanup_failed":
+                        if operation not in {"unregister", "publications/register"}:
+                            raise InvalidResponse()
+                        raise PublicationCleanupFailed()
                     code = {
                         "runtime.owner_conflict": "sdk.owner_conflict",
                         "runtime.authentication_required": "sdk.authentication_required",

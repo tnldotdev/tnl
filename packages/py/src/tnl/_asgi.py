@@ -14,13 +14,14 @@ from typing import Literal
 from urllib.parse import urlsplit
 
 import uvicorn
-from starlette.types import ASGIApp
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from ._native import NativeRuntime
 from ._protocol import (
     Endpoint,
     InvalidResponse,
     NativeUnavailable,
+    PublicationCleanupFailed,
     RegistrationLost,
     Status,
     TnlError,
@@ -56,13 +57,91 @@ async def _join_cleanup[T](task: asyncio.Task[T]) -> T:
     return result
 
 
+def _server_shutdown_deadline() -> asyncio.Timeout:
+    return asyncio.timeout(15)
+
+
 class _OwnedServer(uvicorn.Server):
     tunnel: Publication | None = None
+    server_driven_shutdown = False
+
+    def __init__(self, config: uvicorn.Config, app: ASGIApp) -> None:
+        super().__init__(config)
+        self._asgi_workers: set[asyncio.Task[None]] = set()
+        self._forcing = False
+        self._worker_failures: list[BaseException] = []
+
+        async def owned(scope: Scope, receive: Receive, send: Send) -> None:
+            task = asyncio.current_task()
+            assert task is not None
+            self._asgi_workers.add(task)
+            try:
+                await app(scope, receive, send)
+            except BaseException as cause:
+                # uvicorn consumes lifespan exceptions. retain independent
+                # application failures that occur while forced shutdown joins it.
+                if self._forcing and not isinstance(cause, asyncio.CancelledError):
+                    self._worker_failures.append(cause)
+                raise
+            finally:
+                self._asgi_workers.discard(task)
+
+        config.app = owned
 
     async def shutdown(self, sockets: list[socket.socket] | None = None) -> None:
+        self.server_driven_shutdown = self.tunnel is not None
+        failures: list[BaseException] = []
         if self.tunnel is not None:
-            await self.tunnel.unregister()
-        await super().shutdown(sockets)
+            try:
+                await self.tunnel.unregister()
+            except BaseException as cause:
+                failures.append(cause)
+        # server-driven shutdown still owns its listeners, connections, and asgi
+        # lifespan when native cleanup fails. preserve both independent failures.
+        try:
+            # aclose already shields caller cancellation. internal deadline
+            # cancellation must reach this work instead of waiting forever.
+            await super().shutdown(sockets)
+        except BaseException as cause:
+            failures.append(cause)
+        if len(failures) == 1:
+            raise failures[0]
+        if failures:
+            raise BaseExceptionGroup("native and ASGI shutdown failed", failures)
+
+    async def join_workers(self) -> None:
+        workers = self._asgi_workers | self.server_state.tasks
+        if workers:
+            # cancelling this wait at the deadline does not lose the worker
+            # identities that force_shutdown must cancel and join.
+            await asyncio.wait(workers)
+
+    async def force_shutdown(self, serve: asyncio.Task[None]) -> list[BaseException]:
+        self._forcing = self.force_exit = True
+        for server in self.servers:
+            server.close()
+        for connection in tuple(self.server_state.connections):
+            connection.shutdown()
+        workers = self._asgi_workers | self.server_state.tasks
+        serve.cancel()
+        for task in workers:
+            task.cancel()
+        results = await asyncio.gather(serve, *workers, return_exceptions=True)
+        failures: list[BaseException] = []
+        for cause in [*results, *self._worker_failures]:
+            if isinstance(cause, BaseExceptionGroup):
+                canceled, remaining = cause.split(asyncio.CancelledError)
+                if canceled is not None:
+                    cause = remaining
+            if (
+                isinstance(cause, BaseException)
+                and not isinstance(cause, asyncio.CancelledError)
+                and not any(previous is cause for previous in failures)
+            ):
+                failures.append(cause)
+        for server in self.servers:
+            await server.wait_closed()
+        return failures
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,6 +280,7 @@ class Publication:
             self._payload["server_url"] = server_url
         self._registration: dict[str, object] | None = None
         self._registration_uncertain = False
+        self._unregister_reply_lost = False
         self._initial_registration: asyncio.Task[None] | None = None
         if access_mode is not None:
             self._payload["access_mode"] = access_mode
@@ -271,17 +351,20 @@ class Publication:
                     ),
                     self._endpoint,
                 )
-                if not assignment.public_url or (
-                    self._assigned_url is not None and self._assigned_url != assignment.public_url
-                ):
-                    raise InvalidResponse()
-                self._assigned_url = assignment.public_url
                 self._registration = {
                     "version": 1,
                     "registration_id": assignment.registration_id,
                     "owner": self._owner,
                     "target": self._target,
                 }
+                # prepare acknowledged this reservation before url validation.
+                self._registration_uncertain = False
+                if not assignment.public_url or (
+                    self._assigned_url is not None and self._assigned_url != assignment.public_url
+                ):
+                    raise InvalidResponse()
+                self._assigned_url = assignment.public_url
+                self._registration_uncertain = True
                 await self._native.request(self._endpoint, "register", self._registration)
                 self._registration_uncertain = False
                 return
@@ -317,7 +400,9 @@ class Publication:
         async with self._registration_lock:
             for attempt in range(3):
                 try:
-                    if self._registration_uncertain:
+                    if self._registration_uncertain and not (
+                        self._service is not None and self._registration is not None
+                    ):
                         await self._acknowledge_registration()
                     break
                 except NativeUnavailable:
@@ -330,12 +415,26 @@ class Publication:
                         await self._native.request(self._endpoint, "unregister", self._registration)
                         break
                     except RegistrationLost:
+                        if self._unregister_reply_lost:
+                            # a replacement owner or expired outcome cannot
+                            # acknowledge the lost result of the original call.
+                            raise NativeUnavailable() from None
                         break
+                    except PublicationCleanupFailed:
+                        self._registration = None
+                        self._registration_uncertain = False
+                        self._unregister_reply_lost = False
+                        raise
                     except NativeUnavailable:
+                        self._unregister_reply_lost = True
                         if attempt == 2:
                             raise
                         await asyncio.sleep(0.1)
+                    except InvalidResponse:
+                        self._unregister_reply_lost = True
+                        raise
                 self._registration = None
+                self._unregister_reply_lost = False
 
     def _observe(self, status: Status) -> None:
         if status.public_url is not None:
@@ -405,7 +504,24 @@ class Publication:
 
     async def wait(self) -> None:
         self._check()
-        await asyncio.shield(self._finished)
+        primary: BaseException | None = None
+        try:
+            await asyncio.shield(self._finished)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as cause:
+            primary = cause
+        if self._server.server_driven_shutdown:
+            try:
+                await self.aclose()
+            except BaseException as cleanup:
+                if primary is not None and primary is not cleanup:
+                    raise BaseExceptionGroup(
+                        "publication and ASGI shutdown failed", [primary, cleanup]
+                    ) from None
+                raise
+        if primary is not None:
+            raise primary
 
     def _check(self) -> None:
         if self._pid != os.getpid() or self._loop is not asyncio.get_running_loop():
@@ -429,37 +545,44 @@ class Publication:
                 await self._monitor
             # an error retains the listener and registration for a later close
             # retry. only a joined native cleanup may stop the application's ASGI.
-            await self.unregister()
-            cleanup: list[Exception] = []
+            cleanup: list[BaseException] = []
+            try:
+                await self.unregister()
+            except PublicationCleanupFailed as cause:
+                cleanup.append(cause)
             self._server.tunnel = None
             self._server.should_exit = True
             try:
-                await asyncio.wait_for(self._serve_task, 15)
-            except (Exception, asyncio.CancelledError) as cause:
-                if isinstance(cause, Exception):
+                async with _server_shutdown_deadline():
+                    await asyncio.shield(self._serve_task)
+                    await self._server.join_workers()
+            except BaseException as cause:
+                if not isinstance(cause, asyncio.CancelledError):
                     cleanup.append(cause)
-                self._server.force_exit = True
-                self._serve_task.cancel()
-                try:
-                    await self._serve_task
-                except asyncio.CancelledError:
-                    pass
+                # a completed failed serve task is already joined. reawaiting it
+                # would raise again before marking local cleanup complete.
+                for joined in await self._server.force_shutdown(self._serve_task):
+                    if not any(previous is joined for previous in cleanup):
+                        cleanup.append(joined)
             finally:
                 self._listener.close()
             self._close_complete = True
             if self._on_close is not None:
                 self._on_close(self)
+            failure: BaseException | None = None
+            if len(cleanup) == 1:
+                failure = cleanup[0]
+            elif cleanup:
+                failure = BaseExceptionGroup("publisher and ASGI cleanup failed", cleanup)
             if not self._finished.done():
-                if cleanup:
-                    self._finished.set_exception(cleanup[0])
+                if failure is not None:
+                    self._finished.set_exception(failure)
                 else:
                     self._finished.set_result(None)
             if not self._ready.done():
                 self._ready.set_exception(RegistrationLost())
-            if len(cleanup) == 1:
-                raise cleanup[0]
-            if cleanup:
-                raise ExceptionGroup("publisher and ASGI cleanup failed", cleanup)
+            if failure is not None:
+                raise failure
 
     async def __aenter__(self) -> Publication:
         self._check()
@@ -492,7 +615,8 @@ async def _start_asgi(app: ASGIApp) -> tuple[_OwnedServer, asyncio.Task[None], s
                 log_level="critical",
                 access_log=False,
                 timeout_graceful_shutdown=10,
-            )
+            ),
+            app,
         )
         task = asyncio.create_task(server.serve(sockets=[listener]))
         while not server.started:

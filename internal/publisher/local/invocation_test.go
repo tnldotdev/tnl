@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientserver "github.com/tnldotdev/tnl/internal/client/server"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
@@ -367,6 +369,88 @@ func TestInvocationFailedDeletionRetainsExactCleanupForRetry(t *testing.T) {
 	deleted.Range(func(_, _ any) bool { count++; return true })
 	if count != 1 {
 		t.Fatal("cleanup changed allocation identity")
+	}
+}
+
+func TestInvocationExpiredOrRevokedCleanupRetiresWithoutRetryingItsCapturedKey(t *testing.T) {
+	if !testutil.IsolatedPublishingTest(t) {
+		return
+	}
+	a, _, body, f := invocationRuntime(t)
+	a.workers.RunPublisher = readyInvocation
+	transport := f.HTTP.Transport
+	var denied atomic.Int32
+	var attempts atomic.Int32
+	f.HTTP.Transport = invocationTransport(func(r *http.Request) (*http.Response, error) {
+		if status := denied.Load(); status != 0 && r.URL.Path == "/v1/publisher-token" {
+			attempts.Add(1)
+			code := "unauthenticated"
+			if status == http.StatusForbidden {
+				code = "forbidden"
+			}
+			return &http.Response{
+				StatusCode: int(status), Header: http.Header{"Content-Type": {"application/problem+json"}},
+				Body: io.NopCloser(strings.NewReader(fmt.Sprintf(`{"type":"about:blank","title":"publisher authority rejected","code":%q,"status":%d}`, code, status))), Request: r,
+			}, nil
+		}
+		return transport.RoundTrip(r)
+	})
+	defer func() { f.HTTP.Transport = transport }()
+	for _, status := range []int32{http.StatusUnauthorized, http.StatusForbidden} {
+		denied.Store(0)
+		invocation, err := opaqueid.New(opaqueid.InvocationPrefix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		endpoint, err := a.capabilities.Issue(publisherprotocol.CapabilityRequest{Scope: "invocation", InvocationId: &invocation})
+		if err != nil {
+			t.Fatal(err)
+		}
+		body["invocation_id"] = invocation
+		var registration publisherprotocol.Registration
+		if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/publications/register", body, &registration); err != nil {
+			t.Fatal(err)
+		}
+		waitInvocation(t, a, func(s publisherapp.Snapshot) bool {
+			for _, service := range s.Services {
+				if service.RegistrationID == registration.RegistrationID {
+					return service.Routable
+				}
+			}
+			return false
+		})
+		before := attempts.Load()
+		denied.Store(status)
+		var response *publisherprotocol.ResponseError
+		err = publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/unregister", registration, nil)
+		if !errors.As(err, &response) || response.Code != "runtime.publication_cleanup_failed" {
+			t.Fatal("remote authorization loss was not reported with completed local shutdown", err)
+		}
+		if _, found := a.manager.ServiceForRegistration(registration.RegistrationID); found {
+			t.Fatal("terminal cleanup retained a registration")
+		}
+		if !errors.Is(a.manager.RetirementError(), publisherapp.ErrCleanupPermanent) {
+			t.Fatal("owner retirement lost the remote cleanup failure")
+		}
+		a.manager.Sweep(func(int) bool { return false })
+		if attempts.Load() != before+1 || f.Deletions.Load() != 0 {
+			t.Fatal("retirement retried captured authority or bypassed deletion authorization", attempts.Load(), f.Deletions.Load())
+		}
+	}
+}
+
+func TestInvocationCleanupUsesCapturedExpiryWithoutReachingControl(t *testing.T) {
+	expired := time.Now().Add(-time.Second)
+	cleanup := invocationCleanup(nil, controlv1.PublicURL{Id: "original", Ephemeral: true}, expired)
+	first := cleanup()
+	if !errors.Is(first, publisherapp.ErrCleanupPermanent) || !errors.Is(first, auth.ErrDeploymentCredential) {
+		t.Fatal("expired authority did not retain a terminal deletion failure", first)
+	}
+	if again := cleanup(); again != first {
+		t.Fatal("expired cleanup did not retain its exact terminal outcome", again)
+	}
+	if err := invocationCleanup(nil, controlv1.PublicURL{Ephemeral: false}, expired)(); err != nil {
+		t.Fatal("saved publication acquired temporary deletion work", err)
 	}
 }
 

@@ -253,6 +253,11 @@ function runtimeRequestUntraced(
             const value: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
             if (response.statusCode !== 200) {
               const problem = parseValue(problemSchema, value, "sdk.response_invalid");
+              if (problem.code === "runtime.publication_cleanup_failed") {
+                if (operation !== "unregister" && operation !== "publications/register")
+                  throw new TnlError("sdk.response_invalid");
+                throw new TnlError("sdk.publication_cleanup_failed");
+              }
               throw new TnlError(
                 problem.code === "runtime.owner_conflict"
                   ? "sdk.owner_conflict"
