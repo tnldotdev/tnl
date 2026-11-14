@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -25,7 +26,7 @@ func TestInspectionProtocolStorageAndFilterContracts(t *testing.T) {
 		record := InspectionRecord{Protocol: protocol, ReceivedAt: now, Origin: "tnl"}
 		switch protocol {
 		case inspection.HTTP:
-			record.Method, record.Path, record.Status = "GET", "/health", 200
+			record.Method, record.Path, record.Status, record.Result = "GET", "/health", 200, inspection.ResultOK
 		case inspection.Redis:
 			record.RedisCommand, record.Result = "PING", inspection.ResultOK
 		default:
@@ -74,6 +75,51 @@ func testInspectionPolicy() inspection.Policy {
 	return inspection.Policy{Retention: inspection.DefaultRetention, MaxBytes: inspection.DefaultMaxBytes}
 }
 
+func TestHTTPInspectionPersistsCompletionErrorsIndependentlyOfStatus(t *testing.T) {
+	state, err := Open(t.Context(), filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	project := t.TempDir()
+	now := time.Now().UTC()
+	for index, result := range []inspection.Result{inspection.ResultOK, inspection.ResultError} {
+		summary := inspection.Summary{Protocol: inspection.HTTP, ReceivedAt: now.Add(time.Duration(index) * time.Millisecond),
+			Method: http.MethodGet, Path: "/response", Status: http.StatusOK, Origin: "local_service", Result: result}
+		record := InspectionRecordFromSummary(summary)
+		if record.Result != result {
+			t.Fatal("completion result was discarded before persistence")
+		}
+		if err := state.saveInspection(t.Context(), "tun_test", project, project, project, "web", record, testInspectionPolicy()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for index, result := range []inspection.Result{inspection.ResultOK, inspection.ResultError} {
+		items, err := state.ListInspections(t.Context(), InspectionFilter{Project: project, SharedProject: project,
+			Protocol: inspection.HTTP, Status: http.StatusOK, Result: result, Limit: 1})
+		if err != nil || len(items) != 1 || items[0].Number != int64(index+1) || items[0].Result != result {
+			t.Fatal("HTTP completion filtering used status or limited before filtering", items, err)
+		}
+		stored, err := state.GetInspection(t.Context(), project, int64(index+1))
+		if err != nil || stored.Status != http.StatusOK || stored.Result != result {
+			t.Fatal("stored HTTP completion result changed", stored, err)
+		}
+	}
+	for _, result := range []inspection.Result{"", "unknown"} {
+		record := InspectionRecord{Protocol: inspection.HTTP, ReceivedAt: now, Method: http.MethodGet, Path: "/",
+			Status: http.StatusOK, Origin: "local_service", Result: result}
+		if err := state.saveInspection(t.Context(), "tun_test", project, project, project, "web", record, testInspectionPolicy()); err == nil {
+			t.Fatal("accepted HTTP activity without an explicit completion result")
+		}
+	}
+	if _, err := state.db.ExecContext(t.Context(), `UPDATE inspections SET status=500,result='ok'`); err == nil {
+		t.Fatal("SQLite accepted a successful HTTP error status")
+	}
+	if _, err := state.db.ExecContext(t.Context(), `UPDATE inspections SET result=''`); err == nil {
+		t.Fatal("SQLite accepted an absent HTTP completion result")
+	}
+}
+
 func TestInspectionNumbersAndTypedResultsAcrossWorktrees(t *testing.T) {
 	state, err := Open(t.Context(), filepath.Join(t.TempDir(), "state"))
 	if err != nil {
@@ -89,7 +135,7 @@ func TestInspectionNumbersAndTypedResultsAcrossWorktrees(t *testing.T) {
 		record  InspectionRecord
 	}{
 		{project, InspectionRecord{Protocol: inspection.HTTP, ReceivedAt: now, Method: "POST", Path: "/checkout", Status: 500,
-			Origin: "local_service"}},
+			Origin: "local_service", Result: inspection.ResultError}},
 		{otherWorktree, InspectionRecord{ReceivedAt: now.Add(time.Second), Protocol: "postgres",
 			Origin: "tnl", Operation: inspection.OperationExecute, Result: inspection.ResultError, SQLState: "42703"}},
 		{project, InspectionRecord{ReceivedAt: now.Add(2 * time.Second), Protocol: "mysql",
@@ -152,7 +198,7 @@ func TestInspectionRetentionAndByteBudgetArePerServiceAndWorktree(t *testing.T) 
 	state.now = func() time.Time { return now }
 	short := inspection.Policy{Retention: time.Hour, MaxBytes: inspection.MinMaxBytes}
 	long := inspection.Policy{Retention: 48 * time.Hour, MaxBytes: inspection.MinMaxBytes}
-	observation := InspectionRecord{Protocol: inspection.HTTP, ReceivedAt: now, Method: "GET", Path: "/", Status: 200, Origin: "local_service"}
+	observation := InspectionRecord{Protocol: inspection.HTTP, ReceivedAt: now, Method: "GET", Path: "/", Status: 200, Origin: "local_service", Result: inspection.ResultOK}
 	if err := state.saveInspection(t.Context(), "tun_test", project, project, project, "web", observation, short); err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +218,7 @@ func TestInspectionRetentionAndByteBudgetArePerServiceAndWorktree(t *testing.T) 
 	}
 	for index := range 150 {
 		record := InspectionRecord{Protocol: inspection.HTTP, ReceivedAt: now.Add(time.Duration(index) * time.Second), Method: "GET",
-			Path: "/" + strings.Repeat("x", 8<<10), Status: 200, Origin: "local_service"}
+			Path: "/" + strings.Repeat("x", 8<<10), Status: 200, Origin: "local_service", Result: inspection.ResultOK}
 		if err := state.saveInspection(t.Context(), "tun_test", project, project, project, "orders", record, long); err != nil {
 			t.Fatal(err)
 		}

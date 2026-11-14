@@ -18,7 +18,8 @@ func TestInspectProtocolAdapterGoldenJSON(t *testing.T) {
 		record clientstate.InspectionRecord
 		want   string
 	}{
-		{clientstate.InspectionRecord{Protocol: inspection.HTTP, Method: "GET", Path: "/health", Status: 503, Origin: "local_service"}, `"result":"error","http":{"method":"GET","path":"/health","status":503,"origin":"local_service"}}`},
+		{clientstate.InspectionRecord{Protocol: inspection.HTTP, Method: "GET", Path: "/health", Status: 503, Origin: "local_service", Result: inspection.ResultError}, `"result":"error","http":{"method":"GET","path":"/health","status":503,"origin":"local_service"}}`},
+		{clientstate.InspectionRecord{Protocol: inspection.HTTP, Method: "GET", Path: "/interrupted", Status: 200, Origin: "local_service", Result: inspection.ResultError}, `"result":"error","http":{"method":"GET","path":"/interrupted","status":200,"origin":"local_service"}}`},
 		{clientstate.InspectionRecord{Protocol: inspection.Postgres, Operation: inspection.OperationExecute, Result: inspection.ResultError, SQLState: "42703"}, `"result":"error","postgres":{"operation":"execute","sql_state":"42703","rows":0}}`},
 		{clientstate.InspectionRecord{Protocol: inspection.MySQL, Operation: inspection.OperationQuery, Result: inspection.ResultError, SQLState: "42S22", MySQLErrorCode: 1054, ResultSets: 2}, `"result":"error","mysql":{"operation":"query","sql_state":"42S22","rows":0,"error_code":1054,"result_sets":2}}`},
 		{clientstate.InspectionRecord{Protocol: inspection.Redis, RedisCommand: "PING", Result: inspection.ResultOK}, `"result":"ok","redis":{"command":"PING"}}`},
@@ -112,16 +113,20 @@ func TestInspectListAndShowTypeAnHTTPObservation(t *testing.T) {
 	recorder := tunnel.NewInspectionRecorder(primary, project, shared, "web", inspection.Policy{Retention: 24 * time.Hour, MaxBytes: 64 << 20})
 	recorder.Observe(clientstate.InspectionRecord{
 		Protocol: inspection.HTTP, ReceivedAt: time.Now().UTC(), Method: "GET", Path: "/health", Status: 200,
-		Origin: "local_service", DurationMS: 12,
+		Origin: "local_service", DurationMS: 12, Result: inspection.ResultOK,
 	})
 	recorder.Observe(clientstate.InspectionRecord{
 		Protocol: inspection.HTTP, ReceivedAt: time.Now().UTC(), Method: "POST", Path: "/checkout", Status: 500,
-		Origin: "local_service", DurationMS: 25,
+		Origin: "local_service", DurationMS: 25, Result: inspection.ResultError,
 	})
 	recorder.Observe(clientstate.InspectionRecord{
 		Protocol: inspection.HTTP, ReceivedAt: time.Now().UTC(), Method: "GET", Path: "/missing", Status: 404,
-		Origin: "tnl", DurationMS: 1,
+		Origin: "tnl", DurationMS: 1, Result: inspection.ResultError,
 	})
+	recorder.Observe(clientstate.InspectionRecordFromSummary(inspection.Summary{
+		Protocol: inspection.HTTP, ReceivedAt: time.Now().UTC(), Method: "GET", Path: "/interrupted", Status: 200,
+		Origin: "local_service", Duration: time.Millisecond, Result: inspection.ResultError,
+	}))
 	recorder.Close()
 	var listOutput bytes.Buffer
 	if err := run(t.Context(), []string{"inspect", "list", "--output=json"}, &listOutput, &bytes.Buffer{}, nil); err != nil {
@@ -131,11 +136,12 @@ func TestInspectListAndShowTypeAnHTTPObservation(t *testing.T) {
 		SchemaVersion int                `json:"schema_version"`
 		Inspections   []inspectionRecord `json:"inspections"`
 	}
-	if err := json.Unmarshal(listOutput.Bytes(), &list); err != nil || list.SchemaVersion != 1 || len(list.Inspections) != 3 ||
+	if err := json.Unmarshal(listOutput.Bytes(), &list); err != nil || list.SchemaVersion != 1 || len(list.Inspections) != 4 ||
 		list.Inspections[0].Protocol != "http" || list.Inspections[0].HTTP == nil ||
-		list.Inspections[0].Result != "error" || list.Inspections[0].HTTP.Status != 404 ||
-		list.Inspections[1].Result != "error" || list.Inspections[1].HTTP.Status != 500 ||
-		list.Inspections[2].Result != "ok" || list.Inspections[2].HTTP.Status != 200 {
+		list.Inspections[0].Result != "error" || list.Inspections[0].HTTP.Status != 200 ||
+		list.Inspections[1].Result != "error" || list.Inspections[1].HTTP.Status != 404 ||
+		list.Inspections[2].Result != "error" || list.Inspections[2].HTTP.Status != 500 ||
+		list.Inspections[3].Result != "ok" || list.Inspections[3].HTTP.Status != 200 {
 		t.Fatalf("typed HTTP list = %s, %v", listOutput.String(), err)
 	}
 	listOutput.Reset()
@@ -150,8 +156,8 @@ func TestInspectListAndShowTypeAnHTTPObservation(t *testing.T) {
 	if err := run(t.Context(), []string{"inspect", "list", "--result=error", "--output=json"}, &listOutput, &bytes.Buffer{}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := json.Unmarshal(listOutput.Bytes(), &list); err != nil || len(list.Inspections) != 2 ||
-		list.Inspections[0].HTTP.Status != 404 || list.Inspections[1].HTTP.Status != 500 {
+	if err := json.Unmarshal(listOutput.Bytes(), &list); err != nil || len(list.Inspections) != 3 ||
+		list.Inspections[0].HTTP.Status != 200 || list.Inspections[1].HTTP.Status != 404 || list.Inspections[2].HTTP.Status != 500 {
 		t.Fatalf("HTTP error results = %s, %v", listOutput.String(), err)
 	}
 	if err := run(t.Context(), []string{"inspect", "list", "--result=unknown"}, &bytes.Buffer{}, &bytes.Buffer{}, nil); err == nil {
@@ -168,6 +174,14 @@ func TestInspectListAndShowTypeAnHTTPObservation(t *testing.T) {
 	if err := json.Unmarshal(showOutput.Bytes(), &show); err != nil || show.SchemaVersion != 1 || show.Inspection.Number != 1 ||
 		show.Inspection.HTTP == nil || show.Inspection.HTTP.Path != "/health" || show.Inspection.Result != "ok" {
 		t.Fatalf("typed HTTP inspection = %s, %v", showOutput.String(), err)
+	}
+	showOutput.Reset()
+	if err := run(t.Context(), []string{"inspect", "show", "4", "--output=json"}, &showOutput, &bytes.Buffer{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(showOutput.Bytes(), &show); err != nil || show.Inspection.HTTP == nil ||
+		show.Inspection.HTTP.Path != "/interrupted" || show.Inspection.HTTP.Status != 200 || show.Inspection.Result != inspection.ResultError {
+		t.Fatal("stored interrupted response lost its completion error", showOutput.String(), err)
 	}
 }
 

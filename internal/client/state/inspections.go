@@ -34,8 +34,8 @@ type InspectionRecord struct {
 	MySQLErrorCode      int64                `json:"mysql_error_code,omitempty"`
 }
 
-// InspectionRecordFromSummary maps observations to the saved inspection shape.
-// http outcomes are derived from status when read, not stored as a result.
+// InspectionRecordFromSummary preserves completion outcomes, including an HTTP
+// response interrupted after successful headers were already sent.
 func InspectionRecordFromSummary(summary inspection.Summary) InspectionRecord {
 	record := InspectionRecord{
 		Protocol: summary.Protocol, ReceivedAt: summary.ReceivedAt,
@@ -44,9 +44,6 @@ func InspectionRecordFromSummary(summary inspection.Summary) InspectionRecord {
 		Operation: summary.Operation, Result: summary.Result, RedisCommand: summary.Command,
 		SQLState: summary.SQLState, Rows: summary.Rows,
 		ResultSets: int64(summary.ResultSets), MySQLErrorCode: int64(summary.MySQLErrorCode),
-	}
-	if summary.Protocol == inspection.HTTP {
-		record.Result = ""
 	}
 	return record
 }
@@ -114,7 +111,7 @@ func validInspectionRecord(record InspectionRecord) bool {
 	}
 	if record.Protocol == inspection.HTTP {
 		return record.Method != "" && record.Status >= 100 && record.Status <= 599 &&
-			record.Operation == "" && record.Result == "" && record.RedisCommand == "" && record.SQLState == "" &&
+			record.Operation == "" && record.Result.Valid() && (record.Status < 400 || record.Result == inspection.ResultError) && record.RedisCommand == "" && record.SQLState == "" &&
 			record.Rows == 0 && record.ResultSets == 0 && record.MySQLErrorCode == 0
 	}
 	if record.Protocol == inspection.Redis {
@@ -241,8 +238,7 @@ func (d *Database) ListInspections(ctx context.Context, filter InspectionFilter)
 		sql_operation, result, redis_command, sql_state, sql_rows, mysql_result_sets, mysql_error_code
 		FROM inspections WHERE ` + column + ` = ? AND expires_at > ? AND (? = '' OR service = ?)
 		AND (? = '' OR service_protocol = ?) AND (? = '' OR method = ?) AND (? = 0 OR status = ?)
-		AND (? = '' OR CASE WHEN service_protocol = 'http' THEN
-		 CASE WHEN status >= 400 THEN 'error' ELSE 'ok' END ELSE result END = ?)
+		AND (? = '' OR result = ?)
 		AND (? = 0 OR received_at >= ?) ORDER BY received_at DESC, row_id DESC LIMIT ?`
 	cutoff := int64(0)
 	if !filter.Since.IsZero() {

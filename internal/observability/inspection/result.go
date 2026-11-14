@@ -13,7 +13,8 @@ const (
 	MaxMaxBytes      = 1 << 30
 )
 
-// Result is an inspection outcome. http outcomes are derived from status.
+// Result is the completed operation's outcome. an HTTP error status or an
+// interrupted response is an error, including interruption after 200 headers.
 type Result string
 
 const (
