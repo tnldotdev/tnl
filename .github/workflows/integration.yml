@@ -44,8 +44,9 @@ jobs:
       - name: Set up tools
         uses: ./.github/actions/setup # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
         with:
-          tools: go task go:github.com/letsencrypt/pebble/v2/cmd/pebble
+          tools: go task go:github.com/letsencrypt/pebble/v2/cmd/pebble ${{ matrix.suite == 'runtime:shard' && 'node pnpm bun python uv' || '' }}
           go-cache: race
+          pnpm: ${{ matrix.suite == 'runtime:shard' }}
 
       - name: Check test harness and shard selection
         if: matrix.suite == 'api'

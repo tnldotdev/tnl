@@ -19,15 +19,15 @@ const schedulingLinks = createContextKey("tnl scheduling links");
 type Operation =
   | "sdk.prepare"
   | "sdk.connect"
-  | "sdk.open"
+  | "sdk.publish"
   | "sdk.app.register"
   | "sdk.app.renew"
   | "sdk.app.recover"
   | "sdk.app.cleanup"
-  | "sdk.open.recover"
-  | "sdk.open.renew"
-  | "sdk.open.status"
-  | "sdk.open.cleanup"
+  | "sdk.publish.recover"
+  | "sdk.publish.renew"
+  | "sdk.publish.status"
+  | "sdk.publish.cleanup"
   | "sdk.native.command"
   | "sdk.native.request"
   | "vite.prepare"
@@ -63,8 +63,8 @@ export function traceparent(): string | undefined {
   return `00-${sc.traceId}-${sc.spanId}-${(sc.traceFlags & 1) === 1 ? "01" : "00"}`;
 }
 
-export function launchEnvironment(): NodeJS.ProcessEnv {
-  const environment = { ...process.env };
+export function launchEnvironment(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const environment = { ...base };
   delete environment.TNL_TRACEPARENT;
   const parent = traceparent();
   if (parent !== undefined) environment.TNL_TRACEPARENT = parent;

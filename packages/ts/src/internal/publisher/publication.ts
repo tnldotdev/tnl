@@ -10,28 +10,35 @@ import {
   type RuntimeEndpoint,
   type EndpointSelection,
 } from "./local.js";
-import { closeServer, listeningTarget, isBunServer, type LocalHTTPServer } from "./register.js";
+import {
+  closeServer,
+  listeningTarget,
+  isBunServer,
+  observeListenerClose,
+  type LocalHTTPServer,
+} from "./register.js";
 import * as z from "zod";
 import { parseValue } from "../validation.js";
 import { httpsOriginSchema, pathTextSchema, registrationIDSchema } from "../values.js";
 import { parseStatus } from "./status.js";
+import { parseAssignment } from "./app.js";
 import type { TnlRatePeriod } from "../../config.gen.js";
 
-export type PublisherCredentialFile = {
+type PublisherCredentialFile = {
   readonly publisherCredentialFile: string;
   readonly publisherIdentityID?: never;
 };
-export type PublisherIdentityID = {
+type PublisherIdentityID = {
   readonly publisherIdentityID: string;
   readonly publisherCredentialFile?: never;
 };
-export type OpenOptions = OpenSettings &
+type InvocationOptions = InvocationSettings &
   (
     | PublisherCredentialFile
     | PublisherIdentityID
     | { readonly publisherCredentialFile?: never; readonly publisherIdentityID?: never }
   );
-interface OpenSettings {
+interface InvocationSettings {
   readonly telemetry?: boolean;
   readonly server?: string;
   readonly directory?: string;
@@ -52,12 +59,47 @@ interface OpenSettings {
   readonly signal?: AbortSignal;
 }
 
-export interface AdHocTunnel {
+export type NamedPublicationOptions = Pick<
+  InvocationSettings,
+  "targetHostname" | "signal" | "telemetry"
+>;
+export type TemporaryPublicationOptions = NamedPublicationOptions &
+  Pick<InvocationSettings, "requirePostQuantum" | "access" | "limits">;
+
+export function validatePublicationOptions(
+  options: TemporaryPublicationOptions,
+  named: boolean,
+): void {
+  validateOptions(options);
+  const allowed = new Set(
+    named
+      ? ["targetHostname", "signal", "telemetry"]
+      : ["targetHostname", "signal", "telemetry", "requirePostQuantum", "access", "limits"],
+  );
+  if (Object.keys(options).some((key) => !allowed.has(key)))
+    throw new TnlError("sdk.configuration_invalid");
+}
+
+export interface Publication {
   readonly url: `https://${string}`;
   close(): Promise<void>;
   wait(): Promise<void>;
   [Symbol.asyncDispose](): Promise<void>;
 }
+
+export type PublicationSelection = (
+  | { readonly kind: "local"; readonly service?: string }
+  | {
+      readonly kind: "deployment";
+      readonly project: string;
+      readonly name: string;
+      readonly credential: string;
+      readonly service?: string;
+    }
+) & {
+  readonly environment?: NodeJS.ProcessEnv;
+  readonly retainCleanup?: (cleanup: () => Promise<void>) => void;
+};
 
 interface Dependencies {
   start(
@@ -80,23 +122,29 @@ const dependencies: Dependencies = {
 };
 
 // registration acknowledges a listener; filtered status identifies its exact run.
-export function openServer(
+export function publishServer(
   server: LocalHTTPServer,
-  options: OpenOptions = {},
+  options: InvocationOptions = {},
   runtime: Dependencies = dependencies,
-): Promise<AdHocTunnel> {
-  return operation("sdk.open", () => openServerUntraced(server, options, runtime));
+  publication?: PublicationSelection,
+): Promise<Publication> {
+  return operation("sdk.publish", () =>
+    publishServerUntraced(server, options, runtime, publication),
+  );
 }
 
-async function openServerUntraced(
+async function publishServerUntraced(
   server: LocalHTTPServer,
-  options: OpenOptions,
+  options: InvocationOptions,
   runtime: Dependencies,
-): Promise<AdHocTunnel> {
+  publication?: PublicationSelection,
+): Promise<Publication> {
   validateOptions(options);
   const target = await listeningTarget(server, options);
   bound();
   const directory = path.resolve(options.directory ?? process.cwd());
+  const environment = publication?.environment ?? process.env;
+  const localService = publication?.kind === "local" ? publication.service : undefined;
   const owner = randomBytes(16).toString("hex");
   const invocationID = `ivk_${Array.from(
     { length: 22 },
@@ -105,8 +153,10 @@ async function openServerUntraced(
   // the SDK process may receive this environment variable after the native
   // owner starts. pass the path, never the credential contents, to that owner.
   const publisherCredentialFile =
+    localService === undefined &&
+    publication?.kind !== "deployment" &&
     options.publisherIdentityID === undefined
-      ? (options.publisherCredentialFile ?? process.env.TNL_PUBLISHER_CREDENTIAL_FILE)
+      ? (options.publisherCredentialFile ?? environment.TNL_PUBLISHER_CREDENTIAL_FILE)
       : undefined;
   if (
     publisherCredentialFile !== undefined &&
@@ -119,8 +169,18 @@ async function openServerUntraced(
     owner,
     pid: process.pid,
     target,
+    ...(publication?.kind !== "deployment"
+      ? {}
+      : {
+          deployment: {
+            project: publication.project,
+            name: publication.name,
+            credential: publication.credential,
+            ...(publication.service === undefined ? {} : { service: publication.service }),
+          },
+        }),
     telemetry_disabled:
-      options.telemetry === false || /^(1|true)$/i.test(process.env.TNL_NO_TELEMETRY ?? ""),
+      options.telemetry === false || /^(1|true)$/i.test(environment.TNL_NO_TELEMETRY ?? ""),
     ...(options.server === undefined ? {} : { server_url: options.server }),
     ...(options.publisherIdentityID === undefined
       ? {}
@@ -139,22 +199,97 @@ async function openServerUntraced(
             ? {}
             : { ip: [...options.access.ip] }),
         }),
-    ...(options.limits === undefined ? {} : { limits: options.limits }),
+    ...(options.limits === undefined ? {} : { limits: structuredClone(options.limits) }),
     ...(options.requirePostQuantum === undefined
       ? {}
       : { require_post_quantum: options.requirePostQuantum }),
   };
   const selection = {
-    invocationID,
+    ...(localService === undefined ? { invocationID } : { service: localService }),
+    environment,
+    ...(publication?.kind === "deployment" ? { publications: true } : {}),
     ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
   };
   let endpoint = await runtime.start(directory, undefined, selection);
   if (options.signal?.aborted) throw aborted();
-  let registration = parseRegistration(
-    await runtime.request(endpoint, "ad-hoc/register", request),
-    owner,
-    target,
-  );
+  let assignedURL: `https://${string}` | undefined;
+  let registration: z.output<typeof registrationSchema> | undefined;
+  let uncertain = false;
+  const register = async () => {
+    uncertain = true;
+    try {
+      if (localService === undefined) {
+        registration = parseRegistration(
+          await runtime.request(endpoint, "publications/register", request),
+          owner,
+          target,
+        );
+        uncertain = false;
+        return;
+      }
+      const assignment = parseAssignment(
+        await runtime.request(endpoint, "prepare", {
+          version: 1,
+          directory,
+          service: localService,
+          framework: isBunServer(server) ? "bun" : "node",
+          owner,
+          pid: process.pid,
+          telemetry_disabled: request.telemetry_disabled,
+        }),
+      );
+      if (
+        endpoint.scope !== "app" ||
+        assignment.service !== localService ||
+        endpoint.service !== localService ||
+        assignment.publicURL === undefined ||
+        (assignedURL !== undefined && assignedURL !== assignment.publicURL)
+      )
+        throw new TnlError("sdk.response_invalid");
+      assignedURL = assignment.publicURL;
+      registration = {
+        version: 1 as const,
+        registration_id: assignment.registrationID,
+        owner,
+        target,
+      };
+      await runtime.request(endpoint, "register", registration);
+      uncertain = false;
+    } catch (cause) {
+      if (
+        cause instanceof TnlError &&
+        !["sdk.dev_unavailable", "sdk.registration_stale", "sdk.response_invalid"].includes(
+          cause.code,
+        )
+      )
+        uncertain = false;
+      throw cause;
+    }
+  };
+  const unregister = async () => {
+    // recover the original invocation before cleanup when its reply was lost.
+    for (let attempt = 0; uncertain; attempt++) {
+      try {
+        await register();
+      } catch (cause) {
+        if (attempt >= 2 || !(cause instanceof TnlError) || cause.code !== "sdk.dev_unavailable")
+          throw cause;
+        endpoint = await runtime.start(directory, undefined, selection);
+      }
+    }
+    if (registration !== undefined) await runtime.request(endpoint, "unregister", registration);
+  };
+  try {
+    await register();
+  } catch (cause) {
+    try {
+      await unregister();
+    } catch (cleanup) {
+      publication?.retainCleanup?.(unregister);
+      throw new TnlCleanupError(cause, cleanup);
+    }
+    throw cause;
+  }
   let currentURL: `https://${string}` | undefined;
   let closed = false;
   let resolveClosing!: () => void;
@@ -164,9 +299,10 @@ async function openServerUntraced(
   let terminal = false;
   let readyReached = false;
   let closePromise: Promise<void> | undefined;
-  let resolveReady!: (handle: AdHocTunnel) => void;
+  let detachListener: (() => void) | undefined;
+  let resolveReady!: (handle: Publication) => void;
   let rejectReady!: (cause: unknown) => void;
-  const ready = new Promise<AdHocTunnel>((resolve, reject) => {
+  const ready = new Promise<Publication>((resolve, reject) => {
     resolveReady = resolve;
     rejectReady = reject;
   });
@@ -187,11 +323,11 @@ async function openServerUntraced(
     resolveClosing();
     options.signal?.removeEventListener("abort", onAbort);
     process.off("beforeExit", beforeExit);
-    if (!isBunServer(server)) server.off("close", onListenerClose);
+    detachListener?.();
     if (!terminal && !readyReached) rejectReady(aborted());
-    closePromise = operation("sdk.open.cleanup", async () => {
+    closePromise = operation("sdk.publish.cleanup", async () => {
       await monitoring;
-      await runtime.request(endpoint, "unregister", registration);
+      await unregister();
     }).then(
       () => {
         if (!terminal) {
@@ -200,21 +336,20 @@ async function openServerUntraced(
         }
       },
       (cause: unknown) => {
-        const stale =
-          cause instanceof TnlError &&
-          (cause.code === "sdk.registration_stale" || cause.code === "sdk.dev_unavailable");
+        const stale = cause instanceof TnlError && cause.code === "sdk.registration_stale";
         if (!terminal) {
           terminal = true;
           if (stale) resolveDone();
           else rejectDone(cause);
         }
         if (stale) return;
+        closePromise = undefined;
         throw cause;
       },
     );
     return closePromise;
   };
-  const handle: AdHocTunnel = Object.freeze({
+  const handle: Publication = Object.freeze({
     get url(): `https://${string}` {
       if (currentURL === undefined) throw new TnlError("sdk.response_invalid");
       return currentURL;
@@ -243,7 +378,10 @@ async function openServerUntraced(
   let lastRun = 0;
   const observe = (status: NonNullable<ReturnType<typeof parseStatus>>) => {
     if (status.publicURL !== undefined) {
-      if (currentURL !== undefined && currentURL !== status.publicURL)
+      if (
+        (currentURL !== undefined && currentURL !== status.publicURL) ||
+        (assignedURL !== undefined && assignedURL !== status.publicURL)
+      )
         throw new TnlError("sdk.response_invalid");
       currentURL = status.publicURL;
     }
@@ -259,25 +397,24 @@ async function openServerUntraced(
     } else if (status.failure) fail(new TnlError("sdk.publication_failed"));
   };
   // registering acknowledges the listener, not routability.
-  const statusRequest = independent("sdk.open.status", () => runtime.request(endpoint, "status"));
-  const renew = independent("sdk.open.renew", () =>
+  const statusRequest = independent("sdk.publish.status", () =>
+    runtime.request(endpoint, "status"),
+  );
+  const renew = independent("sdk.publish.renew", () =>
     runtime.request(endpoint, "renew", registration),
   );
-  const recover = independent("sdk.open.recover", async () => {
+  const recover = independent("sdk.publish.recover", async () => {
     endpoint = await runtime.start(directory, undefined, selection);
-    registration = parseRegistration(
-      await runtime.request(endpoint, "ad-hoc/register", request),
-      owner,
-      target,
-    );
+    await register();
   });
   const monitoring = background(async () => {
     while (!closed && !terminal) {
       try {
         if (!isBunServer(server) && !server.listening) throw new TnlError("sdk.listener_failed");
+        if (registration === undefined) throw new TnlError("sdk.response_invalid");
         const status = parseStatus(
           await statusRequest(),
-          invocationID,
+          localService ?? invocationID,
           registration.registration_id,
           target,
         );
@@ -316,17 +453,10 @@ async function openServerUntraced(
       }
     }
   });
-  if (isBunServer(server)) {
-    const original = server.stop.bind(server);
-    server.stop = async (force) => {
-      try {
-        await original(force);
-      } finally {
-        onListenerClose();
-        await close();
-      }
-    };
-  } else server.once("close", onListenerClose);
+  detachListener = observeListenerClose(server, async () => {
+    onListenerClose();
+    await close();
+  });
   if (options.signal?.aborted) onAbort();
   try {
     return await ready;
@@ -334,6 +464,7 @@ async function openServerUntraced(
     try {
       await close();
     } catch (cleanupError) {
+      publication?.retainCleanup?.(close);
       throw new TnlCleanupError(cause, cleanupError);
     }
     throw cause;
@@ -374,7 +505,7 @@ const networkSchema = z
     );
   });
 const accessModeSchema = z.enum(["restricted", "anonymous"]);
-const openOptionsSchema = z
+const invocationOptionsSchema = z
   .strictObject({
     publisherCredentialFile: credentialFileSchema.optional(),
     publisherIdentityID: z
@@ -405,30 +536,49 @@ const openOptionsSchema = z
       options.publisherCredentialFile === undefined || options.publisherIdentityID === undefined,
   );
 
-function validateOptions(options: OpenOptions): void {
-  parseValue(openOptionsSchema, options, "sdk.configuration_invalid");
+function validateOptions(options: InvocationOptions): void {
+  parseValue(invocationOptionsSchema, options, "sdk.configuration_invalid");
 }
 function validPublisherCredentialFile(value: unknown): value is string {
   return credentialFileSchema.safeParse(value).success;
 }
 
 function aborted(): DOMException {
-  return new DOMException("ad-hoc publication was aborted", "AbortError");
+  return new DOMException("publication was aborted", "AbortError");
 }
 
 // inline Fetch handlers own their Node listener; a supplied server is never closed.
-export async function openFetch(
+export async function publishFetch(
   handler: FetchHandler,
-  options: OpenOptions = {},
+  options: InvocationOptions = {},
   runtime: Dependencies = dependencies,
-): Promise<AdHocTunnel> {
+  publication?: PublicationSelection,
+): Promise<Publication> {
   validateOptions(options);
   const { createFetchServer } = await import("./fetch.js");
   const server = await createFetchServer(handler);
-  let base: AdHocTunnel;
+  let base: Publication;
+  let retained = false;
   try {
-    base = await openServer(server, options, runtime);
+    base = await publishServer(
+      server,
+      options,
+      runtime,
+      publication === undefined
+        ? undefined
+        : {
+            ...publication,
+            retainCleanup: (cleanup) => {
+              retained = true;
+              publication.retainCleanup?.(async () => {
+                await cleanup();
+                await closeServer(server);
+              });
+            },
+          },
+    );
   } catch (cause) {
+    if (retained) throw cause;
     try {
       await closeServer(server);
     } catch (cleanupError) {
@@ -440,20 +590,12 @@ export async function openFetch(
   const close = (): Promise<void> => {
     if (closing !== undefined) return closing;
     closing = (async () => {
-      let publicationError: unknown;
-      try {
-        await base.close();
-      } catch (cause) {
-        publicationError = cause;
-      }
-      try {
-        await closeServer(server);
-      } catch (cause) {
-        if (publicationError !== undefined) throw new TnlCleanupError(publicationError, cause);
-        throw cause;
-      }
-      if (publicationError !== undefined) throw publicationError;
-    })();
+      await base.close();
+      await closeServer(server);
+    })().catch((cause: unknown) => {
+      closing = undefined;
+      throw cause;
+    });
     return closing;
   };
   return Object.freeze({

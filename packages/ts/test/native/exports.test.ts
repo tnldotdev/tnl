@@ -27,6 +27,7 @@ test("import and require share errors, workload configuration, and deployment cl
     assert.equal(typeof esm.createClient, 'function');
     assert.equal('connect' in esm.tnl, false);
     assert.equal('client' in esm.tnl, false);
+    assert.equal('open' in esm.tnl, false);
     const token = async () => 'request-scoped-assertion';
     workload.configureWorkload({name:'worker', token});
     require('@tnldotdev/tnl/workload').configureWorkload({name:'worker', token});

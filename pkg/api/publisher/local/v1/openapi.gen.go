@@ -303,7 +303,15 @@ type Event struct {
 
 // Invocation defines model for Invocation.
 type Invocation struct {
-	AccessMode              *InvocationAccessMode                    `json:"access_mode,omitempty"`
+	AccessMode *InvocationAccessMode `json:"access_mode,omitempty"`
+
+	// Deployment Private captured selection. Omit service for a temporary URL; named publication retains saved visitor policy and limits.
+	Deployment *struct {
+		Credential string `json:"credential"`
+		Name       string `json:"name"`
+		Project    string `json:"project"`
+		Service    string `json:"service,omitempty"`
+	} `json:"deployment,omitempty"`
 	InvocationId            string                                   `json:"invocation_id"`
 	Ip                      *[]string                                `json:"ip,omitempty"`
 	Limits                  *externalRef0.PublisherApplicationLimits `json:"limits,omitempty"`
@@ -458,9 +466,6 @@ type HealthParams struct {
 	ConfigurationDigest *string `form:"configuration_digest,omitempty" json:"configuration_digest,omitempty"`
 }
 
-// RegisterInvocationJSONRequestBody defines body for RegisterInvocation for application/json ContentType.
-type RegisterInvocationJSONRequestBody = Invocation
-
 // IssueCapabilityJSONRequestBody defines body for IssueCapability for application/json ContentType.
 type IssueCapabilityJSONRequestBody = CapabilityRequest
 
@@ -472,6 +477,9 @@ type AcquireLeaseJSONRequestBody = Lease
 
 // PrepareJSONRequestBody defines body for Prepare for application/json ContentType.
 type PrepareJSONRequestBody = Prepare
+
+// RegisterInvocationJSONRequestBody defines body for RegisterInvocation for application/json ContentType.
+type RegisterInvocationJSONRequestBody = Invocation
 
 // RegisterJSONRequestBody defines body for Register for application/json ContentType.
 type RegisterJSONRequestBody = Registration
@@ -556,18 +564,6 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 // The interface specification for the client above.
 type ClientInterface interface {
 
-	// RegisterInvocationWithBody performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
-	RegisterInvocationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RegisterInvocation performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request.
-	// Takes a body of the `application/json` content type.
-	//
-	// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
-	RegisterInvocation(ctx context.Context, body RegisterInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// IssueCapabilityWithBody performs a POST /v1/capabilities (the `IssueCapability` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -624,6 +620,18 @@ type ClientInterface interface {
 	// App capability only; service must equal the capability service. Idempotent for the live owner and PID.
 	Prepare(ctx context.Context, body PrepareJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// RegisterInvocationWithBody performs a POST /v1/publications/register (the `RegisterInvocation` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Invocation capability only. Publish a bound HTTP listener using either a captured deployment credential or a local namespace publisher. A deployment service selects its saved URL and limits; omitting it allocates a temporary URL. Registration acknowledges the target before asynchronous provisioning. Renewal and unregister share the app registration lifetime. Credentials remain private and never enter snapshots, metadata, or logs.
+	RegisterInvocationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RegisterInvocation performs a POST /v1/publications/register (the `RegisterInvocation` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Invocation capability only. Publish a bound HTTP listener using either a captured deployment credential or a local namespace publisher. A deployment service selects its saved URL and limits; omitting it allocates a temporary URL. Registration acknowledges the target before asynchronous provisioning. Renewal and unregister share the app registration lifetime. Credentials remain private and never enter snapshots, metadata, or logs.
+	RegisterInvocation(ctx context.Context, body RegisterInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// RegisterWithBody performs a POST /v1/register (the `Register` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -664,38 +672,6 @@ type ClientInterface interface {
 	//
 	// Stop and join the exact registration and bound target. Target is required after register.
 	Unregister(ctx context.Context, body UnregisterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-}
-
-// RegisterInvocationWithBody performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request,
-// with any type of body and a specified content type.
-//
-// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
-func (c *Client) RegisterInvocationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRegisterInvocationRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RegisterInvocation performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request.
-// Takes a body of the `application/json` content type.
-//
-// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
-func (c *Client) RegisterInvocation(ctx context.Context, body RegisterInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRegisterInvocationRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
 }
 
 // IssueCapabilityWithBody performs a POST /v1/capabilities (the `IssueCapability` operationId) request,
@@ -854,6 +830,38 @@ func (c *Client) Prepare(ctx context.Context, body PrepareJSONRequestBody, reqEd
 	return c.Client.Do(req)
 }
 
+// RegisterInvocationWithBody performs a POST /v1/publications/register (the `RegisterInvocation` operationId) request,
+// with any type of body and a specified content type.
+//
+// Invocation capability only. Publish a bound HTTP listener using either a captured deployment credential or a local namespace publisher. A deployment service selects its saved URL and limits; omitting it allocates a temporary URL. Registration acknowledges the target before asynchronous provisioning. Renewal and unregister share the app registration lifetime. Credentials remain private and never enter snapshots, metadata, or logs.
+func (c *Client) RegisterInvocationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterInvocationRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RegisterInvocation performs a POST /v1/publications/register (the `RegisterInvocation` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Invocation capability only. Publish a bound HTTP listener using either a captured deployment credential or a local namespace publisher. A deployment service selects its saved URL and limits; omitting it allocates a temporary URL. Registration acknowledges the target before asynchronous provisioning. Renewal and unregister share the app registration lifetime. Credentials remain private and never enter snapshots, metadata, or logs.
+func (c *Client) RegisterInvocation(ctx context.Context, body RegisterInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterInvocationRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // RegisterWithBody performs a POST /v1/register (the `Register` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -963,46 +971,6 @@ func (c *Client) Unregister(ctx context.Context, body UnregisterJSONRequestBody,
 		return nil, err
 	}
 	return c.Client.Do(req)
-}
-
-// NewRegisterInvocationRequest calls the generic RegisterInvocation builder with application/json body
-func NewRegisterInvocationRequest(server string, body RegisterInvocationJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewRegisterInvocationRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewRegisterInvocationRequestWithBody constructs an http.Request for the RegisterInvocation method, with any body, and a specified content type
-func NewRegisterInvocationRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/ad-hoc/register")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
 }
 
 // NewIssueCapabilityRequest calls the generic IssueCapability builder with application/json body
@@ -1269,6 +1237,46 @@ func NewPrepareRequestWithBody(server string, contentType string, body io.Reader
 	return req, nil
 }
 
+// NewRegisterInvocationRequest calls the generic RegisterInvocation builder with application/json body
+func NewRegisterInvocationRequest(server string, body RegisterInvocationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRegisterInvocationRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewRegisterInvocationRequestWithBody constructs an http.Request for the RegisterInvocation method, with any body, and a specified content type
+func NewRegisterInvocationRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publications/register")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewRegisterRequest calls the generic Register builder with application/json body
 func NewRegisterRequest(server string, body RegisterJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -1460,20 +1468,6 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
-	// RegisterInvocationWithBodyWithResponse performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	RegisterInvocationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterInvocationResponse, error)
-
-	// RegisterInvocationWithResponse performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
-	RegisterInvocationWithResponse(ctx context.Context, body RegisterInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterInvocationResponse, error)
-
 	// IssueCapabilityWithBodyWithResponse performs a POST /v1/capabilities (the `IssueCapability` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -1542,6 +1536,20 @@ type ClientWithResponsesInterface interface {
 	// App capability only; service must equal the capability service. Idempotent for the live owner and PID.
 	PrepareWithResponse(ctx context.Context, body PrepareJSONRequestBody, reqEditors ...RequestEditorFn) (*PrepareResponse, error)
 
+	// RegisterInvocationWithBodyWithResponse performs a POST /v1/publications/register (the `RegisterInvocation` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Invocation capability only. Publish a bound HTTP listener using either a captured deployment credential or a local namespace publisher. A deployment service selects its saved URL and limits; omitting it allocates a temporary URL. Registration acknowledges the target before asynchronous provisioning. Renewal and unregister share the app registration lifetime. Credentials remain private and never enter snapshots, metadata, or logs.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RegisterInvocationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterInvocationResponse, error)
+
+	// RegisterInvocationWithResponse performs a POST /v1/publications/register (the `RegisterInvocation` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Invocation capability only. Publish a bound HTTP listener using either a captured deployment credential or a local namespace publisher. A deployment service selects its saved URL and limits; omitting it allocates a temporary URL. Registration acknowledges the target before asynchronous provisioning. Renewal and unregister share the app registration lifetime. Credentials remain private and never enter snapshots, metadata, or logs.
+	RegisterInvocationWithResponse(ctx context.Context, body RegisterInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterInvocationResponse, error)
+
 	// RegisterWithBodyWithResponse performs a POST /v1/register (the `Register` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -1590,54 +1598,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Stop and join the exact registration and bound target. Target is required after register.
 	UnregisterWithResponse(ctx context.Context, body UnregisterJSONRequestBody, reqEditors ...RequestEditorFn) (*UnregisterResponse, error)
-}
-
-type RegisterInvocationResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *Registration
-	// JSONDefault the response for an HTTP default `application/json` response
-	JSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r RegisterInvocationResponse) GetJSON200() *Registration {
-	return r.JSON200
-}
-
-// GetJSONDefault returns the response for an HTTP default `application/json` response
-func (r RegisterInvocationResponse) GetJSONDefault() *Problem {
-	return r.JSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r RegisterInvocationResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r RegisterInvocationResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RegisterInvocationResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RegisterInvocationResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
 }
 
 type IssueCapabilityResponse struct {
@@ -1921,6 +1881,54 @@ func (r PrepareResponse) ContentType() string {
 	return ""
 }
 
+type RegisterInvocationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Registration
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RegisterInvocationResponse) GetJSON200() *Registration {
+	return r.JSON200
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r RegisterInvocationResponse) GetJSONDefault() *Problem {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RegisterInvocationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RegisterInvocationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RegisterInvocationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RegisterInvocationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type RegisterResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -2092,32 +2100,6 @@ func (r UnregisterResponse) ContentType() string {
 	return ""
 }
 
-// RegisterInvocationWithBodyWithResponse performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request,
-// with any type of body and a specified content type.
-//
-// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) RegisterInvocationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterInvocationResponse, error) {
-	rsp, err := c.RegisterInvocationWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRegisterInvocationResponse(rsp)
-}
-
-// RegisterInvocationWithResponse performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
-func (c *ClientWithResponses) RegisterInvocationWithResponse(ctx context.Context, body RegisterInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterInvocationResponse, error) {
-	rsp, err := c.RegisterInvocation(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRegisterInvocationResponse(rsp)
-}
-
 // IssueCapabilityWithBodyWithResponse performs a POST /v1/capabilities (the `IssueCapability` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -2246,6 +2228,32 @@ func (c *ClientWithResponses) PrepareWithResponse(ctx context.Context, body Prep
 	return ParsePrepareResponse(rsp)
 }
 
+// RegisterInvocationWithBodyWithResponse performs a POST /v1/publications/register (the `RegisterInvocation` operationId) request,
+// with any type of body and a specified content type.
+//
+// Invocation capability only. Publish a bound HTTP listener using either a captured deployment credential or a local namespace publisher. A deployment service selects its saved URL and limits; omitting it allocates a temporary URL. Registration acknowledges the target before asynchronous provisioning. Renewal and unregister share the app registration lifetime. Credentials remain private and never enter snapshots, metadata, or logs.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RegisterInvocationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterInvocationResponse, error) {
+	rsp, err := c.RegisterInvocationWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegisterInvocationResponse(rsp)
+}
+
+// RegisterInvocationWithResponse performs a POST /v1/publications/register (the `RegisterInvocation` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Invocation capability only. Publish a bound HTTP listener using either a captured deployment credential or a local namespace publisher. A deployment service selects its saved URL and limits; omitting it allocates a temporary URL. Registration acknowledges the target before asynchronous provisioning. Renewal and unregister share the app registration lifetime. Credentials remain private and never enter snapshots, metadata, or logs.
+func (c *ClientWithResponses) RegisterInvocationWithResponse(ctx context.Context, body RegisterInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterInvocationResponse, error) {
+	rsp, err := c.RegisterInvocation(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegisterInvocationResponse(rsp)
+}
+
 // RegisterWithBodyWithResponse performs a POST /v1/register (the `Register` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -2335,39 +2343,6 @@ func (c *ClientWithResponses) UnregisterWithResponse(ctx context.Context, body U
 		return nil, err
 	}
 	return ParseUnregisterResponse(rsp)
-}
-
-// ParseRegisterInvocationResponse parses an HTTP response from a RegisterInvocationWithResponse call
-func ParseRegisterInvocationResponse(rsp *http.Response) (*RegisterInvocationResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RegisterInvocationResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest Registration
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSONDefault = &dest
-
-	}
-
-	return response, nil
 }
 
 // ParseIssueCapabilityResponse parses an HTTP response from a IssueCapabilityWithResponse call
@@ -2564,6 +2539,39 @@ func ParsePrepareResponse(rsp *http.Response) (*PrepareResponse, error) {
 	return response, nil
 }
 
+// ParseRegisterInvocationResponse parses an HTTP response from a RegisterInvocationWithResponse call
+func ParseRegisterInvocationResponse(rsp *http.Response) (*RegisterInvocationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RegisterInvocationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Registration
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseRegisterResponse parses an HTTP response from a RegisterWithResponse call
 func ParseRegisterResponse(rsp *http.Response) (*RegisterResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -2687,9 +2695,6 @@ func ParseUnregisterResponse(rsp *http.Response) (*UnregisterResponse, error) {
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 
-	// (POST /v1/ad-hoc/register)
-	RegisterInvocation(w http.ResponseWriter, r *http.Request)
-
 	// (POST /v1/capabilities)
 	IssueCapability(w http.ResponseWriter, r *http.Request)
 
@@ -2707,6 +2712,9 @@ type ServerInterface interface {
 
 	// (POST /v1/prepare)
 	Prepare(w http.ResponseWriter, r *http.Request)
+
+	// (POST /v1/publications/register)
+	RegisterInvocation(w http.ResponseWriter, r *http.Request)
 
 	// (POST /v1/register)
 	Register(w http.ResponseWriter, r *http.Request)
@@ -2729,20 +2737,6 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
-
-// RegisterInvocation operation middleware
-func (siw *ServerInterfaceWrapper) RegisterInvocation(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RegisterInvocation(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
 
 // IssueCapability operation middleware
 func (siw *ServerInterfaceWrapper) IssueCapability(w http.ResponseWriter, r *http.Request) {
@@ -2857,6 +2851,20 @@ func (siw *ServerInterfaceWrapper) Prepare(w http.ResponseWriter, r *http.Reques
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.Prepare(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RegisterInvocation operation middleware
+func (siw *ServerInterfaceWrapper) RegisterInvocation(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RegisterInvocation(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3052,7 +3060,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/events", wrapper.Events)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/check", wrapper.Check)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/leases", wrapper.AcquireLease)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/ad-hoc/register", wrapper.RegisterInvocation)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publications/register", wrapper.RegisterInvocation)
 
 	return m
 }

@@ -42,7 +42,7 @@ type publisherSetupCommand struct {
 	ExpiresIn       time.Duration    `name:"expires-in" default:"10m" help:"Deployment enrollment lifetime, from 1m to 24h."`
 	IdempotencyKey  string           `name:"idempotency-key" help:"Original deployment setup request key for lost-response recovery."`
 	Output          statusOutputMode `name:"output" enum:"human,json" default:"human" help:"With --deployment, print a raw enrollment key with human diagnostics, or JSON containing the key."`
-	Namespace       bool             `help:"Set up this team's HTTP namespace for tnl.open."`
+	Namespace       bool             `help:"Set up this team's HTTP namespace for local application publication."`
 	URL             string           `name:"url" help:"Set up one saved development public URL by ID."`
 	Domain          string           `help:"Ready team domain; defaults to the team's default domain."`
 }
@@ -125,7 +125,7 @@ func runPublisherSetup(ctx context.Context, f publisherSetupCommand, project pro
 	if err != nil {
 		return err
 	}
-	return writeHumanFrame(output, "tnl publisher setup", "ready", "tnl.open can now publish in this namespace", clioutput.Fields(
+	return writeHumanFrame(output, "tnl publisher setup", "ready", "local apps can now publish in this namespace", clioutput.Fields(
 		clioutput.Field{Label: "namespace", Value: namespace}, clioutput.Field{Label: "publisher", Value: identity.ClientId}, clioutput.Field{Label: "grant", Value: identity.GrantId},
 	))
 }

@@ -1,30 +1,27 @@
-import {
-  tnl,
-  type PublisherCredentialFile,
-  type PublisherIdentityID,
-  type OpenOptions,
-} from "@tnldotdev/tnl";
+import { createClient, tnl, type Publication } from "@tnldotdev/tnl";
 import { assertType, test } from "vitest";
 
-test("publication accepts either prepared identity and keeps app options separate", () => {
-  const file: PublisherCredentialFile = { publisherCredentialFile: "/private/publisher.json" };
-  const stored: PublisherIdentityID = { publisherIdentityID: `pub_${"A".repeat(22)}` };
+test("deployment publication keeps saved policy and captured authority separate", () => {
+  const client = createClient({
+    project: "shop/checkout",
+    services: { web: { protocol: "http" }, db: { protocol: "postgres" } },
+  });
+  const production = client.deployment("production");
   const handler = () => new Response("app");
-  assertType<Promise<import("@tnldotdev/tnl").AdHocTunnel>>(tnl.open(handler));
-  void tnl.open(handler, file);
-  void tnl.open(handler, { ...stored, stateDir: "/private/client", access: { ip: ["127.0.0.1"] } });
+  assertType<Promise<Publication>>(production.publish("web", handler));
+  assertType<Promise<Publication>>(production.publish(handler, { access: { ip: ["127.0.0.1"] } }));
   void tnl.prepare({ service: "web", directory: "/project", stateDir: "/private/client" });
-
-  // @ts-expect-error a publisher file and stored publisher ID are separate choices.
-  const both: OpenOptions = {
-    publisherCredentialFile: "/private/publisher.json",
-    publisherIdentityID: "id",
-  };
-  void both;
-  // @ts-expect-error enrollment is an explicit native setup operation.
-  void tnl.open(handler, { enrollmentKey: "key" });
-  // @ts-expect-error publication credentials were removed.
-  void tnl.open(handler, { credential: "old" });
-  // @ts-expect-error use access.ip for visitor IP settings.
-  void tnl.open(handler, { allowIP: ["127.0.0.1"] });
+  // @ts-expect-error the unscoped publication surface was removed.
+  void tnl.open(handler);
+  // @ts-expect-error only HTTP services can be published.
+  void production.publish("db", handler);
+  // @ts-expect-error named publication uses saved visitor policy.
+  void production.publish("web", handler, { access: "anonymous" });
+  // @ts-expect-error authority is captured by the deployment.
+  void production.publish(handler, { token: "other" });
+  // @ts-expect-error the working directory is captured by the deployment.
+  void production.publish(handler, { directory: "/other" });
+  // @ts-expect-error publication identities are not per-call options.
+  void production.publish(handler, { publisherCredentialFile: "/private/file" });
+  void createClient({ project: "shop/checkout" }).deployment("production").publish("web", handler);
 });

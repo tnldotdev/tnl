@@ -26,8 +26,8 @@ paths:
     $ref: "./paths/observations.yaml#/paths/~1v1~1check"
   /v1/leases:
     $ref: "./paths/invocations.yaml#/paths/~1v1~1leases"
-  /v1/ad-hoc/register:
-    $ref: "./paths/invocations.yaml#/paths/~1v1~1ad-hoc~1register"
+  /v1/publications/register:
+    $ref: "./paths/invocations.yaml#/paths/~1v1~1publications~1register"
 components:
   responses:
     Problem:

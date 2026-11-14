@@ -23,6 +23,7 @@ type runtimeOptions struct {
 	Directory     string `name:"directory" required:"" type:"path"`
 	StateDir      string `name:"state-dir" env:"TNL_STATE_DIR" type:"path"`
 	SnapshotStdin bool   `name:"snapshot-stdin" hidden:""`
+	Publications  bool   `name:"publications" hidden:""`
 }
 
 type runtimeEndpointOptions struct {
@@ -32,7 +33,7 @@ type runtimeEndpointOptions struct {
 }
 
 func (o runtimeOptions) settings() local.Options {
-	settings := local.Options{Telemetry: o.telemetry, Directory: o.Directory, StateDir: o.StateDir}
+	settings := local.Options{Telemetry: o.telemetry, Directory: o.Directory, StateDir: o.StateDir, Publications: o.Publications}
 	if o.SnapshotStdin {
 		settings.Snapshot = os.Stdin
 	}

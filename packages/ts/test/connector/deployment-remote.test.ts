@@ -43,7 +43,7 @@ describe("project-bound deployment handles", () => {
   it("captures independent selections and closes only its own driver factories and native owner", async () => {
     const app = createClient({ project: "acme/shop", token: "portable-private", services });
     const production = app.deployment("production");
-    const customer = app.deployment("pgrp_aaaaaaaaaaaaaaaaaaaaaa");
+    const customer = app.deployment("dpl_Aaaaaaaaaaaaaaaaaaaaaa");
     const create = vi.fn((connection) => ({ connection }));
     const close = vi.fn();
     const first = production.client("db", { create, close });
@@ -55,7 +55,7 @@ describe("project-bound deployment handles", () => {
       {
         project: "acme/shop",
         token: "portable-private",
-        name: "pgrp_aaaaaaaaaaaaaaaaaaaaaa",
+        name: "dpl_Aaaaaaaaaaaaaaaaaaaaaa",
         services: ["db"],
       },
     ]);
@@ -107,7 +107,7 @@ describe("project-bound deployment handles", () => {
           if (input.method === "DELETE") return new Response(null, { status: 204 });
           return Response.json(
             {
-              id: "pgrp_customer",
+              id: "dpl_customer",
               team_id: "tm_selected",
               project_key: "shop",
               name: "customer",
