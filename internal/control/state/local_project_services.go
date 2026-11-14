@@ -278,6 +278,11 @@ func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLoca
 			return result, projectConstraintError(err)
 		}
 	}
+	if entry.ServiceID.Valid {
+		if err = d.saveLocalServiceHTTP(ctx, tx, entry.ServiceID.String, s.HTTP); err != nil {
+			return result, err
+		}
+	}
 	if err = reconcileLocalVisitorGrant(ctx, tx, entry, r.WorktreeKey, r.ActorID, oldGrant, s.Access != nil && s.Access.Team, r.Now); err != nil {
 		return result, err
 	}
@@ -409,6 +414,9 @@ func (d *Database) reconcileLocalProjectServices(ctx context.Context, tx pgx.Tx,
 				return err
 			}
 			if err = d.setLocalServiceExposure(ctx, tx, row.ID, projectServicePublic(nil, *s), r.Now); err != nil {
+				return err
+			}
+			if err = d.saveLocalServiceHTTP(ctx, tx, row.ID, s.HTTP); err != nil {
 				return err
 			}
 		}

@@ -62,8 +62,8 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 		savedName, protocol := config.ServiceName(name, service), controlv1.ServiceProtocol(config.Protocol(service))
 		entry := controlv1.ProjectServiceConfiguration{Name: &savedName, Protocol: &protocol, Public: service.Public}
 		httpSettings := service.HTTP
-		if deployment != "local" && service.Tunnel == nil {
-			resolved, err := config.ResolveRemoteHTTP(project.Config.Tunnel, service.HTTP)
+		if protocol == controlv1.ServiceProtocolHTTP && service.Tunnel == nil {
+			resolved, err := config.ResolveServiceHTTP(project.Config.Tunnel, service.HTTP)
 			if err != nil {
 				return declaration, err
 			}

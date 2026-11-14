@@ -38,6 +38,40 @@ func TestRemoteHTTPSettingsInheritDefaultsWithoutCreatingPublicURL(t *testing.T)
 	}
 }
 
+func TestServiceHTTPRequestPolicyDeclarationMatchesLocalAndRemote(t *testing.T) {
+	period := config.Duration(time.Second)
+	project := clientproject.Project{Config: config.TNL{
+		Tunnel: &config.Tunnel{Access: &config.Access{IP: []string{"192.0.2.1"}}, Limits: &config.Limits{HTTP: &config.WorkLimits{Total: new(100), Rate: &config.Rate{Count: new(5), Per: &period}}}},
+		Services: config.Services{"web": {
+			Public: new(true), Target: &config.ServiceTarget{Type: "address", Address: new(config.Target("http://app.internal:3000"))},
+			HTTP: &config.HTTPService{Limits: &config.WorkLimits{Concurrency: new(2), Rate: &config.Rate{Burst: new(2)}}},
+		}},
+	}}
+	local, err := Declaration(t.Context(), project, appliedTestContext(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project.Config.Deployment = "production"
+	remote, err := Declaration(t.Context(), project, appliedTestContext(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, err := json.Marshal(local.Services["web"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := json.Marshal(remote.Services["web"])
+	if err != nil || string(l) != string(r) {
+		t.Fatal("placement changed service request policy or reachability", string(l), string(r), err)
+	}
+	if value := local.Services["web"]; value.PublicUrl != nil || value.Http == nil || value.Http.Access == nil || value.Http.Limits == nil || *value.Http.Limits.Total != 100 || *value.Http.Limits.Concurrency != 2 {
+		t.Fatal("local declaration lost inherited request policy or selected a preview URL", value)
+	}
+	if rate := local.Services["web"].Http.Limits.Rate; rate == nil || rate.Count != 5 || rate.Per != "1s" || rate.Burst == nil || *rate.Burst != 2 {
+		t.Fatal("per-field rate inheritance was validated before defaults were applied", rate)
+	}
+}
+
 func TestRemoteDeclarationKeepsExposureOnEachService(t *testing.T) {
 	project := clientproject.Project{Config: config.TNL{
 		Deployment: "production",
