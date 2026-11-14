@@ -2,6 +2,7 @@ package resolve
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -178,5 +179,45 @@ func TestDeploymentDeclarationCapturesSavedURLWithoutLocalListenerFacts(t *testi
 	web := value.Services["web"]
 	if web.Target != "app" || web.PublicUrl == nil || web.PublicUrl.Hostname == nil || *web.PublicUrl.Hostname != "web.example.test" || web.PublicUrl.DomainId == nil || *web.PublicUrl.DomainId != "domain_1" || web.Http != nil {
 		t.Fatal("declaration lost exact saved URL settings or invented remote HTTP defaults")
+	}
+}
+
+func TestSharedPublicURLHTTPPolicyKeepsCanonicalDeclaration(t *testing.T) {
+	period := config.Duration(time.Second)
+	for _, deployment := range []string{"local", "production"} {
+		legacy := clientproject.Project{Config: config.TNL{Deployment: deployment, Services: config.Services{"web": {
+			Target: &config.ServiceTarget{Type: "address", Address: new(config.Target("http://app.internal:3000"))},
+			Tunnel: &config.Tunnel{Access: &config.Access{Mode: "anonymous", IP: []string{"192.0.2.1"}}, Limits: &config.Limits{
+				HTTP:    &config.WorkLimits{Total: new(100), Concurrency: new(2), Rate: &config.Rate{Count: new(5), Per: &period}},
+				Traffic: &config.TrafficLimits{Connections: new(8)},
+			}},
+		}}}}
+		if deployment == "local" {
+			s := legacy.Config.Services["web"]
+			s.HTTP = &config.HTTPService{Readiness: &config.Readiness{Path: "/health"}, Open: new(false)}
+			legacy.Config.Services["web"] = s
+		}
+		old, err := Declaration(t.Context(), legacy, appliedTestContext(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		modern := legacy
+		s := legacy.Config.Services["web"]
+		modern.Config.Services = config.Services{"web": s}
+		settings := &config.HTTPService{Access: s.Tunnel.Access, Limits: s.Tunnel.Limits.HTTP}
+		if s.HTTP != nil {
+			settings.Readiness, settings.Open = s.HTTP.Readiness, s.HTTP.Open
+		}
+		s.HTTP = settings
+		s.Tunnel = &config.Tunnel{Limits: &config.Limits{Traffic: s.Tunnel.Limits.Traffic}}
+		modern.Config.Services["web"] = s
+		current, err := Declaration(t.Context(), modern, appliedTestContext(), nil)
+		if err != nil || !reflect.DeepEqual(old, current) {
+			t.Fatal("moving request policy changed the normalized declaration", deployment, err)
+		}
+		effective, err := modern.EffectiveService("web")
+		if err != nil || effective.Tunnel.Access.VisitorMode() != "anonymous" || *effective.Tunnel.Limits.HTTP.Total != 100 || *effective.Tunnel.Limits.Traffic.Connections != 8 {
+			t.Fatal("runtime and declaration resolved different HTTP policy", deployment, err)
+		}
 	}
 }

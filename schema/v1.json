@@ -329,6 +329,233 @@
                         "inspection": {
                           "$ref": "#/$defs/Inspection"
                         },
+                        "public_url": false,
+                        "http": {
+                          "properties": {
+                            "access": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
+                                  "enum": ["restricted"]
+                                },
+                                {
+                                  "properties": {
+                                    "mode": {
+                                      "type": "string",
+                                      "enum": ["restricted"]
+                                    },
+                                    "ip": {
+                                      "items": {
+                                        "type": "string"
+                                      },
+                                      "type": "array",
+                                      "maxItems": 256,
+                                      "minItems": 1,
+                                      "uniqueItems": true
+                                    }
+                                  },
+                                  "additionalProperties": false,
+                                  "type": "object"
+                                }
+                              ]
+                            },
+                            "limits": {
+                              "properties": {
+                                "total": {
+                                  "type": "integer",
+                                  "maximum": 9007199254740991,
+                                  "minimum": 1
+                                },
+                                "concurrency": {
+                                  "type": "integer",
+                                  "maximum": 9007199254740991,
+                                  "minimum": 1
+                                },
+                                "rate": {
+                                  "properties": {
+                                    "count": {
+                                      "type": "integer",
+                                      "maximum": 9007199254740991,
+                                      "minimum": 1
+                                    },
+                                    "per": {
+                                      "type": "string",
+                                      "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                                    },
+                                    "burst": {
+                                      "type": "integer",
+                                      "maximum": 9007199254740991,
+                                      "minimum": 1
+                                    }
+                                  },
+                                  "additionalProperties": false,
+                                  "type": "object"
+                                }
+                              },
+                              "additionalProperties": false,
+                              "type": "object"
+                            },
+                            "readiness": {
+                              "properties": {
+                                "path": {
+                                  "type": "string",
+                                  "minLength": 1
+                                }
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["path"],
+                              "description": "Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings."
+                            },
+                            "open": {
+                              "type": "boolean"
+                            },
+                            "paths": {
+                              "additionalProperties": {
+                                "oneOf": [
+                                  {
+                                    "type": "string",
+                                    "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                                  },
+                                  {
+                                    "properties": {
+                                      "service": {
+                                        "type": "string",
+                                        "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                                      },
+                                      "strip_prefix": {
+                                        "type": "boolean"
+                                      }
+                                    },
+                                    "additionalProperties": false,
+                                    "type": "object",
+                                    "required": ["service"]
+                                  }
+                                ]
+                              },
+                              "type": "object",
+                              "maxProperties": 32,
+                              "description": "Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts."
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object"
+                        }
+                      },
+                      "additionalProperties": false,
+                      "type": "object"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "not": {
+                            "properties": {
+                              "public_url": {
+                                "required": ["hostname"]
+                              }
+                            },
+                            "required": ["name", "public_url"]
+                          }
+                        },
+                        {
+                          "not": {
+                            "required": ["public", "public_url"]
+                          }
+                        },
+                        {
+                          "not": {
+                            "properties": {
+                              "public_url": {
+                                "properties": {
+                                  "access": true
+                                },
+                                "required": ["access"]
+                              },
+                              "http": {
+                                "properties": {},
+                                "required": ["access"]
+                              }
+                            },
+                            "required": ["public_url", "http"]
+                          }
+                        },
+                        {
+                          "not": {
+                            "properties": {
+                              "public_url": {
+                                "properties": {
+                                  "limits": {
+                                    "required": ["http"]
+                                  }
+                                },
+                                "required": ["limits"]
+                              },
+                              "http": {
+                                "properties": {},
+                                "required": ["limits"]
+                              }
+                            },
+                            "required": ["public_url", "http"]
+                          }
+                        }
+                      ],
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "app"
+                        },
+                        "tls": {
+                          "properties": {
+                            "hostname": {
+                              "type": "string",
+                              "maxLength": 253,
+                              "minLength": 1,
+                              "description": "Verified target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known."
+                            },
+                            "ca": {
+                              "type": "string",
+                              "maxLength": 1048576,
+                              "minLength": 1,
+                              "description": "system (the default), aws-rds, or CA-only PEM certificates. Never a path or URL. aws-rds selects pinned regional roots offline and verifies the exact database hostname."
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object",
+                          "description": "Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS."
+                        },
+                        "address": false,
+                        "project": false,
+                        "file": false,
+                        "service": false,
+                        "port": false,
+                        "container": false,
+                        "region": false,
+                        "cluster": false,
+                        "instance": false,
+                        "endpoint": false,
+                        "name": {
+                          "type": "string",
+                          "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                        },
+                        "auth": false,
+                        "access": {
+                          "properties": {
+                            "team": {
+                              "type": "boolean",
+                              "const": true
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": ["team"]
+                        },
+                        "public": {
+                          "type": "boolean",
+                          "description": "Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only."
+                        },
+                        "inspection": {
+                          "$ref": "#/$defs/Inspection"
+                        },
                         "public_url": {
                           "properties": {
                             "name": false,
@@ -515,6 +742,210 @@
                               "oneOf": [
                                 {
                                   "type": "string",
+                                  "enum": ["restricted", "anonymous"]
+                                },
+                                {
+                                  "properties": {
+                                    "mode": {
+                                      "type": "string",
+                                      "enum": ["restricted", "anonymous"]
+                                    },
+                                    "ip": {
+                                      "items": {
+                                        "type": "string"
+                                      },
+                                      "type": "array",
+                                      "maxItems": 256,
+                                      "minItems": 1,
+                                      "uniqueItems": true
+                                    }
+                                  },
+                                  "additionalProperties": false,
+                                  "type": "object"
+                                }
+                              ]
+                            },
+                            "limits": {
+                              "properties": {
+                                "total": {
+                                  "type": "integer",
+                                  "maximum": 9007199254740991,
+                                  "minimum": 1
+                                },
+                                "concurrency": {
+                                  "type": "integer",
+                                  "maximum": 9007199254740991,
+                                  "minimum": 1
+                                },
+                                "rate": {
+                                  "properties": {
+                                    "count": {
+                                      "type": "integer",
+                                      "maximum": 9007199254740991,
+                                      "minimum": 1
+                                    },
+                                    "per": {
+                                      "type": "string",
+                                      "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                                    },
+                                    "burst": {
+                                      "type": "integer",
+                                      "maximum": 9007199254740991,
+                                      "minimum": 1
+                                    }
+                                  },
+                                  "additionalProperties": false,
+                                  "type": "object"
+                                }
+                              },
+                              "additionalProperties": false,
+                              "type": "object"
+                            },
+                            "readiness": {
+                              "properties": {
+                                "path": {
+                                  "type": "string",
+                                  "minLength": 1
+                                }
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["path"],
+                              "description": "Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings."
+                            },
+                            "open": {
+                              "type": "boolean"
+                            },
+                            "paths": {
+                              "additionalProperties": {
+                                "oneOf": [
+                                  {
+                                    "type": "string",
+                                    "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                                  },
+                                  {
+                                    "properties": {
+                                      "service": {
+                                        "type": "string",
+                                        "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                                      },
+                                      "strip_prefix": {
+                                        "type": "boolean"
+                                      }
+                                    },
+                                    "additionalProperties": false,
+                                    "type": "object",
+                                    "required": ["service"]
+                                  }
+                                ]
+                              },
+                              "type": "object",
+                              "maxProperties": 32,
+                              "description": "Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts."
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object"
+                        }
+                      },
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": ["public_url"]
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "not": {
+                            "properties": {
+                              "public_url": {
+                                "required": ["hostname"]
+                              }
+                            },
+                            "required": ["name", "public_url"]
+                          }
+                        },
+                        {
+                          "not": {
+                            "required": ["public", "public_url"]
+                          }
+                        }
+                      ],
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "address"
+                        },
+                        "address": {
+                          "oneOf": [
+                            {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            {
+                              "type": "integer",
+                              "maximum": 65535,
+                              "minimum": 1
+                            }
+                          ]
+                        },
+                        "tls": {
+                          "properties": {
+                            "hostname": {
+                              "type": "string",
+                              "maxLength": 253,
+                              "minLength": 1,
+                              "description": "Verified target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known."
+                            },
+                            "ca": {
+                              "type": "string",
+                              "maxLength": 1048576,
+                              "minLength": 1,
+                              "description": "system (the default), aws-rds, or CA-only PEM certificates. Never a path or URL. aws-rds selects pinned regional roots offline and verifies the exact database hostname."
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object",
+                          "description": "Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS."
+                        },
+                        "project": false,
+                        "file": false,
+                        "service": false,
+                        "port": false,
+                        "container": false,
+                        "region": false,
+                        "cluster": false,
+                        "instance": false,
+                        "endpoint": false,
+                        "name": {
+                          "type": "string",
+                          "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                        },
+                        "auth": false,
+                        "access": {
+                          "properties": {
+                            "team": {
+                              "type": "boolean",
+                              "const": true
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": ["team"]
+                        },
+                        "public": {
+                          "type": "boolean",
+                          "description": "Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only."
+                        },
+                        "inspection": {
+                          "$ref": "#/$defs/Inspection"
+                        },
+                        "public_url": false,
+                        "http": {
+                          "properties": {
+                            "access": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
                                   "enum": ["restricted"]
                                 },
                                 {
@@ -622,7 +1053,8 @@
                         }
                       },
                       "additionalProperties": false,
-                      "type": "object"
+                      "type": "object",
+                      "required": ["address"]
                     },
                     {
                       "allOf": [
@@ -639,6 +1071,42 @@
                         {
                           "not": {
                             "required": ["public", "public_url"]
+                          }
+                        },
+                        {
+                          "not": {
+                            "properties": {
+                              "public_url": {
+                                "properties": {
+                                  "access": true
+                                },
+                                "required": ["access"]
+                              },
+                              "http": {
+                                "properties": {},
+                                "required": ["access"]
+                              }
+                            },
+                            "required": ["public_url", "http"]
+                          }
+                        },
+                        {
+                          "not": {
+                            "properties": {
+                              "public_url": {
+                                "properties": {
+                                  "limits": {
+                                    "required": ["http"]
+                                  }
+                                },
+                                "required": ["limits"]
+                              },
+                              "http": {
+                                "properties": {},
+                                "required": ["limits"]
+                              }
+                            },
+                            "required": ["public_url", "http"]
                           }
                         }
                       ],
@@ -897,6 +1365,212 @@
                               "oneOf": [
                                 {
                                   "type": "string",
+                                  "enum": ["restricted", "anonymous"]
+                                },
+                                {
+                                  "properties": {
+                                    "mode": {
+                                      "type": "string",
+                                      "enum": ["restricted", "anonymous"]
+                                    },
+                                    "ip": {
+                                      "items": {
+                                        "type": "string"
+                                      },
+                                      "type": "array",
+                                      "maxItems": 256,
+                                      "minItems": 1,
+                                      "uniqueItems": true
+                                    }
+                                  },
+                                  "additionalProperties": false,
+                                  "type": "object"
+                                }
+                              ]
+                            },
+                            "limits": {
+                              "properties": {
+                                "total": {
+                                  "type": "integer",
+                                  "maximum": 9007199254740991,
+                                  "minimum": 1
+                                },
+                                "concurrency": {
+                                  "type": "integer",
+                                  "maximum": 9007199254740991,
+                                  "minimum": 1
+                                },
+                                "rate": {
+                                  "properties": {
+                                    "count": {
+                                      "type": "integer",
+                                      "maximum": 9007199254740991,
+                                      "minimum": 1
+                                    },
+                                    "per": {
+                                      "type": "string",
+                                      "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                                    },
+                                    "burst": {
+                                      "type": "integer",
+                                      "maximum": 9007199254740991,
+                                      "minimum": 1
+                                    }
+                                  },
+                                  "additionalProperties": false,
+                                  "type": "object"
+                                }
+                              },
+                              "additionalProperties": false,
+                              "type": "object"
+                            },
+                            "readiness": {
+                              "properties": {
+                                "path": {
+                                  "type": "string",
+                                  "minLength": 1
+                                }
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["path"],
+                              "description": "Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings."
+                            },
+                            "open": {
+                              "type": "boolean"
+                            },
+                            "paths": {
+                              "additionalProperties": {
+                                "oneOf": [
+                                  {
+                                    "type": "string",
+                                    "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                                  },
+                                  {
+                                    "properties": {
+                                      "service": {
+                                        "type": "string",
+                                        "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                                      },
+                                      "strip_prefix": {
+                                        "type": "boolean"
+                                      }
+                                    },
+                                    "additionalProperties": false,
+                                    "type": "object",
+                                    "required": ["service"]
+                                  }
+                                ]
+                              },
+                              "type": "object",
+                              "maxProperties": 32,
+                              "description": "Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts."
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object"
+                        }
+                      },
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": ["address", "public_url"]
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "not": {
+                            "properties": {
+                              "public_url": {
+                                "required": ["hostname"]
+                              }
+                            },
+                            "required": ["name", "public_url"]
+                          }
+                        },
+                        {
+                          "not": {
+                            "required": ["public", "public_url"]
+                          }
+                        }
+                      ],
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "compose"
+                        },
+                        "project": {
+                          "type": "string",
+                          "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$"
+                        },
+                        "file": {
+                          "type": "string",
+                          "minLength": 1,
+                          "pattern": "^(?!/)(?!.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$))[^\\\\\\u0000]+$"
+                        },
+                        "service": {
+                          "type": "string",
+                          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$"
+                        },
+                        "port": {
+                          "type": "integer",
+                          "maximum": 65535,
+                          "minimum": 1
+                        },
+                        "tls": {
+                          "properties": {
+                            "hostname": {
+                              "type": "string",
+                              "maxLength": 253,
+                              "minLength": 1,
+                              "description": "Verified target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known."
+                            },
+                            "ca": {
+                              "type": "string",
+                              "maxLength": 1048576,
+                              "minLength": 1,
+                              "description": "system (the default), aws-rds, or CA-only PEM certificates. Never a path or URL. aws-rds selects pinned regional roots offline and verifies the exact database hostname."
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object",
+                          "description": "Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS."
+                        },
+                        "address": false,
+                        "container": false,
+                        "region": false,
+                        "cluster": false,
+                        "instance": false,
+                        "endpoint": false,
+                        "name": {
+                          "type": "string",
+                          "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                        },
+                        "auth": false,
+                        "access": {
+                          "properties": {
+                            "team": {
+                              "type": "boolean",
+                              "const": true
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": ["team"]
+                        },
+                        "public": {
+                          "type": "boolean",
+                          "description": "Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only."
+                        },
+                        "inspection": {
+                          "$ref": "#/$defs/Inspection"
+                        },
+                        "public_url": false,
+                        "http": {
+                          "properties": {
+                            "access": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
                                   "enum": ["restricted"]
                                 },
                                 {
@@ -1005,7 +1679,7 @@
                       },
                       "additionalProperties": false,
                       "type": "object",
-                      "required": ["address"]
+                      "required": ["type", "service", "port"]
                     },
                     {
                       "allOf": [
@@ -1022,6 +1696,42 @@
                         {
                           "not": {
                             "required": ["public", "public_url"]
+                          }
+                        },
+                        {
+                          "not": {
+                            "properties": {
+                              "public_url": {
+                                "properties": {
+                                  "access": true
+                                },
+                                "required": ["access"]
+                              },
+                              "http": {
+                                "properties": {},
+                                "required": ["access"]
+                              }
+                            },
+                            "required": ["public_url", "http"]
+                          }
+                        },
+                        {
+                          "not": {
+                            "properties": {
+                              "public_url": {
+                                "properties": {
+                                  "limits": {
+                                    "required": ["http"]
+                                  }
+                                },
+                                "required": ["limits"]
+                              },
+                              "http": {
+                                "properties": {},
+                                "required": ["limits"]
+                              }
+                            },
+                            "required": ["public_url", "http"]
                           }
                         }
                       ],
@@ -1282,6 +1992,205 @@
                               "oneOf": [
                                 {
                                   "type": "string",
+                                  "enum": ["restricted", "anonymous"]
+                                },
+                                {
+                                  "properties": {
+                                    "mode": {
+                                      "type": "string",
+                                      "enum": ["restricted", "anonymous"]
+                                    },
+                                    "ip": {
+                                      "items": {
+                                        "type": "string"
+                                      },
+                                      "type": "array",
+                                      "maxItems": 256,
+                                      "minItems": 1,
+                                      "uniqueItems": true
+                                    }
+                                  },
+                                  "additionalProperties": false,
+                                  "type": "object"
+                                }
+                              ]
+                            },
+                            "limits": {
+                              "properties": {
+                                "total": {
+                                  "type": "integer",
+                                  "maximum": 9007199254740991,
+                                  "minimum": 1
+                                },
+                                "concurrency": {
+                                  "type": "integer",
+                                  "maximum": 9007199254740991,
+                                  "minimum": 1
+                                },
+                                "rate": {
+                                  "properties": {
+                                    "count": {
+                                      "type": "integer",
+                                      "maximum": 9007199254740991,
+                                      "minimum": 1
+                                    },
+                                    "per": {
+                                      "type": "string",
+                                      "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                                    },
+                                    "burst": {
+                                      "type": "integer",
+                                      "maximum": 9007199254740991,
+                                      "minimum": 1
+                                    }
+                                  },
+                                  "additionalProperties": false,
+                                  "type": "object"
+                                }
+                              },
+                              "additionalProperties": false,
+                              "type": "object"
+                            },
+                            "readiness": {
+                              "properties": {
+                                "path": {
+                                  "type": "string",
+                                  "minLength": 1
+                                }
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["path"],
+                              "description": "Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings."
+                            },
+                            "open": {
+                              "type": "boolean"
+                            },
+                            "paths": {
+                              "additionalProperties": {
+                                "oneOf": [
+                                  {
+                                    "type": "string",
+                                    "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                                  },
+                                  {
+                                    "properties": {
+                                      "service": {
+                                        "type": "string",
+                                        "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                                      },
+                                      "strip_prefix": {
+                                        "type": "boolean"
+                                      }
+                                    },
+                                    "additionalProperties": false,
+                                    "type": "object",
+                                    "required": ["service"]
+                                  }
+                                ]
+                              },
+                              "type": "object",
+                              "maxProperties": 32,
+                              "description": "Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts."
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object"
+                        }
+                      },
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": ["type", "service", "port", "public_url"]
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "not": {
+                            "properties": {
+                              "public_url": {
+                                "required": ["hostname"]
+                              }
+                            },
+                            "required": ["name", "public_url"]
+                          }
+                        },
+                        {
+                          "not": {
+                            "required": ["public", "public_url"]
+                          }
+                        }
+                      ],
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "docker"
+                        },
+                        "container": {
+                          "type": "string",
+                          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$"
+                        },
+                        "port": {
+                          "type": "integer",
+                          "maximum": 65535,
+                          "minimum": 1
+                        },
+                        "tls": {
+                          "properties": {
+                            "hostname": {
+                              "type": "string",
+                              "maxLength": 253,
+                              "minLength": 1,
+                              "description": "Verified target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known."
+                            },
+                            "ca": {
+                              "type": "string",
+                              "maxLength": 1048576,
+                              "minLength": 1,
+                              "description": "system (the default), aws-rds, or CA-only PEM certificates. Never a path or URL. aws-rds selects pinned regional roots offline and verifies the exact database hostname."
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object",
+                          "description": "Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS."
+                        },
+                        "address": false,
+                        "project": false,
+                        "file": false,
+                        "service": false,
+                        "region": false,
+                        "cluster": false,
+                        "instance": false,
+                        "endpoint": false,
+                        "name": {
+                          "type": "string",
+                          "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                        },
+                        "auth": false,
+                        "access": {
+                          "properties": {
+                            "team": {
+                              "type": "boolean",
+                              "const": true
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": ["team"]
+                        },
+                        "public": {
+                          "type": "boolean",
+                          "description": "Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only."
+                        },
+                        "inspection": {
+                          "$ref": "#/$defs/Inspection"
+                        },
+                        "public_url": false,
+                        "http": {
+                          "properties": {
+                            "access": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
                                   "enum": ["restricted"]
                                 },
                                 {
@@ -1390,7 +2299,7 @@
                       },
                       "additionalProperties": false,
                       "type": "object",
-                      "required": ["type", "service", "port"]
+                      "required": ["type", "container", "port"]
                     },
                     {
                       "allOf": [
@@ -1407,6 +2316,42 @@
                         {
                           "not": {
                             "required": ["public", "public_url"]
+                          }
+                        },
+                        {
+                          "not": {
+                            "properties": {
+                              "public_url": {
+                                "properties": {
+                                  "access": true
+                                },
+                                "required": ["access"]
+                              },
+                              "http": {
+                                "properties": {},
+                                "required": ["access"]
+                              }
+                            },
+                            "required": ["public_url", "http"]
+                          }
+                        },
+                        {
+                          "not": {
+                            "properties": {
+                              "public_url": {
+                                "properties": {
+                                  "limits": {
+                                    "required": ["http"]
+                                  }
+                                },
+                                "required": ["limits"]
+                              },
+                              "http": {
+                                "properties": {},
+                                "required": ["limits"]
+                              }
+                            },
+                            "required": ["public_url", "http"]
                           }
                         }
                       ],
@@ -1660,6 +2605,187 @@
                               "oneOf": [
                                 {
                                   "type": "string",
+                                  "enum": ["restricted", "anonymous"]
+                                },
+                                {
+                                  "properties": {
+                                    "mode": {
+                                      "type": "string",
+                                      "enum": ["restricted", "anonymous"]
+                                    },
+                                    "ip": {
+                                      "items": {
+                                        "type": "string"
+                                      },
+                                      "type": "array",
+                                      "maxItems": 256,
+                                      "minItems": 1,
+                                      "uniqueItems": true
+                                    }
+                                  },
+                                  "additionalProperties": false,
+                                  "type": "object"
+                                }
+                              ]
+                            },
+                            "limits": {
+                              "properties": {
+                                "total": {
+                                  "type": "integer",
+                                  "maximum": 9007199254740991,
+                                  "minimum": 1
+                                },
+                                "concurrency": {
+                                  "type": "integer",
+                                  "maximum": 9007199254740991,
+                                  "minimum": 1
+                                },
+                                "rate": {
+                                  "properties": {
+                                    "count": {
+                                      "type": "integer",
+                                      "maximum": 9007199254740991,
+                                      "minimum": 1
+                                    },
+                                    "per": {
+                                      "type": "string",
+                                      "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                                    },
+                                    "burst": {
+                                      "type": "integer",
+                                      "maximum": 9007199254740991,
+                                      "minimum": 1
+                                    }
+                                  },
+                                  "additionalProperties": false,
+                                  "type": "object"
+                                }
+                              },
+                              "additionalProperties": false,
+                              "type": "object"
+                            },
+                            "readiness": {
+                              "properties": {
+                                "path": {
+                                  "type": "string",
+                                  "minLength": 1
+                                }
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["path"],
+                              "description": "Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings."
+                            },
+                            "open": {
+                              "type": "boolean"
+                            },
+                            "paths": {
+                              "additionalProperties": {
+                                "oneOf": [
+                                  {
+                                    "type": "string",
+                                    "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                                  },
+                                  {
+                                    "properties": {
+                                      "service": {
+                                        "type": "string",
+                                        "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                                      },
+                                      "strip_prefix": {
+                                        "type": "boolean"
+                                      }
+                                    },
+                                    "additionalProperties": false,
+                                    "type": "object",
+                                    "required": ["service"]
+                                  }
+                                ]
+                              },
+                              "type": "object",
+                              "maxProperties": 32,
+                              "description": "Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts."
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object"
+                        }
+                      },
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": ["type", "container", "port", "public_url"]
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "not": {
+                            "properties": {
+                              "public_url": {
+                                "required": ["hostname"]
+                              }
+                            },
+                            "required": ["name", "public_url"]
+                          }
+                        },
+                        {
+                          "not": {
+                            "required": ["public", "public_url"]
+                          }
+                        }
+                      ],
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "eks"
+                        },
+                        "region": {
+                          "type": "string",
+                          "maxLength": 32,
+                          "pattern": "^[a-z]{2}(-[a-z]+)+-[0-9]+$"
+                        },
+                        "cluster": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,99}$"
+                        },
+                        "tls": false,
+                        "address": false,
+                        "project": false,
+                        "file": false,
+                        "service": false,
+                        "port": false,
+                        "container": false,
+                        "instance": false,
+                        "endpoint": false,
+                        "name": {
+                          "type": "string",
+                          "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                        },
+                        "auth": false,
+                        "access": {
+                          "properties": {
+                            "team": {
+                              "type": "boolean",
+                              "const": true
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": ["team"]
+                        },
+                        "public": {
+                          "type": "boolean",
+                          "description": "Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only."
+                        },
+                        "inspection": {
+                          "$ref": "#/$defs/Inspection"
+                        },
+                        "public_url": false,
+                        "http": {
+                          "properties": {
+                            "access": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
                                   "enum": ["restricted"]
                                 },
                                 {
@@ -1768,7 +2894,7 @@
                       },
                       "additionalProperties": false,
                       "type": "object",
-                      "required": ["type", "container", "port"]
+                      "required": ["type", "region", "cluster"]
                     },
                     {
                       "allOf": [
@@ -1785,6 +2911,42 @@
                         {
                           "not": {
                             "required": ["public", "public_url"]
+                          }
+                        },
+                        {
+                          "not": {
+                            "properties": {
+                              "public_url": {
+                                "properties": {
+                                  "access": true
+                                },
+                                "required": ["access"]
+                              },
+                              "http": {
+                                "properties": {},
+                                "required": ["access"]
+                              }
+                            },
+                            "required": ["public_url", "http"]
+                          }
+                        },
+                        {
+                          "not": {
+                            "properties": {
+                              "public_url": {
+                                "properties": {
+                                  "limits": {
+                                    "required": ["http"]
+                                  }
+                                },
+                                "required": ["limits"]
+                              },
+                              "http": {
+                                "properties": {},
+                                "required": ["limits"]
+                              }
+                            },
+                            "required": ["public_url", "http"]
                           }
                         }
                       ],
@@ -2020,6 +3182,193 @@
                               "oneOf": [
                                 {
                                   "type": "string",
+                                  "enum": ["restricted", "anonymous"]
+                                },
+                                {
+                                  "properties": {
+                                    "mode": {
+                                      "type": "string",
+                                      "enum": ["restricted", "anonymous"]
+                                    },
+                                    "ip": {
+                                      "items": {
+                                        "type": "string"
+                                      },
+                                      "type": "array",
+                                      "maxItems": 256,
+                                      "minItems": 1,
+                                      "uniqueItems": true
+                                    }
+                                  },
+                                  "additionalProperties": false,
+                                  "type": "object"
+                                }
+                              ]
+                            },
+                            "limits": {
+                              "properties": {
+                                "total": {
+                                  "type": "integer",
+                                  "maximum": 9007199254740991,
+                                  "minimum": 1
+                                },
+                                "concurrency": {
+                                  "type": "integer",
+                                  "maximum": 9007199254740991,
+                                  "minimum": 1
+                                },
+                                "rate": {
+                                  "properties": {
+                                    "count": {
+                                      "type": "integer",
+                                      "maximum": 9007199254740991,
+                                      "minimum": 1
+                                    },
+                                    "per": {
+                                      "type": "string",
+                                      "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                                    },
+                                    "burst": {
+                                      "type": "integer",
+                                      "maximum": 9007199254740991,
+                                      "minimum": 1
+                                    }
+                                  },
+                                  "additionalProperties": false,
+                                  "type": "object"
+                                }
+                              },
+                              "additionalProperties": false,
+                              "type": "object"
+                            },
+                            "readiness": {
+                              "properties": {
+                                "path": {
+                                  "type": "string",
+                                  "minLength": 1
+                                }
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["path"],
+                              "description": "Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings."
+                            },
+                            "open": {
+                              "type": "boolean"
+                            },
+                            "paths": {
+                              "additionalProperties": {
+                                "oneOf": [
+                                  {
+                                    "type": "string",
+                                    "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                                  },
+                                  {
+                                    "properties": {
+                                      "service": {
+                                        "type": "string",
+                                        "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                                      },
+                                      "strip_prefix": {
+                                        "type": "boolean"
+                                      }
+                                    },
+                                    "additionalProperties": false,
+                                    "type": "object",
+                                    "required": ["service"]
+                                  }
+                                ]
+                              },
+                              "type": "object",
+                              "maxProperties": 32,
+                              "description": "Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts."
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object"
+                        }
+                      },
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": ["type", "region", "cluster", "public_url"]
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "not": {
+                            "properties": {
+                              "public_url": {
+                                "required": ["hostname"]
+                              }
+                            },
+                            "required": ["name", "public_url"]
+                          }
+                        },
+                        {
+                          "not": {
+                            "required": ["public", "public_url"]
+                          }
+                        }
+                      ],
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "rds"
+                        },
+                        "region": {
+                          "type": "string",
+                          "maxLength": 32,
+                          "pattern": "^[a-z]{2}(-[a-z]+)+-[0-9]+$"
+                        },
+                        "cluster": false,
+                        "instance": {
+                          "not": {
+                            "pattern": "--|-$"
+                          },
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9-]{0,62}$"
+                        },
+                        "endpoint": {
+                          "type": "string",
+                          "const": "writer"
+                        },
+                        "tls": false,
+                        "address": false,
+                        "project": false,
+                        "file": false,
+                        "service": false,
+                        "port": false,
+                        "container": false,
+                        "name": {
+                          "type": "string",
+                          "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                        },
+                        "auth": false,
+                        "access": {
+                          "properties": {
+                            "team": {
+                              "type": "boolean",
+                              "const": true
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": ["team"]
+                        },
+                        "public": {
+                          "type": "boolean",
+                          "description": "Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only."
+                        },
+                        "inspection": {
+                          "$ref": "#/$defs/Inspection"
+                        },
+                        "public_url": false,
+                        "http": {
+                          "properties": {
+                            "access": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
                                   "enum": ["restricted"]
                                 },
                                 {
@@ -2128,7 +3477,7 @@
                       },
                       "additionalProperties": false,
                       "type": "object",
-                      "required": ["type", "region", "cluster"]
+                      "required": ["type", "region", "instance"]
                     },
                     {
                       "allOf": [
@@ -2145,6 +3494,42 @@
                         {
                           "not": {
                             "required": ["public", "public_url"]
+                          }
+                        },
+                        {
+                          "not": {
+                            "properties": {
+                              "public_url": {
+                                "properties": {
+                                  "access": true
+                                },
+                                "required": ["access"]
+                              },
+                              "http": {
+                                "properties": {},
+                                "required": ["access"]
+                              }
+                            },
+                            "required": ["public_url", "http"]
+                          }
+                        },
+                        {
+                          "not": {
+                            "properties": {
+                              "public_url": {
+                                "properties": {
+                                  "limits": {
+                                    "required": ["http"]
+                                  }
+                                },
+                                "required": ["limits"]
+                              },
+                              "http": {
+                                "properties": {},
+                                "required": ["limits"]
+                              }
+                            },
+                            "required": ["public_url", "http"]
                           }
                         }
                       ],
@@ -2386,6 +3771,194 @@
                               "oneOf": [
                                 {
                                   "type": "string",
+                                  "enum": ["restricted", "anonymous"]
+                                },
+                                {
+                                  "properties": {
+                                    "mode": {
+                                      "type": "string",
+                                      "enum": ["restricted", "anonymous"]
+                                    },
+                                    "ip": {
+                                      "items": {
+                                        "type": "string"
+                                      },
+                                      "type": "array",
+                                      "maxItems": 256,
+                                      "minItems": 1,
+                                      "uniqueItems": true
+                                    }
+                                  },
+                                  "additionalProperties": false,
+                                  "type": "object"
+                                }
+                              ]
+                            },
+                            "limits": {
+                              "properties": {
+                                "total": {
+                                  "type": "integer",
+                                  "maximum": 9007199254740991,
+                                  "minimum": 1
+                                },
+                                "concurrency": {
+                                  "type": "integer",
+                                  "maximum": 9007199254740991,
+                                  "minimum": 1
+                                },
+                                "rate": {
+                                  "properties": {
+                                    "count": {
+                                      "type": "integer",
+                                      "maximum": 9007199254740991,
+                                      "minimum": 1
+                                    },
+                                    "per": {
+                                      "type": "string",
+                                      "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                                    },
+                                    "burst": {
+                                      "type": "integer",
+                                      "maximum": 9007199254740991,
+                                      "minimum": 1
+                                    }
+                                  },
+                                  "additionalProperties": false,
+                                  "type": "object"
+                                }
+                              },
+                              "additionalProperties": false,
+                              "type": "object"
+                            },
+                            "readiness": {
+                              "properties": {
+                                "path": {
+                                  "type": "string",
+                                  "minLength": 1
+                                }
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["path"],
+                              "description": "Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings."
+                            },
+                            "open": {
+                              "type": "boolean"
+                            },
+                            "paths": {
+                              "additionalProperties": {
+                                "oneOf": [
+                                  {
+                                    "type": "string",
+                                    "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                                  },
+                                  {
+                                    "properties": {
+                                      "service": {
+                                        "type": "string",
+                                        "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                                      },
+                                      "strip_prefix": {
+                                        "type": "boolean"
+                                      }
+                                    },
+                                    "additionalProperties": false,
+                                    "type": "object",
+                                    "required": ["service"]
+                                  }
+                                ]
+                              },
+                              "type": "object",
+                              "maxProperties": 32,
+                              "description": "Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts."
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object"
+                        }
+                      },
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": ["type", "region", "instance", "public_url"]
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "not": {
+                            "properties": {
+                              "public_url": {
+                                "required": ["hostname"]
+                              }
+                            },
+                            "required": ["name", "public_url"]
+                          }
+                        },
+                        {
+                          "not": {
+                            "required": ["public", "public_url"]
+                          }
+                        }
+                      ],
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "rds"
+                        },
+                        "region": {
+                          "type": "string",
+                          "maxLength": 32,
+                          "pattern": "^[a-z]{2}(-[a-z]+)+-[0-9]+$"
+                        },
+                        "cluster": {
+                          "not": {
+                            "pattern": "--|-$"
+                          },
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9-]{0,62}$"
+                        },
+                        "instance": false,
+                        "endpoint": {
+                          "type": "string",
+                          "enum": ["writer", "reader"],
+                          "default": "writer"
+                        },
+                        "tls": false,
+                        "address": false,
+                        "project": false,
+                        "file": false,
+                        "service": false,
+                        "port": false,
+                        "container": false,
+                        "name": {
+                          "type": "string",
+                          "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                        },
+                        "auth": false,
+                        "access": {
+                          "properties": {
+                            "team": {
+                              "type": "boolean",
+                              "const": true
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": ["team"]
+                        },
+                        "public": {
+                          "type": "boolean",
+                          "description": "Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only."
+                        },
+                        "inspection": {
+                          "$ref": "#/$defs/Inspection"
+                        },
+                        "public_url": false,
+                        "http": {
+                          "properties": {
+                            "access": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
                                   "enum": ["restricted"]
                                 },
                                 {
@@ -2494,7 +4067,7 @@
                       },
                       "additionalProperties": false,
                       "type": "object",
-                      "required": ["type", "region", "instance"]
+                      "required": ["type", "region", "cluster"]
                     },
                     {
                       "allOf": [
@@ -2511,6 +4084,42 @@
                         {
                           "not": {
                             "required": ["public", "public_url"]
+                          }
+                        },
+                        {
+                          "not": {
+                            "properties": {
+                              "public_url": {
+                                "properties": {
+                                  "access": true
+                                },
+                                "required": ["access"]
+                              },
+                              "http": {
+                                "properties": {},
+                                "required": ["access"]
+                              }
+                            },
+                            "required": ["public_url", "http"]
+                          }
+                        },
+                        {
+                          "not": {
+                            "properties": {
+                              "public_url": {
+                                "properties": {
+                                  "limits": {
+                                    "required": ["http"]
+                                  }
+                                },
+                                "required": ["limits"]
+                              },
+                              "http": {
+                                "properties": {},
+                                "required": ["limits"]
+                              }
+                            },
+                            "required": ["public_url", "http"]
                           }
                         }
                       ],
@@ -2753,13 +4362,13 @@
                               "oneOf": [
                                 {
                                   "type": "string",
-                                  "enum": ["restricted"]
+                                  "enum": ["restricted", "anonymous"]
                                 },
                                 {
                                   "properties": {
                                     "mode": {
                                       "type": "string",
-                                      "enum": ["restricted"]
+                                      "enum": ["restricted", "anonymous"]
                                     },
                                     "ip": {
                                       "items": {
@@ -2861,7 +4470,7 @@
                       },
                       "additionalProperties": false,
                       "type": "object",
-                      "required": ["type", "region", "cluster"]
+                      "required": ["type", "region", "cluster", "public_url"]
                     }
                   ]
                 },

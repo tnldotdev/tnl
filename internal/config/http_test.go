@@ -61,3 +61,64 @@ func TestLocalHTTPBehaviorDoesNotBecomeRemotePublisherWork(t *testing.T) {
 		}
 	}
 }
+
+func TestPublicURLHTTPPolicyUsesSharedSettingsWithoutChangingExposure(t *testing.T) {
+	period := Duration(time.Second)
+	defaults := &Tunnel{Access: &Access{Mode: "anonymous", IP: []string{"192.0.2.1"}}, Limits: &Limits{
+		HTTP:    &WorkLimits{Total: new(100), Rate: &Rate{Count: new(5), Per: &period}},
+		Traffic: &TrafficLimits{Connections: new(8)},
+	}}
+	for _, deployment := range []string{"local", "production"} {
+		value := &HTTPService{Access: &Access{Mode: "restricted"}, Limits: &WorkLimits{Concurrency: new(2), Rate: &Rate{Burst: new(3)}}}
+		binding := &Tunnel{RequirePostQuantum: new(true)}
+		configuration := TNL{Deployment: deployment, Tunnel: defaults, Services: Services{"web": {
+			Tunnel: binding, Target: &ServiceTarget{Type: "address", Address: new(Target("http://app.internal:3000"))}, HTTP: value,
+		}}}
+		if err := ValidateTNL(configuration); err != nil {
+			t.Fatalf("%s rejected shared HTTP policy: %v", deployment, err)
+		}
+		policy, err := ResolvePublicURLHTTP(defaults, binding, value)
+		if err != nil || policy.Access.VisitorMode() != "restricted" || len(policy.Access.IP) != 0 ||
+			*policy.Limits.Total != 100 || *policy.Limits.Concurrency != 2 || *policy.Limits.Rate.Count != 5 || *policy.Limits.Rate.Burst != 3 {
+			t.Fatal("HTTP overrides lost inherited fields or retained the default IP restriction", policy, err)
+		}
+		if value.Limits.Total != nil || value.Limits.Rate.Count != nil || defaults.Limits.HTTP.Concurrency != nil ||
+			binding.Access != nil || binding.Limits != nil || configuration.Services["web"].Public != nil {
+			t.Fatal("HTTP resolution changed its input or selected service exposure")
+		}
+		inherited, err := ResolvePublicURLHTTP(defaults, binding, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inherited.Access.IP[0] = "198.51.100.1"
+		if defaults.Access.IP[0] != "192.0.2.1" {
+			t.Fatal("resolved access policy aliases its defaults")
+		}
+		value.Access = &Access{Mode: "anonymous"}
+		if err := ValidateTNL(configuration); err != nil {
+			t.Fatal("public URL lost its existing anonymous request capability", err)
+		}
+	}
+}
+
+func TestPublicURLHTTPPolicyRejectsDuplicateAndInvalidSettings(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		binding *Tunnel
+		http    *HTTPService
+	}{
+		{"duplicate access", &Tunnel{Access: &Access{Mode: "restricted"}}, &HTTPService{Access: &Access{Mode: "anonymous"}}},
+		{"duplicate limits", &Tunnel{Limits: &Limits{HTTP: &WorkLimits{Total: new(100)}}}, &HTTPService{Limits: &WorkLimits{Concurrency: new(2)}}},
+		{"invalid access", &Tunnel{}, &HTTPService{Access: &Access{Mode: "invalid"}}},
+		{"invalid IP", &Tunnel{}, &HTTPService{Access: &Access{IP: []string{"not-an-address"}}}},
+		{"empty IP", &Tunnel{}, &HTTPService{Access: &Access{IP: []string{}}}},
+		{"invalid limit", &Tunnel{}, &HTTPService{Limits: &WorkLimits{Total: new(0)}}},
+		{"incomplete rate", &Tunnel{}, &HTTPService{Limits: &WorkLimits{Rate: &Rate{Burst: new(2)}}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := ResolvePublicURLHTTP(nil, test.binding, test.http); err == nil {
+				t.Fatal("ambiguous or invalid HTTP policy accepted")
+			}
+		})
+	}
+}

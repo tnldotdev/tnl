@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -100,6 +101,26 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	localApplied, err := owner.ApplyProjectConfiguration(ctx, project, localBody)
 	if err != nil || !localApplied.Configuration.Oauth || len(localApplied.Configuration.Webhooks) != 1 || len(localApplied.Services) != 2 {
 		t.Fatal("local wire configuration lost integration declarations", localApplied, err)
+	}
+	// shared request settings normalize to the same saved URL policy. a
+	// syntax-only replay must not allocate or advance the project revision.
+	shared := localBody
+	shared.Configuration = localApplied.Configuration
+	shared.Configuration.Services = maps.Clone(localApplied.Configuration.Services)
+	url := shared.Configuration.Services["local-app"]
+	url.PublicUrl = &controlv1.ProjectServicePublicURL{}
+	url.Http = &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectPublicAccess{Mode: &mode}}
+	shared.Configuration.Services["local-app"] = url
+	replayed, err := owner.ApplyProjectConfiguration(ctx, project, shared)
+	if err != nil || replayed.Revision != localApplied.Revision || replayed.ConfigurationHash != localApplied.ConfigurationHash ||
+		replayed.Configuration.Services["local-app"].Http != nil || replayed.Configuration.Services["local-app"].PublicUrl.Access == nil {
+		t.Fatal("shared HTTP request policy changed the saved wire definition", err)
+	}
+	url.PublicUrl.Access = &controlv1.ProjectPublicAccess{Mode: &mode}
+	shared.Configuration.Services["local-app"] = url
+	var problem *clientcontrol.ProblemError
+	if _, err := owner.ApplyProjectConfiguration(ctx, project, shared); !errors.As(err, &problem) || problem.Status != http.StatusBadRequest || problem.Problem.Code != controlv1.InvalidRequest {
+		t.Fatal("duplicate HTTP policy owners were accepted", err)
 	}
 	body.ExpectedRevision = localApplied.Revision
 	applied, err := owner.ApplyProjectConfiguration(ctx, project, body)

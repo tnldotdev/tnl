@@ -108,8 +108,8 @@ type TargetTLS struct {
 }
 
 type HTTPService struct {
-	Access    *Access              `json:"access,omitempty" yaml:"access,omitempty" jsonschema_description:"Restricted visitor access for a service. IP rules narrow access independently of public endpoint access."`
-	Limits    *WorkLimits          `json:"limits,omitempty" yaml:"limits,omitempty" jsonschema_description:"HTTP request limits for a local or remote service."`
+	Access    *Access              `json:"access,omitempty" yaml:"access,omitempty" jsonschema_description:"Visitor request policy for a local or remote HTTP binding. Services require restricted access; public URLs also support anonymous access. IP rules narrow access independently of public reachability."`
+	Limits    *WorkLimits          `json:"limits,omitempty" yaml:"limits,omitempty" jsonschema_description:"HTTP request limits for a local or remote binding, including public URLs."`
 	Readiness *Readiness           `json:"readiness,omitempty" yaml:"readiness,omitempty" jsonschema_description:"Readiness probe for a local HTTP service. Remote publisher assignments do not support readiness overrides."`
 	Paths     map[string]PathMount `json:"paths,omitempty" yaml:"paths,omitempty" jsonschema_description:"Path mounts between local HTTP services. Remote publisher assignments do not support path mounts."`
 	Open      *bool                `json:"open,omitempty" yaml:"open,omitempty"`

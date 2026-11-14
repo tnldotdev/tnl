@@ -3334,7 +3334,7 @@ type ProjectServiceAccessTeam bool
 type ProjectServiceConfiguration struct {
 	Access *ProjectServiceAccess `json:"access,omitempty"`
 
-	// Http Restricted HTTP access and request limits for local and remote services, independent of public endpoint access. Only local bindings support readiness, path mounts, and browser opening. Public URL records retain their access and limits in public_url.
+	// Http HTTP request policy for local and remote bindings, independent of public endpoint access. Services require restricted access; public URLs retain their existing anonymous-access capability. Public URL access and request limits normalize to the saved public_url policy; do not also declare the same setting under public_url. Only local bindings support readiness, path mounts, and browser opening.
 	Http     *ProjectServiceHTTP `json:"http,omitempty"`
 	Name     *string             `json:"name,omitempty"`
 	Protocol *ServiceProtocol    `json:"protocol,omitempty"`
@@ -3358,7 +3358,7 @@ type ProjectServiceConfiguration struct {
 // ProjectServiceDeclarations defines model for ProjectServiceDeclarations.
 type ProjectServiceDeclarations map[string]ServiceProtocol
 
-// ProjectServiceHTTP Restricted HTTP access and request limits for local and remote services, independent of public endpoint access. Only local bindings support readiness, path mounts, and browser opening. Public URL records retain their access and limits in public_url.
+// ProjectServiceHTTP HTTP request policy for local and remote bindings, independent of public endpoint access. Services require restricted access; public URLs retain their existing anonymous-access capability. Public URL access and request limits normalize to the saved public_url policy; do not also declare the same setting under public_url. Only local bindings support readiness, path mounts, and browser opening.
 type ProjectServiceHTTP struct {
 	Access *ProjectPublicAccess          `json:"access,omitempty"`
 	Limits *ProjectHTTPApplicationLimits `json:"limits,omitempty"`

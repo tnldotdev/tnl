@@ -153,6 +153,9 @@ func NormalizeProjectConfiguration(input ProjectConfiguration) (ProjectConfigura
 		if s.PublicURL != nil && s.PublicURL.Access != nil && s.PublicURL.Access.IP != nil && len(s.PublicURL.Access.IP) == 0 {
 			return ProjectConfiguration{}, "", ErrProjectConfigurationInvalid
 		}
+		if s.HTTP != nil && s.HTTP.Access != nil && s.HTTP.Access.IP != nil && len(s.HTTP.Access.IP) == 0 {
+			return ProjectConfiguration{}, "", ErrProjectConfigurationInvalid
+		}
 	}
 	data, err := json.Marshal(input)
 	if err != nil || len(data) > 512<<10 {

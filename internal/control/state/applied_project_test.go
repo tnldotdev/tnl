@@ -11,6 +11,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"math/big"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -79,6 +80,63 @@ func TestNormalizeAppliedHTTPSettingsDoNotDisappear(t *testing.T) {
 		_, _, err := NormalizeProjectConfiguration(ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{"web": {Target: "http://app.internal:3000", HTTP: s}}})
 		if !errors.Is(err, ErrProjectConfigurationInvalid) {
 			t.Fatal("unsupported remote HTTP behavior accepted", err)
+		}
+	}
+}
+
+func TestNormalizeSharedPublicURLHTTPPolicyPreservesSavedDefinition(t *testing.T) {
+	period := config.Duration(time.Second)
+	for _, remote := range []bool{false, true} {
+		old := ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"web": {
+			Protocol: "http", Target: "http://app.internal:3000", PublicURL: &ProjectServicePublicURL{
+				Access: &ProjectPublicAccess{Mode: "anonymous", IP: []string{"192.0.2.1"}},
+				Limits: &ProjectPublicLimits{HTTP: &ProjectHTTPApplicationLimits{Total: new(100), Concurrency: new(2), Rate: &ProjectApplicationRate{Count: 5, Per: "1s"}}},
+			},
+		}}}
+		modern := ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"web": {
+			Protocol: "http", Target: "http://app.internal:3000", PublicURL: &ProjectServicePublicURL{},
+			HTTP: &config.HTTPService{Access: &config.Access{Mode: "anonymous", IP: []string{"192.0.2.1"}}, Limits: &config.WorkLimits{
+				Total: new(100), Concurrency: new(2), Rate: &config.Rate{Count: new(5), Per: &period},
+			}},
+		}}}
+		if remote {
+			old.Settings, modern.Settings = &DeploymentSettings{}, &DeploymentSettings{}
+		} else {
+			s := old.Services["web"]
+			s.HTTP = &config.HTTPService{Readiness: &config.Readiness{Path: "/health"}}
+			old.Services["web"] = s
+			modern.Services["web"].HTTP.Readiness = s.HTTP.Readiness
+		}
+		expected, oldHash, err := NormalizeProjectConfiguration(old)
+		if err != nil {
+			t.Fatal(err)
+		}
+		current, hash, err := NormalizeProjectConfiguration(modern)
+		if err != nil || oldHash != hash || !reflect.DeepEqual(current, expected) {
+			t.Fatal("HTTP policy syntax changed saved identity or policy", remote, err)
+		}
+		again, hash2, err := NormalizeProjectConfiguration(current)
+		if err != nil || hash != hash2 || !reflect.DeepEqual(current, again) {
+			t.Fatal("public URL HTTP normal form is not idempotent", remote, err)
+		}
+		if modern.Services["web"].HTTP.Access == nil || modern.Services["web"].PublicURL.Access != nil {
+			t.Fatal("normalization mutated input")
+		}
+	}
+}
+
+func TestNormalizeSharedPublicURLHTTPPolicyDoesNotBroadenAuthority(t *testing.T) {
+	for _, test := range []ProjectServiceConfiguration{
+		{PublicURL: &ProjectServicePublicURL{Access: &ProjectPublicAccess{Mode: "restricted"}}, HTTP: &config.HTTPService{Access: &config.Access{Mode: "anonymous"}}},
+		{PublicURL: &ProjectServicePublicURL{Limits: &ProjectPublicLimits{HTTP: &ProjectHTTPApplicationLimits{Total: new(100)}}}, HTTP: &config.HTTPService{Limits: &config.WorkLimits{Concurrency: new(2)}}},
+		{PublicURL: &ProjectServicePublicURL{}, Public: new(true), HTTP: &config.HTTPService{Access: &config.Access{Mode: "restricted"}}},
+		{HTTP: &config.HTTPService{Access: &config.Access{Mode: "anonymous"}}},
+		{PublicURL: &ProjectServicePublicURL{}, HTTP: &config.HTTPService{Access: &config.Access{IP: []string{}}}},
+		{PublicURL: &ProjectServicePublicURL{}, HTTP: &config.HTTPService{Limits: &config.WorkLimits{Total: new(0)}}},
+	} {
+		test.Target = "http://app.internal:3000"
+		if _, _, err := NormalizeProjectConfiguration(ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"web": test}}); !errors.Is(err, ErrProjectConfigurationInvalid) {
+			t.Fatal("conflicting, unsupported or invalid policy accepted", err)
 		}
 	}
 }

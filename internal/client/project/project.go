@@ -226,6 +226,17 @@ func (p Project) EffectiveService(name string) (ResolvedService, error) {
 		result.Feedback, result.OAuth, result.Webhooks = base.Feedback, base.OAuth, base.Webhooks
 		result.Inspection = config.MergeInspection(base.Inspection, service.Inspection)
 		result.Tunnel = mergeTunnel(base.Tunnel, service.Tunnel)
+		if name != "" {
+			policy, err := config.ResolvePublicURLHTTP(base.Tunnel, service.Tunnel, service.HTTP)
+			if err != nil {
+				return ResolvedService{}, err
+			}
+			if result.Tunnel == nil {
+				result.Tunnel = &config.Tunnel{}
+			}
+			result.Tunnel.Access = policy.Access
+			result.Tunnel.Limits = config.MergeLimits(result.Tunnel.Limits, &config.Limits{HTTP: policy.Limits})
+		}
 		if name == "" {
 			if result.Name != nil {
 				if result.Tunnel == nil {

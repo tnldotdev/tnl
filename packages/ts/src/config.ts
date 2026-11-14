@@ -68,8 +68,11 @@ type BindingReferences<
           readonly http?: { readiness?: never; paths?: never; open?: never };
         }
     : { readonly publicURL?: never; readonly http?: never }) &
-  (Binding extends { readonly publicURL: object }
-    ? { readonly http?: { readonly access?: never; readonly limits?: never } }
+  (Binding extends { readonly publicURL: { readonly access: unknown } }
+    ? { readonly http?: { readonly access?: never } }
+    : unknown) &
+  (Binding extends { readonly publicURL: { readonly limits: { readonly http: unknown } } }
+    ? { readonly http?: { readonly limits?: never } }
     : unknown) &
   (Deployment extends "local"
     ? Binding extends { readonly publicURL: object }

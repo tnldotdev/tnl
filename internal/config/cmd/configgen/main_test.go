@@ -125,8 +125,33 @@ func TestServiceSchemaKeepsServicesSeparateFromPublicURLs(t *testing.T) {
 		if _, found := binding.Properties.Get("protocol"); found {
 			t.Fatal("binding repeats a logical protocol")
 		}
-		if public, found := binding.Properties.Get("public"); !found || public.Type != "boolean" || len(binding.AllOf) != 2 || binding.AllOf[1].Not == nil || !slices.Equal(binding.AllOf[1].Not.Required, []string{"public", "public_url"}) {
+		if public, found := binding.Properties.Get("public"); !found || public.Type != "boolean" || len(binding.AllOf) < 2 || binding.AllOf[1].Not == nil || !slices.Equal(binding.AllOf[1].Not.Required, []string{"public", "public_url"}) {
 			t.Fatal("binding lost explicit exposure or permits two publication lifecycles")
+		}
+	}
+}
+
+func TestSharedHTTPPolicySchemaRetainsAuthorityAndRejectsDuplicateOwners(t *testing.T) {
+	for _, binding := range deploymentBindingSchema().OneOf {
+		http, _ := binding.Properties.Get("http")
+		access, _ := http.Properties.Get("access")
+		url, _ := binding.Properties.Get("public_url")
+		if url == jsonschema.FalseSchema {
+			if len(access.OneOf[0].Enum) != 1 || access.OneOf[0].Enum[0] != "restricted" {
+				t.Fatal("service schema acquired anonymous HTTP authority")
+			}
+			continue
+		}
+		if !slices.Contains(binding.Required, "public_url") || len(access.OneOf[0].Enum) != 2 || access.OneOf[0].Enum[1] != "anonymous" {
+			t.Fatal("shared public URL policy is not bound to its existing resource kind")
+		}
+		if len(binding.AllOf) != 4 {
+			t.Fatal("public URL schema lost duplicate policy guards")
+		}
+		for _, constraint := range binding.AllOf[2:] {
+			if constraint.Not == nil || !slices.Equal(constraint.Not.Required, []string{"public_url", "http"}) {
+				t.Fatal("duplicate policy guard lost its exact owner fields")
+			}
 		}
 	}
 }
@@ -146,8 +171,17 @@ func TestSchemaHasDisjointTargetsAndNoRetiredPublicFields(t *testing.T) {
 		}
 	}
 	target := deploymentBindingSchema()
-	if len(target.OneOf) != 7 {
-		t.Fatal("target variants are not disjoint")
+	if len(target.OneOf) != 14 {
+		t.Fatal("seven discovery variants must each retain two disjoint HTTP policy capabilities")
+	}
+	for i := 0; i < len(target.OneOf); i += 2 {
+		service, public := target.OneOf[i], target.OneOf[i+1]
+		serviceKind, _ := service.Properties.Get("type")
+		publicKind, _ := public.Properties.Get("type")
+		excluded, _ := service.Properties.Get("public_url")
+		if serviceKind.Const != publicKind.Const || excluded != jsonschema.FalseSchema || !slices.Contains(public.Required, "public_url") {
+			t.Fatal("policy capability variants overlap or change target discovery")
+		}
 	}
 	for _, variant := range target.OneOf {
 		kind, _ := variant.Properties.Get("type")

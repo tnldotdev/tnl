@@ -243,11 +243,12 @@ func ValidateTNL(config TNL) error {
 			}
 		}
 		if service.Tunnel != nil {
-			if service.HTTP != nil && (service.HTTP.Access != nil || service.HTTP.Limits != nil) {
-				return fmt.Errorf("services.%s.http: public_url owns this URL's access and limits", name)
+			resolved, err := ResolvePublicURLHTTP(config.Tunnel, service.Tunnel, service.HTTP)
+			if err != nil {
+				return fmt.Errorf("services.%s.http: %w", name, err)
 			}
 			if deployment != "local" {
-				if err := ValidateRemoteHTTP(service.HTTP); err != nil {
+				if err := ValidatePublicURLHTTP(resolved, true); err != nil {
 					return fmt.Errorf("services.%s.http: %w", name, err)
 				}
 			}
@@ -335,29 +336,43 @@ func ValidateTNL(config TNL) error {
 
 // remote HTTP policy cannot add local readiness, path mounts, or browser opening.
 func ValidateRemoteHTTP(value *HTTPService) error {
-	if value == nil {
-		return nil
-	}
-	if value.Readiness != nil || len(value.Paths) != 0 || value.Open != nil {
-		return errors.New("remote deployments do not support readiness, path mounts, or browser opening")
+	if err := ValidatePublicURLHTTP(value, true); err != nil {
+		return err
 	}
 	return ValidateServiceHTTP(value)
 }
 
-// request policy is independent of the publisher's local or remote placement.
-func ValidateServiceHTTP(value *HTTPService) error {
+// public URL request policy retains its existing anonymous-access capability.
+// placement changes only whether the publisher can run local app behavior.
+func ValidatePublicURLHTTP(value *HTTPService, remote bool) error {
 	if value == nil {
 		return nil
+	}
+	if remote && (value.Readiness != nil || len(value.Paths) != 0 || value.Open != nil) {
+		return errors.New("remote deployments do not support readiness, path mounts, or browser opening")
 	}
 	if value.Access != nil {
 		if err := value.Access.Validate(); err != nil {
 			return err
 		}
+	}
+	return validateLimits(&Limits{HTTP: value.Limits}, nil, "http")
+}
+
+// request policy is independent of the publisher's local or remote placement.
+func ValidateServiceHTTP(value *HTTPService) error {
+	if err := ValidatePublicURLHTTP(value, false); err != nil {
+		return err
+	}
+	if value == nil {
+		return nil
+	}
+	if value.Access != nil {
 		if value.Access.VisitorMode() != "restricted" {
 			return errors.New("services require restricted HTTP access")
 		}
 	}
-	return validateLimits(&Limits{HTTP: value.Limits}, nil, "http")
+	return nil
 }
 
 // inherited HTTP defaults never change service reachability.

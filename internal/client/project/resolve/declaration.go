@@ -62,6 +62,16 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 		savedName, protocol := config.ServiceName(name, service), controlv1.ServiceProtocol(config.Protocol(service))
 		entry := controlv1.ProjectServiceConfiguration{Name: &savedName, Protocol: &protocol, Public: service.Public}
 		httpSettings := service.HTTP
+		if service.Tunnel != nil && httpSettings != nil {
+			// the saved public URL shape remains canonical. moving request
+			// settings in a project file must not change its stored definition.
+			behavior := *httpSettings
+			behavior.Access, behavior.Limits = nil, nil
+			httpSettings = &behavior
+			if behavior.Readiness == nil && len(behavior.Paths) == 0 && behavior.Open == nil {
+				httpSettings = nil
+			}
+		}
 		if protocol == controlv1.ServiceProtocolHTTP && service.Tunnel == nil {
 			resolved, err := config.ResolveServiceHTTP(project.Config.Tunnel, service.HTTP)
 			if err != nil {

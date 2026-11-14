@@ -31,10 +31,28 @@ func TestIntegrationLocalPublicURLConfigurationReusesBoundIdentity(t *testing.T)
 	f := newSplitPublishFixture(t, "local-continuity")
 	directory := t.TempDir()
 	path := filepath.Join(directory, "tnl.json")
-	document := fmt.Sprintf(`{"version":1,"tnl":{"server":%q,"feedback":true,"services":{"web":{}},"deployments":{"local":{"targets":{"web":{"public_url":{"hostname":%q}}}}}}}`, f.identity.controlOrigin, f.identity.hostname)
-	if err := os.WriteFile(path, []byte(document), 0600); err != nil {
-		t.Fatal(err)
+	writeConfiguration := func(shared bool) {
+		t.Helper()
+		limits := map[string]any{"total": 100, "concurrency": 3}
+		public := map[string]any{"hostname": f.identity.hostname}
+		binding := map[string]any{"public_url": public}
+		if shared {
+			binding["http"] = map[string]any{"access": "restricted", "limits": limits}
+		} else {
+			public["access"], public["limits"] = "restricted", map[string]any{"http": limits}
+		}
+		document, err := json.Marshal(map[string]any{"version": 1, "tnl": map[string]any{
+			"server": f.identity.controlOrigin, "feedback": true, "services": map[string]any{"web": map[string]any{}},
+			"deployments": map[string]any{"local": map[string]any{"targets": map[string]any{"web": binding}}},
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, document, 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
+	writeConfiguration(false)
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, "source-bound application")
 	}))
@@ -54,6 +72,9 @@ func TestIntegrationLocalPublicURLConfigurationReusesBoundIdentity(t *testing.T)
 	var report controlv1.FeedbackThread
 	for round := range 2 {
 		func() {
+			if round == 1 {
+				writeConfiguration(true)
+			}
 			state, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(f.owner.directory, "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
 			if err != nil {
 				t.Fatal(err)
@@ -78,6 +99,9 @@ func TestIntegrationLocalPublicURLConfigurationReusesBoundIdentity(t *testing.T)
 				t.Fatal("configure source-bound application", err)
 			}
 			cfg := configuration.Publisher
+			if cfg.Limits.Requests != 100 || cfg.Limits.Concurrency != 3 {
+				t.Fatal("moving HTTP settings lost the request budget")
+			}
 			if cfg.AssignedPublicURL == nil || cfg.AssignedPublicURL.Port < 1024 || cfg.PreviewID == "" || cfg.PublisherIdentityID == "" {
 				t.Fatal("configuration omitted saved endpoint or identity facts")
 			}

@@ -276,8 +276,10 @@ test("configuration enforces service ownership and references for literals and f
   defineConfig({
     services: { web: {} },
     deployments: {
-      // @ts-expect-error legacy preview URL policy has one owner, in either placement.
-      local: { targets: { web: { publicURL: {}, http: { access: "restricted" } } } },
+      local: {
+        // @ts-expect-error request access cannot have two owners.
+        targets: { web: { publicURL: { access: "anonymous" }, http: { access: "restricted" } } },
+      },
     },
   });
   defineConfig({
@@ -305,8 +307,12 @@ test("configuration enforces service ownership and references for literals and f
   defineConfig({
     services: { web: {} },
     deployments: {
-      // @ts-expect-error named visitor policy belongs on publicURL, not http.
-      production: { targets: { web: { publicURL: {}, http: { access: "restricted" } } } },
+      production: {
+        targets: {
+          // @ts-expect-error request limits cannot have two owners.
+          web: { publicURL: { limits: { http: { total: 100 } } }, http: { limits: { total: 50 } } },
+        },
+      },
     },
   });
   // @ts-expect-error service-owned target definitions have been replaced.
@@ -749,4 +755,39 @@ test("configuration enforces service ownership and references for literals and f
   defineConfig({ ...config, inspection: { maxBytes: "1GiB" } });
   // @ts-expect-error TLS belongs on a binding, not a declaration.
   ({ services: { db: { protocol: "tcp", tls: { ca: "system" } } } }) satisfies TnlConfig;
+});
+
+test("public URLs use shared HTTP settings in literals and factories", () => {
+  defineConfig({
+    services: { web: {} },
+    deployments: {
+      local: {
+        targets: {
+          web: {
+            publicURL: { limits: { traffic: { connections: 8 } } },
+            http: { access: "anonymous", limits: { total: 100 }, readiness: { path: "/health" } },
+          },
+        },
+      },
+      production: {
+        targets: {
+          web: {
+            publicURL: {},
+            http: {
+              access: { mode: "restricted", ip: ["192.0.2.1"] },
+              limits: { concurrency: 2, rate: { count: 5, per: "1s" } },
+            },
+          },
+        },
+      },
+    },
+  });
+  defineConfig(async () => ({
+    services: { web: {} },
+    deployments: {
+      production: {
+        targets: { web: { publicURL: {}, http: { access: "anonymous", limits: { total: 100 } } } },
+      },
+    },
+  }));
 });

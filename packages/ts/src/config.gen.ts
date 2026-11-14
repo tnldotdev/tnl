@@ -109,10 +109,87 @@ export interface TnlConfig {
                         | undefined;
                     };
                   };
+                  publicURL?: never;
+                }
+              | {
+                  type?: "app";
+                  /**
+                   * Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS.
+                   */
+                  tls?: {
+                    /**
+                     * Verified target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known.
+                     */
+                    hostname?: string;
+                    /**
+                     * system (the default), aws-rds, or CA-only PEM certificates. Never a path or URL. aws-rds selects pinned regional roots offline and verifies the exact database hostname.
+                     */
+                    ca?: string;
+                  };
+                  address?: never;
+                  project?: never;
+                  file?: never;
+                  service?: never;
+                  port?: never;
+                  container?: never;
+                  region?: never;
+                  cluster?: never;
+                  instance?: never;
+                  endpoint?: never;
+                  name?: string;
+                  auth?: never;
+                  access?: {
+                    team: true;
+                  };
+                  /**
+                   * Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only.
+                   */
+                  public?: boolean;
+                  inspection?: Inspection;
+                  http?: {
+                    access?:
+                      | ("restricted" | "anonymous")
+                      | {
+                          mode?: "restricted" | "anonymous";
+                          /**
+                           * @minItems 1
+                           * @maxItems 256
+                           */
+                          ip?: [string, ...string[]];
+                        };
+                    limits?: {
+                      total?: number;
+                      concurrency?: number;
+                      rate?: {
+                        count?: number;
+                        per?: TnlRatePeriod;
+                        burst?: number;
+                      };
+                    };
+                    /**
+                     * Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings.
+                     */
+                    readiness?: {
+                      path: string;
+                    };
+                    open?: boolean;
+                    /**
+                     * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
+                     */
+                    paths?: {
+                      [k: string]:
+                        | string
+                        | {
+                            service: string;
+                            stripPrefix?: boolean;
+                          }
+                        | undefined;
+                    };
+                  };
                   /**
                    * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
                    */
-                  publicURL?: {
+                  publicURL: {
                     name?: never;
                     /**
                      * Ready team domain used for generated public URL hostnames.
@@ -249,10 +326,87 @@ export interface TnlConfig {
                         | undefined;
                     };
                   };
+                  publicURL?: never;
+                }
+              | {
+                  type?: "address";
+                  address: string | number;
+                  /**
+                   * Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS.
+                   */
+                  tls?: {
+                    /**
+                     * Verified target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known.
+                     */
+                    hostname?: string;
+                    /**
+                     * system (the default), aws-rds, or CA-only PEM certificates. Never a path or URL. aws-rds selects pinned regional roots offline and verifies the exact database hostname.
+                     */
+                    ca?: string;
+                  };
+                  project?: never;
+                  file?: never;
+                  service?: never;
+                  port?: never;
+                  container?: never;
+                  region?: never;
+                  cluster?: never;
+                  instance?: never;
+                  endpoint?: never;
+                  name?: string;
+                  auth?: never;
+                  access?: {
+                    team: true;
+                  };
+                  /**
+                   * Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only.
+                   */
+                  public?: boolean;
+                  inspection?: Inspection;
+                  http?: {
+                    access?:
+                      | ("restricted" | "anonymous")
+                      | {
+                          mode?: "restricted" | "anonymous";
+                          /**
+                           * @minItems 1
+                           * @maxItems 256
+                           */
+                          ip?: [string, ...string[]];
+                        };
+                    limits?: {
+                      total?: number;
+                      concurrency?: number;
+                      rate?: {
+                        count?: number;
+                        per?: TnlRatePeriod;
+                        burst?: number;
+                      };
+                    };
+                    /**
+                     * Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings.
+                     */
+                    readiness?: {
+                      path: string;
+                    };
+                    open?: boolean;
+                    /**
+                     * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
+                     */
+                    paths?: {
+                      [k: string]:
+                        | string
+                        | {
+                            service: string;
+                            stripPrefix?: boolean;
+                          }
+                        | undefined;
+                    };
+                  };
                   /**
                    * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
                    */
-                  publicURL?: {
+                  publicURL: {
                     name?: never;
                     /**
                      * Ready team domain used for generated public URL hostnames.
@@ -389,10 +543,87 @@ export interface TnlConfig {
                         | undefined;
                     };
                   };
+                  publicURL?: never;
+                }
+              | {
+                  type: "compose";
+                  project?: string;
+                  file?: string;
+                  service: string;
+                  port: number;
+                  /**
+                   * Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS.
+                   */
+                  tls?: {
+                    /**
+                     * Verified target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known.
+                     */
+                    hostname?: string;
+                    /**
+                     * system (the default), aws-rds, or CA-only PEM certificates. Never a path or URL. aws-rds selects pinned regional roots offline and verifies the exact database hostname.
+                     */
+                    ca?: string;
+                  };
+                  address?: never;
+                  container?: never;
+                  region?: never;
+                  cluster?: never;
+                  instance?: never;
+                  endpoint?: never;
+                  name?: string;
+                  auth?: never;
+                  access?: {
+                    team: true;
+                  };
+                  /**
+                   * Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only.
+                   */
+                  public?: boolean;
+                  inspection?: Inspection;
+                  http?: {
+                    access?:
+                      | ("restricted" | "anonymous")
+                      | {
+                          mode?: "restricted" | "anonymous";
+                          /**
+                           * @minItems 1
+                           * @maxItems 256
+                           */
+                          ip?: [string, ...string[]];
+                        };
+                    limits?: {
+                      total?: number;
+                      concurrency?: number;
+                      rate?: {
+                        count?: number;
+                        per?: TnlRatePeriod;
+                        burst?: number;
+                      };
+                    };
+                    /**
+                     * Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings.
+                     */
+                    readiness?: {
+                      path: string;
+                    };
+                    open?: boolean;
+                    /**
+                     * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
+                     */
+                    paths?: {
+                      [k: string]:
+                        | string
+                        | {
+                            service: string;
+                            stripPrefix?: boolean;
+                          }
+                        | undefined;
+                    };
+                  };
                   /**
                    * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
                    */
-                  publicURL?: {
+                  publicURL: {
                     name?: never;
                     /**
                      * Ready team domain used for generated public URL hostnames.
@@ -529,10 +760,87 @@ export interface TnlConfig {
                         | undefined;
                     };
                   };
+                  publicURL?: never;
+                }
+              | {
+                  type: "docker";
+                  container: string;
+                  port: number;
+                  /**
+                   * Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS.
+                   */
+                  tls?: {
+                    /**
+                     * Verified target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known.
+                     */
+                    hostname?: string;
+                    /**
+                     * system (the default), aws-rds, or CA-only PEM certificates. Never a path or URL. aws-rds selects pinned regional roots offline and verifies the exact database hostname.
+                     */
+                    ca?: string;
+                  };
+                  address?: never;
+                  project?: never;
+                  file?: never;
+                  service?: never;
+                  region?: never;
+                  cluster?: never;
+                  instance?: never;
+                  endpoint?: never;
+                  name?: string;
+                  auth?: never;
+                  access?: {
+                    team: true;
+                  };
+                  /**
+                   * Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only.
+                   */
+                  public?: boolean;
+                  inspection?: Inspection;
+                  http?: {
+                    access?:
+                      | ("restricted" | "anonymous")
+                      | {
+                          mode?: "restricted" | "anonymous";
+                          /**
+                           * @minItems 1
+                           * @maxItems 256
+                           */
+                          ip?: [string, ...string[]];
+                        };
+                    limits?: {
+                      total?: number;
+                      concurrency?: number;
+                      rate?: {
+                        count?: number;
+                        per?: TnlRatePeriod;
+                        burst?: number;
+                      };
+                    };
+                    /**
+                     * Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings.
+                     */
+                    readiness?: {
+                      path: string;
+                    };
+                    open?: boolean;
+                    /**
+                     * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
+                     */
+                    paths?: {
+                      [k: string]:
+                        | string
+                        | {
+                            service: string;
+                            stripPrefix?: boolean;
+                          }
+                        | undefined;
+                    };
+                  };
                   /**
                    * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
                    */
-                  publicURL?: {
+                  publicURL: {
                     name?: never;
                     /**
                      * Ready team domain used for generated public URL hostnames.
@@ -657,10 +965,75 @@ export interface TnlConfig {
                         | undefined;
                     };
                   };
+                  publicURL?: never;
+                }
+              | {
+                  type: "eks";
+                  region: string;
+                  cluster: string;
+                  tls?: never;
+                  address?: never;
+                  project?: never;
+                  file?: never;
+                  service?: never;
+                  port?: never;
+                  container?: never;
+                  instance?: never;
+                  endpoint?: never;
+                  name?: string;
+                  auth?: never;
+                  access?: {
+                    team: true;
+                  };
+                  /**
+                   * Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only.
+                   */
+                  public?: boolean;
+                  inspection?: Inspection;
+                  http?: {
+                    access?:
+                      | ("restricted" | "anonymous")
+                      | {
+                          mode?: "restricted" | "anonymous";
+                          /**
+                           * @minItems 1
+                           * @maxItems 256
+                           */
+                          ip?: [string, ...string[]];
+                        };
+                    limits?: {
+                      total?: number;
+                      concurrency?: number;
+                      rate?: {
+                        count?: number;
+                        per?: TnlRatePeriod;
+                        burst?: number;
+                      };
+                    };
+                    /**
+                     * Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings.
+                     */
+                    readiness?: {
+                      path: string;
+                    };
+                    open?: boolean;
+                    /**
+                     * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
+                     */
+                    paths?: {
+                      [k: string]:
+                        | string
+                        | {
+                            service: string;
+                            stripPrefix?: boolean;
+                          }
+                        | undefined;
+                    };
+                  };
                   /**
                    * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
                    */
-                  publicURL?: {
+                  publicURL: {
                     name?: never;
                     /**
                      * Ready team domain used for generated public URL hostnames.
@@ -785,10 +1158,75 @@ export interface TnlConfig {
                         | undefined;
                     };
                   };
+                  publicURL?: never;
+                }
+              | {
+                  type: "rds";
+                  region: string;
+                  cluster?: never;
+                  instance: string;
+                  endpoint?: "writer";
+                  tls?: never;
+                  address?: never;
+                  project?: never;
+                  file?: never;
+                  service?: never;
+                  port?: never;
+                  container?: never;
+                  name?: string;
+                  auth?: never;
+                  access?: {
+                    team: true;
+                  };
+                  /**
+                   * Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only.
+                   */
+                  public?: boolean;
+                  inspection?: Inspection;
+                  http?: {
+                    access?:
+                      | ("restricted" | "anonymous")
+                      | {
+                          mode?: "restricted" | "anonymous";
+                          /**
+                           * @minItems 1
+                           * @maxItems 256
+                           */
+                          ip?: [string, ...string[]];
+                        };
+                    limits?: {
+                      total?: number;
+                      concurrency?: number;
+                      rate?: {
+                        count?: number;
+                        per?: TnlRatePeriod;
+                        burst?: number;
+                      };
+                    };
+                    /**
+                     * Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings.
+                     */
+                    readiness?: {
+                      path: string;
+                    };
+                    open?: boolean;
+                    /**
+                     * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
+                     */
+                    paths?: {
+                      [k: string]:
+                        | string
+                        | {
+                            service: string;
+                            stripPrefix?: boolean;
+                          }
+                        | undefined;
+                    };
+                  };
                   /**
                    * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
                    */
-                  publicURL?: {
+                  publicURL: {
                     name?: never;
                     /**
                      * Ready team domain used for generated public URL hostnames.
@@ -913,10 +1351,75 @@ export interface TnlConfig {
                         | undefined;
                     };
                   };
+                  publicURL?: never;
+                }
+              | {
+                  type: "rds";
+                  region: string;
+                  cluster: string;
+                  instance?: never;
+                  endpoint?: "writer" | "reader";
+                  tls?: never;
+                  address?: never;
+                  project?: never;
+                  file?: never;
+                  service?: never;
+                  port?: never;
+                  container?: never;
+                  name?: string;
+                  auth?: never;
+                  access?: {
+                    team: true;
+                  };
+                  /**
+                   * Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only.
+                   */
+                  public?: boolean;
+                  inspection?: Inspection;
+                  http?: {
+                    access?:
+                      | ("restricted" | "anonymous")
+                      | {
+                          mode?: "restricted" | "anonymous";
+                          /**
+                           * @minItems 1
+                           * @maxItems 256
+                           */
+                          ip?: [string, ...string[]];
+                        };
+                    limits?: {
+                      total?: number;
+                      concurrency?: number;
+                      rate?: {
+                        count?: number;
+                        per?: TnlRatePeriod;
+                        burst?: number;
+                      };
+                    };
+                    /**
+                     * Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings.
+                     */
+                    readiness?: {
+                      path: string;
+                    };
+                    open?: boolean;
+                    /**
+                     * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
+                     */
+                    paths?: {
+                      [k: string]:
+                        | string
+                        | {
+                            service: string;
+                            stripPrefix?: boolean;
+                          }
+                        | undefined;
+                    };
+                  };
                   /**
                    * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
                    */
-                  publicURL?: {
+                  publicURL: {
                     name?: never;
                     /**
                      * Ready team domain used for generated public URL hostnames.

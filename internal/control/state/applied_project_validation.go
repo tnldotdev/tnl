@@ -57,6 +57,11 @@ func normalizeAppliedProjectService(s *ProjectServiceConfiguration, local bool) 
 	if s.PublicURL != nil && s.Public != nil {
 		return ErrProjectConfigurationInvalid
 	}
+	if s.PublicURL != nil && s.HTTP != nil {
+		if err := normalizePublicURLHTTP(s, local); err != nil {
+			return err
+		}
+	}
 	if s.HTTP != nil {
 		// remote publishers do not run local readiness checks or path mounts.
 		if s.Protocol != "http" {
@@ -171,6 +176,39 @@ func normalizeAppliedProjectService(s *ProjectServiceConfiguration, local bool) 
 		if err = normalizeAppliedLimits(p); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// retain one saved policy representation so a syntax-only edit has the same
+// configuration hash and cannot retire IDs, grants, previews, shares or feedback.
+func normalizePublicURLHTTP(s *ProjectServiceConfiguration, local bool) error {
+	h, p := s.HTTP, s.PublicURL
+	if err := config.ValidatePublicURLHTTP(h, !local); err != nil {
+		return ErrProjectConfigurationInvalid
+	}
+	if h.Access != nil {
+		if p.Access != nil {
+			return ErrProjectConfigurationInvalid
+		}
+		p.Access = &ProjectPublicAccess{Mode: h.Access.VisitorMode(), IP: h.Access.IP}
+		h.Access = nil
+	}
+	if h.Limits != nil {
+		if p.Limits == nil {
+			p.Limits = &ProjectPublicLimits{}
+		}
+		if p.Limits.HTTP != nil {
+			return ErrProjectConfigurationInvalid
+		}
+		p.Limits.HTTP = &ProjectHTTPApplicationLimits{Total: h.Limits.Total, Concurrency: h.Limits.Concurrency}
+		if r := h.Limits.Rate; r != nil {
+			p.Limits.HTTP.Rate = &ProjectApplicationRate{Count: *r.Count, Per: r.Per.Value().String(), Burst: r.Burst}
+		}
+		h.Limits = nil
+	}
+	if h.Readiness == nil && len(h.Paths) == 0 && h.Open == nil {
+		s.HTTP = nil
 	}
 	return nil
 }

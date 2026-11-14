@@ -261,8 +261,10 @@ func deploymentBindingSchema() *jsonschema.Schema {
 		}},
 		Description: "Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.",
 	})
-	properties.Set("http", &jsonschema.Schema{Type: "object", Properties: httpProperties, AdditionalProperties: jsonschema.FalseSchema})
+	serviceHTTP := &jsonschema.Schema{Type: "object", Properties: httpProperties, AdditionalProperties: jsonschema.FalseSchema}
+	properties.Set("http", serviceHTTP)
 	result := targetSchema("*")
+	var bindings []*jsonschema.Schema
 	for _, variant := range result.OneOf {
 		for pair := properties.Oldest(); pair != nil; pair = pair.Next() {
 			variant.Properties.Set(pair.Key, pair.Value)
@@ -277,7 +279,40 @@ func deploymentBindingSchema() *jsonschema.Schema {
 		if kind.Const == "address" || kind.Const == "app" {
 			variant.Required = slices.DeleteFunc(variant.Required, func(name string) bool { return name == "type" })
 		}
+		// separate policy capabilities without changing discovery or exposure.
+		// generated TypeScript must not admit anonymous service policy merely
+		// because public URLs accept it through the same http field.
+		variant.Properties.Set("public_url", jsonschema.FalseSchema)
+		bindings = append(bindings, variant)
+		public := *variant
+		public.Properties = jsonschema.NewProperties()
+		for pair := variant.Properties.Oldest(); pair != nil; pair = pair.Next() {
+			public.Properties.Set(pair.Key, pair.Value)
+		}
+		public.Properties.Set("public_url", tunnel)
+		publicHTTP := *serviceHTTP
+		publicHTTP.Properties = jsonschema.NewProperties()
+		for pair := httpProperties.Oldest(); pair != nil; pair = pair.Next() {
+			publicHTTP.Properties.Set(pair.Key, pair.Value)
+		}
+		publicHTTP.Properties.Set("access", accessSchema("restricted", "anonymous"))
+		public.Properties.Set("http", &publicHTTP)
+		public.Required = append(slices.Clone(variant.Required), "public_url")
+		public.AllOf = slices.Clone(variant.AllOf)
+		for _, setting := range []string{"access", "limits"} {
+			urlFields, httpFields, fields := jsonschema.NewProperties(), jsonschema.NewProperties(), jsonschema.NewProperties()
+			urlSetting := &jsonschema.Schema{}
+			if setting == "limits" {
+				urlSetting.Required = []string{"http"}
+			}
+			urlFields.Set(setting, urlSetting)
+			fields.Set("public_url", &jsonschema.Schema{Properties: urlFields, Required: []string{setting}})
+			fields.Set("http", &jsonschema.Schema{Properties: httpFields, Required: []string{setting}})
+			public.AllOf = append(public.AllOf, &jsonschema.Schema{Not: &jsonschema.Schema{Properties: fields, Required: []string{"public_url", "http"}}})
+		}
+		bindings = append(bindings, &public)
 	}
+	result.OneOf = bindings
 	return result
 }
 
