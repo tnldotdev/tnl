@@ -12,14 +12,6 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-type pendingTLSBackend struct{ connection net.Conn }
-
-func (pendingTLSBackend) ConnectionSlot() uint8 { return 0 }
-
-func (b pendingTLSBackend) Start(ctx context.Context, _ string, _ bool, proxy, initial []byte) (net.Conn, error) {
-	return startTestBackend(ctx, b.connection, proxy, initial)
-}
-
 type relayAttemptMetrics struct {
 	testMetrics
 	mu    sync.Mutex

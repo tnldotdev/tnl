@@ -1,28 +1,72 @@
 package ingress
 
 import (
-	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
+	"net"
+	"net/netip"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
-	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func TestForwarderWarmStalledAssignmentFallsBackBeforeVisitorBytes(t *testing.T) {
 	material := newForwardingTestMaterial(t)
-	warmed := make(chan tunnel.InternalForwardingRequest, 1)
-	stalled := make(chan *tunnel.IncomingPublicForwardingStream, 1)
+	fallback := newServiceTLSRelay(t)
+	fallbackHeaders := make(chan tunnelv1.ServiceForwardingHeader, 2)
+	var forwarder *Forwarder
+	var relay ingressv1.ServiceRelay
+	config := serviceIngressConfig(t, func(ctx context.Context, header tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
+		return forwarder.OpenPrivate(ctx, relay, header)
+	}, func(ctx context.Context, header tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
+		fallbackHeaders <- header
+		return fallback.open(ctx, header)
+	})
+	control := config.PublicServices.config.Control.(*httpsServiceControl)
+	lease := config.PublicServices.config.CurrentLease()
+	expectedRelay := control.relays[0]
+	ref := tunnelv1.ServicePublisherConnectionRef{
+		ServiceID: control.service, ServiceRunID: control.run, RunNumber: 1,
+		PublisherConnectionID: control.relays[0].PublisherConnectionId, ConnectionSlot: 0,
+		ConnectionAssignmentRevision: uint64(control.relays[0].ConnectionAssignmentRevision), RelayServiceID: control.relays[0].RelayServiceId,
+	}
+	warmed := make(chan *tunnel.IncomingServiceForwardingStream, 1)
+	stalled := make(chan *tunnel.IncomingServiceForwardingStream, 1)
 	checkSibling := make(chan struct{})
+	releaseSibling := sync.OnceFunc(func() { close(checkSibling) })
+	t.Cleanup(releaseSibling)
+	noUnacknowledgedBytes := func(request *tunnel.IncomingServiceForwardingStream) error {
+		if request.Header.Validate() != nil || tunnel.ServiceForwardingRef(request.Header) != ref ||
+			request.Header.RelayID != expectedRelay.RelayId || request.Header.RelayRunID != expectedRelay.RelayRunId ||
+			request.Header.RelayLeaseRevision != uint64(expectedRelay.RelayLeaseRevision) ||
+			!request.Header.LeaseExpiresAt.Equal(expectedRelay.LeaseExpiresAt) || !request.Header.ExpiresAt.After(time.Now()) ||
+			request.Header.PublicService == nil || request.Header.PublicService.IngressID != lease.IngressId ||
+			request.Header.PublicService.IngressRunID != lease.IngressRunId ||
+			request.Header.PublicService.IngressLeaseRevision != uint64(lease.IngressLeaseRevision) ||
+			request.Header.PublicService.DestinationPort != 443 || request.Header.SourceIP != "192.0.2.4" {
+			return errors.New("service opening changed its current run, assignment, or ingress lease")
+		}
+		if err := request.Stream().SetReadDeadline(time.Now()); err != nil {
+			return err
+		}
+		var beforeAcceptance [1]byte
+		if n, err := request.Stream().Read(beforeAcceptance[:]); n != 0 || err == nil {
+			return errors.New("service opening sent metadata or visitor bytes before acknowledgment")
+		}
+		return request.Stream().SetReadDeadline(time.Time{})
+	}
 	server := startForwardingTestServer(t, material, func(ctx context.Context, transport muxsession.Session) error {
 		session, _, err := tunnel.Accept(ctx, transport, func(_ context.Context, message tunnelv1.Message) error {
-			if message.Role != tunnelv1.Ingress || message.Credential != forwardingClusterSecret {
+			if message.Role != tunnelv1.Ingress || message.Credential != forwardingClusterSecret || message.PublisherConnection != nil || message.ServiceConnection != nil {
 				return &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 			}
 			return nil
@@ -31,20 +75,36 @@ func TestForwarderWarmStalledAssignmentFallsBackBeforeVisitorBytes(t *testing.T)
 			return err
 		}
 		defer session.Close()
-		first, err := session.AcceptInternalForwardingStream(ctx)
+		firstOpening, err := session.AcceptInternalForwardingStream(ctx)
 		if err != nil {
+			return err
+		}
+		first, ok := firstOpening.(*tunnel.IncomingServiceForwardingStream)
+		if !ok {
+			return errors.New("warm opening did not use a service forwarding stream")
+		}
+		defer first.Stream().Close()
+		if err := noUnacknowledgedBytes(first); err != nil {
 			return err
 		}
 		if err := first.Accept(); err != nil {
 			return err
 		}
 		warmed <- first
-		second, err := session.AcceptInternalForwardingStream(ctx)
+		secondOpening, err := session.AcceptInternalForwardingStream(ctx)
 		if err != nil {
 			return err
 		}
+		second, ok := secondOpening.(*tunnel.IncomingServiceForwardingStream)
+		if !ok {
+			return errors.New("stalled opening did not use a service forwarding stream")
+		}
+		defer second.Stream().Close()
+		if err := noUnacknowledgedBytes(second); err != nil {
+			return err
+		}
 		// withhold acceptance after this exact session/assignment was warmed.
-		stalled <- second.(*tunnel.IncomingPublicForwardingStream)
+		stalled <- second
 		select {
 		case <-checkSibling:
 			if _, err := first.Stream().Write([]byte("ok")); err != nil {
@@ -56,23 +116,46 @@ func TestForwarderWarmStalledAssignmentFallsBackBeforeVisitorBytes(t *testing.T)
 		<-ctx.Done()
 		return nil
 	})
-	forwarder := newTestForwarder(t, material)
-	backend := mustOnlyBackend(t, forwarder, forwardingTestEntry(time.Now(), server.address())).(forwardingBackend)
-	warm, err := backend.Start(ingressContext(t), "visitor_warm", false, nil, nil)
+	relay = control.relays[0]
+	relay.InternalRelayAddress, relay.TlsServerName = server.address(), material.serverName
+	control.relays[0] = relay
+	connector, err := newTLSRelayConnector(&tls.Config{MinVersion: tls.VersionTLS13, RootCAs: material.roots}, forwardingClusterSecret, muxsession.TLSYamuxConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	forwarder = newForwarder(connector)
+	closeForwarder := sync.OnceValue(func() error { return forwarder.Close() })
+	t.Cleanup(func() {
+		if err := closeForwarder(); err != nil {
+			t.Error("close service forwarder", err)
+		}
+	})
+	warmHeader := tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{
+		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream,
+		ServiceID: ref.ServiceID, ServiceRunID: ref.ServiceRunID, RunNumber: ref.RunNumber,
+		PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision,
+		PublicService: &tunnelv1.PublicServiceAdmission{IngressID: lease.IngressId, IngressRunID: lease.IngressRunId,
+			IngressLeaseRevision: uint64(lease.IngressLeaseRevision), DestinationPort: 443},
+		SourceIP: "192.0.2.4", VisitorConnectionID: publicServiceTestID(t, opaqueid.VisitorConnectionPrefix), ExpiresAt: time.Now().Add(time.Minute),
+	}, ConnectionSlot: ref.ConnectionSlot, RelayServiceID: ref.RelayServiceID, RelayID: relay.RelayId, RelayRunID: relay.RelayRunId,
+		RelayLeaseRevision: uint64(relay.RelayLeaseRevision), LeaseExpiresAt: relay.LeaseExpiresAt}
+	warm, err := forwarder.OpenPrivate(ingressContext(t), relay, warmHeader)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ownIngressConn(t, warm)
-	ingressAwait(t, warmed)
-	session, _, err := forwarder.session(ingressContext(t), backend.target)
-	if err != nil {
-		t.Fatal(err)
+	if first := ingressAwait(t, warmed); first.Header.VisitorConnectionID != warmHeader.VisitorConnectionID {
+		t.Fatal("warm opening changed the visitor identity", first.Header)
 	}
-	fallback := newTLSBackend(t)
-	config := publicURLConfig(backend, contextBackend{fallback})
-	config.OpenTimeout = 2 * time.Second
+	target := relayTarget{address: relay.InternalRelayAddress, serverName: relay.TlsServerName, relayServiceID: relay.RelayServiceId,
+		relayID: relay.RelayId, relayRunID: relay.RelayRunId, relayLeaseRevision: uint64(relay.RelayLeaseRevision)}
+	session, reused, err := forwarder.session(ingressContext(t), target)
+	if err != nil || !reused {
+		t.Fatalf("warm service assignment was not pooled: reused=%t error=%v", reused, err)
+	}
+	config.PublicServices.config.PendingTimeout = 2 * time.Second
 	_, address := startIngress(t, config)
-	client := ingressClient(t, address, "route.example", "")
+	client := ingressClient(t, address, "route.example", "192.0.2.4:42000")
 	_ = client.SetDeadline(time.Now().Add(2 * time.Second))
 	if err := client.Handshake(); err != nil {
 		t.Fatal("warm stalled assignment prevented fallback", err)
@@ -83,24 +166,26 @@ func TestForwarderWarmStalledAssignmentFallsBackBeforeVisitorBytes(t *testing.T)
 		t.Fatalf("fallback did not deliver exactly once: %+v opens=%d", result, fallback.opens.Load())
 	}
 	request := ingressAwait(t, stalled)
-	_, remainder, err := proxyproto.Decode(bytes.NewReader(request.TakeInitial()))
-	if err != nil {
-		t.Fatal("stalled relay lost PROXY metadata", err)
+	if request.Header.VisitorConnectionID != result.visitorConnectionID || request.Header.VisitorConnectionID == warmHeader.VisitorConnectionID {
+		t.Fatal("stalled service opening lost the fallback visitor identity", request.Header)
 	}
-	initial, err := io.ReadAll(remainder)
-	if err != nil || !request.Header.ConfirmBeforeBytes || len(initial) != 0 || request.Header.VisitorConnectionID != result.visitorConnectionID {
-		t.Fatal("stalled relay received visitor bytes or lost the connection identity", request.Header)
+	fallbackHeader := ingressAwait(t, fallbackHeaders)
+	if fallbackHeader.ServiceID != ref.ServiceID || fallbackHeader.ServiceRunID != ref.ServiceRunID || fallbackHeader.RunNumber != ref.RunNumber ||
+		fallbackHeader.VisitorConnectionID != request.Header.VisitorConnectionID || fallbackHeader.ConnectionSlot != 1 ||
+		fallbackHeader.PublisherConnectionID != control.relays[1].PublisherConnectionId ||
+		result.header.Source != netip.MustParseAddrPort("192.0.2.4:42000") || result.header.Destination != netip.MustParseAddrPort("203.0.113.10:443") {
+		t.Fatal("fallback changed its service run, assignment, or trusted PROXY metadata", fallbackHeader, result.header)
 	}
 	if err := request.Stream().SetReadDeadline(time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if n, _ := request.Stream().Read(make([]byte, 1)); n != 0 {
-		t.Fatal("stalled relay received a visitor byte after fallback")
+		t.Fatal("unacknowledged relay received metadata or visitor bytes after fallback")
 	}
-	if session.Err() != nil || !forwarder.currentSession(backend.target.key(), session) {
+	if session.Err() != nil || !forwarder.currentSession(target.key(), session) {
 		t.Fatal("stalled opening discarded a pooled session and its sibling")
 	}
-	close(checkSibling)
+	releaseSibling()
 	_ = warm.SetReadDeadline(time.Now().Add(fixtureTimeout))
 	response := make([]byte, 2)
 	if _, err := io.ReadFull(warm, response); err != nil || string(response) != "ok" {
@@ -109,6 +194,15 @@ func TestForwarderWarmStalledAssignmentFallsBackBeforeVisitorBytes(t *testing.T)
 	if got := server.accepted.Load(); got != 1 {
 		t.Fatalf("pooled relay sessions=%d, want 1", got)
 	}
+	if err := warm.Close(); err != nil {
+		t.Fatal("close warm sibling", err)
+	}
+	if err := closeForwarder(); err != nil {
+		t.Fatal("service forwarder did not join", err)
+	}
+	server.cancel()
+	_ = server.listener.Close()
+	server.active.Wait()
 }
 
 type failingForwardingConnector struct {

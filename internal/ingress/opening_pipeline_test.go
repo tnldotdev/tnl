@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -43,44 +44,65 @@ func maximumOpeningClientHello() []byte {
 }
 
 func TestPublicOpeningMaximumClientHelloAndForwardedBytes(t *testing.T) {
-	f := newAdmissionTransportFixture(t)
-	backends, err := f.forwarder.Backends(f.entry)
-	if err != nil {
-		t.Fatal(err)
+	var f *serviceTransportFixture
+	config := serviceIngressConfig(t, func(ctx context.Context, header tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
+		return f.open(ctx, header)
+	})
+	p := config.PublicServices
+	control := p.config.Control.(*httpsServiceControl)
+	relay := control.relays[0]
+	ref := tunnelv1.ServicePublisherConnectionRef{
+		ServiceID: control.service, ServiceRunID: control.run, RunNumber: 1,
+		PublisherConnectionID: relay.PublisherConnectionId, ConnectionSlot: uint8(relay.ConnectionSlot),
+		ConnectionAssignmentRevision: uint64(relay.ConnectionAssignmentRevision), RelayServiceID: relay.RelayServiceId,
 	}
+	f = newServiceTransportFixture(t, ref, relay)
+	control.relays[0] = f.relay
 	metrics := &testMetrics{visitorOutcomes: make(chan string, 2)}
-	config := publicURLConfig(backends...)
-	lookup := config.Lookup
-	config.Lookup = func(host string) ([]PublicURL, LookupReason) {
-		candidates, reason := lookup(host)
-		for index := range candidates {
-			candidates[index].AccessMode = "anonymous"
-		}
-		return candidates, reason
-	}
-	config.Metrics = metrics
-	_, address := startIngress(t, config)
+	config.Metrics, p.config.Metrics = metrics, metrics
+	server, address := startIngress(t, config)
 	hello := maximumOpeningClientHello()
 	if len(hello) != clienthello.MaxClientHelloBytes {
 		t.Fatal("fixture did not reach ClientHello limit", len(hello))
 	}
 	worker := ingressWorker(t, func() { _ = f.publisher.Close() }, func() error {
+		visitors := make(map[string]bool)
 		for range 2 {
-			incoming, err := f.publisher.AcceptVisitorStream(ingressContext(t))
+			incoming, err := f.publisher.AcceptServiceForwardingStream(ingressContext(t))
 			if err != nil {
 				return err
 			}
-			if !incoming.Header.ConfirmBeforeBytes {
-				return errors.New("wrong assignment confirmation phase")
+			if incoming.Header.Validate() != nil || tunnel.ServiceForwardingRef(incoming.Header) != ref ||
+				incoming.Header.PublicService == nil || incoming.Header.PublicService.DestinationPort != 443 ||
+				incoming.Header.SourceIP != "192.0.2.4" || visitors[incoming.Header.VisitorConnectionID] {
+				return errors.New("maximum ClientHello changed the service run or visitor identity")
+			}
+			visitors[incoming.Header.VisitorConnectionID] = true
+			stream := incoming.Stream()
+			// no metadata or visitor bytes may arrive before publisher acceptance.
+			if err := stream.SetReadDeadline(time.Now()); err != nil {
+				return err
+			}
+			var beforeAcceptance [1]byte
+			n, err := stream.Read(beforeAcceptance[:])
+			var timeout net.Error
+			if n != 0 || !errors.As(err, &timeout) || !timeout.Timeout() {
+				return fmt.Errorf("service stream received bytes before acknowledgment: n=%d error=%v", n, err)
+			}
+			if err := stream.SetReadDeadline(time.Time{}); err != nil {
+				return err
 			}
 			if err := incoming.Accept(); err != nil {
 				return err
 			}
-			header, reader, err := proxyproto.Decode(incoming.Stream)
+			if err := stream.SetDeadline(time.Now().Add(fixtureTimeout)); err != nil {
+				return err
+			}
+			header, reader, err := proxyproto.Decode(stream)
 			if err != nil {
 				return err
 			}
-			if !header.Source.Addr().IsLoopback() || !header.Destination.Addr().IsLoopback() {
+			if header.Source != netip.MustParseAddrPort("192.0.2.4:42000") || header.Destination != netip.MustParseAddrPort("203.0.113.10:443") {
 				return errors.New("PROXY addresses changed")
 			}
 			got, err := io.ReadAll(reader)
@@ -90,13 +112,13 @@ func TestPublicOpeningMaximumClientHelloAndForwardedBytes(t *testing.T) {
 			if !bytes.Equal(got, hello) {
 				return fmt.Errorf("maximum ClientHello lost bytes: %d", len(got))
 			}
-			if _, err := incoming.Stream.Write([]byte("ok")); err != nil {
+			if _, err := stream.Write([]byte("ok")); err != nil {
 				return err
 			}
-			if err := incoming.Stream.CloseWrite(); err != nil {
+			if err := stream.CloseWrite(); err != nil {
 				return err
 			}
-			_ = incoming.Stream.Close()
+			_ = stream.Close()
 		}
 		return nil
 	})
@@ -107,6 +129,15 @@ func TestPublicOpeningMaximumClientHelloAndForwardedBytes(t *testing.T) {
 		}
 		ownIngressConn(t, connection)
 		_ = connection.SetDeadline(time.Now().Add(fixtureTimeout))
+		metadata, err := proxyproto.Encode(proxyproto.Header{
+			Source: netip.MustParseAddrPort("192.0.2.4:42000"), Destination: netip.MustParseAddrPort("203.0.113.10:443"),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := writeAll(connection, metadata); err != nil {
+			t.Fatal(err)
+		}
 		if _, err := connection.Write(hello); err != nil {
 			t.Fatal(err)
 		}
@@ -129,6 +160,15 @@ func TestPublicOpeningMaximumClientHelloAndForwardedBytes(t *testing.T) {
 	}
 	if err := ingressAwait(t, worker); err != nil {
 		t.Fatal(err)
+	}
+	if f.relayServer.accepted.Load() != 1 || f.publisherServer.accepted.Load() != 1 {
+		t.Fatalf("sequential visitors did not reuse both service sessions: ingress=%d publisher=%d", f.relayServer.accepted.Load(), f.publisherServer.accepted.Load())
+	}
+	if err := server.Drain(ingressContext(t)); err != nil {
+		t.Fatal("maximum ClientHello server did not join", err)
+	}
+	if err := f.close(); err != nil {
+		t.Fatal("maximum ClientHello transport did not join", err)
 	}
 }
 

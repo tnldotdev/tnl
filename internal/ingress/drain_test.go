@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 type singleBackend struct{ connection net.Conn }
@@ -42,8 +43,11 @@ func TestDrainDeadlineForcesBackendClosed(t *testing.T) {
 		_, err = io.Copy(io.Discard, replay)
 		return err
 	})
-	server, address := startIngress(t, publicURLConfig(singleBackend{&drainReadConn{Conn: a, reading: sync.OnceFunc(func() { close(opened) })}}))
-	client := ingressClient(t, address, "route.example", "")
+	config := serviceIngressConfig(t, func(context.Context, tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
+		return &drainReadConn{Conn: a, reading: sync.OnceFunc(func() { close(opened) })}, nil
+	})
+	server, address := startIngress(t, config)
+	client := ingressClient(t, address, "route.example", "192.0.2.4:42000")
 	handshake := ingressWorker(t, func() { _ = client.Close() }, client.Handshake)
 	ingressAwait(t, opened)
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
@@ -56,6 +60,16 @@ func TestDrainDeadlineForcesBackendClosed(t *testing.T) {
 	}
 	if err := ingressAwait(t, handshake); err == nil {
 		t.Fatal("holding backend completed TLS")
+	}
+	joined := ingressWorker(t, server.closeConnections, func() error { server.active.Wait(); return nil })
+	if err := ingressAwait(t, joined); err != nil {
+		t.Fatal(err)
+	}
+	p := config.PublicServices
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.sessions != 0 || p.pending != 0 || p.active != 0 || p.streams != 0 || len(p.connections) != 0 {
+		t.Fatal("forced drain retained service forwarding ownership")
 	}
 }
 
