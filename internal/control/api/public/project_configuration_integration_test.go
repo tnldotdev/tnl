@@ -18,7 +18,6 @@ import (
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 	"github.com/tnldotdev/tnl/internal/testutil"
@@ -40,7 +39,7 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(d.Close)
-	if err := d.ConfigureIngressServicePorts(ctx, controlstate.PrimaryIngressPoolID, []tcpport.Range{{First: 25443, Last: 25443}}); err != nil {
+	if err := d.ConfigureIngressServicePorts(ctx, controlstate.PrimaryIngressPoolID, nil); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
@@ -115,8 +114,8 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	for _, service := range applied.Services {
 		wantPublic := service.Service == "public"
 		public := service.Public != nil && *service.Public
-		if public != wantPublic || wantPublic && (service.Port == nil || *service.Port != 25443) || !wantPublic && service.Port != nil && *service.Port != 0 {
-			t.Fatal("wire per-service exposure allocated or exposed another binding", service)
+		if public != wantPublic || service.Port == nil || *service.Port != 443 {
+			t.Fatal("wire HTTP identity or exposure depended on an allocated port", service)
 		}
 	}
 	// another session can discover and read the project without any local state.
@@ -313,7 +312,7 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 		t.Fatal("public metadata omitted the public binding or leaked private bindings", projection, err)
 	}
 	projected := projection.Services[0]
-	if projected.Service != "public" || projected.ServiceId == nil || *projected.ServiceId != pub.ServiceId || projected.PublicUrlId != nil || projected.Port != 25443 {
+	if projected.Service != "public" || projected.ServiceId == nil || *projected.ServiceId != pub.ServiceId || projected.PublicUrlId != nil || projected.Port != 443 {
 		t.Fatal("public service projection changed resource identity or port", projected)
 	}
 	local, err := owner.RealizeLocalProjectService(ctx, project, "local-app", controlv1.RealizeLocalProjectServiceRequest{TeamId: team, SourceFingerprint: applied.SourceFingerprint, WorktreeKey: "checkout-a", Configuration: localBody.Configuration.Services["local-app"]})
