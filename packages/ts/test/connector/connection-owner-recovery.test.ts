@@ -62,9 +62,27 @@ async function holdCredential(file: string): Promise<() => Promise<void>> {
     })
     .toBe(before + 1);
   return async () => {
-    await (await control(file, "/fixture/release")).arrayBuffer();
-    await pending;
+    const results = await Promise.allSettled([
+      control(file, "/fixture/release").then((response) => response.arrayBuffer()),
+      pending,
+    ]);
+    const failures = results.flatMap((result) =>
+      result.status === "rejected" ? [result.reason as unknown] : [],
+    );
+    if (failures.length) throw new AggregateError(failures, "fixture credential release failed");
   };
+}
+
+function observeResult<T>(operation: Promise<T>): Promise<PromiseSettledResult<T>> {
+  return operation.then(
+    (value) => ({ status: "fulfilled", value }),
+    (reason: unknown) => ({ status: "rejected", reason }),
+  );
+}
+
+function resultValue<T>(result: PromiseSettledResult<T>): T {
+  if (result.status === "rejected") throw result.reason;
+  return result.value;
 }
 
 async function waitForDeadline(file: string): Promise<void> {
@@ -111,6 +129,7 @@ beforeEach(async () => {
       if (event.event !== "ready" || event.file === undefined) continue;
       try {
         for (const operation of [
+          "/fixture/release-read-event",
           "/fixture/release",
           "/fixture/release-stop",
           "/fixture/release-cleanup",
@@ -162,7 +181,7 @@ test("a timed-out prepared read retains the live owner and its fixed-port listen
   expect(await owner()).toEqual(original);
 }, 20_000);
 
-test("canceling HTTP preparation leaves the shared owner and other awaiters intact", async () => {
+async function assertHTTPPreparationCancellation(controlledReadEvent: boolean): Promise<void> {
   await configure({ protocol: "http" });
   const { createClient } = await import("../../src/index.js");
   const deployment = createClient({
@@ -175,24 +194,95 @@ test("canceling HTTP preparation leaves the shared owner and other awaiters inta
   const original = await owner();
   const release = await holdCredential(original.file);
   const abort = new AbortController();
-  const canceled = settings.fetch("/", { signal: abort.signal });
   const reason = new DOMException("the caller stopped waiting", "AbortError");
-  const rejected = expect(canceled).rejects.toBe(reason);
-  const waiting = deployment.connect("database");
-  await expect
-    .poll(async () => (await events()).filter((event) => event.event === "read").length, {
-      timeout: 10_000,
-    })
-    .toBe(2);
-  abort.abort(reason);
-  await rejected;
-  expect((await events()).filter((event) => event.event === "read-canceled")).toHaveLength(0);
-  await release();
-  expect(await waiting).toMatchObject({ url: settings.url });
-  expect(await deployment.connect("database")).toMatchObject({ url: settings.url });
-  expect((await events()).filter((event) => event.event === "start")).toHaveLength(1);
-  expect((await events()).filter((event) => event.event === "stop")).toHaveLength(0);
-  expect(await owner()).toEqual(original);
+  let rejected: Promise<PromiseSettledResult<void>> | undefined;
+  let waiting: Promise<PromiseSettledResult<unknown>> | undefined;
+  let waitingSettled = false;
+  const failures = new Set<unknown>();
+  try {
+    if (controlledReadEvent)
+      await (await control(original.file, "/fixture/hold-read-event")).arrayBuffer();
+    const canceled = settings.fetch("/", { signal: abort.signal });
+    rejected = observeResult(expect(canceled).rejects.toBe(reason));
+    if (controlledReadEvent)
+      await expect
+        .poll(
+          async () =>
+            (await events()).filter((event) => event.event === "read-event-blocked").length,
+          { timeout: 10_000 },
+        )
+        .toBe(1);
+    waiting = observeResult(deployment.connect("database")).then((result) => {
+      waitingSettled = true;
+      return result;
+    });
+    if (controlledReadEvent) {
+      await expect
+        .poll(
+          async () => (await events()).filter((event) => event.event === "read-request").length,
+          { timeout: 10_000 },
+        )
+        .toBe(2);
+      await (await control(original.file, "/fixture/release-read-event")).arrayBuffer();
+      await expect
+        .poll(
+          async () => (await events()).filter((event) => event.event === "read-waiting").length,
+          { timeout: 10_000 },
+        )
+        .toBe(2);
+      expect((await events()).filter((event) => event.event === "read")).toHaveLength(2);
+      expect((await events()).filter((event) => event.event === "read-event-blocked")).toHaveLength(
+        1,
+      );
+    }
+    await expect
+      .poll(async () => (await events()).filter((event) => event.event === "read").length, {
+        timeout: 10_000,
+      })
+      .toBe(2);
+    abort.abort(reason);
+    resultValue(await rejected);
+    expect(waitingSettled).toBe(false);
+    expect((await events()).filter((event) => event.event === "read-canceled")).toHaveLength(0);
+    await release();
+    expect(resultValue(await waiting)).toMatchObject({ url: settings.url });
+    expect((await events()).filter((event) => event.event === "read-canceled")).toHaveLength(0);
+    expect(await deployment.connect("database")).toMatchObject({ url: settings.url });
+    expect((await events()).filter((event) => event.event === "start")).toHaveLength(1);
+    expect((await events()).filter((event) => event.event === "stop")).toHaveLength(0);
+    expect(await owner()).toEqual(original);
+  } catch (error) {
+    failures.add(error);
+  } finally {
+    abort.abort(reason);
+    const cleanup = await Promise.allSettled([
+      control(original.file, "/fixture/release-read-event").then((response) =>
+        response.arrayBuffer(),
+      ),
+      release(),
+    ]);
+    const operations = await Promise.all([
+      ...(rejected === undefined ? [] : [rejected]),
+      ...(waiting === undefined ? [] : [waiting]),
+    ]);
+    for (const result of [...cleanup, ...operations])
+      if (result.status === "rejected") failures.add(result.reason);
+    try {
+      await deployment.close();
+    } catch (error) {
+      failures.add(error);
+    }
+  }
+  if (failures.size === 1) throw [...failures][0];
+  if (failures.size) throw new AggregateError(failures, "HTTP cancellation test cleanup failed");
+}
+
+test("canceling HTTP preparation leaves the shared owner and other awaiters intact", async () => {
+  await assertHTTPPreparationCancellation(false);
+}, 20_000);
+
+test("overlapping prepared handlers record one held read and preserve independent waiters", async () => {
+  await assertHTTPPreparationCancellation(true);
 }, 20_000);
 
 test("failed initial validation joins cleanup before any same-port replacement", async () => {
