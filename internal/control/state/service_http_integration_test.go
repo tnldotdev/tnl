@@ -6,8 +6,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/netip"
-	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,6 +24,9 @@ import (
 
 func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 	d, now, _, leases := newPublishRunPrerequisites(t)
+	if err := d.ConfigureIngressServicePorts(t.Context(), PrimaryIngressPoolID, nil); err != nil {
+		t.Fatal(err)
+	}
 	if err := d.PrepareVisitorSigningKeys(t.Context(), testVisitorIssuer, now); err != nil {
 		t.Fatal(err)
 	}
@@ -72,33 +73,44 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 		return ServiceHTTPRun{Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: run.ServiceID}, RunID: run.RunID, Number: run.RunNumber, Token: credentials.ServiceRunToken(run.Token)}
 	}
 	a, b := start(0, "a"), start(1, "b")
+	var claims int
+	if err := d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.service_port_claims WHERE service_id=ANY($1)`, []string{a.Subject.ID, b.Subject.ID}).Scan(&claims); err != nil || claims != 0 {
+		t.Fatal("HTTP services consumed exclusive ingress port reservations", claims, err)
+	}
+	for _, service := range applied.Services {
+		if service.Port != 443 {
+			t.Fatal("HTTP service did not use shared HTTPS", service.Port)
+		}
+	}
 	if err := d.PrepareVisitorSigningKeys(t.Context(), testVisitorIssuer, now); err != nil {
 		t.Fatal(err)
 	}
-	ports := make([]int32, 0, len(applied.Services))
-	for _, service := range applied.Services {
-		ports = append(ports, int32(service.Port))
-	}
-	slices.Sort(ports)
-	lease, err := d.RegisterIngress(t.Context(), IngressRegistration{IngressID: "service-http", IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix), IngressPoolID: PrimaryIngressPoolID, ServicePorts: ports, ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 64}, now, time.Minute)
+	lease, err := d.RegisterIngress(t.Context(), IngressRegistration{IngressID: "service-http", IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix), IngressPoolID: PrimaryIngressPoolID, HTTPS: true, ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 64}, now, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
 	admit := func(auth ServiceHTTPRun) (string, int) {
 		t.Helper()
 		port := 0
+		hostname := ""
 		for _, s := range applied.Services {
 			if s.ServiceID == auth.Subject.ID {
 				port = s.Port
+				hostname = s.Hostname
 			}
 		}
 		visitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
-		if _, err := d.AdmitPublicServiceVisitor(t.Context(), lease.IngressLeaseIdentity, PrimaryIngressPoolID, visitor, port, netip.MustParseAddr("192.0.2.10"), now); err != nil {
+		if _, err := d.AdmitPublicServiceVisitor(t.Context(), lease.IngressLeaseIdentity, PrimaryIngressPoolID, visitor, hostname, port, netip.MustParseAddr("192.0.2.10"), now); err != nil {
 			t.Fatal(err)
 		}
 		return visitor, port
 	}
 	visitor, port := admit(a)
+	for _, hostname := range []string{"", "unknown.example.test", "UPPER.example.test"} {
+		if _, err := d.AdmitPublicServiceVisitor(t.Context(), lease.IngressLeaseIdentity, PrimaryIngressPoolID, mustOpaqueID(t, opaqueid.VisitorConnectionPrefix), hostname, 443, netip.MustParseAddr("192.0.2.10"), now); !errors.Is(err, ErrServiceAccess) {
+			t.Fatal("shared HTTPS selected a missing or invalid hostname", err)
+		}
+	}
 	grant, err := d.CreateServiceHTTPGrant(t.Context(), a.Subject.ID, r.ActorID, controlv1.CreateVisitorCredentialRequest{Kind: "token", ExpiresAt: now.Add(time.Hour)}, now)
 	if err != nil {
 		t.Fatal(err)
@@ -181,8 +193,8 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(handoff.Origin, ":"+strconv.Itoa(port)) {
-		t.Fatal("handoff dropped allocated port", handoff.Origin)
+	if port != 443 || !strings.HasPrefix(handoff.Origin, "https://") || strings.HasSuffix(handoff.Origin, ":443") {
+		t.Fatal("handoff lost the canonical HTTPS origin", handoff.Origin)
 	}
 	if _, err = d.RedeemServiceBrowserHandoff(t.Context(), b, handoff.Token, now); err == nil {
 		t.Fatal("other service redeemed handoff")

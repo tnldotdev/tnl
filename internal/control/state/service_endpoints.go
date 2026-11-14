@@ -56,6 +56,15 @@ func bindServicePort(ctx context.Context, tx pgx.Tx, service string, port int, p
 }
 
 func allocateServicePort(ctx context.Context, tx pgx.Tx, service, pool string, public bool, now time.Time) (int, error) {
+	var protocol string
+	if err := tx.QueryRow(ctx, `SELECT protocol FROM control.services WHERE id=$1`, service).Scan(&protocol); err != nil {
+		return 0, err
+	}
+	if protocol == "http" {
+		// HTTP shares the ingress listener by exact hostname. this logical port
+		// stays fixed for connector identity and never creates a port claim.
+		return 443, nil
+	}
 	var port int
 	err := tx.QueryRow(ctx, `SELECT port FROM control.service_port_claims WHERE service_id=$1 AND state='held'`, service).Scan(&port)
 	if errors.Is(err, pgx.ErrNoRows) {

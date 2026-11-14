@@ -10,6 +10,7 @@ schemas:
         protocol_version,
         connection_capacity,
         ingress_pool_id,
+        https,
         service_ports,
       ]
     properties:
@@ -17,11 +18,14 @@ schemas:
         $ref: "../../../../public/v1/schemas/common.yaml#/schemas/RegionID"
       ingress_pool_id:
         $ref: "../openapi.yaml#/components/schemas/Identifier"
+      https:
+        type: boolean
+        description: This process serves the shared HTTPS listener on public port 443, independently of allocated non-HTTP service ports.
       service_ports:
         type: array
         maxItems: 256
         uniqueItems: true
-        description: Sorted managed ports bound before registration or exposed by the trusted destination-metadata proxy.
+        description: Sorted allocated non-HTTP ports bound before registration or exposed by the trusted destination-metadata proxy. Shared HTTPS 443 is advertised separately.
         items:
           type: integer
           minimum: 1024

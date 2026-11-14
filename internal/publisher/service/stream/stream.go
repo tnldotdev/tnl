@@ -38,6 +38,7 @@ type Stream struct {
 	Kubernetes   KubernetesLimits
 	Authority    string
 	Target       string
+	Handler      http.Handler
 	TLS          *tls.Config
 	TargetTLS    *tls.Config
 	Visitor      Authentication
@@ -66,7 +67,8 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 	defer func() { admissionDone(result) }()
 	canonical, nameErr := naming.CanonicalizeHostname(s.Hostname)
 	transport := targettransport.Transport{Protocol: s.Protocol, TLS: s.TargetTLS}
-	if transport.Validate() != nil || nameErr != nil || canonical != s.Hostname || s.Target == "" || s.TLS == nil || s.TLS.GetConfigForClient != nil || !valid {
+	inline := s.Protocol == config.ProtocolHTTP && s.Handler != nil && s.Target == "" && s.TargetTLS == nil
+	if transport.Validate() != nil || nameErr != nil || canonical != s.Hostname || s.Target == "" && !inline || s.Handler != nil && !inline || s.TLS == nil || s.TLS.GetConfigForClient != nil || !valid {
 		return ErrEndpoint
 	}
 	if _, ok := s.Visitor.(HTTPVisitor); ok && s.Protocol != config.ProtocolHTTP {
@@ -250,6 +252,9 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 	frontTLS.MinVersion = max(frontTLS.MinVersion, tls.VersionTLS12)
 	frontTLS.ClientAuth = s.Visitor.clientAuth()
 	frontTLS.NextProtos = nil
+	if s.Protocol == config.ProtocolHTTP {
+		frontTLS.NextProtos = []string{"h2", "http/1.1"}
+	}
 	frontTLS.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
 		if hello.ServerName != s.Hostname && !(s.Protocol == config.ProtocolMySQL && hello.ServerName == "") {
 			return nil, ErrEndpoint
@@ -279,7 +284,7 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 			return err
 		}
 		admissionDone(nil)
-		return httpVisitor.Frontend.Forward(ctx, secured, HTTPTarget{Address: s.Target, Transport: transport})
+		return httpVisitor.Frontend.Forward(ctx, secured, HTTPTarget{Address: s.Target, Handler: s.Handler, Transport: transport})
 	}
 	authCtx, authDone := observability.PublisherOperation(setup, "visitor_authorization")
 	decision, err := s.Visitor.authorize(authCtx, secured.ConnectionState())
@@ -319,7 +324,7 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 			scheme = "https"
 		}
 		target := HTTPTarget{Address: s.Target, Transport: transport, connector: connector, lifetime: ctx, track: trackTarget, enter: enterConnectorWork}
-		return httpstream.Serve(live, client, &url.URL{Scheme: scheme, Host: s.Target}, target.Dial, func(next http.Handler) http.Handler {
+		wrap := func(next http.Handler) http.Handler {
 			return wrapHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				// connector admission is the credential, but every HTTP request still
 				// rechecks current policy before any target bytes on the shared socket.
@@ -340,7 +345,14 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 				defer release()
 				next.ServeHTTP(w, r)
 			}))
-		})
+		}
+		// the underlying visitor and target sockets remain connector-gated.
+		// preserve *tls.Conn here so net/http can serve the negotiated HTTP/2;
+		// every handler also rechecks admission before application work.
+		if inline {
+			return httpstream.ServeHandler(live, secured, wrap(s.Handler))
+		}
+		return httpstream.Serve(live, secured, &url.URL{Scheme: scheme, Host: s.Target}, target.Dial, wrap)
 	}
 	if backend == nil {
 		backend, err = dial(setup)

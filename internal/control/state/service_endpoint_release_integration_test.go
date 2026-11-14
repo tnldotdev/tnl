@@ -61,7 +61,7 @@ func serviceReleasePublisher(t *testing.T, d *Database, r ApplyProjectConfigurat
 }
 
 func TestIntegrationServiceEndpointReleasePreservesServiceAndHistoricalClaims(t *testing.T) {
-	for _, protocol := range []string{"http", "postgres"} {
+	for _, protocol := range []string{"tcp", "postgres"} {
 		t.Run(protocol, func(t *testing.T) {
 			d, now, r, applied, service := serviceReleaseProject(t, protocol, false)
 			ctx := t.Context()
@@ -157,7 +157,7 @@ func TestIntegrationLocalServiceEndpointReleaseRetainsCapturedIdentity(t *testin
 	d, now, _, _ := newPublishRunPrerequisites(t)
 	r := appliedProjectRequest(t, d, now)
 	request := RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Service: "app", WorktreeKey: "checkout",
-		ActorID: r.ActorID, Configuration: ProjectServiceConfiguration{Target: "app", Public: new(true)}, Now: now}
+		ActorID: r.ActorID, Configuration: ProjectServiceConfiguration{Protocol: "postgres", Target: "localhost:5432", Public: new(true)}, Now: now}
 	first, err := d.RealizeLocalProjectService(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -179,7 +179,7 @@ func TestIntegrationLocalServiceEndpointReleaseRetainsCapturedIdentity(t *testin
 }
 
 func TestIntegrationServiceEndpointReleaseRequiresSettledDNS(t *testing.T) {
-	d, now, r, applied, service := serviceReleaseProject(t, "http", true)
+	d, now, r, applied, service := serviceReleaseProject(t, "postgres", true)
 	setReleaseProjectExposure(t, d, &r, &applied, false)
 	release := func() error {
 		_, err := d.ReleaseServiceEndpoint(t.Context(), service.ID, r.ActorID, service.TrustRevision, service.Endpoint.Port, now)
@@ -288,7 +288,7 @@ func serviceReleaseIssuance(t *testing.T, d *Database, prepared ServiceRunPrepar
 func TestIntegrationServiceEndpointReleaseSerializesWithReenable(t *testing.T) {
 	for _, releaseFirst := range []bool{false, true} {
 		t.Run(map[bool]string{true: "release-first", false: "reenable-first"}[releaseFirst], func(t *testing.T) {
-			d, now, r, applied, service := serviceReleaseProject(t, "http", false)
+			d, now, r, applied, service := serviceReleaseProject(t, "postgres", false)
 			setReleaseProjectExposure(t, d, &r, &applied, false)
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
@@ -346,7 +346,7 @@ func TestIntegrationServiceEndpointReleaseSerializesWithReenable(t *testing.T) {
 }
 
 func TestIntegrationServiceEndpointReleaseRechecksWaitingManager(t *testing.T) {
-	d, now, r, applied, service := serviceReleaseProject(t, "http", false)
+	d, now, r, applied, service := serviceReleaseProject(t, "postgres", false)
 	setReleaseProjectExposure(t, d, &r, &applied, false)
 	if _, err := d.pool.Exec(t.Context(), `UPDATE control.teams SET kind='organization' WHERE id=$1`, r.TeamID); err != nil {
 		t.Fatal(err)

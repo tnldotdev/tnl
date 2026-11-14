@@ -2,15 +2,14 @@ package httpaccess
 
 import (
 	"errors"
-	"net"
 	"net/http"
 	"net/netip"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
@@ -73,7 +72,7 @@ func localHTTPPermission(request *http.Request, policy *visitorlease.Lease, rene
 	}
 	validHost := publisherproxy.ValidateRequest(request, view.Hostname) == ""
 	if view.Scope.Kind == visitorscope.Service {
-		validHost = request.Host == net.JoinHostPort(view.Hostname, strconv.Itoa(int(view.Port))) && request.Method != http.MethodConnect && !request.URL.IsAbs() && request.URL.Host == "" && request.TLS != nil && request.TLS.ServerName == view.Hostname
+		validHost = serviceendpoint.MatchesHTTPAuthority(view.Hostname, view.Port, request.Host) && request.Method != http.MethodConnect && !request.URL.IsAbs() && request.URL.Host == "" && request.TLS != nil && request.TLS.ServerName == view.Hostname
 	}
 	if !validHost {
 		return httpPermission{}, visitortoken.ErrBinding

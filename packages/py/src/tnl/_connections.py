@@ -24,7 +24,7 @@ from urllib.parse import urlsplit
 
 from ._connection_ipc import OwnerIPC, _InterruptedError
 from ._native import native_binary
-from ._protocol import TnlError, hostname, service_name
+from ._protocol import TnlError, _service_metadata, hostname, service_name
 from ._workload import Selection, Source, select_workload
 
 _MAX_BYTES = 128 << 10
@@ -262,23 +262,10 @@ def _prepared(value: object, service: str) -> Connection:
         raise _error("invalid")
     try:
         hostname(project.get("namespace"))
-        metadata = _object(
-            services.get(service),
-            {"protocol", "namespace", "hostname", "port", "public", "url", "paths"},
-        )
-        hostname(metadata.get("namespace"))
+        metadata = _service_metadata(service, services.get(service))
         name = hostname(metadata.get("hostname"))
     except TnlError as cause:
         raise _error("invalid") from cause
-    port = metadata.get("port")
-    if (
-        type(port) is not int
-        or not 0 <= port <= 65535
-        or type(metadata.get("public")) is not bool
-        or port == 0
-        and metadata.get("public") is True
-    ):
-        raise _error("invalid")
     connection = _snapshot(obj.get("connection"))
     if (
         metadata.get("protocol") != connection.protocol

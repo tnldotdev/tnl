@@ -23,7 +23,13 @@ func TestIngressInventoryValidationAndOwnership(t *testing.T) {
 	if public.servicePorts.Contains(20000) {
 		t.Fatal("public-only ingress gained service ports")
 	}
-	for _, ranges := range [][]tcpport.Range{{}, {{First: 1023, Last: 1024}}, {{First: 20000, Last: 20256}}, {{First: 20000, Last: 20001}, {First: 20001, Last: 20002}}} {
+	configuration.ServicePortRanges = []tcpport.Range{}
+	empty, err := New(listener, configuration)
+	if err != nil || len(empty.servicePorts.Ports()) != 0 {
+		t.Fatal("explicit empty inventory gained non-HTTP ports", err)
+	}
+	t.Cleanup(empty.cancelOpens)
+	for _, ranges := range [][]tcpport.Range{{{First: 1023, Last: 1024}}, {{First: 20000, Last: 20256}}, {{First: 20000, Last: 20001}, {First: 20001, Last: 20002}}} {
 		configuration.ServicePortRanges = ranges
 		if _, err := New(listener, configuration); !errors.Is(err, tcpport.ErrInventory) {
 			t.Fatal("invalid ingress inventory", ranges, err)

@@ -24,8 +24,13 @@ func TestIntegrationLocalServiceExposureRetainsIdentityAndRuns(t *testing.T) {
 			}}
 			r = selectedProjectRequest(r, "local")
 			request := RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Service: "app", WorktreeKey: "checkout-a", WorktreeLabel: "feature-a", ActorID: r.ActorID, Configuration: r.Configuration.Services["app"], Now: now}
+			privatePort, publicPort := 0, 25443
+			revisionIncrement := int64(1)
+			if protocol == "http" {
+				privatePort, publicPort, revisionIncrement = 443, 443, 0
+			}
 			private, err := d.RealizeLocalProjectService(ctx, request)
-			if err != nil || private.Metadata == nil || private.Metadata.Endpoint == nil || private.Metadata.Endpoint.Port != 0 {
+			if err != nil || private.Metadata == nil || private.Metadata.Endpoint == nil || private.Metadata.Endpoint.Public || private.Metadata.Endpoint.Port != privatePort {
 				t.Fatal("private realization consumed capacity", private, err)
 			}
 			endpoint := *private.Metadata.Endpoint
@@ -59,11 +64,17 @@ func TestIntegrationLocalServiceExposureRetainsIdentityAndRuns(t *testing.T) {
 				t.Fatal(err)
 			}
 			record, err := d.GetService(ctx, private.ServiceID, r.ActorID)
-			if err != nil || record.Endpoint == nil || !record.Endpoint.Public || record.Endpoint.Port != 25443 || record.Endpoint.Hostname != endpoint.Hostname || record.TrustRevision != private.Metadata.TrustRevision+1 {
+			if err != nil || record.Endpoint == nil || !record.Endpoint.Public || record.Endpoint.Port != publicPort || record.Endpoint.Hostname != endpoint.Hostname || record.TrustRevision != private.Metadata.TrustRevision+revisionIncrement {
 				t.Fatal("first public binding lost captured identity or fencing", record, err)
 			}
-			if _, err := d.StartServiceRun(ctx, oldRun.ServiceID, oldRun.RunID, oldRun.RunNumber, access, now); !errors.Is(err, ErrServiceAccess) {
-				t.Fatal("zero-port run acquired public authority", err)
+			started, err := d.StartServiceRun(ctx, oldRun.ServiceID, oldRun.RunID, oldRun.RunNumber, access, now)
+			if protocol == "http" && err != nil || protocol != "http" && !errors.Is(err, ErrServiceAccess) {
+				t.Fatal("first exposure changed the wrong run authority", err)
+			}
+			if protocol == "http" {
+				if err := d.CloseServiceRun(ctx, oldRun.ServiceID, oldRun.RunID, started.Token, now); err != nil {
+					t.Fatal(err)
+				}
 			}
 			next, err := d.PrepareServiceRun(ctx, private.ServiceID, access, "local-public", now, record.ServiceMetadata)
 			if err != nil || next.ServicePort != record.Endpoint.Port {
@@ -92,7 +103,7 @@ func TestIntegrationLocalServiceExposureRetainsIdentityAndRuns(t *testing.T) {
 				t.Fatal("app restart changed its captured endpoint", retry, err)
 			}
 			projection, err := d.GetProjectPublicMetadata(ctx, r.TeamID, r.ProjectKey, r.ActorID, now)
-			if err != nil || protocol == "http" && (len(projection.Services) != 1 || projection.Services[0].ServiceID != private.ServiceID || projection.Services[0].Port != 25443 || projection.Services[0].PublicURLID != "") || protocol != "http" && len(projection.Services) != 0 {
+			if err != nil || protocol == "http" && (len(projection.Services) != 1 || projection.Services[0].ServiceID != private.ServiceID || projection.Services[0].Port != 443 || projection.Services[0].PublicURLID != "") || protocol != "http" && len(projection.Services) != 0 {
 				t.Fatal("local public projection lost resource identity or exposed a database", projection, err)
 			}
 		})
@@ -106,7 +117,7 @@ func TestIntegrationLocalServiceExposureAtomicAcrossWorktrees(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"app": {Target: "app"}}}
+	r.Configuration = ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"app": {Protocol: "postgres", Target: "localhost:5432"}}}
 	r = selectedProjectRequest(r, "local")
 	request := RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Service: "app", WorktreeKey: "checkout-a", ActorID: r.ActorID, Configuration: r.Configuration.Services["app"], Now: now}
 	first, err := d.RealizeLocalProjectService(ctx, request)
@@ -163,8 +174,8 @@ func TestIntegrationLocalServiceExposureFencesDNSWork(t *testing.T) {
 	}
 	request.Configuration.Public, request.Now = new(true), now.Add(time.Second)
 	public, err := d.RealizeLocalProjectService(ctx, request)
-	if err != nil || !public.Metadata.Endpoint.Public || public.Metadata.Endpoint.Port < 1024 {
-		t.Fatal("public startup did not allocate a binding", public, err)
+	if err != nil || !public.Metadata.Endpoint.Public || public.Metadata.Endpoint.Port != 443 {
+		t.Fatal("public startup did not use shared HTTPS", public, err)
 	}
 	if err := d.ValidateServiceEndpointDNSWork(ctx, private, request.Now); !errors.Is(err, ErrDNSPublicURLWorkStale) {
 		t.Fatal("old loopback worker retained provider authority", err)

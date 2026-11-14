@@ -353,9 +353,6 @@ func ValidateServiceHTTP(value *HTTPService) error {
 		if err := value.Access.Validate(); err != nil {
 			return err
 		}
-		if value.Access.VisitorMode() != "restricted" {
-			return errors.New("services require restricted HTTP access")
-		}
 	}
 	return validateLimits(&Limits{HTTP: value.Limits}, nil, "http")
 }

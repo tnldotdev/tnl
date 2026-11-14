@@ -16,7 +16,7 @@ func TestIntegrationPrivateServicePortCapacity(t *testing.T) {
 	}
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{
-		"api": {Target: "localhost:3000", Public: new(true)},
+		"api": {Protocol: "tcp", Target: "localhost:3000", Public: new(true)},
 	}}
 	r = selectedProjectRequest(r, "production")
 	first, err := d.ApplyProjectConfiguration(ctx, r)
@@ -46,6 +46,8 @@ func TestIntegrationPrivateServicePortCapacity(t *testing.T) {
 		want := 0
 		if service.Service == "api" {
 			want = 25443
+		} else if service.Service == "web" {
+			want = 443
 		}
 		if service.Public || service.Port != want || service.ServiceID == "" || service.Hostname == "" {
 			t.Fatal("private identity or retained reservation changed", service)
@@ -57,14 +59,14 @@ func TestIntegrationPrivateServicePortCapacity(t *testing.T) {
 	}
 	// enabling public access is atomic; no partial configuration survives failure.
 	r.ExpectedRevision = private.Revision
-	web := r.Configuration.Services["web"]
-	web.Public = new(true)
-	r.Configuration.Services["web"] = web
+	orders := r.Configuration.Services["orders"]
+	orders.Public = new(true)
+	r.Configuration.Services["orders"] = orders
 	if _, err := d.ApplyProjectConfiguration(ctx, r); !errors.Is(err, ErrServicePortsExhausted) {
 		t.Fatal("public enable ignored exhausted capacity", err)
 	}
 	current, err := d.GetProjectConfiguration(ctx, r.TeamID, r.ProjectKey, r.ActorID, "production")
-	if err != nil || current.Revision != private.Revision || current.Configuration.Services["web"].Public != nil {
+	if err != nil || current.Revision != private.Revision || current.Configuration.Services["orders"].Public != nil {
 		t.Fatal("failed public enable partially committed", current, err)
 	}
 }
@@ -74,7 +76,7 @@ func TestIntegrationPrivateServiceFirstPublicBindingFencesOldRun(t *testing.T) {
 	ctx := t.Context()
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{
-		"api": {Target: "localhost:3000"},
+		"api": {Protocol: "tcp", Target: "localhost:3000"},
 	}}
 	r = selectedProjectRequest(r, "production")
 	private, err := d.ApplyProjectConfiguration(ctx, r)

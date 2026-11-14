@@ -11,19 +11,27 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-// AcceptPublic selects by the trusted destination port and carries application TLS
-// unchanged. publisher authentication promotes a bounded pending connection.
-func (p *PublicServices) AcceptPublic(ctx context.Context, connection net.Conn, source, destination netip.AddrPort) (retErr error) {
+// AcceptPublic selects HTTP by inspected hostname on 443 and other protocols by
+// trusted destination port. publisher authentication promotes a bounded connection.
+func (p *PublicServices) AcceptPublic(ctx context.Context, connection net.Conn, source, destination netip.AddrPort, hostname string) (retErr error) {
 	ctx, finishConnection := observability.Start(ctx, "ingress.public_service_visitor_connection")
 	defer func() { finishConnection(retErr) }()
 	control := p.config.Control
 	if control == nil || connection == nil || !validPrivateSocketPair(source, destination) {
+		return ErrServiceAdmission
+	}
+	if destination.Port() == 443 {
+		if !serviceendpoint.Valid("http", hostname, 443, true) {
+			return ErrServiceAdmission
+		}
+	} else if destination.Port() < 1024 || hostname != "" {
 		return ErrServiceAdmission
 	}
 	ctx, release, ok := p.acquireSession(ctx, connection)
@@ -54,7 +62,11 @@ func (p *PublicServices) AcceptPublic(ctx context.Context, connection net.Conn, 
 	defer finish()
 	stopSetup := context.AfterFunc(p.admissions, finish)
 	defer stopSetup()
-	claimed, err := control.AdmitPublicServiceVisitor(setup, lease.IngressId, ingressv1.PublicServiceVisitorClaim{IngressRunId: lease.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision, IngressPoolId: p.config.IngressPoolID, DestinationPort: int(destination.Port()), ObservedSourceIp: source.Addr().Unmap().String(), VisitorConnectionId: visitor})
+	claim := ingressv1.PublicServiceVisitorClaim{IngressRunId: lease.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision, IngressPoolId: p.config.IngressPoolID, DestinationPort: int(destination.Port()), ObservedSourceIp: source.Addr().Unmap().String(), VisitorConnectionId: visitor}
+	if hostname != "" {
+		claim.Hostname = &hostname
+	}
+	claimed, err := control.AdmitPublicServiceVisitor(setup, lease.IngressId, claim)
 	if err != nil {
 		return err
 	}

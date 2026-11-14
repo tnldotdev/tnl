@@ -674,6 +674,7 @@ type ControlIngressLease struct {
 	ProtocolVersion      int64
 	ConnectionCapacity   int64
 	IngressPoolID        string
+	Https                bool
 	ServicePorts         []int32
 	ReportedConnections  int64
 	RoutingTableRevision int64

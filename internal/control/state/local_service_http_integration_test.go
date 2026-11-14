@@ -112,7 +112,7 @@ func TestIntegrationLocalServiceHTTPPolicySurvivesRealizationAndApply(t *testing
 		t.Fatal("request policy change replaced publisher authority or closed its run", err)
 	}
 	approved, err = d.GetServiceForPublisher(ctx, first.ServiceID, access, now)
-	if err != nil || approved.HTTPLimits == nil || *approved.HTTPLimits.Total != 250 || approved.Endpoint.Port != 0 {
+	if err != nil || approved.HTTPLimits == nil || *approved.HTTPLimits.Total != 250 || approved.Endpoint.Port != 443 || approved.Endpoint.Public {
 		t.Fatal("local publisher lost updated request policy or consumed public capacity", approved, err)
 	}
 	r.ExpectedRevision = applied.Revision

@@ -177,7 +177,7 @@ func (d *daemon) startIngressRuntime(
 	runtime.configuredIdentity, runtime.processRunID = runtimeConfig.ingressID, runID
 	routingTable := new(ingress.RoutingTable)
 	var publicServer *ingress.Server
-	registration := ingressv1.IngressRegistration{IngressId: runtimeConfig.ingressID, IngressRunId: runID, ProtocolVersion: tunnelv1.Version, ConnectionCapacity: settings.visitorConnectionLimit}
+	registration := ingressv1.IngressRegistration{IngressId: runtimeConfig.ingressID, IngressRunId: runID, ProtocolVersion: tunnelv1.Version, ConnectionCapacity: settings.visitorConnectionLimit, Https: true}
 	registration.Region = settings.region
 	registration.IngressPoolId, registration.ServicePorts = string(settings.ingressPoolID), settings.servicePortRanges.Ports()
 	controller, err := ingress.NewController(ingress.ControllerConfig{

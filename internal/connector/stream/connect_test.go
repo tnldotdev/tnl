@@ -564,6 +564,9 @@ func TestManagedConnectorReadinessAcrossReachabilityAndProtocols(t *testing.T) {
 					t.Run(fmt.Sprintf("public=%v/%s/%s/%s", public, protocol, transport, outcome), func(t *testing.T) {
 						f := newConfiguredConnectorFixture(t, transport, "", func(f *connectorFixture, c *Config) {
 							c.Protocol, f.run.Protocol = protocol, protocol
+							if protocol == "http" {
+								f.run.Endpoint.Port = 443
+							}
 							f.run.Endpoint.Public = public
 							f.wantStartupError = outcome != "ready"
 							f.wrongCertificate.Store(outcome == "wrong-tls")
@@ -861,6 +864,9 @@ func TestConnectorPreservesNativeBytesForHTTPAndTCP(t *testing.T) {
 			f := newConfiguredConnectorFixture(t, "quic", "", func(f *connectorFixture, configuration *Config) {
 				configuration.Protocol, configuration.TrustRevision = protocol, 2
 				f.run.Protocol, f.run.TrustRevision = protocol, 2
+				if protocol == "http" {
+					f.run.Endpoint.Port = 443
+				}
 			})
 			local := f.local(t)
 			// deliberately not HTTP or a TLS handshake: omitted TLS must carry

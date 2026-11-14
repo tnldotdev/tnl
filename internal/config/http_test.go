@@ -10,20 +10,25 @@ func TestServiceHTTPRequestPolicyIsIndependentOfPlacementAndExposure(t *testing.
 	period := Duration(time.Second)
 	for _, deployment := range []string{"local", "production"} {
 		for _, public := range []bool{false, true} {
-			configuration := TNL{Deployment: deployment, Services: Services{"web": {
-				Public: new(public),
-				Target: &ServiceTarget{Type: "address", Address: new(Target("http://app.internal:3000"))},
-				HTTP: &HTTPService{Access: &Access{IP: []string{"192.0.2.1"}}, Limits: &WorkLimits{
-					Total: new(100), Concurrency: new(2), Rate: &Rate{Count: new(5), Per: &period},
-				}},
-			}}}
-			if err := ValidateTNL(configuration); err != nil {
-				t.Fatalf("%s public=%t rejected HTTP policy: %v", deployment, public, err)
-			}
-			service := configuration.Services["web"]
-			service.HTTP.Access.Mode = "anonymous"
-			if err := ValidateTNL(configuration); err == nil {
-				t.Fatalf("%s public=%t accepted anonymous service authority", deployment, public)
+			for _, mode := range []string{"", "restricted", "anonymous"} {
+				configuration := TNL{Deployment: deployment, Services: Services{"web": {
+					Public: new(public),
+					Target: &ServiceTarget{Type: "address", Address: new(Target("http://app.internal:3000"))},
+					HTTP: &HTTPService{Access: &Access{Mode: mode, IP: []string{"192.0.2.1"}}, Limits: &WorkLimits{
+						Total: new(100), Concurrency: new(2), Rate: &Rate{Count: new(5), Per: &period},
+					}},
+				}}}
+				if err := ValidateTNL(configuration); err != nil {
+					t.Fatalf("%s public=%t mode=%q rejected HTTP policy: %v", deployment, public, mode, err)
+				}
+				service := configuration.Services["web"]
+				if service.Public == nil || *service.Public != public || service.HTTP.Access.VisitorMode() != (Access{Mode: mode}).VisitorMode() {
+					t.Fatal("visitor access changed reachability or lost its mode")
+				}
+				service.HTTP.Access.Mode = "invalid"
+				if err := ValidateTNL(configuration); err == nil {
+					t.Fatalf("%s public=%t accepted an unknown visitor access mode", deployment, public)
+				}
 			}
 		}
 	}

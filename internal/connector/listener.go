@@ -14,9 +14,5 @@ func listenConnector(ctx context.Context, store *clientstate.Store, identity str
 	if override != "" {
 		return store.ListenServiceAt(ctx, identity, service.Id, override)
 	}
-	protocol := string(service.Protocol)
-	if protocol == "http" || protocol == "kubernetes" {
-		protocol = "tcp"
-	}
-	return store.ListenService(ctx, identity, service.Id, protocol)
+	return store.ListenService(ctx, identity, service.Id, string(service.Protocol))
 }

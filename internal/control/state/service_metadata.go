@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
 )
 
@@ -31,7 +32,8 @@ type ServiceMetadata struct {
 
 type ServiceEndpoint struct {
 	Hostname string `json:"hostname"`
-	// zero means no public port has been reserved, never a local listener.
+	// HTTP uses shared 443; zero means a non-HTTP service has no reservation.
+	// neither value selects a local connector listener or enables public access.
 	Port   int  `json:"port"`
 	Public bool `json:"public"`
 }
@@ -56,13 +58,13 @@ func checkedServiceMetadata(row controlstatedb.ControlService) (ServiceMetadata,
 		return m, err
 	}
 	if row.CertificateHostname != "" && row.ServicePort.Valid {
-		m.Endpoint = managedServiceTLS(row.CertificateHostname, int(row.ServicePort.Int32), row.Public)
+		m.Endpoint = managedServiceTLS(row.Protocol, row.CertificateHostname, int(row.ServicePort.Int32), row.Public)
 	}
 	return m, nil
 }
 
-func managedServiceTLS(hostname string, port int, public bool) *ServiceEndpoint {
-	if hostname == "" || port < 0 || port > 65535 || port > 0 && port < 1024 || public && port == 0 {
+func managedServiceTLS(protocol, hostname string, port int, public bool) *ServiceEndpoint {
+	if !serviceendpoint.Valid(protocol, hostname, port, public) {
 		return nil
 	}
 	return &ServiceEndpoint{Hostname: hostname, Port: port, Public: public}

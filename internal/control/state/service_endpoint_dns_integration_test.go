@@ -11,7 +11,7 @@ func TestIntegrationServiceEndpointDNSRevisions(t *testing.T) {
 	ctx := t.Context()
 	r := appliedProjectRequest(t, d, now)
 	r.DNSAutomation = true
-	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{"api": {Target: "localhost:3000"}}}
+	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{"api": {Protocol: "tcp", Target: "localhost:3000"}}}
 	r = selectedProjectRequest(r, "production")
 	applied, err := d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {

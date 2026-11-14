@@ -59,7 +59,7 @@ const pathMetadataSchema = z
 const address = {
   namespace: hostnameSchema,
   hostname: hostnameSchema,
-  // zero means no ingress reservation, never a local socket or wildcard.
+  // non-HTTP zero means no ingress reservation, never a local socket or wildcard.
   port: z.union([z.literal(0), portSchema]),
   public: z.boolean(),
 };
@@ -79,7 +79,9 @@ const serviceMetadataSchema = z
   ])
   .refine(
     (service) =>
-      !(service.public && service.port === 0) &&
+      (service.protocol === "http"
+        ? service.port === 443
+        : service.port >= 1024 || (service.port === 0 && !service.public)) &&
       (!("url" in service) ||
         service.url ===
           `https://${service.hostname}${service.port === 0 || service.port === 443 ? "" : `:${service.port}`}`),

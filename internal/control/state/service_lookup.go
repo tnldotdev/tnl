@@ -120,7 +120,7 @@ func (d *Database) ListAvailableServices(ctx context.Context, identityID, cursor
 		if err != nil {
 			return nil, "", err
 		}
-		metadata.Endpoint = managedServiceTLS(row.CertificateHostname, int(row.ServicePort.Int32), row.Public)
+		metadata.Endpoint = managedServiceTLS(row.Protocol, row.CertificateHostname, int(row.ServicePort.Int32), row.Public)
 		var kube *controlv1.KubernetesAuth
 		if row.Protocol == "kubernetes" {
 			kube, err = d.visitorKubernetesAuth(ctx, controlstatedb.New(d.pool), row.ID)

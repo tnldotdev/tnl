@@ -4,13 +4,12 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
-	"strconv"
 	"strings"
 
+	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
@@ -68,7 +67,7 @@ func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func(), error) {
 
 func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestream.HTTPTarget) error {
 	h := f.Header
-	if f.Policy == nil || f.Subject.Kind != visitorscope.Service || !f.Subject.Valid() || h.PublicService == nil || h.ServiceID != f.Subject.ID || h.ServiceRunID != f.RunID || h.RunNumber != uint64(f.Number) || h.PublicService.DestinationPort != f.Port || f.Port < 1024 || h.Validate() != nil {
+	if f.Policy == nil || f.Subject.Kind != visitorscope.Service || !f.Subject.Valid() || h.PublicService == nil || h.ServiceID != f.Subject.ID || h.ServiceRunID != f.RunID || h.RunNumber != uint64(f.Number) || h.PublicService.DestinationPort != f.Port || f.Port != 443 || h.Validate() != nil {
 		return servicestream.ErrEndpoint
 	}
 	source, err := netip.ParseAddr(h.SourceIP)
@@ -79,15 +78,14 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 	if !enabled || view.Scope != f.Subject || view.Hostname != f.Hostname || view.Port != f.Port {
 		return servicestream.ErrEndpoint
 	}
-	authority := net.JoinHostPort(f.Hostname, strconv.Itoa(int(f.Port)))
 	scheme := "http"
 	if target.Transport.TLS != nil {
 		scheme = "https"
 	}
-	return httpstream.Serve(ctx, client, &url.URL{Scheme: scheme, Host: target.Address}, target.Dial, func(next http.Handler) http.Handler {
+	wrap := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "no-store")
-			if r.Host != authority || r.Method == http.MethodConnect || r.URL.IsAbs() || r.URL.Host != "" || client.ConnectionState().ServerName != f.Hostname {
+			if !serviceendpoint.MatchesHTTPAuthority(f.Hostname, f.Port, r.Host) || r.Method == http.MethodConnect || r.URL.IsAbs() || r.URL.Host != "" || client.ConnectionState().ServerName != f.Hostname {
 				servicestream.DenyHTTP(w, http.StatusMisdirectedRequest)
 				return
 			}
@@ -142,7 +140,11 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 			}
 			next.ServeHTTP(w, r)
 		})
-	})
+	}
+	if target.Handler != nil {
+		return httpstream.ServeHandler(ctx, client, wrap(target.Handler))
+	}
+	return httpstream.Serve(ctx, client, &url.URL{Scheme: scheme, Host: target.Address}, target.Dial, wrap)
 }
 
 func (f HTTP) share(w http.ResponseWriter, r *http.Request) {

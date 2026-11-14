@@ -130,7 +130,7 @@ func TestPublicServiceVisitorStalledRelayLeavesAlternateBudget(t *testing.T) {
 			defer cancel()
 			done := make(chan error, 1)
 			go func() {
-				done <- p.AcceptPublic(ctx, connection, netip.MustParseAddrPort("192.0.2.4:42000"), netip.MustParseAddrPort("203.0.113.8:20000"))
+				done <- p.AcceptPublic(ctx, connection, netip.MustParseAddrPort("192.0.2.4:42000"), netip.MustParseAddrPort("203.0.113.8:20000"), "")
 			}()
 			t.Cleanup(func() {
 				cancel()

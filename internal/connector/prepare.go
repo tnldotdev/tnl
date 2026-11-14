@@ -81,7 +81,8 @@ func (p *servicePreparation) result() (*servingService, error) {
 }
 
 func (p *servicePreparation) matches(service controlv1.Service) bool {
-	return p != nil && service.Id == p.service.Id && service.Protocol == p.service.Protocol && service.Endpoint != nil && p.service.Endpoint != nil && *service.Endpoint == *p.service.Endpoint
+	return p != nil && service.Id == p.service.Id && service.Protocol == p.service.Protocol && service.TrustRevision == p.service.TrustRevision &&
+		service.Endpoint != nil && p.service.Endpoint != nil && service.Endpoint.Hostname == p.service.Endpoint.Hostname && service.Endpoint.Port == p.service.Endpoint.Port
 }
 
 func (p *servicePreparation) serving(client *workload.Client) *servingService {
@@ -176,7 +177,7 @@ func (b *connectorConnectionBackend) prepareListener(ctx context.Context, name s
 	if err != nil {
 		return nil, err
 	}
-	if run.Protocol != string(service.Protocol) || run.Endpoint == nil || *run.Endpoint != *endpoint {
+	if run.Protocol != string(service.Protocol) || run.Endpoint == nil || run.Endpoint.Hostname != endpoint.Hostname || run.Endpoint.Port != endpoint.Port {
 		return nil, connectorruntime.ErrUnavailable
 	}
 	// the service and identity are already validated; the resolved revision must

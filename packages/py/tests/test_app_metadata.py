@@ -79,14 +79,18 @@ def test_private_service_metadata_needs_no_ingress_reservation(protocol: str) ->
         "protocol": protocol,
         "hostname": "private.member.example",
         "namespace": "member.example",
-        "port": 0,
+        "port": 443 if protocol == "http" else 0,
         "public": False,
     }
     if protocol in ("http", "kubernetes"):
         service["url"] = "https://private.member.example"
     assert _protocol._service_metadata("private", service) == service
-    with pytest.raises(InvalidResponse):
-        _protocol._service_metadata("private", {**service, "public": True})
+    exposed = {**service, "public": True}
+    if protocol == "http":
+        assert _protocol._service_metadata("private", exposed) == exposed
+    else:
+        with pytest.raises(InvalidResponse):
+            _protocol._service_metadata("private", exposed)
 
 
 def test_native_assignment_is_http_only_for_selected_app(
@@ -101,7 +105,7 @@ def test_native_assignment_is_http_only_for_selected_app(
         "postgres",
         "kubernetes",
     }
-    assert services["web"]["port"] == 25443
+    assert services["web"]["port"] == 443
     assert services["api"]["public"] is False
     assert services["mysql"]["public"] is True
 
@@ -112,7 +116,7 @@ def test_native_assignment_is_http_only_for_selected_app(
         await publication.start()
         try:
             assert isinstance(publication._phase, _app._Prepared)
-            assert publication.public_url == "https://web.member.example:25443"
+            assert publication.public_url == "https://web.member.example"
             await publication.register("http://127.0.0.1:8000")
         finally:
             await publication.close()
@@ -137,7 +141,9 @@ def test_native_assignment_is_http_only_for_selected_app(
         (("project", "services", "database", "url"), "https://database.member.example:15443"),
         (("project", "services", "database", "target"), "private target"),
         (("project", "services", "api", "url"), "https://api.member.example:1234"),
-        (("project", "services", "web", "url"), "https://web.member.example"),
+        (("project", "services", "web", "url"), "https://web.member.example:25443"),
+        (("project", "services", "web", "port"), 0),
+        (("project", "services", "web", "port"), 25443),
         (("project", "services", "cluster", "url"), "https://cluster.member.example"),
         (("project", "services", "web", "namespace"), "INVALID.example"),
         (("project", "services", "web", "hostname"), "web.member.example."),
@@ -152,7 +158,7 @@ def test_native_assignment_is_http_only_for_selected_app(
         (("service",), "api"),
         (("service",), "invalid name"),
         (("hostname",), "other.member.example"),
-        (("public_url",), "https://web.member.example"),
+        (("public_url",), "https://web.member.example:25443"),
         (("public_url",), "https://web.member.example:25443/path"),
         (("registration_id",), "reg_bad"),
         (("version",), True),
@@ -234,11 +240,8 @@ def test_rejects_invalid_service_set_or_scope(
     ("port", "public", "omit_service"),
     [
         (443, True, False),
-        (25443, True, False),
-        (25443, False, False),
-        (25443, False, True),
-        (1, False, False),
-        (65535, True, False),
+        (443, False, False),
+        (443, False, True),
     ],
 )
 def test_native_metadata_registration_and_cleanup(

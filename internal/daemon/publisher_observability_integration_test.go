@@ -364,7 +364,11 @@ func TestIntegrationPublisherObservabilityPublicService(t *testing.T) {
 			go func() {
 				defer close(done)
 				defer remote.Close()
-				_ = process.ingresses[0].publicServices.AcceptPublic(ctx, remote, netip.MustParseAddrPort("192.0.2.4:42000"), netip.AddrPortFrom(netip.MustParseAddr("203.0.113.8"), uint16(service.Endpoint.Port)))
+				hostname := ""
+				if service.Protocol == "http" {
+					hostname = service.Endpoint.Hostname
+				}
+				_ = process.ingresses[0].publicServices.AcceptPublic(ctx, remote, netip.MustParseAddrPort("192.0.2.4:42000"), netip.AddrPortFrom(netip.MustParseAddr("203.0.113.8"), uint16(service.Endpoint.Port)), hostname)
 			}()
 			t.Cleanup(func() {
 				_ = local.Close()

@@ -26,6 +26,7 @@ type IngressRegistration struct {
 	ProtocolVersion    uint64
 	ConnectionCapacity uint64
 	IngressPoolID      string
+	HTTPS              bool
 	ServicePorts       []int32
 }
 
@@ -101,7 +102,7 @@ func (d *Database) RegisterIngress(
 		Region:    string(registration.Region),
 		IngressID: registration.IngressID, IngressRunID: registration.IngressRunID,
 		ProtocolVersion: protocolVersion, ConnectionCapacity: connectionCapacity,
-		IngressPoolID: registration.IngressPoolID, ServicePorts: append([]int32{}, registration.ServicePorts...),
+		IngressPoolID: registration.IngressPoolID, Https: registration.HTTPS, ServicePorts: append([]int32{}, registration.ServicePorts...),
 		RegisteredAt: timestamptz(now), RenewedAt: timestamptz(now),
 		LeaseExpiresAt: timestamptz(now.Add(leaseDuration)),
 	})

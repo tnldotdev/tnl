@@ -13,7 +13,7 @@ import (
 )
 
 type publicServiceStore interface {
-	AdmitPublicServiceVisitor(context.Context, controlstate.IngressLeaseIdentity, string, string, int, netip.Addr, time.Time) (controlstate.PublicServiceVisitorAdmission, error)
+	AdmitPublicServiceVisitor(context.Context, controlstate.IngressLeaseIdentity, string, string, string, int, netip.Addr, time.Time) (controlstate.PublicServiceVisitorAdmission, error)
 	PublicServiceVisitorStatus(context.Context, controlstate.IngressLeaseIdentity, string, time.Time) (controlstate.PublicServiceVisitorStatus, error)
 	ClosePublicServiceVisitor(context.Context, controlstate.IngressLeaseIdentity, string, time.Time) error
 	PromotePublicServiceVisitor(context.Context, controlstate.IngressLeaseIdentity, string, time.Time) error
@@ -26,7 +26,11 @@ func (s *service) AdmitPublicServiceVisitor(ctx context.Context, id string, body
 	if !ok || !sourceOK {
 		return result, serverhttp.NewProblemError(400, "invalid_request", "invalid public service admission")
 	}
-	admitted, err := s.store.AdmitPublicServiceVisitor(ctx, lease, body.IngressPoolId, body.VisitorConnectionId, body.DestinationPort, source, s.now())
+	hostname := ""
+	if body.Hostname != nil {
+		hostname = *body.Hostname
+	}
+	admitted, err := s.store.AdmitPublicServiceVisitor(ctx, lease, body.IngressPoolId, body.VisitorConnectionId, hostname, body.DestinationPort, source, s.now())
 	if err != nil {
 		return result, s.privateStateError(ctx, err)
 	}

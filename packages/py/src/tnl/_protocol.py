@@ -101,8 +101,11 @@ def _service_metadata(name: str, value: object) -> dict[str, object]:
         or type(port) is not int
         or not 0 <= port <= 65535
         or type(item.get("public")) is not bool
-        or port == 0
-        and item.get("public") is True
+        or (
+            port != 443
+            if protocol == "http"
+            else not (1024 <= port <= 65535 or port == 0 and item.get("public") is False)
+        )
     ):
         raise InvalidResponse()
     url = item.get("url", "")

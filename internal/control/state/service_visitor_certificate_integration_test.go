@@ -46,7 +46,7 @@ func TestIntegrationPrivateVisitorCertificateDeadline(t *testing.T) {
 	}
 	visitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
 	admit := func() (PublicServiceVisitorAdmission, error) {
-		return d.AdmitPublicServiceVisitor(ctx, lease.IngressLeaseIdentity, PrimaryIngressPoolID, visitor, port, netip.MustParseAddr("192.0.2.4"), now)
+		return d.AdmitPublicServiceVisitor(ctx, lease.IngressLeaseIdentity, PrimaryIngressPoolID, visitor, "", port, netip.MustParseAddr("192.0.2.4"), now)
 	}
 	initial, err := admit()
 	if err != nil || initial.ExpiresAt.After(expires) {

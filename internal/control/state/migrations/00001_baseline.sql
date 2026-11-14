@@ -711,6 +711,7 @@ CREATE TABLE control.ingress_leases (
     protocol_version bigint NOT NULL CHECK (protocol_version >= 1),
     connection_capacity bigint NOT NULL CHECK (connection_capacity >= 0),
     ingress_pool_id text NOT NULL DEFAULT '',
+    https boolean NOT NULL DEFAULT false,
     service_ports integer[] NOT NULL DEFAULT '{}' CHECK (cardinality(service_ports)<=256),
     reported_connections bigint NOT NULL DEFAULT 0 CHECK (reported_connections >= 0),
     routing_table_revision bigint NOT NULL DEFAULT 0 CHECK (routing_table_revision >= 0),
@@ -1650,11 +1651,14 @@ CREATE TABLE control.services (
     domain_id text REFERENCES control.domains(id) ON DELETE RESTRICT,
     certificate_hostname text NOT NULL DEFAULT '',
     certificate_scope text NOT NULL DEFAULT '',
-    service_port integer CHECK (service_port = 0 OR service_port BETWEEN 1024 AND 65535),
+    service_port integer CHECK (service_port IS NULL
+        OR protocol='http' AND service_port=443
+        OR protocol<>'http' AND (service_port=0 OR service_port BETWEEN 1024 AND 65535)),
     ingress_pool_id text NOT NULL DEFAULT 'ingress-a' REFERENCES control.ingress_pools(id) ON DELETE RESTRICT,
     public boolean NOT NULL DEFAULT false,
     CONSTRAINT services_public_port_required CHECK (
-        NOT public OR service_port IS NOT NULL AND service_port BETWEEN 1024 AND 65535),
+        NOT public OR service_port IS NOT NULL
+            AND (protocol='http' AND service_port=443 OR protocol<>'http' AND service_port BETWEEN 1024 AND 65535)),
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     idempotency_key text NOT NULL CHECK (idempotency_key <> ''),
     request_digest bytea NOT NULL CHECK (octet_length(request_digest) = 32),
@@ -1797,7 +1801,7 @@ CREATE TABLE control.service_runs (
     certificate_identifiers text[] NOT NULL DEFAULT '{}',
     certificate_domain_id text REFERENCES control.domains(id) ON DELETE RESTRICT,
     certificate_hostname text NOT NULL DEFAULT '',
-    service_port integer CHECK (service_port = 0 OR service_port BETWEEN 1024 AND 65535),
+    service_port integer CHECK (service_port IN (0,443) OR service_port BETWEEN 1024 AND 65535),
     certificate_issuance_id text REFERENCES control.acme_orders(id) ON DELETE RESTRICT,
     certificate_expires_at timestamptz,
     CHECK ((certificate_issuance_id IS NULL)=(certificate_expires_at IS NULL)),
@@ -1950,7 +1954,7 @@ CREATE TABLE control.public_service_visitors (
     ingress_id text NOT NULL,
     ingress_run_id text NOT NULL,
     ingress_lease_revision bigint NOT NULL CHECK (ingress_lease_revision>0),
-    destination_port integer NOT NULL CHECK (destination_port BETWEEN 1024 AND 65535),
+    destination_port integer NOT NULL CHECK (destination_port=443 OR destination_port BETWEEN 1024 AND 65535),
     source_ip inet NOT NULL,
     identity_id text,
     device_id text,

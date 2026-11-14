@@ -144,6 +144,7 @@ func TestIntegrationConnectionSharedOwnerStalledSibling(t *testing.T) {
 	ids := []string{"svc_" + strings.Repeat("a", 22), "svc_" + strings.Repeat("b", 22)}
 	serviceNames := []string{"api", "db"}
 	protocols := []string{"http", "postgres"}
+	servicePorts := []int{443, 15444}
 	trustRevision := int64(1)
 	session := authorityv1.WorkloadSession{Id: id, Credential: "wlc_" + strings.Repeat("x", 43), TeamId: team, ProjectKey: "project", Workload: "worker", Provider: controlv1.WorkloadVercel, Binding: strings.Repeat("a", 64), Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, ServiceIds: ids, ExpiresAt: new(now.Add(time.Hour)), LeaseExpiresAt: now.Add(90 * time.Second), RenewAfter: now.Add(30 * time.Second)}
 	session.IdentityExpiresAt = now.Add(2 * time.Hour)
@@ -189,7 +190,7 @@ func TestIntegrationConnectionSharedOwnerStalledSibling(t *testing.T) {
 		case r.URL.Path == "/v1/workload/services":
 			services := []any{}
 			for i, name := range serviceNames {
-				services = append(services, map[string]any{"id": ids[i], "service": name, "protocol": protocols[i], "endpoint": controlv1.ServiceEndpoint{Hostname: name + ".example.test", Port: 15443 + i}})
+				services = append(services, map[string]any{"id": ids[i], "service": name, "protocol": protocols[i], "endpoint": controlv1.ServiceEndpoint{Hostname: name + ".example.test", Port: servicePorts[i]}})
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"services": services})
 		case strings.HasSuffix(r.URL.Path, "/authorization"):
@@ -206,7 +207,7 @@ func TestIntegrationConnectionSharedOwnerStalledSibling(t *testing.T) {
 				ServiceId: service, ServiceRunId: serviceRun, RunNumber: 1,
 				Protocol: controlv1.ServiceProtocol(protocols[i]), TrustRevision: trustRevision,
 				ExpiresAt: now.Add(time.Minute), Subject: session.Subject,
-				Endpoint:  &controlv1.ServiceEndpoint{Hostname: serviceNames[i] + ".example.test", Port: 15443 + i},
+				Endpoint:  &controlv1.ServiceEndpoint{Hostname: serviceNames[i] + ".example.test", Port: servicePorts[i]},
 				PairReady: &natives[service].Ready,
 			})
 		case strings.Contains(r.URL.Path, "/connector-peer-pairs"):
@@ -230,9 +231,9 @@ func TestIntegrationConnectionSharedOwnerStalledSibling(t *testing.T) {
 				i := slices.Index(ids, pair.ServiceId)
 				_ = json.NewEncoder(w).Encode(controlv1.ConnectorPeerPairRenewal{Pair: pair, RunValidUntil: pair.ExpiresAt,
 					Protocol: controlv1.ServiceProtocol(protocols[i]), TrustRevision: trustRevision,
-					Endpoint: controlv1.ServiceEndpoint{Hostname: serviceNames[i] + ".example.test", Port: 15443 + i},
+					Endpoint: controlv1.ServiceEndpoint{Hostname: serviceNames[i] + ".example.test", Port: servicePorts[i]},
 					VisitorPermission: controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKindService, Id: pair.ServiceId},
-						Hostname: serviceNames[i] + ".example.test", Port: 15443 + i, ServiceTrustRevision: &trustRevision, VisitorPolicyRevision: 1, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: pair.ExpiresAt}})
+						Hostname: serviceNames[i] + ".example.test", Port: servicePorts[i], ServiceTrustRevision: &trustRevision, VisitorPolicyRevision: 1, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: pair.ExpiresAt}})
 				return
 			}
 			_ = json.NewEncoder(w).Encode(pair)
@@ -248,7 +249,7 @@ func TestIntegrationConnectionSharedOwnerStalledSibling(t *testing.T) {
 				w.WriteHeader(403)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(controlv1.VisitorTokenResponse{Resource: body.Resource, Hostname: serviceNames[i] + ".example.test", Port: 15443 + i, ServiceTrustRevision: &trustRevision, VisitorPolicyRevision: 1, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: time.Now().Add(time.Minute)})
+			_ = json.NewEncoder(w).Encode(controlv1.VisitorTokenResponse{Resource: body.Resource, Hostname: serviceNames[i] + ".example.test", Port: servicePorts[i], ServiceTrustRevision: &trustRevision, VisitorPolicyRevision: 1, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: time.Now().Add(time.Minute)})
 		case r.Method == http.MethodDelete:
 			w.WriteHeader(204)
 		default:

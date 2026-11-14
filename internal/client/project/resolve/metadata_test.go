@@ -33,7 +33,7 @@ func TestProjectMetadataUsesVisitorProjectionWithoutManagerConfiguration(t *test
 	requests := 0
 	hostname := "review.tnl.dev"
 	protocol, public := "http", false
-	port := 20001
+	port := 443
 	status := http.StatusOK
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
@@ -68,10 +68,10 @@ func TestProjectMetadataUsesVisitorProjectionWithoutManagerConfiguration(t *test
 		t.Fatal(err)
 	}
 	encoded, err := json.Marshal(metadata)
-	if err != nil || requests != 1 || len(metadata.Services) != 1 || metadata.Services["web"].URL != "https://review.tnl.dev:20001" || metadata.Services["web"].Port != port || metadata.Services["web"].Public || strings.Contains(string(encoded), "production.internal") || strings.Contains(string(encoded), "private-target-trust") || strings.Contains(string(encoded), `"api"`) || strings.Contains(string(encoded), "visitor-session") {
+	if err != nil || requests != 1 || len(metadata.Services) != 1 || metadata.Services["web"].URL != "https://review.tnl.dev" || metadata.Services["web"].Port != port || metadata.Services["web"].Public || strings.Contains(string(encoded), "production.internal") || strings.Contains(string(encoded), "private-target-trust") || strings.Contains(string(encoded), `"api"`) || strings.Contains(string(encoded), "visitor-session") {
 		t.Fatalf("unsafe or incomplete visitor metadata: %s, requests=%d, error=%v", encoded, requests, err)
 	}
-	protocol, public = "postgres", true
+	protocol, public, port = "postgres", true, 20001
 	service := resolver.project.Config.Services["web"]
 	service.Protocol, service.Tunnel = &protocol, nil
 	service.HTTP = nil
@@ -114,7 +114,7 @@ func TestLocalPublicMetadataUsesExactWorktreeEndpoint(t *testing.T) {
 		Services: config.Services{"api": {Public: new(true)}, "db": {Protocol: new("postgres"), Public: new(true), Target: &config.ServiceTarget{Type: "address", Address: testTarget("db.internal:5432")}}, "private": {}},
 	}}
 	source, worktree := project.LocalPublicationIdentity(), project.LocalWorktreeKey()
-	public, port, status := true, 25443, http.StatusOK
+	public, port, status := true, 443, http.StatusOK
 	returnedWorktree := worktree
 	requests := 0
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -149,7 +149,7 @@ func TestLocalPublicMetadataUsesExactWorktreeEndpoint(t *testing.T) {
 	resolver.Seed(server.URL, &auth.Client{ServerEndpoint: server.URL, Control: control})
 	resolver.contexts[server.URL+"\x00"] = appliedTestContext()
 	metadata, err := resolver.Generate(t.Context())
-	if err != nil || requests != 1 || len(metadata.Services) != 1 || metadata.Services["api"].URL != "https://api.feature.tnl.dev:25443" || !metadata.Services["api"].Public {
+	if err != nil || requests != 1 || len(metadata.Services) != 1 || metadata.Services["api"].URL != "https://api.feature.tnl.dev" || !metadata.Services["api"].Public {
 		t.Fatal("metadata invented a port or included private/database bindings", metadata, requests, err)
 	}
 	public = false
@@ -161,7 +161,7 @@ func TestLocalPublicMetadataUsesExactWorktreeEndpoint(t *testing.T) {
 	if _, err := resolver.Generate(t.Context()); err == nil {
 		t.Fatal("public service without an allocated port was accepted")
 	}
-	port, returnedWorktree = 25443, "another-worktree"
+	port, returnedWorktree = 443, "another-worktree"
 	if _, err := resolver.Generate(t.Context()); err == nil {
 		t.Fatal("metadata adopted another worktree endpoint")
 	}

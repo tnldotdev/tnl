@@ -20,7 +20,7 @@ import (
 )
 
 func TestConnectorHTTPBrowserInstructionsSeparateLocalAndPublicPorts(t *testing.T) {
-	service := controlv1.Service{Id: "svc_0123456789ABCDEFGHIJKL", Protocol: controlv1.ServiceProtocolHTTP, Enabled: true, Endpoint: &controlv1.ServiceEndpoint{Hostname: "orders.example.test", Port: 25443, Public: true}}
+	service := controlv1.Service{Id: "svc_0123456789ABCDEFGHIJKL", Protocol: controlv1.ServiceProtocolHTTP, Enabled: true, Endpoint: &controlv1.ServiceEndpoint{Hostname: "orders.example.test", Port: 443, Public: true}}
 	for _, listen := range []string{"127.0.0.1:25443", "127.0.0.1:15432", "[::1]:15432"} {
 		profile, err := serviceConnectionProfile(service, listen)
 		if err != nil {
@@ -62,7 +62,7 @@ func TestConnectorHTTPCurlDialsOverrideWithVerifiedAuthority(t *testing.T) {
 	// even a configured HTTPS proxy must not divert this local connector command.
 	t.Setenv("https_proxy", "http://127.0.0.1:1")
 	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
-	service := controlv1.Service{Id: "svc_0123456789ABCDEFGHIJKL", Protocol: controlv1.ServiceProtocolHTTP, Enabled: true, Endpoint: &controlv1.ServiceEndpoint{Hostname: "example.com", Port: 25443, Public: true}}
+	service := controlv1.Service{Id: "svc_0123456789ABCDEFGHIJKL", Protocol: controlv1.ServiceProtocolHTTP, Enabled: true, Endpoint: &controlv1.ServiceEndpoint{Hostname: "example.com", Port: 443, Public: true}}
 	invoke := func() ([]byte, error) {
 		t.Helper()
 		profile, err := serviceConnectionProfile(service, target.Listener.Addr().String())
@@ -85,6 +85,9 @@ func TestConnectorProfileSeparatesLocalDialAndVerifiedIdentity(t *testing.T) {
 	for _, public := range []bool{false, true} {
 		for _, protocol := range []controlv1.ServiceProtocol{controlv1.ServiceProtocolHTTP, controlv1.Postgres, controlv1.Mysql, controlv1.Tcp, "kubernetes"} {
 			service := controlv1.Service{Id: "svc_0123456789ABCDEFGHIJKL", Protocol: protocol, Enabled: true, Endpoint: &controlv1.ServiceEndpoint{Hostname: "orders.production.example.test", Port: 25443, Public: public}}
+			if protocol == controlv1.ServiceProtocolHTTP {
+				service.Endpoint.Port = 443
+			}
 			approved := *service.Endpoint
 			profile, err := serviceConnectionProfile(service, "127.0.0.1:15432")
 			if err != nil || !profile.ConnectorRequired || profile.Authentication != connectionConnector || profile.Host != "127.0.0.1" || profile.Port != 15432 || profile.Hostname != approved.Hostname || *service.Endpoint != approved || profile.Public != public {
@@ -122,6 +125,9 @@ func TestConnectModeMatrix(t *testing.T) {
 	for _, public := range []bool{false, true} {
 		for _, protocol := range []controlv1.ServiceProtocol{controlv1.ServiceProtocolHTTP, controlv1.Postgres, controlv1.Mysql, controlv1.Tcp, "kubernetes"} {
 			service := controlv1.Service{Id: "svc_0123456789ABCDEFGHIJKL", Enabled: true, Protocol: protocol, Endpoint: &controlv1.ServiceEndpoint{Hostname: "service.example.test", Port: 25443, Public: public}}
+			if protocol == controlv1.ServiceProtocolHTTP {
+				service.Endpoint.Port = 443
+			}
 			for _, flags := range []StartOptions{{}, {Install: true}, {Detach: true}, {Foreground: true}, {Listen: "127.0.0.1:15432"}, {Detach: true, Listen: "127.0.0.1:15432", Output: "json"}, {Stdio: true}, {Output: "json"}, {Protocol: "tcp"}} {
 				valid := (!flags.Stdio || protocol == controlv1.Tcp) && (flags.Protocol == "" || flags.Protocol == string(protocol))
 				if err := ValidateServiceMode(flags, service); (err == nil) != valid {
@@ -136,15 +142,20 @@ func TestConnectorPrivateIdentityNeedsNoPublicReservation(t *testing.T) {
 	for _, protocol := range []controlv1.ServiceProtocol{"http", "tcp", "postgres", "mysql", "kubernetes"} {
 		service := controlv1.Service{Id: "svc_0123456789ABCDEFGHIJKL", Enabled: true, Protocol: protocol,
 			Endpoint: &controlv1.ServiceEndpoint{Hostname: "private.example.test"}}
+		port := 0
+		if protocol == controlv1.ServiceProtocolHTTP {
+			port = 443
+			service.Endpoint.Port = port
+		}
 		profile, err := serviceConnectionProfile(service, "127.0.0.1:24117")
-		if err != nil || profile.Port != 24117 || profile.ServicePort != 0 || profile.Public || strings.Contains(profile.URL, ":0") {
+		if err != nil || profile.Port != 24117 || profile.ServicePort != port || profile.Public || strings.Contains(profile.URL, ":0") {
 			t.Fatal("private identity acquired a public port or lost its local listener", profile, err)
 		}
 		if protocol == "http" && profile.URL != "https://private.example.test:24117/" {
 			t.Fatal("private HTTP URL does not use the saved local port", profile.URL)
 		}
 		service.Endpoint.Public = true
-		if ValidateService(service) == nil {
+		if err := ValidateService(service); protocol == "http" && err != nil || protocol != "http" && err == nil {
 			t.Fatal("public service accepted an unallocated port")
 		}
 	}
