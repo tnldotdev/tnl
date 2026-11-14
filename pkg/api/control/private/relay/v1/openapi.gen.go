@@ -174,7 +174,7 @@ type ConnectorPeerPairLegClaimRequest struct {
 	// ObservedSourceIp IP of the accepted connector socket as observed and signed by the relay process; never an HTTP header or connector-supplied value.
 	ObservedSourceIp string `json:"observed_source_ip"`
 
-	// ProofFrame unpadded base64url of exactly one frame from tunnelv1.WriteConnectorPairLegProof, including its four-byte length prefix. the framed payload is limited to 4096 bytes.
+	// ProofFrame Unpadded base64url of exactly one frame from tunnelv1.WriteConnectorPairLegProof, including its four-byte length prefix. The framed payload is limited to 4096 bytes and retains exactly one service/run or public URL/publish-run family with its own canonical signing domain. No HTTP adapter may rewrite proof fields.
 	ProofFrame string             `json:"proof_frame"`
 	RelayLease RelayLeaseIdentity `json:"relay_lease"`
 

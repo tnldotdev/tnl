@@ -33,13 +33,11 @@ func ConnectorPeerPairProof(serviceID string, body ConnectorPeerPairRequest) (tu
 		proof.PreviousGeneration = *body.PreviousGeneration
 	}
 	for i, relay := range body.ExpectedRelays {
-		if relay.RelayLease.RelayLeaseRevision < 1 {
+		converted, valid := connectorProofRelay(relay)
+		if !valid {
 			return tunnelv1.ConnectorPeerPairProof{}, tunnelv1.ErrConnectorPeerPairProof
 		}
-		proof.ExpectedRelays[i] = tunnelv1.ConnectorPeerPairRelay{PublisherConnectionID: relay.PublisherConnectionId,
-			AssignmentRevision: relay.AssignmentRevision, RelayAddress: relay.RelayAddress, TLSServerName: relay.TlsServerName,
-			RelayLease: tunnelv1.ConnectorPeerRelayLease{RelayServiceID: relay.RelayLease.RelayServiceId, RelayID: relay.RelayLease.RelayId,
-				RelayRunID: relay.RelayLease.RelayRunId, RelayLeaseRevision: uint64(relay.RelayLease.RelayLeaseRevision)}}
+		proof.ExpectedRelays[i] = converted
 	}
 	if _, err := proof.Message(); err != nil {
 		return tunnelv1.ConnectorPeerPairProof{}, err

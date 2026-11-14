@@ -21,6 +21,14 @@ func assertConnectorPairCandidatePages(t *testing.T, d *Database, pair Connector
 	if _, err := d.ListConnectorPeerPairs(ctx, pair.ServiceID, run.RunID, "invalid", run.Token, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("invalid cursor was accepted", err)
 	}
+	assertConnectorPairCandidateInventory(t, d, pair, now, func(after string) (ConnectorPeerPairCandidates, error) {
+		return d.ListConnectorPeerPairs(ctx, pair.ServiceID, run.RunID, after, run.Token, now)
+	})
+}
+
+func assertConnectorPairCandidateInventory(t *testing.T, d *Database, pair ConnectorPeerPair, now time.Time, list func(string) (ConnectorPeerPairCandidates, error)) {
+	t.Helper()
+	ctx := t.Context()
 	expected := map[string]int64{pair.ID: pair.DeliveryGeneration}
 	var inserted []string
 	defer func() {
@@ -39,10 +47,10 @@ func assertConnectorPairCandidatePages(t *testing.T, d *Database, pair Connector
 		}
 		var generation int64
 		err = d.pool.QueryRow(ctx, `INSERT INTO control.connector_peer_pairs
-			(id,service_id,service_run_id,run_number,publisher_identity_id,subject_kind,subject_id,parent_control_session_id,
+			(id,service_id,service_run_id,run_number,public_url_id,publish_run_id,publish_run_number,preview_id,publisher_identity_id,subject_kind,subject_id,parent_control_session_id,
 			owner_key,idempotency_key,request_digest,key_digest,key_ciphertext,delivery_id,storage_key_id,slots,
 			delivery_generation,created_at,last_authorized_at,last_request_at,replay_fence_until,expires_at)
-			SELECT $2,service_id,service_run_id,run_number,publisher_identity_id,subject_kind,$2,parent_control_session_id,
+			SELECT $2,service_id,service_run_id,run_number,public_url_id,publish_run_id,publish_run_number,preview_id,publisher_identity_id,subject_kind,$2,parent_control_session_id,
 			owner_key,idempotency_key,request_digest,key_digest,key_ciphertext,$3,storage_key_id,slots,
 			nextval('control.connector_peer_delivery_generation'),created_at,last_authorized_at,last_request_at,replay_fence_until,expires_at
 			FROM control.connector_peer_pairs WHERE id=$1 RETURNING delivery_generation`, pair.ID, id, delivery).Scan(&generation)
@@ -69,7 +77,7 @@ func assertConnectorPairCandidatePages(t *testing.T, d *Database, pair Connector
 		if pages > 2 {
 			t.Fatal("discovery cursor did not terminate")
 		}
-		page, err := d.ListConnectorPeerPairs(ctx, pair.ServiceID, run.RunID, after, run.Token, now)
+		page, err := list(after)
 		if err != nil || len(page.Items) > 64 || pages == 0 && len(page.Items) != 64 {
 			t.Fatal("discovery page was not bounded", len(page.Items), err)
 		}

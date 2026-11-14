@@ -18,7 +18,9 @@ SELECT count(*) FROM (
 SELECT id,COALESCE((SELECT pending.delivery_generation FROM control.connector_peer_pending_bindings pending
     WHERE pending.pair_id=connector_peer_pairs.id AND pending.pending_until>sqlc.arg(now)),delivery_generation)::bigint AS delivery_generation FROM control.connector_peer_pairs
 WHERE service_id=sqlc.arg(service_id) AND service_run_id=sqlc.arg(service_run_id)
-    AND run_number=sqlc.arg(run_number) AND publisher_identity_id=sqlc.arg(publisher_identity_id)
+    AND run_number=sqlc.arg(run_number) AND public_url_id=sqlc.arg(public_url_id)
+    AND publish_run_id=sqlc.arg(publish_run_id) AND publish_run_number=sqlc.arg(publish_run_number)
+    AND publisher_identity_id=sqlc.arg(publisher_identity_id)
     AND expires_at>sqlc.arg(now) AND id COLLATE "C">sqlc.arg(after_id) COLLATE "C"
 ORDER BY id COLLATE "C" LIMIT 65;
 

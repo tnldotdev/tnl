@@ -23,11 +23,15 @@ type connectorPeerClaimStoreStub struct {
 	*relayStoreStub
 	err    error
 	cancel context.CancelFunc
+	proof  *tunnelv1.ConnectorPairLegProof
 }
 
-func (s connectorPeerClaimStoreStub) ClaimConnectorPeerPairLeg(context.Context, controlstate.RelayLeaseIdentity, netip.Addr, tunnelv1.ConnectorPairLegProof, []byte, time.Time) (controlstate.ConnectorPeerPairLegClaim, error) {
+func (s connectorPeerClaimStoreStub) ClaimConnectorPeerPairLeg(_ context.Context, _ controlstate.RelayLeaseIdentity, _ netip.Addr, proof tunnelv1.ConnectorPairLegProof, _ []byte, _ time.Time) (controlstate.ConnectorPeerPairLegClaim, error) {
 	if s.cancel != nil {
 		s.cancel()
+	}
+	if s.proof != nil {
+		*s.proof = proof
 	}
 	return controlstate.ConnectorPeerPairLegClaim{}, s.err
 }
@@ -57,6 +61,7 @@ func TestConnectorPeerClaimProblemPreservesCauseAndSafeOutput(t *testing.T) {
 		{"service", controlstate.ErrServiceAccess, 403, "unauthenticated", false, false},
 		{"permission", controlstate.ErrVisitorPermission, 403, "unauthenticated", false, false},
 		{"workload", controlstate.ErrWorkloadDenied, 403, "unauthenticated", false, false},
+		{"publisher", controlstate.ErrPublisherIdentity, 403, "unauthenticated", false, false},
 		{"authorized stale binding", controlstate.ErrConnectorPeerBindingStale, 409, "stale_network_binding", false, false},
 		{"denial precedes stale", errors.Join(controlstate.ErrConnectorPeerBindingStale, controlstate.ErrServiceAccess), 403, "unauthenticated", false, false},
 		{"canceled request", fmt.Errorf("database canceled: %w", context.Canceled), 0, "", false, true},
@@ -111,5 +116,45 @@ func TestConnectorPeerClaimProblemPreservesCauseAndSafeOutput(t *testing.T) {
 				t.Fatal("direct adapter changed the safe problem", err)
 			}
 		})
+	}
+}
+
+func TestPublicURLConnectorRelayAdaptersPreserveCanonicalProofFrame(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	proof := tunnelv1.ConnectorPairLegProof{PairID: "cpp_1234567890123456789012", DeliveryGeneration: 7,
+		PublicURLID: "url_1234567890123456789012", PublishRunID: "pr_1234567890123456789012", PublishRunNumber: 9007199254740993,
+		PublisherIdentityID: "pub_1234567890123456789012", ConnectionSlot: 1, PublisherConnectionID: "pc_1234567890123456789012",
+		AssignmentRevision: 3, RelayServiceID: "relay-a", RelayID: "node-a", RelayRunID: "process-a", RelayLeaseRevision: 2,
+		RequestedAt: now, Nonce: bytes.Repeat([]byte{1}, 32), Signature: bytes.Repeat([]byte{2}, 64)}
+	lease := relayv1.RelayLease{RelayServiceId: proof.RelayServiceID, RelayId: proof.RelayID, RelayRunId: proof.RelayRunID, RelayLeaseRevision: 2}
+	source := netip.MustParseAddr("192.0.2.10")
+	signature := bytes.Repeat([]byte{3}, 64)
+	body, err := relayv1.NewConnectorPeerPairLegClaimRequest(lease, source, proof, signature)
+	if err != nil {
+		t.Fatal("frame public URL relay proof", err)
+	}
+	var got tunnelv1.ConnectorPairLegProof
+	store := connectorPeerClaimStoreStub{relayStoreStub: &relayStoreStub{}, proof: &got}
+	handler := testRelayHandler(t, store, now, func(err error) { t.Error("unexpected operator report", err) })
+	response := serveRelayJSON(t, handler, http.MethodPost, "/internal/v1/connector-peer-pairs/"+proof.PairID+"/legs/1/claim", body)
+	if response.Code != http.StatusOK || !got.SameLeg(proof) || !bytes.Equal(got.Signature, proof.Signature) ||
+		got.ServiceID != "" || got.ServiceRunID != "" || got.RunNumber != 0 {
+		t.Fatal("HTTP relay adapter rewrote typed public URL proof fields", response.Code)
+	}
+	want, err := proof.RelayClaimMessage(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual, err := got.RelayClaimMessage(source)
+	if err != nil || !bytes.Equal(actual, want) {
+		t.Fatal("HTTP relay adapter changed canonical attestation bytes", err)
+	}
+	got = tunnelv1.ConnectorPairLegProof{}
+	direct, err := NewDirectClient(DirectConfig{Store: store, LeaseDuration: time.Minute, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := direct.ClaimConnectorPeerPairLegFromAcceptedSocket(t.Context(), lease, source, proof, signature); err != nil || !got.SameLeg(proof) {
+		t.Fatal("standalone relay adapter lost public URL proof fields", err)
 	}
 }

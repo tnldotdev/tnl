@@ -111,12 +111,18 @@ func connectorPairSavedAuthority(t *testing.T, d *Database, id string) []byte {
 	if err := d.pool.QueryRow(t.Context(), `SELECT jsonb_build_object('pair',to_jsonb(pair),
 	    'pending',(SELECT to_jsonb(pending) FROM control.connector_peer_pending_bindings pending WHERE pending.pair_id=pair.id),
 	    'claims',(SELECT jsonb_agg(to_jsonb(claim) ORDER BY connection_slot) FROM control.connector_peer_pair_leg_claims claim WHERE pair_id=pair.id),
-	    'run',to_jsonb(run),
-	    'slots',(SELECT jsonb_agg(to_jsonb(slot) ORDER BY connection_slot) FROM control.service_connection_slots slot WHERE service_run_id=run.id),
+	    'run',COALESCE(
+	        (SELECT to_jsonb(run) FROM control.service_runs run WHERE run.id=pair.service_run_id),
+	        (SELECT to_jsonb(run) FROM control.publish_runs run WHERE run.id=pair.publish_run_id)),
+	    'slots',COALESCE(
+	        (SELECT jsonb_agg(to_jsonb(slot) ORDER BY connection_slot) FROM control.service_connection_slots slot WHERE service_run_id=pair.service_run_id),
+	        (SELECT jsonb_agg(to_jsonb(slot) ORDER BY connection_slot) FROM control.publish_run_connection_slots slot WHERE publish_run_id=pair.publish_run_id)),
 	    'parent',(SELECT to_jsonb(parent) FROM control.control_sessions parent WHERE id=pair.parent_control_session_id),
 	    'workload',(SELECT to_jsonb(workload) FROM control.workload_sessions workload WHERE id=pair.subject_id),
-	    'grant',(SELECT to_jsonb(grant_row) FROM control.publisher_grants grant_row WHERE id=run.publisher_grant_id))
-	    FROM control.connector_peer_pairs pair JOIN control.service_runs run ON run.id=pair.service_run_id WHERE pair.id=$1`, id).Scan(&value); err != nil {
+	    'grant',(SELECT to_jsonb(grant_row) FROM control.publisher_grants grant_row WHERE id=COALESCE(
+	        (SELECT publisher_grant_id FROM control.service_runs WHERE id=pair.service_run_id),
+	        (SELECT publisher_grant_id FROM control.publish_runs WHERE id=pair.publish_run_id))))
+	    FROM control.connector_peer_pairs pair WHERE pair.id=$1`, id).Scan(&value); err != nil {
 		t.Fatal(err)
 	}
 	return value

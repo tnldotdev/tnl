@@ -57,6 +57,18 @@ tags:
   - name: service-audit
     description: Read the team's bounded service access and lifecycle audit history.
 paths:
+  /v1/public-urls/{public_url_id}/connector-peer-pairs:
+    $ref: "./paths/public-url-connectors.yaml#/paths/~1v1~1public-urls~1{public_url_id}~1connector-peer-pairs"
+  /v1/public-urls/{public_url_id}/connector-peer-pairs/{pair_id}/renew:
+    $ref: "./paths/public-url-connectors.yaml#/paths/~1v1~1public-urls~1{public_url_id}~1connector-peer-pairs~1{pair_id}~1renew"
+  /v1/public-urls/{public_url_id}/connector-peer-pairs/{pair_id}/rebind:
+    $ref: "./paths/public-url-connectors.yaml#/paths/~1v1~1public-urls~1{public_url_id}~1connector-peer-pairs~1{pair_id}~1rebind"
+  /v1/publish-runs/{publish_run_id}/connector-peer-pairs:
+    $ref: "./paths/public-url-connectors.yaml#/paths/~1v1~1publish-runs~1{publish_run_id}~1connector-peer-pairs"
+  /v1/publish-runs/{publish_run_id}/connector-peer-pairs/{pair_id}/delivery:
+    $ref: "./paths/public-url-connectors.yaml#/paths/~1v1~1publish-runs~1{publish_run_id}~1connector-peer-pairs~1{pair_id}~1delivery"
+  /v1/publish-runs/{publish_run_id}/connector-peer-pairs/{pair_id}/prepared:
+    $ref: "./paths/public-url-connectors.yaml#/paths/~1v1~1publish-runs~1{publish_run_id}~1connector-peer-pairs~1{pair_id}~1prepared"
   /v1/projects/{project_key}/deployments/{deployment}/public-urls/{service}:
     $ref: "./paths/deployment-publication.yaml#/paths/~1v1~1projects~1{project_key}~1deployments~1{deployment}~1public-urls~1{service}"
   /v1/projects/{project_key}/deployments/{deployment}/public-urls:
@@ -378,6 +390,18 @@ components:
     Problem:
       $ref: "./schemas/common.yaml#/responses/Problem"
   schemas:
+    PublicURLConnectorPeerPairRequest:
+      $ref: "./schemas/public-url-connectors.yaml#/schemas/PublicURLConnectorPeerPairRequest"
+    PublicURLConnectorPeerPair:
+      $ref: "./schemas/public-url-connectors.yaml#/schemas/PublicURLConnectorPeerPair"
+    PublicURLConnectorPeerPairRenewal:
+      $ref: "./schemas/public-url-connectors.yaml#/schemas/PublicURLConnectorPeerPairRenewal"
+    PublicURLConnectorPeerPairRebindRequest:
+      $ref: "./schemas/public-url-connectors.yaml#/schemas/PublicURLConnectorPeerPairRebindRequest"
+    PublicURLConnectorPeerPairRebindState:
+      $ref: "./schemas/public-url-connectors.yaml#/schemas/PublicURLConnectorPeerPairRebindState"
+    PublicURLConnectorPeerPairDelivery:
+      $ref: "./schemas/public-url-connectors.yaml#/schemas/PublicURLConnectorPeerPairDelivery"
     ProjectStatus:
       $ref: "./schemas/project-status.yaml#/schemas/ProjectStatus"
     ProjectPublicationStatus:

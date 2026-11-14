@@ -59,7 +59,7 @@ func (s *service) ClaimConnectorPeerPairLeg(ctx context.Context, pairID string, 
 		if ctx.Err() != nil {
 			return relayv1.ConnectorPeerPairLegClaim{}, context.Cause(ctx)
 		}
-		if errors.Is(err, controlstate.ErrServiceAccess) || errors.Is(err, controlstate.ErrVisitorPermission) || errors.Is(err, controlstate.ErrWorkloadDenied) {
+		if errors.Is(err, controlstate.ErrServiceAccess) || errors.Is(err, controlstate.ErrVisitorPermission) || errors.Is(err, controlstate.ErrWorkloadDenied) || errors.Is(err, controlstate.ErrPublisherIdentity) {
 			return relayv1.ConnectorPeerPairLegClaim{}, serverhttp.NewProblemError(http.StatusForbidden, "unauthenticated", "connector peer pair leg is no longer authorized")
 		}
 		if errors.Is(err, controlstate.ErrConnectorPeerBindingStale) {

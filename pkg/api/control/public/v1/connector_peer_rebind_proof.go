@@ -28,13 +28,11 @@ func ConnectorPeerPairRebindProof(serviceID, pairID string, body ConnectorPeerPa
 		PublisherIdentityID: body.PublisherIdentityId, TrustRevision: body.TrustRevision, Subject: subject,
 		BindingChallenge: body.BindingChallenge}
 	for _, relay := range body.ExpectedRelays {
-		if relay.RelayLease.RelayLeaseRevision < 1 {
+		converted, valid := connectorProofRelay(relay)
+		if !valid {
 			return tunnelv1.ConnectorPeerPairRebindProof{}, tunnelv1.ErrConnectorPeerPairRebindProof
 		}
-		proof.ExpectedRelays = append(proof.ExpectedRelays, tunnelv1.ConnectorPeerPairRelay{PublisherConnectionID: relay.PublisherConnectionId,
-			AssignmentRevision: relay.AssignmentRevision, RelayAddress: relay.RelayAddress, TLSServerName: relay.TlsServerName,
-			RelayLease: tunnelv1.ConnectorPeerRelayLease{RelayServiceID: relay.RelayLease.RelayServiceId, RelayID: relay.RelayLease.RelayId,
-				RelayRunID: relay.RelayLease.RelayRunId, RelayLeaseRevision: uint64(relay.RelayLease.RelayLeaseRevision)}})
+		proof.ExpectedRelays = append(proof.ExpectedRelays, converted)
 	}
 	for _, path := range body.PathProofs {
 		proof.PathProofs = append(proof.PathProofs, tunnelv1.ConnectorPeerPairPathProof{ConnectionSlot: path.ConnectionSlot,

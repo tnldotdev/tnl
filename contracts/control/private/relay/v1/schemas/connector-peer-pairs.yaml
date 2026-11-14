@@ -18,7 +18,7 @@ schemas:
         minLength: 1
         maxLength: 5467
         pattern: "^[A-Za-z0-9_-]+$"
-        description: unpadded base64url of exactly one frame from tunnelv1.WriteConnectorPairLegProof, including its four-byte length prefix. the framed payload is limited to 4096 bytes.
+        description: Unpadded base64url of exactly one frame from tunnelv1.WriteConnectorPairLegProof, including its four-byte length prefix. The framed payload is limited to 4096 bytes and retains exactly one service/run or public URL/publish-run family with its own canonical signing domain. No HTTP adapter may rewrite proof fields.
       relay_signature:
         type: string
         pattern: "^[A-Za-z0-9_-]{85}[AQgw]$"

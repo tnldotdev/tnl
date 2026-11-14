@@ -245,19 +245,19 @@ func (e ConnectorPeerPairRebindPhase) Valid() bool {
 
 // Defines values for ConnectorPeerPairRequestAction.
 const (
-	Create  ConnectorPeerPairRequestAction = "create"
-	Renew   ConnectorPeerPairRequestAction = "renew"
-	Replace ConnectorPeerPairRequestAction = "replace"
+	ConnectorPeerPairRequestActionCreate  ConnectorPeerPairRequestAction = "create"
+	ConnectorPeerPairRequestActionRenew   ConnectorPeerPairRequestAction = "renew"
+	ConnectorPeerPairRequestActionReplace ConnectorPeerPairRequestAction = "replace"
 )
 
 // Valid indicates whether the value is a known member of the ConnectorPeerPairRequestAction enum.
 func (e ConnectorPeerPairRequestAction) Valid() bool {
 	switch e {
-	case Create:
+	case ConnectorPeerPairRequestActionCreate:
 		return true
-	case Renew:
+	case ConnectorPeerPairRequestActionRenew:
 		return true
-	case Replace:
+	case ConnectorPeerPairRequestActionReplace:
 		return true
 	default:
 		return false
@@ -831,6 +831,27 @@ func (e ProjectTargetDiscoveryType) Valid() bool {
 	case Eks:
 		return true
 	case Rds:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PublicURLConnectorPeerPairRequestAction.
+const (
+	PublicURLConnectorPeerPairRequestActionCreate  PublicURLConnectorPeerPairRequestAction = "create"
+	PublicURLConnectorPeerPairRequestActionRenew   PublicURLConnectorPeerPairRequestAction = "renew"
+	PublicURLConnectorPeerPairRequestActionReplace PublicURLConnectorPeerPairRequestAction = "replace"
+)
+
+// Valid indicates whether the value is a known member of the PublicURLConnectorPeerPairRequestAction enum.
+func (e PublicURLConnectorPeerPairRequestAction) Valid() bool {
+	switch e {
+	case PublicURLConnectorPeerPairRequestActionCreate:
+		return true
+	case PublicURLConnectorPeerPairRequestActionRenew:
+		return true
+	case PublicURLConnectorPeerPairRequestActionReplace:
 		return true
 	default:
 		return false
@@ -3537,6 +3558,169 @@ type PublicURL struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// PublicURLConnectorPeerPair Exact public URL owner and network binding. Public URL IDs and publish run numbers never appear in service fields. The existing pair/session lifecycle and independent delivery deadlines apply.
+type PublicURLConnectorPeerPair struct {
+	BindingChallenge string                        `json:"binding_challenge,omitempty"`
+	BindingState     ConnectorPeerPairBindingState `json:"binding_state,omitempty"`
+
+	// DeliveryGeneration Current network binding revision; aborted revisions are never reused.
+	DeliveryGeneration int64 `json:"delivery_generation,string"`
+
+	// DeliveryId Canonical unpadded base64url of the nonzero 16-byte delivery header identifier; not an access grant.
+	DeliveryId string `json:"delivery_id"`
+
+	// ExpiresAt Owner authority deadline, conservatively capped for a pending snapshot by pending_until. Independent relay claims and publisher installation retain their confirmed bounds; see ConnectorPeerPairPrepared.binding_expires_at in service-runs.yaml. Only a fresh authorized owner renewal extends owner authority; inspect and exact lifecycle retries do not.
+	ExpiresAt time.Time `json:"expires_at"`
+
+	// Key Per-binding delivery credential; never use it as the retained endpoint frame key.
+	Key string `json:"key"`
+
+	// ObservedAt Control's authority observation time; subtract request transit when installing local deadlines.
+	ObservedAt time.Time `json:"observed_at"`
+
+	// OperationId Rebind operation that issued this revision; absent for the initial binding, which has no rebind operation.
+	OperationId         string       `json:"operation_id,omitempty"`
+	PairId              string       `json:"pair_id"`
+	PublicUrlId         PublicURLID  `json:"public_url_id"`
+	PublishRunId        PublishRunID `json:"publish_run_id"`
+	PublishRunNumber    int64        `json:"publish_run_number,string"`
+	PublisherIdentityId string       `json:"publisher_identity_id"`
+
+	// PublisherPreparedUntil The publisher reported its exact packet registration and inner listener installed through this bound. This startup barrier is not visitor permission or a guarantee of continued process liveness.
+	PublisherPreparedUntil *time.Time `json:"publisher_prepared_until,omitempty"`
+
+	// PublisherProvedUntil Independent publisher path-proof freshness, at most five seconds and capped by installation, claim, pending-operation and owner bounds. Used only for activation, not a serving lease. Inspect, exact proof retries and owner renewal cannot extend it; fresh proofs use the prepared operation in service-runs.yaml.
+	PublisherProvedUntil *time.Time               `json:"publisher_proved_until,omitempty"`
+	Relays               []ConnectorPeerPairRelay `json:"relays"`
+
+	// SessionKey Stable endpoint frame key, returned only to the authorized connector and publisher, never a relay.
+	SessionKey string  `json:"session_key,omitempty"`
+	SourceIp   *string `json:"source_ip,omitempty"`
+
+	// Subject Exactly identity_id and device_id for human_device; workload_session_id for workload_session; grant_id and key_id for registered_key. A machine never borrows a human device or provider identity.
+	Subject       VisitorSubject `json:"subject"`
+	TrustRevision int64          `json:"trust_revision,omitempty,string"`
+}
+
+// PublicURLConnectorPeerPairDelivery Existing binding delivery to the exact authenticated publish run, after matching relay claims. This grants no application access and contains no service run credentials.
+type PublicURLConnectorPeerPairDelivery struct {
+	BindingChallenge   string                        `json:"binding_challenge,omitempty"`
+	BindingState       ConnectorPeerPairBindingState `json:"binding_state,omitempty"`
+	DeliveryGeneration int64                         `json:"delivery_generation,string"`
+	DeliveryId         string                        `json:"delivery_id"`
+	ExpiresAt          time.Time                     `json:"expires_at"`
+
+	// Key Per-binding delivery credential; do not log or persist.
+	Key string `json:"key"`
+
+	// ObservedAt Control time for this authority observation; the publisher subtracts request delay when installing its local deadline.
+	ObservedAt          time.Time                `json:"observed_at"`
+	OperationId         string                   `json:"operation_id,omitempty"`
+	PairId              string                   `json:"pair_id"`
+	PublicUrlId         PublicURLID              `json:"public_url_id"`
+	PublishRunId        PublishRunID             `json:"publish_run_id"`
+	PublishRunNumber    int64                    `json:"publish_run_number,string"`
+	PublisherIdentityId string                   `json:"publisher_identity_id"`
+	Relays              []ConnectorPeerPairRelay `json:"relays"`
+
+	// SessionKey Stable retained endpoint frame key; never returned by the private relay claim API.
+	SessionKey string `json:"session_key,omitempty"`
+
+	// SourceIp Canonical source observed by both relays.
+	SourceIp string `json:"source_ip"`
+
+	// Subject Exactly identity_id and device_id for human_device; workload_session_id for workload_session; grant_id and key_id for registered_key. A machine never borrows a human device or provider identity.
+	Subject       VisitorSubject `json:"subject"`
+	TrustRevision int64          `json:"trust_revision,omitempty,string"`
+}
+
+// PublicURLConnectorPeerPairRebindRequest Sign the public URL tunnelv1 rebind proof with the original device key and use the original control session and preview selection. Inspect never renews authority; no phase may select another publication.
+type PublicURLConnectorPeerPairRebindRequest struct {
+	// BindingChallenge The pending binding's canonical 32-byte base64url challenge for activate; empty otherwise.
+	BindingChallenge string `json:"binding_challenge"`
+
+	// ExpectedGeneration Known high-water for inspect, exact high-water CAS for prepare, exact pending revision for activate or abort.
+	ExpectedGeneration int64 `json:"expected_generation,string"`
+
+	// ExpectedRelays Exactly two ordered relay slots for prepare; empty for every other phase.
+	ExpectedRelays []ConnectorPeerPairRelay `json:"expected_relays"`
+	IdempotencyKey IdempotencyKey           `json:"idempotency_key"`
+
+	// OperationId Empty for inspect; otherwise an ik_ opaque id retained across all phases of one operation.
+	OperationId string `json:"operation_id"`
+
+	// PathProofs Exactly two ordered connector-initiated proofs for activate; empty otherwise.
+	PathProofs          []ConnectorPeerPairPathProof `json:"path_proofs"`
+	Phase               ConnectorPeerPairRebindPhase `json:"phase"`
+	PublishRunId        PublishRunID                 `json:"publish_run_id"`
+	PublishRunNumber    int64                        `json:"publish_run_number,string"`
+	PublisherIdentityId string                       `json:"publisher_identity_id"`
+	RequestedAt         time.Time                    `json:"requested_at"`
+	Signature           string                       `json:"signature"`
+
+	// Source A current control session and its enrolled native device. An optional preview selects existing team access to an included public URL; it grants no access by itself.
+	Source VisitorTokenDeviceSource `json:"source"`
+
+	// Subject Exactly identity_id and device_id for human_device; workload_session_id for workload_session; grant_id and key_id for registered_key. A machine never borrows a human device or provider identity.
+	Subject       VisitorSubject `json:"subject"`
+	TrustRevision int64          `json:"trust_revision,string"`
+}
+
+// PublicURLConnectorPeerPairRebindState defines model for PublicURLConnectorPeerPairRebindState.
+type PublicURLConnectorPeerPairRebindState struct {
+	// Active Exact public URL owner and network binding. Public URL IDs and publish run numbers never appear in service fields. The existing pair/session lifecycle and independent delivery deadlines apply.
+	Active              *PublicURLConnectorPeerPair       `json:"active,omitempty"`
+	HighWaterGeneration int64                             `json:"high_water_generation,string"`
+	Operation           *ConnectorPeerPairRebindOperation `json:"operation,omitempty"`
+
+	// Pending Exact public URL owner and network binding. Public URL IDs and publish run numbers never appear in service fields. The existing pair/session lifecycle and independent delivery deadlines apply.
+	Pending *PublicURLConnectorPeerPair `json:"pending,omitempty"`
+
+	// PendingUntil Fixed pending-operation deadline, at most ten seconds from preparation and capped by the existing owner authority. Inspect, exact retries and owner renewal cannot extend it. Publisher installation and path proofs in service-runs.yaml cannot outlive this deadline while pending.
+	PendingUntil *time.Time               `json:"pending_until,omitempty"`
+	ReadyRelays  []ConnectorPeerPairRelay `json:"ready_relays"`
+}
+
+// PublicURLConnectorPeerPairRenewal defines model for PublicURLConnectorPeerPairRenewal.
+type PublicURLConnectorPeerPairRenewal struct {
+	// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Port is zero when no public ingress reservation exists; a positive port remains reserved when public access is temporarily disabled. It is never a machine-local connector port. Public access requires an allocated port. Target trust is a separate publisher-side boundary.
+	Endpoint ServiceEndpoint `json:"endpoint"`
+
+	// Pair Exact public URL owner and network binding. Public URL IDs and publish run numbers never appear in service fields. The existing pair/session lifecycle and independent delivery deadlines apply.
+	Pair              PublicURLConnectorPeerPair `json:"pair"`
+	Protocol          string                     `json:"protocol"`
+	RunValidUntil     time.Time                  `json:"run_valid_until"`
+	TrustRevision     int64                      `json:"trust_revision,string"`
+	VisitorPermission VisitorTokenResponse       `json:"visitor_permission"`
+}
+
+// PublicURLConnectorPeerPairRequest Sign the public URL tunnelv1 preparation proof, not this HTTP object. Only the matching enrolled device and current control session can prepare this exact publish run. Optional source.preview_id selects existing preview access, not another permission.
+type PublicURLConnectorPeerPairRequest struct {
+	Action              PublicURLConnectorPeerPairRequestAction `json:"action"`
+	ExpectedRelays      []ConnectorPeerPairRelay                `json:"expected_relays"`
+	IdempotencyKey      IdempotencyKey                          `json:"idempotency_key"`
+	PreviousGeneration  *int64                                  `json:"previous_generation,omitempty,string"`
+	PreviousPairId      *string                                 `json:"previous_pair_id,omitempty"`
+	PublishRunId        PublishRunID                            `json:"publish_run_id"`
+	PublishRunNumber    int64                                   `json:"publish_run_number,string"`
+	PublisherIdentityId string                                  `json:"publisher_identity_id"`
+
+	// RequestedAt Retain this timestamp on an uncertain reply retry. A successful fresh renewal supersedes earlier create or replace reply proofs; those proofs cannot recover the later renewal's bound.
+	RequestedAt time.Time `json:"requested_at"`
+
+	// Signature Unpadded base64url Ed25519 signature over ConnectorPeerPairProofMessage.
+	Signature string `json:"signature"`
+
+	// Source A current control session and its enrolled native device. An optional preview selects existing team access to an included public URL; it grants no access by itself.
+	Source VisitorTokenDeviceSource `json:"source"`
+
+	// Subject Exactly identity_id and device_id for human_device; workload_session_id for workload_session; grant_id and key_id for registered_key. A machine never borrows a human device or provider identity.
+	Subject VisitorSubject `json:"subject"`
+}
+
+// PublicURLConnectorPeerPairRequestAction defines model for PublicURLConnectorPeerPairRequest.Action.
+type PublicURLConnectorPeerPairRequestAction string
+
 // PublicURLID defines model for PublicURLID.
 type PublicURLID = ResourceID
 
@@ -5033,6 +5217,25 @@ type CreateCertificateIssuanceParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
+// ListPublicURLConnectorPeerPairsParams defines parameters for ListPublicURLConnectorPeerPairs.
+type ListPublicURLConnectorPeerPairsParams struct {
+	PublishRunNumber int64   `form:"publish_run_number" json:"publish_run_number"`
+	After            *string `form:"after,omitempty" json:"after,omitempty"`
+}
+
+// DeliverPublicURLConnectorPeerPairJSONBody defines parameters for DeliverPublicURLConnectorPeerPair.
+type DeliverPublicURLConnectorPeerPairJSONBody struct {
+	DeliveryGeneration int64 `json:"delivery_generation,string"`
+	PublishRunNumber   int64 `json:"publish_run_number,string"`
+}
+
+// ConfirmPublicURLConnectorPeerPairPreparedJSONBody defines parameters for ConfirmPublicURLConnectorPeerPairPrepared.
+type ConfirmPublicURLConnectorPeerPairPreparedJSONBody struct {
+	// Prepared Report installation of the exact independently prepared binding; this does not renew pair or application authority.
+	Prepared         ConnectorPeerPairPrepared `json:"prepared"`
+	PublishRunNumber int64                     `json:"publish_run_number,string"`
+}
+
 // CreateFeedbackReportParams defines parameters for CreateFeedbackReport.
 type CreateFeedbackReportParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
@@ -5237,6 +5440,15 @@ type UpdatePublicURLJSONRequestBody = UpdatePublicURLRequest
 // ReplaceVisitorAccessJSONRequestBody defines body for ReplaceVisitorAccess for application/json ContentType.
 type ReplaceVisitorAccessJSONRequestBody = ReplaceVisitorAccessRequest
 
+// PreparePublicURLConnectorPeerPairJSONRequestBody defines body for PreparePublicURLConnectorPeerPair for application/json ContentType.
+type PreparePublicURLConnectorPeerPairJSONRequestBody = PublicURLConnectorPeerPairRequest
+
+// RebindPublicURLConnectorPeerPairJSONRequestBody defines body for RebindPublicURLConnectorPeerPair for application/json ContentType.
+type RebindPublicURLConnectorPeerPairJSONRequestBody = PublicURLConnectorPeerPairRebindRequest
+
+// RenewPublicURLConnectorPeerPairJSONRequestBody defines body for RenewPublicURLConnectorPeerPair for application/json ContentType.
+type RenewPublicURLConnectorPeerPairJSONRequestBody = PublicURLConnectorPeerPairRequest
+
 // CreatePublishRunJSONRequestBody defines body for CreatePublishRun for application/json ContentType.
 type CreatePublishRunJSONRequestBody = CreatePublishRunRequest
 
@@ -5263,6 +5475,12 @@ type MarkPublishRunCertificateInstalledJSONRequestBody = CertificateInstalledReq
 
 // CreateCertificateIssuanceJSONRequestBody defines body for CreateCertificateIssuance for application/json ContentType.
 type CreateCertificateIssuanceJSONRequestBody = CreateCertificateIssuanceRequest
+
+// DeliverPublicURLConnectorPeerPairJSONRequestBody defines body for DeliverPublicURLConnectorPeerPair for application/json ContentType.
+type DeliverPublicURLConnectorPeerPairJSONRequestBody DeliverPublicURLConnectorPeerPairJSONBody
+
+// ConfirmPublicURLConnectorPeerPairPreparedJSONRequestBody defines body for ConfirmPublicURLConnectorPeerPairPrepared for application/json ContentType.
+type ConfirmPublicURLConnectorPeerPairPreparedJSONRequestBody ConfirmPublicURLConnectorPeerPairPreparedJSONBody
 
 // CreateFeedbackReportJSONRequestBody defines body for CreateFeedbackReport for application/json ContentType.
 type CreateFeedbackReportJSONRequestBody = CreateFeedbackReportRequest
@@ -6374,6 +6592,60 @@ type ClientInterface interface {
 	// Corresponds with PUT /v1/public-urls/{public_url_id}/access (the `ReplaceVisitorAccess` operationId).
 	ReplaceVisitorAccess(ctx context.Context, publicUrlId PublicURLID, body ReplaceVisitorAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// PreparePublicURLConnectorPeerPairWithBody Prepare a signed connector owner for an exact public URL publish run
+	//
+	// Require the current matching control session and enrolled device signature. Control rechecks existing public URL or selected preview access, publisher authority, certificate, and both relay assignments. A ready snapshot is not permission. No anonymous, share bearer, service workload, or management credential can replace native device possession.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/connector-peer-pairs (the `PreparePublicURLConnectorPeerPair` operationId).
+	PreparePublicURLConnectorPeerPairWithBody(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PreparePublicURLConnectorPeerPair Prepare a signed connector owner for an exact public URL publish run
+	//
+	// Require the current matching control session and enrolled device signature. Control rechecks existing public URL or selected preview access, publisher authority, certificate, and both relay assignments. A ready snapshot is not permission. No anonymous, share bearer, service workload, or management credential can replace native device possession.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/connector-peer-pairs (the `PreparePublicURLConnectorPeerPair` operationId).
+	PreparePublicURLConnectorPeerPair(ctx context.Context, publicUrlId PublicURLID, body PreparePublicURLConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RebindPublicURLConnectorPeerPairWithBody Inspect or change an existing public URL connector network binding
+	//
+	// Use the existing inspect, prepare, activate, and abort lifecycle with the original device, session, and preview selection. No phase can change publication identity or revive an expired owner. Only stale_network_binding permits network recovery; other authorization failures are terminal.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/connector-peer-pairs/{pair_id}/rebind (the `RebindPublicURLConnectorPeerPair` operationId).
+	RebindPublicURLConnectorPeerPairWithBody(ctx context.Context, publicUrlId PublicURLID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RebindPublicURLConnectorPeerPair Inspect or change an existing public URL connector network binding
+	//
+	// Use the existing inspect, prepare, activate, and abort lifecycle with the original device, session, and preview selection. No phase can change publication identity or revive an expired owner. Only stale_network_binding permits network recovery; other authorization failures are terminal.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/connector-peer-pairs/{pair_id}/rebind (the `RebindPublicURLConnectorPeerPair` operationId).
+	RebindPublicURLConnectorPeerPair(ctx context.Context, publicUrlId PublicURLID, pairId string, body RebindPublicURLConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RenewPublicURLConnectorPeerPairWithBody Renew the retained public URL owner and exact visitor permission together
+	//
+	// Retain the original device, parent control session, preview selection, publisher, and publish run. Endpoint trust changes require replacement. Only a fresh signed renewal extends the owner; independently confirmed relay and installation deadlines remain unchanged.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/connector-peer-pairs/{pair_id}/renew (the `RenewPublicURLConnectorPeerPair` operationId).
+	RenewPublicURLConnectorPeerPairWithBody(ctx context.Context, publicUrlId PublicURLID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RenewPublicURLConnectorPeerPair Renew the retained public URL owner and exact visitor permission together
+	//
+	// Retain the original device, parent control session, preview selection, publisher, and publish run. Endpoint trust changes require replacement. Only a fresh signed renewal extends the owner; independently confirmed relay and installation deadlines remain unchanged.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/connector-peer-pairs/{pair_id}/renew (the `RenewPublicURLConnectorPeerPair` operationId).
+	RenewPublicURLConnectorPeerPair(ctx context.Context, publicUrlId PublicURLID, pairId string, body RenewPublicURLConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// CreatePublishRunWithBody Create a publish run and allocate its publish run number
 	//
 	// Start a new publication under the exact publisher grant using an idempotency key and Publisher-Run-Proof signature. The publisher access token does not replace the required proof of the signing key; the response includes the separate run token and two connection assignments.
@@ -6570,6 +6842,49 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
 	CreateCertificateIssuance(ctx context.Context, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, body CreateCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListPublicURLConnectorPeerPairs Reconcile connector pair candidates for an exact publish run
+	//
+	// Return at most 64 candidate references without keys or subject facts. Starting runs may reconcile hints; installed owners may have an independent authorization observation during relay recovery. Each delivery still requires its own current checks.
+	//
+	// Corresponds with GET /v1/publish-runs/{publish_run_id}/connector-peer-pairs (the `ListPublicURLConnectorPeerPairs` operationId).
+	ListPublicURLConnectorPeerPairs(ctx context.Context, publishRunId PublishRunID, params *ListPublicURLConnectorPeerPairsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeliverPublicURLConnectorPeerPairWithBody Deliver an existing public URL connector binding to its publisher
+	//
+	// Authenticate with the exact publish run token and number, not a service run token. Both current relay legs must have claimed the same observed source under the current IP policy. The response permits local binding setup, not application admission.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverPublicURLConnectorPeerPair` operationId).
+	DeliverPublicURLConnectorPeerPairWithBody(ctx context.Context, publishRunId PublishRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeliverPublicURLConnectorPeerPair Deliver an existing public URL connector binding to its publisher
+	//
+	// Authenticate with the exact publish run token and number, not a service run token. Both current relay legs must have claimed the same observed source under the current IP policy. The response permits local binding setup, not application admission.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverPublicURLConnectorPeerPair` operationId).
+	DeliverPublicURLConnectorPeerPair(ctx context.Context, publishRunId PublishRunID, pairId string, body DeliverPublicURLConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ConfirmPublicURLConnectorPeerPairPreparedWithBody Report installation or path proofs for the exact public URL connector binding
+	//
+	// Recheck the authenticated publish run, original native source, matching relay claims, and IP-policy deadline. Reports cannot extend owner authority or substitute another publication.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmPublicURLConnectorPeerPairPrepared` operationId).
+	ConfirmPublicURLConnectorPeerPairPreparedWithBody(ctx context.Context, publishRunId PublishRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ConfirmPublicURLConnectorPeerPairPrepared Report installation or path proofs for the exact public URL connector binding
+	//
+	// Recheck the authenticated publish run, original native source, matching relay claims, and IP-policy deadline. Reports cannot extend owner authority or substitute another publication.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmPublicURLConnectorPeerPairPrepared` operationId).
+	ConfirmPublicURLConnectorPeerPairPrepared(ctx context.Context, publishRunId PublishRunID, pairId string, body ConfirmPublicURLConnectorPeerPairPreparedJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateFeedbackReportWithBody Store a reviewer's first report for a preview page
 	//
@@ -9204,6 +9519,120 @@ func (c *Client) ReplaceVisitorAccess(ctx context.Context, publicUrlId PublicURL
 	return c.Client.Do(req)
 }
 
+// PreparePublicURLConnectorPeerPairWithBody Prepare a signed connector owner for an exact public URL publish run
+//
+// Require the current matching control session and enrolled device signature. Control rechecks existing public URL or selected preview access, publisher authority, certificate, and both relay assignments. A ready snapshot is not permission. No anonymous, share bearer, service workload, or management credential can replace native device possession.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/connector-peer-pairs (the `PreparePublicURLConnectorPeerPair` operationId).
+func (c *Client) PreparePublicURLConnectorPeerPairWithBody(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPreparePublicURLConnectorPeerPairRequestWithBody(c.Server, publicUrlId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PreparePublicURLConnectorPeerPair Prepare a signed connector owner for an exact public URL publish run
+//
+// Require the current matching control session and enrolled device signature. Control rechecks existing public URL or selected preview access, publisher authority, certificate, and both relay assignments. A ready snapshot is not permission. No anonymous, share bearer, service workload, or management credential can replace native device possession.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/connector-peer-pairs (the `PreparePublicURLConnectorPeerPair` operationId).
+func (c *Client) PreparePublicURLConnectorPeerPair(ctx context.Context, publicUrlId PublicURLID, body PreparePublicURLConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPreparePublicURLConnectorPeerPairRequest(c.Server, publicUrlId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RebindPublicURLConnectorPeerPairWithBody Inspect or change an existing public URL connector network binding
+//
+// Use the existing inspect, prepare, activate, and abort lifecycle with the original device, session, and preview selection. No phase can change publication identity or revive an expired owner. Only stale_network_binding permits network recovery; other authorization failures are terminal.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/connector-peer-pairs/{pair_id}/rebind (the `RebindPublicURLConnectorPeerPair` operationId).
+func (c *Client) RebindPublicURLConnectorPeerPairWithBody(ctx context.Context, publicUrlId PublicURLID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRebindPublicURLConnectorPeerPairRequestWithBody(c.Server, publicUrlId, pairId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RebindPublicURLConnectorPeerPair Inspect or change an existing public URL connector network binding
+//
+// Use the existing inspect, prepare, activate, and abort lifecycle with the original device, session, and preview selection. No phase can change publication identity or revive an expired owner. Only stale_network_binding permits network recovery; other authorization failures are terminal.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/connector-peer-pairs/{pair_id}/rebind (the `RebindPublicURLConnectorPeerPair` operationId).
+func (c *Client) RebindPublicURLConnectorPeerPair(ctx context.Context, publicUrlId PublicURLID, pairId string, body RebindPublicURLConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRebindPublicURLConnectorPeerPairRequest(c.Server, publicUrlId, pairId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RenewPublicURLConnectorPeerPairWithBody Renew the retained public URL owner and exact visitor permission together
+//
+// Retain the original device, parent control session, preview selection, publisher, and publish run. Endpoint trust changes require replacement. Only a fresh signed renewal extends the owner; independently confirmed relay and installation deadlines remain unchanged.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/connector-peer-pairs/{pair_id}/renew (the `RenewPublicURLConnectorPeerPair` operationId).
+func (c *Client) RenewPublicURLConnectorPeerPairWithBody(ctx context.Context, publicUrlId PublicURLID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenewPublicURLConnectorPeerPairRequestWithBody(c.Server, publicUrlId, pairId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RenewPublicURLConnectorPeerPair Renew the retained public URL owner and exact visitor permission together
+//
+// Retain the original device, parent control session, preview selection, publisher, and publish run. Endpoint trust changes require replacement. Only a fresh signed renewal extends the owner; independently confirmed relay and installation deadlines remain unchanged.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/connector-peer-pairs/{pair_id}/renew (the `RenewPublicURLConnectorPeerPair` operationId).
+func (c *Client) RenewPublicURLConnectorPeerPair(ctx context.Context, publicUrlId PublicURLID, pairId string, body RenewPublicURLConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenewPublicURLConnectorPeerPairRequest(c.Server, publicUrlId, pairId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // CreatePublishRunWithBody Create a publish run and allocate its publish run number
 //
 // Start a new publication under the exact publisher grant using an idempotency key and Publisher-Run-Proof signature. The publisher access token does not replace the required proof of the signing key; the response includes the separate run token and two connection assignments.
@@ -9621,6 +10050,99 @@ func (c *Client) CreateCertificateIssuanceWithBody(ctx context.Context, publishR
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
 func (c *Client) CreateCertificateIssuance(ctx context.Context, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, body CreateCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateCertificateIssuanceRequest(c.Server, publishRunId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListPublicURLConnectorPeerPairs Reconcile connector pair candidates for an exact publish run
+//
+// Return at most 64 candidate references without keys or subject facts. Starting runs may reconcile hints; installed owners may have an independent authorization observation during relay recovery. Each delivery still requires its own current checks.
+//
+// Corresponds with GET /v1/publish-runs/{publish_run_id}/connector-peer-pairs (the `ListPublicURLConnectorPeerPairs` operationId).
+func (c *Client) ListPublicURLConnectorPeerPairs(ctx context.Context, publishRunId PublishRunID, params *ListPublicURLConnectorPeerPairsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListPublicURLConnectorPeerPairsRequest(c.Server, publishRunId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeliverPublicURLConnectorPeerPairWithBody Deliver an existing public URL connector binding to its publisher
+//
+// Authenticate with the exact publish run token and number, not a service run token. Both current relay legs must have claimed the same observed source under the current IP policy. The response permits local binding setup, not application admission.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverPublicURLConnectorPeerPair` operationId).
+func (c *Client) DeliverPublicURLConnectorPeerPairWithBody(ctx context.Context, publishRunId PublishRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeliverPublicURLConnectorPeerPairRequestWithBody(c.Server, publishRunId, pairId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeliverPublicURLConnectorPeerPair Deliver an existing public URL connector binding to its publisher
+//
+// Authenticate with the exact publish run token and number, not a service run token. Both current relay legs must have claimed the same observed source under the current IP policy. The response permits local binding setup, not application admission.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverPublicURLConnectorPeerPair` operationId).
+func (c *Client) DeliverPublicURLConnectorPeerPair(ctx context.Context, publishRunId PublishRunID, pairId string, body DeliverPublicURLConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeliverPublicURLConnectorPeerPairRequest(c.Server, publishRunId, pairId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ConfirmPublicURLConnectorPeerPairPreparedWithBody Report installation or path proofs for the exact public URL connector binding
+//
+// Recheck the authenticated publish run, original native source, matching relay claims, and IP-policy deadline. Reports cannot extend owner authority or substitute another publication.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmPublicURLConnectorPeerPairPrepared` operationId).
+func (c *Client) ConfirmPublicURLConnectorPeerPairPreparedWithBody(ctx context.Context, publishRunId PublishRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewConfirmPublicURLConnectorPeerPairPreparedRequestWithBody(c.Server, publishRunId, pairId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ConfirmPublicURLConnectorPeerPairPrepared Report installation or path proofs for the exact public URL connector binding
+//
+// Recheck the authenticated publish run, original native source, matching relay claims, and IP-policy deadline. Reports cannot extend owner authority or substitute another publication.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmPublicURLConnectorPeerPairPrepared` operationId).
+func (c *Client) ConfirmPublicURLConnectorPeerPairPrepared(ctx context.Context, publishRunId PublishRunID, pairId string, body ConfirmPublicURLConnectorPeerPairPreparedJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewConfirmPublicURLConnectorPeerPairPreparedRequest(c.Server, publishRunId, pairId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -15440,6 +15962,161 @@ func NewReplaceVisitorAccessRequestWithBody(server string, publicUrlId PublicURL
 	return req, nil
 }
 
+// NewPreparePublicURLConnectorPeerPairRequest calls the generic PreparePublicURLConnectorPeerPair builder with application/json body
+func NewPreparePublicURLConnectorPeerPairRequest(server string, publicUrlId PublicURLID, body PreparePublicURLConnectorPeerPairJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPreparePublicURLConnectorPeerPairRequestWithBody(server, publicUrlId, "application/json", bodyReader)
+}
+
+// NewPreparePublicURLConnectorPeerPairRequestWithBody constructs an http.Request for the PreparePublicURLConnectorPeerPair method, with any body, and a specified content type
+func NewPreparePublicURLConnectorPeerPairRequestWithBody(server string, publicUrlId PublicURLID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/public-urls/%s/connector-peer-pairs", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRebindPublicURLConnectorPeerPairRequest calls the generic RebindPublicURLConnectorPeerPair builder with application/json body
+func NewRebindPublicURLConnectorPeerPairRequest(server string, publicUrlId PublicURLID, pairId string, body RebindPublicURLConnectorPeerPairJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRebindPublicURLConnectorPeerPairRequestWithBody(server, publicUrlId, pairId, "application/json", bodyReader)
+}
+
+// NewRebindPublicURLConnectorPeerPairRequestWithBody constructs an http.Request for the RebindPublicURLConnectorPeerPair method, with any body, and a specified content type
+func NewRebindPublicURLConnectorPeerPairRequestWithBody(server string, publicUrlId PublicURLID, pairId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "pair_id", pairId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/public-urls/%s/connector-peer-pairs/%s/rebind", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRenewPublicURLConnectorPeerPairRequest calls the generic RenewPublicURLConnectorPeerPair builder with application/json body
+func NewRenewPublicURLConnectorPeerPairRequest(server string, publicUrlId PublicURLID, pairId string, body RenewPublicURLConnectorPeerPairJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRenewPublicURLConnectorPeerPairRequestWithBody(server, publicUrlId, pairId, "application/json", bodyReader)
+}
+
+// NewRenewPublicURLConnectorPeerPairRequestWithBody constructs an http.Request for the RenewPublicURLConnectorPeerPair method, with any body, and a specified content type
+func NewRenewPublicURLConnectorPeerPairRequestWithBody(server string, publicUrlId PublicURLID, pairId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "pair_id", pairId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/public-urls/%s/connector-peer-pairs/%s/renew", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewCreatePublishRunRequest calls the generic CreatePublishRun builder with application/json body
 func NewCreatePublishRunRequest(server string, publicUrlId PublicURLID, params *CreatePublishRunParams, body CreatePublishRunJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -16117,6 +16794,183 @@ func NewCreateCertificateIssuanceRequestWithBody(server string, publishRunId Pub
 		req.Header.Set("Idempotency-Key", headerParam0)
 
 	}
+
+	return req, nil
+}
+
+// NewListPublicURLConnectorPeerPairsRequest constructs an http.Request for the ListPublicURLConnectorPeerPairs method
+func NewListPublicURLConnectorPeerPairsRequest(server string, publishRunId PublishRunID, params *ListPublicURLConnectorPeerPairsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publish-runs/%s/connector-peer-pairs", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "publish_run_number", params.PublishRunNumber, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if params.After != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "after", *params.After, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDeliverPublicURLConnectorPeerPairRequest calls the generic DeliverPublicURLConnectorPeerPair builder with application/json body
+func NewDeliverPublicURLConnectorPeerPairRequest(server string, publishRunId PublishRunID, pairId string, body DeliverPublicURLConnectorPeerPairJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewDeliverPublicURLConnectorPeerPairRequestWithBody(server, publishRunId, pairId, "application/json", bodyReader)
+}
+
+// NewDeliverPublicURLConnectorPeerPairRequestWithBody constructs an http.Request for the DeliverPublicURLConnectorPeerPair method, with any body, and a specified content type
+func NewDeliverPublicURLConnectorPeerPairRequestWithBody(server string, publishRunId PublishRunID, pairId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "pair_id", pairId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publish-runs/%s/connector-peer-pairs/%s/delivery", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewConfirmPublicURLConnectorPeerPairPreparedRequest calls the generic ConfirmPublicURLConnectorPeerPairPrepared builder with application/json body
+func NewConfirmPublicURLConnectorPeerPairPreparedRequest(server string, publishRunId PublishRunID, pairId string, body ConfirmPublicURLConnectorPeerPairPreparedJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewConfirmPublicURLConnectorPeerPairPreparedRequestWithBody(server, publishRunId, pairId, "application/json", bodyReader)
+}
+
+// NewConfirmPublicURLConnectorPeerPairPreparedRequestWithBody constructs an http.Request for the ConfirmPublicURLConnectorPeerPairPrepared method, with any body, and a specified content type
+func NewConfirmPublicURLConnectorPeerPairPreparedRequestWithBody(server string, publishRunId PublishRunID, pairId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "pair_id", pairId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publish-runs/%s/connector-peer-pairs/%s/prepared", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -20890,6 +21744,60 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /v1/public-urls/{public_url_id}/access (the `ReplaceVisitorAccess` operationId).
 	ReplaceVisitorAccessWithResponse(ctx context.Context, publicUrlId PublicURLID, body ReplaceVisitorAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplaceVisitorAccessResponse, error)
 
+	// PreparePublicURLConnectorPeerPairWithBodyWithResponse Prepare a signed connector owner for an exact public URL publish run
+	//
+	// Require the current matching control session and enrolled device signature. Control rechecks existing public URL or selected preview access, publisher authority, certificate, and both relay assignments. A ready snapshot is not permission. No anonymous, share bearer, service workload, or management credential can replace native device possession.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/connector-peer-pairs (the `PreparePublicURLConnectorPeerPair` operationId).
+	PreparePublicURLConnectorPeerPairWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PreparePublicURLConnectorPeerPairResponse, error)
+
+	// PreparePublicURLConnectorPeerPairWithResponse Prepare a signed connector owner for an exact public URL publish run
+	//
+	// Require the current matching control session and enrolled device signature. Control rechecks existing public URL or selected preview access, publisher authority, certificate, and both relay assignments. A ready snapshot is not permission. No anonymous, share bearer, service workload, or management credential can replace native device possession.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/connector-peer-pairs (the `PreparePublicURLConnectorPeerPair` operationId).
+	PreparePublicURLConnectorPeerPairWithResponse(ctx context.Context, publicUrlId PublicURLID, body PreparePublicURLConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*PreparePublicURLConnectorPeerPairResponse, error)
+
+	// RebindPublicURLConnectorPeerPairWithBodyWithResponse Inspect or change an existing public URL connector network binding
+	//
+	// Use the existing inspect, prepare, activate, and abort lifecycle with the original device, session, and preview selection. No phase can change publication identity or revive an expired owner. Only stale_network_binding permits network recovery; other authorization failures are terminal.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/connector-peer-pairs/{pair_id}/rebind (the `RebindPublicURLConnectorPeerPair` operationId).
+	RebindPublicURLConnectorPeerPairWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RebindPublicURLConnectorPeerPairResponse, error)
+
+	// RebindPublicURLConnectorPeerPairWithResponse Inspect or change an existing public URL connector network binding
+	//
+	// Use the existing inspect, prepare, activate, and abort lifecycle with the original device, session, and preview selection. No phase can change publication identity or revive an expired owner. Only stale_network_binding permits network recovery; other authorization failures are terminal.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/connector-peer-pairs/{pair_id}/rebind (the `RebindPublicURLConnectorPeerPair` operationId).
+	RebindPublicURLConnectorPeerPairWithResponse(ctx context.Context, publicUrlId PublicURLID, pairId string, body RebindPublicURLConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*RebindPublicURLConnectorPeerPairResponse, error)
+
+	// RenewPublicURLConnectorPeerPairWithBodyWithResponse Renew the retained public URL owner and exact visitor permission together
+	//
+	// Retain the original device, parent control session, preview selection, publisher, and publish run. Endpoint trust changes require replacement. Only a fresh signed renewal extends the owner; independently confirmed relay and installation deadlines remain unchanged.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/connector-peer-pairs/{pair_id}/renew (the `RenewPublicURLConnectorPeerPair` operationId).
+	RenewPublicURLConnectorPeerPairWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewPublicURLConnectorPeerPairResponse, error)
+
+	// RenewPublicURLConnectorPeerPairWithResponse Renew the retained public URL owner and exact visitor permission together
+	//
+	// Retain the original device, parent control session, preview selection, publisher, and publish run. Endpoint trust changes require replacement. Only a fresh signed renewal extends the owner; independently confirmed relay and installation deadlines remain unchanged.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/connector-peer-pairs/{pair_id}/renew (the `RenewPublicURLConnectorPeerPair` operationId).
+	RenewPublicURLConnectorPeerPairWithResponse(ctx context.Context, publicUrlId PublicURLID, pairId string, body RenewPublicURLConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewPublicURLConnectorPeerPairResponse, error)
+
 	// CreatePublishRunWithBodyWithResponse Create a publish run and allocate its publish run number
 	//
 	// Start a new publication under the exact publisher grant using an idempotency key and Publisher-Run-Proof signature. The publisher access token does not replace the required proof of the signing key; the response includes the separate run token and two connection assignments.
@@ -21096,6 +22004,51 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/certificate-issuances (the `CreateCertificateIssuance` operationId).
 	CreateCertificateIssuanceWithResponse(ctx context.Context, publishRunId PublishRunID, params *CreateCertificateIssuanceParams, body CreateCertificateIssuanceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCertificateIssuanceResponse, error)
+
+	// ListPublicURLConnectorPeerPairsWithResponse Reconcile connector pair candidates for an exact publish run
+	//
+	// Return at most 64 candidate references without keys or subject facts. Starting runs may reconcile hints; installed owners may have an independent authorization observation during relay recovery. Each delivery still requires its own current checks.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/publish-runs/{publish_run_id}/connector-peer-pairs (the `ListPublicURLConnectorPeerPairs` operationId).
+	ListPublicURLConnectorPeerPairsWithResponse(ctx context.Context, publishRunId PublishRunID, params *ListPublicURLConnectorPeerPairsParams, reqEditors ...RequestEditorFn) (*ListPublicURLConnectorPeerPairsResponse, error)
+
+	// DeliverPublicURLConnectorPeerPairWithBodyWithResponse Deliver an existing public URL connector binding to its publisher
+	//
+	// Authenticate with the exact publish run token and number, not a service run token. Both current relay legs must have claimed the same observed source under the current IP policy. The response permits local binding setup, not application admission.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverPublicURLConnectorPeerPair` operationId).
+	DeliverPublicURLConnectorPeerPairWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DeliverPublicURLConnectorPeerPairResponse, error)
+
+	// DeliverPublicURLConnectorPeerPairWithResponse Deliver an existing public URL connector binding to its publisher
+	//
+	// Authenticate with the exact publish run token and number, not a service run token. Both current relay legs must have claimed the same observed source under the current IP policy. The response permits local binding setup, not application admission.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverPublicURLConnectorPeerPair` operationId).
+	DeliverPublicURLConnectorPeerPairWithResponse(ctx context.Context, publishRunId PublishRunID, pairId string, body DeliverPublicURLConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*DeliverPublicURLConnectorPeerPairResponse, error)
+
+	// ConfirmPublicURLConnectorPeerPairPreparedWithBodyWithResponse Report installation or path proofs for the exact public URL connector binding
+	//
+	// Recheck the authenticated publish run, original native source, matching relay claims, and IP-policy deadline. Reports cannot extend owner authority or substitute another publication.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmPublicURLConnectorPeerPairPrepared` operationId).
+	ConfirmPublicURLConnectorPeerPairPreparedWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ConfirmPublicURLConnectorPeerPairPreparedResponse, error)
+
+	// ConfirmPublicURLConnectorPeerPairPreparedWithResponse Report installation or path proofs for the exact public URL connector binding
+	//
+	// Recheck the authenticated publish run, original native source, matching relay claims, and IP-policy deadline. Reports cannot extend owner authority or substitute another publication.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmPublicURLConnectorPeerPairPrepared` operationId).
+	ConfirmPublicURLConnectorPeerPairPreparedWithResponse(ctx context.Context, publishRunId PublishRunID, pairId string, body ConfirmPublicURLConnectorPeerPairPreparedJSONRequestBody, reqEditors ...RequestEditorFn) (*ConfirmPublicURLConnectorPeerPairPreparedResponse, error)
 
 	// CreateFeedbackReportWithBodyWithResponse Store a reviewer's first report for a preview page
 	//
@@ -25093,6 +26046,150 @@ func (r ReplaceVisitorAccessResponse) ContentType() string {
 	return ""
 }
 
+type PreparePublicURLConnectorPeerPairResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublicURLConnectorPeerPair
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PreparePublicURLConnectorPeerPairResponse) GetJSON200() *PublicURLConnectorPeerPair {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r PreparePublicURLConnectorPeerPairResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r PreparePublicURLConnectorPeerPairResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PreparePublicURLConnectorPeerPairResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PreparePublicURLConnectorPeerPairResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PreparePublicURLConnectorPeerPairResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RebindPublicURLConnectorPeerPairResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublicURLConnectorPeerPairRebindState
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RebindPublicURLConnectorPeerPairResponse) GetJSON200() *PublicURLConnectorPeerPairRebindState {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RebindPublicURLConnectorPeerPairResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RebindPublicURLConnectorPeerPairResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RebindPublicURLConnectorPeerPairResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RebindPublicURLConnectorPeerPairResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RebindPublicURLConnectorPeerPairResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RenewPublicURLConnectorPeerPairResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublicURLConnectorPeerPairRenewal
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RenewPublicURLConnectorPeerPairResponse) GetJSON200() *PublicURLConnectorPeerPairRenewal {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RenewPublicURLConnectorPeerPairResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RenewPublicURLConnectorPeerPairResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RenewPublicURLConnectorPeerPairResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RenewPublicURLConnectorPeerPairResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RenewPublicURLConnectorPeerPairResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type CreatePublishRunResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -25738,6 +26835,143 @@ func (r CreateCertificateIssuanceResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r CreateCertificateIssuanceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListPublicURLConnectorPeerPairsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConnectorPeerPairCandidates
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListPublicURLConnectorPeerPairsResponse) GetJSON200() *ConnectorPeerPairCandidates {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListPublicURLConnectorPeerPairsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListPublicURLConnectorPeerPairsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListPublicURLConnectorPeerPairsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListPublicURLConnectorPeerPairsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListPublicURLConnectorPeerPairsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeliverPublicURLConnectorPeerPairResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublicURLConnectorPeerPairDelivery
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r DeliverPublicURLConnectorPeerPairResponse) GetJSON200() *PublicURLConnectorPeerPairDelivery {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeliverPublicURLConnectorPeerPairResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r DeliverPublicURLConnectorPeerPairResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeliverPublicURLConnectorPeerPairResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeliverPublicURLConnectorPeerPairResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeliverPublicURLConnectorPeerPairResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ConfirmPublicURLConnectorPeerPairPreparedResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ConfirmPublicURLConnectorPeerPairPreparedResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ConfirmPublicURLConnectorPeerPairPreparedResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ConfirmPublicURLConnectorPeerPairPreparedResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ConfirmPublicURLConnectorPeerPairPreparedResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ConfirmPublicURLConnectorPeerPairPreparedResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -30874,6 +32108,96 @@ func (c *ClientWithResponses) ReplaceVisitorAccessWithResponse(ctx context.Conte
 	return ParseReplaceVisitorAccessResponse(rsp)
 }
 
+// PreparePublicURLConnectorPeerPairWithBodyWithResponse Prepare a signed connector owner for an exact public URL publish run
+//
+// Require the current matching control session and enrolled device signature. Control rechecks existing public URL or selected preview access, publisher authority, certificate, and both relay assignments. A ready snapshot is not permission. No anonymous, share bearer, service workload, or management credential can replace native device possession.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/connector-peer-pairs (the `PreparePublicURLConnectorPeerPair` operationId).
+func (c *ClientWithResponses) PreparePublicURLConnectorPeerPairWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PreparePublicURLConnectorPeerPairResponse, error) {
+	rsp, err := c.PreparePublicURLConnectorPeerPairWithBody(ctx, publicUrlId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePreparePublicURLConnectorPeerPairResponse(rsp)
+}
+
+// PreparePublicURLConnectorPeerPairWithResponse Prepare a signed connector owner for an exact public URL publish run
+//
+// Require the current matching control session and enrolled device signature. Control rechecks existing public URL or selected preview access, publisher authority, certificate, and both relay assignments. A ready snapshot is not permission. No anonymous, share bearer, service workload, or management credential can replace native device possession.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/connector-peer-pairs (the `PreparePublicURLConnectorPeerPair` operationId).
+func (c *ClientWithResponses) PreparePublicURLConnectorPeerPairWithResponse(ctx context.Context, publicUrlId PublicURLID, body PreparePublicURLConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*PreparePublicURLConnectorPeerPairResponse, error) {
+	rsp, err := c.PreparePublicURLConnectorPeerPair(ctx, publicUrlId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePreparePublicURLConnectorPeerPairResponse(rsp)
+}
+
+// RebindPublicURLConnectorPeerPairWithBodyWithResponse Inspect or change an existing public URL connector network binding
+//
+// Use the existing inspect, prepare, activate, and abort lifecycle with the original device, session, and preview selection. No phase can change publication identity or revive an expired owner. Only stale_network_binding permits network recovery; other authorization failures are terminal.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/connector-peer-pairs/{pair_id}/rebind (the `RebindPublicURLConnectorPeerPair` operationId).
+func (c *ClientWithResponses) RebindPublicURLConnectorPeerPairWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RebindPublicURLConnectorPeerPairResponse, error) {
+	rsp, err := c.RebindPublicURLConnectorPeerPairWithBody(ctx, publicUrlId, pairId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRebindPublicURLConnectorPeerPairResponse(rsp)
+}
+
+// RebindPublicURLConnectorPeerPairWithResponse Inspect or change an existing public URL connector network binding
+//
+// Use the existing inspect, prepare, activate, and abort lifecycle with the original device, session, and preview selection. No phase can change publication identity or revive an expired owner. Only stale_network_binding permits network recovery; other authorization failures are terminal.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/connector-peer-pairs/{pair_id}/rebind (the `RebindPublicURLConnectorPeerPair` operationId).
+func (c *ClientWithResponses) RebindPublicURLConnectorPeerPairWithResponse(ctx context.Context, publicUrlId PublicURLID, pairId string, body RebindPublicURLConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*RebindPublicURLConnectorPeerPairResponse, error) {
+	rsp, err := c.RebindPublicURLConnectorPeerPair(ctx, publicUrlId, pairId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRebindPublicURLConnectorPeerPairResponse(rsp)
+}
+
+// RenewPublicURLConnectorPeerPairWithBodyWithResponse Renew the retained public URL owner and exact visitor permission together
+//
+// Retain the original device, parent control session, preview selection, publisher, and publish run. Endpoint trust changes require replacement. Only a fresh signed renewal extends the owner; independently confirmed relay and installation deadlines remain unchanged.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/connector-peer-pairs/{pair_id}/renew (the `RenewPublicURLConnectorPeerPair` operationId).
+func (c *ClientWithResponses) RenewPublicURLConnectorPeerPairWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewPublicURLConnectorPeerPairResponse, error) {
+	rsp, err := c.RenewPublicURLConnectorPeerPairWithBody(ctx, publicUrlId, pairId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRenewPublicURLConnectorPeerPairResponse(rsp)
+}
+
+// RenewPublicURLConnectorPeerPairWithResponse Renew the retained public URL owner and exact visitor permission together
+//
+// Retain the original device, parent control session, preview selection, publisher, and publish run. Endpoint trust changes require replacement. Only a fresh signed renewal extends the owner; independently confirmed relay and installation deadlines remain unchanged.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/connector-peer-pairs/{pair_id}/renew (the `RenewPublicURLConnectorPeerPair` operationId).
+func (c *ClientWithResponses) RenewPublicURLConnectorPeerPairWithResponse(ctx context.Context, publicUrlId PublicURLID, pairId string, body RenewPublicURLConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewPublicURLConnectorPeerPairResponse, error) {
+	rsp, err := c.RenewPublicURLConnectorPeerPair(ctx, publicUrlId, pairId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRenewPublicURLConnectorPeerPairResponse(rsp)
+}
+
 // CreatePublishRunWithBodyWithResponse Create a publish run and allocate its publish run number
 //
 // Start a new publication under the exact publisher grant using an idempotency key and Publisher-Run-Proof signature. The publisher access token does not replace the required proof of the signing key; the response includes the separate run token and two connection assignments.
@@ -31217,6 +32541,81 @@ func (c *ClientWithResponses) CreateCertificateIssuanceWithResponse(ctx context.
 		return nil, err
 	}
 	return ParseCreateCertificateIssuanceResponse(rsp)
+}
+
+// ListPublicURLConnectorPeerPairsWithResponse Reconcile connector pair candidates for an exact publish run
+//
+// Return at most 64 candidate references without keys or subject facts. Starting runs may reconcile hints; installed owners may have an independent authorization observation during relay recovery. Each delivery still requires its own current checks.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/publish-runs/{publish_run_id}/connector-peer-pairs (the `ListPublicURLConnectorPeerPairs` operationId).
+func (c *ClientWithResponses) ListPublicURLConnectorPeerPairsWithResponse(ctx context.Context, publishRunId PublishRunID, params *ListPublicURLConnectorPeerPairsParams, reqEditors ...RequestEditorFn) (*ListPublicURLConnectorPeerPairsResponse, error) {
+	rsp, err := c.ListPublicURLConnectorPeerPairs(ctx, publishRunId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListPublicURLConnectorPeerPairsResponse(rsp)
+}
+
+// DeliverPublicURLConnectorPeerPairWithBodyWithResponse Deliver an existing public URL connector binding to its publisher
+//
+// Authenticate with the exact publish run token and number, not a service run token. Both current relay legs must have claimed the same observed source under the current IP policy. The response permits local binding setup, not application admission.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverPublicURLConnectorPeerPair` operationId).
+func (c *ClientWithResponses) DeliverPublicURLConnectorPeerPairWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DeliverPublicURLConnectorPeerPairResponse, error) {
+	rsp, err := c.DeliverPublicURLConnectorPeerPairWithBody(ctx, publishRunId, pairId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeliverPublicURLConnectorPeerPairResponse(rsp)
+}
+
+// DeliverPublicURLConnectorPeerPairWithResponse Deliver an existing public URL connector binding to its publisher
+//
+// Authenticate with the exact publish run token and number, not a service run token. Both current relay legs must have claimed the same observed source under the current IP policy. The response permits local binding setup, not application admission.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverPublicURLConnectorPeerPair` operationId).
+func (c *ClientWithResponses) DeliverPublicURLConnectorPeerPairWithResponse(ctx context.Context, publishRunId PublishRunID, pairId string, body DeliverPublicURLConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*DeliverPublicURLConnectorPeerPairResponse, error) {
+	rsp, err := c.DeliverPublicURLConnectorPeerPair(ctx, publishRunId, pairId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeliverPublicURLConnectorPeerPairResponse(rsp)
+}
+
+// ConfirmPublicURLConnectorPeerPairPreparedWithBodyWithResponse Report installation or path proofs for the exact public URL connector binding
+//
+// Recheck the authenticated publish run, original native source, matching relay claims, and IP-policy deadline. Reports cannot extend owner authority or substitute another publication.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmPublicURLConnectorPeerPairPrepared` operationId).
+func (c *ClientWithResponses) ConfirmPublicURLConnectorPeerPairPreparedWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ConfirmPublicURLConnectorPeerPairPreparedResponse, error) {
+	rsp, err := c.ConfirmPublicURLConnectorPeerPairPreparedWithBody(ctx, publishRunId, pairId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseConfirmPublicURLConnectorPeerPairPreparedResponse(rsp)
+}
+
+// ConfirmPublicURLConnectorPeerPairPreparedWithResponse Report installation or path proofs for the exact public URL connector binding
+//
+// Recheck the authenticated publish run, original native source, matching relay claims, and IP-policy deadline. Reports cannot extend owner authority or substitute another publication.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmPublicURLConnectorPeerPairPrepared` operationId).
+func (c *ClientWithResponses) ConfirmPublicURLConnectorPeerPairPreparedWithResponse(ctx context.Context, publishRunId PublishRunID, pairId string, body ConfirmPublicURLConnectorPeerPairPreparedJSONRequestBody, reqEditors ...RequestEditorFn) (*ConfirmPublicURLConnectorPeerPairPreparedResponse, error) {
+	rsp, err := c.ConfirmPublicURLConnectorPeerPairPrepared(ctx, publishRunId, pairId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseConfirmPublicURLConnectorPeerPairPreparedResponse(rsp)
 }
 
 // CreateFeedbackReportWithBodyWithResponse Store a reviewer's first report for a preview page
@@ -35190,6 +36589,105 @@ func ParseReplaceVisitorAccessResponse(rsp *http.Response) (*ReplaceVisitorAcces
 	return response, nil
 }
 
+// ParsePreparePublicURLConnectorPeerPairResponse parses an HTTP response from a PreparePublicURLConnectorPeerPairWithResponse call
+func ParsePreparePublicURLConnectorPeerPairResponse(rsp *http.Response) (*PreparePublicURLConnectorPeerPairResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PreparePublicURLConnectorPeerPairResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublicURLConnectorPeerPair
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRebindPublicURLConnectorPeerPairResponse parses an HTTP response from a RebindPublicURLConnectorPeerPairWithResponse call
+func ParseRebindPublicURLConnectorPeerPairResponse(rsp *http.Response) (*RebindPublicURLConnectorPeerPairResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RebindPublicURLConnectorPeerPairResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublicURLConnectorPeerPairRebindState
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRenewPublicURLConnectorPeerPairResponse parses an HTTP response from a RenewPublicURLConnectorPeerPairWithResponse call
+func ParseRenewPublicURLConnectorPeerPairResponse(rsp *http.Response) (*RenewPublicURLConnectorPeerPairResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RenewPublicURLConnectorPeerPairResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublicURLConnectorPeerPairRenewal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseCreatePublishRunResponse parses an HTTP response from a CreatePublishRunWithResponse call
 func ParseCreatePublishRunResponse(rsp *http.Response) (*CreatePublishRunResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -35630,6 +37128,101 @@ func ParseCreateCertificateIssuanceResponse(rsp *http.Response) (*CreateCertific
 			return nil, err
 		}
 		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListPublicURLConnectorPeerPairsResponse parses an HTTP response from a ListPublicURLConnectorPeerPairsWithResponse call
+func ParseListPublicURLConnectorPeerPairsResponse(rsp *http.Response) (*ListPublicURLConnectorPeerPairsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListPublicURLConnectorPeerPairsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConnectorPeerPairCandidates
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeliverPublicURLConnectorPeerPairResponse parses an HTTP response from a DeliverPublicURLConnectorPeerPairWithResponse call
+func ParseDeliverPublicURLConnectorPeerPairResponse(rsp *http.Response) (*DeliverPublicURLConnectorPeerPairResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeliverPublicURLConnectorPeerPairResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublicURLConnectorPeerPairDelivery
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseConfirmPublicURLConnectorPeerPairPreparedResponse parses an HTTP response from a ConfirmPublicURLConnectorPeerPairPreparedWithResponse call
+func ParseConfirmPublicURLConnectorPeerPairPreparedResponse(rsp *http.Response) (*ConfirmPublicURLConnectorPeerPairPreparedResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ConfirmPublicURLConnectorPeerPairPreparedResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -38546,6 +40139,15 @@ type ServerInterface interface {
 	// ReplaceVisitorAccess Replace the complete live visitor access policy
 	// (PUT /v1/public-urls/{public_url_id}/access)
 	ReplaceVisitorAccess(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
+	// PreparePublicURLConnectorPeerPair Prepare a signed connector owner for an exact public URL publish run
+	// (POST /v1/public-urls/{public_url_id}/connector-peer-pairs)
+	PreparePublicURLConnectorPeerPair(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
+	// RebindPublicURLConnectorPeerPair Inspect or change an existing public URL connector network binding
+	// (POST /v1/public-urls/{public_url_id}/connector-peer-pairs/{pair_id}/rebind)
+	RebindPublicURLConnectorPeerPair(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, pairId string)
+	// RenewPublicURLConnectorPeerPair Renew the retained public URL owner and exact visitor permission together
+	// (POST /v1/public-urls/{public_url_id}/connector-peer-pairs/{pair_id}/renew)
+	RenewPublicURLConnectorPeerPair(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, pairId string)
 	// CreatePublishRun Create a publish run and allocate its publish run number
 	// (POST /v1/public-urls/{public_url_id}/publish-runs)
 	CreatePublishRun(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, params CreatePublishRunParams)
@@ -38588,6 +40190,15 @@ type ServerInterface interface {
 	// CreateCertificateIssuance Begin issuance for the publish run's certificate plan
 	// (POST /v1/publish-runs/{publish_run_id}/certificate-issuances)
 	CreateCertificateIssuance(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID, params CreateCertificateIssuanceParams)
+	// ListPublicURLConnectorPeerPairs Reconcile connector pair candidates for an exact publish run
+	// (GET /v1/publish-runs/{publish_run_id}/connector-peer-pairs)
+	ListPublicURLConnectorPeerPairs(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID, params ListPublicURLConnectorPeerPairsParams)
+	// DeliverPublicURLConnectorPeerPair Deliver an existing public URL connector binding to its publisher
+	// (POST /v1/publish-runs/{publish_run_id}/connector-peer-pairs/{pair_id}/delivery)
+	DeliverPublicURLConnectorPeerPair(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID, pairId string)
+	// ConfirmPublicURLConnectorPeerPairPrepared Report installation or path proofs for the exact public URL connector binding
+	// (POST /v1/publish-runs/{publish_run_id}/connector-peer-pairs/{pair_id}/prepared)
+	ConfirmPublicURLConnectorPeerPairPrepared(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID, pairId string)
 	// CreateFeedbackReport Store a reviewer's first report for a preview page
 	// (POST /v1/publish-runs/{publish_run_id}/feedback)
 	CreateFeedbackReport(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID, params CreateFeedbackReportParams)
@@ -41299,6 +42910,102 @@ func (siw *ServerInterfaceWrapper) ReplaceVisitorAccess(w http.ResponseWriter, r
 	handler.ServeHTTP(w, r)
 }
 
+// PreparePublicURLConnectorPeerPair operation middleware
+func (siw *ServerInterfaceWrapper) PreparePublicURLConnectorPeerPair(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "public_url_id" -------------
+	var publicUrlId PublicURLID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PreparePublicURLConnectorPeerPair(w, r, publicUrlId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RebindPublicURLConnectorPeerPair operation middleware
+func (siw *ServerInterfaceWrapper) RebindPublicURLConnectorPeerPair(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "public_url_id" -------------
+	var publicUrlId PublicURLID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "pair_id" -------------
+	var pairId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "pair_id", r.PathValue("pair_id"), &pairId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "pair_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RebindPublicURLConnectorPeerPair(w, r, publicUrlId, pairId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RenewPublicURLConnectorPeerPair operation middleware
+func (siw *ServerInterfaceWrapper) RenewPublicURLConnectorPeerPair(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "public_url_id" -------------
+	var publicUrlId PublicURLID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "pair_id" -------------
+	var pairId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "pair_id", r.PathValue("pair_id"), &pairId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "pair_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RenewPublicURLConnectorPeerPair(w, r, publicUrlId, pairId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // CreatePublishRun operation middleware
 func (siw *ServerInterfaceWrapper) CreatePublishRun(w http.ResponseWriter, r *http.Request) {
 
@@ -41835,6 +43542,131 @@ func (siw *ServerInterfaceWrapper) CreateCertificateIssuance(w http.ResponseWrit
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CreateCertificateIssuance(w, r, publishRunId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListPublicURLConnectorPeerPairs operation middleware
+func (siw *ServerInterfaceWrapper) ListPublicURLConnectorPeerPairs(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publish_run_id" -------------
+	var publishRunId PublishRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListPublicURLConnectorPeerPairsParams
+
+	// ------------- Required query parameter "publish_run_number" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "publish_run_number", r.URL.Query(), &params.PublishRunNumber, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "publish_run_number"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_number", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "after" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "after", r.URL.Query(), &params.After, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "after"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "after", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListPublicURLConnectorPeerPairs(w, r, publishRunId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeliverPublicURLConnectorPeerPair operation middleware
+func (siw *ServerInterfaceWrapper) DeliverPublicURLConnectorPeerPair(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publish_run_id" -------------
+	var publishRunId PublishRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "pair_id" -------------
+	var pairId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "pair_id", r.PathValue("pair_id"), &pairId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "pair_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeliverPublicURLConnectorPeerPair(w, r, publishRunId, pairId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ConfirmPublicURLConnectorPeerPairPrepared operation middleware
+func (siw *ServerInterfaceWrapper) ConfirmPublicURLConnectorPeerPairPrepared(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publish_run_id" -------------
+	var publishRunId PublishRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "pair_id" -------------
+	var pairId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "pair_id", r.PathValue("pair_id"), &pairId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "pair_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ConfirmPublicURLConnectorPeerPairPrepared(w, r, publishRunId, pairId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -44605,6 +46437,12 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/connector-peer-pairs", wrapper.PreparePublicURLConnectorPeerPair)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/connector-peer-pairs/{pair_id}/renew", wrapper.RenewPublicURLConnectorPeerPair)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/connector-peer-pairs/{pair_id}/rebind", wrapper.RebindPublicURLConnectorPeerPair)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/connector-peer-pairs", wrapper.ListPublicURLConnectorPeerPairs)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/connector-peer-pairs/{pair_id}/delivery", wrapper.DeliverPublicURLConnectorPeerPair)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/connector-peer-pairs/{pair_id}/prepared", wrapper.ConfirmPublicURLConnectorPeerPairPrepared)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/deployments/{deployment}/public-urls/{service}", wrapper.GetDeploymentPublication)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/deployments/{deployment}/public-urls", wrapper.AllocateDeploymentPublication)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/retire", wrapper.RetireProject)

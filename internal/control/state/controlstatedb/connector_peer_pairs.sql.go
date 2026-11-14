@@ -474,8 +474,10 @@ const listConnectorPeerPairCandidates = `-- name: ListConnectorPeerPairCandidate
 SELECT id,COALESCE((SELECT pending.delivery_generation FROM control.connector_peer_pending_bindings pending
     WHERE pending.pair_id=connector_peer_pairs.id AND pending.pending_until>$1),delivery_generation)::bigint AS delivery_generation FROM control.connector_peer_pairs
 WHERE service_id=$2 AND service_run_id=$3
-    AND run_number=$4 AND publisher_identity_id=$5
-    AND expires_at>$1 AND id COLLATE "C">$6 COLLATE "C"
+    AND run_number=$4 AND public_url_id=$5
+    AND publish_run_id=$6 AND publish_run_number=$7
+    AND publisher_identity_id=$8
+    AND expires_at>$1 AND id COLLATE "C">$9 COLLATE "C"
 ORDER BY id COLLATE "C" LIMIT 65
 `
 
@@ -484,6 +486,9 @@ type ListConnectorPeerPairCandidatesParams struct {
 	ServiceID           string
 	ServiceRunID        string
 	RunNumber           int64
+	PublicURLID         string
+	PublishRunID        string
+	PublishRunNumber    int64
 	PublisherIdentityID string
 	AfterID             string
 }
@@ -501,6 +506,9 @@ func (q *Queries) ListConnectorPeerPairCandidates(ctx context.Context, arg ListC
 		arg.ServiceID,
 		arg.ServiceRunID,
 		arg.RunNumber,
+		arg.PublicURLID,
+		arg.PublishRunID,
+		arg.PublishRunNumber,
 		arg.PublisherIdentityID,
 		arg.AfterID,
 	)

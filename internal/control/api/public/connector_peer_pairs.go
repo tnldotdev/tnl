@@ -54,11 +54,16 @@ func connectorPairInput(serviceID string, body controlv1.ConnectorPeerPairReques
 	if err != nil {
 		return controlstate.ConnectorPeerPairRequest{}, controlstate.ErrServiceAccess
 	}
-	signature, err := base64.RawURLEncoding.Strict().DecodeString(body.Signature)
+	return connectorPairProofInput(proof, body.Signature)
+}
+
+func connectorPairProofInput(proof tunnelv1.ConnectorPeerPairProof, encodedSignature string) (controlstate.ConnectorPeerPairRequest, error) {
+	signature, err := base64.RawURLEncoding.Strict().DecodeString(encodedSignature)
 	if err != nil || len(signature) != ed25519.SignatureSize {
 		return controlstate.ConnectorPeerPairRequest{}, controlstate.ErrServiceAccess
 	}
 	result := controlstate.ConnectorPeerPairRequest{ServiceID: proof.ServiceID, ServiceRunID: proof.ServiceRunID, RunNumber: proof.RunNumber,
+		PublicURLID: proof.PublicURLID, PublishRunID: proof.PublishRunID, PublishRunNumber: proof.PublishRunNumber,
 		PublisherIdentityID: proof.PublisherIdentityID, Subject: proof.Subject, Action: proof.Action, IdempotencyKey: proof.IdempotencyKey,
 		RequestedAt: proof.RequestedAt, PreviousPairID: proof.PreviousPairID, PreviousGeneration: proof.PreviousGeneration, Signature: signature}
 	for i, relay := range proof.ExpectedRelays {
@@ -195,6 +200,10 @@ func (h *handler) ListConnectorPeerPairs(w http.ResponseWriter, r *http.Request,
 		serviceRunProblem(r.Context(), w, "list connector peer pairs", err)
 		return
 	}
+	writeJSON(w, 200, connectorPairCandidatesResponse(page))
+}
+
+func connectorPairCandidatesResponse(page controlstate.ConnectorPeerPairCandidates) controlv1.ConnectorPeerPairCandidates {
 	result := controlv1.ConnectorPeerPairCandidates{Items: make([]controlv1.ConnectorPeerPairCandidate, 0, len(page.Items))}
 	for _, item := range page.Items {
 		candidate := controlv1.ConnectorPeerPairCandidate{PairId: item.PairID, DeliveryGeneration: item.DeliveryGeneration}
@@ -206,17 +215,17 @@ func (h *handler) ListConnectorPeerPairs(w http.ResponseWriter, r *http.Request,
 	if page.NextAfter != "" {
 		result.NextAfter = &page.NextAfter
 	}
-	writeJSON(w, 200, result)
+	return result
 }
 
 func (h *handler) ConfirmConnectorPeerPairPrepared(w http.ResponseWriter, r *http.Request, serviceID controlv1.ServiceID, runID controlv1.ServiceRunID, pairID string) {
 	w.Header().Set("Cache-Control", "no-store")
 	var body controlv1.ConnectorPeerPairPrepared
-	if decodeJSONLimited(w, r, &body, 4096) != nil || !body.Phase.Valid() || body.DeliveryGeneration < 1 || body.BindingExpiresAt.IsZero() {
+	if decodeJSONLimited(w, r, &body, 4096) != nil {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid connector peer preparation report")
 		return
 	}
-	id, err := tunnelv1.ParsePeerDeliveryIdentifier(body.DeliveryId)
+	prepared, err := connectorPairPreparedInput(body)
 	if err != nil {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid connector peer preparation report")
 		return
@@ -230,15 +239,6 @@ func (h *handler) ConfirmConnectorPeerPairPrepared(w http.ResponseWriter, r *htt
 	if !ok {
 		writeProblem(w, 503, controlv1.Unavailable, "connector peer preparation reports are unavailable")
 		return
-	}
-	prepared := controlstate.ConnectorPeerPairPrepared{DeliveryID: id, DeliveryGeneration: body.DeliveryGeneration, BindingExpiresAt: body.BindingExpiresAt,
-		Phase: string(body.Phase), OperationID: body.OperationId, BindingChallenge: body.BindingChallenge}
-	if len(body.PathProofs) > 2 {
-		writeProblem(w, 400, controlv1.InvalidRequest, "invalid connector peer path proofs")
-		return
-	}
-	for _, proof := range body.PathProofs {
-		prepared.PathProofs = append(prepared.PathProofs, tunnelv1.ConnectorPeerPairPathProof{ConnectionSlot: proof.ConnectionSlot, ProbeNonce: proof.ProbeNonce, ReplyFrame: proof.ReplyFrame})
 	}
 	err = store.ConfirmConnectorPeerPairPrepared(r.Context(), serviceID, runID, pairID, token, prepared, time.Now())
 	if err != nil {

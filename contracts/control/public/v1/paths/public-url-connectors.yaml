@@ -1,0 +1,174 @@
+paths:
+  /v1/public-urls/{public_url_id}/connector-peer-pairs:
+    post:
+      operationId: preparePublicURLConnectorPeerPair
+      tags: [connectors]
+      summary: Prepare a signed connector owner for an exact public URL publish run
+      description: Require the current matching control session and enrolled device signature. Control rechecks existing public URL or selected preview access, publisher authority, certificate, and both relay assignments. A ready snapshot is not permission. No anonymous, share bearer, service workload, or management credential can replace native device possession.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "../openapi.yaml#/components/parameters/PublicURLID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              { $ref: "../openapi.yaml#/components/schemas/PublicURLConnectorPeerPairRequest" }
+      responses:
+        "200":
+          description: Exact native-authorized public URL pair; never cache
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/PublicURLConnectorPeerPair" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/public-urls/{public_url_id}/connector-peer-pairs/{pair_id}/renew:
+    post:
+      operationId: renewPublicURLConnectorPeerPair
+      tags: [connectors]
+      summary: Renew the retained public URL owner and exact visitor permission together
+      description: Retain the original device, parent control session, preview selection, publisher, and publish run. Endpoint trust changes require replacement. Only a fresh signed renewal extends the owner; independently confirmed relay and installation deadlines remain unchanged.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/PublicURLID" }
+        - name: pair_id
+          in: path
+          required: true
+          schema: { type: string, pattern: "^cpp_[A-Za-z0-9]{22}$" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              { $ref: "../openapi.yaml#/components/schemas/PublicURLConnectorPeerPairRequest" }
+      responses:
+        "200":
+          description: One authority decision for the retained owner and native public URL visitor permission
+          content:
+            application/json:
+              schema:
+                { $ref: "../openapi.yaml#/components/schemas/PublicURLConnectorPeerPairRenewal" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/public-urls/{public_url_id}/connector-peer-pairs/{pair_id}/rebind:
+    post:
+      operationId: rebindPublicURLConnectorPeerPair
+      tags: [connectors]
+      summary: Inspect or change an existing public URL connector network binding
+      description: Use the existing inspect, prepare, activate, and abort lifecycle with the original device, session, and preview selection. No phase can change publication identity or revive an expired owner. Only stale_network_binding permits network recovery; other authorization failures are terminal.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/PublicURLID" }
+        - name: pair_id
+          in: path
+          required: true
+          schema: { type: string, pattern: "^cpp_[A-Za-z0-9]{22}$" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              {
+                $ref: "../openapi.yaml#/components/schemas/PublicURLConnectorPeerPairRebindRequest",
+              }
+      responses:
+        "200":
+          description: Typed public URL active and pending bindings; observations renew nothing
+          content:
+            application/json:
+              schema:
+                {
+                  $ref: "../openapi.yaml#/components/schemas/PublicURLConnectorPeerPairRebindState",
+                }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/publish-runs/{publish_run_id}/connector-peer-pairs:
+    get:
+      operationId: listPublicURLConnectorPeerPairs
+      tags: [publish-runs]
+      summary: Reconcile connector pair candidates for an exact publish run
+      description: Return at most 64 candidate references without keys or subject facts. Starting runs may reconcile hints; installed owners may have an independent authorization observation during relay recovery. Each delivery still requires its own current checks.
+      security: [{ publishRunAuth: [] }]
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/PublishRunID" }
+        - name: publish_run_number
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: "^[0-9]+$"
+            x-go-type: int64
+        - name: after
+          in: query
+          schema: { type: string, pattern: "^cpp_[A-Za-z0-9]{22}$" }
+      responses:
+        "200":
+          description: Bounded hints for the authenticated publisher; never cache
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairCandidates" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/publish-runs/{publish_run_id}/connector-peer-pairs/{pair_id}/delivery:
+    post:
+      operationId: deliverPublicURLConnectorPeerPair
+      tags: [publish-runs]
+      summary: Deliver an existing public URL connector binding to its publisher
+      description: Authenticate with the exact publish run token and number, not a service run token. Both current relay legs must have claimed the same observed source under the current IP policy. The response permits local binding setup, not application admission.
+      security: [{ publishRunAuth: [] }]
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/PublishRunID" }
+        - name: pair_id
+          in: path
+          required: true
+          schema: { type: string, pattern: "^cpp_[A-Za-z0-9]{22}$" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [publish_run_number, delivery_generation]
+              properties:
+                publish_run_number:
+                  {
+                    $ref: "../schemas/public-url-connectors.yaml#/schemas/PublicURLConnectorPeerPairRequest/properties/publish_run_number",
+                  }
+                delivery_generation:
+                  {
+                    $ref: "../schemas/service-runs.yaml#/schemas/ConnectorPeerPairDelivery/properties/delivery_generation",
+                  }
+      responses:
+        "200":
+          description: Existing binding and endpoint session material, never returned to a relay
+          content:
+            application/json:
+              schema:
+                { $ref: "../openapi.yaml#/components/schemas/PublicURLConnectorPeerPairDelivery" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/publish-runs/{publish_run_id}/connector-peer-pairs/{pair_id}/prepared:
+    post:
+      operationId: confirmPublicURLConnectorPeerPairPrepared
+      tags: [publish-runs]
+      summary: Report installation or path proofs for the exact public URL connector binding
+      description: Recheck the authenticated publish run, original native source, matching relay claims, and IP-policy deadline. Reports cannot extend owner authority or substitute another publication.
+      security: [{ publishRunAuth: [] }]
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/PublishRunID" }
+        - name: pair_id
+          in: path
+          required: true
+          schema: { type: string, pattern: "^cpp_[A-Za-z0-9]{22}$" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [publish_run_number, prepared]
+              properties:
+                publish_run_number:
+                  {
+                    $ref: "../schemas/public-url-connectors.yaml#/schemas/PublicURLConnectorPeerPairRequest/properties/publish_run_number",
+                  }
+                prepared: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairPrepared" }
+      responses:
+        "204": { description: Exact binding report recorded without renewing authority }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

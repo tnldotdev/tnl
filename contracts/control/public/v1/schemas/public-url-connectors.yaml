@@ -1,0 +1,242 @@
+schemas:
+  PublicURLConnectorPeerPairRequest:
+    type: object
+    additionalProperties: false
+    description: Sign the public URL tunnelv1 preparation proof, not this HTTP object. Only the matching enrolled device and current control session can prepare this exact publish run. Optional source.preview_id selects existing preview access, not another permission.
+    required:
+      [
+        publish_run_id,
+        publish_run_number,
+        publisher_identity_id,
+        subject,
+        source,
+        action,
+        idempotency_key,
+        requested_at,
+        expected_relays,
+        signature,
+      ]
+    properties:
+      publish_run_id: { $ref: "../openapi.yaml#/components/schemas/PublishRunID" }
+      publish_run_number:
+        type: string
+        pattern: "^[0-9]+$"
+        x-go-type: int64
+        x-oapi-codegen-extra-tags: { json: "publish_run_number,string" }
+      publisher_identity_id:
+        {
+          $ref: "./connectors.yaml#/schemas/ConnectorPeerPairRequest/properties/publisher_identity_id",
+        }
+      subject: { $ref: "../openapi.yaml#/components/schemas/VisitorSubject" }
+      source:
+        $ref: "../openapi.yaml#/components/schemas/VisitorTokenDeviceSource"
+      action: { $ref: "./connectors.yaml#/schemas/ConnectorPeerPairRequest/properties/action" }
+      idempotency_key: { $ref: "../openapi.yaml#/components/schemas/IdempotencyKey" }
+      requested_at:
+        { $ref: "./connectors.yaml#/schemas/ConnectorPeerPairRequest/properties/requested_at" }
+      previous_pair_id:
+        { $ref: "./connectors.yaml#/schemas/ConnectorPeerPairRequest/properties/previous_pair_id" }
+      previous_generation:
+        {
+          $ref: "./connectors.yaml#/schemas/ConnectorPeerPairRequest/properties/previous_generation",
+        }
+      expected_relays:
+        { $ref: "./connectors.yaml#/schemas/ConnectorPeerPairRequest/properties/expected_relays" }
+      signature:
+        { $ref: "./connectors.yaml#/schemas/ConnectorPeerPairRequest/properties/signature" }
+  PublicURLConnectorPeerPair:
+    type: object
+    additionalProperties: false
+    description: Exact public URL owner and network binding. Public URL IDs and publish run numbers never appear in service fields. The existing pair/session lifecycle and independent delivery deadlines apply.
+    required:
+      [
+        pair_id,
+        public_url_id,
+        publish_run_id,
+        publish_run_number,
+        publisher_identity_id,
+        subject,
+        delivery_id,
+        delivery_generation,
+        key,
+        relays,
+        observed_at,
+        expires_at,
+      ]
+    properties:
+      pair_id: { $ref: "./connectors.yaml#/schemas/ConnectorPeerPair/properties/pair_id" }
+      public_url_id: { $ref: "../openapi.yaml#/components/schemas/PublicURLID" }
+      publish_run_id: { $ref: "../openapi.yaml#/components/schemas/PublishRunID" }
+      publish_run_number:
+        { $ref: "#/schemas/PublicURLConnectorPeerPairRequest/properties/publish_run_number" }
+      publisher_identity_id:
+        { $ref: "./connectors.yaml#/schemas/ConnectorPeerPair/properties/publisher_identity_id" }
+      subject: { $ref: "../openapi.yaml#/components/schemas/VisitorSubject" }
+      delivery_id: { $ref: "./connectors.yaml#/schemas/ConnectorPeerPair/properties/delivery_id" }
+      delivery_generation:
+        { $ref: "./connectors.yaml#/schemas/ConnectorPeerPair/properties/delivery_generation" }
+      key: { $ref: "./connectors.yaml#/schemas/ConnectorPeerPair/properties/key" }
+      session_key: { $ref: "./connectors.yaml#/schemas/ConnectorPeerPair/properties/session_key" }
+      trust_revision:
+        { $ref: "./connectors.yaml#/schemas/ConnectorPeerPair/properties/trust_revision" }
+      operation_id: { $ref: "./connectors.yaml#/schemas/ConnectorPeerPair/properties/operation_id" }
+      binding_challenge:
+        { $ref: "./connectors.yaml#/schemas/ConnectorPeerPair/properties/binding_challenge" }
+      binding_state:
+        { $ref: "./connectors.yaml#/schemas/ConnectorPeerPair/properties/binding_state" }
+      source_ip: { $ref: "./connectors.yaml#/schemas/ConnectorPeerPair/properties/source_ip" }
+      publisher_proved_until:
+        { $ref: "./connectors.yaml#/schemas/ConnectorPeerPair/properties/publisher_proved_until" }
+      publisher_prepared_until:
+        { $ref: "./connectors.yaml#/schemas/ConnectorPeerPair/properties/publisher_prepared_until" }
+      observed_at: { $ref: "./connectors.yaml#/schemas/ConnectorPeerPair/properties/observed_at" }
+      relays: { $ref: "./connectors.yaml#/schemas/ConnectorPeerPair/properties/relays" }
+      expires_at: { $ref: "./connectors.yaml#/schemas/ConnectorPeerPair/properties/expires_at" }
+  PublicURLConnectorPeerPairRenewal:
+    type: object
+    additionalProperties: false
+    required: [pair, run_valid_until, protocol, trust_revision, endpoint, visitor_permission]
+    properties:
+      pair: { $ref: "../openapi.yaml#/components/schemas/PublicURLConnectorPeerPair" }
+      run_valid_until:
+        { $ref: "./connectors.yaml#/schemas/ConnectorPeerPairRenewal/properties/run_valid_until" }
+      protocol: { type: string, const: http, x-go-type: string }
+      trust_revision:
+        { $ref: "./connectors.yaml#/schemas/ConnectorPeerPairRenewal/properties/trust_revision" }
+      endpoint: { $ref: "../openapi.yaml#/components/schemas/ServiceEndpoint" }
+      visitor_permission: { $ref: "../openapi.yaml#/components/schemas/VisitorTokenResponse" }
+  PublicURLConnectorPeerPairRebindRequest:
+    type: object
+    additionalProperties: false
+    description: Sign the public URL tunnelv1 rebind proof with the original device key and use the original control session and preview selection. Inspect never renews authority; no phase may select another publication.
+    required:
+      [
+        phase,
+        idempotency_key,
+        operation_id,
+        expected_generation,
+        requested_at,
+        publish_run_id,
+        publish_run_number,
+        publisher_identity_id,
+        trust_revision,
+        subject,
+        source,
+        expected_relays,
+        binding_challenge,
+        path_proofs,
+        signature,
+      ]
+    properties:
+      phase: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairRebindPhase" }
+      idempotency_key: { $ref: "../openapi.yaml#/components/schemas/IdempotencyKey" }
+      operation_id:
+        {
+          $ref: "./connectors.yaml#/schemas/ConnectorPeerPairRebindRequest/properties/operation_id",
+        }
+      expected_generation:
+        {
+          $ref: "./connectors.yaml#/schemas/ConnectorPeerPairRebindRequest/properties/expected_generation",
+        }
+      requested_at:
+        {
+          $ref: "./connectors.yaml#/schemas/ConnectorPeerPairRebindRequest/properties/requested_at",
+        }
+      publish_run_id: { $ref: "../openapi.yaml#/components/schemas/PublishRunID" }
+      publish_run_number:
+        { $ref: "#/schemas/PublicURLConnectorPeerPairRequest/properties/publish_run_number" }
+      publisher_identity_id:
+        {
+          $ref: "./connectors.yaml#/schemas/ConnectorPeerPairRebindRequest/properties/publisher_identity_id",
+        }
+      trust_revision:
+        {
+          $ref: "./connectors.yaml#/schemas/ConnectorPeerPairRebindRequest/properties/trust_revision",
+        }
+      subject: { $ref: "../openapi.yaml#/components/schemas/VisitorSubject" }
+      source: { $ref: "../openapi.yaml#/components/schemas/VisitorTokenDeviceSource" }
+      expected_relays:
+        {
+          $ref: "./connectors.yaml#/schemas/ConnectorPeerPairRebindRequest/properties/expected_relays",
+        }
+      binding_challenge:
+        {
+          $ref: "./connectors.yaml#/schemas/ConnectorPeerPairRebindRequest/properties/binding_challenge",
+        }
+      path_proofs:
+        { $ref: "./connectors.yaml#/schemas/ConnectorPeerPairRebindRequest/properties/path_proofs" }
+      signature:
+        { $ref: "./connectors.yaml#/schemas/ConnectorPeerPairRebindRequest/properties/signature" }
+  PublicURLConnectorPeerPairRebindState:
+    type: object
+    additionalProperties: false
+    required: [high_water_generation, ready_relays]
+    properties:
+      active: { $ref: "../openapi.yaml#/components/schemas/PublicURLConnectorPeerPair" }
+      pending: { $ref: "../openapi.yaml#/components/schemas/PublicURLConnectorPeerPair" }
+      high_water_generation:
+        {
+          $ref: "./connectors.yaml#/schemas/ConnectorPeerPairRebindState/properties/high_water_generation",
+        }
+      pending_until:
+        { $ref: "./connectors.yaml#/schemas/ConnectorPeerPairRebindState/properties/pending_until" }
+      ready_relays:
+        { $ref: "./connectors.yaml#/schemas/ConnectorPeerPairRebindState/properties/ready_relays" }
+      operation: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairRebindOperation" }
+  PublicURLConnectorPeerPairDelivery:
+    type: object
+    additionalProperties: false
+    description: Existing binding delivery to the exact authenticated publish run, after matching relay claims. This grants no application access and contains no service run credentials.
+    required:
+      [
+        pair_id,
+        public_url_id,
+        publish_run_id,
+        publish_run_number,
+        publisher_identity_id,
+        subject,
+        delivery_id,
+        delivery_generation,
+        key,
+        source_ip,
+        relays,
+        observed_at,
+        expires_at,
+      ]
+    properties:
+      pair_id: { $ref: "./service-runs.yaml#/schemas/ConnectorPeerPairDelivery/properties/pair_id" }
+      public_url_id: { $ref: "../openapi.yaml#/components/schemas/PublicURLID" }
+      publish_run_id: { $ref: "../openapi.yaml#/components/schemas/PublishRunID" }
+      publish_run_number:
+        { $ref: "#/schemas/PublicURLConnectorPeerPairRequest/properties/publish_run_number" }
+      publisher_identity_id:
+        {
+          $ref: "./service-runs.yaml#/schemas/ConnectorPeerPairDelivery/properties/publisher_identity_id",
+        }
+      subject: { $ref: "../openapi.yaml#/components/schemas/VisitorSubject" }
+      delivery_id:
+        { $ref: "./service-runs.yaml#/schemas/ConnectorPeerPairDelivery/properties/delivery_id" }
+      delivery_generation:
+        {
+          $ref: "./service-runs.yaml#/schemas/ConnectorPeerPairDelivery/properties/delivery_generation",
+        }
+      key: { $ref: "./service-runs.yaml#/schemas/ConnectorPeerPairDelivery/properties/key" }
+      session_key:
+        { $ref: "./service-runs.yaml#/schemas/ConnectorPeerPairDelivery/properties/session_key" }
+      trust_revision:
+        { $ref: "./service-runs.yaml#/schemas/ConnectorPeerPairDelivery/properties/trust_revision" }
+      operation_id:
+        { $ref: "./service-runs.yaml#/schemas/ConnectorPeerPairDelivery/properties/operation_id" }
+      binding_challenge:
+        {
+          $ref: "./service-runs.yaml#/schemas/ConnectorPeerPairDelivery/properties/binding_challenge",
+        }
+      binding_state:
+        { $ref: "./service-runs.yaml#/schemas/ConnectorPeerPairDelivery/properties/binding_state" }
+      source_ip:
+        { $ref: "./service-runs.yaml#/schemas/ConnectorPeerPairDelivery/properties/source_ip" }
+      observed_at:
+        { $ref: "./service-runs.yaml#/schemas/ConnectorPeerPairDelivery/properties/observed_at" }
+      relays: { $ref: "./service-runs.yaml#/schemas/ConnectorPeerPairDelivery/properties/relays" }
+      expires_at:
+        { $ref: "./service-runs.yaml#/schemas/ConnectorPeerPairDelivery/properties/expires_at" }

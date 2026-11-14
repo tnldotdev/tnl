@@ -33,6 +33,20 @@ func connectorPeerPublisherAuthority(ctx context.Context, tx pgx.Tx, run control
 }
 
 func (d *Database) connectorPublicURLPublisherAuthority(ctx context.Context, tx pgx.Tx, url controlstatedb.ControlPublicUrl, run controlstatedb.ControlPublishRun, now time.Time) (time.Time, error) {
+	until, err := d.connectorPublicURLPublisherIdentity(ctx, tx, url, run, now)
+	if err != nil {
+		return time.Time{}, err
+	}
+	until = minTime(until, run.CertificateNotAfter.Time)
+	if !until.After(now) {
+		return time.Time{}, ErrServiceAccess
+	}
+	return until, nil
+}
+
+// publisher hints do not require a certificate or ready connections. delivery
+// and owner observations independently check those stronger publication facts.
+func (d *Database) connectorPublicURLPublisherIdentity(ctx context.Context, tx pgx.Tx, url controlstatedb.ControlPublicUrl, run controlstatedb.ControlPublishRun, now time.Time) (time.Time, error) {
 	if !run.PublisherIdentityID.Valid || !run.PublisherGrantID.Valid || !run.PublisherKeyID.Valid {
 		return time.Time{}, ErrServiceAccess
 	}
@@ -51,7 +65,7 @@ func (d *Database) connectorPublicURLPublisherAuthority(ctx context.Context, tx 
 		}
 		return time.Time{}, ErrServiceAccess
 	}
-	until := minTime(run.PublisherExpiresAt.Time, run.CertificateNotAfter.Time)
+	until := run.PublisherExpiresAt.Time
 	if grant.ExpiresAt.Valid {
 		until = minTime(until, grant.ExpiresAt.Time)
 	}

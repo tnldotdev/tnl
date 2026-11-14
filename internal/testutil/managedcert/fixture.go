@@ -18,6 +18,28 @@ import (
 
 func Install(t *testing.T, d *controlstate.Database, prep controlstate.ServiceRunPreparation, run controlstate.ServiceRunState, now time.Time) {
 	t.Helper()
+	install(t, d, prep.CertificatePlan.Identifiers, now, func(directory string, csr []byte) (controlstate.CertificateIssuance, error) {
+		return d.CreateServiceCertificateIssuance(t.Context(), run.ServiceID, run.RunID, run.Token, directory, "test-issuance", run.RunNumber, csr, now)
+	}, func(id string, notAfter time.Time) error {
+		return d.MarkServiceCertificateInstalled(t.Context(), run.ServiceID, run.RunID, run.Token, id, run.RunNumber, notAfter, now)
+	})
+}
+
+func InstallPublicURL(t *testing.T, d *controlstate.Database, auth controlstate.PublishRunAuthentication, identifiers []string, now time.Time) {
+	t.Helper()
+	install(t, d, identifiers, now, func(directory string, csr []byte) (controlstate.CertificateIssuance, error) {
+		return d.CreateCertificateIssuance(t.Context(), controlstate.CreateCertificateIssuanceRequest{
+			Authentication: auth, DirectoryURL: directory, IdempotencyKey: "test-issuance",
+			RequestDigest: sha256.Sum256(csr), CSRDER: csr,
+		}, now)
+	}, func(id string, notAfter time.Time) error {
+		_, err := d.MarkPublicURLCertificateInstalled(t.Context(), auth, id, notAfter, now)
+		return err
+	})
+}
+
+func install(t *testing.T, d *controlstate.Database, identifiers []string, now time.Time, create func(string, []byte) (controlstate.CertificateIssuance, error), acknowledge func(string, time.Time) error) {
+	t.Helper()
 	ctx := t.Context()
 	const directory = "https://acme.example.test/directory"
 	account, err := d.EnsureACMEAccount(ctx, directory, "operator@example.test", now)
@@ -31,11 +53,11 @@ func Install(t *testing.T, d *controlstate.Database, prep controlstate.ServiceRu
 	if err != nil {
 		t.Fatal(err)
 	}
-	csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{DNSNames: prep.CertificatePlan.Identifiers}, key)
+	csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{DNSNames: identifiers}, key)
 	if err != nil {
 		t.Fatal(err)
 	}
-	issue, err := d.CreateServiceCertificateIssuance(ctx, run.ServiceID, run.RunID, run.Token, directory, "test-issuance", run.RunNumber, csr, now)
+	issue, err := create(directory, csr)
 	if err != nil {
 		t.Fatalf("create private certificate fixture: %v", err)
 	}
@@ -52,7 +74,7 @@ func Install(t *testing.T, d *controlstate.Database, prep controlstate.ServiceRu
 	if err != nil {
 		t.Fatal(err)
 	}
-	leaf := &x509.Certificate{SerialNumber: big.NewInt(2), DNSNames: prep.CertificatePlan.Identifiers, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	leaf := &x509.Certificate{SerialNumber: big.NewInt(2), DNSNames: identifiers, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
 	der, err := x509.CreateCertificate(rand.Reader, leaf, ca, &key.PublicKey, issuer)
 	if err != nil {
 		t.Fatal(err)
@@ -68,14 +90,14 @@ func Install(t *testing.T, d *controlstate.Database, prep controlstate.ServiceRu
 	work.RenewAt = &renewAt
 	work.CertificatePEM = append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: root})...)
 	work.OrderURL, work.FinalizeURL, work.CertificateURL = "https://acme.example.test/order/"+issue.ID, "https://acme.example.test/finalize/"+issue.ID, "https://acme.example.test/certificate/"+issue.ID
-	for _, name := range prep.CertificatePlan.Identifiers {
+	for _, name := range identifiers {
 		expires := now.Add(time.Hour)
 		work.Authorizations = append(work.Authorizations, controlstate.ACMEAuthorizationWork{Identifier: name, AuthorizationURL: "https://acme.example.test/auth/" + issue.ID + "/" + name, ChallengeType: "dns-01", ChallengeURL: "https://acme.example.test/challenge/" + issue.ID + "/" + name, ChallengeToken: "token", ChallengeDigest: sha256.Sum256([]byte(name)), State: "complete", AvailableAt: now, PresentedAt: &now, ValidatedAt: &now, CleanupCompletedAt: &now, ExpiresAt: &expires})
 	}
 	if _, err = d.SaveACMEOrderWork(ctx, work, now); err != nil {
 		t.Fatalf("save private certificate fixture: %v", err)
 	}
-	if err = d.MarkServiceCertificateInstalled(ctx, run.ServiceID, run.RunID, run.Token, issue.ID, run.RunNumber, leaf.NotAfter, now); err != nil {
+	if err = acknowledge(issue.ID, leaf.NotAfter); err != nil {
 		t.Fatalf("install private certificate fixture: %v", err)
 	}
 }
