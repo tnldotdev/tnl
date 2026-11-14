@@ -21,6 +21,7 @@ type serviceVisitorStore interface {
 	ConfigureService(context.Context, string, string, controlstate.ServiceMetadata, time.Time) (controlstate.ServiceRecord, error)
 	GetService(context.Context, string, string) (controlstate.ServiceRecord, error)
 	DeleteService(context.Context, string, string, time.Time) error
+	ReleaseServiceEndpoint(context.Context, string, string, int64, int, time.Time) (controlstate.ServiceRecord, error)
 	CreateServiceGrant(context.Context, string, string, string, string, string, *time.Time, time.Time) (controlstate.ServiceGrant, error)
 	ListServiceGrants(context.Context, string, string, string) ([]controlstate.ServiceGrant, string, error)
 	RevokeServiceGrant(context.Context, string, string, string, time.Time) error
@@ -54,6 +55,10 @@ func serviceVisitorError(ctx context.Context, w http.ResponseWriter, operation s
 		writeProblem(w, 400, controlv1.InvalidRequest, "select a ready team domain and a valid source-bound worktree placement")
 	case errors.Is(err, controlstate.ErrServiceAccess):
 		writeProblem(w, 404, controlv1.NotFound, "service not found or unavailable")
+	case errors.Is(err, controlstate.ErrServiceEndpointPublic):
+		writeProblem(w, 409, controlv1.Conflict, "disable public access in the service binding and apply before releasing its reservation")
+	case errors.Is(err, controlstate.ErrServiceEndpointDNSPending):
+		writeProblem(w, 409, controlv1.Conflict, "managed endpoint DNS cleanup is incomplete; wait for cleanup and retry")
 	case errors.Is(err, controlstate.ErrServiceConflict):
 		writeProblem(w, 409, controlv1.Conflict, "service state or idempotency key conflicts with this request; read the current service and retry")
 	default:
@@ -218,6 +223,25 @@ func (h *handler) DeleteService(w http.ResponseWriter, r *http.Request, id contr
 		return
 	}
 	w.WriteHeader(204)
+}
+
+func (h *handler) ReleaseServiceEndpoint(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID) {
+	var body controlv1.ReleaseServiceEndpointRequest
+	if decodeJSON(w, r, &body) != nil || body.ExpectedEndpointRevision < 1 || body.ExpectedPort < 1024 || body.ExpectedPort > 65535 {
+		writeProblem(w, 400, controlv1.InvalidRequest, "send the current endpoint revision and exact reserved port")
+		return
+	}
+	store, identity, ok := h.serviceVisitor(w, r)
+	if !ok {
+		return
+	}
+	record, err := store.ReleaseServiceEndpoint(r.Context(), id, identity, body.ExpectedEndpointRevision, body.ExpectedPort, time.Now())
+	if err != nil {
+		serviceVisitorError(r.Context(), w, "release service endpoint", err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, 200, serviceaccess.Service(record))
 }
 
 func (h *handler) CreateServiceGrant(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID, _ controlv1.CreateServiceGrantParams) {

@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -122,24 +123,22 @@ func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLoca
 	if !validLocalProjectServiceScope(r.ProjectKey, r.SourceFingerprint, r.Service, r.WorktreeKey) {
 		return result, ErrProjectConfigurationInvalid
 	}
-	services := map[string]ProjectServiceConfiguration{r.Service: r.Configuration}
 	if err := (ServicePlacement{WorktreeKey: r.WorktreeKey, WorktreeLabel: r.WorktreeLabel, DomainID: r.DomainID}).Validate(); err != nil {
 		return result, err
 	}
-	// this endpoint realizes one resource, not the path destinations. include
-	// inert declarations only so shared path-reference validation remains exact.
-	if r.Configuration.HTTP != nil {
-		for _, mount := range r.Configuration.HTTP.Paths {
-			if mount.Service != r.Service {
-				services[mount.Service] = ProjectServiceConfiguration{Protocol: "http", Target: "app"}
-			}
-		}
+	data, err := json.Marshal(r.Configuration)
+	if err != nil || len(data) > 512<<10 {
+		return result, ErrProjectConfigurationInvalid
 	}
-	c, _, err := NormalizeProjectConfiguration(ProjectConfiguration{Services: services})
-	if err != nil {
+	var s ProjectServiceConfiguration
+	if err = json.Unmarshal(data, &s); err != nil {
 		return result, err
 	}
-	s := c.Services[r.Service]
+	// realization validates one binding. only the actual project can validate
+	// cross-service destinations; never invent neighboring declarations here.
+	if err = normalizeAppliedProjectService(r.Service, &s, true); err != nil {
+		return result, err
+	}
 	if (s.PublicURL != nil) != (r.PublicURLID != "") {
 		return result, ErrProjectConfigurationInvalid
 	}
@@ -234,7 +233,7 @@ func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLoca
 		if e != nil {
 			return result, e
 		}
-		if e = d.ensureLocalServiceEndpoint(ctx, tx, row.ID, r.ActorID, s.Name, ServicePlacement{DomainID: r.DomainID, WorktreeKey: localPlacementKey(r.WorktreeKey), WorktreeLabel: r.WorktreeLabel, SourceKey: r.ProjectKey + "/" + r.SourceFingerprint + "/" + r.WorktreeKey + "/" + r.Service, DNSAutomation: r.DNSAutomation}, r.Now); e != nil {
+		if e = d.ensureLocalServiceEndpoint(ctx, tx, row.ID, r.ActorID, s.Name, ServicePlacement{DomainID: r.DomainID, WorktreeKey: localPlacementKey(r.WorktreeKey), WorktreeLabel: r.WorktreeLabel, SourceKey: r.ProjectKey + "/" + r.SourceFingerprint + "/" + r.WorktreeKey + "/" + r.Service, DNSAutomation: r.DNSAutomation}, projectServicePublic(s), r.Now); e != nil {
 			return result, e
 		}
 		row, e = q.LockService(ctx, row.ID)
@@ -276,6 +275,11 @@ func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLoca
 		_, err = tx.Exec(ctx, `INSERT INTO control.local_project_services(team_id,project_key,source_fingerprint,service,worktree_key,service_id,public_url_id,created_by_identity_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, r.TeamID, r.ProjectKey, r.SourceFingerprint, r.Service, r.WorktreeKey, entry.ServiceID, entry.PublicURLID, r.ActorID)
 		if err != nil {
 			return result, projectConstraintError(err)
+		}
+	}
+	if entry.ServiceID.Valid {
+		if err = d.saveLocalServiceHTTP(ctx, tx, entry.ServiceID.String, s.HTTP); err != nil {
+			return result, err
 		}
 	}
 	if err = reconcileLocalVisitorGrant(ctx, tx, entry, r.WorktreeKey, r.ActorID, oldGrant, s.Access != nil && s.Access.Team, r.Now); err != nil {
@@ -408,6 +412,12 @@ func (d *Database) reconcileLocalProjectServices(ctx context.Context, tx pgx.Tx,
 			if err = d.updateLocalService(ctx, tx, q, row, local, r.Now); err != nil {
 				return err
 			}
+			if err = d.setLocalServiceExposure(ctx, tx, row.ID, projectServicePublic(*s), r.Now); err != nil {
+				return err
+			}
+			if err = d.saveLocalServiceHTTP(ctx, tx, row.ID, s.HTTP); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -448,7 +458,10 @@ func (d *Database) GetProjectPublicMetadata(ctx context.Context, team, project, 
 	    UNION SELECT service,public_url_id FROM control.local_project_services WHERE team_id=$1 AND project_key=$2)
 	    SELECT s.service,u.id,''::text,u.canonical_hostname,443 FROM public_services s JOIN control.public_urls u ON u.id=s.public_url_id AND u.lifecycle_state='enabled'
 	    WHERE $5 OR EXISTS(SELECT 1 FROM control.visitor_identity_permission('public_url',u.id,$3,$6,'',$4))
-	    UNION ALL SELECT a.service,''::text,s.id,s.certificate_hostname,s.service_port FROM control.applied_project_services a JOIN control.services s ON s.id=a.service_id
+	    UNION ALL SELECT a.service,''::text,s.id,s.certificate_hostname,s.service_port FROM (
+	      SELECT team_id,project_key,service,service_id FROM control.applied_project_services
+	      UNION SELECT team_id,project_key,service,service_id FROM control.local_project_services
+	    ) a JOIN control.services s ON s.id=a.service_id
 	    WHERE a.team_id=$1 AND a.project_key=$2 AND s.enabled AND s.deleted_at IS NULL AND s.public AND s.protocol='http'
 	    ORDER BY 1,2,3`, team, project, actor, now, manager, companySessionID(ctx, actor))
 	if err != nil {

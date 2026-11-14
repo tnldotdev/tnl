@@ -27,10 +27,12 @@ class Session:
     registration: dict[str, object] = field(default_factory=dict)
     payloads: list[dict[str, object]] = field(default_factory=list)
     stopped: bool = False
+    public_url: str | None = None
+    run_number: int = 1
 
     @property
     def url(self) -> str:
-        return f"https://app-{self.endpoint.owner_id}.example.test"
+        return self.public_url or f"https://app-{self.endpoint.owner_id}.example.test"
 
 
 class Native(NativeRuntime):
@@ -48,6 +50,8 @@ class Native(NativeRuntime):
         self.retired_cleanup = False
         self.retired_error = PublicationCleanupFailed()
         self.private_http = False
+        self.unrealized = False
+        self.run_number = 1
         self.initial_retired = False
 
     async def start(
@@ -69,7 +73,9 @@ class Native(NativeRuntime):
             service=service,
             invocation_id=invocation_id,
         )
-        self.sessions[endpoint.capability] = Session(endpoint, environment, publications)
+        self.sessions[endpoint.capability] = Session(
+            endpoint, environment, publications, run_number=self.run_number
+        )
         return endpoint
 
     async def request(
@@ -78,7 +84,7 @@ class Native(NativeRuntime):
         self.operations.append(operation)
         session = self.sessions[endpoint.capability]
         if operation == "prepare":
-            if self.private_http:
+            if self.private_http or self.unrealized:
                 return {
                     "version": 1,
                     "registration_id": "reg_" + endpoint.owner_id,
@@ -145,8 +151,8 @@ class Native(NativeRuntime):
                         "routable": True,
                         "ready": False,
                         "readiness": {"path": "/"},
-                        "public_url": session.url,
-                        "run_number": 1,
+                        **({} if self.private_http else {"public_url": session.url}),
+                        "run_number": session.run_number,
                     }
                 ],
             }
@@ -249,7 +255,73 @@ def test_local_named_uses_framework_registration_and_saved_policy(
     asyncio.run(scenario())
 
 
-def test_private_http_prepare_releases_acknowledged_reservation_and_asgi(
+def test_local_named_waits_for_first_endpoint_after_registration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        native = setup(monkeypatch)
+        native.unrealized = True
+        native.routable.clear()
+        local = tnl.create_client(
+            project="acme/shop", services={"web": {"protocol": "http"}}
+        ).deployment("local")
+        pending = asyncio.create_task(local.publish("web", tnl.handler(endpoint)))
+        try:
+            await asyncio.wait_for(native.status_entered.wait(), 5)
+            assert not pending.done()
+            assert native.operations.count("prepare") == 1
+            assert native.operations.count("register") == 1
+            session = next(iter(native.sessions.values()))
+            async with httpx.AsyncClient(trust_env=False) as http:
+                assert (
+                    await http.get(str(session.registration["target"]))
+                ).text == "ASGI application"
+            native.routable.set()
+            publication = await asyncio.wait_for(pending, 5)
+            assert publication.url == session.url
+            await publication.aclose()
+            assert native.operations.count("unregister") == 1
+            assert publication._serve_task.done() and session.stopped
+            async with httpx.AsyncClient(trust_env=False) as http:
+                with pytest.raises(httpx.ConnectError):
+                    await http.get(str(session.registration["target"]))
+        finally:
+            native.routable.set()
+            await local.aclose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("changed", ["url", "run"])
+def test_late_named_endpoint_retains_url_and_run_fences(
+    monkeypatch: pytest.MonkeyPatch, changed: str
+) -> None:
+    async def scenario() -> None:
+        native = setup(monkeypatch)
+        native.unrealized, native.run_number = True, 2
+        local = tnl.create_client(
+            project="acme/shop", services={"web": {"protocol": "http"}}
+        ).deployment("local")
+        publication = await local.publish("web", tnl.handler(endpoint))
+        try:
+            session = next(iter(native.sessions.values()))
+            if changed == "url":
+                session.public_url = "https://another.example.test"
+            else:
+                session.run_number = 1
+            with pytest.raises(tnl.TnlError) as failure:
+                await asyncio.wait_for(publication.wait(), 5)
+            assert failure.value.code == "sdk.response_invalid"
+        finally:
+            await publication.aclose()
+            await local.aclose()
+        assert publication._serve_task.done() and session.stopped
+        assert native.operations.count("unregister") == 1
+
+    asyncio.run(scenario())
+
+
+def test_connector_only_http_releases_registration_and_asgi(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def scenario() -> None:
@@ -262,7 +334,7 @@ def test_private_http_prepare_releases_acknowledged_reservation_and_asgi(
             await local.publish("web", tnl.handler(endpoint))
         assert failure.value.code == "sdk.response_invalid"
         assert native.operations.count("prepare") == 1
-        assert native.operations.count("register") == 0
+        assert native.operations.count("register") == 1
         assert native.operations.count("unregister") == 1
         session = next(iter(native.sessions.values()))
         assert session.stopped and not local._publications

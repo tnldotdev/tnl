@@ -57,7 +57,7 @@ type PublicURLServerConfig struct {
 	ObserveSummary  inspection.Observer
 	PromoteVisitor  PromoteVisitor
 	AdmitVisitor    AdmitVisitor
-	ReadinessProof  *ReadinessProof
+	ReadinessProof  *httpaccess.ReadinessProof
 	OnWarning       func(string)
 	InspectionMode  inspection.Mode
 	Certificate     tls.Certificate

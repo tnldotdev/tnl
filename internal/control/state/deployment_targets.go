@@ -56,7 +56,7 @@ func normalizeDeploymentTarget(ctx context.Context, name, protocol string, input
 		}
 		s.TargetTLS = &ProjectTargetTLS{Hostname: declaration.Hostname, CAPEM: string(declaration.CAPEM), Digest: declaration.Digest}
 	}
-	if err = normalizeAppliedProjectService(&s, false); err != nil {
+	if err = normalizeAppliedProjectService(name, &s, false); err != nil {
 		return s, err
 	}
 	return s, nil

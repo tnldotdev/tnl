@@ -73,9 +73,9 @@ async function fixture() {
                   protocol: "http",
                   namespace: "team.example",
                   hostname: "localhost",
-                  port: 8443,
+                  port: 443,
                   public: false,
-                  url: "https://localhost:8443",
+                  url: "https://localhost",
                 },
               },
             },
@@ -84,7 +84,7 @@ async function fixture() {
               protocol: "http",
               host: "127.0.0.1",
               port: target.port,
-              url: "https://localhost:8443",
+              url: "https://localhost",
               ssl: { servername: "localhost", rejectUnauthorized: true, ca: cert },
               expires_at: new Date(Date.now() + 60_000).toISOString(),
               transport_id: `ctg_${"a".repeat(22)}`,
@@ -158,7 +158,7 @@ test("borrowed deployment retries failed initialization on its same captured han
     vi.stubEnv("TNL_TOKEN", undefined);
     const sibling = createClient({ project: "acme/project", services }).deployment("production");
     try {
-      expect((await sibling.connect("api")).url).toBe("https://localhost:8443");
+      expect((await sibling.connect("api")).url).toBe("https://localhost");
     } finally {
       await sibling.close();
     }
@@ -216,7 +216,7 @@ test("borrowed deployments capture exact selection and own independent verified 
           value.selection.project === "acme/project" && value.selection.name === "production",
       ),
     ).toBe(true);
-    expect(owner.visits).toEqual(["localhost:8443", "localhost:8443"]);
+    expect(owner.visits).toEqual(["localhost", "localhost"]);
     expect(owner.servernames).toEqual(["localhost", "localhost"]);
     await expect(first.connect("api")).rejects.toMatchObject({ code: "sdk.client_closed" });
   } finally {
@@ -247,7 +247,7 @@ test("borrowed authority rejects another team, project, or deployment before vis
       "production",
     );
     try {
-      expect((await matchingID.connect("api")).url).toBe("https://localhost:8443");
+      expect((await matchingID.connect("api")).url).toBe("https://localhost");
     } finally {
       await matchingID.close();
     }

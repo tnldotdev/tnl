@@ -35,7 +35,7 @@ func (q *Queries) AcknowledgeDeploymentPublisherConfiguration(ctx context.Contex
 }
 
 const getDeploymentServiceConfiguration = `-- name: GetDeploymentServiceConfiguration :one
-SELECT deployment.ownership, deployment.id, deployment.team_id, deployment.project_key, deployment.name, deployment.description, deployment.domain_id, deployment.namespace, deployment.public, deployment.revision, deployment.configuration_hash, deployment.configuration_ciphertext, deployment.storage_key_id, deployment.create_principal_id, deployment.create_idempotency_key, deployment.create_request_digest, deployment.deleted_at,binding.service FROM control.applied_project_services binding
+SELECT deployment.ownership, deployment.id, deployment.team_id, deployment.project_key, deployment.name, deployment.description, deployment.domain_id, deployment.namespace, deployment.revision, deployment.configuration_hash, deployment.configuration_ciphertext, deployment.storage_key_id, deployment.create_principal_id, deployment.create_idempotency_key, deployment.create_request_digest, deployment.deleted_at,binding.service FROM control.applied_project_services binding
 JOIN control.deployments deployment ON deployment.id=binding.deployment_id AND deployment.deleted_at IS NULL
 WHERE binding.service_id=$1
 `
@@ -57,7 +57,6 @@ func (q *Queries) GetDeploymentServiceConfiguration(ctx context.Context, service
 		&i.ControlDeployment.Description,
 		&i.ControlDeployment.DomainID,
 		&i.ControlDeployment.Namespace,
-		&i.ControlDeployment.Public,
 		&i.ControlDeployment.Revision,
 		&i.ControlDeployment.ConfigurationHash,
 		&i.ControlDeployment.ConfigurationCiphertext,
@@ -72,7 +71,7 @@ func (q *Queries) GetDeploymentServiceConfiguration(ctx context.Context, service
 }
 
 const getLocalProjectService = `-- name: GetLocalProjectService :one
-SELECT local.source_fingerprint, s.id, s.team_id, s.name, s.name_scope, s.placement_worktree_key, s.placement_worktree_label, s.protocol, s.tls_metadata, s.trust_revision, s.visitor_revision, s.publisher_pool, s.domain_id, s.certificate_hostname, s.certificate_scope, s.service_port, s.ingress_pool_id, s.public, s.created_by_identity_id, s.idempotency_key, s.request_digest, s.enabled, s.next_run_number, s.created_at, s.updated_at, s.deleted_at
+SELECT local.source_fingerprint, s.id, s.team_id, s.name, s.name_scope, s.placement_worktree_key, s.placement_worktree_label, s.protocol, s.tls_metadata, s.trust_revision, s.endpoint_revision, s.visitor_revision, s.publisher_pool, s.domain_id, s.certificate_hostname, s.certificate_scope, s.service_port, s.ingress_pool_id, s.public, s.created_by_identity_id, s.idempotency_key, s.request_digest, s.enabled, s.next_run_number, s.created_at, s.updated_at, s.deleted_at
 FROM control.local_project_services local
 JOIN control.services s ON s.id=local.service_id AND s.team_id=local.team_id
 WHERE local.team_id=$1 AND local.project_key=$2
@@ -110,6 +109,7 @@ func (q *Queries) GetLocalProjectService(ctx context.Context, arg GetLocalProjec
 		&i.ControlService.Protocol,
 		&i.ControlService.TlsMetadata,
 		&i.ControlService.TrustRevision,
+		&i.ControlService.EndpointRevision,
 		&i.ControlService.VisitorRevision,
 		&i.ControlService.PublisherPool,
 		&i.ControlService.DomainID,
@@ -127,6 +127,23 @@ func (q *Queries) GetLocalProjectService(ctx context.Context, arg GetLocalProjec
 		&i.ControlService.UpdatedAt,
 		&i.ControlService.DeletedAt,
 	)
+	return i, err
+}
+
+const getLocalServiceHTTPConfiguration = `-- name: GetLocalServiceHTTPConfiguration :one
+SELECT http_configuration_ciphertext,http_storage_key_id
+FROM control.local_project_services WHERE service_id=$1
+`
+
+type GetLocalServiceHTTPConfigurationRow struct {
+	HttpConfigurationCiphertext []byte
+	HttpStorageKeyID            pgtype.Text
+}
+
+func (q *Queries) GetLocalServiceHTTPConfiguration(ctx context.Context, serviceID pgtype.Text) (GetLocalServiceHTTPConfigurationRow, error) {
+	row := q.db.QueryRow(ctx, getLocalServiceHTTPConfiguration, serviceID)
+	var i GetLocalServiceHTTPConfigurationRow
+	err := row.Scan(&i.HttpConfigurationCiphertext, &i.HttpStorageKeyID)
 	return i, err
 }
 
@@ -180,7 +197,7 @@ func (q *Queries) ListAppliedProjectServices(ctx context.Context, arg ListApplie
 }
 
 const listAuthorizedDeployments = `-- name: ListAuthorizedDeployments :many
-SELECT deployment.ownership, deployment.id, deployment.team_id, deployment.project_key, deployment.name, deployment.description, deployment.domain_id, deployment.namespace, deployment.public, deployment.revision, deployment.configuration_hash, deployment.configuration_ciphertext, deployment.storage_key_id, deployment.create_principal_id, deployment.create_idempotency_key, deployment.create_request_digest, deployment.deleted_at FROM control.deployments deployment
+SELECT deployment.ownership, deployment.id, deployment.team_id, deployment.project_key, deployment.name, deployment.description, deployment.domain_id, deployment.namespace, deployment.revision, deployment.configuration_hash, deployment.configuration_ciphertext, deployment.storage_key_id, deployment.create_principal_id, deployment.create_idempotency_key, deployment.create_request_digest, deployment.deleted_at FROM control.deployments deployment
 JOIN control.deployment_management_grants approval ON approval.grant_id=$1
 AND approval.team_id=deployment.team_id AND approval.project_key=deployment.project_key
 WHERE deployment.deleted_at IS NULL
@@ -214,7 +231,6 @@ func (q *Queries) ListAuthorizedDeployments(ctx context.Context, arg ListAuthori
 			&i.Description,
 			&i.DomainID,
 			&i.Namespace,
-			&i.Public,
 			&i.Revision,
 			&i.ConfigurationHash,
 			&i.ConfigurationCiphertext,
@@ -329,7 +345,7 @@ func (q *Queries) ListDeploymentPublisherStatus(ctx context.Context, arg ListDep
 }
 
 const listDeployments = `-- name: ListDeployments :many
-SELECT ownership, id, team_id, project_key, name, description, domain_id, namespace, public, revision, configuration_hash, configuration_ciphertext, storage_key_id, create_principal_id, create_idempotency_key, create_request_digest, deleted_at FROM control.deployments
+SELECT ownership, id, team_id, project_key, name, description, domain_id, namespace, revision, configuration_hash, configuration_ciphertext, storage_key_id, create_principal_id, create_idempotency_key, create_request_digest, deleted_at FROM control.deployments
 WHERE team_id=$1 AND project_key=$2 AND deleted_at IS NULL
 AND id COLLATE "C">$3::text COLLATE "C" ORDER BY id COLLATE "C" LIMIT $4
 `
@@ -364,7 +380,6 @@ func (q *Queries) ListDeployments(ctx context.Context, arg ListDeploymentsParams
 			&i.Description,
 			&i.DomainID,
 			&i.Namespace,
-			&i.Public,
 			&i.Revision,
 			&i.ConfigurationHash,
 			&i.ConfigurationCiphertext,
@@ -466,7 +481,7 @@ func (q *Queries) ListDiscoverableProjects(ctx context.Context, arg ListDiscover
 }
 
 const listProjectDeployments = `-- name: ListProjectDeployments :many
-SELECT ownership, id, team_id, project_key, name, description, domain_id, namespace, public, revision, configuration_hash, configuration_ciphertext, storage_key_id, create_principal_id, create_idempotency_key, create_request_digest, deleted_at FROM control.deployments WHERE team_id=$1 AND project_key=$2 AND deleted_at IS NULL ORDER BY name
+SELECT ownership, id, team_id, project_key, name, description, domain_id, namespace, revision, configuration_hash, configuration_ciphertext, storage_key_id, create_principal_id, create_idempotency_key, create_request_digest, deleted_at FROM control.deployments WHERE team_id=$1 AND project_key=$2 AND deleted_at IS NULL ORDER BY name
 `
 
 type ListProjectDeploymentsParams struct {
@@ -492,7 +507,6 @@ func (q *Queries) ListProjectDeployments(ctx context.Context, arg ListProjectDep
 			&i.Description,
 			&i.DomainID,
 			&i.Namespace,
-			&i.Public,
 			&i.Revision,
 			&i.ConfigurationHash,
 			&i.ConfigurationCiphertext,
@@ -575,7 +589,7 @@ func (q *Queries) LockAppliedProject(ctx context.Context, arg LockAppliedProject
 }
 
 const lockDeployment = `-- name: LockDeployment :one
-SELECT g.ownership, g.id, g.team_id, g.project_key, g.name, g.description, g.domain_id, g.namespace, g.public, g.revision, g.configuration_hash, g.configuration_ciphertext, g.storage_key_id, g.create_principal_id, g.create_idempotency_key, g.create_request_digest, g.deleted_at FROM control.deployments g
+SELECT g.ownership, g.id, g.team_id, g.project_key, g.name, g.description, g.domain_id, g.namespace, g.revision, g.configuration_hash, g.configuration_ciphertext, g.storage_key_id, g.create_principal_id, g.create_idempotency_key, g.create_request_digest, g.deleted_at FROM control.deployments g
 WHERE g.team_id=$1 AND g.project_key=$2 AND g.deleted_at IS NULL
 AND (g.id=$3 OR EXISTS(SELECT 1 FROM control.deployment_names alias WHERE alias.deployment_id=g.id AND alias.name=$3)) FOR UPDATE
 `
@@ -598,7 +612,6 @@ func (q *Queries) LockDeployment(ctx context.Context, arg LockDeploymentParams) 
 		&i.Description,
 		&i.DomainID,
 		&i.Namespace,
-		&i.Public,
 		&i.Revision,
 		&i.ConfigurationHash,
 		&i.ConfigurationCiphertext,
@@ -612,7 +625,7 @@ func (q *Queries) LockDeployment(ctx context.Context, arg LockDeploymentParams) 
 }
 
 const lockDeploymentByID = `-- name: LockDeploymentByID :one
-SELECT ownership, id, team_id, project_key, name, description, domain_id, namespace, public, revision, configuration_hash, configuration_ciphertext, storage_key_id, create_principal_id, create_idempotency_key, create_request_digest, deleted_at FROM control.deployments WHERE id=$1 AND deleted_at IS NULL FOR UPDATE
+SELECT ownership, id, team_id, project_key, name, description, domain_id, namespace, revision, configuration_hash, configuration_ciphertext, storage_key_id, create_principal_id, create_idempotency_key, create_request_digest, deleted_at FROM control.deployments WHERE id=$1 AND deleted_at IS NULL FOR UPDATE
 `
 
 func (q *Queries) LockDeploymentByID(ctx context.Context, id string) (ControlDeployment, error) {
@@ -627,7 +640,6 @@ func (q *Queries) LockDeploymentByID(ctx context.Context, id string) (ControlDep
 		&i.Description,
 		&i.DomainID,
 		&i.Namespace,
-		&i.Public,
 		&i.Revision,
 		&i.ConfigurationHash,
 		&i.ConfigurationCiphertext,
@@ -691,4 +703,24 @@ func (q *Queries) ServiceNamespaceOwnsHostname(ctx context.Context, hostname str
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const setLocalServiceHTTPConfiguration = `-- name: SetLocalServiceHTTPConfiguration :execrows
+UPDATE control.local_project_services
+SET http_configuration_ciphertext=$1,http_storage_key_id=$2
+WHERE service_id=$3
+`
+
+type SetLocalServiceHTTPConfigurationParams struct {
+	Ciphertext   []byte
+	StorageKeyID pgtype.Text
+	ServiceID    pgtype.Text
+}
+
+func (q *Queries) SetLocalServiceHTTPConfiguration(ctx context.Context, arg SetLocalServiceHTTPConfigurationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setLocalServiceHTTPConfiguration, arg.Ciphertext, arg.StorageKeyID, arg.ServiceID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

@@ -73,6 +73,26 @@ func (d *Database) SelectServiceRun(ctx context.Context, serviceID, identityID, 
 	return d.SelectVisitorServiceRun(ctx, serviceID, VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: identityID, DeviceID: deviceID}, now)
 }
 
+// both access paths select only runs with a current relay that can accept work.
+// callers hold service admission while selecting; existing streams never reselect.
+func selectRoutableServiceRun(ctx context.Context, tx pgx.Tx, serviceID string, now time.Time) (id string, number int64, until time.Time, err error) {
+	err = tx.QueryRow(ctx, `SELECT run.id,run.run_number,LEAST(run.publisher_expires_at,g.expires_at,run.certificate_expires_at)
+	    FROM control.service_runs run
+	    JOIN control.publisher_grants g ON g.id=run.publisher_grant_id
+	    JOIN control.publisher_identities p ON p.id=run.publisher_identity_id
+	    WHERE run.service_id=$1 AND run.state='ready' AND run.healthy AND run.closed_at IS NULL AND run.publisher_expires_at>$2
+	    AND g.revoked_at IS NULL AND(g.expires_at IS NULL OR g.expires_at>$2) AND p.revoked_at IS NULL
+	    AND run.certificate_expires_at>$2
+	    AND EXISTS(SELECT 1 FROM control.service_connection_slots slot JOIN control.relay_leases lease ON lease.relay_id=slot.relay_id
+	        AND lease.relay_run_id=slot.relay_run_id AND lease.relay_lease_revision=slot.relay_lease_revision
+	        AND lease.relay_service_id=slot.relay_service_id
+	        WHERE slot.service_run_id=run.id AND slot.state='ready' AND slot.session_open AND lease.lease_expires_at>$2 AND NOT lease.draining AND lease.reported_streams<lease.stream_capacity)
+	    AND GREATEST(run.reported_streams,(SELECT count(*) FROM control.service_visitor_capacity stream WHERE stream.service_run_id=run.id AND stream.closed_at IS NULL AND stream.valid_until>$2))<run.stream_capacity
+	    ORDER BY GREATEST(run.reported_streams,(SELECT count(*) FROM control.service_visitor_capacity stream WHERE stream.service_run_id=run.id AND stream.closed_at IS NULL AND stream.valid_until>$2))::numeric/run.stream_capacity,run.run_number LIMIT 1`, serviceID, now).
+		Scan(&id, &number, &until)
+	return
+}
+
 func (d *Database) SelectVisitorServiceRun(ctx context.Context, serviceID string, subject VisitorSubject, now time.Time) (result ServiceSelection, retErr error) {
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
@@ -92,20 +112,7 @@ func (d *Database) SelectVisitorServiceRun(ctx context.Context, serviceID string
 	}
 	// count only admitted streams with a current hard deadline. no established
 	// stream moves, and expired authority cannot retain capacity indefinitely.
-	err = tx.QueryRow(ctx, `SELECT run.id,run.run_number,LEAST(run.publisher_expires_at,g.expires_at,run.certificate_expires_at)
-	    FROM control.publisher_service_runs runtime JOIN control.service_runs run ON run.id=runtime.id
-	    JOIN control.publisher_grants g ON g.id=runtime.publisher_grant_id
-	    JOIN control.publisher_identities p ON p.id=run.publisher_identity_id
-	    WHERE runtime.service_id=$1 AND runtime.state='ready' AND runtime.healthy AND runtime.closed_at IS NULL AND runtime.publisher_expires_at>$2
-	    AND g.revoked_at IS NULL AND(g.expires_at IS NULL OR g.expires_at>$2) AND p.revoked_at IS NULL
-	    AND run.certificate_expires_at>$2
-	    AND EXISTS(SELECT 1 FROM control.publisher_service_connection_slots slot JOIN control.relay_leases lease ON lease.relay_id=slot.connected_relay_id
-	        AND lease.relay_run_id=slot.connected_relay_run_id AND lease.relay_lease_revision=slot.connected_relay_lease_revision
-	        AND lease.relay_service_id=slot.relay_service_id
-	        WHERE slot.run_id=run.id AND slot.state='ready' AND slot.session_open AND lease.lease_expires_at>$2 AND NOT lease.draining AND lease.reported_streams<lease.stream_capacity)
-	    AND GREATEST(runtime.reported_streams,(SELECT count(*) FROM control.service_visitor_capacity stream WHERE stream.service_run_id=run.id AND stream.closed_at IS NULL AND stream.valid_until>$2))<runtime.stream_capacity
-	    ORDER BY GREATEST(runtime.reported_streams,(SELECT count(*) FROM control.service_visitor_capacity stream WHERE stream.service_run_id=run.id AND stream.closed_at IS NULL AND stream.valid_until>$2))::numeric/runtime.stream_capacity,run.run_number LIMIT 1`, serviceID, now).
-		Scan(&result.ServiceRunID, &result.RunNumber, &result.ExpiresAt)
+	result.ServiceRunID, result.RunNumber, result.ExpiresAt, err = selectRoutableServiceRun(ctx, tx, serviceID, now)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return result, ErrServiceAccess
 	}

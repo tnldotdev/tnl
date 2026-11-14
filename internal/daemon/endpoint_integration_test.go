@@ -55,7 +55,16 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 			projectLabel := "storefront"
 			protocol := controlv1.ServiceProtocolHTTP
 			targetAddress := strings.TrimPrefix(target.URL, "http://")
-			applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), project, controlv1.ApplyProjectConfigurationRequest{Deployment: group, ServiceDeclarations: controlv1.ProjectServiceDeclarations{"api": protocol}, TeamId: f.identity.teamID, Source: &testProjectSource, ProjectLabel: &projectLabel, Configuration: controlv1.ProjectConfiguration{Settings: &controlv1.DeploymentSettings{}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {Protocol: &protocol, Target: targetAddress}}, Webhooks: map[string]controlv1.ProjectWebhook{}}})
+			applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), project, controlv1.ApplyProjectConfigurationRequest{Deployment: group, ServiceDeclarations: controlv1.ProjectServiceDeclarations{"api": protocol}, TeamId: f.identity.teamID, Source: &testProjectSource, ProjectLabel: &projectLabel, Configuration: controlv1.ProjectConfiguration{Settings: &controlv1.DeploymentSettings{}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {Protocol: &protocol, Target: targetAddress, Public: new(true)}}, Webhooks: map[string]controlv1.ProjectWebhook{}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			// reserve public capacity, then start privately with that reservation
+			// retained so enablement below does not replace the active run.
+			binding := applied.Configuration.Services["api"]
+			binding.Public = new(false)
+			applied.Configuration.Services["api"] = binding
+			applied, err = f.identity.routes.ApplyProjectConfiguration(t.Context(), project, controlv1.ApplyProjectConfigurationRequest{Deployment: group, ServiceDeclarations: applied.ServiceDeclarations, TeamId: f.identity.teamID, Source: &testProjectSource, ExpectedRevision: applied.Revision, Configuration: applied.Configuration})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -88,8 +97,8 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if service.Endpoint == nil || applied.Services[0].Hostname == nil || *applied.Services[0].Hostname != service.Endpoint.Hostname {
-				t.Fatal("missing managed TLS metadata", service)
+			if service.Endpoint == nil || applied.Services[0].Hostname == nil || *applied.Services[0].Hostname != service.Endpoint.Hostname || service.Endpoint.Port == 0 || service.Endpoint.Public {
+				t.Fatal("missing private TLS metadata or retained public reservation", service)
 			}
 			identity := authorityv1.PublisherEnrollmentResult{ClientId: member.PublisherIdentityId, KeyId: member.KeyId, TeamId: member.TeamId, GrantId: assignment.GrantId, Kind: authorityv1.Service, ServiceId: &assignment.ServiceId}
 			quic, tcp := f.connectors()
@@ -216,7 +225,11 @@ func checkManagedPublicEndpointTLS(t *testing.T, f *privateSeparatedFixture, con
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := ingress.New(listener, ingress.Config{PublicServicesOnly: true, RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, PublicServices: connector, ServicePortRanges: []tcpport.Range{{First: service.Endpoint.Port, Last: service.Endpoint.Port}}, MaxConnections: 64})
+	var ranges []tcpport.Range
+	if service.Endpoint.Port != 443 {
+		ranges = []tcpport.Range{{First: service.Endpoint.Port, Last: service.Endpoint.Port}}
+	}
+	server, err := ingress.New(listener, ingress.Config{RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, PublicServices: connector, ServicePortRanges: ranges, MaxConnections: 64})
 	if err != nil {
 		_ = listener.Close()
 		t.Fatal(err)
@@ -261,7 +274,9 @@ func checkManagedPublicEndpointTLS(t *testing.T, f *privateSeparatedFixture, con
 	assertDenied()
 	setPublic := func(public bool) {
 		t.Helper()
-		applied.Configuration.Settings.Public = &public
+		binding := applied.Configuration.Services["api"]
+		binding.Public = &public
+		applied.Configuration.Services["api"] = binding
 		result, err := f.identity.routes.ApplyProjectConfiguration(ctx, "managed-runtime", controlv1.ApplyProjectConfigurationRequest{Deployment: applied.Deployment, ServiceDeclarations: applied.ServiceDeclarations, TeamId: f.identity.teamID, Source: &testProjectSource, ExpectedRevision: applied.Revision, Configuration: applied.Configuration})
 		if err != nil {
 			t.Fatal(err)

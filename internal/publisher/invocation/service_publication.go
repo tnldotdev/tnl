@@ -303,6 +303,18 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 		if approved.Source == nil || approved.Source.ProjectKey != source.Key || approved.Source.SourceFingerprint != source.Fingerprint || approved.Source.Service != flags.Service || approved.Source.WorktreeKey != project.LocalWorktreeKey() {
 			return failure.Wrap("select local service publisher", failure.PublisherGrantMismatch, errors.New("grant differs from local publication identity"))
 		}
+		effective, err := project.EffectiveService(flags.Service)
+		if err != nil {
+			return err
+		}
+		traffic, err := config.ResolveTrafficSelection(effectiveTunnelLimits(effective))
+		if err != nil {
+			return err
+		}
+		native, err = native.WithTraffic(traffic)
+		if err != nil {
+			return err
+		}
 	}
 	// a scoped, ad-hoc publisher uses its saved target trust unless the caller
 	// made an explicit local declaration. explicit plaintext is a constraint too.
@@ -346,7 +358,7 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 		output.Starting()
 	}
 	emit := func(state string) error {
-		return output.Event(ServiceEvent{State: state, ServiceID: job.ServiceID, Name: name, Target: target, Hostname: approved.Endpoint.Hostname, Port: approved.Endpoint.Port})
+		return output.Event(ServiceEvent{State: state, ServiceID: job.ServiceID, Name: name, Target: target, Hostname: approved.Endpoint.Hostname, Port: approved.Endpoint.Port, Protocol: string(approved.Protocol), Public: approved.Endpoint.Public})
 	}
 	if err := emit("starting"); err != nil {
 		return err

@@ -3,6 +3,7 @@ package httpstream_test
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"net"
@@ -14,8 +15,79 @@ import (
 	"testing/synctest"
 
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
 	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 )
+
+func TestHTTPStreamServeJoinsHTTP2HandlersAfterConnectionClose(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		certificate := visitorfixture.Certificate(t, "service.example.test")
+		raw, visitor := net.Pipe()
+		defer raw.Close()
+		defer visitor.Close()
+		secured := tls.Server(raw, &tls.Config{Certificates: []tls.Certificate{certificate}, NextProtos: []string{"h2", "http/1.1"}})
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		entered, canceled, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})
+		releaseHandler := make(chan struct{})
+		release := sync.OnceFunc(func() { close(releaseHandler) })
+		defer release()
+		served := make(chan error, 1)
+		go func() {
+			served <- httpstream.Serve(ctx, secured, &url.URL{Scheme: "http", Host: "target.test"}, func(context.Context) (net.Conn, error) {
+				t.Error("inline handler opened a target")
+				return nil, httpstream.ErrClosed
+			}, func(http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					defer close(finished)
+					if r.ProtoMajor != 2 || r.TLS == nil || r.TLS.NegotiatedProtocol != "h2" {
+						t.Error("negotiated HTTP/2 or TLS facts were lost")
+					}
+					close(entered)
+					<-r.Context().Done()
+					close(canceled)
+					<-releaseHandler
+				})
+			})
+		}()
+		transport := &http.Transport{ForceAttemptHTTP2: true,
+			TLSClientConfig: &tls.Config{RootCAs: visitorfixture.Roots(t, certificate)},
+			DialContext:     func(context.Context, string, string) (net.Conn, error) { return visitor, nil }}
+		defer transport.CloseIdleConnections()
+		replied := make(chan struct{})
+		go func() {
+			defer close(replied)
+			request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://service.example.test/", nil)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			response, err := transport.RoundTrip(request)
+			if err == nil {
+				response.Body.Close()
+			}
+		}()
+		<-entered
+		cancel()
+		<-canceled
+		synctest.Wait()
+		select {
+		case err := <-served:
+			t.Fatal("HTTP/2 stream returned before joining its handler", err)
+		default:
+		}
+		release()
+		if err := <-served; err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-finished:
+		default:
+			t.Fatal("HTTP/2 handler remained after stream completion")
+		}
+		<-replied
+	})
+}
 
 func TestHTTPStreamServeJoinsHijackedHandlerAfterSocketClose(t *testing.T) {
 	for _, shutdown := range []string{"backend_close", "cancel"} {

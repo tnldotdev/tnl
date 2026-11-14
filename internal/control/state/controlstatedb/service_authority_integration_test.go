@@ -59,6 +59,8 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	testutil.SeedServicePort(t, conn, service.ID, 20000, now)
+	service.Endpoint.Port = 20000
 	visitorID, wrongEmailID, unverifiedID := newID(opaqueid.IdentityPrefix), newID(opaqueid.IdentityPrefix), newID(opaqueid.IdentityPrefix)
 	for _, row := range []struct {
 		id, email string
@@ -116,7 +118,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	publisherIdentityID, keyID, publisherGrantID := p.ID, p.KeyID, p.GrantID
 	publicURLScope := p
 	publicURLScope.Scope.Kind, publicURLScope.Scope.ServiceID, publicURLScope.Scope.PublicURLID = "saved_public_url", "", service.ID
-	if _, err = d.PrepareServiceRun(ctx, service.ID, publicURLScope, "wrong-scope", now, controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1}); !errors.Is(err, controlstate.ErrServiceAccess) {
+	if _, err = d.PrepareServiceRun(ctx, service.ID, publicURLScope, "wrong-scope", now, controlstate.ServiceRunRequest{Metadata: controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1}}); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("public URL scope selected service: %v", err)
 	}
 	for _, relay := range []string{"relay-a", "relay-b"} {
@@ -128,12 +130,12 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 			registered_at, renewed_at, lease_expires_at)
 			VALUES ($1, $1, $2, 1, 1, $3, 8, 8, $4, $4, $5)`, relay, runID, relay+":444", now, now.Add(10*time.Minute))
 	}
-	prepared, err := d.PrepareServiceRun(ctx, service.ID, p, "first", now, controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1})
+	prepared, err := d.PrepareServiceRun(ctx, service.ID, p, "first", now, controlstate.ServiceRunRequest{Metadata: controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	again, err := d.PrepareServiceRun(ctx, service.ID, p, "first", now, controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1})
-	if err != nil || again.RunID != prepared.RunID || again.Hostname != prepared.Hostname || again.DomainID != prepared.DomainID || again.ServicePort != prepared.ServicePort {
+	again, err := d.PrepareServiceRun(ctx, service.ID, p, "first", now, controlstate.ServiceRunRequest{Metadata: controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1}})
+	if err != nil || again.RunID != prepared.RunID || again.Hostname != prepared.Hostname || again.DomainID != prepared.DomainID {
 		t.Fatalf("idempotent preparation: %+v, %v", again, err)
 	}
 	wrongGrant := p
@@ -212,12 +214,12 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	exec(`UPDATE control.services SET public=true WHERE id=$1`, service.ID)
-	ingress := directIngressLease(t, ctx, d, "authority", prepared.ServicePort, now)
+	ingress := directIngressLease(t, ctx, d, "authority", service.Endpoint.Port, now)
 	device, certificate := publicServiceVisitorCertificate(t, ctx, d, service.ID, visitorID, now)
 	source := netip.MustParseAddr("192.0.2.10")
 	admit := func() controlstate.PublicServiceVisitorAdmission {
 		t.Helper()
-		a, err := d.AdmitPublicServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, newID(opaqueid.VisitorConnectionPrefix), prepared.ServicePort, source, now)
+		a, err := d.AdmitPublicServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, newID(opaqueid.VisitorConnectionPrefix), "", service.Endpoint.Port, source, now)
 		if err != nil {
 			t.Fatal("direct admission", err)
 		}
@@ -254,7 +256,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	exec(`UPDATE control.publisher_identity_keys SET retired_at=$2 WHERE id=$1`, keyID, now)
 	exec(`INSERT INTO control.publisher_identity_keys(id, publisher_identity_id, public_key, revision, created_at)
 		VALUES ($1, $2, $3, 3, $4)`, newKeyID, publisherIdentityID, newIdentityKey, now)
-	if _, err = d.PrepareServiceRun(ctx, service.ID, p, "retired-key", now, controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1}); !errors.Is(err, controlstate.ErrServiceAccess) {
+	if _, err = d.PrepareServiceRun(ctx, service.ID, p, "retired-key", now, controlstate.ServiceRunRequest{Metadata: controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1}}); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("retired key prepared another run: %v", err)
 	}
 	if _, err = d.HeartbeatServiceRun(ctx, service.ID, prepared.RunID, retried.Token, now, controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); err != nil {
@@ -275,23 +277,26 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if issued.Endpoint == nil || issued.Endpoint.Hostname != prepared.Hostname || issued.Endpoint.Port != prepared.ServicePort {
+	if issued.Endpoint == nil || issued.Endpoint.Hostname != prepared.Hostname || issued.Endpoint.Port != service.Endpoint.Port {
 		t.Fatal("selection changed the captured managed endpoint")
 	}
-	if _, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, prepared.RunID, retried.Token, newID(opaqueid.VisitorConnectionPrefix), prepared.RunNumber, source, certificate.Raw, now); !errors.Is(err, controlstate.ErrServiceAccess) {
+	if _, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, prepared.RunID, retried.Token, newID(opaqueid.VisitorConnectionPrefix), prepared.RunNumber, source, service.Endpoint.Port, certificate.Raw, now); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatal("unreserved direct visitor admitted", err)
 	}
-	if _, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, prepared.RunID, retried.Token, current.ConnectionID, prepared.RunNumber, netip.MustParseAddr("192.0.2.11"), certificate.Raw, now); !errors.Is(err, controlstate.ErrServiceAccess) {
+	if _, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, prepared.RunID, retried.Token, current.ConnectionID, prepared.RunNumber, netip.MustParseAddr("192.0.2.11"), service.Endpoint.Port, certificate.Raw, now); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatal("direct admission crossed sources", err)
 	}
-	if decision, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, prepared.RunID, retried.Token, current.ConnectionID, prepared.RunNumber, source, certificate.Raw, now); err != nil || !decision.Allowed {
+	if _, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, prepared.RunID, retried.Token, current.ConnectionID, prepared.RunNumber, source, service.Endpoint.Port+1, certificate.Raw, now); !errors.Is(err, controlstate.ErrServiceAccess) {
+		t.Fatal("publisher authorized a different forwarded destination", err)
+	}
+	if decision, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, prepared.RunID, retried.Token, current.ConnectionID, prepared.RunNumber, source, service.Endpoint.Port, certificate.Raw, now); err != nil || !decision.Allowed {
 		t.Fatal("valid direct certificate rejected", err)
 	}
 	if err := d.PromotePublicServiceVisitor(ctx, ingress, current.ConnectionID, now); err != nil {
 		t.Fatal(err)
 	}
 	_, otherCertificate := publicServiceVisitorCertificate(t, ctx, d, service.ID, visitorID, now)
-	if _, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, prepared.RunID, retried.Token, current.ConnectionID, prepared.RunNumber, source, otherCertificate.Raw, now); !errors.Is(err, controlstate.ErrServiceAccess) {
+	if _, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, prepared.RunID, retried.Token, current.ConnectionID, prepared.RunNumber, source, service.Endpoint.Port, otherCertificate.Raw, now); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatal("direct visitor changed its bound device", err)
 	}
 	var admittedBefore int
@@ -318,7 +323,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	if survivorSelection.ServiceRunID != live.RunID {
 		t.Fatal("direct and native selection disagree")
 	}
-	if decision, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, prepared.RunID, retried.Token, live.ConnectionID, prepared.RunNumber, source, certificate.Raw, now); err != nil || !decision.Allowed {
+	if decision, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, prepared.RunID, retried.Token, live.ConnectionID, prepared.RunNumber, source, service.Endpoint.Port, certificate.Raw, now); err != nil || !decision.Allowed {
 		t.Fatal("one-relay direct authorization", err)
 	}
 	if err := d.PromotePublicServiceVisitor(ctx, ingress, live.ConnectionID, now); err != nil {
@@ -355,7 +360,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	}
 	_, shortCertificate := publicServiceVisitorCertificate(t, ctx, d, service.ID, wrongEmailID, now)
 	short := admit()
-	shortClaim, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, prepared.RunID, retried.Token, short.ConnectionID, prepared.RunNumber, source, shortCertificate.Raw, now)
+	shortClaim, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, prepared.RunID, retried.Token, short.ConnectionID, prepared.RunNumber, source, service.Endpoint.Port, shortCertificate.Raw, now)
 	if err != nil || !shortClaim.Allowed || !shortClaim.ValidUntil.After(now) || shortClaim.ValidUntil.After(shortExpiry) {
 		t.Fatalf("initial visitor claim ignored expiring grant: %v, grant %v", shortClaim.ValidUntil, shortExpiry)
 	}
@@ -432,7 +437,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	if _, err = d.HeartbeatServiceRun(ctx, service.ID, prepared.RunID, retried.Token, now, controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("revoked publisher grant renewed run: %v", err)
 	}
-	if _, err = d.AdmitPublicServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, newID(opaqueid.VisitorConnectionPrefix), prepared.ServicePort, source, now); !errors.Is(err, controlstate.ErrServiceAccess) {
+	if _, err = d.AdmitPublicServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, newID(opaqueid.VisitorConnectionPrefix), "", service.Endpoint.Port, source, now); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("revoked publisher grant admitted a new stream: %v", err)
 	}
 	exec(`UPDATE control.publisher_grants SET revoked_at=NULL WHERE id=$1`, publisherGrantID)
@@ -458,7 +463,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	if list, _, err := d.ListAvailableServices(ctx, visitorID, "", now); err != nil || len(list) != 0 {
 		t.Fatalf("revoked visitor still authorized: %+v, %v", list, err)
 	}
-	if _, err = d.AuthorizeServiceClientCertificate(ctx, service.ID, prepared.RunID, retried.Token, current.ConnectionID, prepared.RunNumber, source, certificate.Raw, now); !errors.Is(err, controlstate.ErrServiceAccess) {
+	if _, err = d.AuthorizeServiceClientCertificate(ctx, service.ID, prepared.RunID, retried.Token, current.ConnectionID, prepared.RunNumber, source, service.Endpoint.Port, certificate.Raw, now); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("revoked visitor grant admitted a new stream: %v", err)
 	}
 	ownerDevice, ownerCertificate := publicServiceVisitorCertificate(t, ctx, d, service.ID, identityID, now)
@@ -471,7 +476,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	ownerVisitor := admit()
-	if decision, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, prepared.RunID, retried.Token, ownerVisitor.ConnectionID, prepared.RunNumber, source, ownerCertificate.Raw, now); err != nil || !decision.Allowed {
+	if decision, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, prepared.RunID, retried.Token, ownerVisitor.ConnectionID, prepared.RunNumber, source, service.Endpoint.Port, ownerCertificate.Raw, now); err != nil || !decision.Allowed {
 		t.Fatal(err)
 	}
 	if err := d.PromotePublicServiceVisitor(ctx, ingress, ownerVisitor.ConnectionID, now); err != nil {
@@ -494,7 +499,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	if recheckVisitor(ownerVisitor.ConnectionID, now) {
 		t.Fatal("zero ready slots kept owner visitor")
 	}
-	if _, err = d.AdmitPublicServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, newID(opaqueid.VisitorConnectionPrefix), prepared.ServicePort, source, now); !errors.Is(err, controlstate.ErrServiceAccess) {
+	if _, err = d.AdmitPublicServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, newID(opaqueid.VisitorConnectionPrefix), "", service.Endpoint.Port, source, now); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("zero live relays accepted visitor before forwarding: %v", err)
 	}
 	recovering, err := d.HeartbeatServiceRun(ctx, service.ID, prepared.RunID, retried.Token, now, controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0})
@@ -524,20 +529,20 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 		t.Fatal("closed run kept active visitor")
 	}
 	p.KeyID = newKeyID
-	replacement, err := d.PrepareServiceRun(ctx, service.ID, p, "replacement", now.Add(time.Second), controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1})
+	replacement, err := d.PrepareServiceRun(ctx, service.ID, p, "replacement", now.Add(time.Second), controlstate.ServiceRunRequest{Metadata: controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1}})
 	if err != nil || replacement.RunNumber != prepared.RunNumber+1 {
 		t.Fatalf("replacement: %+v, %v", replacement, err)
 	}
-	if _, err = d.AuthorizeServiceClientCertificate(ctx, service.ID, oldSelection.ServiceRunID, retried.Token, ownerVisitor.ConnectionID, oldSelection.RunNumber, source, ownerCertificate.Raw, now.Add(time.Second)); !errors.Is(err, controlstate.ErrServiceAccess) {
+	if _, err = d.AuthorizeServiceClientCertificate(ctx, service.ID, oldSelection.ServiceRunID, retried.Token, ownerVisitor.ConnectionID, oldSelection.RunNumber, source, service.Endpoint.Port, ownerCertificate.Raw, now.Add(time.Second)); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("closed run selection survived replacement: %v", err)
 	}
 	if err = d.RevokePublisherGrant(ctx, teamID, publisherIdentityID, publisherGrantID, identityID, now.Add(2*time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.PrepareServiceRun(ctx, service.ID, p, "after-revoke", now.Add(2*time.Second), controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1}); !errors.Is(err, controlstate.ErrServiceAccess) {
+	if _, err = d.PrepareServiceRun(ctx, service.ID, p, "after-revoke", now.Add(2*time.Second), controlstate.ServiceRunRequest{Metadata: controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1}}); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("revoked exact publisher grant prepared another run: %v", err)
 	}
-	if _, err = d.AdmitPublicServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, newID(opaqueid.VisitorConnectionPrefix), prepared.ServicePort, source, now.Add(2*time.Second)); !errors.Is(err, controlstate.ErrServiceAccess) {
+	if _, err = d.AdmitPublicServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, newID(opaqueid.VisitorConnectionPrefix), "", service.Endpoint.Port, source, now.Add(2*time.Second)); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatal("publisher revocation retained direct admission", err)
 	}
 }

@@ -13,7 +13,7 @@ from typing import cast
 import pytest
 
 import tnl
-from tnl import _app
+from tnl import _app, _protocol
 from tnl._native import NativeRuntime
 from tnl._protocol import Endpoint, InvalidResponse, parse_endpoint
 
@@ -73,6 +73,26 @@ def test_publication_telemetry_opt_out_survives_reprepare_and_keeps_siblings_sep
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("protocol", ["http", "postgres", "mysql", "tcp", "kubernetes"])
+def test_private_service_metadata_needs_no_ingress_reservation(protocol: str) -> None:
+    service: dict[str, object] = {
+        "protocol": protocol,
+        "hostname": "private.member.example",
+        "namespace": "member.example",
+        "port": 443 if protocol == "http" else 0,
+        "public": False,
+    }
+    if protocol in ("http", "kubernetes"):
+        service["url"] = "https://private.member.example"
+    assert _protocol._service_metadata("private", service) == service
+    exposed = {**service, "public": True}
+    if protocol == "http":
+        assert _protocol._service_metadata("private", exposed) == exposed
+    else:
+        with pytest.raises(InvalidResponse):
+            _protocol._service_metadata("private", exposed)
+
+
 def test_native_assignment_is_http_only_for_selected_app(
     native_app_assignment: dict[str, object],
 ) -> None:
@@ -85,7 +105,7 @@ def test_native_assignment_is_http_only_for_selected_app(
         "postgres",
         "kubernetes",
     }
-    assert services["web"]["port"] == 25443
+    assert services["web"]["port"] == 443
     assert services["api"]["public"] is False
     assert services["mysql"]["public"] is True
 
@@ -96,7 +116,7 @@ def test_native_assignment_is_http_only_for_selected_app(
         await publication.start()
         try:
             assert isinstance(publication._phase, _app._Prepared)
-            assert publication.public_url == "https://web.member.example:25443"
+            assert publication.public_url == "https://web.member.example"
             await publication.register("http://127.0.0.1:8000")
         finally:
             await publication.close()
@@ -111,7 +131,7 @@ def test_native_assignment_is_http_only_for_selected_app(
 @pytest.mark.parametrize(
     ("path", "value"),
     [
-        (("project", "services", "database", "port"), 0),
+        (("project", "services", "database", "port"), -1),
         (("project", "services", "database", "port"), 65536),
         (("project", "services", "database", "port"), True),
         (("project", "services", "database", "port"), "15443"),
@@ -121,7 +141,9 @@ def test_native_assignment_is_http_only_for_selected_app(
         (("project", "services", "database", "url"), "https://database.member.example:15443"),
         (("project", "services", "database", "target"), "private target"),
         (("project", "services", "api", "url"), "https://api.member.example:1234"),
-        (("project", "services", "web", "url"), "https://web.member.example"),
+        (("project", "services", "web", "url"), "https://web.member.example:25443"),
+        (("project", "services", "web", "port"), 0),
+        (("project", "services", "web", "port"), 25443),
         (("project", "services", "cluster", "url"), "https://cluster.member.example"),
         (("project", "services", "web", "namespace"), "INVALID.example"),
         (("project", "services", "web", "hostname"), "web.member.example."),
@@ -136,7 +158,7 @@ def test_native_assignment_is_http_only_for_selected_app(
         (("service",), "api"),
         (("service",), "invalid name"),
         (("hostname",), "other.member.example"),
-        (("public_url",), "https://web.member.example"),
+        (("public_url",), "https://web.member.example:25443"),
         (("public_url",), "https://web.member.example:25443/path"),
         (("registration_id",), "reg_bad"),
         (("version",), True),
@@ -218,11 +240,8 @@ def test_rejects_invalid_service_set_or_scope(
     ("port", "public", "omit_service"),
     [
         (443, True, False),
-        (25443, True, False),
-        (25443, False, False),
-        (25443, False, True),
-        (1, False, False),
-        (65535, True, False),
+        (443, False, False),
+        (443, False, True),
     ],
 )
 def test_native_metadata_registration_and_cleanup(

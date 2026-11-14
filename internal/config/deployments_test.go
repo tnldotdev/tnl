@@ -73,10 +73,32 @@ func TestDeploymentConfigurationStaticFormatsAndUnknownFields(t *testing.T) {
 	}
 }
 
+func TestDeploymentWideExposureIsRejected(t *testing.T) {
+	for _, value := range []string{"true", "false"} {
+		for _, extension := range []string{"json", "yml"} {
+			source := `{"version":1,"tnl":{"deployments":{"production":{"public":` + value + `}}}}`
+			if extension == "yml" {
+				source = "version: 1\ntnl:\n  deployments:\n    production:\n      public: " + value + "\n"
+			}
+			path := filepath.Join(t.TempDir(), "tnl."+extension)
+			if err := os.WriteFile(path, []byte(source), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := LoadDocument(path); err == nil {
+				t.Fatalf("%s accepted deployment-wide public: %s", extension, value)
+			}
+		}
+	}
+}
+
 func TestDeploymentConfigurationRejectsUnknownBindingsAndLocalServerFacts(t *testing.T) {
 	for _, mutate := range []func(*Project){
 		func(p *Project) { p.Deployments["production"].Targets["unknown"] = DeploymentBinding{} },
-		func(p *Project) { d := p.Deployments["local"]; d.Public = true; p.Deployments["local"] = d },
+		func(p *Project) {
+			d := p.Deployments["local"]
+			d.Domain = new("example.test")
+			p.Deployments["local"] = d
+		},
 		func(p *Project) { p.Services["db"] = ServiceDeclaration{Protocol: new("unknown")} },
 		func(p *Project) { p.Workloads = map[string]DeploymentWorkload{"app": {Deployment: "local"}} },
 	} {
@@ -135,7 +157,7 @@ func TestResolvedDeploymentOwnsSettings(t *testing.T) {
 	project := deploymentProjectFixture()
 	description, domain := "production database", "example.test"
 	settings := project.Deployments["production"]
-	settings.Description, settings.Domain, settings.Public = &description, &domain, true
+	settings.Description, settings.Domain = &description, &domain
 	project.Deployments["production"] = settings
 	production, err := ResolveDeployment(project, "production")
 	if err != nil {
@@ -145,11 +167,52 @@ func TestResolvedDeploymentOwnsSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if SelectedDeployment(production) != "production" || production.DeploymentSettings.Description == nil || *production.DeploymentSettings.Description != description || production.DeploymentSettings.Domain == nil || *production.DeploymentSettings.Domain != domain || !production.DeploymentSettings.Public {
+	if SelectedDeployment(production) != "production" || production.DeploymentSettings.Description == nil || *production.DeploymentSettings.Description != description || production.DeploymentSettings.Domain == nil || *production.DeploymentSettings.Domain != domain {
 		t.Fatal("selection lost its deployment settings")
 	}
-	if local.DeploymentSettings.Description != nil || local.DeploymentSettings.Domain != nil || local.DeploymentSettings.Public {
+	if local.DeploymentSettings.Description != nil || local.DeploymentSettings.Domain != nil {
 		t.Fatal("local selection inherited saved deployment settings")
+	}
+}
+
+func TestSavedDeploymentKeepsPerServiceExposure(t *testing.T) {
+	project := deploymentProjectFixture()
+	deployment := project.Deployments["production"]
+	deployment.Targets["web"] = DeploymentBinding{ServiceTarget: ServiceTarget{Address: new(Target("http://web.internal:3000"))}, Public: new(true)}
+	db := deployment.Targets["db"]
+	db.Public = new(false)
+	deployment.Targets["db"] = db
+	project.Deployments["production"] = deployment
+	selected, err := ResolveDeployment(project, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.Services["web"].Public == nil || !*selected.Services["web"].Public || selected.Services["db"].Public == nil || *selected.Services["db"].Public {
+		t.Fatal("service exposure changed another binding or the deployment default")
+	}
+}
+
+func TestLocalDeploymentKeepsPerServiceExposure(t *testing.T) {
+	project := deploymentProjectFixture()
+	local := project.Deployments["local"]
+	web := local.Targets["web"]
+	web.Tunnel, web.Public = nil, new(true)
+	local.Targets["web"] = web
+	db := local.Targets["db"]
+	db.Public = new(false)
+	local.Targets["db"] = db
+	project.Deployments["local"] = local
+	selected, err := ResolveDeployment(project, "local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.Services["web"].Public == nil || !*selected.Services["web"].Public || IsPublicService(selected.Services["web"]) || selected.Services["db"].Public == nil || *selected.Services["db"].Public {
+		t.Fatal("local exposure changed a sibling binding or selected the preview URL lifecycle")
+	}
+	web.Tunnel = &Tunnel{}
+	local.Targets["web"] = web
+	if _, err := ResolveDeployment(project, "local"); err == nil {
+		t.Fatal("binding selected both public endpoint and preview URL lifecycles")
 	}
 }
 

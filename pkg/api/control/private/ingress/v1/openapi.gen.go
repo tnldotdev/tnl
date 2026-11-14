@@ -234,16 +234,19 @@ type IngressPublicRunObservation struct {
 
 // IngressRegistration defines model for IngressRegistration.
 type IngressRegistration struct {
-	ConnectionCapacity int64      `json:"connection_capacity"`
-	IngressId          Identifier `json:"ingress_id"`
-	IngressPoolId      Identifier `json:"ingress_pool_id"`
-	IngressRunId       Identifier `json:"ingress_run_id"`
-	ProtocolVersion    int64      `json:"protocol_version"`
+	ConnectionCapacity int64 `json:"connection_capacity"`
+
+	// Https This process serves the shared HTTPS listener on public port 443, independently of allocated non-HTTP service ports.
+	Https           bool       `json:"https"`
+	IngressId       Identifier `json:"ingress_id"`
+	IngressPoolId   Identifier `json:"ingress_pool_id"`
+	IngressRunId    Identifier `json:"ingress_run_id"`
+	ProtocolVersion int64      `json:"protocol_version"`
 
 	// Region Exact catalog provider:region identity, such as aws:us-west-2 or fly:sjc. local makes no geographic claim.
 	Region string `json:"region"`
 
-	// ServicePorts Sorted managed ports bound before registration or exposed by the trusted destination-metadata proxy.
+	// ServicePorts Sorted allocated non-HTTP ports bound before registration or exposed by the trusted destination-metadata proxy. Shared HTTPS 443 is advertised separately.
 	ServicePorts []int `json:"service_ports"`
 }
 
@@ -300,7 +303,7 @@ type IngressRoutingTableEntry struct {
 	RecoveryEpisodeId    *int64                                   `json:"recovery_episode_id,omitempty"`
 	ServiceProtocol      *IngressRoutingTableEntryServiceProtocol `json:"service_protocol,omitempty"`
 
-	// Traffic Resolved per-public-URL publish-run budgets, enforced independently on each ingress process. Byte rates count encrypted visitor bytes per second. Omitted totals are unlimited.
+	// Traffic Immutable public endpoint traffic approval for one exact service run, enforced independently on each ingress process. Omitted totals are unlimited. Connector capacity is independent.
 	Traffic *IngressTrafficLimits `json:"traffic,omitempty"`
 }
 
@@ -345,18 +348,8 @@ type IngressRoutingTableSnapshot struct {
 	ThroughRevision       int64                      `json:"through_revision"`
 }
 
-// IngressTrafficLimits Resolved per-public-URL publish-run budgets, enforced independently on each ingress process. Byte rates count encrypted visitor bytes per second. Omitted totals are unlimited.
-type IngressTrafficLimits struct {
-	Burst              int    `json:"burst"`
-	Connections        int    `json:"connections"`
-	DownloadBytes      int64  `json:"download_bytes"`
-	Rate               int    `json:"rate"`
-	RatePerNs          int64  `json:"rate_per_ns"`
-	TotalConnections   *int64 `json:"total_connections,omitempty"`
-	TotalDownloadBytes *int64 `json:"total_download_bytes,omitempty"`
-	TotalUploadBytes   *int64 `json:"total_upload_bytes,omitempty"`
-	UploadBytes        int64  `json:"upload_bytes"`
-}
+// IngressTrafficLimits Immutable public endpoint traffic approval for one exact service run, enforced independently on each ingress process. Omitted totals are unlimited. Connector capacity is independent.
+type IngressTrafficLimits = externalRef0.TrafficLimits
 
 // IngressVisitorPolicyRequest defines model for IngressVisitorPolicyRequest.
 type IngressVisitorPolicyRequest struct {
@@ -388,17 +381,25 @@ type ProblemCode string
 
 // PublicServiceVisitorAdmission defines model for PublicServiceVisitorAdmission.
 type PublicServiceVisitorAdmission struct {
-	ConnectedRelays     []ServiceRelay      `json:"connected_relays"`
-	ExpiresAt           time.Time           `json:"expires_at"`
-	RunNumber           int64               `json:"run_number"`
-	ServiceId           ServiceID           `json:"service_id"`
-	ServiceRunId        ServiceRunID        `json:"service_run_id"`
-	VisitorConnectionId VisitorConnectionID `json:"visitor_connection_id"`
+	// Anonymous Current HTTP policy allows anonymous visitors, so ordinary traffic accounting starts before relay setup. This does not authorize application requests or bypass publisher checks.
+	Anonymous       bool           `json:"anonymous"`
+	ConnectedRelays []ServiceRelay `json:"connected_relays"`
+	ExpiresAt       time.Time      `json:"expires_at"`
+	RunNumber       int64          `json:"run_number"`
+	ServiceId       ServiceID      `json:"service_id"`
+	ServiceRunId    ServiceRunID   `json:"service_run_id"`
+
+	// Traffic Immutable public endpoint traffic approval for one exact service run, enforced independently on each ingress process. Omitted totals are unlimited. Connector capacity is independent.
+	Traffic             IngressTrafficLimits `json:"traffic"`
+	VisitorConnectionId VisitorConnectionID  `json:"visitor_connection_id"`
 }
 
 // PublicServiceVisitorClaim defines model for PublicServiceVisitorClaim.
 type PublicServiceVisitorClaim struct {
-	DestinationPort      int                 `json:"destination_port"`
+	DestinationPort int `json:"destination_port"`
+
+	// Hostname Required exact inspected TLS hostname for shared HTTPS port 443. Must be absent on allocated non-HTTP service ports.
+	Hostname             *string             `json:"hostname,omitempty"`
 	IngressLeaseRevision int64               `json:"ingress_lease_revision"`
 	IngressPoolId        string              `json:"ingress_pool_id"`
 	IngressRunId         Identifier          `json:"ingress_run_id"`
@@ -459,8 +460,27 @@ type ServiceRelay struct {
 	TlsServerName                string     `json:"tls_server_name"`
 }
 
+// ServiceRunClosureLookup defines model for ServiceRunClosureLookup.
+type ServiceRunClosureLookup struct {
+	IngressLeaseRevision int64                 `json:"ingress_lease_revision"`
+	IngressRunId         Identifier            `json:"ingress_run_id"`
+	ServiceRuns          []ServiceRunReference `json:"service_runs"`
+}
+
+// ServiceRunClosures defines model for ServiceRunClosures.
+type ServiceRunClosures struct {
+	Closed []ServiceRunReference `json:"closed"`
+}
+
 // ServiceRunID defines model for ServiceRunID.
 type ServiceRunID = string
+
+// ServiceRunReference defines model for ServiceRunReference.
+type ServiceRunReference struct {
+	RunNumber    int64        `json:"run_number"`
+	ServiceId    ServiceID    `json:"service_id"`
+	ServiceRunId ServiceRunID `json:"service_run_id"`
+}
 
 // VisitorConnectionID defines model for VisitorConnectionID.
 type VisitorConnectionID = string
@@ -516,6 +536,9 @@ type AdmitPublicServiceVisitorJSONRequestBody = PublicServiceVisitorClaim
 
 // ClosePublicServiceVisitorJSONRequestBody defines body for ClosePublicServiceVisitor for application/json ContentType.
 type ClosePublicServiceVisitorJSONRequestBody = PublicServiceVisitorLookup
+
+// ClosedServiceRunsJSONRequestBody defines body for ClosedServiceRuns for application/json ContentType.
+type ClosedServiceRunsJSONRequestBody = ServiceRunClosureLookup
 
 // PromotePublicServiceVisitorJSONRequestBody defines body for PromotePublicServiceVisitor for application/json ContentType.
 type PromotePublicServiceVisitorJSONRequestBody = PublicServiceVisitorLookup
@@ -652,6 +675,14 @@ type ClientInterface interface {
 	// ClosePublicServiceVisitor performs a POST /internal/v1/ingresses/{ingress_id}/public-services/close (the `ClosePublicServiceVisitor` operationId) request.
 	// Takes a body of the `application/json` content type.
 	ClosePublicServiceVisitor(ctx context.Context, ingressId IngressID, body ClosePublicServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ClosedServiceRunsWithBody performs a POST /internal/v1/ingresses/{ingress_id}/public-services/closed-runs (the `ClosedServiceRuns` operationId) request,
+	// with any type of body and a specified content type.
+	ClosedServiceRunsWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ClosedServiceRuns performs a POST /internal/v1/ingresses/{ingress_id}/public-services/closed-runs (the `ClosedServiceRuns` operationId) request.
+	// Takes a body of the `application/json` content type.
+	ClosedServiceRuns(ctx context.Context, ingressId IngressID, body ClosedServiceRunsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PromotePublicServiceVisitorWithBody performs a POST /internal/v1/ingresses/{ingress_id}/public-services/promote (the `PromotePublicServiceVisitor` operationId) request,
 	// with any type of body and a specified content type.
@@ -842,6 +873,34 @@ func (c *Client) ClosePublicServiceVisitorWithBody(ctx context.Context, ingressI
 // Takes a body of the `application/json` content type.
 func (c *Client) ClosePublicServiceVisitor(ctx context.Context, ingressId IngressID, body ClosePublicServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewClosePublicServiceVisitorRequest(c.Server, ingressId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ClosedServiceRunsWithBody performs a POST /internal/v1/ingresses/{ingress_id}/public-services/closed-runs (the `ClosedServiceRuns` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) ClosedServiceRunsWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClosedServiceRunsRequestWithBody(c.Server, ingressId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ClosedServiceRuns performs a POST /internal/v1/ingresses/{ingress_id}/public-services/closed-runs (the `ClosedServiceRuns` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) ClosedServiceRuns(ctx context.Context, ingressId IngressID, body ClosedServiceRunsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClosedServiceRunsRequest(c.Server, ingressId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1228,6 +1287,53 @@ func NewClosePublicServiceVisitorRequestWithBody(server string, ingressId Ingres
 	}
 
 	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/public-services/close", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewClosedServiceRunsRequest calls the generic ClosedServiceRuns builder with application/json body
+func NewClosedServiceRunsRequest(server string, ingressId IngressID, body ClosedServiceRunsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewClosedServiceRunsRequestWithBody(server, ingressId, "application/json", bodyReader)
+}
+
+// NewClosedServiceRunsRequestWithBody constructs an http.Request for the ClosedServiceRuns method, with any body, and a specified content type
+func NewClosedServiceRunsRequestWithBody(server string, ingressId IngressID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/public-services/closed-runs", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -1821,6 +1927,16 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	ClosePublicServiceVisitorWithResponse(ctx context.Context, ingressId IngressID, body ClosePublicServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*ClosePublicServiceVisitorResponse, error)
 
+	// ClosedServiceRunsWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/public-services/closed-runs (the `ClosedServiceRuns` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ClosedServiceRunsWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClosedServiceRunsResponse, error)
+
+	// ClosedServiceRunsWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/public-services/closed-runs (the `ClosedServiceRuns` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	ClosedServiceRunsWithResponse(ctx context.Context, ingressId IngressID, body ClosedServiceRunsJSONRequestBody, reqEditors ...RequestEditorFn) (*ClosedServiceRunsResponse, error)
+
 	// PromotePublicServiceVisitorWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/public-services/promote (the `PromotePublicServiceVisitor` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -2087,6 +2203,54 @@ func (r ClosePublicServiceVisitorResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ClosePublicServiceVisitorResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ClosedServiceRunsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ServiceRunClosures
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ClosedServiceRunsResponse) GetJSON200() *ServiceRunClosures {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ClosedServiceRunsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ClosedServiceRunsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ClosedServiceRunsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ClosedServiceRunsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ClosedServiceRunsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -2573,6 +2737,28 @@ func (c *ClientWithResponses) ClosePublicServiceVisitorWithResponse(ctx context.
 	return ParseClosePublicServiceVisitorResponse(rsp)
 }
 
+// ClosedServiceRunsWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/public-services/closed-runs (the `ClosedServiceRuns` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ClosedServiceRunsWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClosedServiceRunsResponse, error) {
+	rsp, err := c.ClosedServiceRunsWithBody(ctx, ingressId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClosedServiceRunsResponse(rsp)
+}
+
+// ClosedServiceRunsWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/public-services/closed-runs (the `ClosedServiceRuns` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ClosedServiceRunsWithResponse(ctx context.Context, ingressId IngressID, body ClosedServiceRunsJSONRequestBody, reqEditors ...RequestEditorFn) (*ClosedServiceRunsResponse, error) {
+	rsp, err := c.ClosedServiceRuns(ctx, ingressId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClosedServiceRunsResponse(rsp)
+}
+
 // PromotePublicServiceVisitorWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/public-services/promote (the `PromotePublicServiceVisitor` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -2871,6 +3057,39 @@ func ParseClosePublicServiceVisitorResponse(rsp *http.Response) (*ClosePublicSer
 	return response, nil
 }
 
+// ParseClosedServiceRunsResponse parses an HTTP response from a ClosedServiceRunsWithResponse call
+func ParseClosedServiceRunsResponse(rsp *http.Response) (*ClosedServiceRunsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ClosedServiceRunsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ServiceRunClosures
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParsePromotePublicServiceVisitorResponse parses an HTTP response from a PromotePublicServiceVisitorWithResponse call
 func ParsePromotePublicServiceVisitorResponse(rsp *http.Response) (*PromotePublicServiceVisitorResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -3153,6 +3372,9 @@ type ServerInterface interface {
 	// (POST /internal/v1/ingresses/{ingress_id}/public-services/close)
 	ClosePublicServiceVisitor(w http.ResponseWriter, r *http.Request, ingressId IngressID)
 
+	// (POST /internal/v1/ingresses/{ingress_id}/public-services/closed-runs)
+	ClosedServiceRuns(w http.ResponseWriter, r *http.Request, ingressId IngressID)
+
 	// (POST /internal/v1/ingresses/{ingress_id}/public-services/promote)
 	PromotePublicServiceVisitor(w http.ResponseWriter, r *http.Request, ingressId IngressID)
 
@@ -3270,6 +3492,32 @@ func (siw *ServerInterfaceWrapper) ClosePublicServiceVisitor(w http.ResponseWrit
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ClosePublicServiceVisitor(w, r, ingressId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ClosedServiceRuns operation middleware
+func (siw *ServerInterfaceWrapper) ClosedServiceRuns(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "ingress_id" -------------
+	var ingressId IngressID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ClosedServiceRuns(w, r, ingressId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3747,6 +3995,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/public-services/status", wrapper.PublicServiceVisitorStatus)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/public-services/promote", wrapper.PromotePublicServiceVisitor)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/public-services/close", wrapper.ClosePublicServiceVisitor)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/public-services/closed-runs", wrapper.ClosedServiceRuns)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/service-observations", wrapper.ReportIngressServiceObservations)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/register", wrapper.RegisterIngress)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/renew", wrapper.RenewIngress)

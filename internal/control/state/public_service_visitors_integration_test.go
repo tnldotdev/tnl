@@ -41,7 +41,7 @@ func testDirectManagedAdmission(t *testing.T, d *Database, r ApplyProjectConfigu
 	visitor := id(opaqueid.VisitorConnectionPrefix)
 	source := netip.MustParseAddr("192.0.2.44")
 	admit := func() (PublicServiceVisitorAdmission, error) {
-		return d.AdmitPublicServiceVisitor(ctx, lease.IngressLeaseIdentity, PrimaryIngressPoolID, visitor, port, source, now)
+		return d.AdmitPublicServiceVisitor(ctx, lease.IngressLeaseIdentity, PrimaryIngressPoolID, visitor, "", port, source, now)
 	}
 	if _, err = admit(); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("private endpoint admitted direct traffic", err)
@@ -49,7 +49,10 @@ func testDirectManagedAdmission(t *testing.T, d *Database, r ApplyProjectConfigu
 	setPublic := func(public bool) {
 		t.Helper()
 		r.DNSAutomation = true
-		r.Configuration.Settings.Public = public
+		for name, binding := range r.Configuration.Services {
+			binding.Public = new(public)
+			r.Configuration.Services[name] = binding
+		}
 		r.ExpectedRevision = applied.Revision
 		applied, err = d.ApplyProjectConfiguration(ctx, r)
 		if err != nil {
@@ -107,7 +110,7 @@ func testDirectManagedAdmission(t *testing.T, d *Database, r ApplyProjectConfigu
 	}
 	block, _ := pem.Decode([]byte(credential.CertificatePEM))
 	authorize := func(ip netip.Addr) (ServiceVisitorValidity, error) {
-		return d.AuthorizeServiceClientCertificate(ctx, run.ServiceID, run.RunID, run.Token, visitor, run.RunNumber, ip, block.Bytes, now)
+		return d.AuthorizeServiceClientCertificate(ctx, run.ServiceID, run.RunID, run.Token, visitor, run.RunNumber, ip, port, block.Bytes, now)
 	}
 	if _, err = authorize(netip.MustParseAddr("192.0.2.45")); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("certificate moved to another source", err)

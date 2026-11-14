@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/http"
 	"time"
 
 	quic "github.com/quic-go/quic-go"
@@ -15,8 +16,10 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/tcptarget"
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
@@ -53,15 +56,22 @@ type RunConfig struct {
 	Identity          authorityv1.PublisherEnrollmentResult
 	ServiceID         string
 	Target            string
+	Handler           http.Handler
+	InspectionMode    inspection.Mode
+	ObserveSummary    inspection.Observer
+	AdmitRequest      func(*http.Request) error
+	ReadinessProof    func(httpaccess.ReadinessRun) *httpaccess.ReadinessProof
 	TargetResolver    TargetResolver
 	resolvedTargetTLS *tls.Config
 	HeartbeatInterval time.Duration
 	Connect           func(context.Context, *Bound, uint8, ConnectOptions) (SlotSession, error)
-	Ready             func() error
-	TransportTLS      *tls.Config
-	RelayQUIC         muxsession.Connector
-	RelayTCP          muxsession.Connector
-	Connectivity      peer.ConnectivityOptions
+	// prepared observes validated control facts once, before starting that run.
+	Prepared     func(controlv1.ServiceRunPreparation) error
+	Ready        func() error
+	TransportTLS *tls.Config
+	RelayQUIC    muxsession.Connector
+	RelayTCP     muxsession.Connector
+	Connectivity peer.ConnectivityOptions
 	// PeerSocket is borrowed by qualification; the default service run owns one.
 	PeerSocket       *peer.Socket
 	Metadata         controlv1.ServiceMetadata
@@ -79,8 +89,8 @@ type RunStatus struct {
 	Connected                                  [2]bool
 }
 
-func (RunConfig) String() string   { return "private publisher configuration" }
-func (RunConfig) GoString() string { return "private publisher configuration" }
+func (RunConfig) String() string   { return "service publisher configuration" }
+func (RunConfig) GoString() string { return "service publisher configuration" }
 
 // Publish keeps the managed certificate lifecycle, two independently claimed
 // relay slots and current control heartbeat together. live bytes are never replayed.
@@ -91,8 +101,9 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	}
 	telemetry := config.Telemetry.BeginScope("publisher")
 	defer telemetry.Close()
-	if config.Control == nil || config.Access == nil || !config.Metadata.Protocol.Valid() || config.Identity.ServiceId == nil ||
-		config.Identity.Kind != authorityv1.Service || *config.Identity.ServiceId != config.ServiceID {
+	if config.Control == nil || config.Access == nil || !config.Metadata.Protocol.Valid() || !config.InspectionMode.Valid() || config.Identity.ServiceId == nil ||
+		config.Identity.Kind != authorityv1.Service || *config.Identity.ServiceId != config.ServiceID ||
+		config.ReadinessProof != nil && config.Metadata.Protocol != controlv1.ServiceProtocolHTTP {
 		return ErrPrivateStream
 	}
 	var dialer muxsession.QUICDialer
@@ -121,8 +132,14 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		}
 		config.resolvedTargetTLS = discoveredTLS
 	}
-	if _, err := tcptarget.Normalize(config.Target); err != nil {
-		return err
+	if config.Handler != nil {
+		if config.Metadata.Protocol != controlv1.ServiceProtocolHTTP || config.Target != "" || config.TargetResolver != nil || config.Metadata.TargetTls != nil {
+			return ErrPrivateStream
+		}
+	} else {
+		if _, err := tcptarget.Normalize(config.Target); err != nil {
+			return err
+		}
 	}
 	if config.HeartbeatInterval == 0 {
 		config.HeartbeatInterval = 10 * time.Second
@@ -191,6 +208,9 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	}
 	if config.Healthy == nil {
 		config.Healthy = func(ctx context.Context) bool {
+			if config.Handler != nil {
+				return true
+			}
 			probe, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
 			target, current := config.Target, transport
@@ -227,6 +247,11 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	prepared, err = newManagedPrepared(preparation, approved, config)
 	if err != nil {
 		return err
+	}
+	if config.Prepared != nil {
+		if err := config.Prepared(preparation); err != nil {
+			return err
+		}
 	}
 	// uncertain starts retry the exact prepared run, never a new preparation.
 	var setup controlv1.ServiceRunSetup
@@ -297,7 +322,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	bound.streamCapacity = int(config.StreamCapacity)
 	var certificateDone <-chan error
 	{
-		maintain, cancel, err := configureServiceRun(ctx, config, prepared, setup, managedControl, config.State)
+		maintain, cancel, err := configureServiceRun(ctx, config, prepared, setup, managedControl, config.State, audit)
 		if err != nil {
 			return err
 		}

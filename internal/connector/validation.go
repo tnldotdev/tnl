@@ -13,8 +13,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/connector/kubeconfig"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -68,21 +68,15 @@ func serviceConnectionProfile(service controlv1.Service, listen string) (Profile
 	profile.ConnectorRequired = true
 	profile.Authentication = connectionConnector
 	managedAddress := net.JoinHostPort(hostname, port)
-	managedOrigin := net.JoinHostPort(hostname, strconv.Itoa(endpoint.Port))
 	switch profile.Protocol {
 	case config.ProtocolKubernetes:
 		profile.TLS = "HTTPS; managed tnl hostname; system roots; independent cluster CA verification by publisher"
-		profile.URL = "https://" + managedOrigin
+		profile.URL = "https://" + managedAddress
 	case config.ProtocolHTTP:
 		profile.TLS = "HTTPS with server hostname verification"
-		profile.URL = "https://" + managedOrigin + "/"
-		profile.Command = []string{"curl", "--noproxy", hostname, "--connect-to", managedOrigin + ":" + address, profile.URL}
-		profile.Instructions = []string{"curl below dials the local listener and verifies the managed TLS hostname"}
-		if profile.Port == profile.ServicePort {
-			profile.Instructions = append(profile.Instructions, "browser: map the exact managed hostname to the listener in your local hosts file before opening the HTTPS URL:", host+" "+hostname, profile.URL)
-		} else {
-			profile.Instructions = append(profile.Instructions, "browser: first run tnl connect with --listen="+net.JoinHostPort(host, strconv.Itoa(profile.ServicePort))+" and map the exact managed hostname to that loopback IP in your local hosts file; HTTP requires the allocated port in its URL")
-		}
+		profile.URL = "https://" + hostname + "/"
+		profile.Command = []string{"curl", "--noproxy", hostname, "--connect-to", net.JoinHostPort(hostname, "443") + ":" + address, profile.URL}
+		profile.Instructions = []string{"curl below dials the local listener while keeping the service's HTTPS authority", "a browser uses the public endpoint when enabled; connector access needs a client-specific dial override"}
 	case config.ProtocolPostgres:
 		profile.TLS = "PostgreSQL SSLRequest; verify-full; system roots"
 		query := url.Values{"hostaddr": {host}, "sslmode": {"verify-full"}, "sslrootcert": {"system"}, "channel_binding": {"disable"}, "gssencmode": {"disable"}}
@@ -93,10 +87,11 @@ func serviceConnectionProfile(service controlv1.Service, listen string) (Profile
 		if err != nil {
 			return profile, err
 		}
-		profile.TLS = "MySQL SSLRequest; VERIFY_IDENTITY; system CA bundle"
+		profile.TLS = "MySQL SSLRequest; verified service hostname; system CA bundle"
 		profile.ServerCAFile = roots
-		profile.Instructions = []string{"before running mysql, map the exact managed hostname to the listener in /etc/hosts:", host + " " + hostname, "mysql verifies the managed hostname; --host=localhost would verify the wrong identity"}
-		profile.Command = []string{"mysql", "--protocol=TCP", "--host=" + hostname, "--port=" + port, "--ssl-mode=VERIFY_IDENTITY", "--ssl-ca=" + roots}
+		profile.Instructions = []string{"use a MySQL driver that dials " + address + " while verifying the TLS server as " + hostname,
+			"the mysql CLI cannot separate its dial address from its verified hostname; use the SDK mysql2 connection factory instead",
+			"keep certificate and hostname verification enabled"}
 	case config.ProtocolTCP:
 		profile.TLS = "tnl verifies the service hostname before opaque bytes"
 		profile.Command = []string{"nc", host, port}
@@ -138,8 +133,7 @@ func ValidateService(service controlv1.Service) error {
 		return publisherCLIError("service has no managed TLS endpoint; refresh its applied configuration")
 	}
 	endpoint := service.Endpoint
-	hostname, err := naming.CanonicalizeHostname(endpoint.Hostname)
-	if err != nil || hostname != endpoint.Hostname || endpoint.Port < 1024 || endpoint.Port > 65535 {
+	if !serviceendpoint.Valid(string(service.Protocol), endpoint.Hostname, endpoint.Port, endpoint.Public) {
 		return publisherCLIError("service returned an invalid managed TLS endpoint")
 	}
 	return nil

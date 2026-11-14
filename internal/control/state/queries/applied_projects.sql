@@ -94,3 +94,12 @@ FROM control.local_project_services local
 JOIN control.services s ON s.id=local.service_id AND s.team_id=local.team_id
 WHERE local.team_id=sqlc.arg(team_id) AND local.project_key=sqlc.arg(project_key)
     AND local.service=sqlc.arg(service) AND local.worktree_key=sqlc.arg(worktree_key);
+
+-- name: GetLocalServiceHTTPConfiguration :one
+SELECT http_configuration_ciphertext,http_storage_key_id
+FROM control.local_project_services WHERE service_id=sqlc.arg(service_id);
+
+-- name: SetLocalServiceHTTPConfiguration :execrows
+UPDATE control.local_project_services
+SET http_configuration_ciphertext=sqlc.narg(ciphertext),http_storage_key_id=sqlc.narg(storage_key_id)
+WHERE service_id=sqlc.arg(service_id);

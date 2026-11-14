@@ -22,7 +22,7 @@
     },
     {
       "name": "allocated http port",
-      "valid": true,
+      "valid": false,
       "metadata": {
         "version": 1,
         "dev": false,
@@ -35,6 +35,61 @@
             "port": 20001,
             "public": false,
             "url": "https://web.member.example:20001"
+          }
+        }
+      }
+    },
+    {
+      "name": "connector-only http keeps logical 443",
+      "valid": true,
+      "metadata": {
+        "version": 1,
+        "dev": false,
+        "namespace": "member.example",
+        "services": {
+          "web": {
+            "protocol": "http",
+            "namespace": "member.example",
+            "hostname": "web.member.example",
+            "port": 443,
+            "public": false,
+            "url": "https://web.member.example"
+          }
+        }
+      }
+    },
+    {
+      "name": "connector-only postgres without public reservation",
+      "valid": true,
+      "metadata": {
+        "version": 1,
+        "dev": false,
+        "namespace": "member.example",
+        "services": {
+          "db": {
+            "protocol": "postgres",
+            "namespace": "member.example",
+            "hostname": "db.member.example",
+            "port": 0,
+            "public": false
+          }
+        }
+      }
+    },
+    {
+      "name": "non-http cannot select shared https",
+      "valid": false,
+      "metadata": {
+        "version": 1,
+        "dev": false,
+        "namespace": "member.example",
+        "services": {
+          "db": {
+            "protocol": "postgres",
+            "namespace": "member.example",
+            "hostname": "db.member.example",
+            "port": 443,
+            "public": true
           }
         }
       }
@@ -187,7 +242,7 @@
       }
     },
     {
-      "name": "port below range",
+      "name": "public service without port reservation",
       "valid": false,
       "metadata": {
         "version": 1,
@@ -199,7 +254,7 @@
             "namespace": "member.example",
             "hostname": "db.member.example",
             "port": 0,
-            "public": false
+            "public": true
           }
         }
       }

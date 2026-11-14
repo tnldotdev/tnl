@@ -119,7 +119,7 @@ func (d *Database) ClaimConnectorPeerPairLeg(ctx context.Context, lease RelayLea
 	if len(key) != ed25519.PublicKeySize || !ed25519.Verify(key, message, proof.Signature) {
 		return result, ErrServiceAccess
 	}
-	if err = d.serviceHTTPSourceAllowed(ctx, q, proof.ServiceID, observedSource); err != nil {
+	if _, err = d.serviceHTTPSourcePolicy(ctx, q, proof.ServiceID, observedSource); err != nil {
 		return result, err
 	}
 	pair, pending, bindingUntil, err := connectorPeerBindingRevision(ctx, tx, pair, proof.DeliveryGeneration, checkedNow())

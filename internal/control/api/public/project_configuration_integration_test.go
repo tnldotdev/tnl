@@ -39,6 +39,9 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(d.Close)
+	if err := d.ConfigureIngressServicePorts(ctx, controlstate.PrimaryIngressPoolID, nil); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Now().UTC()
 	session, err := controltest.Session(ctx, d, "example.test", time.Hour, 24*time.Hour, now)
 	if err != nil {
@@ -80,7 +83,7 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	body.Configuration.Webhooks = map[string]controlv1.ProjectWebhook{"payments": {Service: "local-app", Path: "/hooks/payments", Provider: controlv1.Custom}}
 	name, hostname, mode := "website", "upstream.internal", controlv1.Restricted
 	digest := sha256.Sum256([]byte("tnl-target-tls/v1\x00" + hostname + "\x00"))
-	body.Configuration.Services["public"] = controlv1.ProjectServiceConfiguration{Name: &name, Target: "https://192.0.2.5:8443", TargetTls: &controlv1.ProjectTargetTLS{Hostname: hostname, Digest: hex.EncodeToString(digest[:])}, Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectPublicAccess{Mode: &mode}}}
+	body.Configuration.Services["public"] = controlv1.ProjectServiceConfiguration{Name: &name, Public: new(true), Target: "https://192.0.2.5:8443", TargetTls: &controlv1.ProjectTargetTLS{Hostname: hostname, Digest: hex.EncodeToString(digest[:])}, Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectPublicAccess{Mode: &mode}}}
 	body.Deployment = deployment
 	body.ServiceDeclarations = controlv1.ProjectServiceDeclarations{"web": "http", "public": "http", "local-app": "http", "local-private": "http"}
 	localBody := body
@@ -107,6 +110,13 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	}
 	if applied.Configuration.Services["public"].TargetTls.Digest != hex.EncodeToString(digest[:]) {
 		t.Fatal("control did not return the derived project trust digest")
+	}
+	for _, service := range applied.Services {
+		wantPublic := service.Service == "public"
+		public := service.Public != nil && *service.Public
+		if public != wantPublic || service.Port == nil || *service.Port != 443 {
+			t.Fatal("wire HTTP identity or exposure depended on an allocated port", service)
+		}
 	}
 	// another session can discover and read the project without any local state.
 	second, err := controltest.Session(ctx, d, "example.test", time.Hour, 24*time.Hour, now)
@@ -298,8 +308,12 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	_, managedErr = owner.CreatePublisherGrant(ctx, member.PublisherIdentityId, controlv1.CreatePublisherGrantRequest{TeamId: team, ServiceId: &web.ServiceId})
 	assertManaged(managedErr)
 	projection, err := owner.GetProjectPublicMetadata(ctx, team, project)
-	if err != nil || len(projection.Services) != 0 {
-		t.Fatal("service leaked into public URL metadata", projection, err)
+	if err != nil || len(projection.Services) != 1 {
+		t.Fatal("public metadata omitted the public binding or leaked private bindings", projection, err)
+	}
+	projected := projection.Services[0]
+	if projected.Service != "public" || projected.ServiceId == nil || *projected.ServiceId != pub.ServiceId || projected.PublicUrlId != nil || projected.Port != 443 {
+		t.Fatal("public service projection changed resource identity or port", projected)
 	}
 	local, err := owner.RealizeLocalProjectService(ctx, project, "local-app", controlv1.RealizeLocalProjectServiceRequest{TeamId: team, SourceFingerprint: applied.SourceFingerprint, WorktreeKey: "checkout-a", Configuration: localBody.Configuration.Services["local-app"]})
 	if err == nil || local.ServiceId != "" {

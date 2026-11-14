@@ -156,11 +156,13 @@ func TestPublicServiceTLSCloseEndsReturnStreamExactlyOnce(t *testing.T) {
 	_ = client.SetDeadline(time.Now().Add(5 * time.Second))
 	var ended atomic.Int32
 	done := make(chan error, 1)
+	header := privateHeader(t, ref)
+	header.PublicService.DestinationPort = 443
 	go func() {
 		defer server.Close()
-		done <- bound.serveBody(ctx, ref, server, privateHeader(t, ref), func(context.Context) error { ended.Add(1); return nil })
+		done <- bound.serveBody(ctx, ref, server, header, func(context.Context) error { ended.Add(1); return nil })
 	}()
-	metadata, _ := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.10:40000"), Destination: netip.MustParseAddrPort("203.0.113.1:25443")})
+	metadata, _ := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.10:40000"), Destination: netip.MustParseAddrPort("203.0.113.1:443")})
 	if _, err := client.Write(metadata); err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +170,7 @@ func TestPublicServiceTLSCloseEndsReturnStreamExactlyOnce(t *testing.T) {
 	if err := secure.HandshakeContext(ctx); err != nil {
 		t.Fatal(err)
 	}
-	request, _ := http.NewRequest(http.MethodGet, "https://"+p.managedHostname+":25443/", nil)
+	request, _ := http.NewRequest(http.MethodGet, "https://"+p.managedHostname+"/", nil)
 	request.Close = true
 	if err := request.Write(secure); err != nil {
 		t.Fatal(err)
@@ -206,8 +208,8 @@ func privateFixture(t *testing.T, target string) (*Prepared, *Bound, tunnelv1.Se
 	identity := authorityv1.PublisherEnrollmentResult{ClientId: id(opaqueid.PublisherIdentityPrefix), GrantId: id(opaqueid.PublisherGrantPrefix), KeyId: id(opaqueid.PublisherIdentityKeyPrefix), TeamId: team, Kind: authorityv1.Service, ServiceId: &service}
 	const hostname = "service.worktree.member.example.test"
 	plan := controlv1.CertificatePlan{CacheKey: "service-test", Scope: hostname, Identifiers: []string{hostname}, ChallengeMethod: controlv1.Dns01}
-	prep := controlv1.ServiceRunPreparation{TeamId: team, ServiceId: service, ServiceRunId: id(opaqueid.ServiceRunPrefix), RunNumber: 7, PublisherIdentityId: identity.ClientId, PublisherGrantId: identity.GrantId, PublisherKeyId: identity.KeyId, IdempotencyKey: id(opaqueid.IdempotencyPrefix), ExpiresAt: time.Now().Add(time.Minute), Hostname: hostname, ServicePort: 25443, DomainId: domain, CertificatePlan: &plan}
-	approved := controlv1.Service{Id: service, TeamId: team, DomainId: &domain, Protocol: controlv1.Tcp, Enabled: true, TrustRevision: 1, Endpoint: &controlv1.ServiceEndpoint{Hostname: hostname, Port: prep.ServicePort}}
+	prep := controlv1.ServiceRunPreparation{TeamId: team, ServiceId: service, ServiceRunId: id(opaqueid.ServiceRunPrefix), RunNumber: 7, PublisherIdentityId: identity.ClientId, PublisherGrantId: identity.GrantId, PublisherKeyId: identity.KeyId, IdempotencyKey: id(opaqueid.IdempotencyPrefix), ExpiresAt: time.Now().Add(time.Minute), Hostname: hostname, DomainId: domain, CertificatePlan: &plan, Traffic: serviceTrafficFixture()}
+	approved := controlv1.Service{Id: service, TeamId: team, DomainId: &domain, Protocol: controlv1.Tcp, Enabled: true, TrustRevision: 1, Endpoint: &controlv1.ServiceEndpoint{Hostname: hostname, Port: 25443}}
 	p, err := newManagedPrepared(prep, approved, RunConfig{Identity: identity, Target: target})
 	if err != nil {
 		t.Fatal(err)

@@ -15,7 +15,7 @@ func TestServiceHTTPGuardRevocationAbortsActiveResponse(t *testing.T) {
 		w.(http.Flusher).Flush()
 		<-r.Context().Done()
 	}))
-	r, _ := http.NewRequestWithContext(t.Context(), "GET", "https://preview.example.test:25443/", nil)
+	r, _ := http.NewRequestWithContext(t.Context(), "GET", "https://preview.example.test/", nil)
 	r.Header.Set(httpaccess.VisitorTokenHeader, token.Reveal())
 	response, err := client.Do(r)
 	if err != nil {

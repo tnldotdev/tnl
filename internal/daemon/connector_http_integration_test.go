@@ -19,6 +19,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/config"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
+	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
@@ -27,7 +28,7 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func startPrivateHTTPPublisher(t *testing.T, f *privateSeparatedFixture, service controlv1.Service, target string, overrides ...publisherservice.RunControl) {
+func startPrivateHTTPPublisher(t *testing.T, f *privateSeparatedFixture, service controlv1.Service, target string, configure ...func(*publisherservice.RunConfig)) func() {
 	t.Helper()
 	enrollment, err := f.identity.routes.CreatePublisherEnrollment(t.Context(), controlv1.CreatePublisherEnrollmentRequest{TeamId: service.TeamId, ServiceId: &service.Id, Kind: controlv1.CreatePublisherEnrollmentRequestKindInstalled, Name: "private-http"})
 	if err != nil {
@@ -47,26 +48,26 @@ func startPrivateHTTPPublisher(t *testing.T, f *privateSeparatedFixture, service
 	if f.defaultTiming {
 		heartbeat = 0
 	}
-	var control publisherservice.RunControl = f.identity.routes
-	if len(overrides) == 1 {
-		control = overrides[0]
+	cfg := publisherservice.RunConfig{Control: f.identity.routes, State: f.identity.state, Access: native.Access, Identity: identity, ServiceID: service.Id, Target: target,
+		Metadata: controlv1.ServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool}, HeartbeatInterval: heartbeat,
+		RelayQUIC: quic, RelayTCP: tcp,
+		Ready: func() error { close(ready); return nil }, Connect: func(ctx context.Context, bound *publisherservice.Bound, slot uint8, options publisherservice.ConnectOptions) (publisherservice.SlotSession, error) {
+			claimed, err := bound.ConnectSlot(ctx, slot, options)
+			if err == nil && f.publisherConnections != nil {
+				select {
+				case f.publisherConnections <- claimed:
+				case <-ctx.Done():
+					_ = claimed.Close()
+					return nil, context.Cause(ctx)
+				}
+			}
+			return claimed, err
+		}}
+	for _, apply := range configure {
+		apply(&cfg)
 	}
 	go func() {
-		done <- publisherservice.Publish(ctx, publisherservice.RunConfig{Control: control, State: f.identity.state, Access: native.Access, Identity: identity, ServiceID: service.Id, Target: target,
-			Metadata: controlv1.ServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool}, HeartbeatInterval: heartbeat,
-			RelayQUIC: quic, RelayTCP: tcp,
-			Ready: func() error { close(ready); return nil }, Connect: func(ctx context.Context, bound *publisherservice.Bound, slot uint8, options publisherservice.ConnectOptions) (publisherservice.SlotSession, error) {
-				claimed, err := bound.ConnectSlot(ctx, slot, options)
-				if err == nil && f.publisherConnections != nil {
-					select {
-					case f.publisherConnections <- claimed:
-					case <-ctx.Done():
-						_ = claimed.Close()
-						return nil, context.Cause(ctx)
-					}
-				}
-				return claimed, err
-			}})
+		done <- publisherservice.Publish(ctx, cfg)
 	}()
 	join := sync.OnceValue(func() error {
 		select {
@@ -85,6 +86,12 @@ func startPrivateHTTPPublisher(t *testing.T, f *privateSeparatedFixture, service
 	case <-time.After(12 * time.Second):
 		t.Fatal("private HTTP publisher did not become ready")
 	}
+	return func() {
+		cancel()
+		if err := join(); err != nil {
+			t.Error("stop private HTTP publisher", err)
+		}
+	}
 }
 
 func TestIntegrationPrivateHTTPProductionControl(t *testing.T) {
@@ -93,6 +100,11 @@ func TestIntegrationPrivateHTTPProductionControl(t *testing.T) {
 		for _, endpoint := range []bool{false, true} {
 			t.Run(fmt.Sprintf("standalone=%t/tnl-tls=%t", standalone, endpoint), func(t *testing.T) {
 				f := newServiceRuntimeFixture(t, standalone, nil)
+				// model unavailable public capacity without relaxing inventory
+				// validation or changing the already-bound runtime listeners.
+				if _, err := f.inspect.ExecContext(t.Context(), `DELETE FROM control.ingress_service_port_ranges WHERE ingress_pool_id=$1`, controlstate.PrimaryIngressPoolID); err != nil {
+					t.Fatal(err)
+				}
 				ca := newTestCertificateAuthority(t)
 				const hostname = "target.private.integration.test"
 				var posts atomic.Int64
@@ -147,6 +159,9 @@ func TestIntegrationPrivateHTTPProductionControl(t *testing.T) {
 				service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "private-http", key, metadata)
 				if err != nil {
 					t.Fatal(err)
+				}
+				if service.Endpoint == nil || service.Endpoint.Port != 443 || service.Endpoint.Public {
+					t.Fatal("connector-only HTTP lost its logical HTTPS identity", service.Endpoint)
 				}
 				startPrivateHTTPPublisher(t, f, service, target.Listener.Addr().String())
 				person, err := f.identity.authority.IdentityContext(t.Context())
@@ -221,6 +236,10 @@ func TestIntegrationPrivateHTTPProductionControl(t *testing.T) {
 				var publicURLs int
 				if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.public_urls`).Scan(&publicURLs); err != nil || publicURLs != 0 {
 					t.Fatalf("private HTTP created public URL state: %d %v", publicURLs, err)
+				}
+				var claims int
+				if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.service_port_claims`).Scan(&claims); err != nil || claims != 0 {
+					t.Fatalf("private HTTP consumed public capacity: %d %v", claims, err)
 				}
 			})
 		}

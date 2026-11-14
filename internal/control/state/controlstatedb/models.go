@@ -371,7 +371,6 @@ type ControlDeployment struct {
 	Description             string
 	DomainID                pgtype.Text
 	Namespace               string
-	Public                  bool
 	Revision                int64
 	ConfigurationHash       string
 	ConfigurationCiphertext []byte
@@ -675,6 +674,7 @@ type ControlIngressLease struct {
 	ProtocolVersion      int64
 	ConnectionCapacity   int64
 	IngressPoolID        string
+	Https                bool
 	ServicePorts         []int32
 	ReportedConnections  int64
 	RoutingTableRevision int64
@@ -739,15 +739,17 @@ type ControlIngressServicePortRange struct {
 }
 
 type ControlLocalProjectService struct {
-	TeamID              string
-	ProjectKey          string
-	SourceFingerprint   string
-	Service             string
-	WorktreeKey         string
-	ServiceID           pgtype.Text
-	PublicURLID         pgtype.Text
-	VisitorGrantID      pgtype.Text
-	CreatedByIdentityID string
+	TeamID                      string
+	ProjectKey                  string
+	SourceFingerprint           string
+	Service                     string
+	WorktreeKey                 string
+	ServiceID                   pgtype.Text
+	PublicURLID                 pgtype.Text
+	VisitorGrantID              pgtype.Text
+	HttpConfigurationCiphertext []byte
+	HttpStorageKeyID            pgtype.Text
+	CreatedByIdentityID         string
 }
 
 type ControlMaintenanceControl struct {
@@ -824,6 +826,7 @@ type ControlPublicServiceVisitor struct {
 	IdentityID           pgtype.Text
 	DeviceID             pgtype.Text
 	CertificateDigest    []byte
+	AuthorizedAt         pgtype.Timestamptz
 	PromotedAt           pgtype.Timestamptz
 	ValidUntil           pgtype.Timestamptz
 	CreatedAt            pgtype.Timestamptz
@@ -1226,6 +1229,7 @@ type ControlService struct {
 	Protocol               string
 	TlsMetadata            []byte
 	TrustRevision          int64
+	EndpointRevision       int64
 	VisitorRevision        int64
 	PublisherPool          bool
 	DomainID               pgtype.Text
@@ -1401,17 +1405,21 @@ type ControlServiceNamespaceClaim struct {
 }
 
 type ControlServicePortClaim struct {
-	ID            int64
-	ServiceID     string
-	IngressPoolID string
-	Port          int32
-	State         string
-	ClaimedAt     pgtype.Timestamptz
-	ReusableAfter pgtype.Timestamptz
+	ID                      int64
+	ServiceID               string
+	IngressPoolID           string
+	Port                    int32
+	State                   string
+	ClaimedAt               pgtype.Timestamptz
+	RetiredAt               pgtype.Timestamptz
+	ReusableAfter           pgtype.Timestamptz
+	RetiredIssuanceRevision pgtype.Int8
+	DnsClearedAt            pgtype.Timestamptz
 }
 
 type ControlServiceRun struct {
 	PreferredRegions           []string
+	TrafficLimits              []byte
 	ID                         string
 	ServiceID                  string
 	TeamID                     string
@@ -1435,7 +1443,6 @@ type ControlServiceRun struct {
 	CertificateIdentifiers     []string
 	CertificateDomainID        pgtype.Text
 	CertificateHostname        string
-	ServicePort                pgtype.Int4
 	CertificateIssuanceID      pgtype.Text
 	CertificateExpiresAt       pgtype.Timestamptz
 	CreatedAt                  pgtype.Timestamptz

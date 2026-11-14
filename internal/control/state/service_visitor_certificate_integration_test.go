@@ -10,7 +10,7 @@ import (
 )
 
 func TestIntegrationPrivateVisitorCertificateDeadline(t *testing.T) {
-	f := newConnectorPairFixture(t)
+	f := newConnectorPairFixture(t, true)
 	d, now, ctx := f.d, f.now, f.visitor
 	var issuance string
 	if err := d.pool.QueryRow(ctx, `SELECT certificate_issuance_id FROM control.service_runs WHERE id=$1`, f.run.RunID).Scan(&issuance); err != nil {
@@ -46,7 +46,7 @@ func TestIntegrationPrivateVisitorCertificateDeadline(t *testing.T) {
 	}
 	visitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
 	admit := func() (PublicServiceVisitorAdmission, error) {
-		return d.AdmitPublicServiceVisitor(ctx, lease.IngressLeaseIdentity, PrimaryIngressPoolID, visitor, port, netip.MustParseAddr("192.0.2.4"), now)
+		return d.AdmitPublicServiceVisitor(ctx, lease.IngressLeaseIdentity, PrimaryIngressPoolID, visitor, "", port, netip.MustParseAddr("192.0.2.4"), now)
 	}
 	initial, err := admit()
 	if err != nil || initial.ExpiresAt.After(expires) {

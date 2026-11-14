@@ -1,4 +1,35 @@
 schemas:
+  ServiceRunReference:
+    type: object
+    additionalProperties: false
+    required: [service_id, service_run_id, run_number]
+    properties:
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
+      run_number: { type: integer, format: int64, minimum: 1 }
+  ServiceRunClosureLookup:
+    type: object
+    additionalProperties: false
+    required: [ingress_run_id, ingress_lease_revision, service_runs]
+    properties:
+      ingress_run_id: { $ref: "../openapi.yaml#/components/schemas/Identifier" }
+      ingress_lease_revision: { type: integer, format: int64, minimum: 1 }
+      service_runs:
+        type: array
+        minItems: 1
+        maxItems: 128
+        uniqueItems: true
+        items: { $ref: "../openapi.yaml#/components/schemas/ServiceRunReference" }
+  ServiceRunClosures:
+    type: object
+    additionalProperties: false
+    required: [closed]
+    properties:
+      closed:
+        type: array
+        maxItems: 128
+        uniqueItems: true
+        items: { $ref: "../openapi.yaml#/components/schemas/ServiceRunReference" }
   ServiceID:
     type: string
     pattern: "^svc_[A-Za-z0-9]{22}$"
@@ -24,7 +55,12 @@ schemas:
       ingress_run_id: { $ref: "../openapi.yaml#/components/schemas/Identifier" }
       ingress_lease_revision: { type: integer, format: int64, minimum: 1 }
       ingress_pool_id: { type: string, minLength: 1, maxLength: 128 }
-      destination_port: { type: integer, minimum: 1024, maximum: 65535 }
+      destination_port: { type: integer, minimum: 1, maximum: 65535 }
+      hostname:
+        type: string
+        minLength: 1
+        maxLength: 253
+        description: Required exact inspected TLS hostname for shared HTTPS port 443. Must be absent on allocated non-HTTP service ports.
       observed_source_ip: { type: string, minLength: 1, maxLength: 64 }
       visitor_connection_id: { $ref: "../openapi.yaml#/components/schemas/VisitorConnectionID" }
   PublicServiceVisitorLookup:
@@ -39,13 +75,26 @@ schemas:
     type: object
     additionalProperties: false
     required:
-      [service_id, service_run_id, run_number, visitor_connection_id, expires_at, connected_relays]
+      [
+        service_id,
+        service_run_id,
+        run_number,
+        visitor_connection_id,
+        expires_at,
+        connected_relays,
+        traffic,
+        anonymous,
+      ]
     properties:
       service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
       service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
       run_number: { type: integer, format: int64, minimum: 1 }
       visitor_connection_id: { $ref: "../openapi.yaml#/components/schemas/VisitorConnectionID" }
       expires_at: { type: string, format: date-time }
+      traffic: { $ref: "../openapi.yaml#/components/schemas/IngressTrafficLimits" }
+      anonymous:
+        type: boolean
+        description: Current HTTP policy allows anonymous visitors, so ordinary traffic accounting starts before relay setup. This does not authorize application requests or bypass publisher checks.
       connected_relays:
         type: array
         minItems: 1

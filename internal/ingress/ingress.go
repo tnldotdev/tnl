@@ -76,7 +76,6 @@ type Config struct {
 	HandleRelay               func(net.Conn) bool
 	PublicServices            *PublicServices
 	ServicePortRanges         []tcpport.Range
-	PublicServicesOnly        bool
 	RequireProxyHeader        bool
 	TrustedProxyPeers         []netip.Prefix
 	MaxConnections            int
@@ -92,7 +91,6 @@ type Config struct {
 	OnForwardingFailure       func(string, uint64, string, ForwardingFailureReason, int)
 	Traffic                   TrafficConfig
 	Pending                   PendingConfig
-	TerminalTrafficRuns       func([]TrafficRun) map[TrafficRun]struct{}
 }
 
 type Server struct {
@@ -121,8 +119,8 @@ type Server struct {
 }
 
 func New(listener net.Listener, config Config) (*Server, error) {
-	if listener == nil || !config.PublicServicesOnly && config.Lookup == nil || config.PublicServicesOnly && config.PublicServices == nil {
-		return nil, errors.New("ingress: listener and route lookup are required")
+	if listener == nil || config.Lookup == nil && config.PublicServices == nil {
+		return nil, errors.New("ingress: listener and service forwarding are required")
 	}
 	if config.MaxConnections <= 0 {
 		return nil, errors.New("ingress: connection limits must be positive")
@@ -168,8 +166,7 @@ func New(listener net.Listener, config Config) (*Server, error) {
 		openContext = observability.WithMetrics(openContext, metrics)
 	}
 	traffic := newTrafficAdmission(config.Traffic, config.Pending)
-	traffic.terminalRuns = config.TerminalTrafficRuns
-	return &Server{
+	server := &Server{
 		listener:        listener,
 		config:          config,
 		openContext:     openContext,
@@ -182,7 +179,14 @@ func New(listener net.Listener, config Config) (*Server, error) {
 		traffic:         traffic,
 		servicePorts:    servicePorts,
 		pendingVisitors: make(map[string]*visitorAdmission),
-	}, nil
+	}
+	if config.PublicServices != nil {
+		if err := config.PublicServices.bindServer(server); err != nil {
+			cancelOpens()
+			return nil, err
+		}
+	}
+	return server, nil
 }
 
 func (s *Server) Serve() error {
@@ -284,18 +288,12 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 	_ = public.SetReadDeadline(time.Time{})
 	// native database negotiation is not a TLS ClientHello. select a managed
 	// service by its trusted destination before attempting HTTPS inspection.
-	if s.config.PublicServicesOnly || s.servicePorts.Contains(int(destination.Port())) || s.config.RequireProxyHeader && destination.Port() != 443 {
+	if s.servicePorts.Contains(int(destination.Port())) || s.config.RequireProxyHeader && destination.Port() != 443 {
 		if s.config.PublicServices == nil || !s.servicePorts.Contains(int(destination.Port())) {
 			return nil
 		}
 		finishInspection()
-		release, rejected := s.admitClass(serviceConnection, "")
-		if release == nil {
-			s.rejectCapacity(rejected)
-			return nil
-		}
-		defer release()
-		return s.config.PublicServices.AcceptPublic(s.openContext, &readerConn{Conn: public, reader: reader}, source, destination)
+		return s.forwardService(&readerConn{Conn: public, reader: reader}, source, destination, "", nil)
 	}
 	inspected := &readerConn{Conn: public, reader: reader}
 	hello, err := clienthello.InspectClientHello(inspected)
@@ -312,6 +310,7 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 		}
 		return nil
 	}
+	canonicalSNI := hello.ServerName == serverName
 	hello.ServerName = serverName
 	finishInspection()
 	if hello.ServerName == s.config.ServerHostname {
@@ -331,7 +330,23 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 		s.transfer(public)
 		return nil
 	}
-	return s.forward(public, source, destination, hello)
+	if !canonicalSNI {
+		return ErrServiceAdmission
+	}
+	return s.forwardService(&readerConn{Conn: public, reader: hello.Remainder}, source, destination, hello.ServerName, hello.Prefix)
+}
+
+func (s *Server) forwardService(public net.Conn, source, destination netip.AddrPort, hostname string, initial []byte) error {
+	if s.config.PublicServices == nil {
+		return ErrServiceAdmission
+	}
+	release, rejected := s.admitClass(serviceConnection, "")
+	if release == nil {
+		s.rejectCapacity(rejected)
+		return nil
+	}
+	defer release()
+	return s.config.PublicServices.AcceptPublic(s.openContext, public, source, destination, hostname, initial)
 }
 
 func (s *Server) handoff(

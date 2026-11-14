@@ -10,6 +10,7 @@ schemas:
         protocol_version,
         connection_capacity,
         ingress_pool_id,
+        https,
         service_ports,
       ]
     properties:
@@ -17,11 +18,14 @@ schemas:
         $ref: "../../../../public/v1/schemas/common.yaml#/schemas/RegionID"
       ingress_pool_id:
         $ref: "../openapi.yaml#/components/schemas/Identifier"
+      https:
+        type: boolean
+        description: This process serves the shared HTTPS listener on public port 443, independently of allocated non-HTTP service ports.
       service_ports:
         type: array
         maxItems: 256
         uniqueItems: true
-        description: Sorted managed ports bound before registration or exposed by the trusted destination-metadata proxy.
+        description: Sorted allocated non-HTTP ports bound before registration or exposed by the trusted destination-metadata proxy. Shared HTTPS 443 is advertised separately.
         items:
           type: integer
           minimum: 1024
@@ -158,47 +162,4 @@ schemas:
         type: string
         format: date-time
   IngressTrafficLimits:
-    type: object
-    additionalProperties: false
-    description: Resolved per-public-URL publish-run budgets, enforced independently on each ingress process. Byte rates count encrypted visitor bytes per second. Omitted totals are unlimited.
-    required: [connections, rate, rate_per_ns, burst, upload_bytes, download_bytes]
-    properties:
-      connections:
-        type: integer
-        minimum: 1
-        maximum: 1048576
-      rate:
-        type: integer
-        minimum: 1
-        maximum: 2147483648
-      rate_per_ns:
-        type: integer
-        format: int64
-        minimum: 1000000
-        maximum: 86400000000000
-      burst:
-        type: integer
-        minimum: 1
-        maximum: 2147483648
-      upload_bytes:
-        type: integer
-        format: int64
-        minimum: 65536
-        maximum: 1099511627776
-      download_bytes:
-        type: integer
-        format: int64
-        minimum: 65536
-        maximum: 1099511627776
-      total_connections:
-        type: integer
-        format: int64
-        minimum: 1
-      total_upload_bytes:
-        type: integer
-        format: int64
-        minimum: 1
-      total_download_bytes:
-        type: integer
-        format: int64
-        minimum: 1
+    $ref: "../../../../public/v1/openapi.yaml#/components/schemas/TrafficLimits"

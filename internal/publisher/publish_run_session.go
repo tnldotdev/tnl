@@ -151,7 +151,7 @@ func runSession(
 	}
 	var material clientstate.Material
 	identity := authority.identity
-	var readiness *ReadinessProof
+	var readiness *httpaccess.ReadinessProof
 	if config.ReadinessProof != nil {
 		readiness = config.ReadinessProof(identity)
 	}

@@ -136,19 +136,26 @@ ORDER BY s.id LIMIT 101;
 -- caller locks the service, checks the live publisher grant and enrolled key,
 -- allocates one run number and captures its managed certificate plan.
 -- a retry with the same idempotency key returns the same prepared row.
-INSERT INTO control.service_runs(preferred_regions, id, service_id, team_id, run_number,
+INSERT INTO control.service_runs(preferred_regions, traffic_limits, id, service_id, team_id, run_number,
     publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key,
     request_digest, preparation_expires_at, assignment_seed_ciphertext,
-    assignment_seed_storage_key_id, certificate_cache_key,certificate_scope,certificate_identifiers,certificate_domain_id,certificate_hostname,service_port,state, created_at, publisher_expires_at)
-VALUES (sqlc.arg(preferred_regions), sqlc.arg(id), sqlc.arg(service_id), sqlc.arg(team_id), sqlc.arg(run_number),
+    assignment_seed_storage_key_id, certificate_cache_key,certificate_scope,certificate_identifiers,certificate_domain_id,certificate_hostname,state, created_at, publisher_expires_at)
+VALUES (sqlc.arg(preferred_regions), convert_from(sqlc.arg(traffic_limits)::bytea,'UTF8')::jsonb, sqlc.arg(id), sqlc.arg(service_id), sqlc.arg(team_id), sqlc.arg(run_number),
     sqlc.arg(publisher_identity_id), sqlc.arg(publisher_grant_id), sqlc.arg(publisher_key_id),
     sqlc.arg(idempotency_key), sqlc.arg(request_digest),
     sqlc.arg(preparation_expires_at), sqlc.arg(assignment_seed_ciphertext),
-    sqlc.arg(assignment_seed_storage_key_id),sqlc.arg(certificate_cache_key),sqlc.arg(certificate_scope),sqlc.arg(certificate_identifiers),sqlc.narg(certificate_domain_id),sqlc.arg(certificate_hostname),sqlc.narg(service_port), 'prepared', sqlc.arg(now), sqlc.arg(publisher_expires_at)) RETURNING *;
+    sqlc.arg(assignment_seed_storage_key_id),sqlc.arg(certificate_cache_key),sqlc.arg(certificate_scope),sqlc.arg(certificate_identifiers),sqlc.narg(certificate_domain_id),sqlc.arg(certificate_hostname), 'prepared', sqlc.arg(now), sqlc.arg(publisher_expires_at)) RETURNING *;
 
 -- name: LockServiceRun :one
 SELECT * FROM control.service_runs
 WHERE id = sqlc.arg(id) AND service_id = sqlc.arg(service_id) FOR UPDATE;
+
+-- name: ClosedServiceRuns :many
+-- only an exact stored terminal tuple proves a finite traffic budget can retire.
+SELECT run.service_id,run.id,run.run_number
+FROM control.service_runs run
+WHERE run.id=ANY(sqlc.arg(run_ids)::text[])
+    AND run.state='closed' AND run.closed_at IS NOT NULL ORDER BY run.id;
 
 -- name: GetServiceRunPublisherIdentity :one
 -- starting a run requires its exact authenticated publisher, grant and key.

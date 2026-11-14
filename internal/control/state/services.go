@@ -24,6 +24,7 @@ var serviceName = regexp.MustCompile(`^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$`)
 type ServiceRecord struct {
 	ServiceMetadata
 	ID, TeamID, DomainID, Name string
+	EndpointRevision           int64
 	Placement                  *ServicePlacement   `json:"placement,omitempty"`
 	Source                     *LocalServiceSource `json:"source,omitempty"`
 	HTTPLimits                 *ProjectHTTPApplicationLimits
@@ -80,7 +81,7 @@ func checkedServiceRecord(row controlstatedb.ControlService) (ServiceRecord, err
 	if err != nil {
 		return ServiceRecord{}, err
 	}
-	return ServiceRecord{ServiceMetadata: metadata, ID: row.ID, TeamID: row.TeamID, DomainID: row.DomainID.String, Name: row.Name, Enabled: row.Enabled, CreatedAt: row.CreatedAt.Time, Placement: &ServicePlacement{DomainID: row.DomainID.String, WorktreeKey: row.PlacementWorktreeKey, WorktreeLabel: row.PlacementWorktreeLabel}}, nil
+	return ServiceRecord{ServiceMetadata: metadata, ID: row.ID, TeamID: row.TeamID, DomainID: row.DomainID.String, Name: row.Name, EndpointRevision: row.EndpointRevision, Enabled: row.Enabled, CreatedAt: row.CreatedAt.Time, Placement: &ServicePlacement{DomainID: row.DomainID.String, WorktreeKey: row.PlacementWorktreeKey, WorktreeLabel: row.PlacementWorktreeLabel}}, nil
 }
 
 func serviceManager(ctx context.Context, tx pgx.Tx, teamID, actorID string) error {
@@ -154,7 +155,7 @@ func (d *Database) CreateServiceAt(ctx context.Context, teamID, actorID, name, k
 		if row.DeletedAt.Valid || row.TeamID != teamID || row.Name != name || !serviceMetadataMatches(saved, metadata) || row.PublisherPool != metadata.PublisherPool {
 			return result, ErrServiceConflict
 		}
-		if err = d.ensureLocalServiceEndpoint(ctx, tx, row.ID, actorID, name, placement, now); err != nil {
+		if err = d.ensureLocalServiceEndpoint(ctx, tx, row.ID, actorID, name, placement, row.Public, now); err != nil {
 			return result, err
 		}
 		result, err = checkedServiceRecord(row)
@@ -187,7 +188,7 @@ func (d *Database) CreateServiceAt(ctx context.Context, teamID, actorID, name, k
 	if _, err = tx.Exec(ctx, `UPDATE control.services SET protocol=$2, tls_metadata=convert_from($3::bytea,'UTF8')::jsonb, publisher_pool=$4 WHERE id=$1`, id, metadata.Protocol, encoded, metadata.PublisherPool); err != nil {
 		return result, err
 	}
-	if err = d.ensureLocalServiceEndpoint(ctx, tx, id, actorID, name, placement, now); err != nil {
+	if err = d.ensureLocalServiceEndpoint(ctx, tx, id, actorID, name, placement, false, now); err != nil {
 		return result, err
 	}
 	row, err := controlstatedb.New(tx).LockService(ctx, id)

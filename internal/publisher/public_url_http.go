@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
@@ -19,6 +18,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
@@ -83,11 +83,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		handler = config.Handler
 	} else {
 		hooks := publisherproxy.ResponseHooks{ModifyHTML: modifyResponse, Observe: config.ObserveResponse, ObserveStatus: observe, OnForwarded: func(request *http.Request) {
-			if request != nil {
-				if forwarded, ok := request.Context().Value(responseOriginKey{}).(*atomic.Bool); ok {
-					forwarded.Store(true)
-				}
-			}
+			inspection.ApplicationResponse(request)
 		}}
 		proxyConfig := publisherproxy.Config{
 			Target: config.Target, Hostname: hostname, Mounts: config.Mounts,
@@ -162,43 +158,13 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					serviceaudit.Emit(config.AuditSink, serviceaudit.Observation{ServiceID: config.PublicURLID, ServiceKind: "public_url", RunID: config.PublishRunID, RunNumber: int64(config.PublishRunNumber), VisitorConnectionID: session.visitor.Header.VisitorConnectionID, SourceIP: session.visitor.Source.Addr().Unmap().String(), EventType: "http.decision", Outcome: auditOutcome, Reason: auditReason})
 				}
 				defer emitAudit()
-				if config.ObserveSummary != nil && config.InspectionMode != inspection.None && !strings.HasPrefix(request.URL.Path, "/__tnl/") {
-					started := time.Now()
-					observationContext := request.Context()
-					forwarded := &atomic.Bool{}
-					request = request.WithContext(context.WithValue(request.Context(), responseOriginKey{}, forwarded))
-					tracked := &observedResponseWriter{ResponseWriter: response}
-					response = tracked
-					defer func() {
-						interrupted := recover()
-						path := request.URL.EscapedPath()
-						if len(path) > 512 {
-							path = path[:512]
-						}
-						origin := "tnl"
-						if forwarded.Load() {
-							origin = "local_service"
-						}
-						status := tracked.status
-						if status == 0 {
-							status = http.StatusOK
-						}
-						result := inspection.HTTPResult(status)
-						if interrupted != nil || tracked.err != nil || observationContext.Err() != nil {
-							result = inspection.ResultError
-						}
-						config.ObserveSummary(inspection.Summary{Protocol: "http", ReceivedAt: started.UTC(), Method: request.Method,
-							Path: path, Status: status, Result: result, Duration: time.Since(started), Origin: origin})
-						if interrupted != nil {
-							panic(interrupted)
-						}
-					}()
-				}
+				response, request, finishInspection := inspection.BeginHTTP(response, request, config.InspectionMode, config.ObserveSummary)
+				defer finishInspection()
 				if code := publisherproxy.ValidateRequest(request, hostname); code != "" {
 					diagnostic.WriteHTTP(response, request, code, "")
 					return
 				}
-				proof := config.ReadinessProof.consume(request, PublishRunIdentity{Hostname: hostname, PublicURLID: config.PublicURLID, PublishRunID: config.PublishRunID, Number: config.PublishRunNumber})
+				proof := config.ReadinessProof.Consume(request, httpaccess.ReadinessRun{Subject: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: config.PublicURLID}, Hostname: hostname, ID: config.PublishRunID, Number: config.PublishRunNumber})
 				request.Header.Del(publisherproxy.ReadinessProbeHeader)
 				if proof {
 					auditReport = false

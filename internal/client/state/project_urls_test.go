@@ -21,7 +21,7 @@ func TestKnownProjectURLsSurviveTunnelStopAndStayBounded(t *testing.T) {
 		t.Fatal(err)
 	}
 	const server = "https://control.example.test"
-	tunnel, err := db.BeginTunnel(t.Context(), BeginTunnelOptions{Command: TunnelCommandPublish, Server: server, Project: project, Target: "http://127.0.0.1:3000", ServiceProtocol: controlv1.Http})
+	tunnel, err := db.BeginTunnel(t.Context(), BeginTunnelOptions{Command: TunnelCommandPublish, Server: server, Project: project, Target: "http://127.0.0.1:3000", ServiceProtocol: controlv1.ServiceProtocolHTTP})
 	if err != nil {
 		t.Fatal(err)
 	}

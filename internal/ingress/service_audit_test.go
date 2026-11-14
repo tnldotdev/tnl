@@ -9,10 +9,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 )
 
-type auditSinkFunc func(serviceaudit.Observation) bool
-
-func (f auditSinkFunc) Observe(o serviceaudit.Observation) bool { return f(o) }
-
 func TestNetworkPolicyDenialAuditedAtIngress(t *testing.T) {
 	var events []serviceaudit.Observation
 	route := PublicURL{ID: "url_0123456789ABCDEFGHIJKL", PublishRunID: "pr_0123456789ABCDEFGHIJKL", PublishRunNumber: 1, Backends: []Backend{&singleBackend{}}, AttestSource: testBackendSourceProof}

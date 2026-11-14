@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
 
@@ -105,7 +106,8 @@ func TestHTTPAuthorizationPrecedesPromotionAndTarget(t *testing.T) {
 
 func TestReadinessProofIsExactSingleUseAndStripped(t *testing.T) {
 	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", Number: 8}
-	proof, err := NewReadinessProof(run, "/health")
+	probeRun := httpaccess.ReadinessRun{Subject: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: run.PublicURLID}, ID: run.PublishRunID, Number: run.Number, Hostname: run.Hostname}
+	proof, err := httpaccess.NewReadinessProof(probeRun, "/health")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,11 +153,11 @@ func TestReadinessProofIsExactSingleUseAndStripped(t *testing.T) {
 	if forwarded != 1 || promoted != 0 || checked != 1 {
 		t.Fatalf("forwarded=%d promoted=%d checked=%d", forwarded, promoted, checked)
 	}
-	other, _ := NewReadinessProof(run, "/health")
+	other, _ := httpaccess.NewReadinessProof(probeRun, "/health")
 	r := httptest.NewRequest("GET", "/health", nil)
 	r.Header.Set(publisherproxy.ReadinessProbeHeader, other.HeaderValue())
-	run.Number++
-	if other.consume(r, run) {
+	probeRun.Number++
+	if other.Consume(r, probeRun) {
 		t.Fatal("proof crossed publish runs")
 	}
 }
@@ -178,7 +180,7 @@ func TestReadinessProofForHTTPSTargetIsSingleUseAndPrivate(t *testing.T) {
 		t.Fatal("preflight sent an HTTP request to the target")
 	}
 	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", Number: 8}
-	proof, err := NewReadinessProof(run, "/health")
+	proof, err := httpaccess.NewReadinessProof(httpaccess.ReadinessRun{Subject: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: run.PublicURLID}, ID: run.PublishRunID, Number: run.Number, Hostname: run.Hostname}, "/health")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -40,7 +40,7 @@ func TestConnectNamesAndRemovedChoices(t *testing.T) {
 
 func TestNativeHTTPOutputQualifiesURLAndLocalListener(t *testing.T) {
 	for _, listen := range []string{"127.0.0.1:25443", "127.0.0.1:15432", "[::1]:15432"} {
-		profile := connector.Profile{Protocol: config.ProtocolHTTP, ServiceID: "svc_0123456789ABCDEFGHIJKL", Hostname: "orders.example.test", Port: 15432, URL: "https://orders.example.test:25443/"}
+		profile := connector.Profile{Protocol: config.ProtocolHTTP, ServiceID: "svc_0123456789ABCDEFGHIJKL", Hostname: "orders.example.test", Port: 15432, URL: "https://orders.example.test/"}
 		var output bytes.Buffer
 		if err := writeNativeConnection(&output, profile, statusOutputHuman, listen); err != nil {
 			t.Fatal(err)
@@ -48,6 +48,17 @@ func TestNativeHTTPOutputQualifiesURLAndLocalListener(t *testing.T) {
 		if !strings.Contains(output.String(), "curl url") || !strings.Contains(output.String(), listen) {
 			t.Fatal("HTTP output did not qualify its URL and local listener", output.String())
 		}
+	}
+}
+
+func TestNativeProfileWithoutCommandKeepsClientGuidance(t *testing.T) {
+	profile := connector.Profile{Protocol: config.ProtocolMySQL, Instructions: []string{"use the SDK mysql2 connection factory"}}
+	var output bytes.Buffer
+	if err := writeNativeConnection(&output, profile, statusOutputHuman, "127.0.0.1:13306"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), "client command") || !strings.Contains(output.String(), profile.Instructions[0]) {
+		t.Fatal("unsupported CLI command was presented as usable", output.String())
 	}
 }
 

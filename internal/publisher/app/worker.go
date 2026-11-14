@@ -11,14 +11,16 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	telemetryv1 "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 )
 
 type Configuration struct {
-	RunPrivate       func(context.Context, func(uint64, bool) error) error
-	CheckPrivate     func(context.Context, Service) Observation
+	Service          *ServicePublication
 	Publisher        publisher.Config
 	Inspection       inspection.Policy
 	PrimaryRoot      string
@@ -31,13 +33,63 @@ type Configuration struct {
 	Attach  func(context.Context, *clientstate.Tunnel, *publisher.Config) (func(), error)
 }
 
+// ServicePublication supplies an operation, not another publisher engine. the
+// worker owns local journaling and inspection until the operation joins its work.
+type ServicePublication struct {
+	Options clientstate.BeginTunnelOptions
+	URL     string
+	Run     func(context.Context, func(uint64, bool) error, inspection.Observer) error
+	Check   func(context.Context, Service) Observation
+}
+
+type publicationJournal struct {
+	tunnel   *clientstate.Tunnel
+	recorder *clientstate.InspectionRecorder
+}
+
+// the caller finalizes a non-nil journal even when binding fails, so cleanup
+// errors and the original operation failure share one terminal observation.
+func (w *Workers) beginPublication(ctx context.Context, service Service, cfg Configuration, options clientstate.BeginTunnelOptions) (*publicationJournal, error) {
+	if options.Target != service.Target {
+		return nil, ErrRegistrationStale
+	}
+	tunnel, err := w.Database.BeginTunnel(ctx, options)
+	if err != nil {
+		return nil, err
+	}
+	journal := &publicationJournal{tunnel: tunnel}
+	if err := w.Manager.BindTunnel(service.Name, service.RegistrationID, service.Target, tunnel.ID()); err != nil {
+		return journal, err
+	}
+	if cfg.PrimaryRoot == "" {
+		cfg.PrimaryRoot = options.Project
+	}
+	if cfg.SharedRoot == "" {
+		cfg.SharedRoot = cfg.PrimaryRoot
+	}
+	if cfg.Inspection.Mode == inspection.SummaryMode {
+		journal.recorder = tunnel.NewInspectionRecorder(cfg.PrimaryRoot, options.Project, cfg.SharedRoot, service.Name, cfg.Inspection)
+	}
+	return journal, nil
+}
+
+func (j *publicationJournal) close(result error, cleanup func() error) error {
+	j.recorder.Close()
+	if cleanup != nil {
+		result = errors.Join(result, cleanup())
+	}
+	finish, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return errors.Join(result, j.tunnel.Finish(finish, result))
+}
+
 type proofEntry struct {
 	service      Service
 	run          publisher.PublishRunIdentity
-	proof        *publisher.ReadinessProof
+	proof        *httpaccess.ReadinessProof
 	target       *target.TargetBinding
 	check        sync.Mutex
-	privateCheck func(context.Context, Service) Observation
+	serviceCheck func(context.Context, Service) Observation
 }
 
 type Workers struct {
@@ -55,16 +107,31 @@ type Workers struct {
 	proofs          map[string]*proofEntry
 }
 
-func (w *Workers) Run(ctx context.Context, service Service, observe func(uint64, bool) error) (result error) {
+func (w *Workers) Run(ctx context.Context, service Service, observe func(PublicationUpdate) error) (result error) {
 	configuration, err := w.Configure(ctx, service)
 	if err != nil {
 		return err
 	}
-	if configuration.Cleanup != nil {
-		defer func() { result = errors.Join(result, configuration.Cleanup()) }()
-	}
-	if configuration.RunPrivate != nil {
-		return w.runPrivate(ctx, service, configuration, observe)
+	var journal *publicationJournal
+	defer func() {
+		if journal != nil {
+			// operation and attachment workers have joined before recorder drain.
+			// include independent configuration cleanup failures in the terminal row.
+			result = journal.close(result, configuration.Cleanup)
+		} else if configuration.Cleanup != nil {
+			result = errors.Join(result, configuration.Cleanup())
+		}
+	}()
+	if configuration.Service != nil {
+		publication := configuration.Service
+		if publication.Run == nil || publication.Check == nil {
+			return ErrRegistrationStale
+		}
+		journal, err = w.beginPublication(ctx, service, configuration, publication.Options)
+		if err != nil {
+			return err
+		}
+		return w.runService(journal.tunnel.Context(), service, publication, journal, observe)
 	}
 	cfg := configuration.Publisher
 	if service.Framework != "" {
@@ -92,30 +159,12 @@ func (w *Workers) Run(ctx context.Context, service Service, observe func(uint64,
 	}
 	// service.Name is the registration key, which may be an invocation ID.
 	// cfg.Service is only a configured service name; ad-hoc tunnels have none.
-	tunnel, err := w.Database.BeginTunnel(ctx, clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, Server: cfg.ControlURL, Target: service.Target, Project: cfg.ProjectRoot, Service: cfg.Service, ServiceProtocol: cfg.ServiceProtocol, IntegrationScope: configuration.IntegrationScope})
+	journal, err = w.beginPublication(ctx, service, configuration, clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, Server: cfg.ControlURL, Target: service.Target, Project: cfg.ProjectRoot, Service: cfg.Service, ServiceProtocol: controlv1.ServiceProtocol(cfg.ServiceProtocol), IntegrationScope: configuration.IntegrationScope})
 	if err != nil {
 		return err
 	}
+	tunnel := journal.tunnel
 	ctx = tunnel.Context()
-	defer func() {
-		finish, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		result = errors.Join(result, tunnel.Finish(finish, result))
-	}()
-	if err := w.Manager.BindTunnel(service.Name, service.RegistrationID, service.Target, tunnel.ID()); err != nil {
-		return err
-	}
-	if configuration.PrimaryRoot == "" {
-		configuration.PrimaryRoot = cfg.ProjectRoot
-	}
-	if configuration.SharedRoot == "" {
-		configuration.SharedRoot = configuration.PrimaryRoot
-	}
-	var recorder *clientstate.InspectionRecorder
-	if configuration.Inspection.Mode == inspection.SummaryMode {
-		recorder = tunnel.NewInspectionRecorder(configuration.PrimaryRoot, cfg.ProjectRoot, configuration.SharedRoot, service.Name, configuration.Inspection)
-		defer recorder.Close()
-	}
 	// attachments can start alias publishers immediately. give them the same
 	// current target check before they copy the entry service's request hook.
 	if configuration.TargetBinding != nil {
@@ -144,7 +193,7 @@ func (w *Workers) Run(ctx context.Context, service Service, observe func(uint64,
 	}
 	cfg.InspectionMode = configuration.Inspection.Mode
 	previousSummary := cfg.ObserveSummary
-	recordSummary := SummaryObservation(recorder)
+	recordSummary := SummaryObservation(journal.recorder)
 	cfg.ObserveSummary = func(summary inspection.Summary) {
 		if previousSummary != nil {
 			previousSummary(summary)
@@ -204,12 +253,12 @@ func (w *Workers) Run(ctx context.Context, service Service, observe func(uint64,
 	}
 	var entry *proofEntry
 	if cfg.ServiceProtocol == "http" || cfg.ServiceProtocol == "" {
-		cfg.ReadinessProof = func(run publisher.PublishRunIdentity) *publisher.ReadinessProof {
+		cfg.ReadinessProof = func(run publisher.PublishRunIdentity) *httpaccess.ReadinessProof {
 			path := service.Readiness.Path
 			if path == "" {
 				path = "/"
 			}
-			proof, err := publisher.NewReadinessProof(run, path)
+			proof, err := httpaccess.NewReadinessProof(httpaccess.ReadinessRun{Subject: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: run.PublicURLID}, ID: run.PublishRunID, Number: run.Number, Hostname: run.Hostname}, path)
 			if err != nil {
 				return nil
 			}
@@ -261,12 +310,12 @@ func (w *Workers) Run(ctx context.Context, service Service, observe func(uint64,
 			if err := tunnel.SetProvisioning(ctx, event.PublishRunNumber); err != nil {
 				return err
 			}
-			return observe(event.PublishRunNumber, false)
+			return observe(PublicationUpdate{RunNumber: event.PublishRunNumber, TunnelID: tunnel.ID(), Target: service.Target})
 		case publisher.EventReady:
 			if err := tunnel.SetReady(ctx, event.PublicURL, event.PublishRunNumber); err != nil {
 				return err
 			}
-			if err := observe(event.PublishRunNumber, true); err != nil {
+			if err := observe(PublicationUpdate{RunNumber: event.PublishRunNumber, Routable: true, TunnelID: tunnel.ID(), Target: service.Target, PublicURL: event.PublicURL}); err != nil {
 				return err
 			}
 			if w.AutomaticReadiness && event.PublishRunNumber > lastReadinessRun {
@@ -279,7 +328,7 @@ func (w *Workers) Run(ctx context.Context, service Service, observe func(uint64,
 			if err := tunnel.SetDraining(ctx); err != nil {
 				return err
 			}
-			return observe(event.PublishRunNumber, false)
+			return observe(PublicationUpdate{RunNumber: event.PublishRunNumber, TunnelID: tunnel.ID(), Target: service.Target})
 		case publisher.EventProvisioningStep:
 			w.Manager.SetProvisioningStage(service.Name, service.RegistrationID, event.PublishRunNumber, event.ProvisioningStage)
 		}
@@ -348,8 +397,8 @@ func (w *Workers) checkService(ctx context.Context, service Service) (ready bool
 		}
 		capturedTarget = true
 	}
-	if entry.privateCheck != nil {
-		observation = entry.privateCheck(ctx, service)
+	if entry.serviceCheck != nil {
+		observation = entry.serviceCheck(ctx, service)
 	} else if service.ServiceProtocol == "http" || service.ServiceProtocol == "" {
 		if entry.proof == nil {
 			return false

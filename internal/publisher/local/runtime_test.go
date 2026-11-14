@@ -70,8 +70,8 @@ func testAppRuntimeWorkers(t *testing.T, realWorkers bool, defaultProtection ...
 	t.Cleanup(func() { _ = state.Close() })
 	a := &appRuntime{state: state, project: clientproject.Project{Root: root, Config: config.TNL{Services: config.Services{"web": {}, "api": {}}}}, prepared: map[string]appPreparation{}}
 	a.workers = &publisherapp.Workers{Database: state, Configure: a.workerConfiguration}
-	run := func(ctx context.Context, _ publisherapp.Service, observe func(uint64, bool) error) error {
-		if err := observe(1, true); err != nil {
+	run := func(ctx context.Context, service publisherapp.Service, observe func(publisherapp.PublicationUpdate) error) error {
+		if err := observe(publisherapp.PublicationUpdate{RunNumber: 1, Routable: true, Target: service.Target, TunnelID: service.TunnelID, PublicURL: service.PublicURL}); err != nil {
 			return err
 		}
 		<-ctx.Done()

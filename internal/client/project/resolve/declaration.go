@@ -28,7 +28,7 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 	deployment := config.SelectedDeployment(project.Config)
 	if deployment != "local" {
 		settings := project.Config.DeploymentSettings
-		entry := controlv1.DeploymentSettings{Description: settings.Description, Public: &settings.Public}
+		entry := controlv1.DeploymentSettings{Description: settings.Description}
 		if settings.Domain != nil {
 			domain, err := current.ReadyDomain(*settings.Domain)
 			if err != nil {
@@ -60,10 +60,10 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 	for _, name := range names {
 		service := project.Config.Services[name]
 		savedName, protocol := config.ServiceName(name, service), controlv1.ServiceProtocol(config.Protocol(service))
-		entry := controlv1.ProjectServiceConfiguration{Name: &savedName, Protocol: &protocol}
+		entry := controlv1.ProjectServiceConfiguration{Name: &savedName, Protocol: &protocol, Public: service.Public}
 		httpSettings := service.HTTP
-		if deployment != "local" && service.Tunnel == nil {
-			resolved, err := config.ResolveRemoteHTTP(project.Config.Tunnel, service.HTTP)
+		if protocol == controlv1.ServiceProtocolHTTP && service.Tunnel == nil {
+			resolved, err := config.ResolveServiceHTTP(project.Config.Tunnel, service.HTTP)
 			if err != nil {
 				return declaration, err
 			}

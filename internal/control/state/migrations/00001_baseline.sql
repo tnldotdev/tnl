@@ -711,6 +711,7 @@ CREATE TABLE control.ingress_leases (
     protocol_version bigint NOT NULL CHECK (protocol_version >= 1),
     connection_capacity bigint NOT NULL CHECK (connection_capacity >= 0),
     ingress_pool_id text NOT NULL DEFAULT '',
+    https boolean NOT NULL DEFAULT false,
     service_ports integer[] NOT NULL DEFAULT '{}' CHECK (cardinality(service_ports)<=256),
     reported_connections bigint NOT NULL DEFAULT 0 CHECK (reported_connections >= 0),
     routing_table_revision bigint NOT NULL DEFAULT 0 CHECK (routing_table_revision >= 0),
@@ -1645,14 +1646,20 @@ CREATE TABLE control.services (
     protocol text NOT NULL DEFAULT 'tcp' CHECK (protocol IN ('http', 'tcp', 'mysql', 'postgres', 'kubernetes')),
     tls_metadata jsonb,
     trust_revision bigint NOT NULL DEFAULT 1 CHECK (trust_revision >= 1),
+    endpoint_revision bigint NOT NULL DEFAULT 1 CHECK (endpoint_revision >= 1),
     visitor_revision bigint NOT NULL DEFAULT 1 CHECK (visitor_revision >= 1),
     publisher_pool boolean NOT NULL DEFAULT false,
     domain_id text REFERENCES control.domains(id) ON DELETE RESTRICT,
     certificate_hostname text NOT NULL DEFAULT '',
     certificate_scope text NOT NULL DEFAULT '',
-    service_port integer CHECK (service_port BETWEEN 1024 AND 65535),
+    service_port integer CHECK (service_port IS NULL
+        OR protocol='http' AND service_port=443
+        OR protocol<>'http' AND (service_port=0 OR service_port BETWEEN 1024 AND 65535)),
     ingress_pool_id text NOT NULL DEFAULT 'ingress-a' REFERENCES control.ingress_pools(id) ON DELETE RESTRICT,
     public boolean NOT NULL DEFAULT false,
+    CONSTRAINT services_public_port_required CHECK (
+        NOT public OR service_port IS NOT NULL
+            AND (protocol='http' AND service_port=443 OR protocol<>'http' AND service_port BETWEEN 1024 AND 65535)),
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     idempotency_key text NOT NULL CHECK (idempotency_key <> ''),
     request_digest bytea NOT NULL CHECK (octet_length(request_digest) = 32),
@@ -1667,20 +1674,29 @@ CREATE UNIQUE INDEX services_scoped_name ON control.services(team_id, name_scope
 CREATE UNIQUE INDEX services_certificate_hostname ON control.services(certificate_hostname) WHERE deleted_at IS NULL AND certificate_hostname<>'';
 CREATE TABLE control.service_port_claims (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    service_id text NOT NULL UNIQUE REFERENCES control.services(id) ON DELETE RESTRICT,
+    service_id text NOT NULL REFERENCES control.services(id) ON DELETE RESTRICT,
     ingress_pool_id text NOT NULL REFERENCES control.ingress_pools(id) ON DELETE RESTRICT,
     port integer NOT NULL CHECK (port BETWEEN 1024 AND 65535),
     state text NOT NULL DEFAULT 'held' CHECK (state IN ('held','quarantined','released')),
     claimed_at timestamptz NOT NULL,
+    retired_at timestamptz,
     reusable_after timestamptz,
+    retired_issuance_revision bigint,
+    dns_cleared_at timestamptz,
+    CONSTRAINT service_port_retirement CHECK (
+        (state='held' AND retired_at IS NULL AND retired_issuance_revision IS NULL AND dns_cleared_at IS NULL)
+        OR (state<>'held' AND retired_at IS NOT NULL
+            AND retired_issuance_revision IS NOT NULL AND retired_issuance_revision>=0)),
     CHECK ((state='held') = (reusable_after IS NULL))
 );
 CREATE UNIQUE INDEX service_ports_held ON control.service_port_claims(ingress_pool_id,port) WHERE state<>'released';
+CREATE UNIQUE INDEX service_port_current ON control.service_port_claims(service_id) WHERE state='held';
 -- +goose StatementBegin
 CREATE FUNCTION control.retire_service_port() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF OLD.deleted_at IS NULL AND NEW.deleted_at IS NOT NULL THEN
-        UPDATE control.service_port_claims SET state='quarantined',
+        UPDATE control.service_port_claims SET state='quarantined',retired_at=NEW.deleted_at,
+            retired_issuance_revision=COALESCE((SELECT max(created_revision) FROM control.acme_orders WHERE service_id=NEW.id),0),
             reusable_after=GREATEST(NEW.deleted_at+interval '7 days',COALESCE((SELECT max(not_after) FROM control.acme_orders WHERE certificate_scope=NEW.certificate_scope),NEW.deleted_at))
             WHERE service_id=NEW.id AND state='held';
         PERFORM control.retire_service_endpoints(NEW.id,'',NEW.deleted_at);
@@ -1690,6 +1706,19 @@ END;
 $$;
 -- +goose StatementEnd
 CREATE TRIGGER retire_service_port AFTER UPDATE ON control.services FOR EACH ROW EXECUTE FUNCTION control.retire_service_port();
+-- +goose StatementBegin
+CREATE FUNCTION control.advance_service_endpoint_revision() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF (OLD.certificate_hostname,OLD.domain_id,OLD.ingress_pool_id,OLD.service_port)
+        IS DISTINCT FROM (NEW.certificate_hostname,NEW.domain_id,NEW.ingress_pool_id,NEW.service_port) THEN
+        NEW.endpoint_revision := OLD.endpoint_revision+1;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+-- +goose StatementEnd
+CREATE TRIGGER advance_service_endpoint_revision BEFORE UPDATE ON control.services
+    FOR EACH ROW EXECUTE FUNCTION control.advance_service_endpoint_revision();
 ALTER TABLE control.publisher_grants ADD CONSTRAINT publisher_grants_service_fkey
     FOREIGN KEY (service_id) REFERENCES control.services(id) ON DELETE RESTRICT;
 ALTER TABLE control.publisher_enrollments ADD CONSTRAINT publisher_enrollments_service_fkey
@@ -1769,6 +1798,7 @@ ALTER TABLE control.visitor_grants ADD CONSTRAINT visitor_grants_invitation_fkey
 -- endpoint and certificate plan. visitor TLS keys never enter control storage.
 CREATE TABLE control.service_runs (
     preferred_regions text[] NOT NULL DEFAULT '{}' CHECK (cardinality(preferred_regions)<=8 AND array_position(preferred_regions, NULL) IS NULL),
+    traffic_limits jsonb NOT NULL CHECK (jsonb_typeof(traffic_limits) = 'object'),
     id text PRIMARY KEY CHECK (id ~ '^srun_[A-Za-z0-9]{22}$'), service_id text NOT NULL, team_id text NOT NULL,
     run_number bigint NOT NULL CHECK (run_number >= 1),
     publisher_identity_id text NOT NULL, publisher_grant_id text NOT NULL,
@@ -1789,7 +1819,6 @@ CREATE TABLE control.service_runs (
     certificate_identifiers text[] NOT NULL DEFAULT '{}',
     certificate_domain_id text REFERENCES control.domains(id) ON DELETE RESTRICT,
     certificate_hostname text NOT NULL DEFAULT '',
-    service_port integer CHECK (service_port BETWEEN 1024 AND 65535),
     certificate_issuance_id text REFERENCES control.acme_orders(id) ON DELETE RESTRICT,
     certificate_expires_at timestamptz,
     CHECK ((certificate_issuance_id IS NULL)=(certificate_expires_at IS NULL)),
@@ -1803,7 +1832,7 @@ CREATE TABLE control.service_runs (
     UNIQUE (id, service_id, run_number), UNIQUE (id, assignments_open),
     CHECK ((state = 'closed') = (closed_at IS NOT NULL)),
     CHECK (state <> 'ready' OR ready_at IS NOT NULL),
-    CHECK (certificate_domain_id IS NOT NULL AND certificate_hostname<>'' AND service_port IS NOT NULL
+    CHECK (certificate_domain_id IS NOT NULL AND certificate_hostname<>''
         AND certificate_cache_key<>'' AND certificate_scope<>'' AND cardinality(certificate_identifiers)>0),
     CHECK (preparation_expires_at > created_at AND preparation_expires_at <= created_at + interval '5 minutes'),
     CHECK ((run_token_digest IS NULL)=(started_at IS NULL)),
@@ -1942,11 +1971,12 @@ CREATE TABLE control.public_service_visitors (
     ingress_id text NOT NULL,
     ingress_run_id text NOT NULL,
     ingress_lease_revision bigint NOT NULL CHECK (ingress_lease_revision>0),
-    destination_port integer NOT NULL CHECK (destination_port BETWEEN 1024 AND 65535),
+    destination_port integer NOT NULL CHECK (destination_port=443 OR destination_port BETWEEN 1024 AND 65535),
     source_ip inet NOT NULL,
     identity_id text,
     device_id text,
     certificate_digest bytea CHECK (certificate_digest IS NULL OR octet_length(certificate_digest)=32),
+    authorized_at timestamptz,
     promoted_at timestamptz,
     valid_until timestamptz NOT NULL,
     created_at timestamptz NOT NULL,
@@ -2058,7 +2088,6 @@ CREATE TABLE control.deployments (
     description text NOT NULL DEFAULT '',
     domain_id text REFERENCES control.domains(id) ON DELETE RESTRICT,
     namespace text NOT NULL DEFAULT '',
-    public boolean NOT NULL DEFAULT false,
     revision bigint NOT NULL DEFAULT 0 CHECK (revision >= 0),
     configuration_hash text NOT NULL DEFAULT '',
     configuration_ciphertext bytea,
@@ -2240,9 +2269,13 @@ CREATE TABLE control.local_project_services (
     service_id text UNIQUE REFERENCES control.services(id) ON DELETE RESTRICT,
     public_url_id text UNIQUE REFERENCES control.public_urls(id) ON DELETE RESTRICT,
     visitor_grant_id text,
+    http_configuration_ciphertext bytea,
+    http_storage_key_id text,
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     PRIMARY KEY (team_id, project_key, service, worktree_key),
-    CHECK ((service_id IS NULL) <> (public_url_id IS NULL))
+    CHECK ((service_id IS NULL) <> (public_url_id IS NULL)),
+    CHECK ((http_configuration_ciphertext IS NULL) = (http_storage_key_id IS NULL)),
+    CHECK (http_configuration_ciphertext IS NULL OR service_id IS NOT NULL)
 );
 CREATE TABLE control.deployment_publisher_enrollments (
     id text PRIMARY KEY,
@@ -2716,8 +2749,8 @@ CREATE TRIGGER visitor_policy_public_changed AFTER UPDATE ON control.public_urls
 CREATE TRIGGER visitor_policy_service_created AFTER INSERT OR DELETE ON control.services
     FOR EACH ROW EXECUTE FUNCTION control.visitor_policy_fact_changed('service_resource');
 CREATE TRIGGER visitor_policy_service_changed AFTER UPDATE ON control.services FOR EACH ROW
-    WHEN ((OLD.team_id,OLD.enabled,OLD.deleted_at,OLD.certificate_hostname,OLD.service_port,OLD.public,OLD.protocol,OLD.trust_revision)
-        IS DISTINCT FROM (NEW.team_id,NEW.enabled,NEW.deleted_at,NEW.certificate_hostname,NEW.service_port,NEW.public,NEW.protocol,NEW.trust_revision))
+    WHEN ((OLD.team_id,OLD.enabled,OLD.deleted_at,OLD.certificate_hostname,OLD.protocol,OLD.trust_revision)
+        IS DISTINCT FROM (NEW.team_id,NEW.enabled,NEW.deleted_at,NEW.certificate_hostname,NEW.protocol,NEW.trust_revision))
     EXECUTE FUNCTION control.visitor_policy_fact_changed('service_resource');
 CREATE TRIGGER visitor_policy_grant AFTER INSERT OR UPDATE OR DELETE ON control.visitor_grants
     FOR EACH ROW EXECUTE FUNCTION control.visitor_policy_fact_changed('grant');

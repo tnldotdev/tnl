@@ -101,7 +101,7 @@ func TestServicePublicationTransitions(t *testing.T) {
 	for _, test := range []struct {
 		name     string
 		before   Service
-		update   publicationUpdate
+		update   PublicationUpdate
 		became   bool
 		stale    bool
 		run      uint64
@@ -110,18 +110,19 @@ func TestServicePublicationTransitions(t *testing.T) {
 		stage    string
 		failure  string
 	}{
-		{"reservation cannot publish", reserved, publicationUpdate{8, true}, false, true, 0, false, false, "", ""},
-		{"zero run rejected", ready, publicationUpdate{0, true}, false, true, 0, false, false, "", ""},
-		{"old run rejected", ready, publicationUpdate{6, true}, false, true, 0, false, false, "", ""},
-		{"duplicate routable keeps readiness", ready, publicationUpdate{7, true}, false, false, 7, true, true, "", ""},
-		{"drain invalidates readiness", ready, publicationUpdate{7, false}, false, false, 7, false, false, "", ""},
-		{"same provisioning run keeps stage and warning", provisioning, publicationUpdate{7, false}, false, false, 7, false, false, "certificate", "runtime.provisioning_stalled"},
-		{"new provisioning run clears stage but keeps warning", provisioning, publicationUpdate{8, false}, false, false, 8, false, false, "", "runtime.provisioning_stalled"},
-		{"routable clears stage and warning", provisioning, publicationUpdate{7, true}, true, false, 7, true, false, "", ""},
-		{"new routable run needs its own observation", ready, publicationUpdate{8, true}, true, false, 8, true, false, "", ""},
+		{"reservation cannot publish", reserved, PublicationUpdate{RunNumber: 8, Routable: true}, false, true, 0, false, false, "", ""},
+		{"zero run rejected", ready, PublicationUpdate{RunNumber: 0, Routable: true}, false, true, 0, false, false, "", ""},
+		{"old run rejected", ready, PublicationUpdate{RunNumber: 6, Routable: true}, false, true, 0, false, false, "", ""},
+		{"duplicate routable keeps readiness", ready, PublicationUpdate{RunNumber: 7, Routable: true}, false, false, 7, true, true, "", ""},
+		{"drain invalidates readiness", ready, PublicationUpdate{RunNumber: 7}, false, false, 7, false, false, "", ""},
+		{"same provisioning run keeps stage and warning", provisioning, PublicationUpdate{RunNumber: 7}, false, false, 7, false, false, "certificate", "runtime.provisioning_stalled"},
+		{"new provisioning run clears stage but keeps warning", provisioning, PublicationUpdate{RunNumber: 8}, false, false, 8, false, false, "", "runtime.provisioning_stalled"},
+		{"routable clears stage and warning", provisioning, PublicationUpdate{RunNumber: 7, Routable: true}, true, false, 7, true, false, "", ""},
+		{"new routable run needs its own observation", ready, PublicationUpdate{RunNumber: 8, Routable: true}, true, false, 8, true, false, "", ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			service := test.before
+			test.update.Target, test.update.TunnelID, test.update.PublicURL = service.Target, service.TunnelID, service.PublicURL
 			became, err := service.publish(test.update)
 			if became != test.became || (test.stale && !errors.Is(err, ErrRegistrationStale)) || (!test.stale && err != nil) {
 				t.Fatalf("publish = %v, %v", became, err)

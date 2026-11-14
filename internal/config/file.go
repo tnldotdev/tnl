@@ -189,7 +189,7 @@ func ValidateTNL(config TNL) error {
 		return errors.New("selected deployment must be a lowercase DNS label")
 	}
 	settings := config.DeploymentSettings
-	if deployment == "local" && (settings.Description != nil || settings.Domain != nil || settings.Public) {
+	if deployment == "local" && (settings.Description != nil || settings.Domain != nil) {
 		return errors.New("local selection has no saved deployment settings")
 	}
 	if deployment == "local" && len(config.Workloads) != 0 {
@@ -222,6 +222,9 @@ func ValidateTNL(config TNL) error {
 	publicHostnames := make(map[string]string)
 	for _, name := range names {
 		service := config.Services[name]
+		if service.Tunnel != nil && service.Public != nil {
+			return fmt.Errorf("services.%s: public and public_url are mutually exclusive", name)
+		}
 		if service.Access != nil && !service.Access.Team {
 			return fmt.Errorf("services.%s.access requires team: true", name)
 		}
@@ -235,14 +238,29 @@ func ValidateTNL(config TNL) error {
 			if kind := TargetType(service); kind != "address" && kind != "eks" && kind != "rds" && !(kind == "app" && IsPublicService(service)) {
 				return fmt.Errorf("services.%s: remote publishers require an address, eks, rds, or public HTTP app target", name)
 			}
-			if service.Tunnel != nil && (service.Tunnel.Ephemeral != nil && *service.Tunnel.Ephemeral || service.HTTP != nil && (service.HTTP.Access != nil || service.HTTP.Limits != nil)) {
+			if service.Tunnel != nil && service.Tunnel.Ephemeral != nil && *service.Tunnel.Ephemeral {
 				return fmt.Errorf("services.%s.public_url: save visitor policy here, omit http access/limits, and publish unnamed apps for temporary URLs", name)
 			}
-			if _, err := ResolveRemoteHTTP(config.Tunnel, service.HTTP); err != nil {
+		}
+		if service.Tunnel != nil {
+			if service.HTTP != nil && (service.HTTP.Access != nil || service.HTTP.Limits != nil) {
+				return fmt.Errorf("services.%s.http: public_url owns this URL's access and limits", name)
+			}
+			if deployment != "local" {
+				if err := ValidateRemoteHTTP(service.HTTP); err != nil {
+					return fmt.Errorf("services.%s.http: %w", name, err)
+				}
+			}
+		} else if Protocol(service) == "http" {
+			resolved, err := ResolveServiceHTTP(config.Tunnel, service.HTTP)
+			if err != nil {
 				return fmt.Errorf("services.%s.http: %w", name, err)
 			}
-		} else if service.HTTP != nil && (service.HTTP.Access != nil || service.HTTP.Limits != nil) {
-			return fmt.Errorf("services.%s.http: access and limits require a remote deployment; use public_url for local HTTPS", name)
+			if deployment != "local" {
+				if err := ValidateRemoteHTTP(resolved); err != nil {
+					return fmt.Errorf("services.%s.http: %w", name, err)
+				}
+			}
 		}
 		savedName := ServiceName(name, service)
 		if !naming.ValidServiceName(savedName) {
@@ -323,19 +341,24 @@ func ValidateRemoteHTTP(value *HTTPService) error {
 	if value.Readiness != nil || len(value.Paths) != 0 || value.Open != nil {
 		return errors.New("remote deployments do not support readiness, path mounts, or browser opening")
 	}
+	return ValidateServiceHTTP(value)
+}
+
+// request policy is independent of the publisher's local or remote placement.
+func ValidateServiceHTTP(value *HTTPService) error {
+	if value == nil {
+		return nil
+	}
 	if value.Access != nil {
 		if err := value.Access.Validate(); err != nil {
 			return err
-		}
-		if value.Access.VisitorMode() != "restricted" {
-			return errors.New("remote services require restricted HTTP access")
 		}
 	}
 	return validateLimits(&Limits{HTTP: value.Limits}, nil, "http")
 }
 
-// inherited HTTP defaults never change deployment reachability.
-func ResolveRemoteHTTP(defaults *Tunnel, value *HTTPService) (*HTTPService, error) {
+// inherited HTTP defaults never change service reachability.
+func ResolveServiceHTTP(defaults *Tunnel, value *HTTPService) (*HTTPService, error) {
 	if value == nil {
 		return nil, nil
 	}
@@ -347,12 +370,12 @@ func ResolveRemoteHTTP(defaults *Tunnel, value *HTTPService) (*HTTPService, erro
 		limits := MergeLimits(defaults.Limits, &Limits{HTTP: result.Limits})
 		if limits != nil {
 			if limits.Traffic != nil {
-				return nil, errors.New("remote services do not support traffic-limit overrides")
+				return nil, errors.New("service HTTP settings do not support traffic-limit overrides")
 			}
 			result.Limits = limits.HTTP
 		}
 	}
-	if err := ValidateRemoteHTTP(&result); err != nil {
+	if err := ValidateServiceHTTP(&result); err != nil {
 		return nil, err
 	}
 	return &result, nil

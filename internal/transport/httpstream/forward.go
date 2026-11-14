@@ -4,6 +4,7 @@ package httpstream
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"log"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/observability/inspection"
 )
 
 var ErrClosed = errors.New("selected HTTP upstream connection is closed")
@@ -34,16 +36,6 @@ func Serve(ctx context.Context, client net.Conn, target *url.URL, connect func(c
 	if client == nil || target == nil || target.Host == "" || connect == nil || target.Scheme != "http" && target.Scheme != "https" {
 		return ErrClosed
 	}
-	var workers sync.WaitGroup
-	workers.Add(1)
-	stop := context.AfterFunc(ctx, func() { defer workers.Done(); _ = client.Close() })
-	defer func() {
-		if stop() {
-			workers.Done()
-		}
-		// listener and upstream cleanup must unblock the connection before joining.
-		workers.Wait()
-	}()
 	var mu sync.Mutex
 	dialed := false
 	closed := false
@@ -88,6 +80,7 @@ func Serve(ctx context.Context, client net.Conn, target *url.URL, connect func(c
 			request.SetURL(target)
 			request.Out.Host = target.Host
 		}, ModifyResponse: func(response *http.Response) error {
+			inspection.ApplicationResponse(response.Request)
 			observability.PublisherHTTPResponse(response.Request.Context())
 			observability.PublisherHTTPUpgrade(response)
 			if response.StatusCode != http.StatusSwitchingProtocols && response.Close {
@@ -100,19 +93,58 @@ func Serve(ctx context.Context, client net.Conn, target *url.URL, connect func(c
 			_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(5 * time.Second))
 			http.Error(w, "service connection closed", http.StatusBadGateway)
 		}, ErrorLog: log.New(io.Discard, "", 0)}
-	connection := &ownedConn{Conn: client, done: make(chan struct{})}
-	listener := &singleListener{connection: connection}
 	var handler http.Handler = proxy
 	if wrap != nil {
 		handler = wrap(handler)
 	}
+	return ServeHandler(ctx, client, handler)
+}
+
+// ServeHandler serves an in-process HTTP application on the admitted visitor
+// connection. TLS negotiation is preserved; no target socket or local listener
+// is created. completion joins HTTP/1 upgrades and concurrent HTTP/2 handlers.
+func ServeHandler(ctx context.Context, client net.Conn, handler http.Handler) error {
+	if client == nil || handler == nil {
+		return ErrClosed
+	}
+	var workers sync.WaitGroup
+	workers.Add(1)
+	stop := context.AfterFunc(ctx, func() { defer workers.Done(); _ = client.Close() })
+	defer func() {
+		if stop() {
+			workers.Done()
+		}
+		// listener cleanup must unblock the connection before joining.
+		workers.Wait()
+	}()
+	listener := &singleListener{connection: client, done: make(chan struct{})}
 	handler = Requests(observability.PublisherHTTP(handler), RequestBodyTimeout)
-	// net/http forgets hijacked connections before their handlers return. both
-	// this flag and the handler's defer run on the single connection's worker.
+	// HTTP/2 closes its connection before all handlers necessarily return.
+	// close admission before joining so a late stream cannot add another worker.
+	var handlerMu sync.Mutex
+	var handlers sync.WaitGroup
+	acceptHandlers := true
+	defer func() {
+		handlerMu.Lock()
+		acceptHandlers = false
+		handlerMu.Unlock()
+		handlers.Wait()
+	}()
+	// net/http forgets hijacked HTTP/1 connections before their handlers return.
+	// HTTP/2 cannot hijack; this flag is used only by the HTTP/1 connection worker.
 	hijacked := false
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerMu.Lock()
+		if !acceptHandlers {
+			handlerMu.Unlock()
+			return
+		}
+		handlers.Add(1)
+		handlerMu.Unlock()
+		defer handlers.Done()
 		defer func() {
 			if hijacked {
+				listener.finish()
 				workers.Done()
 			}
 		}()
@@ -127,10 +159,12 @@ func Serve(ctx context.Context, client net.Conn, target *url.URL, connect func(c
 			case http.StateHijacked:
 				hijacked = true
 			case http.StateClosed:
+				listener.finish()
 				workers.Done()
 			}
 		},
-		BaseContext: func(net.Listener) context.Context { return ctx }, ErrorLog: log.New(io.Discard, "", 0)}
+		BaseContext: func(net.Listener) context.Context { return ctx }, ErrorLog: log.New(io.Discard, "", 0),
+		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"h2", "http/1.1"}}}
 	defer server.Close()
 	err := server.Serve(listener)
 	if errors.Is(err, net.ErrClosed) || errors.Is(err, http.ErrServerClosed) {
@@ -139,27 +173,10 @@ func Serve(ctx context.Context, client net.Conn, target *url.URL, connect func(c
 	return err
 }
 
-type ownedConn struct {
-	net.Conn
-	done chan struct{}
-	once sync.Once
-}
-
-func (c *ownedConn) Close() error {
-	err := c.Conn.Close()
-	c.once.Do(func() { close(c.done) })
-	return err
-}
-
-func (c *ownedConn) CloseWrite() error {
-	if writer, ok := c.Conn.(interface{ CloseWrite() error }); ok {
-		return writer.CloseWrite()
-	}
-	return errors.ErrUnsupported
-}
-
 type singleListener struct {
-	connection *ownedConn
+	connection net.Conn
+	done       chan struct{}
+	once       sync.Once
 	accepted   bool
 }
 
@@ -168,9 +185,16 @@ func (l *singleListener) Accept() (net.Conn, error) {
 		l.accepted = true
 		return l.connection, nil
 	}
-	<-l.connection.done
+	<-l.done
 	return nil, net.ErrClosed
 }
 
-func (l *singleListener) Close() error   { return l.connection.Close() }
+func (l *singleListener) finish() { l.once.Do(func() { close(l.done) }) }
+
+func (l *singleListener) Close() error {
+	err := l.connection.Close()
+	l.finish()
+	return err
+}
+
 func (l *singleListener) Addr() net.Addr { return l.connection.LocalAddr() }

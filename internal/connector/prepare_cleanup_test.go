@@ -66,7 +66,7 @@ func TestConnectionPreparationRetirementCleanupOrder(t *testing.T) {
 							t.Fatal(err)
 						}
 						defer listener.Close()
-						service := controlv1.Service{Id: "svc_aaaaaaaaaaaaaaaaaaaaaa", Protocol: controlv1.ServiceProtocolHTTP, Endpoint: &controlv1.ServiceEndpoint{Hostname: "api.example.test", Port: 15443}}
+						service := controlv1.Service{Id: "svc_aaaaaaaaaaaaaaaaaaaaaa", Protocol: controlv1.ServiceProtocolHTTP, Endpoint: &controlv1.ServiceEndpoint{Hostname: "api.example.test", Port: 443}}
 						serveErr := connectorstream.Serve(t.Context(), listener, connectorstream.Config{Control: control, ServiceID: service.Id, Protocol: "http", TrustRevision: 1, Endpoint: service.Endpoint, ServiceTLS: &tls.Config{MinVersion: tls.VersionTLS13}})
 						if !errors.Is(serveErr, cause.err) || closes.Load() != 1 {
 							t.Fatal("stream lost its operation or joined cleanup", serveErr, closes.Load())

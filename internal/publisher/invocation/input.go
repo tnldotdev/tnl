@@ -7,8 +7,8 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -44,8 +44,7 @@ func validateProfileService(service controlv1.Service) error {
 		return publisherCLIError("service has no managed TLS endpoint; refresh its applied configuration")
 	}
 	endpoint := service.Endpoint
-	hostname, err := naming.CanonicalizeHostname(endpoint.Hostname)
-	if err != nil || hostname != endpoint.Hostname || endpoint.Port < 1024 || endpoint.Port > 65535 {
+	if !serviceendpoint.Valid(string(service.Protocol), endpoint.Hostname, endpoint.Port, endpoint.Public) {
 		return publisherCLIError("service returned an invalid managed TLS endpoint")
 	}
 	return nil

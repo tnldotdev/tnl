@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net"
 	"slices"
-	"strconv"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/config"
@@ -15,6 +14,7 @@ import (
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -81,7 +81,8 @@ func (p *servicePreparation) result() (*servingService, error) {
 }
 
 func (p *servicePreparation) matches(service controlv1.Service) bool {
-	return p != nil && service.Id == p.service.Id && service.Protocol == p.service.Protocol && service.Endpoint != nil && p.service.Endpoint != nil && *service.Endpoint == *p.service.Endpoint
+	return p != nil && service.Id == p.service.Id && service.Protocol == p.service.Protocol && service.TrustRevision == p.service.TrustRevision &&
+		service.Endpoint != nil && p.service.Endpoint != nil && service.Endpoint.Hostname == p.service.Endpoint.Hostname
 }
 
 func (p *servicePreparation) serving(client *workload.Client) *servingService {
@@ -176,7 +177,7 @@ func (b *connectorConnectionBackend) prepareListener(ctx context.Context, name s
 	if err != nil {
 		return nil, err
 	}
-	if run.Protocol != string(service.Protocol) || run.Endpoint == nil || *run.Endpoint != *endpoint {
+	if run.Protocol != string(service.Protocol) || run.Endpoint == nil || !serviceendpoint.Valid(run.Protocol, run.Endpoint.Hostname, run.Endpoint.Port, run.Endpoint.Public) || run.Endpoint.Hostname != endpoint.Hostname {
 		return nil, connectorruntime.ErrUnavailable
 	}
 	// the service and identity are already validated; the resolved revision must
@@ -186,13 +187,15 @@ func (b *connectorConnectionBackend) prepareListener(ctx context.Context, name s
 	}
 	owner := previous
 	if owner == nil {
-		port := endpoint.Port
-		// independently verified SDK identities cannot share a local capability
-		// or compete for the same managed port. metadata retains the remote port.
-		if b.parentPID > 0 {
-			port = 0
+		var base net.Listener
+		var err error
+		if b.parentPID == 0 && b.human != nil {
+			base, err = listenConnector(ctx, b.human.store, identity, service, "")
+		} else {
+			// independent SDK/workload contexts own isolated ephemeral sockets.
+			// none competes for, or binds, the public ingress reservation.
+			base, err = net.Listen("tcp4", "127.0.0.1:0")
 		}
-		base, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 		if err != nil {
 			return nil, err
 		}
@@ -262,7 +265,7 @@ func (b *connectorConnectionBackend) prepareListener(ctx context.Context, name s
 		serving.sessionID = session.Id
 	}
 	if string(service.Protocol) == "http" || string(service.Protocol) == "kubernetes" {
-		serving.connection.URL = "https://" + net.JoinHostPort(endpoint.Hostname, strconv.Itoa(endpoint.Port))
+		serving.connection.URL = "https://" + endpoint.Hostname
 	}
 	kube := owner.kube
 	if string(service.Protocol) == "kubernetes" && kube.result.File == "" {

@@ -192,7 +192,7 @@ func (d *Database) CreateDeployment(ctx context.Context, r CreateDeploymentReque
 		if _, err = tx.Exec(ctx, `INSERT INTO control.applied_project_services(team_id,project_key,service,deployment_id,service_id,desired_revision) VALUES($1,$2,$3,$4,$5,1)`, r.TeamID, r.ProjectKey, name, id, serviceID); err != nil {
 			return result, err
 		}
-		if err = d.ensureServiceEndpoint(ctx, tx, serviceID, id, r.DNSAutomation, r.Now); err != nil {
+		if err = d.ensureServiceEndpoint(ctx, tx, serviceID, id, projectServicePublic(c.Services[name]), r.DNSAutomation, r.Now); err != nil {
 			return result, err
 		}
 	}

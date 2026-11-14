@@ -96,7 +96,7 @@ func (d *Database) ensureDeploymentNamespace(ctx context.Context, tx pgx.Tx, r A
 			return err
 		}
 	}
-	_, err := tx.Exec(ctx, `UPDATE control.deployments SET namespace=$2,domain_id=$3,public=$4 WHERE id=$1`, deploymentID, namespace, settings.DomainID, settings.Public)
+	_, err := tx.Exec(ctx, `UPDATE control.deployments SET namespace=$2,domain_id=$3 WHERE id=$1`, deploymentID, namespace, settings.DomainID)
 	if err != nil {
 		return err
 	}

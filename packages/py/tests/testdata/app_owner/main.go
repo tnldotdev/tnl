@@ -33,7 +33,7 @@ func run() error {
 	metadataOnly := flag.Bool("tnl-metadata", false, "emit the native assignment and exit")
 	invocations := flag.Bool("tnl-invocations", false, "serve invocation reply-loss and drain gates")
 	cleanupReplyLoss := flag.String("tnl-cleanup-reply-loss", "", "drop the first terminal, transient, or successful unregister reply")
-	port := flag.Int("tnl-port", 25443, "allocated HTTP port")
+	port := flag.Int("tnl-port", 443, "shared HTTP port")
 	public := flag.Bool("tnl-public", true, "HTTP endpoint exposure")
 	omit := flag.Bool("tnl-omit-service", false, "omit the selected service's metadata")
 	flag.Parse()
@@ -88,7 +88,7 @@ func run() error {
 		return err
 	}
 	defer database.Close()
-	manager, err := publisherapp.New(ctx, root, database, []publisherapp.Service{{Name: "web", Directory: root, ServiceProtocol: "http"}}, func(ctx context.Context, _ publisherapp.Service, _ func(uint64, bool) error) error {
+	manager, err := publisherapp.New(ctx, root, database, []publisherapp.Service{{Name: "web", Directory: root, ServiceProtocol: "http"}}, func(ctx context.Context, _ publisherapp.Service, _ func(publisherapp.PublicationUpdate) error) error {
 		<-ctx.Done()
 		return ctx.Err()
 	})

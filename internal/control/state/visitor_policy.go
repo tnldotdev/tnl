@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
+	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
@@ -116,16 +117,17 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 		if err != nil {
 			return result, err
 		}
-		if !row.ServicePort.Valid || row.ServicePort.Int32 < 1024 || row.ServicePort.Int32 > 65535 {
+		if !row.ServicePort.Valid || !serviceendpoint.Valid(row.Protocol, row.CertificateHostname, int(row.ServicePort.Int32), row.Public) {
 			return result, ErrVisitorPolicy
 		}
-		team, policy.Hostname, policy.Port = row.TeamID, row.CertificateHostname, int(row.ServicePort.Int32)
+		team, policy.Hostname, policy.Port = row.TeamID, row.CertificateHostname, int(serviceendpoint.PermissionPort(row.Protocol))
 		policy.MetadataRevision = row.TrustRevision
 		policy.Enabled = row.Enabled && !row.DeletedAt.Valid
 		settings, err := d.serviceHTTPSettings(ctx, q, scope.ID)
 		if err != nil {
 			return result, err
 		}
+		policy.Anonymous = settings != nil && settings.Access != nil && settings.Access.VisitorMode() == "anonymous"
 		if settings != nil && settings.Access != nil && len(settings.Access.IP) > 0 {
 			ipRestricted = true
 			for _, raw := range settings.Access.IP {

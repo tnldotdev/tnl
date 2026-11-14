@@ -137,6 +137,26 @@ paths:
       responses:
         "204": { description: Service deleted }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/services/{service_id}/endpoint/release:
+    post:
+      operationId: releaseServiceEndpoint
+      tags: [services]
+      summary: Retire a disabled service's public port reservation
+      description: "Requires current service management permission, public access already disabled, and completed managed DNS cleanup. Send the current trust revision and exact positive reserved port. Closes old runs and advances trust revision while preserving the service, hostname, grants, and machine-local connector assignments. Capacity stays quarantined for at least seven days and until old certificate, issuance, and authorization work is settled. Later private runs do not extend this retired reservation. A stale request conflicts; later public enablement allocates another reservation."
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/ReleaseServiceEndpointRequest" }
+      responses:
+        "200":
+          description: Surviving service with an exact zero-port private binding
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/Service" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/services/{service_id}/grants:
     get:
       operationId: listServiceGrants

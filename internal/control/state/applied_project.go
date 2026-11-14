@@ -33,7 +33,6 @@ var (
 type DeploymentSettings struct {
 	Description string `json:"description,omitempty"`
 	DomainID    string `json:"domain_id,omitempty"`
-	Public      bool   `json:"public,omitempty"`
 }
 type ProjectServicePublicURL struct {
 	RequirePostQuantum *bool                `json:"require_post_quantum,omitempty"`
@@ -75,6 +74,7 @@ type ProjectServiceConfiguration struct {
 	Protocol        string                   `json:"protocol,omitempty"`
 	Target          string                   `json:"target"`
 	PublicURL       *ProjectServicePublicURL `json:"public_url,omitempty"`
+	Public          *bool                    `json:"public,omitempty"`
 	TargetTLS       *ProjectTargetTLS        `json:"target_tls,omitempty"`
 	Access          *ProjectServiceAccess    `json:"access,omitempty"`
 	HTTP            *config.HTTPService      `json:"http,omitempty"`
@@ -174,22 +174,7 @@ func NormalizeProjectConfiguration(input ProjectConfiguration) (ProjectConfigura
 		}
 	}
 	for key, s := range c.Services {
-		if !serviceName.MatchString(key) {
-			return c, "", ErrProjectConfigurationInvalid
-		}
-		if s.Name == "" {
-			s.Name = key
-		}
-		if !serviceName.MatchString(s.Name) {
-			return c, "", ErrProjectConfigurationInvalid
-		}
-		if s.Protocol == "" {
-			s.Protocol = "http"
-		}
-		if (ServiceMetadata{Protocol: s.Protocol}).Validate() != nil || s.Access != nil && !s.Access.Team || (len(s.Target) == 0 && s.TargetDiscovery == nil) || len(s.Target) > 8192 || strings.ContainsAny(s.Target, "\x00\r\n") {
-			return c, "", ErrProjectConfigurationInvalid
-		}
-		if err := normalizeAppliedProjectService(&s, c.Settings == nil); err != nil {
+		if err := normalizeAppliedProjectService(key, &s, c.Settings == nil); err != nil {
 			return c, "", err
 		}
 		c.Services[key] = s
@@ -497,7 +482,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 				return result, err
 			}
 			delete(saved, s.Service)
-		} else if !reflect.DeepEqual(previous, declared) {
+		} else if !sameAppliedPublication(previous, declared) {
 			if err = d.revokeAppliedServicePublishers(ctx, tx, q, s, r.Now); err != nil {
 				return result, err
 			}
@@ -510,7 +495,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 		if entry.DeploymentID.Valid {
 			previous = serving[key]
 		}
-		changed := !found || !reflect.DeepEqual(previous, s)
+		changed := !found || !sameAppliedPublication(previous, s)
 		if !found {
 			entry = controlstatedb.ControlAppliedProjectService{TeamID: r.TeamID, ProjectKey: r.ProjectKey, Service: key}
 			if r.Deployment != "local" {
@@ -560,7 +545,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 			return result, err
 		}
 		if entry.ServiceID.Valid && entry.DeploymentID.Valid {
-			if err = d.ensureServiceEndpoint(ctx, tx, entry.ServiceID.String, entry.DeploymentID.String, r.DNSAutomation, r.Now); err != nil {
+			if err = d.ensureServiceEndpoint(ctx, tx, entry.ServiceID.String, entry.DeploymentID.String, projectServicePublic(s), r.DNSAutomation, r.Now); err != nil {
 				return result, err
 			}
 		}
@@ -792,7 +777,11 @@ func (d *Database) appliedProjectStatus(ctx context.Context, tx pgx.Tx, row cont
 		if err := tx.QueryRow(ctx, `SELECT array_agg(name ORDER BY name) FROM control.deployment_names WHERE deployment_id=$1`, deployment.ID).Scan(&names); err != nil {
 			return result, err
 		}
-		result.Deployments = append(result.Deployments, AppliedDeployment{ID: deployment.ID, Name: deployment.Name, DeploymentNames: names, Namespace: deployment.Namespace, DomainID: deployment.DomainID.String, Public: deployment.Public})
+		public := false
+		for _, service := range result.Services {
+			public = public || service.Public || service.Kind == "public_url"
+		}
+		result.Deployments = append(result.Deployments, AppliedDeployment{ID: deployment.ID, Name: deployment.Name, DeploymentNames: names, Namespace: deployment.Namespace, DomainID: deployment.DomainID.String, Public: public})
 	}
 	return result, err
 }

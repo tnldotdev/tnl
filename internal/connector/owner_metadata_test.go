@@ -12,7 +12,7 @@ import (
 
 func TestWorkloadInventoryProjectsExactServiceFactsAndRejectsDuplicates(t *testing.T) {
 	var inventory controlv1.WorkloadServices
-	if err := json.Unmarshal([]byte(`{"services":[{"id":"svc_0123456789ABCDEFGHIJKL","service":"api","protocol":"http","endpoint":{"hostname":"api.example.test","port":25443,"public":true}}]}`), &inventory); err != nil {
+	if err := json.Unmarshal([]byte(`{"services":[{"id":"svc_0123456789ABCDEFGHIJKL","service":"api","protocol":"http","endpoint":{"hostname":"api.example.test","port":443,"public":true}}]}`), &inventory); err != nil {
 		t.Fatal(err)
 	}
 	services, err := workloadInventoryServices(inventory, "team")
@@ -30,7 +30,7 @@ func TestWorkloadInventoryProjectsExactServiceFactsAndRejectsDuplicates(t *testi
 }
 
 func TestConnectionMetadataProjectsOnlyRequestedValidProtocolsInScopeOrder(t *testing.T) {
-	service := controlv1.Service{Id: "svc_0123456789ABCDEFGHIJKL", Enabled: true, Protocol: "http", Endpoint: &controlv1.ServiceEndpoint{Hostname: "api.example.test", Port: 25443, Public: true}}
+	service := controlv1.Service{Id: "svc_0123456789ABCDEFGHIJKL", Enabled: true, Protocol: "http", Endpoint: &controlv1.ServiceEndpoint{Hostname: "api.example.test", Port: 443, Public: true}}
 	database := service
 	database.Protocol = "postgres"
 	database.Endpoint = &controlv1.ServiceEndpoint{Hostname: "db.example.test", Port: 25444}
@@ -42,7 +42,7 @@ func TestConnectionMetadataProjectsOnlyRequestedValidProtocolsInScopeOrder(t *te
 	if err != nil || len(services) != 2 || len(metadata.Services) != 2 || metadata.Namespace != "db.example.test" {
 		t.Fatal("projection included an invalid or unrequested service", services, metadata, err)
 	}
-	if metadata.Services["api"].Hostname != service.Endpoint.Hostname || !metadata.Services["api"].Public || metadata.Services["api"].URL != "https://api.example.test:25443" || metadata.Services["db"].Public {
+	if metadata.Services["api"].Hostname != service.Endpoint.Hostname || !metadata.Services["api"].Public || metadata.Services["api"].URL != "https://api.example.test" || metadata.Services["db"].Public {
 		t.Fatal("metadata changed managed TLS identity or reachability", metadata)
 	}
 	if len(inventory) != 5 {

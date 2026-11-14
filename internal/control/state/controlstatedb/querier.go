@@ -30,6 +30,7 @@ type Querier interface {
 	AdvanceIngressRoutingRetentionFloor(ctx context.Context, revision int64) (int64, error)
 	AdvanceServiceRunNumber(ctx context.Context, arg AdvanceServiceRunNumberParams) (int64, error)
 	AdvanceTeamPolicyRevision(ctx context.Context, arg AdvanceTeamPolicyRevisionParams) (int64, error)
+	AuthorizeServiceHTTPVisitor(ctx context.Context, arg AuthorizeServiceHTTPVisitorParams) (pgtype.Timestamptz, error)
 	BeginAdminRelayDrain(ctx context.Context, arg BeginAdminRelayDrainParams) (BeginAdminRelayDrainRow, error)
 	BeginGuestPublishRun(ctx context.Context, arg BeginGuestPublishRunParams) (int64, error)
 	BeginIngressDrain(ctx context.Context, arg BeginIngressDrainParams) (ControlIngressLease, error)
@@ -81,6 +82,8 @@ type Querier interface {
 	ClosePublishRun(ctx context.Context, arg ClosePublishRunParams) (ControlPublishRun, error)
 	ClosePublishRunConnections(ctx context.Context, arg ClosePublishRunConnectionsParams) error
 	CloseServiceRun(ctx context.Context, arg CloseServiceRunParams) (int64, error)
+	// only an exact stored terminal tuple proves a finite traffic budget can retire.
+	ClosedServiceRuns(ctx context.Context, runIds []string) ([]ClosedServiceRunsRow, error)
 	CompanySessionAuthorized(ctx context.Context, arg CompanySessionAuthorizedParams) (bool, error)
 	CompanySessionRefreshValid(ctx context.Context, arg CompanySessionRefreshValidParams) (pgtype.Bool, error)
 	CompanySubjectDeadline(ctx context.Context, arg CompanySubjectDeadlineParams) (pgtype.Timestamptz, error)
@@ -217,6 +220,7 @@ type Querier interface {
 	GetIngressPool(ctx context.Context, id string) (ControlIngressPool, error)
 	GetInvitationByIdempotency(ctx context.Context, arg GetInvitationByIdempotencyParams) (GetInvitationByIdempotencyRow, error)
 	GetLocalProjectService(ctx context.Context, arg GetLocalProjectServiceParams) (GetLocalProjectServiceRow, error)
+	GetLocalServiceHTTPConfiguration(ctx context.Context, serviceID pgtype.Text) (GetLocalServiceHTTPConfigurationRow, error)
 	GetManagedCertificateDomainKind(ctx context.Context, domainID string) (string, error)
 	GetOpenPublicURLRecoveryEpisode(ctx context.Context, arg GetOpenPublicURLRecoveryEpisodeParams) (ControlPublicUrlRecoveryEpisode, error)
 	GetOpenPublishRun(ctx context.Context, publicUrlID string) (ControlPublishRun, error)
@@ -634,6 +638,7 @@ type Querier interface {
 	SetDNSReadyDomainDefault(ctx context.Context, arg SetDNSReadyDomainDefaultParams) (int64, error)
 	SetDomainAuthorityRevision(ctx context.Context, arg SetDomainAuthorityRevisionParams) error
 	SetIdentityInitialTeam(ctx context.Context, arg SetIdentityInitialTeamParams) error
+	SetLocalServiceHTTPConfiguration(ctx context.Context, arg SetLocalServiceHTTPConfigurationParams) (int64, error)
 	SetMaintenanceControl(ctx context.Context, arg SetMaintenanceControlParams) (ControlMaintenanceControl, error)
 	SetPersonalTeamDefaultDomain(ctx context.Context, arg SetPersonalTeamDefaultDomainParams) error
 	SetPreviewTeamAccess(ctx context.Context, arg SetPreviewTeamAccessParams) error

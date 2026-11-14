@@ -33,7 +33,6 @@ type ServiceDeclaration struct {
 type Deployment struct {
 	Description *string                      `json:"description,omitempty" yaml:"description,omitempty"`
 	Domain      *string                      `json:"domain,omitempty" yaml:"domain,omitempty"`
-	Public      bool                         `json:"public,omitempty" yaml:"public,omitempty"`
 	Targets     map[string]DeploymentBinding `json:"targets,omitempty" yaml:"targets,omitempty"`
 }
 
@@ -43,6 +42,7 @@ type DeploymentBinding struct {
 	ServiceTarget `yaml:",inline"`
 	Name          *string        `json:"name,omitempty" yaml:"name,omitempty" jsonschema_description:"Saved endpoint label; defaults to the logical service key."`
 	Access        *ServiceAccess `json:"access,omitempty" yaml:"access,omitempty"`
+	Public        *bool          `json:"public,omitempty" yaml:"public,omitempty" jsonschema_description:"Add public endpoint access for this service binding. Visitor access remains separate; false keeps connector access only."`
 	Inspection    *Inspection    `json:"inspection,omitempty" yaml:"inspection,omitempty"`
 	Tunnel        *Tunnel        `json:"public_url,omitempty" yaml:"public_url,omitempty"`
 	HTTP          *HTTPService   `json:"http,omitempty" yaml:"http,omitempty"`
@@ -128,13 +128,13 @@ func resolveProjectDeployment(project Project, name string) (TNL, error) {
 	deployment := project.Deployments[name]
 	resolved := TNL{Name: project.Name, Server: project.Server, Team: project.Team, Tunnel: project.Tunnel, Services: Services{}, Deployment: name, Workloads: map[string]Workload{}}
 	if name == "local" {
-		if deployment.Description != nil || deployment.Domain != nil || deployment.Public {
-			return TNL{}, errors.New("local is client-side selection and has no server domain, description, or reachability")
+		if deployment.Description != nil || deployment.Domain != nil {
+			return TNL{}, errors.New("local is client-side selection and has no server domain or description")
 		}
 		resolved.Feedback, resolved.OAuth, resolved.Inspection = project.Feedback, project.OAuth, project.Inspection
 		resolved.Webhooks, resolved.Aliases = project.Webhooks, project.Aliases
 	} else {
-		resolved.DeploymentSettings = DeploymentSettings{Description: deployment.Description, Domain: deployment.Domain, Public: deployment.Public}
+		resolved.DeploymentSettings = DeploymentSettings{Description: deployment.Description, Domain: deployment.Domain}
 	}
 	for service, binding := range deployment.Targets {
 		declaration, found := project.Services[service]
@@ -149,7 +149,7 @@ func resolveProjectDeployment(project Project, name string) (TNL, error) {
 			}
 		}
 		protocol := DeclaredProtocol(declaration)
-		resolved.Services[service] = Service{Name: binding.Name, Protocol: &protocol, Target: &target, Access: binding.Access, Inspection: binding.Inspection, Tunnel: binding.Tunnel, HTTP: binding.HTTP}
+		resolved.Services[service] = Service{Name: binding.Name, Protocol: &protocol, Target: &target, Access: binding.Access, Public: binding.Public, Inspection: binding.Inspection, Tunnel: binding.Tunnel, HTTP: binding.HTTP}
 	}
 	for policy, entry := range project.Workloads {
 		if entry.Deployment == name {

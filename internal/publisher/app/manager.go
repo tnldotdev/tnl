@@ -30,7 +30,7 @@ const maxStoppedOutcomes = 64
 var ErrCleanupPermanent = errors.New("publication cleanup cannot be retried")
 var ErrRegistrationStopped = errors.New("publication stopped with a cleanup failure")
 
-type Run func(context.Context, Service, func(uint64, bool) error) error
+type Run func(context.Context, Service, func(PublicationUpdate) error) error
 
 type registration struct {
 	owner   string
@@ -386,14 +386,14 @@ func (m *Manager) RegisterContext(scheduling context.Context, id, owner, target,
 	m.mu.Unlock()
 	go func() {
 		defer close(done)
-		err := m.run(ctx, copy, func(run uint64, routable bool) error {
+		err := m.run(ctx, copy, func(update PublicationUpdate) error {
 			m.mu.Lock()
 			defer m.mu.Unlock()
 			current, active := m.findLocked(id, owner)
 			if active == nil || active.done != done || current.Target != copy.Target || ctx.Err() != nil {
 				return ErrRegistrationStale
 			}
-			return m.publishedLocked(id, run, routable)
+			return m.publishedLocked(id, update)
 		})
 		m.mu.Lock()
 		defer m.mu.Unlock()
@@ -417,13 +417,13 @@ func (m *Manager) RegisterContext(scheduling context.Context, id, owner, target,
 	return nil
 }
 
-func (m *Manager) Published(id string, run uint64, routable bool) error {
+func (m *Manager) Published(id string, update PublicationUpdate) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.publishedLocked(id, run, routable)
+	return m.publishedLocked(id, update)
 }
 
-func (m *Manager) publishedLocked(id string, run uint64, routable bool) error {
+func (m *Manager) publishedLocked(id string, update PublicationUpdate) error {
 	if m.closed {
 		return ErrRegistrationStale
 	}
@@ -436,7 +436,7 @@ func (m *Manager) publishedLocked(id string, run uint64, routable bool) error {
 		if m.Alive != nil && !m.Alive(reg.pid) {
 			return ErrRegistrationStale
 		}
-		becameRoutable, err := service.publish(publicationUpdate{runNumber: run, routable: routable})
+		becameRoutable, err := service.publish(update)
 		if err != nil {
 			return err
 		}

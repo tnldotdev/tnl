@@ -14,9 +14,9 @@ import (
 
 var ErrTrafficSelection = errors.New("controlstate: invalid traffic selection")
 
-// publishRunTrafficDigest binds explicit selections to retries independently of
+// runTrafficDigest binds explicit selections to retries independently of
 // current operator defaults. equivalent duration spellings share one digest.
-func publishRunTrafficDigest(base [32]byte, selection *trafficlimits.Selection) ([32]byte, error) {
+func runTrafficDigest(base [32]byte, selection *trafficlimits.Selection) ([32]byte, error) {
 	s := trafficlimits.Selection{}
 	if selection != nil {
 		s = *selection
@@ -34,7 +34,7 @@ func publishRunTrafficDigest(base [32]byte, selection *trafficlimits.Selection) 
 		return [32]byte{}, fmt.Errorf("%w: %v", ErrTrafficSelection, err)
 	}
 	h := sha256.New()
-	_, _ = h.Write([]byte("tnl/publish-run/traffic/v1\x00"))
+	_, _ = h.Write([]byte("tnl/service-run/traffic/v1\x00"))
 	_, _ = h.Write(base[:])
 	_, _ = h.Write(payload)
 	var result [32]byte
@@ -42,8 +42,7 @@ func publishRunTrafficDigest(base [32]byte, selection *trafficlimits.Selection) 
 	return result, nil
 }
 
-func resolvePublishRunTraffic(request PublishRunRequest) ([]byte, error) {
-	defaults, ceiling := request.TrafficDefaults, request.TrafficCeiling
+func resolveRunTraffic(selected *trafficlimits.Selection, defaults, ceiling trafficlimits.Limits) ([]byte, error) {
 	if defaults == (trafficlimits.Limits{}) {
 		defaults = trafficlimits.Default()
 	}
@@ -51,8 +50,8 @@ func resolvePublishRunTraffic(request PublishRunRequest) ([]byte, error) {
 		ceiling = trafficlimits.Ceiling()
 	}
 	selection := trafficlimits.Selection{}
-	if request.TrafficSelection != nil {
-		selection = *request.TrafficSelection
+	if selected != nil {
+		selection = *selected
 	}
 	resolved, err := selection.Resolve(defaults, ceiling)
 	if err != nil {
@@ -61,15 +60,15 @@ func resolvePublishRunTraffic(request PublishRunRequest) ([]byte, error) {
 	return json.Marshal(resolved)
 }
 
-func decodePublishRunTraffic(payload []byte) (trafficlimits.Limits, error) {
+func decodeRunTraffic(payload []byte) (trafficlimits.Limits, error) {
 	var limits trafficlimits.Limits
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&limits); err != nil {
-		return limits, fmt.Errorf("controlstate: decode publish-run traffic limits: %w", err)
+		return limits, fmt.Errorf("controlstate: decode service-run traffic limits: %w", err)
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) || !limits.Valid() || limits.RatePer == 0 {
-		return limits, errors.New("controlstate: invalid stored publish-run traffic limits")
+		return limits, errors.New("controlstate: invalid stored service-run traffic limits")
 	}
 	return limits, nil
 }

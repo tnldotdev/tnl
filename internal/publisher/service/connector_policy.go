@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -27,7 +28,7 @@ func (b *Bound) PrepareConnectorPolicy(ctx context.Context, control connectorPol
 	lease := owner.Lease()
 	view, enabled, _ := lease.Current()
 	b.mu.Lock()
-	if b.closed || b.prepared.policy != nil || !enabled || view.MetadataRevision != b.prepared.metadataRevision || view.Hostname != b.prepared.managedHostname || view.Port != b.prepared.servicePort {
+	if b.closed || b.prepared.policy != nil || !enabled || view.MetadataRevision != b.prepared.metadataRevision || view.Hostname != b.prepared.managedHostname || view.Port != serviceendpoint.PermissionPort(string(b.prepared.managedProtocol)) {
 		b.mu.Unlock()
 		owner.Close()
 		return ErrPrivateStream

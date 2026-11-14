@@ -250,10 +250,7 @@
                 "maxLength": 253,
                 "minLength": 1
               },
-              "public": {
-                "type": "boolean",
-                "default": false
-              },
+              "public": false,
               "targets": {
                 "additionalProperties": {
                   "oneOf": [
@@ -267,6 +264,11 @@
                               }
                             },
                             "required": ["name", "public_url"]
+                          }
+                        },
+                        {
+                          "not": {
+                            "required": ["public", "public_url"]
                           }
                         }
                       ],
@@ -319,6 +321,10 @@
                           "additionalProperties": false,
                           "type": "object",
                           "required": ["team"]
+                        },
+                        "public": {
+                          "type": "boolean",
+                          "description": "Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only."
                         },
                         "inspection": {
                           "$ref": "#/$defs/Inspection"
@@ -629,6 +635,11 @@
                             },
                             "required": ["name", "public_url"]
                           }
+                        },
+                        {
+                          "not": {
+                            "required": ["public", "public_url"]
+                          }
                         }
                       ],
                       "properties": {
@@ -692,6 +703,10 @@
                           "additionalProperties": false,
                           "type": "object",
                           "required": ["team"]
+                        },
+                        "public": {
+                          "type": "boolean",
+                          "description": "Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only."
                         },
                         "inspection": {
                           "$ref": "#/$defs/Inspection"
@@ -1003,6 +1018,11 @@
                             },
                             "required": ["name", "public_url"]
                           }
+                        },
+                        {
+                          "not": {
+                            "required": ["public", "public_url"]
+                          }
                         }
                       ],
                       "properties": {
@@ -1068,6 +1088,10 @@
                           "additionalProperties": false,
                           "type": "object",
                           "required": ["team"]
+                        },
+                        "public": {
+                          "type": "boolean",
+                          "description": "Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only."
                         },
                         "inspection": {
                           "$ref": "#/$defs/Inspection"
@@ -1379,6 +1403,11 @@
                             },
                             "required": ["name", "public_url"]
                           }
+                        },
+                        {
+                          "not": {
+                            "required": ["public", "public_url"]
+                          }
                         }
                       ],
                       "properties": {
@@ -1437,6 +1466,10 @@
                           "additionalProperties": false,
                           "type": "object",
                           "required": ["team"]
+                        },
+                        "public": {
+                          "type": "boolean",
+                          "description": "Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only."
                         },
                         "inspection": {
                           "$ref": "#/$defs/Inspection"
@@ -1748,6 +1781,11 @@
                             },
                             "required": ["name", "public_url"]
                           }
+                        },
+                        {
+                          "not": {
+                            "required": ["public", "public_url"]
+                          }
                         }
                       ],
                       "properties": {
@@ -1788,6 +1826,10 @@
                           "additionalProperties": false,
                           "type": "object",
                           "required": ["team"]
+                        },
+                        "public": {
+                          "type": "boolean",
+                          "description": "Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only."
                         },
                         "inspection": {
                           "$ref": "#/$defs/Inspection"
@@ -2099,6 +2141,11 @@
                             },
                             "required": ["name", "public_url"]
                           }
+                        },
+                        {
+                          "not": {
+                            "required": ["public", "public_url"]
+                          }
                         }
                       ],
                       "properties": {
@@ -2145,6 +2192,10 @@
                           "additionalProperties": false,
                           "type": "object",
                           "required": ["team"]
+                        },
+                        "public": {
+                          "type": "boolean",
+                          "description": "Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only."
                         },
                         "inspection": {
                           "$ref": "#/$defs/Inspection"
@@ -2456,6 +2507,11 @@
                             },
                             "required": ["name", "public_url"]
                           }
+                        },
+                        {
+                          "not": {
+                            "required": ["public", "public_url"]
+                          }
                         }
                       ],
                       "properties": {
@@ -2503,6 +2559,10 @@
                           "additionalProperties": false,
                           "type": "object",
                           "required": ["team"]
+                        },
+                        "public": {
+                          "type": "boolean",
+                          "description": "Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only."
                         },
                         "inspection": {
                           "$ref": "#/$defs/Inspection"

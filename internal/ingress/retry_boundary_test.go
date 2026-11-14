@@ -13,15 +13,16 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func TestIngressRetryBoundary(t *testing.T) {
 	for _, committed := range []int{0, 1} {
 		t.Run(fmt.Sprintf("visitor_bytes=%d", committed), func(t *testing.T) {
-			first := newFailAfterProxyBackend(t, committed)
-			fallback := newTLSBackend(t)
-			_, address := startIngress(t, publicURLConfig(first, fallback))
-			client := ingressClient(t, address, "route.example", "")
+			first := newServiceFailureRelay(t, committed)
+			fallback := newServiceTLSRelay(t)
+			_, address := startIngress(t, serviceIngressConfig(t, first.open, fallback.open))
+			client := ingressClient(t, address, "route.example", "192.0.2.4:42000")
 			err := client.Handshake()
 			if committed != 0 {
 				if err == nil {
@@ -51,10 +52,10 @@ func TestIngressRetryBoundary(t *testing.T) {
 }
 
 func TestIngressAlternatesInitialRelayPerVisitor(t *testing.T) {
-	first, second := newTLSBackend(t), newTLSBackend(t)
-	_, address := startIngress(t, publicURLConfig(first, second))
-	for _, backend := range []*tlsBackend{first, second} {
-		client := ingressClient(t, address, "route.example", "")
+	first, second := newServiceTLSRelay(t), newServiceTLSRelay(t)
+	_, address := startIngress(t, serviceIngressConfig(t, first.open, second.open))
+	for _, backend := range []*serviceTLSRelay{first, second} {
+		client := ingressClient(t, address, "route.example", "192.0.2.4:42000")
 		if err := client.Handshake(); err != nil {
 			t.Fatal(err)
 		}
@@ -69,10 +70,10 @@ func TestIngressAlternatesInitialRelayPerVisitor(t *testing.T) {
 }
 
 func TestIngressRotatedRelayDoesNotRetryCommittedByte(t *testing.T) {
-	first := newTLSBackend(t)
-	second := newFailAfterProxyBackend(t, 1)
-	_, address := startIngress(t, publicURLConfig(first, second))
-	client := ingressClient(t, address, "route.example", "")
+	first := newServiceTLSRelay(t)
+	second := newServiceFailureRelay(t, 1)
+	_, address := startIngress(t, serviceIngressConfig(t, first.open, second.open))
+	client := ingressClient(t, address, "route.example", "192.0.2.4:42000")
 	if err := client.Handshake(); err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +81,7 @@ func TestIngressRotatedRelayDoesNotRetryCommittedByte(t *testing.T) {
 	if result := ingressAwait(t, first.result); result.err != nil {
 		t.Fatal(result.err)
 	}
-	client = ingressClient(t, address, "route.example", "")
+	client = ingressClient(t, address, "route.example", "192.0.2.4:42000")
 	if err := client.Handshake(); err == nil {
 		t.Fatal("partial ClientHello completed TLS")
 	}
@@ -89,36 +90,17 @@ func TestIngressRotatedRelayDoesNotRetryCommittedByte(t *testing.T) {
 	}
 }
 
-type waitingBackend struct{ entered chan struct{} }
-
-func (waitingBackend) ConnectionSlot() uint8 { return 0 }
-
-type contextBackend struct{ Backend }
-
-func (b contextBackend) Start(ctx context.Context, id string, pending bool, proxy, initial []byte) (net.Conn, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	return b.Backend.Start(ctx, id, pending, proxy, initial)
-}
-
-func (b waitingBackend) Start(ctx context.Context, _ string, _ bool, _, _ []byte) (net.Conn, error) {
-	if b.entered != nil {
-		close(b.entered)
-	}
-	<-ctx.Done()
-	return nil, ctx.Err()
-}
-
 func TestIngressStalledAttemptLeavesFallbackBudget(t *testing.T) {
 	for _, stage := range []string{"open", "proxy_write", "hello_write"} {
 		t.Run(stage, func(t *testing.T) {
-			var first Backend = waitingBackend{}
+			first := waitingServiceRelay(nil)
 			if stage != "open" {
 				a, b := net.Pipe()
 				ownIngressConn(t, a)
 				ownIngressConn(t, b)
-				first = singleBackend{a} // peer never reads the PROXY header.
+				first = func(context.Context, tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
+					return a, nil // peer never reads the PROXY header.
+				}
 				if stage == "hello_write" {
 					ctx, cancel := context.WithCancel(t.Context())
 					ingressWorker(t, func() { cancel(); _ = b.Close() }, func() error {
@@ -130,11 +112,11 @@ func TestIngressStalledAttemptLeavesFallbackBudget(t *testing.T) {
 					})
 				}
 			}
-			fallback := newTLSBackend(t)
-			config := publicURLConfig(first, contextBackend{fallback})
-			config.OpenTimeout = 2 * time.Second
+			fallback := newServiceTLSRelay(t)
+			config := serviceIngressConfig(t, first, fallback.open)
+			config.PublicServices.config.PendingTimeout = 2 * time.Second
 			_, address := startIngress(t, config)
-			client := ingressClient(t, address, "route.example", "")
+			client := ingressClient(t, address, "route.example", "192.0.2.4:42000")
 			if err := client.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
 				t.Fatal(err)
 			}
@@ -155,10 +137,10 @@ func TestIngressStalledAttemptLeavesFallbackBudget(t *testing.T) {
 
 func TestForcedDrainCancelsPendingOpen(t *testing.T) {
 	entered := make(chan struct{})
-	config := publicURLConfig(waitingBackend{entered: entered})
-	config.OpenTimeout = 2 * time.Second
+	config := serviceIngressConfig(t, waitingServiceRelay(entered))
+	config.PublicServices.config.PendingTimeout = 2 * time.Second
 	server, address := startIngress(t, config)
-	client := ingressClient(t, address, "route.example", "")
+	client := ingressClient(t, address, "route.example", "192.0.2.4:42000")
 	handshake := ingressWorker(t, func() { _ = client.Close() }, client.Handshake)
 	ingressAwait(t, entered)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -179,10 +161,10 @@ func TestForcedDrainCancelsPendingOpen(t *testing.T) {
 
 func TestIngressBothBackendsUnavailable(t *testing.T) {
 	first, second := make(chan struct{}), make(chan struct{})
-	config := publicURLConfig(waitingBackend{first}, waitingBackend{second})
-	config.OpenTimeout = 200 * time.Millisecond
+	config := serviceIngressConfig(t, waitingServiceRelay(first), waitingServiceRelay(second))
+	config.PublicServices.config.PendingTimeout = 200 * time.Millisecond
 	_, address := startIngress(t, config)
-	client := ingressClient(t, address, "route.example", "")
+	client := ingressClient(t, address, "route.example", "192.0.2.4:42000")
 	_ = client.SetDeadline(time.Now().Add(time.Second))
 	started := time.Now()
 	if err := client.Handshake(); err == nil {

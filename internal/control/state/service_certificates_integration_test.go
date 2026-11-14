@@ -22,11 +22,22 @@ func TestIntegrationManagedCertificateRunAuthority(t *testing.T) {
 	r := appliedProjectRequest(t, d, now)
 	r.ProjectLabel = "storefront"
 	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{
-		"orders": {Protocol: "postgres", Target: "orders.internal:5432"},
-		"api":    {Target: "api.internal:3000"},
+		"orders": {Protocol: "postgres", Target: "orders.internal:5432", Public: new(true)},
+		"api":    {Target: "api.internal:3000", Public: new(true)},
 	}}
 	r = selectedProjectRequest(r, "production")
 	applied, err := d.ApplyProjectConfiguration(t.Context(), r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// retain the allocated ports while testing private certificate authority;
+	// the direct-admission subtest later re-enables these exact bindings.
+	r.ExpectedRevision = applied.Revision
+	for name, binding := range r.Configuration.Services {
+		binding.Public = new(false)
+		r.Configuration.Services[name] = binding
+	}
+	applied, err = d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +60,7 @@ func TestIntegrationManagedCertificateRunAuthority(t *testing.T) {
 		}
 		access := deploymentAssignmentAccess(t, d, replica, assignment, now)
 		attempt++
-		prep, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, fmt.Sprintf("managed-test-%d", attempt), now, ServiceMetadata{Protocol: assignment.Configuration.Protocol, TrustRevision: assignment.TrustRevision})
+		prep, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, fmt.Sprintf("managed-test-%d", attempt), now, ServiceRunRequest{Metadata: ServiceMetadata{Protocol: assignment.Configuration.Protocol, TrustRevision: assignment.TrustRevision}})
 		if err != nil {
 			t.Fatal(err)
 		}

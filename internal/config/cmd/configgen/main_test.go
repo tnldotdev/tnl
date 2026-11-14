@@ -104,6 +104,10 @@ func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 }
 
 func TestServiceSchemaKeepsServicesSeparateFromPublicURLs(t *testing.T) {
+	deployments := schemaForType(reflect.TypeOf(map[string]config.Deployment{}))
+	if public, found := deployments.AdditionalProperties.Properties.Get("public"); !found || public != jsonschema.FalseSchema {
+		t.Fatal("deployment schema allows reachability outside a service binding")
+	}
 	declaration := servicesSchema().AdditionalProperties
 	for _, field := range []string{"private", "public_url", "target", "tls", "name", "deployment", "http"} {
 		if _, found := declaration.Properties.Get(field); found {
@@ -120,6 +124,9 @@ func TestServiceSchemaKeepsServicesSeparateFromPublicURLs(t *testing.T) {
 		}
 		if _, found := binding.Properties.Get("protocol"); found {
 			t.Fatal("binding repeats a logical protocol")
+		}
+		if public, found := binding.Properties.Get("public"); !found || public.Type != "boolean" || len(binding.AllOf) != 2 || binding.AllOf[1].Not == nil || !slices.Equal(binding.AllOf[1].Not.Required, []string{"public", "public_url"}) {
+			t.Fatal("binding lost explicit exposure or permits two publication lifecycles")
 		}
 	}
 }

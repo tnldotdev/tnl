@@ -8,8 +8,10 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/naming/tcpport"
+	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 )
 
 type PublicServiceVisitorAdmission struct {
@@ -17,12 +19,23 @@ type PublicServiceVisitorAdmission struct {
 	RunNumber                      int64
 	ExpiresAt                      time.Time
 	Relays                         []ServiceRelay
+	Traffic                        trafficlimits.Limits
+	Anonymous                      bool
 }
 
-// AdmitPublicServiceVisitor reserves only bounded pre-authentication capacity.
-// the destination comes from a trusted socket or outer PROXY header, never SNI.
-func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressLeaseIdentity, pool, visitor string, port int, source netip.Addr, now time.Time) (result PublicServiceVisitorAdmission, retErr error) {
-	if validateIngressLeaseIdentity(lease) != nil || !opaqueid.Valid(visitor, opaqueid.VisitorConnectionPrefix) || !tcpport.ValidNetwork(port) || port < 1024 || !source.IsValid() || source.Zone() != "" {
+// AdmitPublicServiceVisitor reserves bounded pre-authentication capacity. HTTP
+// selects an exact inspected hostname on 443; other protocols select a trusted
+// destination port without inspecting their native negotiation.
+func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressLeaseIdentity, pool, visitor, hostname string, port int, source netip.Addr, now time.Time) (result PublicServiceVisitorAdmission, retErr error) {
+	if validateIngressLeaseIdentity(lease) != nil || !opaqueid.Valid(visitor, opaqueid.VisitorConnectionPrefix) || !tcpport.ValidNetwork(port) || port != 443 && port < 1024 || !source.IsValid() || source.Zone() != "" {
+		return result, ErrServiceAccess
+	}
+	if port == 443 {
+		canonical, err := naming.CanonicalizeHostname(hostname)
+		if err != nil || hostname != canonical {
+			return result, ErrServiceAccess
+		}
+	} else if hostname != "" {
 		return result, ErrServiceAccess
 	}
 	tx, err := d.pool.Begin(ctx)
@@ -32,7 +45,8 @@ func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressL
 	defer rollback(ctx, tx, "admit public service visitor", &retErr)()
 	// select the service before the admission lock, then revalidate everything
 	// under that lock. an old DNS answer cannot authorize a private endpoint.
-	err = tx.QueryRow(ctx, `SELECT id FROM control.services WHERE ingress_pool_id=$1 AND service_port=$2 AND public AND enabled AND deleted_at IS NULL`, pool, port).Scan(&result.ServiceID)
+	err = tx.QueryRow(ctx, `SELECT id FROM control.services WHERE ingress_pool_id=$1 AND service_port=$2 AND public AND enabled AND deleted_at IS NULL
+	    AND ((protocol='http' AND $2=443 AND certificate_hostname=$3) OR (protocol<>'http' AND $2>=1024 AND $3=''))`, pool, port, hostname).Scan(&result.ServiceID)
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}
@@ -41,15 +55,27 @@ func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressL
 	}
 	q := controlstatedb.New(tx)
 	service, err := q.GetService(ctx, result.ServiceID)
-	if err != nil || !service.Public || service.IngressPoolID != pool || int(service.ServicePort.Int32) != port {
+	if err != nil || !service.Public || service.IngressPoolID != pool || int(service.ServicePort.Int32) != port ||
+		service.Protocol == "http" && (port != 443 || hostname != service.CertificateHostname) ||
+		service.Protocol != "http" && (port < 1024 || hostname != "") {
 		return result, errors.Join(ErrServiceAccess, err)
+	}
+	// reject disallowed HTTP sources before opening TLS or reserving pending
+	// capacity. the publisher still enforces the current policy on each request.
+	if service.Protocol == "http" {
+		mode, err := d.serviceHTTPSourcePolicy(ctx, q, service.ID, source)
+		if err != nil {
+			return result, err
+		}
+		result.Anonymous = mode == VisitorAccessAnonymous
 	}
 	current, err := lockCurrentIngressLease(ctx, q, lease, now)
 	if err != nil || current.Draining {
 		return result, errors.Join(ErrServiceAccess, err)
 	}
 	var supported bool
-	if err = tx.QueryRow(ctx, `SELECT ingress_pool_id=$2 AND $3=ANY(service_ports) FROM control.ingress_leases WHERE ingress_id=$1`, lease.IngressID, pool, port).Scan(&supported); err != nil || !supported {
+	if err = tx.QueryRow(ctx, `SELECT ingress_pool_id=$2 AND (CASE WHEN $3=443 THEN https ELSE $3=ANY(service_ports) END)
+	    FROM control.ingress_leases WHERE ingress_id=$1`, lease.IngressID, pool, port).Scan(&supported); err != nil || !supported {
 		return result, errors.Join(ErrServiceAccess, err)
 	}
 	var existing bool
@@ -57,13 +83,7 @@ func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressL
 	if err == nil {
 		existing = true
 	} else if errors.Is(err, pgx.ErrNoRows) {
-		err = tx.QueryRow(ctx, `SELECT run.id,run.run_number FROM control.service_runs run JOIN control.services service ON service.id=run.service_id
-		    JOIN control.publisher_grants g ON g.id=run.publisher_grant_id JOIN control.publisher_identities p ON p.id=run.publisher_identity_id
-		    WHERE service.id=$1 AND service.public AND service.enabled AND service.deleted_at IS NULL AND service.ingress_pool_id=$2 AND service.service_port=$3
-		    AND run.state='ready' AND run.healthy AND run.closed_at IS NULL AND run.publisher_expires_at>$4 AND run.certificate_expires_at>$4
-		    AND g.revoked_at IS NULL AND(g.expires_at IS NULL OR g.expires_at>$4) AND p.revoked_at IS NULL
-		    AND GREATEST(run.reported_streams,(SELECT count(*) FROM control.service_visitor_capacity v WHERE v.service_run_id=run.id AND v.closed_at IS NULL AND v.valid_until>$4))<run.stream_capacity
-		    ORDER BY GREATEST(run.reported_streams,(SELECT count(*) FROM control.service_visitor_capacity v WHERE v.service_run_id=run.id AND v.closed_at IS NULL AND v.valid_until>$4))::numeric/run.stream_capacity,run.run_number LIMIT 1`, result.ServiceID, pool, port, now).Scan(&result.RunID, &result.RunNumber)
+		result.RunID, result.RunNumber, _, err = selectRoutableServiceRun(ctx, tx, result.ServiceID, now)
 	}
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
@@ -78,14 +98,19 @@ func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressL
 	// retries retain their original setup bound but still need the current run
 	// and certificate. a saved pending row cannot revive expired serving state.
 	var runUntil time.Time
-	err = tx.QueryRow(ctx, `SELECT LEAST(run.publisher_expires_at,run.certificate_expires_at,g.expires_at)
+	var traffic []byte
+	err = tx.QueryRow(ctx, `SELECT LEAST(run.publisher_expires_at,run.certificate_expires_at,g.expires_at),run.traffic_limits
 	    FROM control.service_runs run JOIN control.publisher_grants g ON g.id=run.publisher_grant_id
 	    JOIN control.publisher_identities publisher ON publisher.id=run.publisher_identity_id
 	    WHERE run.id=$1 AND run.service_id=$2 AND run.run_number=$3 AND run.state='ready' AND run.healthy
 	    AND run.closed_at IS NULL AND run.publisher_expires_at>$4 AND run.certificate_expires_at>$4
-	    AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>$4) AND publisher.revoked_at IS NULL`, result.RunID, result.ServiceID, result.RunNumber, now).Scan(&runUntil)
+	    AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>$4) AND publisher.revoked_at IS NULL`, result.RunID, result.ServiceID, result.RunNumber, now).Scan(&runUntil, &traffic)
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
+	}
+	result.Traffic, err = decodeRunTraffic(traffic)
+	if err != nil {
+		return result, err
 	}
 	result.ExpiresAt = minTime(result.ExpiresAt, runUntil)
 	if !existing {
@@ -95,7 +120,9 @@ func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressL
 		}
 		// verify the exact reserved identity even when the retry key collided.
 		var same bool
-		if err = tx.QueryRow(ctx, `SELECT service_id=$2 AND service_run_id=$3 AND ingress_id=$4 AND ingress_run_id=$5 AND ingress_lease_revision=$6 AND source_ip=$7 AND destination_port=$8 AND valid_until>$9 AND closed_at IS NULL FROM control.public_service_visitors WHERE visitor_connection_id=$1`, visitor, result.ServiceID, result.RunID, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), source.Unmap(), port, now).Scan(&same); err != nil || !same {
+		// return the stored deadline on the first response too. PostgreSQL stores
+		// microseconds, so an in-memory nanosecond deadline would change on retry.
+		if err = tx.QueryRow(ctx, `SELECT service_id=$2 AND service_run_id=$3 AND ingress_id=$4 AND ingress_run_id=$5 AND ingress_lease_revision=$6 AND source_ip=$7 AND destination_port=$8 AND valid_until>$9 AND closed_at IS NULL,valid_until FROM control.public_service_visitors WHERE visitor_connection_id=$1`, visitor, result.ServiceID, result.RunID, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), source.Unmap(), port, now).Scan(&same, &result.ExpiresAt); err != nil || !same {
 			return result, errors.Join(ErrServiceAccess, err)
 		}
 	}
@@ -155,11 +182,20 @@ func (d *Database) PublicServiceVisitorStatus(ctx context.Context, lease Ingress
 		return result, err
 	}
 	if protocol == "http" {
-		// HTTP permission terminates at the publisher. this transport lease only
-		// retains the selected run and ingress capacity; it grants no app access.
+		if _, err := d.serviceHTTPSourcePolicy(ctx, q, service, source); err != nil {
+			if errors.Is(err, ErrServiceAccess) {
+				return PublicServiceVisitorStatus{State: PublicServiceVisitorDenied, ValidUntil: now}, nil
+			}
+			return result, err
+		}
 		transport, err := q.ServiceHTTPTransportBinding(ctx, controlstatedb.ServiceHTTPTransportBindingParams{ServiceID: service, ServiceRunID: run, RunNumber: number, VisitorConnectionID: visitor, SourceIp: source, DestinationPort: binding.DestinationPort, Now: timestamptz(now)})
 		if err != nil {
 			return result, publisherLookupError(err, ErrServiceAccess)
+		}
+		if !transport.Authorized {
+			// TLS and browser preparation retain the original pending deadline.
+			result.State = PublicServiceVisitorPending
+			return result, tx.Commit(ctx)
 		}
 		result.ValidUntil = transport.ValidUntil.Time
 		if !result.ValidUntil.After(now) {
@@ -173,7 +209,7 @@ func (d *Database) PublicServiceVisitorStatus(ctx context.Context, lease Ingress
 			result.State = PublicServiceVisitorAllowed
 		}
 	} else if binding.WorkloadSessionID.Valid {
-		if err := d.serviceHTTPSourceAllowed(ctx, q, service, source); err != nil {
+		if _, err := d.serviceHTTPSourcePolicy(ctx, q, service, source); err != nil {
 			return result, err
 		}
 		validity, err := recheckWorkloadPublicServiceVisitor(ctx, tx, service, run, number, visitor, binding.WorkloadSessionID.String, source, nil, now)
@@ -196,7 +232,7 @@ func (d *Database) PublicServiceVisitorStatus(ctx context.Context, lease Ingress
 			result.State = PublicServiceVisitorPending
 		}
 	} else {
-		if err := d.serviceHTTPSourceAllowed(ctx, q, service, source); err != nil {
+		if _, err := d.serviceHTTPSourcePolicy(ctx, q, service, source); err != nil {
 			if errors.Is(err, ErrServiceAccess) {
 				return PublicServiceVisitorStatus{State: PublicServiceVisitorDenied, ValidUntil: now}, nil
 			}
@@ -224,7 +260,8 @@ func (d *Database) PromotePublicServiceVisitor(ctx context.Context, lease Ingres
 	var id string
 	err := d.pool.QueryRow(ctx, `UPDATE control.public_service_visitors v SET promoted_at=COALESCE(v.promoted_at,$5)
 	    FROM control.services service,control.ingress_leases ingress
-	    WHERE v.visitor_connection_id=$1 AND v.ingress_id=$2 AND v.ingress_run_id=$3 AND v.ingress_lease_revision=$4 AND v.closed_at IS NULL AND v.valid_until>$5 AND (v.identity_id IS NOT NULL OR v.workload_session_id IS NOT NULL OR service.protocol='http')
+	    WHERE v.visitor_connection_id=$1 AND v.ingress_id=$2 AND v.ingress_run_id=$3 AND v.ingress_lease_revision=$4 AND v.closed_at IS NULL AND v.valid_until>$5
+	    AND ((service.protocol='http' AND v.authorized_at IS NOT NULL) OR (service.protocol<>'http' AND (v.identity_id IS NOT NULL OR v.workload_session_id IS NOT NULL)))
 	    AND service.id=v.service_id AND service.public AND service.enabled AND service.deleted_at IS NULL
 	    AND ingress.ingress_id=v.ingress_id AND ingress.ingress_run_id=v.ingress_run_id AND ingress.ingress_lease_revision=v.ingress_lease_revision AND ingress.lease_expires_at>$5
 	    RETURNING v.visitor_connection_id`, visitor, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), now).Scan(&id)

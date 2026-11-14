@@ -7,6 +7,7 @@ INSERT INTO control.ingress_leases (
     protocol_version,
     connection_capacity,
     ingress_pool_id,
+    https,
     service_ports,
     registered_at,
     renewed_at,
@@ -19,6 +20,7 @@ INSERT INTO control.ingress_leases (
     sqlc.arg(protocol_version),
     sqlc.arg(connection_capacity),
     sqlc.arg(ingress_pool_id),
+    sqlc.arg(https),
     sqlc.arg(service_ports),
     sqlc.arg(registered_at),
     sqlc.arg(renewed_at),
@@ -36,6 +38,7 @@ ON CONFLICT (ingress_id) DO UPDATE SET
     protocol_version = EXCLUDED.protocol_version,
     connection_capacity = EXCLUDED.connection_capacity,
     ingress_pool_id = EXCLUDED.ingress_pool_id,
+    https = EXCLUDED.https,
     service_ports = EXCLUDED.service_ports,
     reported_connections = CASE
         WHEN control.ingress_leases.ingress_run_id = EXCLUDED.ingress_run_id
@@ -78,6 +81,7 @@ ON CONFLICT (ingress_id) DO UPDATE SET
 WHERE (control.ingress_leases.ingress_run_id = EXCLUDED.ingress_run_id
     AND control.ingress_leases.region=EXCLUDED.region
     AND control.ingress_leases.ingress_pool_id=EXCLUDED.ingress_pool_id
+    AND control.ingress_leases.https=EXCLUDED.https
     AND control.ingress_leases.service_ports=EXCLUDED.service_ports)
    OR control.ingress_leases.lease_expires_at <= EXCLUDED.registered_at
 RETURNING *;

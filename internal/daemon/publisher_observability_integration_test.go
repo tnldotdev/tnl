@@ -335,8 +335,8 @@ func TestIntegrationPublisherObservabilityPublicService(t *testing.T) {
 				Deployment: group, ServiceDeclarations: controlv1.ProjectServiceDeclarations{"echo": protocol},
 				TeamId: f.identity.teamID, Source: &testProjectSource,
 				Configuration: controlv1.ProjectConfiguration{
-					Settings: &controlv1.DeploymentSettings{Public: &public},
-					Services: map[string]controlv1.ProjectServiceConfiguration{"echo": {Protocol: &protocol, Target: target.address}},
+					Settings: &controlv1.DeploymentSettings{},
+					Services: map[string]controlv1.ProjectServiceConfiguration{"echo": {Protocol: &protocol, Target: target.address, Public: &public}},
 					Webhooks: map[string]controlv1.ProjectWebhook{},
 				},
 			})
@@ -364,7 +364,11 @@ func TestIntegrationPublisherObservabilityPublicService(t *testing.T) {
 			go func() {
 				defer close(done)
 				defer remote.Close()
-				_ = process.ingresses[0].publicServices.AcceptPublic(ctx, remote, netip.MustParseAddrPort("192.0.2.4:42000"), netip.AddrPortFrom(netip.MustParseAddr("203.0.113.8"), uint16(service.Endpoint.Port)))
+				hostname := ""
+				if service.Protocol == "http" {
+					hostname = service.Endpoint.Hostname
+				}
+				_ = process.ingresses[0].publicServices.AcceptPublic(ctx, remote, netip.MustParseAddrPort("192.0.2.4:42000"), netip.AddrPortFrom(netip.MustParseAddr("203.0.113.8"), uint16(service.Endpoint.Port)), hostname, nil)
 			}()
 			t.Cleanup(func() {
 				_ = local.Close()

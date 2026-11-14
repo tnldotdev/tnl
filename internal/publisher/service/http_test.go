@@ -10,19 +10,23 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
 
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 
@@ -31,28 +35,52 @@ import (
 )
 
 func serviceHTTPFixture(t *testing.T, target http.Handler) (*http.Client, *visitorlease.Lease, visitorlease.Update, visitortoken.Token) {
+	return serviceHTTPProtocolFixture(t, target, false)
+}
+
+func serviceHTTPProtocolFixture(t *testing.T, target http.Handler, h2 bool) (*http.Client, *visitorlease.Lease, visitorlease.Update, visitortoken.Token) {
+	return serviceHTTPApplicationFixture(t, target, h2, false)
+}
+
+func serviceHTTPApplicationFixture(t *testing.T, target http.Handler, h2, inline bool, audits ...serviceaudit.Sink) (*http.Client, *visitorlease.Lease, visitorlease.Update, visitortoken.Token) {
+	t.Helper()
+	return serviceHTTPConfiguredFixture(t, target, h2, inline, func(frontend *HTTP) {
+		if len(audits) != 0 {
+			frontend.AuditSink = audits[0]
+		}
+	})
+}
+
+func serviceHTTPConfiguredFixture(t *testing.T, target http.Handler, h2, inline bool, configure func(*HTTP)) (*http.Client, *visitorlease.Lease, visitorlease.Update, visitortoken.Token) {
 	t.Helper()
 	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_" + strings.Repeat("A", 22)}
-	policy, update, token := visitorfixture.ScopePolicy(t, scope, "preview.example.test", 25443, false)
-	upstream := httptest.NewServer(target)
-	t.Cleanup(upstream.Close)
+	policy, update, token := visitorfixture.ScopePolicy(t, scope, "preview.example.test", 443, false)
+	application := servicestream.HTTPTarget{Handler: target}
+	if !inline {
+		upstream := httptest.NewServer(target)
+		t.Cleanup(upstream.Close)
+		application = servicestream.HTTPTarget{Address: strings.TrimPrefix(upstream.URL, "http://"), Transport: targettransport.Transport{Protocol: config.ProtocolHTTP}}
+	}
 	certificate := visitorfixture.Certificate(t, update.View.Hostname)
 	header := tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream,
 		ServiceID: scope.ID, ServiceRunID: "srun_" + strings.Repeat("R", 22), RunNumber: 1, SourceIP: "192.0.2.1",
 		VisitorConnectionID: "vc_" + strings.Repeat("V", 22), PublisherConnectionID: "pc_" + strings.Repeat("P", 22), ConnectionAssignmentRevision: 1, ExpiresAt: time.Now().Add(time.Minute),
-		PublicService: &tunnelv1.PublicServiceAdmission{IngressID: "ingress", IngressRunID: "ir_" + strings.Repeat("I", 22), IngressLeaseRevision: 1, DestinationPort: 25443}},
+		PublicService: &tunnelv1.PublicServiceAdmission{IngressID: "ingress", IngressRunID: "ir_" + strings.Repeat("I", 22), IngressLeaseRevision: 1, DestinationPort: 443}},
 		RelayID: "relay", RelayServiceID: "relay-service", RelayRunID: "rr_" + strings.Repeat("R", 22), RelayLeaseRevision: 1, LeaseExpiresAt: time.Now().Add(time.Minute)}
 	if err := header.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	frontend := HTTP{Subject: scope, RunID: header.ServiceRunID, Number: 1, Hostname: update.View.Hostname, Port: update.View.Port, Header: header, Policy: policy}
-	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: visitorfixture.Roots(t, certificate)}, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+	frontend := HTTP{Control: serviceHTTPAdmissionControl{}, Subject: scope, RunID: header.ServiceRunID, Number: 1, Token: credentials.ServiceRunToken("run-token"), Hostname: update.View.Hostname, Port: update.View.Port, Header: header, Policy: policy}
+	if configure != nil {
+		configure(&frontend)
+	}
+	transport := &http.Transport{ForceAttemptHTTP2: h2, TLSClientConfig: &tls.Config{RootCAs: visitorfixture.Roots(t, certificate)}, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		visitor, raw := net.Pipe()
-		server := tls.Server(raw, &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS13})
+		server := tls.Server(raw, &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS13, NextProtos: []string{"h2", "http/1.1"}})
 		done := make(chan error, 1)
 		go func() {
 			defer server.Close()
-			done <- frontend.Forward(t.Context(), server, servicestream.HTTPTarget{Address: strings.TrimPrefix(upstream.URL, "http://"), Transport: targettransport.Transport{Protocol: config.ProtocolHTTP}})
+			done <- frontend.Forward(t.Context(), server, application)
 		}()
 		t.Cleanup(func() {
 			_ = visitor.Close()
@@ -71,6 +99,18 @@ func serviceHTTPFixture(t *testing.T, target http.Handler) (*http.Client, *visit
 type serviceHTTPGrantControl struct {
 	HTTPControl
 	client httpaccess.TokenClient
+}
+
+type serviceHTTPAdmissionControl struct {
+	HTTPControl
+	authorize func(context.Context, string, string, credentials.ServiceRunToken, controlv1.AuthorizeServiceHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error)
+}
+
+func (c serviceHTTPAdmissionControl) AuthorizeServiceHTTPVisitor(ctx context.Context, service, run string, token credentials.ServiceRunToken, request controlv1.AuthorizeServiceHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error) {
+	if c.authorize != nil {
+		return c.authorize(ctx, service, run, token, request)
+	}
+	return controlv1.ServiceClientCertificateDecision{Allowed: true, Admitted: true, ValidUntil: time.Now().Add(time.Minute)}, nil
 }
 
 func (c serviceHTTPGrantControl) IssueVisitorToken(ctx context.Context, request controlv1.VisitorTokenRequest) (controlv1.VisitorTokenResponse, error) {
@@ -179,7 +219,7 @@ func TestServiceHTTPCredentialPrecedenceFailsClosed(t *testing.T) {
 		{"refresh", http.Header{httpaccess.VisitorTokenHeader: {"vrf1.shg_" + strings.Repeat("A", 22) + "." + strings.Repeat("A", 43)}}, 403},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r, _ := http.NewRequestWithContext(t.Context(), "GET", "https://preview.example.test:25443/", nil)
+			r, _ := http.NewRequestWithContext(t.Context(), "GET", "https://preview.example.test/", nil)
 			if tc.headers != nil {
 				r.Header = tc.headers.Clone()
 			}
@@ -199,5 +239,127 @@ func TestServiceHTTPCredentialPrecedenceFailsClosed(t *testing.T) {
 	}
 	if forwarded.Load() != 1 {
 		t.Fatalf("forwarded %d requests", forwarded.Load())
+	}
+}
+
+func TestServiceHTTPAnonymousAccessKeepsPolicyAndCredentialFences(t *testing.T) {
+	var forwarded atomic.Int64
+	client, policy, update, _ := serviceHTTPFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded.Add(1)
+		if r.Header.Get(httpaccess.VisitorTokenHeader) != "" {
+			t.Error("visitor credential reached the target")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	apply := func(anonymous, enabled bool, ip *ippolicy.Policy) {
+		t.Helper()
+		now := time.Now()
+		update.View.VisitorPolicyRevision++
+		update.View.ObservedAt, update.View.ValidUntil = now, now.Add(10*time.Second)
+		update.Anonymous, update.Enabled, update.IP = anonymous, enabled, ip
+		if err := policy.Apply(policy.Begin(), update); err != nil {
+			t.Fatal(err)
+		}
+	}
+	request := func(headers http.Header, status int) {
+		t.Helper()
+		r, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://preview.example.test/", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if headers != nil {
+			r.Header = headers.Clone()
+		}
+		response, err := client.Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		_, _ = io.Copy(io.Discard, response.Body)
+		if response.StatusCode != status {
+			t.Fatalf("status %d, want %d", response.StatusCode, status)
+		}
+	}
+	apply(true, true, nil)
+	request(nil, http.StatusNoContent)
+	for _, headers := range []http.Header{
+		{httpaccess.VisitorTokenHeader: {"invalid"}},
+		{httpaccess.VisitorTokenHeader: {"invalid", "invalid"}},
+		{"Tnl-Access-Token": {"invalid"}},
+		{"Cookie": {httpaccess.VisitorTokenCookie + "=invalid"}},
+		{"Cookie": {httpaccess.BrowserCookieName + "=invalid"}},
+		{"Cookie": {httpaccess.ShareCookieName + "=invalid"}},
+	} {
+		request(headers, http.StatusForbidden)
+	}
+	key := [32]byte{1}
+	entry, err := ippolicy.Hash(key, netip.MustParsePrefix("203.0.113.0/24"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ip, err := ippolicy.New(key, []ippolicy.Entry{entry})
+	if err != nil {
+		t.Fatal(err)
+	}
+	apply(true, true, &ip)
+	// HTTP headers cannot replace the original source supplied by the relay.
+	request(http.Header{"X-Forwarded-For": {"203.0.113.1"}}, http.StatusServiceUnavailable)
+	apply(true, true, nil)
+	request(nil, http.StatusNoContent)
+	apply(false, true, nil)
+	request(nil, http.StatusForbidden)
+	apply(true, true, nil)
+	request(nil, http.StatusNoContent)
+	apply(true, false, nil)
+	request(nil, http.StatusServiceUnavailable)
+	if forwarded.Load() != 3 {
+		t.Fatalf("forwarded %d requests, want 3", forwarded.Load())
+	}
+}
+
+func TestServiceHTTPRestrictingAccessCancelsAnonymousRequest(t *testing.T) {
+	started, stopped := make(chan struct{}), make(chan struct{})
+	client, policy, update, _ := serviceHTTPFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+		close(stopped)
+	}))
+	apply := func(anonymous bool) {
+		t.Helper()
+		now := time.Now()
+		update.View.VisitorPolicyRevision++
+		update.View.ObservedAt, update.View.ValidUntil = now, now.Add(10*time.Second)
+		update.Anonymous = anonymous
+		if err := policy.Apply(policy.Begin(), update); err != nil {
+			t.Fatal(err)
+		}
+	}
+	apply(true)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://preview.example.test/", nil)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		response, err := client.Do(request)
+		if err == nil {
+			_, _ = io.Copy(io.Discard, response.Body)
+			response.Body.Close()
+		}
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("anonymous request did not reach its target")
+	}
+	apply(false)
+	for _, event := range []<-chan struct{}{stopped, done} {
+		select {
+		case <-event:
+		case <-time.After(5 * time.Second):
+			t.Fatal("restricting HTTP access did not stop and join the anonymous request")
+		}
 	}
 }

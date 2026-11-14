@@ -75,6 +75,21 @@ func (e AuthenticationFactsMethods) Valid() bool {
 	}
 }
 
+// Defines values for AuthorizeServiceHTTPVisitorRequestDestinationPort.
+const (
+	N443 AuthorizeServiceHTTPVisitorRequestDestinationPort = 443
+)
+
+// Valid indicates whether the value is a known member of the AuthorizeServiceHTTPVisitorRequestDestinationPort enum.
+func (e AuthorizeServiceHTTPVisitorRequestDestinationPort) Valid() bool {
+	switch e {
+	case N443:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AvailablePublicURLVisitorAccess.
 const (
 	IdentityGrant AvailablePublicURLVisitorAccess = "identity_grant"
@@ -2004,7 +2019,9 @@ type AppliedDeployment struct {
 	Id              string   `json:"id"`
 	Name            string   `json:"name"`
 	Namespace       string   `json:"namespace"`
-	Public          bool     `json:"public"`
+
+	// Public Read-only summary indicating that at least one binding has public endpoint access configured. Not a deployment-wide default.
+	Public bool `json:"public"`
 }
 
 // AppliedProjectConfiguration defines model for AppliedProjectConfiguration.
@@ -2070,10 +2087,22 @@ type AuthenticationFactsMethods string
 // AuthorizeServiceClientCertificateRequest defines model for AuthorizeServiceClientCertificateRequest.
 type AuthorizeServiceClientCertificateRequest struct {
 	Certificate         []byte              `json:"certificate"`
+	DestinationPort     int                 `json:"destination_port"`
 	RunNumber           int64               `json:"run_number,string"`
 	SourceIp            string              `json:"source_ip"`
 	VisitorConnectionId VisitorConnectionID `json:"visitor_connection_id"`
 }
+
+// AuthorizeServiceHTTPVisitorRequest defines model for AuthorizeServiceHTTPVisitorRequest.
+type AuthorizeServiceHTTPVisitorRequest struct {
+	DestinationPort     AuthorizeServiceHTTPVisitorRequestDestinationPort `json:"destination_port"`
+	RunNumber           int64                                             `json:"run_number,string"`
+	SourceIp            string                                            `json:"source_ip"`
+	VisitorConnectionId string                                            `json:"visitor_connection_id"`
+}
+
+// AuthorizeServiceHTTPVisitorRequestDestinationPort defines model for AuthorizeServiceHTTPVisitorRequest.DestinationPort.
+type AuthorizeServiceHTTPVisitorRequestDestinationPort int
 
 // AvailablePublicURL defines model for AvailablePublicURL.
 type AvailablePublicURL struct {
@@ -2387,7 +2416,7 @@ type ConnectorPeerPairRelay struct {
 
 // ConnectorPeerPairRenewal One authenticated authority decision for the pinned run, pair lease and signed visitor permission. All deadlines share pair.observed_at; install local bounds from request start so transit spends the interval. Publisher installation and relay claims retain their independently confirmed deadlines.
 type ConnectorPeerPairRenewal struct {
-	// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
+	// Endpoint Control-owned service TLS identity. HTTP uses shared port 443 without an exclusive ingress reservation, including when public access is disabled. Other protocols use zero when no public ingress port is reserved; an allocated port remains reserved during temporary disablement. Only public enables ingress access. This port is never a machine-local connector port. Target trust is a separate publisher-side boundary.
 	Endpoint          ServiceEndpoint      `json:"endpoint"`
 	Pair              ConnectorPeerPair    `json:"pair"`
 	Protocol          ServiceProtocol      `json:"protocol"`
@@ -2530,7 +2559,7 @@ type CreatePublishRunRequest struct {
 	// PreferredRegions Ordered provider-qualified preferences, not hard placement constraints. Control uses nearby eligible capacity when preferred regions are unavailable. Omission preserves load-based placement.
 	PreferredRegions *[]string `json:"preferred_regions,omitempty"`
 
-	// Traffic Explicit encrypted visitor traffic limits, resolved once against operator defaults and ceilings when the publish run is created. Omitted values use operator defaults. Zero totals mean unlimited.
+	// Traffic Explicit encrypted public endpoint traffic limits, resolved once against operator defaults and ceilings when the service run is prepared. Omitted values use operator defaults. Zero totals mean unlimited.
 	Traffic *TrafficSelection `json:"traffic,omitempty"`
 }
 
@@ -2808,7 +2837,7 @@ type DeploymentPublisherVerification struct {
 
 // DeploymentService defines model for DeploymentService.
 type DeploymentService struct {
-	// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
+	// Endpoint Control-owned service TLS identity. HTTP uses shared port 443 without an exclusive ingress reservation, including when public access is disabled. Other protocols use zero when no public ingress port is reserved; an allocated port remains reserved during temporary disablement. Only public enables ingress access. This port is never a machine-local connector port. Target trust is a separate publisher-side boundary.
 	Endpoint *ServiceEndpoint `json:"endpoint,omitempty"`
 
 	// Id The bound saved service or public URL ID.
@@ -2824,7 +2853,6 @@ type DeploymentService struct {
 type DeploymentSettings struct {
 	Description *string `json:"description,omitempty"`
 	DomainId    *string `json:"domain_id,omitempty"`
-	Public      *bool   `json:"public,omitempty"`
 }
 
 // DeploymentTarget defines model for DeploymentTarget.
@@ -3272,14 +3300,16 @@ type ProjectPublicAccess struct {
 type ProjectPublicLimits struct {
 	Http *ProjectHTTPApplicationLimits `json:"http,omitempty"`
 
-	// Traffic Explicit encrypted visitor traffic limits, resolved once against operator defaults and ceilings when the publish run is created. Omitted values use operator defaults. Zero totals mean unlimited.
+	// Traffic Explicit encrypted public endpoint traffic limits, resolved once against operator defaults and ceilings when the service run is prepared. Omitted values use operator defaults. Zero totals mean unlimited.
 	Traffic *TrafficSelection `json:"traffic,omitempty"`
 }
 
 // ProjectPublicMetadata defines model for ProjectPublicMetadata.
 type ProjectPublicMetadata struct {
 	Services []struct {
-		Hostname    string       `json:"hostname"`
+		Hostname string `json:"hostname"`
+
+		// Port Public reservation, or zero for a connector-only service with no public reservation.
 		Port        int          `json:"port"`
 		PublicUrlId *PublicURLID `json:"public_url_id,omitempty"`
 		Service     string       `json:"service"`
@@ -3332,10 +3362,13 @@ type ProjectServiceAccessTeam bool
 type ProjectServiceConfiguration struct {
 	Access *ProjectServiceAccess `json:"access,omitempty"`
 
-	// Http Local readiness and path mounts, or restricted HTTP access and request limits for a saved deployment. The deployment owns its endpoint and reachability.
+	// Http HTTP visitor access and request limits for local and remote services, independent of public endpoint access. Visitor access defaults to restricted; anonymous access does not enable a public endpoint or grant connector access. Only local bindings support readiness, path mounts, and browser opening.
 	Http     *ProjectServiceHTTP `json:"http,omitempty"`
 	Name     *string             `json:"name,omitempty"`
 	Protocol *ServiceProtocol    `json:"protocol,omitempty"`
+
+	// Public Public endpoint access for this service binding, independent of visitor authorization. Local bindings allocate only when realized by an authorized worktree. Omission or false keeps connector access only. Mutually exclusive with public_url.
+	Public *bool `json:"public,omitempty"`
 
 	// PublicUrl Enables an HTTP public URL. Local URLs belong to the developer preview; remote saved URLs belong to the team/project/deployment and retain their own visitor policy. Remote declarations cannot mark a named URL ephemeral; unnamed application publication allocates temporary URLs separately.
 	PublicUrl *ProjectServicePublicURL `json:"public_url,omitempty"`
@@ -3353,7 +3386,7 @@ type ProjectServiceConfiguration struct {
 // ProjectServiceDeclarations defines model for ProjectServiceDeclarations.
 type ProjectServiceDeclarations map[string]ServiceProtocol
 
-// ProjectServiceHTTP Local readiness and path mounts, or restricted HTTP access and request limits for a saved deployment. The deployment owns its endpoint and reachability.
+// ProjectServiceHTTP HTTP visitor access and request limits for local and remote services, independent of public endpoint access. Visitor access defaults to restricted; anonymous access does not enable a public endpoint or grant connector access. Only local bindings support readiness, path mounts, and browser opening.
 type ProjectServiceHTTP struct {
 	Access *ProjectPublicAccess          `json:"access,omitempty"`
 	Limits *ProjectHTTPApplicationLimits `json:"limits,omitempty"`
@@ -3589,7 +3622,7 @@ type PublishRunSetup struct {
 	PublishRunToken      string                 `json:"publish_run_token"`
 	PublisherConnections []ConnectionAssignment `json:"publisher_connections"`
 
-	// Traffic Resolved limits for one exact public URL and publish run, enforced independently on each ingress process. Omitted totals are unlimited.
+	// Traffic Immutable public endpoint traffic approval for one exact service run, enforced independently on each ingress process. Omitted totals are unlimited. Connector capacity is independent.
 	Traffic *TrafficLimits `json:"traffic,omitempty"`
 }
 
@@ -3874,6 +3907,12 @@ type RelayID = ResourceID
 // RelayServiceID defines model for RelayServiceID.
 type RelayServiceID = ResourceID
 
+// ReleaseServiceEndpointRequest defines model for ReleaseServiceEndpointRequest.
+type ReleaseServiceEndpointRequest struct {
+	ExpectedEndpointRevision int64 `json:"expected_endpoint_revision,string"`
+	ExpectedPort             int   `json:"expected_port"`
+}
+
 // RenameDeploymentNamespaceRequest defines model for RenameDeploymentNamespaceRequest.
 type RenameDeploymentNamespaceRequest struct {
 	ExpectedRevision int64  `json:"expected_revision,string"`
@@ -3919,8 +3958,11 @@ type Service struct {
 	DomainId  *DomainID `json:"domain_id,omitempty"`
 	Enabled   bool      `json:"enabled"`
 
-	// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
+	// Endpoint Control-owned service TLS identity. HTTP uses shared port 443 without an exclusive ingress reservation, including when public access is disabled. Other protocols use zero when no public ingress port is reserved; an allocated port remains reserved during temporary disablement. Only public enables ingress access. This port is never a machine-local connector port. Target trust is a separate publisher-side boundary.
 	Endpoint *ServiceEndpoint `json:"endpoint,omitempty"`
+
+	// EndpointRevision Revision of the hostname, domain, ingress pool, and port reservation. Independent of target trust and connector permission.
+	EndpointRevision int64 `json:"endpoint_revision,string"`
 
 	// HttpLimits Approved run-local HTTP request limits returned to the scoped publisher. Applies after visitor authorization on public and connector admissions.
 	HttpLimits *ProjectHTTPApplicationLimits `json:"http_limits,omitempty"`
@@ -4019,7 +4061,7 @@ type ServiceClientCertificateDecision struct {
 	ValidUntil time.Time `json:"valid_until"`
 }
 
-// ServiceEndpoint Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
+// ServiceEndpoint Control-owned service TLS identity. HTTP uses shared port 443 without an exclusive ingress reservation, including when public access is disabled. Other protocols use zero when no public ingress port is reserved; an allocated port remains reserved during temporary disablement. Only public enables ingress access. This port is never a machine-local connector port. Target trust is a separate publisher-side boundary.
 type ServiceEndpoint struct {
 	Hostname string `json:"hostname"`
 	Port     int    `json:"port"`
@@ -4099,7 +4141,7 @@ type ServiceInvitationPage struct {
 
 // ServiceMetadata defines model for ServiceMetadata.
 type ServiceMetadata struct {
-	// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
+	// Endpoint Control-owned service TLS identity. HTTP uses shared port 443 without an exclusive ingress reservation, including when public access is disabled. Other protocols use zero when no public ingress port is reserved; an allocated port remains reserved during temporary disablement. Only public enables ingress access. This port is never a machine-local connector port. Target trust is a separate publisher-side boundary.
 	Endpoint      *ServiceEndpoint `json:"endpoint,omitempty"`
 	Protocol      ServiceProtocol  `json:"protocol"`
 	PublisherPool bool             `json:"publisher_pool"`
@@ -4170,7 +4212,10 @@ type ServiceRunDeclaration struct {
 	Protocol         ServiceProtocol `json:"protocol"`
 
 	// TargetTls Approved publisher-to-target trust. This never selects or disables visitor TLS.
-	TargetTls     *ServiceTargetTLS `json:"target_tls,omitempty"`
+	TargetTls *ServiceTargetTLS `json:"target_tls,omitempty"`
+
+	// Traffic Explicit encrypted public endpoint traffic limits, resolved once against operator defaults and ceilings when the service run is prepared. Omitted values use operator defaults. Zero totals mean unlimited.
+	Traffic       *TrafficSelection `json:"traffic,omitempty"`
 	TrustRevision int64             `json:"trust_revision,string"`
 }
 
@@ -4202,9 +4247,11 @@ type ServiceRunPreparation struct {
 	PublisherKeyId      ResourceID       `json:"publisher_key_id"`
 	RunNumber           int64            `json:"run_number,string"`
 	ServiceId           ServiceID        `json:"service_id"`
-	ServicePort         int              `json:"service_port"`
 	ServiceRunId        ServiceRunID     `json:"service_run_id"`
 	TeamId              TeamID           `json:"team_id"`
+
+	// Traffic Immutable public endpoint traffic approval for one exact service run, enforced independently on each ingress process. Omitted totals are unlimited. Connector capacity is independent.
+	Traffic TrafficLimits `json:"traffic"`
 }
 
 // ServiceRunSetup defines model for ServiceRunSetup.
@@ -4234,7 +4281,7 @@ type ServiceRunStateState string
 
 // ServiceSelection defines model for ServiceSelection.
 type ServiceSelection struct {
-	// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
+	// Endpoint Control-owned service TLS identity. HTTP uses shared port 443 without an exclusive ingress reservation, including when public access is disabled. Other protocols use zero when no public ingress port is reserved; an allocated port remains reserved during temporary disablement. Only public enables ingress access. This port is never a machine-local connector port. Target trust is a separate publisher-side boundary.
 	Endpoint  *ServiceEndpoint `json:"endpoint,omitempty"`
 	ExpiresAt time.Time        `json:"expires_at"`
 
@@ -4259,7 +4306,7 @@ type ServiceSummary struct {
 	DomainId  *DomainID `json:"domain_id,omitempty"`
 	Enabled   bool      `json:"enabled"`
 
-	// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
+	// Endpoint Control-owned service TLS identity. HTTP uses shared port 443 without an exclusive ingress reservation, including when public access is disabled. Other protocols use zero when no public ingress port is reserved; an allocated port remains reserved during temporary disablement. Only public enables ingress access. This port is never a machine-local connector port. Target trust is a separate publisher-side boundary.
 	Endpoint *ServiceEndpoint `json:"endpoint,omitempty"`
 	Id       ServiceID        `json:"id"`
 
@@ -4388,7 +4435,7 @@ type SourceState struct {
 // TeamID defines model for TeamID.
 type TeamID = ResourceID
 
-// TrafficLimits Resolved limits for one exact public URL and publish run, enforced independently on each ingress process. Omitted totals are unlimited.
+// TrafficLimits Immutable public endpoint traffic approval for one exact service run, enforced independently on each ingress process. Omitted totals are unlimited. Connector capacity is independent.
 type TrafficLimits struct {
 	Burst              int    `json:"burst"`
 	Connections        int    `json:"connections"`
@@ -4401,7 +4448,7 @@ type TrafficLimits struct {
 	UploadBytes        int64  `json:"upload_bytes"`
 }
 
-// TrafficSelection Explicit encrypted visitor traffic limits, resolved once against operator defaults and ceilings when the publish run is created. Omitted values use operator defaults. Zero totals mean unlimited.
+// TrafficSelection Explicit encrypted public endpoint traffic limits, resolved once against operator defaults and ceilings when the service run is prepared. Omitted values use operator defaults. Zero totals mean unlimited.
 type TrafficSelection struct {
 	Burst       *int `json:"burst,omitempty"`
 	Connections *int `json:"connections,omitempty"`
@@ -4524,8 +4571,10 @@ type VisitorPolicySnapshot struct {
 	KeyRevision        int64            `json:"key_revision,string"`
 
 	// MetadataRevision current service trust revision; zero for public URLs.
-	MetadataRevision    int64                       `json:"metadata_revision,string"`
-	ObservedAt          time.Time                   `json:"observed_at"`
+	MetadataRevision int64     `json:"metadata_revision,string"`
+	ObservedAt       time.Time `json:"observed_at"`
+
+	// Port Exact resource port binding. Zero is permitted only for a service without a public reservation and is never a wildcard.
 	Port                int                         `json:"port"`
 	RegisteredKeyLeases []VisitorRegisteredKeyLease `json:"registered_key_leases"`
 
@@ -4637,7 +4686,9 @@ type VisitorTokenRequest struct {
 type VisitorTokenResponse struct {
 	ExpiresAt time.Time `json:"expires_at"`
 	Hostname  string    `json:"hostname"`
-	Port      int       `json:"port"`
+
+	// Port Exact signed resource port binding. Zero is permitted only for a service without a public reservation and is never a wildcard.
+	Port int `json:"port"`
 
 	// Resource An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
 	Resource VisitorResourceScope `json:"resource"`
@@ -4739,7 +4790,7 @@ type WorkloadServiceAuthorization struct {
 // WorkloadServices defines model for WorkloadServices.
 type WorkloadServices struct {
 	Services []struct {
-		// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
+		// Endpoint Control-owned service TLS identity. HTTP uses shared port 443 without an exclusive ingress reservation, including when public access is disabled. Other protocols use zero when no public ingress port is reserved; an allocated port remains reserved during temporary disablement. Only public enables ingress access. This port is never a machine-local connector port. Target trust is a separate publisher-side boundary.
 		Endpoint ServiceEndpoint `json:"endpoint"`
 		Id       string          `json:"id"`
 
@@ -5330,6 +5381,9 @@ type RebindConnectorPeerPairJSONRequestBody = ConnectorPeerPairRebindRequest
 // RenewConnectorPeerPairJSONRequestBody defines body for RenewConnectorPeerPair for application/json ContentType.
 type RenewConnectorPeerPairJSONRequestBody = ConnectorPeerPairRequest
 
+// ReleaseServiceEndpointJSONRequestBody defines body for ReleaseServiceEndpoint for application/json ContentType.
+type ReleaseServiceEndpointJSONRequestBody = ReleaseServiceEndpointRequest
+
 // CreateServiceGrantJSONRequestBody defines body for CreateServiceGrant for application/json ContentType.
 type CreateServiceGrantJSONRequestBody = CreateServiceGrantRequest
 
@@ -5344,6 +5398,9 @@ type PrepareServiceRunJSONRequestBody = ServiceRunDeclaration
 
 // AuthorizeServiceClientCertificateJSONRequestBody defines body for AuthorizeServiceClientCertificate for application/json ContentType.
 type AuthorizeServiceClientCertificateJSONRequestBody = AuthorizeServiceClientCertificateRequest
+
+// AuthorizeServiceHTTPVisitorJSONRequestBody defines body for AuthorizeServiceHTTPVisitor for application/json ContentType.
+type AuthorizeServiceHTTPVisitorJSONRequestBody = AuthorizeServiceHTTPVisitorRequest
 
 // RedeemServiceBrowserHandoffJSONRequestBody defines body for RedeemServiceBrowserHandoff for application/json ContentType.
 type RedeemServiceBrowserHandoffJSONRequestBody = ServiceBrowserRequest
@@ -7146,6 +7203,24 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId).
 	RenewConnectorPeerPair(ctx context.Context, serviceId ServiceID, pairId string, body RenewConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ReleaseServiceEndpointWithBody Retire a disabled service's public port reservation
+	//
+	// Requires current service management permission, public access already disabled, and completed managed DNS cleanup. Send the current trust revision and exact positive reserved port. Closes old runs and advances trust revision while preserving the service, hostname, grants, and machine-local connector assignments. Capacity stays quarantined for at least seven days and until old certificate, issuance, and authorization work is settled. Later private runs do not extend this retired reservation. A stale request conflicts; later public enablement allocates another reservation.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/endpoint/release (the `ReleaseServiceEndpoint` operationId).
+	ReleaseServiceEndpointWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReleaseServiceEndpoint Retire a disabled service's public port reservation
+	//
+	// Requires current service management permission, public access already disabled, and completed managed DNS cleanup. Send the current trust revision and exact positive reserved port. Closes old runs and advances trust revision while preserving the service, hostname, grants, and machine-local connector assignments. Capacity stays quarantined for at least seven days and until old certificate, issuance, and authorization work is settled. Later private runs do not extend this retired reservation. A stale request conflicts; later public enablement allocates another reservation.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/endpoint/release (the `ReleaseServiceEndpoint` operationId).
+	ReleaseServiceEndpoint(ctx context.Context, serviceId ServiceID, body ReleaseServiceEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListServiceGrants List a service's visitor grants and retained history
 	//
 	// Current managers may read up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent; inventory is not proof of current visitor access.
@@ -7284,6 +7359,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId).
 	AuthorizeServiceClientCertificate(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AuthorizeServiceHTTPVisitorWithBody Record locally verified HTTP request permission and check ingress admission
+	//
+	// The publisher reports permission only after authorizing an application request or verifying its exact readiness proof. Browser preparation and valid TLS alone do not authorize a visitor. Control rechecks the exact run, source, public endpoint, and live transport. The publisher must wait for admitted before calling the target.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/authorize-http-visitor (the `AuthorizeServiceHTTPVisitor` operationId).
+	AuthorizeServiceHTTPVisitorWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AuthorizeServiceHTTPVisitor Record locally verified HTTP request permission and check ingress admission
+	//
+	// The publisher reports permission only after authorizing an application request or verifying its exact readiness proof. Browser preparation and valid TLS alone do not authorize a visitor. Control rechecks the exact run, source, public endpoint, and live transport. The publisher must wait for admitted before calling the target.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/authorize-http-visitor (the `AuthorizeServiceHTTPVisitor` operationId).
+	AuthorizeServiceHTTPVisitor(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceHTTPVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RedeemServiceBrowserHandoffWithBody Exchange a service browser handoff through its publisher run
 	//
@@ -7443,18 +7536,18 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/renew (the `RenewServiceRun` operationId).
 	RenewServiceRun(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body RenewServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ReportServiceRunObservationsWithBody Report connector connection observations for a service run
+	// ReportServiceRunObservationsWithBody Report HTTP decisions or connector connections for a service run
 	//
-	// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+	// Report bounded HTTP request decisions and connector connection facts for this exact publisher run. Control derives connector identity and source from the installed pair. HTTP decisions carry no actor identity. Reporting never authorizes traffic.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId).
 	ReportServiceRunObservationsWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ReportServiceRunObservations Report connector connection observations for a service run
+	// ReportServiceRunObservations Report HTTP decisions or connector connections for a service run
 	//
-	// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+	// Report bounded HTTP request decisions and connector connection facts for this exact publisher run. Control derives connector identity and source from the installed pair. HTTP decisions carry no actor identity. Reporting never authorizes traffic.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -10878,6 +10971,44 @@ func (c *Client) RenewConnectorPeerPair(ctx context.Context, serviceId ServiceID
 	return c.Client.Do(req)
 }
 
+// ReleaseServiceEndpointWithBody Retire a disabled service's public port reservation
+//
+// Requires current service management permission, public access already disabled, and completed managed DNS cleanup. Send the current trust revision and exact positive reserved port. Closes old runs and advances trust revision while preserving the service, hostname, grants, and machine-local connector assignments. Capacity stays quarantined for at least seven days and until old certificate, issuance, and authorization work is settled. Later private runs do not extend this retired reservation. A stale request conflicts; later public enablement allocates another reservation.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/services/{service_id}/endpoint/release (the `ReleaseServiceEndpoint` operationId).
+func (c *Client) ReleaseServiceEndpointWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReleaseServiceEndpointRequestWithBody(c.Server, serviceId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReleaseServiceEndpoint Retire a disabled service's public port reservation
+//
+// Requires current service management permission, public access already disabled, and completed managed DNS cleanup. Send the current trust revision and exact positive reserved port. Closes old runs and advances trust revision while preserving the service, hostname, grants, and machine-local connector assignments. Capacity stays quarantined for at least seven days and until old certificate, issuance, and authorization work is settled. Later private runs do not extend this retired reservation. A stale request conflicts; later public enablement allocates another reservation.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/services/{service_id}/endpoint/release (the `ReleaseServiceEndpoint` operationId).
+func (c *Client) ReleaseServiceEndpoint(ctx context.Context, serviceId ServiceID, body ReleaseServiceEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReleaseServiceEndpointRequest(c.Server, serviceId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListServiceGrants List a service's visitor grants and retained history
 //
 // Current managers may read up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent; inventory is not proof of current visitor access.
@@ -11177,6 +11308,44 @@ func (c *Client) AuthorizeServiceClientCertificateWithBody(ctx context.Context, 
 // Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId).
 func (c *Client) AuthorizeServiceClientCertificate(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAuthorizeServiceClientCertificateRequest(c.Server, serviceId, serviceRunId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AuthorizeServiceHTTPVisitorWithBody Record locally verified HTTP request permission and check ingress admission
+//
+// The publisher reports permission only after authorizing an application request or verifying its exact readiness proof. Browser preparation and valid TLS alone do not authorize a visitor. Control rechecks the exact run, source, public endpoint, and live transport. The publisher must wait for admitted before calling the target.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/authorize-http-visitor (the `AuthorizeServiceHTTPVisitor` operationId).
+func (c *Client) AuthorizeServiceHTTPVisitorWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAuthorizeServiceHTTPVisitorRequestWithBody(c.Server, serviceId, serviceRunId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AuthorizeServiceHTTPVisitor Record locally verified HTTP request permission and check ingress admission
+//
+// The publisher reports permission only after authorizing an application request or verifying its exact readiness proof. Browser preparation and valid TLS alone do not authorize a visitor. Control rechecks the exact run, source, public endpoint, and live transport. The publisher must wait for admitted before calling the target.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/authorize-http-visitor (the `AuthorizeServiceHTTPVisitor` operationId).
+func (c *Client) AuthorizeServiceHTTPVisitor(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceHTTPVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAuthorizeServiceHTTPVisitorRequest(c.Server, serviceId, serviceRunId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -11525,9 +11694,9 @@ func (c *Client) RenewServiceRun(ctx context.Context, serviceId ServiceID, servi
 	return c.Client.Do(req)
 }
 
-// ReportServiceRunObservationsWithBody Report connector connection observations for a service run
+// ReportServiceRunObservationsWithBody Report HTTP decisions or connector connections for a service run
 //
-// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+// Report bounded HTTP request decisions and connector connection facts for this exact publisher run. Control derives connector identity and source from the installed pair. HTTP decisions carry no actor identity. Reporting never authorizes traffic.
 //
 // Takes any type of body and a specified content type.
 //
@@ -11544,9 +11713,9 @@ func (c *Client) ReportServiceRunObservationsWithBody(ctx context.Context, servi
 	return c.Client.Do(req)
 }
 
-// ReportServiceRunObservations Report connector connection observations for a service run
+// ReportServiceRunObservations Report HTTP decisions or connector connections for a service run
 //
-// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+// Report bounded HTTP request decisions and connector connection facts for this exact publisher run. Control derives connector identity and source from the installed pair. HTTP decisions carry no actor identity. Reporting never authorizes traffic.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -17877,6 +18046,53 @@ func NewRenewConnectorPeerPairRequestWithBody(server string, serviceId ServiceID
 	return req, nil
 }
 
+// NewReleaseServiceEndpointRequest calls the generic ReleaseServiceEndpoint builder with application/json body
+func NewReleaseServiceEndpointRequest(server string, serviceId ServiceID, body ReleaseServiceEndpointJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReleaseServiceEndpointRequestWithBody(server, serviceId, "application/json", bodyReader)
+}
+
+// NewReleaseServiceEndpointRequestWithBody constructs an http.Request for the ReleaseServiceEndpoint method, with any body, and a specified content type
+func NewReleaseServiceEndpointRequestWithBody(server string, serviceId ServiceID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/services/%s/endpoint/release", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListServiceGrantsRequest constructs an http.Request for the ListServiceGrants method
 func NewListServiceGrantsRequest(server string, serviceId ServiceID, params *ListServiceGrantsParams) (*http.Request, error) {
 	var err error
@@ -18459,6 +18675,60 @@ func NewAuthorizeServiceClientCertificateRequestWithBody(server string, serviceI
 	}
 
 	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s/authorize-client-certificate", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewAuthorizeServiceHTTPVisitorRequest calls the generic AuthorizeServiceHTTPVisitor builder with application/json body
+func NewAuthorizeServiceHTTPVisitorRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceHTTPVisitorJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAuthorizeServiceHTTPVisitorRequestWithBody(server, serviceId, serviceRunId, "application/json", bodyReader)
+}
+
+// NewAuthorizeServiceHTTPVisitorRequestWithBody constructs an http.Request for the AuthorizeServiceHTTPVisitor method, with any body, and a specified content type
+func NewAuthorizeServiceHTTPVisitorRequestWithBody(server string, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "service_run_id", serviceRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s/authorize-http-visitor", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -21591,6 +21861,24 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId).
 	RenewConnectorPeerPairWithResponse(ctx context.Context, serviceId ServiceID, pairId string, body RenewConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewConnectorPeerPairResponse, error)
 
+	// ReleaseServiceEndpointWithBodyWithResponse Retire a disabled service's public port reservation
+	//
+	// Requires current service management permission, public access already disabled, and completed managed DNS cleanup. Send the current trust revision and exact positive reserved port. Closes old runs and advances trust revision while preserving the service, hostname, grants, and machine-local connector assignments. Capacity stays quarantined for at least seven days and until old certificate, issuance, and authorization work is settled. Later private runs do not extend this retired reservation. A stale request conflicts; later public enablement allocates another reservation.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/endpoint/release (the `ReleaseServiceEndpoint` operationId).
+	ReleaseServiceEndpointWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReleaseServiceEndpointResponse, error)
+
+	// ReleaseServiceEndpointWithResponse Retire a disabled service's public port reservation
+	//
+	// Requires current service management permission, public access already disabled, and completed managed DNS cleanup. Send the current trust revision and exact positive reserved port. Closes old runs and advances trust revision while preserving the service, hostname, grants, and machine-local connector assignments. Capacity stays quarantined for at least seven days and until old certificate, issuance, and authorization work is settled. Later private runs do not extend this retired reservation. A stale request conflicts; later public enablement allocates another reservation.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/endpoint/release (the `ReleaseServiceEndpoint` operationId).
+	ReleaseServiceEndpointWithResponse(ctx context.Context, serviceId ServiceID, body ReleaseServiceEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*ReleaseServiceEndpointResponse, error)
+
 	// ListServiceGrantsWithResponse List a service's visitor grants and retained history
 	//
 	// Current managers may read up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent; inventory is not proof of current visitor access.
@@ -21743,6 +22031,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId).
 	AuthorizeServiceClientCertificateWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeServiceClientCertificateResponse, error)
+
+	// AuthorizeServiceHTTPVisitorWithBodyWithResponse Record locally verified HTTP request permission and check ingress admission
+	//
+	// The publisher reports permission only after authorizing an application request or verifying its exact readiness proof. Browser preparation and valid TLS alone do not authorize a visitor. Control rechecks the exact run, source, public endpoint, and live transport. The publisher must wait for admitted before calling the target.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/authorize-http-visitor (the `AuthorizeServiceHTTPVisitor` operationId).
+	AuthorizeServiceHTTPVisitorWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeServiceHTTPVisitorResponse, error)
+
+	// AuthorizeServiceHTTPVisitorWithResponse Record locally verified HTTP request permission and check ingress admission
+	//
+	// The publisher reports permission only after authorizing an application request or verifying its exact readiness proof. Browser preparation and valid TLS alone do not authorize a visitor. Control rechecks the exact run, source, public endpoint, and live transport. The publisher must wait for admitted before calling the target.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/authorize-http-visitor (the `AuthorizeServiceHTTPVisitor` operationId).
+	AuthorizeServiceHTTPVisitorWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceHTTPVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeServiceHTTPVisitorResponse, error)
 
 	// RedeemServiceBrowserHandoffWithBodyWithResponse Exchange a service browser handoff through its publisher run
 	//
@@ -21906,18 +22212,18 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/renew (the `RenewServiceRun` operationId).
 	RenewServiceRunWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body RenewServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewServiceRunResponse, error)
 
-	// ReportServiceRunObservationsWithBodyWithResponse Report connector connection observations for a service run
+	// ReportServiceRunObservationsWithBodyWithResponse Report HTTP decisions or connector connections for a service run
 	//
-	// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+	// Report bounded HTTP request decisions and connector connection facts for this exact publisher run. Control derives connector identity and source from the installed pair. HTTP decisions carry no actor identity. Reporting never authorizes traffic.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId).
 	ReportServiceRunObservationsWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReportServiceRunObservationsResponse, error)
 
-	// ReportServiceRunObservationsWithResponse Report connector connection observations for a service run
+	// ReportServiceRunObservationsWithResponse Report HTTP decisions or connector connections for a service run
 	//
-	// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+	// Report bounded HTTP request decisions and connector connection facts for this exact publisher run. Control derives connector identity and source from the installed pair. HTTP decisions carry no actor identity. Reporting never authorizes traffic.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -27484,6 +27790,54 @@ func (r RenewConnectorPeerPairResponse) ContentType() string {
 	return ""
 }
 
+type ReleaseServiceEndpointResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Service
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ReleaseServiceEndpointResponse) GetJSON200() *Service {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ReleaseServiceEndpointResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ReleaseServiceEndpointResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReleaseServiceEndpointResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReleaseServiceEndpointResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReleaseServiceEndpointResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListServiceGrantsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -28033,6 +28387,54 @@ func (r AuthorizeServiceClientCertificateResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r AuthorizeServiceClientCertificateResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AuthorizeServiceHTTPVisitorResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ServiceClientCertificateDecision
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AuthorizeServiceHTTPVisitorResponse) GetJSON200() *ServiceClientCertificateDecision {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AuthorizeServiceHTTPVisitorResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r AuthorizeServiceHTTPVisitorResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AuthorizeServiceHTTPVisitorResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AuthorizeServiceHTTPVisitorResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AuthorizeServiceHTTPVisitorResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -32061,6 +32463,36 @@ func (c *ClientWithResponses) RenewConnectorPeerPairWithResponse(ctx context.Con
 	return ParseRenewConnectorPeerPairResponse(rsp)
 }
 
+// ReleaseServiceEndpointWithBodyWithResponse Retire a disabled service's public port reservation
+//
+// Requires current service management permission, public access already disabled, and completed managed DNS cleanup. Send the current trust revision and exact positive reserved port. Closes old runs and advances trust revision while preserving the service, hostname, grants, and machine-local connector assignments. Capacity stays quarantined for at least seven days and until old certificate, issuance, and authorization work is settled. Later private runs do not extend this retired reservation. A stale request conflicts; later public enablement allocates another reservation.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/endpoint/release (the `ReleaseServiceEndpoint` operationId).
+func (c *ClientWithResponses) ReleaseServiceEndpointWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReleaseServiceEndpointResponse, error) {
+	rsp, err := c.ReleaseServiceEndpointWithBody(ctx, serviceId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReleaseServiceEndpointResponse(rsp)
+}
+
+// ReleaseServiceEndpointWithResponse Retire a disabled service's public port reservation
+//
+// Requires current service management permission, public access already disabled, and completed managed DNS cleanup. Send the current trust revision and exact positive reserved port. Closes old runs and advances trust revision while preserving the service, hostname, grants, and machine-local connector assignments. Capacity stays quarantined for at least seven days and until old certificate, issuance, and authorization work is settled. Later private runs do not extend this retired reservation. A stale request conflicts; later public enablement allocates another reservation.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/endpoint/release (the `ReleaseServiceEndpoint` operationId).
+func (c *ClientWithResponses) ReleaseServiceEndpointWithResponse(ctx context.Context, serviceId ServiceID, body ReleaseServiceEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*ReleaseServiceEndpointResponse, error) {
+	rsp, err := c.ReleaseServiceEndpoint(ctx, serviceId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReleaseServiceEndpointResponse(rsp)
+}
+
 // ListServiceGrantsWithResponse List a service's visitor grants and retained history
 //
 // Current managers may read up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent; inventory is not proof of current visitor access.
@@ -32314,6 +32746,36 @@ func (c *ClientWithResponses) AuthorizeServiceClientCertificateWithResponse(ctx 
 		return nil, err
 	}
 	return ParseAuthorizeServiceClientCertificateResponse(rsp)
+}
+
+// AuthorizeServiceHTTPVisitorWithBodyWithResponse Record locally verified HTTP request permission and check ingress admission
+//
+// The publisher reports permission only after authorizing an application request or verifying its exact readiness proof. Browser preparation and valid TLS alone do not authorize a visitor. Control rechecks the exact run, source, public endpoint, and live transport. The publisher must wait for admitted before calling the target.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/authorize-http-visitor (the `AuthorizeServiceHTTPVisitor` operationId).
+func (c *ClientWithResponses) AuthorizeServiceHTTPVisitorWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeServiceHTTPVisitorResponse, error) {
+	rsp, err := c.AuthorizeServiceHTTPVisitorWithBody(ctx, serviceId, serviceRunId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAuthorizeServiceHTTPVisitorResponse(rsp)
+}
+
+// AuthorizeServiceHTTPVisitorWithResponse Record locally verified HTTP request permission and check ingress admission
+//
+// The publisher reports permission only after authorizing an application request or verifying its exact readiness proof. Browser preparation and valid TLS alone do not authorize a visitor. Control rechecks the exact run, source, public endpoint, and live transport. The publisher must wait for admitted before calling the target.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/authorize-http-visitor (the `AuthorizeServiceHTTPVisitor` operationId).
+func (c *ClientWithResponses) AuthorizeServiceHTTPVisitorWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceHTTPVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeServiceHTTPVisitorResponse, error) {
+	rsp, err := c.AuthorizeServiceHTTPVisitor(ctx, serviceId, serviceRunId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAuthorizeServiceHTTPVisitorResponse(rsp)
 }
 
 // RedeemServiceBrowserHandoffWithBodyWithResponse Exchange a service browser handoff through its publisher run
@@ -32586,9 +33048,9 @@ func (c *ClientWithResponses) RenewServiceRunWithResponse(ctx context.Context, s
 	return ParseRenewServiceRunResponse(rsp)
 }
 
-// ReportServiceRunObservationsWithBodyWithResponse Report connector connection observations for a service run
+// ReportServiceRunObservationsWithBodyWithResponse Report HTTP decisions or connector connections for a service run
 //
-// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+// Report bounded HTTP request decisions and connector connection facts for this exact publisher run. Control derives connector identity and source from the installed pair. HTTP decisions carry no actor identity. Reporting never authorizes traffic.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -32601,9 +33063,9 @@ func (c *ClientWithResponses) ReportServiceRunObservationsWithBodyWithResponse(c
 	return ParseReportServiceRunObservationsResponse(rsp)
 }
 
-// ReportServiceRunObservationsWithResponse Report connector connection observations for a service run
+// ReportServiceRunObservationsWithResponse Report HTTP decisions or connector connections for a service run
 //
-// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+// Report bounded HTTP request decisions and connector connection facts for this exact publisher run. Control derives connector identity and source from the installed pair. HTTP decisions carry no actor identity. Reporting never authorizes traffic.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -36723,6 +37185,39 @@ func ParseRenewConnectorPeerPairResponse(rsp *http.Response) (*RenewConnectorPee
 	return response, nil
 }
 
+// ParseReleaseServiceEndpointResponse parses an HTTP response from a ReleaseServiceEndpointWithResponse call
+func ParseReleaseServiceEndpointResponse(rsp *http.Response) (*ReleaseServiceEndpointResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReleaseServiceEndpointResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Service
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListServiceGrantsResponse parses an HTTP response from a ListServiceGrantsWithResponse call
 func ParseListServiceGrantsResponse(rsp *http.Response) (*ListServiceGrantsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -37086,6 +37581,39 @@ func ParseAuthorizeServiceClientCertificateResponse(rsp *http.Response) (*Author
 	}
 
 	response := &AuthorizeServiceClientCertificateResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ServiceClientCertificateDecision
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAuthorizeServiceHTTPVisitorResponse parses an HTTP response from a AuthorizeServiceHTTPVisitorWithResponse call
+func ParseAuthorizeServiceHTTPVisitorResponse(rsp *http.Response) (*AuthorizeServiceHTTPVisitorResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AuthorizeServiceHTTPVisitorResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -38452,6 +38980,9 @@ type ServerInterface interface {
 	// RenewConnectorPeerPair Renew an exact signed connector pair and visitor permission
 	// (POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew)
 	RenewConnectorPeerPair(w http.ResponseWriter, r *http.Request, serviceId ServiceID, pairId string)
+	// ReleaseServiceEndpoint Retire a disabled service's public port reservation
+	// (POST /v1/services/{service_id}/endpoint/release)
+	ReleaseServiceEndpoint(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
 	// ListServiceGrants List a service's visitor grants and retained history
 	// (GET /v1/services/{service_id}/grants)
 	ListServiceGrants(w http.ResponseWriter, r *http.Request, serviceId ServiceID, params ListServiceGrantsParams)
@@ -38488,6 +39019,9 @@ type ServerInterface interface {
 	// AuthorizeServiceClientCertificate Check a public endpoint visitor's client certificate and admission
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate)
 	AuthorizeServiceClientCertificate(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
+	// AuthorizeServiceHTTPVisitor Record locally verified HTTP request permission and check ingress admission
+	// (POST /v1/services/{service_id}/runs/{service_run_id}/authorize-http-visitor)
+	AuthorizeServiceHTTPVisitor(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
 	// RedeemServiceBrowserHandoff Exchange a service browser handoff through its publisher run
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff)
 	RedeemServiceBrowserHandoff(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
@@ -38518,7 +39052,7 @@ type ServerInterface interface {
 	// RenewServiceRun Renew a service run and report publisher health and capacity
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/renew)
 	RenewServiceRun(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
-	// ReportServiceRunObservations Report connector connection observations for a service run
+	// ReportServiceRunObservations Report HTTP decisions or connector connections for a service run
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/service-observations)
 	ReportServiceRunObservations(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
 	// StartServiceRun Start one prepared service run with its publisher grant
@@ -42694,6 +43228,32 @@ func (siw *ServerInterfaceWrapper) RenewConnectorPeerPair(w http.ResponseWriter,
 	handler.ServeHTTP(w, r)
 }
 
+// ReleaseServiceEndpoint operation middleware
+func (siw *ServerInterfaceWrapper) ReleaseServiceEndpoint(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "service_id" -------------
+	var serviceId ServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReleaseServiceEndpoint(w, r, serviceId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListServiceGrants operation middleware
 func (siw *ServerInterfaceWrapper) ListServiceGrants(w http.ResponseWriter, r *http.Request) {
 
@@ -43158,6 +43718,41 @@ func (siw *ServerInterfaceWrapper) AuthorizeServiceClientCertificate(w http.Resp
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.AuthorizeServiceClientCertificate(w, r, serviceId, serviceRunId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AuthorizeServiceHTTPVisitor operation middleware
+func (siw *ServerInterfaceWrapper) AuthorizeServiceHTTPVisitor(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "service_id" -------------
+	var serviceId ServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "service_run_id" -------------
+	var serviceRunId ServiceRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_run_id", r.PathValue("service_run_id"), &serviceRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_run_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AuthorizeServiceHTTPVisitor(w, r, serviceId, serviceRunId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -44389,6 +44984,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/services/{service_id}", wrapper.ConfigureService)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/services/{service_id}/grants", wrapper.ListServiceGrants)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/grants", wrapper.CreateServiceGrant)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/endpoint/release", wrapper.ReleaseServiceEndpoint)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/services/{service_id}/grants/{grant_id}", wrapper.RevokeServiceGrant)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/services/{service_id}/invitations", wrapper.ListServiceInvitations)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/invitations", wrapper.InviteServiceVisitor)
@@ -44402,6 +44998,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs", wrapper.PrepareServiceRun)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}", wrapper.CloseServiceRun)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/renew", wrapper.RenewServiceRun)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/authorize-http-visitor", wrapper.AuthorizeServiceHTTPVisitor)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/visitor/public-urls", wrapper.ListAvailablePublicURLs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-grants", wrapper.ListVisitorGrants)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-grants", wrapper.CreateTeamVisitorGrant)

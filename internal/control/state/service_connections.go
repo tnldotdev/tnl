@@ -51,7 +51,7 @@ func lockServiceConnectionRun(ctx context.Context, tx pgx.Tx, q *controlstatedb.
 	if err != nil {
 		return run, err
 	}
-	if !binding.serviceRunBinding.matches(run) || !activeServiceRun(run, now) {
+	if !binding.ServiceRunReference.matches(run) || !activeServiceRun(run, now) {
 		return run, ErrServiceAccess
 	}
 	_, err = q.GetServiceRunPublisherIdentity(ctx, controlstatedb.GetServiceRunPublisherIdentityParams{

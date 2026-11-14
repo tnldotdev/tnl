@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
@@ -96,7 +97,7 @@ func separatedVisitor(t *testing.T, address, source string, port uint16) net.Con
 func TestSeparatedHTTPIPFilterAndReadinessProof(t *testing.T) {
 	f := newAdmissionTransportFixture(t)
 	run := publisher.PublishRunIdentity{Hostname: "route.example", PublicURLID: f.entry.PublicUrlId, PublishRunID: f.entry.PublishRunId, Number: uint64(f.entry.PublishRunNumber)}
-	proof, err := publisher.NewReadinessProof(run, "/health")
+	proof, err := httpaccess.NewReadinessProof(httpaccess.ReadinessRun{Subject: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: run.PublicURLID}, ID: run.PublishRunID, Number: run.Number, Hostname: run.Hostname}, "/health")
 	if err != nil {
 		t.Fatal(err)
 	}

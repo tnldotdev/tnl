@@ -8,7 +8,7 @@ This guide explains those paths and where their code lives. For setup and check
 commands, see [contributing](contributing.md). For terms and repository rules,
 see [AGENTS.md](AGENTS.md). Product and operator docs live in `../tnl.dev`.
 
-## how an app gets a public url
+## how an app publishes a service
 
 An SDK tells the local `tnl` process which listener the app opened. `tnl` accepts
 the registration, then starts publishing in the background:
@@ -17,18 +17,24 @@ the registration, then starts publishing in the background:
 app + SDK             local tnl                 control
     |-- bound listener -->|                        |
     |<-- registered ------|                        |
-    |                     |-- create publish run ->|
+    |                     |-- create service run ->|
     |                     |<-- run + assignments --|
     |-- renew ownership ->|                        |
 ```
 
-Registration does not mean the public URL is ready. The publisher still needs
-permission, a certificate, and connections to its assigned relays. Certificate
-and relay setup are omitted from this diagram.
+Registration does not mean the service is routable. The publisher still needs
+permission, a certificate, and connections to its assigned relays. Public
+reachability is a separate endpoint setting. Certificate and relay setup are
+omitted from this diagram.
 
 The SDK renews the registration while the app is running. `publisher/app` manages
 registrations and stops the old publication before replacing it.
 `publisher/local` runs that manager and the local API.
+
+Service-backed app workers use the same local publication journal for every
+protocol. The worker joins publication work, drains inspection, and includes
+configuration cleanup failures before writing the terminal local observation.
+Local readiness does not require a public hostname or consume an ingress port.
 
 ## how visitors reach the app
 
@@ -78,6 +84,14 @@ A service can also have a public hostname and port, reached through ingress.
 That is **public endpoint access**, rather than **connector access**. Making an
 endpoint public does not remove its visitor access rules.
 
+HTTP services share ingress 443 by exact TLS hostname. Other protocols use
+allocated ingress ports. Neither selects the connector's machine-local listener.
+Endpoint allocation and release advance `endpoint_revision`, not target trust;
+authorized runs and connector sessions survive those changes. Public admission
+still checks the current endpoint, and a retired port cannot select that service.
+Port quarantine captures outstanding certificate issuance by revision, so a late
+certificate can delay reuse without later connector renewals pinning capacity.
+
 ## who decides what
 
 | Role      | Job                                                                                         |
@@ -119,16 +133,17 @@ API. A declaration cannot remove or change the protocol of a retained binding.
 Control keeps each deployment's encrypted serving configuration and revision
 separate from the project's desired configuration and apply revision.
 
-An HTTP binding can reference an existing public URL record instead of a private
-service. Apply saves its deployment ownership and visitor policy. An app-owned
-binding defers its listener to the application; installed workers receive only
-explicit targets. They compose `publisher.Run`, not another publication engine.
+Every binding refers to a service, independently of its protocol or reachability.
+Apply saves its deployment ownership, target trust, and visitor policy. An
+app-owned binding defers its listener to the application; installed workers need
+targets they can own and resolve. Both compose the service-run owner rather than
+another publication engine.
 
-Deployment credentials independently approve management, connections, named HTTP
-publication, and temporary allocation. Control stores temporary provenance in the
-existing namespace allocation table and reuses URL expiration and deletion.
-Native preparation narrows that credential to one URL without issuing another
-grant. Retiring a namespace waits for public URL and service authority alike.
+Deployment credentials independently approve management, connections, named
+service publication, and temporary allocation. Control records temporary service
+provenance; service expiration and deletion own its lifetime. Native preparation
+narrows the credential to an exact service. Retiring a namespace must account for
+all service authority, not just public endpoints.
 
 SDK deployment handles compose connections and publications without sharing their
 credentials. Remote publication passes its captured registered credential through
@@ -149,7 +164,7 @@ cmd/
   tnl/                 client flags, prompts, and output
   tnld/                server flags and role selection
 internal/
-  publisher/           public URL publish runs
+  publisher/           service publication composition
     app/               app registrations and replacement
     local/             project-scoped local tnl process
     localapi/          native app and CLI registration API
@@ -233,15 +248,15 @@ parent to reach a helper.
 
 ### shared HTTP code
 
-Public URL and service runs share HTTP authorization and request limits, but
-manage their runs separately:
+Service HTTP frontends use shared authorization and request limits. Public
+endpoint and connector requests reach the same service-run owner:
 
 ```text
-publisher (public URLs) --+
-                         +--> httpaccess + requestlimit
-publisher/service -------+
-        |
-        +--> service/stream
+invocation + deployment --> publisher/service
+                                    |
+                                    +--> httpaccess + requestlimit
+                                    |
+                                    +--> service/stream
 ```
 
 - `httpaccess` refreshes visitor policy and handles browser handoffs, token
@@ -249,9 +264,17 @@ publisher/service -------+
   workers. It does not own accepted visitor connections.
 - `requestlimit` keeps one HTTP request budget per run, shared across that run's
   visitor connections.
+- `httpaccess.ReadinessProof` accepts one body-free GET at an exact path for one
+  run. Service HTTP strips its secret before forwarding and uses a separate,
+  bounded probe budget. The app owner still checks its current registration and
+  captured target; successful visitor access is not a readiness proof.
 - `service/http.go` builds the service HTTP frontend. `service/stream` handles
   visitor TLS, protocol negotiation, expiry, target connections, and cleanup.
   The run supplies current admission and a shared request budget.
+- `observability/inspection` records body-free HTTP summaries for public and
+  connector requests. The target transport marks accepted application responses;
+  a denied request or failed target dial remains a tnl response. Inspection
+  observes completion without owning the handler or changing its cancellation.
 
 Neither shared package nor the service tree imports publisher root.
 
@@ -361,8 +384,9 @@ explicitly. Do not guess from defaults or optional runtime interface assertions.
 HTTP authorization must receive the trusted visitor source from the accepted
 stream, not reconstruct it from forwarding headers or socket defaults.
 
-Keep visitor TLS separate from target TLS. Keep public URL and service records,
-credentials, and lifecycles separate even where they share HTTP or transport code.
+Keep visitor TLS separate from target TLS. Public reachability, connector
+permission, and target trust are independent facts within one service and
+service-run lifecycle; an HTTP address is not a second saved resource.
 
 Shared APIs must be safe during refresh and cleanup: reads must not race with
 background updates, and exported fields must not leak credentials through JSON.

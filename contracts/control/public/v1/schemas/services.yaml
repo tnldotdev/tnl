@@ -1,4 +1,28 @@
 schemas:
+  AuthorizeServiceHTTPVisitorRequest:
+    type: object
+    additionalProperties: false
+    required: [run_number, visitor_connection_id, source_ip, destination_port]
+    properties:
+      run_number:
+        type: string
+        pattern: "^[0-9]+$"
+        x-go-type: int64
+        x-oapi-codegen-extra-tags: { json: "run_number,string" }
+      visitor_connection_id: { type: string, pattern: "^vc_[A-Za-z0-9]{22}$" }
+      source_ip: { type: string, maxLength: 45 }
+      destination_port: { type: integer, enum: [443] }
+  ReleaseServiceEndpointRequest:
+    type: object
+    additionalProperties: false
+    required: [expected_endpoint_revision, expected_port]
+    properties:
+      expected_endpoint_revision:
+        type: string
+        pattern: "^[0-9]+$"
+        x-go-type: int64
+        x-oapi-codegen-extra-tags: { json: "expected_endpoint_revision,string" }
+      expected_port: { type: integer, minimum: 1024, maximum: 65535 }
   UpdateServiceRequest:
     type: object
     additionalProperties: false
@@ -117,6 +141,8 @@ schemas:
     properties:
       preferred_regions:
         $ref: "./common.yaml#/schemas/PreferredRegions"
+      traffic:
+        $ref: "../openapi.yaml#/components/schemas/TrafficSelection"
       protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
       target_tls: { $ref: "../openapi.yaml#/components/schemas/ServiceTargetTLS" }
       trust_revision:
@@ -130,7 +156,18 @@ schemas:
     type: object
     additionalProperties: false
     description: Saved service and its approved protocol/TLS trust. service_run_id and run_number are an optional ready-publisher hint; select a run before each new connection.
-    required: [id, team_id, name, enabled, created_at, protocol, publisher_pool, trust_revision]
+    required:
+      [
+        id,
+        team_id,
+        name,
+        enabled,
+        created_at,
+        protocol,
+        publisher_pool,
+        trust_revision,
+        endpoint_revision,
+      ]
     dependentRequired:
       service_run_id: [run_number]
       run_number: [service_run_id]
@@ -143,6 +180,12 @@ schemas:
       name: { $ref: "../openapi.yaml#/components/schemas/ServiceName" }
       enabled: { type: boolean }
       endpoint: { $ref: "../openapi.yaml#/components/schemas/ServiceEndpoint" }
+      endpoint_revision:
+        type: string
+        pattern: "^[0-9]+$"
+        x-go-type: int64
+        x-oapi-codegen-extra-tags: { json: "endpoint_revision,string" }
+        description: Revision of the hostname, domain, ingress pool, and port reservation. Independent of target trust and connector permission.
       http_limits:
         $ref: "../openapi.yaml#/components/schemas/ProjectHTTPApplicationLimits"
         description: Approved run-local HTTP request limits returned to the scoped publisher. Applies after visitor authorization on public and connector admissions.
@@ -302,8 +345,8 @@ schemas:
         idempotency_key,
         expires_at,
         hostname,
-        service_port,
         domain_id,
+        traffic,
       ]
     properties:
       team_id: { $ref: "../openapi.yaml#/components/schemas/TeamID" }
@@ -323,8 +366,8 @@ schemas:
       expires_at: { type: string, format: date-time }
       certificate_plan: { $ref: "../openapi.yaml#/components/schemas/CertificatePlan" }
       hostname: { type: string, minLength: 1, maxLength: 253 }
-      service_port: { type: integer, minimum: 1024, maximum: 65535 }
       domain_id: { $ref: "../openapi.yaml#/components/schemas/DomainID" }
+      traffic: { $ref: "../openapi.yaml#/components/schemas/TrafficLimits" }
   ServiceRunSetup:
     type: object
     additionalProperties: false

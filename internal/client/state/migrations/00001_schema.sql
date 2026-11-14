@@ -109,7 +109,7 @@ CREATE TABLE local_tunnels (
     server_origin TEXT NOT NULL REFERENCES server_profiles (origin) ON DELETE RESTRICT,
     project_root TEXT NOT NULL,
     service TEXT CHECK (service IS NULL OR service <> ''),
-    service_protocol TEXT NOT NULL DEFAULT 'http' CHECK (service_protocol = 'http'),
+    service_protocol TEXT NOT NULL DEFAULT 'http' CHECK (service_protocol IN ('http','tcp','mysql','postgres','kubernetes')),
     primary_project_root TEXT,
     integration_namespace TEXT,
     hostname TEXT CHECK (hostname IS NULL OR hostname <> ''),
@@ -125,8 +125,7 @@ CREATE TABLE local_tunnels (
     stopped_at INTEGER,
     failure_code TEXT CHECK (failure_code IS NULL OR failure_code <> ''),
     CHECK ((state IN ('stopped', 'failed')) = (stopped_at IS NOT NULL)),
-    CHECK (state NOT IN ('ready', 'draining') OR
-           (public_url_id IS NOT NULL AND hostname IS NOT NULL AND publish_run_number IS NOT NULL)),
+    CHECK (state NOT IN ('ready', 'draining') OR publish_run_number IS NOT NULL),
     CHECK (failure_code IS NULL OR state = 'failed'),
     CHECK ((primary_project_root IS NULL AND integration_namespace IS NULL) OR
            (primary_project_root IS NOT NULL AND primary_project_root <> '' AND instr(primary_project_root, char(0)) = 0 AND
@@ -356,7 +355,8 @@ CREATE TABLE inspections (
     mysql_result_sets INTEGER NOT NULL DEFAULT 0 CHECK (mysql_result_sets >= 0),
     mysql_error_code INTEGER NOT NULL DEFAULT 0 CHECK (mysql_error_code BETWEEN 0 AND 65535),
     CHECK (
-      (service_protocol = 'http' AND method != '' AND status BETWEEN 100 AND 599 AND sql_operation = '' AND result = '' AND redis_command = '')
+      (service_protocol = 'http' AND method != '' AND status BETWEEN 100 AND 599 AND sql_operation = ''
+          AND result IN ('ok','error') AND (status < 400 OR result = 'error') AND redis_command = '')
       OR (service_protocol IN ('postgres', 'mysql') AND method = '' AND path = '' AND status = 0
           AND sql_operation != '' AND result != '' AND redis_command = '')
       OR (service_protocol = 'redis' AND method = '' AND path = '' AND status = 0
@@ -518,7 +518,7 @@ SELECT id,
     json_object('publication', json_object(
         'tunnel_id', id, 'command', command, 'state', state, 'process_id', process_id,
         'server', server_origin, 'project', project_root, 'service', coalesce(service, ''),
-        'service_protocol', CASE WHEN service_protocol = 'http' THEN '' ELSE service_protocol END,
+        'service_protocol', service_protocol,
         'public_url_id', coalesce(public_url_id, ''), 'publish_run_number', coalesce(publish_run_number, 0),
         'hostname', coalesce(hostname, ''),
         'public_url', CASE WHEN hostname IS NULL THEN '' ELSE 'https://' || hostname END,

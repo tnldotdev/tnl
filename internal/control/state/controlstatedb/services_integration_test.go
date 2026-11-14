@@ -51,7 +51,9 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 		}
 		return value
 	}
-	now := time.Now().UTC()
+	// force a sub-microsecond input even on platforms with coarser clocks.
+	// the first response and its retry must return the same persisted deadline.
+	now := time.Now().UTC().Truncate(time.Microsecond).Add(123 * time.Nanosecond)
 	owner, err := controltest.Session(ctx, d, "example.test", time.Hour, 24*time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
@@ -63,6 +65,8 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	testutil.SeedServicePort(t, conn, service.ID, 20000, now)
+	service.Endpoint.Port = 20000
 	for _, relay := range []string{"relay-a", "relay-b"} {
 		exec(`INSERT INTO control.relay_services(relay_service_id,relay_address,tls_server_name,created_at,updated_at) VALUES($1,$2,$1,$3,$3)`, relay, relay+":443", now)
 		exec(`INSERT INTO control.relay_leases(relay_id,relay_service_id,relay_run_id,relay_lease_revision,protocol_version,internal_relay_address,connection_capacity,stream_capacity,registered_at,renewed_at,lease_expires_at)
@@ -97,10 +101,10 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 		}
 		wrong := metadata
 		wrong.Protocol = "postgres"
-		if _, err = d.PrepareServiceRun(ctx, service.ID, publisher, "wrong", now, wrong); !errors.Is(err, controlstate.ErrServiceConflict) {
+		if _, err = d.PrepareServiceRun(ctx, service.ID, publisher, "wrong", now, controlstate.ServiceRunRequest{Metadata: wrong}); !errors.Is(err, controlstate.ErrServiceConflict) {
 			t.Fatalf("mismatched pool protocol admitted: %v", err)
 		}
-		prepared, err := d.PrepareServiceRun(ctx, service.ID, publisher, "pool-start", now, metadata)
+		prepared, err := d.PrepareServiceRun(ctx, service.ID, publisher, "pool-start", now, controlstate.ServiceRunRequest{Metadata: metadata})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -121,7 +125,7 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 		if _, err = d.HeartbeatServiceRun(ctx, service.ID, run.RunID, run.Token, now, controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 1}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err = d.PrepareServiceRun(ctx, service.ID, publisher, "duplicate", now, metadata); !errors.Is(err, controlstate.ErrServiceConflict) {
+		if _, err = d.PrepareServiceRun(ctx, service.ID, publisher, "duplicate", now, controlstate.ServiceRunRequest{Metadata: metadata}); !errors.Is(err, controlstate.ErrServiceConflict) {
 			t.Fatalf("same publisher joined twice: %v", err)
 		}
 		publishers = append(publishers, publisher)
@@ -138,7 +142,35 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 	otherIngress := directIngressLease(t, ctx, d, "ingress-b", port, now)
 	device, certificate := publicServiceVisitorCertificate(t, ctx, d, service.ID, person, now)
 	source := netip.MustParseAddr("192.0.2.10")
+	// a lagging ready heartbeat must not let a disconnected older run hide its
+	// connected sibling. connector and public admission use the same selection.
+	exec(`UPDATE control.service_connection_slots SET state='connected' WHERE service_run_id=$1`, runs[0].RunID)
 	selected, err := d.SelectServiceRun(ctx, service.ID, person, device, now)
+	if err != nil || selected.ServiceRunID != runs[1].RunID {
+		t.Fatalf("disconnected run hid the connector's healthy sibling: %+v %v", selected, err)
+	}
+	poolVisitor := id(opaqueid.VisitorConnectionPrefix)
+	poolAdmission, err := d.AdmitPublicServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, poolVisitor, "", port, source, now)
+	if err != nil || poolAdmission.RunID != runs[1].RunID {
+		t.Fatalf("disconnected run hid the public visitor's healthy sibling: %+v %v", poolAdmission, err)
+	}
+	exec(`UPDATE control.service_connection_slots SET state='ready' WHERE service_run_id=$1`, runs[0].RunID)
+	retried, err := d.AdmitPublicServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, poolVisitor, "", port, source, now)
+	if err != nil || retried.RunID != poolAdmission.RunID || retried.RunNumber != poolAdmission.RunNumber || !retried.ExpiresAt.Equal(poolAdmission.ExpiresAt) {
+		t.Fatal("reconnected sibling moved an already selected visitor to another run", retried, err)
+	}
+	if err := d.ClosePublicServiceVisitor(ctx, ingress, poolVisitor, now); err != nil {
+		t.Fatal(err)
+	}
+	exec(`UPDATE control.relay_leases SET reported_streams=stream_capacity`)
+	if _, err := d.SelectServiceRun(ctx, service.ID, person, device, now); !errors.Is(err, controlstate.ErrServiceAccess) {
+		t.Fatal("connector selected a pool with no relay stream capacity", err)
+	}
+	if _, err := d.AdmitPublicServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, id(opaqueid.VisitorConnectionPrefix), "", port, source, now); !errors.Is(err, controlstate.ErrServiceAccess) {
+		t.Fatal("public visitor selected a pool with no relay stream capacity", err)
+	}
+	exec(`UPDATE control.relay_leases SET reported_streams=0`)
+	selected, err = d.SelectServiceRun(ctx, service.ID, person, device, now)
 	if err != nil || selected.TLS == nil || selected.TLS.Digest != metadata.TLS.Digest {
 		t.Fatalf("authorized trust snapshot: %+v %v", selected, err)
 	}
@@ -151,7 +183,7 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 	for range 2 {
 		wg.Go(func() {
 			streamID, _ := opaqueid.New(opaqueid.VisitorConnectionPrefix)
-			admitted, err := d.AdmitPublicServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, streamID, port, source, now)
+			admitted, err := d.AdmitPublicServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, streamID, "", port, source, now)
 			results <- admitted
 			problems <- err
 		})
@@ -181,7 +213,7 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 	if err != nil || selected.ServiceRunID != runs[1].RunID {
 		t.Fatalf("full run selected: %+v %v", selected, err)
 	}
-	if _, err = d.AuthorizeServiceClientCertificate(ctx, service.ID, active.RunID, runs[0].Token, active.ConnectionID, active.RunNumber, netip.MustParseAddr("192.0.2.11"), certificate.Raw, now); !errors.Is(err, controlstate.ErrServiceAccess) {
+	if _, err = d.AuthorizeServiceClientCertificate(ctx, service.ID, active.RunID, runs[0].Token, active.ConnectionID, active.RunNumber, netip.MustParseAddr("192.0.2.11"), service.Endpoint.Port, certificate.Raw, now); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("certificate supplied another source: %v", err)
 	}
 	if err = d.ClosePublicServiceVisitor(ctx, ingress, active.ConnectionID, now); err != nil {
@@ -191,7 +223,7 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 	if err != nil || selected.ServiceRunID != runs[0].RunID {
 		t.Fatalf("closed stream held capacity: %+v %v", selected, err)
 	}
-	active, err = d.AdmitPublicServiceVisitor(ctx, otherIngress, controlstate.PrimaryIngressPoolID, id(opaqueid.VisitorConnectionPrefix), port, source, now)
+	active, err = d.AdmitPublicServiceVisitor(ctx, otherIngress, controlstate.PrimaryIngressPoolID, id(opaqueid.VisitorConnectionPrefix), "", port, source, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +233,7 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 			token = run.Token
 		}
 	}
-	if decision, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, active.RunID, token, active.ConnectionID, active.RunNumber, source, certificate.Raw, now); err != nil || !decision.Allowed {
+	if decision, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, active.RunID, token, active.ConnectionID, active.RunNumber, source, service.Endpoint.Port, certificate.Raw, now); err != nil || !decision.Allowed {
 		t.Fatal("valid direct certificate denied", err)
 	}
 	if err = d.PromotePublicServiceVisitor(ctx, otherIngress, active.ConnectionID, now); err != nil {
@@ -236,7 +268,7 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 	if state, err := d.HeartbeatServiceRun(ctx, service.ID, runs[1].RunID, runs[1].Token, now, controlstate.ServiceRunHealth{Healthy: false, StreamCapacity: 1}); err != nil || state.State != "starting" {
 		t.Fatalf("unhealthy publisher stayed ready: %+v %v", state, err)
 	}
-	if _, err := d.AdmitPublicServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, id(opaqueid.VisitorConnectionPrefix), port, source, now); !errors.Is(err, controlstate.ErrServiceAccess) {
+	if _, err := d.AdmitPublicServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, id(opaqueid.VisitorConnectionPrefix), "", port, source, now); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatal("unhealthy publisher retained admission", err)
 	}
 	if state, err := d.HeartbeatServiceRun(ctx, service.ID, runs[1].RunID, runs[1].Token, now, controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 1}); err != nil || state.State != "ready" {
@@ -248,23 +280,23 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 	nextDigest := sha256.Sum256([]byte("replacement.internal\x00system\x00"))
 	trust.Digest = hex.EncodeToString(nextDigest[:])
 	changed.TLS = &trust
-	if _, err = d.PrepareServiceRun(ctx, service.ID, publishers[1], "wrong-trust", now, changed); !errors.Is(err, controlstate.ErrServiceConflict) {
+	if _, err = d.PrepareServiceRun(ctx, service.ID, publishers[1], "wrong-trust", now, controlstate.ServiceRunRequest{Metadata: changed}); !errors.Is(err, controlstate.ErrServiceConflict) {
 		t.Fatalf("unapproved TLS identity joined pool: %v", err)
 	}
 	updated, err := d.ConfigureService(ctx, service.ID, person, changed, now)
 	if err != nil || updated.TrustRevision != 2 {
 		t.Fatalf("immutable trust replacement: %+v %v", updated, err)
 	}
-	if _, err := d.AdmitPublicServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, id(opaqueid.VisitorConnectionPrefix), port, source, now); !errors.Is(err, controlstate.ErrServiceAccess) {
+	if _, err := d.AdmitPublicServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, id(opaqueid.VisitorConnectionPrefix), "", port, source, now); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatal("trust replacement retained old run keys", err)
 	}
 	if _, err = d.ConfigureService(ctx, service.ID, person, metadata, now); !errors.Is(err, controlstate.ErrServiceConflict) {
 		t.Fatalf("stale trust revision replaced approved trust: %v", err)
 	}
-	if _, err = d.PrepareServiceRun(ctx, service.ID, publishers[1], "old-trust", now, metadata); !errors.Is(err, controlstate.ErrServiceConflict) {
+	if _, err = d.PrepareServiceRun(ctx, service.ID, publishers[1], "old-trust", now, controlstate.ServiceRunRequest{Metadata: metadata}); !errors.Is(err, controlstate.ErrServiceConflict) {
 		t.Fatalf("publisher rejoined with obsolete trust: %v", err)
 	}
-	prepared, err := d.PrepareServiceRun(ctx, service.ID, publishers[1], "approved-trust", now, updated.ServiceMetadata)
+	prepared, err := d.PrepareServiceRun(ctx, service.ID, publishers[1], "approved-trust", now, controlstate.ServiceRunRequest{Metadata: updated.ServiceMetadata})
 	if err != nil {
 		t.Fatal(err)
 	}

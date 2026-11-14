@@ -315,7 +315,10 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	p := r.Configuration.Workloads["test"]
 	p.MaxDurationSeconds = 10
 	r.Configuration.Workloads["test"] = p
-	r.Configuration.Settings.Public = true
+	for name, binding := range r.Configuration.Services {
+		binding.Public = new(true)
+		r.Configuration.Services[name] = binding
+	}
 	applied, err := d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {
 		t.Fatal(err)
@@ -409,10 +412,10 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 		t.Fatal("certificate used a human subject", subject, err)
 	}
 	direct := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
-	if _, err = d.AdmitPublicServiceVisitor(ctx, lease.IngressLeaseIdentity, PrimaryIngressPoolID, direct, port, source, now); err != nil {
+	if _, err = d.AdmitPublicServiceVisitor(ctx, lease.IngressLeaseIdentity, PrimaryIngressPoolID, direct, "", port, source, now); err != nil {
 		t.Fatal(err)
 	}
-	decision, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, run.RunID, run.Token, direct, run.RunNumber, source, block.Bytes, now)
+	decision, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, run.RunID, run.Token, direct, run.RunNumber, source, port, block.Bytes, now)
 	if err != nil || !decision.Allowed || decision.Admitted || !decision.ValidUntil.Equal(*session.ExpiresAt) {
 		t.Fatal("public workload certificate authorization", decision, err)
 	}
@@ -439,7 +442,7 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	if _, err := d.DeliverConnectorPeerPair(ctx, service.ID, run.RunID, pair.ID, pair.DeliveryGeneration, run.Token, *session.ExpiresAt); err == nil {
 		t.Fatal("native authority outlived job")
 	}
-	if _, err = d.AuthorizeServiceClientCertificate(ctx, service.ID, run.RunID, run.Token, direct, run.RunNumber, source, block.Bytes, *session.ExpiresAt); !errors.Is(err, ErrServiceAccess) {
+	if _, err = d.AuthorizeServiceClientCertificate(ctx, service.ID, run.RunID, run.Token, direct, run.RunNumber, source, port, block.Bytes, *session.ExpiresAt); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("public stream outlived job", err)
 	}
 	if _, err := d.SelectWorkloadServiceRun(ctx, session.Credential, service.ID, *session.ExpiresAt); !errors.Is(err, ErrWorkloadDenied) {
@@ -457,7 +460,7 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	if _, err := d.DeliverConnectorPeerPair(ctx, service.ID, run.RunID, pair.ID, pair.DeliveryGeneration, run.Token, now.Add(2*time.Second)); err == nil {
 		t.Fatal("native authority survived policy removal")
 	}
-	if decision, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, run.RunID, run.Token, direct, run.RunNumber, source, block.Bytes, now.Add(2*time.Second)); !errors.Is(err, ErrServiceAccess) || decision.Allowed {
+	if decision, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, run.RunID, run.Token, direct, run.RunNumber, source, port, block.Bytes, now.Add(2*time.Second)); !errors.Is(err, ErrServiceAccess) || decision.Allowed {
 		t.Fatal("public stream survived policy removal", decision, err)
 	}
 }

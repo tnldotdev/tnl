@@ -15,6 +15,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/observability/inspection"
+	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
@@ -31,16 +33,20 @@ type Decision struct {
 // selected service owns its certificate name; SNI cannot select another target.
 // target trust is independent of the public WebPKI identity presented to clients.
 type Stream struct {
-	Protocol     config.ProtocolName
-	Public       bool
-	Hostname     string
-	HTTPRequests RequestLimits
-	Kubernetes   KubernetesLimits
-	Authority    string
-	Target       string
-	TLS          *tls.Config
-	TargetTLS    *tls.Config
-	Visitor      Authentication
+	Protocol       config.ProtocolName
+	Public         bool
+	Hostname       string
+	HTTPRequests   RequestLimits
+	Kubernetes     KubernetesLimits
+	Authority      string
+	Target         string
+	Handler        http.Handler
+	InspectionMode inspection.Mode
+	ObserveSummary inspection.Observer
+	AdmitRequest   func(*http.Request) error
+	TLS            *tls.Config
+	TargetTLS      *tls.Config
+	Visitor        Authentication
 }
 
 func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
@@ -66,7 +72,8 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 	defer func() { admissionDone(result) }()
 	canonical, nameErr := naming.CanonicalizeHostname(s.Hostname)
 	transport := targettransport.Transport{Protocol: s.Protocol, TLS: s.TargetTLS}
-	if transport.Validate() != nil || nameErr != nil || canonical != s.Hostname || s.Target == "" || s.TLS == nil || s.TLS.GetConfigForClient != nil || !valid {
+	inline := s.Protocol == config.ProtocolHTTP && s.Handler != nil && s.Target == "" && s.TargetTLS == nil
+	if transport.Validate() != nil || nameErr != nil || canonical != s.Hostname || s.Target == "" && !inline || s.Handler != nil && !inline || s.TLS == nil || s.TLS.GetConfigForClient != nil || !valid {
 		return ErrEndpoint
 	}
 	if _, ok := s.Visitor.(HTTPVisitor); ok && s.Protocol != config.ProtocolHTTP {
@@ -250,6 +257,9 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 	frontTLS.MinVersion = max(frontTLS.MinVersion, tls.VersionTLS12)
 	frontTLS.ClientAuth = s.Visitor.clientAuth()
 	frontTLS.NextProtos = nil
+	if s.Protocol == config.ProtocolHTTP {
+		frontTLS.NextProtos = []string{"h2", "http/1.1"}
+	}
 	frontTLS.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
 		if hello.ServerName != s.Hostname && !(s.Protocol == config.ProtocolMySQL && hello.ServerName == "") {
 			return nil, ErrEndpoint
@@ -279,7 +289,7 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 			return err
 		}
 		admissionDone(nil)
-		return httpVisitor.Frontend.Forward(ctx, secured, HTTPTarget{Address: s.Target, Transport: transport})
+		return httpVisitor.Frontend.Forward(ctx, secured, HTTPTarget{Address: s.Target, Handler: s.Handler, Transport: transport})
 	}
 	authCtx, authDone := observability.PublisherOperation(setup, "visitor_authorization")
 	decision, err := s.Visitor.authorize(authCtx, secured.ConnectionState())
@@ -319,8 +329,12 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 			scheme = "https"
 		}
 		target := HTTPTarget{Address: s.Target, Transport: transport, connector: connector, lifetime: ctx, track: trackTarget, enter: enterConnectorWork}
-		return httpstream.Serve(live, client, &url.URL{Scheme: scheme, Host: s.Target}, target.Dial, func(next http.Handler) http.Handler {
+		wrap := func(next http.Handler) http.Handler {
 			return wrapHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w, r, finishInspection := inspection.BeginHTTP(w, r, s.InspectionMode, s.ObserveSummary)
+				defer finishInspection()
+				// a connector request is not an owner readiness proof.
+				r.Header.Del(publisherproxy.ReadinessProbeHeader)
 				// connector admission is the credential, but every HTTP request still
 				// rechecks current policy before any target bytes on the shared socket.
 				check, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -333,6 +347,12 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 					DenyHTTP(w, HTTPDecisionStatus(err))
 					return
 				}
+				if s.AdmitRequest != nil {
+					if err := s.AdmitRequest(r); err != nil {
+						DenyHTTP(w, http.StatusServiceUnavailable)
+						return
+					}
+				}
 				release, ok := admitRequest(s.HTTPRequests, w, r)
 				if !ok {
 					return
@@ -340,7 +360,14 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 				defer release()
 				next.ServeHTTP(w, r)
 			}))
-		})
+		}
+		// the underlying visitor and target sockets remain connector-gated.
+		// preserve *tls.Conn here so net/http can serve the negotiated HTTP/2;
+		// every handler also rechecks admission before application work.
+		if inline {
+			return httpstream.ServeHandler(live, secured, wrap(s.Handler))
+		}
+		return httpstream.Serve(live, secured, &url.URL{Scheme: scheme, Host: s.Target}, target.Dial, wrap)
 	}
 	if backend == nil {
 		backend, err = dial(setup)

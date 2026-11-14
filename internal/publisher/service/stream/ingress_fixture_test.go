@@ -30,7 +30,8 @@ func (c nativeIngressControl) AdmitPublicServiceVisitor(_ context.Context, _ str
 	if claim.DestinationPort != c.port || claim.ObservedSourceIp != "127.0.0.1" {
 		return ingressv1.PublicServiceVisitorAdmission{}, ingress.ErrServiceAdmission
 	}
-	return ingressv1.PublicServiceVisitorAdmission{ServiceId: c.service, ServiceRunId: c.run, RunNumber: 1, VisitorConnectionId: claim.VisitorConnectionId, ExpiresAt: time.Now().Add(time.Minute), ConnectedRelays: c.relays}, nil
+	return ingressv1.PublicServiceVisitorAdmission{ServiceId: c.service, ServiceRunId: c.run, RunNumber: 1, VisitorConnectionId: claim.VisitorConnectionId, ExpiresAt: time.Now().Add(time.Minute), ConnectedRelays: c.relays,
+		Traffic: ingressv1.IngressTrafficLimits{Connections: 32, Rate: 20, RatePerNs: int64(time.Second), Burst: 40, UploadBytes: 8 << 20, DownloadBytes: 16 << 20}}, nil
 }
 func (c nativeIngressControl) PublicServiceVisitorStatus(context.Context, string, ingressv1.PublicServiceVisitorLookup) (ingressv1.PublicServiceVisitorStatus, error) {
 	return ingressv1.PublicServiceVisitorStatus{State: ingressv1.PublicServiceVisitorAllowed, ValidUntil: time.Now().Add(time.Minute)}, nil
@@ -40,6 +41,9 @@ func (c nativeIngressControl) ClosePublicServiceVisitor(context.Context, string,
 }
 func (c nativeIngressControl) PromotePublicServiceVisitor(context.Context, string, ingressv1.PublicServiceVisitorLookup) error {
 	return nil
+}
+func (c nativeIngressControl) ClosedServiceRuns(context.Context, string, ingressv1.ServiceRunClosureLookup) (ingressv1.ServiceRunClosures, error) {
+	return ingressv1.ServiceRunClosures{Closed: []ingressv1.ServiceRunReference{}}, nil
 }
 
 type nativeIngressForwarder struct {
@@ -121,7 +125,7 @@ func managedIngressListener(t *testing.T, managed servicestream.Stream, visitors
 		_ = backend.Close()
 		t.Fatal(err)
 	}
-	server, err := ingress.New(backend, ingress.Config{PublicServicesOnly: true, PublicServices: connector, RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, ServicePortRanges: []tcpport.Range{{First: port, Last: port}}, MaxConnections: 8})
+	server, err := ingress.New(backend, ingress.Config{PublicServices: connector, RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, ServicePortRanges: []tcpport.Range{{First: port, Last: port}}, MaxConnections: 8})
 	if err != nil {
 		t.Fatal(err)
 	}

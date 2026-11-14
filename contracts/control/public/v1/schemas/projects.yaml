@@ -86,7 +86,11 @@ schemas:
             service: { type: string }
             public_url_id: { $ref: "../openapi.yaml#/components/schemas/PublicURLID" }
             service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
-            port: { type: integer, minimum: 1, maximum: 65535 }
+            port:
+              type: integer
+              minimum: 0
+              maximum: 65535
+              description: Public reservation, or zero for a connector-only service with no public reservation.
             hostname: { type: string }
   RealizeLocalProjectServiceRequest:
     type: object
@@ -178,7 +182,6 @@ schemas:
     properties:
       description: { type: string, maxLength: 1024 }
       domain_id: { type: string }
-      public: { type: boolean, default: false }
   ProjectWorkload:
     type: object
     additionalProperties: false
@@ -292,6 +295,9 @@ schemas:
         maxLength: 8192
         description: Public URL targets are HTTP/HTTPS origins with an explicit port and no trailing slash. Service targets normalize to host:port with separate target_tls trust. The app descriptor defers an HTTP public URL listener to its application owner in any deployment. Only local declarations may use compose:SERVICE:PORT or docker:CONTAINER:PORT descriptors; control does not discover targets.
       target_discovery: { $ref: "../openapi.yaml#/components/schemas/ProjectTargetDiscovery" }
+      public:
+        type: boolean
+        description: Public endpoint access for this service binding, independent of visitor authorization. Local bindings allocate only when realized by an authorized worktree. Omission or false keeps connector access only. Mutually exclusive with public_url.
       public_url: { $ref: "../openapi.yaml#/components/schemas/ProjectServicePublicURL" }
       target_tls: { $ref: "../openapi.yaml#/components/schemas/ProjectTargetTLS" }
       access: { $ref: "../openapi.yaml#/components/schemas/ProjectServiceAccess" }
@@ -299,7 +305,7 @@ schemas:
   ProjectServiceHTTP:
     type: object
     additionalProperties: false
-    description: Local readiness and path mounts, or restricted HTTP access and request limits for a saved deployment. The deployment owns its endpoint and reachability.
+    description: HTTP visitor access and request limits for local and remote services, independent of public endpoint access. Visitor access defaults to restricted; anonymous access does not enable a public endpoint or grant connector access. Only local bindings support readiness, path mounts, and browser opening.
     properties:
       access: { $ref: "../openapi.yaml#/components/schemas/ProjectPublicAccess" }
       limits: { $ref: "../openapi.yaml#/components/schemas/ProjectHTTPApplicationLimits" }
@@ -454,7 +460,9 @@ schemas:
         items: { type: string }
       namespace: { type: string }
       domain_id: { type: string }
-      public: { type: boolean }
+      public:
+        type: boolean
+        description: Read-only summary indicating that at least one binding has public endpoint access configured. Not a deployment-wide default.
   AppliedProjectService:
     type: object
     required: [service, deployment, service_kind, desired_revision, trust_revision]

@@ -69,7 +69,7 @@ func (s *service) RegisterIngress(ctx context.Context, body ingressv1.IngressReg
 		Region:    region.ID(body.Region),
 		IngressID: body.IngressId, IngressRunID: body.IngressRunId,
 		ProtocolVersion: protocolVersion, ConnectionCapacity: connectionCapacity,
-		IngressPoolID: body.IngressPoolId, ServicePorts: servicePorts(body.ServicePorts),
+		IngressPoolID: body.IngressPoolId, HTTPS: body.Https, ServicePorts: servicePorts(body.ServicePorts),
 	}, s.now(), s.leaseDuration)
 	if err != nil {
 		return ingressv1.IngressLease{}, s.storeError(ctx, err)

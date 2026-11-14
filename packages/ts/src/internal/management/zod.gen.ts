@@ -166,11 +166,11 @@ export const deploymentPublisherPageSchema = z.strictObject({
 });
 
 /**
- * Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
+ * Control-owned service TLS identity. HTTP uses shared port 443 without an exclusive ingress reservation, including when public access is disabled. Other protocols use zero when no public ingress port is reserved; an allocated port remains reserved during temporary disablement. Only public enables ingress access. This port is never a machine-local connector port. Target trust is a separate publisher-side boundary.
  */
 export const serviceEndpointSchema = z.strictObject({
   hostname: z.string().min(1).max(253),
-  port: z.int().gte(1024).lte(65535),
+  port: z.int().gte(0).lte(65535),
   public: z.boolean(),
 });
 

@@ -112,10 +112,14 @@ func newDeploymentOwnerFixture(t *testing.T, duration time.Duration, selectRun f
 
 func deploymentOwnerSelection(c auth.DeploymentCredential, name string) controlv1.ServiceSelection {
 	names := map[string]string{"web": "a", "db": "b", "cache": "c", "mysql": "d", "cluster": "e"}
+	port := 15443
+	if (*c.Approval.Permissions.Connect)[name] == controlv1.ServiceProtocolHTTP {
+		port = 443
+	}
 	return controlv1.ServiceSelection{
 		ServiceId: "svc_" + strings.Repeat(names[name], 22), ServiceRunId: "srun_" + strings.Repeat(names[name], 22),
 		RunNumber: 1, TrustRevision: 1, Protocol: (*c.Approval.Permissions.Connect)[name],
-		Endpoint:  &controlv1.ServiceEndpoint{Hostname: name + ".example.test", Port: 15443},
+		Endpoint:  &controlv1.ServiceEndpoint{Hostname: name + ".example.test", Port: port},
 		ExpiresAt: time.Now().Add(time.Minute), Subject: visitorsubject.Wire(c.Subject()),
 	}
 }

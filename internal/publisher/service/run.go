@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"strconv"
+	"net/http"
 	"sync"
 	"time"
 
@@ -15,7 +15,10 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
+	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
@@ -31,12 +34,17 @@ import (
 
 var ErrPrivateStream = errors.New("private publisher: stream is not bound to the current claimed connection")
 
-// Prepared retains control's exact endpoint and certificate plan across retries.
+// Prepared retains control's exact endpoint, traffic approval and certificate plan across retries.
 type Prepared struct {
 	Preparation controlv1.ServiceRunPreparation
 	*preparedCertificate
+	traffic             trafficlimits.Limits
 	clock               func() time.Time
 	target              string
+	handler             http.Handler
+	inspectionMode      inspection.Mode
+	observeSummary      inspection.Observer
+	admitRequest        func(*http.Request) error
 	targetResolver      TargetResolver
 	managedHostname     string
 	managedProtocol     config.ProtocolName
@@ -112,6 +120,10 @@ func (p *Prepared) Activate(setup controlv1.ServiceRunSetup) (*Bound, error) {
 		setup.RunToken == "" ||
 		!p.Preparation.ExpiresAt.After(time.Now()) ||
 		len(setup.PublisherConnections) != 2 {
+		return nil, ErrPrivateStream
+	}
+	traffic, err := serviceTraffic(p.Preparation.Traffic)
+	if err != nil || traffic != p.traffic {
 		return nil, ErrPrivateStream
 	}
 	var connections [2]controlv1.ConnectionAssignment
@@ -494,14 +506,15 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConn
 	if err != nil || metadata.Source.Addr().String() != header.SourceIP {
 		return ErrPrivateStream
 	}
-	if header.PublicService != nil && (metadata.Destination.Port() != header.PublicService.DestinationPort || header.PublicService.DestinationPort != b.prepared.servicePort) {
+	if header.PublicService != nil && (metadata.Destination.Port() != header.PublicService.DestinationPort ||
+		b.prepared.managedProtocol == config.ProtocolHTTP && header.PublicService.DestinationPort != 443) {
 		return ErrPrivateStream
 	}
 	authority := ""
 	// direct visitors use the exact managed origin. admitted connector clients
 	// can use a loopback authority, including an owned kubeconfig's local server.
-	if b.prepared.managedPublic && header.PublicService != nil {
-		authority = net.JoinHostPort(b.prepared.managedHostname, strconv.Itoa(int(b.prepared.servicePort)))
+	if header.PublicService != nil {
+		authority = serviceendpoint.HTTPAuthority(b.prepared.managedHostname, header.PublicService.DestinationPort)
 	}
 	connection := &replayConn{Conn: stream, reader: replay}
 	if endStream != nil {
@@ -544,9 +557,11 @@ func (b *Bound) forwardManaged(ctx context.Context, stream net.Conn, visitor ser
 	if err := check(); err != nil {
 		return err
 	}
-	managed := servicestream.Stream{Protocol: b.prepared.managedProtocol, Public: b.prepared.managedPublic, Hostname: b.prepared.managedHostname, Target: target, HTTPRequests: b.prepared.serviceHTTPRequests,
-		Authority: authority,
-		TLS:       &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return b.prepared.currentCertificate() }}, TargetTLS: targetTLS, Visitor: visitor}
+	managed := servicestream.Stream{Protocol: b.prepared.managedProtocol, Public: b.prepared.managedPublic, Hostname: b.prepared.managedHostname, Target: target, Handler: b.prepared.handler, HTTPRequests: b.prepared.serviceHTTPRequests,
+		InspectionMode: b.prepared.inspectionMode, ObserveSummary: b.prepared.observeSummary,
+		AdmitRequest: b.prepared.admitRequest,
+		Authority:    authority,
+		TLS:          &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return b.prepared.currentCertificate() }}, TargetTLS: targetTLS, Visitor: visitor}
 	return managed.Forward(ctx, stream)
 }
 

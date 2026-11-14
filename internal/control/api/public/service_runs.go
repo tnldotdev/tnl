@@ -1,18 +1,21 @@
 package public
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/region"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type serviceRunStore interface {
-	PrepareServiceRun(context.Context, string, controlstate.PublisherIdentity, string, time.Time, controlstate.ServiceMetadata, ...string) (controlstate.ServiceRunPreparation, error)
+	PrepareServiceRun(context.Context, string, controlstate.PublisherIdentity, string, time.Time, controlstate.ServiceRunRequest) (controlstate.ServiceRunPreparation, error)
 	HeartbeatServiceRun(context.Context, string, string, string, time.Time, controlstate.ServiceRunHealth) (controlstate.ServiceRunState, error)
 	CloseServiceRun(context.Context, string, string, string, time.Time) error
 }
@@ -57,13 +60,20 @@ func (h *handler) PrepareServiceRun(w http.ResponseWriter, r *http.Request, serv
 		return
 	}
 	var body controlv1.ServiceRunDeclaration
-	if decodeJSONLimited(w, r, &body, 2<<20) != nil || body.TrustRevision < 1 {
+	var raw json.RawMessage
+	if decodeJSONLimited(w, r, &raw, 2<<20) != nil ||
+		httpjson.Decode(json.NewDecoder(bytes.NewReader(raw)), &body) != nil || trafficHasNull(raw) || body.TrustRevision < 1 {
 		writeProblem(w, 400, controlv1.InvalidRequest, "declare the service protocol and TLS trust revision")
 		return
 	}
 	declaration := controlstate.ServiceMetadata{Protocol: string(body.Protocol), TLS: targetTLSInput(body.TargetTls), TrustRevision: body.TrustRevision}
 	if declaration.Validate() != nil {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid service protocol or TLS trust")
+		return
+	}
+	traffic := trafficSelection(body.Traffic)
+	if traffic != nil && traffic.Validate() != nil {
+		writeControlStateProblem(r.Context(), w, "select service-run traffic limits", controlstate.ErrTrafficSelection)
 		return
 	}
 	if r.Header.Get("Idempotency-Key") == "" {
@@ -82,9 +92,17 @@ func (h *handler) PrepareServiceRun(w http.ResponseWriter, r *http.Request, serv
 	if body.PreferredRegions != nil {
 		preferences = *body.PreferredRegions
 	}
-	prepared, err := store.PrepareServiceRun(r.Context(), serviceID, publisher, r.Header.Get("Idempotency-Key"), time.Now(), declaration, preferences...)
+	prepared, err := store.PrepareServiceRun(r.Context(), serviceID, publisher, r.Header.Get("Idempotency-Key"), time.Now(), controlstate.ServiceRunRequest{
+		Metadata: declaration, PreferredRegions: preferences, TrafficSelection: traffic,
+		TrafficDefaults: h.config.TrafficDefaults, TrafficCeiling: h.config.TrafficCeiling,
+	})
 	if err != nil {
 		serviceRunProblem(r.Context(), w, "prepare service run", err)
+		return
+	}
+	approval := trafficLimitsResponse(prepared.Traffic)
+	if approval == nil || prepared.Traffic.RatePer == 0 {
+		serviceRunProblem(r.Context(), w, "read service-run traffic approval", errors.New("invalid stored traffic approval"))
 		return
 	}
 	response := controlv1.ServiceRunPreparation{
@@ -93,7 +111,8 @@ func (h *handler) PrepareServiceRun(w http.ResponseWriter, r *http.Request, serv
 		PublisherIdentityId: prepared.PublisherIdentityID, PublisherGrantId: prepared.PublisherGrantID,
 		PublisherKeyId: prepared.PublisherKeyID, IdempotencyKey: prepared.IdempotencyKey,
 		ExpiresAt: prepared.ExpiresAt,
-		Hostname:  prepared.Hostname, ServicePort: prepared.ServicePort, DomainId: prepared.DomainID,
+		Hostname:  prepared.Hostname, DomainId: prepared.DomainID,
+		Traffic: *approval,
 	}
 	if len(prepared.CertificatePlan.Identifiers) != 0 {
 		plan := managedCertificatePlan(prepared.CertificatePlan)

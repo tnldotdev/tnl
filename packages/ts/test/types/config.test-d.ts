@@ -37,6 +37,11 @@ test("deployments select declared bindings and reject infrastructure settings", 
   });
   // @ts-expect-error local is client-side and has no server reachability.
   defineConfig({ deployments: { local: { public: true } } });
+  // @ts-expect-error remote reachability must be explicit on individual service bindings.
+  defineConfig({ deployments: { production: { public: true } } });
+  const globalPrivate = { deployments: { production: { public: false } } } as const;
+  // @ts-expect-error even inferred false is not a supported deployment-wide default.
+  defineConfig(globalPrivate);
   const infrastructure = {
     deployments: { cloud: { description: "db", type: "self-hosted" } },
   } as const;
@@ -49,6 +54,34 @@ test("deployments select declared bindings and reject infrastructure settings", 
   defineConfig(aws);
   // @ts-expect-error fresh AWS settings are rejected.
   defineConfig({ deployments: { production: { aws: {} } } });
+});
+
+test("saved services select exposure independently of protocol and placement", () => {
+  const project = defineConfig({
+    services: { api: {}, db: { protocol: "postgres" } },
+    deployments: {
+      production: {
+        targets: {
+          api: { address: "http://app.internal:3000", public: true },
+          db: { address: "db.internal:5432", public: false },
+        },
+      },
+    },
+  });
+  expectTypeOf(project.deployments.production.targets.api.public).toEqualTypeOf<true>();
+  expectTypeOf(project.deployments.production.targets.db.public).toEqualTypeOf<false>();
+  const app = defineConfig({
+    services: { app: {}, db: { protocol: "postgres" } },
+    deployments: {
+      local: { targets: { app: { public: true }, db: { address: 5432, public: false } } },
+    },
+  });
+  expectTypeOf(app.deployments.local.targets.app.public).toEqualTypeOf<true>();
+  defineConfig({
+    services: { app: {} },
+    // @ts-expect-error one binding cannot select both service and legacy preview URL lifecycles.
+    deployments: { local: { targets: { app: { public: true, publicURL: {} } } } },
+  });
 });
 
 const config = defineConfig({
@@ -218,6 +251,35 @@ test("configuration context and arbitrary service lookups preserve absence", () 
 });
 
 test("configuration enforces service ownership and references for literals and factories", () => {
+  defineConfig({
+    services: { web: {} },
+    deployments: {
+      local: {
+        targets: {
+          web: {
+            public: true,
+            http: { access: { mode: "restricted", ip: ["192.0.2.1"] }, limits: { total: 100 } },
+          },
+        },
+      },
+      production: {
+        targets: {
+          web: {
+            address: "http://web.internal:3000",
+            public: true,
+            http: { access: { mode: "restricted", ip: ["192.0.2.1"] }, limits: { total: 100 } },
+          },
+        },
+      },
+    },
+  });
+  defineConfig({
+    services: { web: {} },
+    deployments: {
+      // @ts-expect-error legacy preview URL policy has one owner, in either placement.
+      local: { targets: { web: { publicURL: {}, http: { access: "restricted" } } } },
+    },
+  });
   defineConfig({
     services: { web: {}, api: {} },
     deployments: {

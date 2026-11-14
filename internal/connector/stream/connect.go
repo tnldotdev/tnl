@@ -13,6 +13,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/peer"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -116,7 +117,7 @@ type connectionConsumer func(context.Context, func(context.Context, net.Conn) er
 func serveConnections(ctx context.Context, config Config, consume connectionConsumer) (result error) {
 	startup, finish := observability.ClientOperation(ctx, "connector.startup")
 	defer func() { finish(result) }()
-	if config.Control == nil || !opaqueid.Valid(config.ServiceID, opaqueid.ServicePrefix) || config.IdentityID != "" && !opaqueid.Valid(config.IdentityID, opaqueid.IdentityPrefix) || !validProtocol(config.Protocol) || config.TrustRevision < 1 || config.Endpoint == nil || config.Endpoint.Hostname == "" || config.Endpoint.Port < 1024 || config.Endpoint.Port > 65535 {
+	if config.Control == nil || !opaqueid.Valid(config.ServiceID, opaqueid.ServicePrefix) || config.IdentityID != "" && !opaqueid.Valid(config.IdentityID, opaqueid.IdentityPrefix) || !validProtocol(config.Protocol) || config.TrustRevision < 1 || config.Endpoint == nil || !serviceendpoint.Valid(config.Protocol, config.Endpoint.Hostname, config.Endpoint.Port, config.Endpoint.Public) {
 		return ErrServiceConnection
 	}
 	if config.TransportTLS != nil && config.TransportTLS.InsecureSkipVerify || config.ServiceTLS == nil || config.ServiceTLS.InsecureSkipVerify || len(config.ServiceTLS.Certificates) != 0 || config.ServiceTLS.GetClientCertificate != nil {
@@ -178,5 +179,5 @@ func sameEndpoint(left, right *controlv1.ServiceEndpoint) bool {
 	if left == nil || right == nil {
 		return left == right
 	}
-	return left.Hostname == right.Hostname && left.Port == right.Port && left.Public == right.Public
+	return left.Hostname == right.Hostname
 }

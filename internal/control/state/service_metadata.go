@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
 )
 
@@ -31,8 +32,10 @@ type ServiceMetadata struct {
 
 type ServiceEndpoint struct {
 	Hostname string `json:"hostname"`
-	Port     int    `json:"port"`
-	Public   bool   `json:"public"`
+	// HTTP uses shared 443; zero means a non-HTTP service has no reservation.
+	// neither value selects a local connector listener or enables public access.
+	Port   int  `json:"port"`
+	Public bool `json:"public"`
 }
 
 func (m ServiceMetadata) Validate() error {
@@ -55,13 +58,13 @@ func checkedServiceMetadata(row controlstatedb.ControlService) (ServiceMetadata,
 		return m, err
 	}
 	if row.CertificateHostname != "" && row.ServicePort.Valid {
-		m.Endpoint = managedServiceTLS(row.CertificateHostname, int(row.ServicePort.Int32), row.Public)
+		m.Endpoint = managedServiceTLS(row.Protocol, row.CertificateHostname, int(row.ServicePort.Int32), row.Public)
 	}
 	return m, nil
 }
 
-func managedServiceTLS(hostname string, port int, public bool) *ServiceEndpoint {
-	if hostname == "" || port == 0 {
+func managedServiceTLS(protocol, hostname string, port int, public bool) *ServiceEndpoint {
+	if !serviceendpoint.Valid(protocol, hostname, port, public) {
 		return nil
 	}
 	return &ServiceEndpoint{Hostname: hostname, Port: port, Public: public}
@@ -103,6 +106,15 @@ func (d *Database) ConfigureService(ctx context.Context, serviceID, actorID stri
 		return result, ErrServiceConflict
 	}
 	changed := !serviceMetadataMatches(saved, metadata)
+	if saved.Protocol != metadata.Protocol {
+		var held bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.service_port_claims WHERE service_id=$1 AND state='held')`, serviceID).Scan(&held); err != nil {
+			return result, err
+		}
+		if row.Public || held {
+			return result, ErrServiceConflict
+		}
+	}
 	configurationChanged := changed || saved.PublisherPool != metadata.PublisherPool
 	if configurationChanged {
 		if _, err = nextPrivateRevision(saved.TrustRevision); err != nil {
@@ -126,6 +138,7 @@ func (d *Database) ConfigureService(ctx context.Context, serviceID, actorID stri
 		}
 	}
 	_, err = tx.Exec(ctx, `UPDATE control.services SET protocol=$2, tls_metadata=convert_from($3::bytea,'UTF8')::jsonb, publisher_pool=$4,
+	    service_port=CASE WHEN protocol<>$2 THEN CASE WHEN $2='http' THEN 443 ELSE 0 END ELSE service_port END,
 	    trust_revision=trust_revision+CASE WHEN $5 THEN 1 ELSE 0 END, updated_at=$6 WHERE id=$1`, serviceID, metadata.Protocol, encoded, metadata.PublisherPool, configurationChanged, now)
 	if err != nil {
 		return result, err
