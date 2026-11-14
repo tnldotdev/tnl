@@ -3,6 +3,7 @@ package invocation
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -11,10 +12,71 @@ import (
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
+
+func TestReserveConfiguredURLUsesRecordedIDWithoutNameFallback(t *testing.T) {
+	const id = "url_0123456789abcdefghijkl"
+	for _, mode := range []string{"current", "missing", "substituted ID", "substituted hostname", "changed policy"} {
+		t.Run(mode, func(t *testing.T) {
+			saved := controlv1.PublicURL{
+				Id: id, TeamId: "team", DomainId: "domain", Port: 25443, CanonicalHostname: "web.member.example",
+				PublicUrlScope: controlv1.Shared, Purpose: controlv1.App, ServiceProtocol: controlv1.Http,
+				LifecycleState: controlv1.Enabled, AccessMode: controlv1.Restricted,
+			}
+			switch mode {
+			case "substituted ID":
+				saved.Id = "url_abcdefghijkl0123456789"
+			case "substituted hostname":
+				saved.CanonicalHostname = "another.member.example"
+			case "changed policy":
+				saved.AccessMode = controlv1.Anonymous
+			}
+			requests := 0
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				if r.Method != http.MethodGet || r.URL.Path != "/v1/public-urls/"+id || r.Header.Get("Authorization") != "Bearer session" {
+					t.Errorf("recorded binding fell back to a name or mutation: %s %s", r.Method, r.URL)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				if mode == "missing" {
+					w.WriteHeader(http.StatusNotFound)
+					_ = json.NewEncoder(w).Encode(controlv1.Problem{Code: controlv1.NotFound})
+					return
+				}
+				_ = json.NewEncoder(w).Encode(saved)
+			}))
+			defer server.Close()
+			control, err := clientcontrol.New(server.URL, server.Client(), credentials.AccessToken("session"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			services := publisherServices{routes: control, teamID: "team", domainID: "domain", publicURLScope: controlv1.Shared}
+			cfg := publisher.Config{AssignedPublicURL: &controlv1.PublicURL{Id: id}, Hostname: "web.member.example",
+				Purpose: controlv1.App, ServiceProtocol: controlv1.Http, AccessMode: controlv1.Restricted}
+			selected, err := reserveConfiguredURL(t.Context(), services, cfg)
+			if requests != 1 {
+				t.Fatal("bound selection searched for or created another resource", requests)
+			}
+			if mode == "current" {
+				if err != nil || selected.Id != id || selected.Port != saved.Port {
+					t.Fatal("bound selection changed saved endpoint facts", selected, err)
+				}
+			} else if mode == "missing" {
+				if !errors.Is(err, clientcontrol.ErrNotFound) {
+					t.Fatal("missing bound URL did not remain missing", err)
+				}
+			} else if _, ok := failure.ReasonOf(err); !ok {
+				t.Fatal("changed bound URL was not rejected", err)
+			}
+		})
+	}
+}
 
 func TestReserveConfiguredURLCreatesBeforeEnrollingPublisher(t *testing.T) {
 	prefixes := []string{"192.0.2.1/32"}

@@ -89,6 +89,15 @@ func TestIntegrationAppliedProjectLocalProjectionAndMemberBinding(t *testing.T) 
 		if _, err := d.RealizeLocalProjectService(t.Context(), local); err != nil {
 			t.Fatal(err)
 		}
+		for _, actor := range []string{r.ActingIdentityID, member.IdentityID} {
+			bound, err := d.GetLocalProjectService(t.Context(), GetLocalProjectServiceRequest{
+				TeamID: r.TeamID, ProjectKey: local.ProjectKey, SourceFingerprint: local.SourceFingerprint,
+				Service: local.Service, WorktreeKey: worktree, ActorID: actor, Now: now,
+			})
+			if err != nil || bound.Kind != "public_url" || bound.ServiceID != u.ID || bound.Hostname != u.CanonicalHostname || bound.Metadata != nil {
+				t.Fatal("local lookup did not return the exact authorized public URL binding", bound, err)
+			}
+		}
 	}
 	projection, err := d.GetProjectPublicMetadata(t.Context(), r.TeamID, local.ProjectKey, member.IdentityID, now)
 	if err != nil || len(projection.Services) != 2 || projection.Services[0].PublicURLID == projection.Services[1].PublicURLID {
@@ -99,6 +108,19 @@ func TestIntegrationAppliedProjectLocalProjectionAndMemberBinding(t *testing.T) 
 		if !ok || service.Hostname != saved.CanonicalHostname || service.Port != saved.Port {
 			t.Fatal("worktree metadata changed the saved public endpoint", service)
 		}
+	}
+	lookup := GetLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: local.ProjectKey, SourceFingerprint: strings.Repeat("b", 64),
+		Service: local.Service, WorktreeKey: local.WorktreeKey, ActorID: member.IdentityID, Now: now}
+	if bound, err := d.GetLocalProjectService(t.Context(), lookup); !errors.Is(err, ErrProjectSourceConflict) || bound.ServiceID != "" || bound.Hostname != "" {
+		t.Fatal("authorized public URL lookup ignored its source binding or returned resource facts", err)
+	}
+	lookup.ActorID = finalVisitorIdentity(t, d, now, "ungranted-local-reader@example.test")
+	if bound, err := d.GetLocalProjectService(t.Context(), lookup); !errors.Is(err, ErrServiceAccess) || bound.ServiceID != "" || bound.Hostname != "" {
+		t.Fatal("unauthorized public URL lookup revealed source provenance", err)
+	}
+	lookup.ActorID, lookup.SourceFingerprint, lookup.WorktreeKey = r.ActingIdentityID, local.SourceFingerprint, "unrealized"
+	if _, err := d.GetLocalProjectService(t.Context(), lookup); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("local public URL lookup searched another worktree", err)
 	}
 	if _, err = d.GetProjectConfiguration(t.Context(), r.TeamID, local.ProjectKey, member.IdentityID, "local"); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("local visitor read full configuration", err)
@@ -118,5 +140,46 @@ func TestIntegrationAppliedProjectLocalProjectionAndMemberBinding(t *testing.T) 
 	}
 	if _, err = d.RealizeLocalProjectService(t.Context(), local); !errors.Is(err, ErrPublicURLAccess) {
 		t.Fatal("member binding was ignored", err)
+	}
+}
+
+func TestIntegrationLocalPublicLookupRetainsUnavailableBinding(t *testing.T) {
+	for _, lifecycle := range []string{"suspended", "deleted"} {
+		t.Run(lifecycle, func(t *testing.T) {
+			d, now := newControlStateIntegrationDatabase(t, "local_unavailable")
+			r := oidcRouteRequest(t, d, now)
+			if _, err := d.pool.Exec(t.Context(), `UPDATE control.teams SET kind='organization' WHERE id=$1`, r.TeamID); err != nil {
+				t.Fatal(err)
+			}
+			member := addAuthorityMember(t, d, now, r.ActingIdentityID, r.TeamID, "reader", TeamRoleMember)
+			u := createTestPublicURL(t, d, r, now)
+			local := RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: "retained", SourceFingerprint: strings.Repeat("a", 64),
+				Service: "web", WorktreeKey: "checkout", ActorID: r.ActingIdentityID, PublicURLID: u.ID, Now: now,
+				Configuration: ProjectServiceConfiguration{Target: "app", PublicURL: &ProjectServicePublicURL{}, Access: &ProjectServiceAccess{Team: true}}}
+			if _, err := d.RealizeLocalProjectService(t.Context(), local); err != nil {
+				t.Fatal(err)
+			}
+			query := `UPDATE control.public_urls SET lifecycle_state='suspended',suspended_at=$2 WHERE id=$1`
+			if lifecycle == "deleted" {
+				query = `UPDATE control.public_urls SET lifecycle_state='deleted',deleted_at=$2,request_digest_ciphertext=NULL,request_digest_storage_key_id=NULL WHERE id=$1`
+			}
+			if _, err := d.pool.Exec(t.Context(), query, u.ID, now); err != nil {
+				t.Fatal(err)
+			}
+			lookup := GetLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: local.ProjectKey, SourceFingerprint: local.SourceFingerprint,
+				Service: local.Service, WorktreeKey: local.WorktreeKey, ActorID: r.ActingIdentityID, Now: now}
+			if bound, err := d.GetLocalProjectService(t.Context(), lookup); !errors.Is(err, ErrProjectConfigurationStale) || bound.ServiceID != "" || bound.Hostname != "" {
+				t.Fatal("creator could replace an unavailable bound public URL or read resource facts", err)
+			}
+			lookup.ActorID = member.IdentityID
+			if bound, err := d.GetLocalProjectService(t.Context(), lookup); !errors.Is(err, ErrServiceAccess) || bound.ServiceID != "" || bound.Hostname != "" {
+				t.Fatal("visitor learned an unavailable binding", err)
+			}
+			var retained string
+			if err := d.pool.QueryRow(t.Context(), `SELECT public_url_id FROM control.local_project_services WHERE team_id=$1 AND project_key=$2 AND service=$3 AND worktree_key=$4`,
+				local.TeamID, local.ProjectKey, local.Service, local.WorktreeKey).Scan(&retained); err != nil || retained != u.ID {
+				t.Fatal("lookup replaced or removed the saved binding", err)
+			}
+		})
 	}
 }

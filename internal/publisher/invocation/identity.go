@@ -33,6 +33,22 @@ func reserveConfiguredURL(ctx context.Context, services publisherServices, cfg p
 	if cfg.Purpose != controlv1.App && cfg.Purpose != controlv1.Alias || cfg.Ephemeral || cfg.ServiceProtocol != controlv1.Http {
 		return controlv1.PublicURL{}, publisherCLIError("project publications require a saved HTTP app or alias public URL")
 	}
+	// a recorded project binding is stronger than a hostname lookup. missing or
+	// changed bound resources never authorize creating a replacement by name.
+	if cfg.AssignedPublicURL != nil {
+		publicURL, err := services.routes.GetPublicURL(ctx, cfg.AssignedPublicURL.Id)
+		if err != nil {
+			return controlv1.PublicURL{}, err
+		}
+		prefixes, err := checkedConfiguredURL(publicURL, services, cfg)
+		if err != nil {
+			return controlv1.PublicURL{}, err
+		}
+		if publicURL.Id != cfg.AssignedPublicURL.Id || publicURL.Target != "" || !configuredURLAccessMatches(publicURL, prefixes, cfg) {
+			return controlv1.PublicURL{}, failure.Wrap("read bound project public URL", failure.ServerConflict, errors.New("saved public URL differs from the applied service; apply the selected configuration before restarting it"))
+		}
+		return publicURL, nil
+	}
 	// an unchanged saved URL can be read while its publisher holds the
 	// hostname lock. only creation and edits need exclusive access.
 	publicURL, err := services.routes.GetPublicURLByHostname(ctx, services.teamID, cfg.Hostname)

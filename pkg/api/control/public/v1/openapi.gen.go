@@ -6236,7 +6236,7 @@ type ClientInterface interface {
 
 	// GetLocalProjectService Resolve one existing source-bound worktree service
 	//
-	// Read the existing service for this team, source, service key, and worktree. Requires visitor access, not project management permission. Returns identity and visitor protocol/TLS metadata, never targets or credentials. It does not create a service or search other worktrees or names. Missing or unauthorized bindings return 404; an authorized source mismatch returns 409.
+	// Read the existing service or public URL for this team, source, service key, and worktree. Requires current visitor access, not project management permission. A service returns identity and visitor protocol/TLS metadata; a public URL returns its recorded ID and hostname. Neither returns targets or credentials. It does not create a resource or search other worktrees or names. Missing or unauthorized bindings return 404; an authorized source mismatch returns 409. A current team manager who created a retained unavailable public URL binding receives 409 without resource facts, not permission to allocate a replacement.
 	//
 	// Corresponds with GET /v1/projects/{project_key}/local-services/{service} (the `GetLocalProjectService` operationId).
 	GetLocalProjectService(ctx context.Context, projectKey string, service string, params *GetLocalProjectServiceParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -8896,7 +8896,7 @@ func (c *Client) SelectDeploymentServiceRun(ctx context.Context, projectKey stri
 
 // GetLocalProjectService Resolve one existing source-bound worktree service
 //
-// Read the existing service for this team, source, service key, and worktree. Requires visitor access, not project management permission. Returns identity and visitor protocol/TLS metadata, never targets or credentials. It does not create a service or search other worktrees or names. Missing or unauthorized bindings return 404; an authorized source mismatch returns 409.
+// Read the existing service or public URL for this team, source, service key, and worktree. Requires current visitor access, not project management permission. A service returns identity and visitor protocol/TLS metadata; a public URL returns its recorded ID and hostname. Neither returns targets or credentials. It does not create a resource or search other worktrees or names. Missing or unauthorized bindings return 404; an authorized source mismatch returns 409. A current team manager who created a retained unavailable public URL binding receives 409 without resource facts, not permission to allocate a replacement.
 //
 // Corresponds with GET /v1/projects/{project_key}/local-services/{service} (the `GetLocalProjectService` operationId).
 func (c *Client) GetLocalProjectService(ctx context.Context, projectKey string, service string, params *GetLocalProjectServiceParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -20738,7 +20738,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetLocalProjectServiceWithResponse Resolve one existing source-bound worktree service
 	//
-	// Read the existing service for this team, source, service key, and worktree. Requires visitor access, not project management permission. Returns identity and visitor protocol/TLS metadata, never targets or credentials. It does not create a service or search other worktrees or names. Missing or unauthorized bindings return 404; an authorized source mismatch returns 409.
+	// Read the existing service or public URL for this team, source, service key, and worktree. Requires current visitor access, not project management permission. A service returns identity and visitor protocol/TLS metadata; a public URL returns its recorded ID and hostname. Neither returns targets or credentials. It does not create a resource or search other worktrees or names. Missing or unauthorized bindings return 404; an authorized source mismatch returns 409. A current team manager who created a retained unavailable public URL binding receives 409 without resource facts, not permission to allocate a replacement.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -30620,7 +30620,7 @@ func (c *ClientWithResponses) SelectDeploymentServiceRunWithResponse(ctx context
 
 // GetLocalProjectServiceWithResponse Resolve one existing source-bound worktree service
 //
-// Read the existing service for this team, source, service key, and worktree. Requires visitor access, not project management permission. Returns identity and visitor protocol/TLS metadata, never targets or credentials. It does not create a service or search other worktrees or names. Missing or unauthorized bindings return 404; an authorized source mismatch returns 409.
+// Read the existing service or public URL for this team, source, service key, and worktree. Requires current visitor access, not project management permission. A service returns identity and visitor protocol/TLS metadata; a public URL returns its recorded ID and hostname. Neither returns targets or credentials. It does not create a resource or search other worktrees or names. Missing or unauthorized bindings return 404; an authorized source mismatch returns 409. A current team manager who created a retained unavailable public URL binding receives 409 without resource facts, not permission to allocate a replacement.
 //
 // Returns a wrapper object for the known response body format(s).
 //

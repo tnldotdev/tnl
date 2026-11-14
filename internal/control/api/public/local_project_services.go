@@ -21,6 +21,10 @@ func (h *handler) GetLocalProjectService(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	result, err := store.GetLocalProjectService(r.Context(), controlstate.GetLocalProjectServiceRequest{TeamID: params.TeamId, ProjectKey: project, Service: service, SourceFingerprint: params.SourceFingerprint, WorktreeKey: params.WorktreeKey, ActorID: principal.identityID, Now: time.Now()})
+	if errors.Is(err, controlstate.ErrProjectConfigurationStale) {
+		writeProblem(w, 409, controlv1.Conflict, "the saved local resource is unavailable; restore it or apply the selected configuration")
+		return
+	}
 	if errors.Is(err, controlstate.ErrProjectConfigurationInvalid) || errors.Is(err, controlstate.ErrProjectSourceConflict) {
 		projectConfigurationProblem(r.Context(), w, "get local project service", err)
 		return

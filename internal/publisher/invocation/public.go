@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
@@ -13,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher/app"
 	"github.com/tnldotdev/tnl/internal/publisher/integrations"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func (a *ProjectRuntime) PublicConfiguration(ctx context.Context, service app.Service) (app.Configuration, error) {
@@ -77,6 +79,20 @@ func (a *ProjectRuntime) PublicConfiguration(ctx context.Context, service app.Se
 		return app.Configuration{}, err
 	}
 	cfg.TargetTLSName = cfg.TargetOptions.ServerName
+	source := project.LocalPublicationIdentity()
+	params := controlv1.GetLocalProjectServiceParams{TeamId: current.team.Id, SourceFingerprint: source.Fingerprint, WorktreeKey: project.LocalWorktreeKey()}
+	bound, err := services.authenticated.Control.GetLocalProjectService(ctx, source.Key, service.Name, params)
+	if err != nil && !errors.Is(err, clientcontrol.ErrNotFound) {
+		return app.Configuration{}, err
+	}
+	if err == nil {
+		if bound.Service != service.Name || bound.WorktreeKey != params.WorktreeKey ||
+			bound.ServiceKind != controlv1.LocalProjectServiceServiceKindPublicUrl || bound.ServiceId == "" ||
+			bound.Hostname == nil || *bound.Hostname != cfg.Hostname {
+			return app.Configuration{}, failure.Wrap("read bound project public URL", failure.ServerConflict, errors.New("recorded local resource differs from the selected service; apply the selected configuration before restarting it"))
+		}
+		cfg.AssignedPublicURL = &controlv1.PublicURL{Id: bound.ServiceId}
+	}
 	native, err := selectNativeProjectPublisher(ctx, services, cfg)
 	if err != nil {
 		return app.Configuration{}, err
@@ -85,6 +101,7 @@ func (a *ProjectRuntime) PublicConfiguration(ctx context.Context, service app.Se
 	if err != nil {
 		return app.Configuration{}, err
 	}
+	cfg.AssignedPublicURL = &publicURL
 	realized, err := RealizeLocalService(ctx, services.authenticated.Control, LocalService{Project: project.Project, Team: current, Name: service.Name, PublicURLID: publicURL.Id, TargetResolver: a.TargetResolver})
 	if err != nil {
 		return app.Configuration{}, err

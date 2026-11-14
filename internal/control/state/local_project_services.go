@@ -52,15 +52,49 @@ func (d *Database) GetLocalProjectService(ctx context.Context, r GetLocalProject
 		return result, err
 	}
 	defer rollback(ctx, tx, "get local project service", &retErr)()
-	row, err := controlstatedb.New(tx).GetLocalProjectService(ctx, controlstatedb.GetLocalProjectServiceParams{TeamID: r.TeamID, ProjectKey: r.ProjectKey, Service: r.Service, WorktreeKey: r.WorktreeKey})
-	if err != nil {
-		return result, publisherLookupError(err, ErrServiceAccess)
-	}
-	if _, _, err = privateVisitorAccess(ctx, tx, row.ControlService.ID, r.ActorID, r.Now); err != nil {
+	var resolved LocalProjectService
+	var source, publicURLID, hostname, creator string
+	var visitor, unavailable bool
+	err = tx.QueryRow(ctx, `SELECT local.source_fingerprint,u.id,u.canonical_hostname,local.created_by_identity_id,
+	    EXISTS(SELECT 1 FROM control.visitor_identity_permission('public_url',u.id,$5,$6,'',$7))
+	    FROM control.local_project_services local
+	    JOIN control.public_urls u ON u.id=local.public_url_id AND u.team_id=local.team_id
+	    WHERE local.team_id=$1 AND local.project_key=$2 AND local.service=$3 AND local.worktree_key=$4`,
+		r.TeamID, r.ProjectKey, r.Service, r.WorktreeKey, r.ActorID, companySessionID(ctx, r.ActorID), r.Now).Scan(&source, &publicURLID, &hostname, &creator, &visitor)
+	if err == nil {
+		if !visitor {
+			if creator != r.ActorID {
+				return result, ErrServiceAccess
+			}
+			if err = serviceManager(ctx, tx, r.TeamID, r.ActorID); err != nil {
+				return result, err
+			}
+			// the current manager who created this binding may learn it needs
+			// repair, but receives no disabled/deleted resource facts. absence
+			// must not authorize a replacement allocation by hostname.
+			unavailable = true
+		}
+		resolved = LocalProjectService{Service: r.Service, WorktreeKey: r.WorktreeKey, Kind: "public_url", ServiceID: publicURLID, Hostname: hostname}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return result, err
+	} else {
+		row, err := controlstatedb.New(tx).GetLocalProjectService(ctx, controlstatedb.GetLocalProjectServiceParams{TeamID: r.TeamID, ProjectKey: r.ProjectKey, Service: r.Service, WorktreeKey: r.WorktreeKey})
+		if err != nil {
+			return result, publisherLookupError(err, ErrServiceAccess)
+		}
+		if _, _, err = privateVisitorAccess(ctx, tx, row.ControlService.ID, r.ActorID, r.Now); err != nil {
+			return result, err
+		}
+		m, err := checkedServiceMetadata(row.ControlService)
+		if err != nil {
+			return result, err
+		}
+		m.TLS = nil
+		source = row.SourceFingerprint
+		resolved = LocalProjectService{Service: r.Service, WorktreeKey: r.WorktreeKey, Kind: "service", ServiceID: row.ControlService.ID, Metadata: &m}
 	}
 	// report source collisions only after authorizing the exact bound resource.
-	if row.SourceFingerprint != r.SourceFingerprint {
+	if source != r.SourceFingerprint {
 		return result, ErrProjectSourceConflict
 	}
 	if err = checkLocalProjectSource(ctx, tx, r.TeamID, r.ProjectKey, r.SourceFingerprint); err != nil {
@@ -73,13 +107,13 @@ func (d *Database) GetLocalProjectService(ctx context.Context, r GetLocalProject
 	if conflict {
 		return result, ErrProjectSourceConflict
 	}
-	m, err := checkedServiceMetadata(row.ControlService)
-	if err != nil {
+	if unavailable {
+		return result, ErrProjectConfigurationStale
+	}
+	if err = tx.Commit(ctx); err != nil {
 		return result, err
 	}
-	m.TLS = nil
-	result = LocalProjectService{Service: r.Service, WorktreeKey: r.WorktreeKey, Kind: "service", ServiceID: row.ControlService.ID, Metadata: &m}
-	return result, tx.Commit(ctx)
+	return resolved, nil
 }
 
 func localProjectPrivateName(r RealizeLocalProjectServiceRequest, name string) string {
