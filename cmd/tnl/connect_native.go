@@ -51,6 +51,8 @@ func writeNativeConnection(output io.Writer, profile connector.Profile, mode sta
 	for _, instruction := range profile.Instructions {
 		blocks = append(blocks, clioutput.Text(instruction))
 	}
-	blocks = append(blocks, clioutput.Section("client command", clioutput.Text(strings.Join(command, " "))))
+	if len(command) != 0 {
+		blocks = append(blocks, clioutput.Section("client command", clioutput.Text(strings.Join(command, " "))))
+	}
 	return writeHumanFrame(output, "tnl connect", "ready", footer, blocks...)
 }
