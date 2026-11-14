@@ -55,8 +55,12 @@ def test_local_deployment_requires_no_credential_and_reuses_driver_bindings(
     asyncio.run(run())
 
 
+@pytest.mark.parametrize(
+    "deployment_id", ["dpl_0123456789ABCDEFGHIJKL", "dpl_abcdefghijklmnopqrstuv"]
+)
 def test_remote_selections_are_independent_and_do_not_read_provider_configuration(
     monkeypatch: pytest.MonkeyPatch,
+    deployment_id: str,
 ) -> None:
     selected: list[dict[str, object] | None] = []
     stopped: list[_connections._Scope] = []
@@ -81,12 +85,12 @@ def test_remote_selections_are_independent_and_do_not_read_provider_configuratio
         client = tnl.create_client(
             project="acme/shop", services={"cache": {"protocol": "tcp"}}, token="private-credential"
         )
-        first, sibling = client.deployment("production"), client.deployment("customer")
+        first, sibling = client.deployment("production"), client.deployment(deployment_id)
         await first.connect("cache")
         await sibling.connect("cache")
         assert selected[0] is not selected[1]
         assert selected[0] is not None and selected[0]["name"] == "production"
-        assert selected[1] is not None and selected[1]["name"] == "customer"
+        assert selected[1] is not None and selected[1]["name"] == deployment_id
         assert "private-credential" not in repr(first)
         await first.aclose()
         assert stopped == [first._scope]
@@ -98,3 +102,29 @@ def test_remote_selections_are_independent_and_do_not_read_provider_configuratio
         assert failure.value.code == "sdk.connection_closed"
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "",
+        "dpl_short",
+        "dpl_" + "a" * 23,
+        "dpl_" + "a" * 21 + "-",
+        "dpl_" + "a" * 21 + "é",
+        "dpl_" + "a" * 22 + "\n",
+        "svc_" + "a" * 22,
+    ],
+)
+def test_invalid_deployment_selection_is_rejected_before_native_startup(
+    name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def prepare(*_args: object) -> None:
+        pytest.fail("invalid selection started native work")
+
+    monkeypatch.setattr(_connections._Scope, "prepare", prepare)
+    client = tnl.create_client(
+        project="acme/shop", services={"cache": {"protocol": "tcp"}}, token="private-credential"
+    )
+    with pytest.raises(tnl.TnlError):
+        client.deployment(name)

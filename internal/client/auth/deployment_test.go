@@ -67,6 +67,42 @@ func TestDeploymentCredentialPortableSigningAndExactSelection(t *testing.T) {
 	}
 }
 
+func TestDeploymentCredentialTeamUsesAuthorityLabels(t *testing.T) {
+	for _, team := range []string{"123studio", strings.Repeat("a", 33), strings.Repeat("a", 63)} {
+		t.Run(team, func(t *testing.T) {
+			value := deploymentFixture(t)
+			value.Team = team
+			encoded, err := value.Encode()
+			if err != nil {
+				t.Fatal("valid team could not export its credential", err)
+			}
+			recovered, err := ParseDeploymentCredential(encoded)
+			if err != nil || recovered.Team != team {
+				t.Fatal("valid team could not consume its credential", err)
+			}
+			if err := recovered.SelectProject(team + "/shop"); err != nil {
+				t.Fatal("valid team could not select its project", err)
+			}
+		})
+	}
+	for _, team := range []string{"", "Acme", "-acme", "acme-", "acme.team", "acme_team", strings.Repeat("a", 64)} {
+		t.Run("invalid-"+team, func(t *testing.T) {
+			value := deploymentFixture(t)
+			value.Team = team
+			if _, err := value.Encode(); !errors.Is(err, ErrDeploymentCredential) {
+				t.Fatal("invalid team exported a credential", err)
+			}
+			data, err := json.Marshal(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ParseDeploymentCredential(deploymentTokenPrefix + base64.RawURLEncoding.EncodeToString(data)); !errors.Is(err, ErrDeploymentCredential) {
+				t.Fatal("invalid team consumed a credential", err)
+			}
+		})
+	}
+}
+
 func TestDeploymentCredentialRejectsInvalidOrExpiredInput(t *testing.T) {
 	value := deploymentFixture(t)
 	for _, change := range []func(*DeploymentCredential){
@@ -101,6 +137,7 @@ func TestDeploymentCredentialRejectsInvalidOrExpiredInput(t *testing.T) {
 
 func TestDeploymentCredentialRegistrationRetainsOriginalProtectedKeyAfterLostReply(t *testing.T) {
 	value := deploymentFixture(t)
+	value.Team = "123" + strings.Repeat("a", 60)
 	var public string
 	calls := 0
 	f := newAuthFixture(t, func(r *http.Request) (*http.Response, error) {
@@ -130,7 +167,7 @@ func TestDeploymentCredentialRegistrationRetainsOriginalProtectedKeyAfterLostRep
 	body.AllDeployments = new(controlv1.RegisterDeploymentCredentialRequestAllDeployments(true))
 	body.Permissions.Connect = new(controlv1.DeploymentCredentialServiceSelection{"db"})
 	register := func() (DeploymentCredential, error) {
-		return RegisterDeploymentCredential(t.Context(), f.store, control, testControlOrigin, value.Approval.TeamId, "acme", "shop", "original", body)
+		return RegisterDeploymentCredential(t.Context(), f.store, control, testControlOrigin, value.Approval.TeamId, value.Team, "shop", "original", body)
 	}
 	if _, err := register(); err == nil {
 		t.Fatal("lost reply was reported as success")
@@ -138,6 +175,9 @@ func TestDeploymentCredentialRegistrationRetainsOriginalProtectedKeyAfterLostRep
 	recovered, err := register()
 	if err != nil {
 		t.Fatal(err)
+	}
+	if recovered.Team != value.Team || recovered.SelectProject(value.Team+"/shop") != nil {
+		t.Fatal("registration lost the authority team label")
 	}
 	key, err := recovered.PublicKey()
 	if err != nil {

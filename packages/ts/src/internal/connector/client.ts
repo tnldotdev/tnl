@@ -203,7 +203,10 @@ export function createClient<const Services extends ServiceFacts = Record<never,
     deployment<Selected extends string>(
       name: Selected,
     ): Deployment<Services, Selected extends "local" ? true : false> {
-      if (!serviceNameSchema.safeParse(name).success && !/^pgrp_[a-z0-9]{22}$/.test(name))
+      if (
+        !serviceNameSchema.safeParse(name).success &&
+        (!/^dpl_[A-Za-z0-9]{22}$/.test(name) || name.length !== 26)
+      )
         throw new TnlError("sdk.configuration_invalid");
       if (name !== "local" && (project === undefined || token === undefined))
         throw new TnlError("sdk.configuration_invalid");
@@ -224,6 +227,7 @@ export function createClient<const Services extends ServiceFacts = Record<never,
       const factories = new Set<{ close(): Promise<void> }>();
       const requests = new Set<Promise<unknown>>();
       const httpFetches = new Map<string, TnlFetch & { close(): Promise<void> }>();
+      const httpLifetime = new AbortController();
       let closed = false;
       let closing: Promise<void> | undefined;
       const validate = (service: string) => {
@@ -294,7 +298,17 @@ export function createClient<const Services extends ServiceFacts = Record<never,
                         } as ConnectionSnapshot),
                   ),
                 );
-                return (await managed)(input, init);
+                const signal =
+                  init?.signal === undefined && input instanceof Request
+                    ? input.signal
+                    : init?.signal;
+                return (await managed)(input, {
+                  ...init,
+                  signal:
+                    signal == null
+                      ? httpLifetime.signal
+                      : AbortSignal.any([httpLifetime.signal, signal]),
+                });
               };
               transport = Object.assign(fetch, {
                 async close() {
@@ -385,18 +399,16 @@ export function createClient<const Services extends ServiceFacts = Record<never,
         close(): Promise<void> {
           closed = true;
           closing ??= (async () => {
-            const work = await Promise.allSettled([
+            httpLifetime.abort(closedError);
+            const results = await Promise.allSettled([
               ...pending,
               ...[...factories].map(async (factory) => {
                 await factory.close();
                 factories.delete(factory);
               }),
               ...requests,
+              ...[...httpFetches.values()].map((value) => value.close()),
             ]);
-            const pools = await Promise.allSettled(
-              [...httpFetches.values()].map((value) => value.close()),
-            );
-            const results = [...work, ...pools];
             const errors = [
               ...new Set(
                 results.flatMap((result) =>

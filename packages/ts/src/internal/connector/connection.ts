@@ -394,6 +394,7 @@ export function managedFetch(
   let dispatcher: Dispatcher | undefined;
   let poolKey: string | undefined;
   const retired = new Set<Pool>();
+  const uploads = new Set<(reason?: unknown) => Promise<void>>();
   const run: TnlFetch = async (input, init) => {
     if (closed) throw new TnlError("sdk.client_closed");
     const running = [...retired, ...(pool === undefined ? [] : [pool])].reduce(
@@ -404,6 +405,9 @@ export function managedFetch(
     active++;
     let request: Request | undefined;
     let dispatched = false;
+    let cancelUpload: ((reason?: unknown) => Promise<void>) | undefined;
+    let uploadFailure: { value: unknown } | undefined;
+    let uploadStopped = false;
     try {
       const requestOptions: RequestInit & { duplex?: "half" } = {
         ...init,
@@ -427,6 +431,8 @@ export function managedFetch(
       )
         throw new TnlError("sdk.response_invalid");
       const { Pool, buildConnector, fetch: transportFetch } = await import("undici/index.js");
+      lifetime.throwIfAborted();
+      if (closed) throw new TnlError("sdk.client_closed");
       const nextKey = JSON.stringify([
         snapshot.host,
         snapshot.port,
@@ -485,18 +491,50 @@ export function managedFetch(
       // bun's global fetch ignores undici dispatchers. own the same transport on
       // both runtimes so the managed origin can never fall back to a direct dial.
       const body = request.body;
+      const reader = body?.getReader();
+      if (reader !== undefined) {
+        let canceling: Promise<void> | undefined;
+        const cancel = (reason?: unknown) => {
+          if (canceling === undefined) {
+            uploadStopped = true;
+            // interrupt a pending read directly: returning the generator cannot do it.
+            canceling = Promise.resolve()
+              .then(() => reader.cancel(reason))
+              .finally(() => {
+                lifetime.removeEventListener("abort", aborted);
+                reader.releaseLock();
+              });
+            // retain a failed cleanup until the request or transport owner observes it.
+            void canceling.then(
+              () => uploads.delete(cancel),
+              () => {},
+            );
+          }
+          return canceling;
+        };
+        const aborted = () => {
+          void cancel(lifetime.reason).catch(() => {});
+        };
+        cancelUpload = cancel;
+        uploads.add(cancel);
+        lifetime.addEventListener("abort", aborted, { once: true });
+        if (lifetime.aborted) aborted();
+      }
       async function* upload() {
-        if (body === null) return;
-        const reader = body.getReader();
+        if (reader === undefined) return;
         try {
           for (;;) {
+            if (uploadStopped) return;
             const chunk = await reader.read();
-            if (chunk.done) return;
+            if (chunk.done || uploadStopped) return;
+            lifetime.throwIfAborted();
             yield chunk.value;
           }
+        } catch (error) {
+          uploadFailure = { value: error };
+          throw error;
         } finally {
-          await reader.cancel().catch(() => {});
-          reader.releaseLock();
+          await cancelUpload?.();
         }
       }
       dispatched = true;
@@ -513,28 +551,28 @@ export function managedFetch(
         referrerPolicy: request.referrerPolicy,
         ...(body === null ? {} : { body: upload(), duplex: "half" }),
       });
-      const reader = response.body?.getReader();
+      const responseReader = response.body?.getReader();
       const stream =
-        reader === undefined
+        responseReader === undefined
           ? null
           : new ReadableStream<Uint8Array>({
               async pull(controller) {
                 try {
-                  const chunk = await reader.read();
+                  const chunk = await responseReader.read();
                   if (chunk.done) {
                     controller.close();
-                    reader.releaseLock();
+                    responseReader.releaseLock();
                   } else controller.enqueue(chunk.value);
                 } catch (error) {
                   controller.error(error);
-                  reader.releaseLock();
+                  responseReader.releaseLock();
                 }
               },
               async cancel(reason: unknown) {
                 try {
-                  await reader.cancel(reason);
+                  await responseReader.cancel(reason);
                 } finally {
-                  reader.releaseLock();
+                  responseReader.releaseLock();
                 }
               },
             });
@@ -545,9 +583,17 @@ export function managedFetch(
       });
       return responseIdentity(result, response.url, response.type);
     } catch (error) {
-      if (!dispatched && request?.body !== null && request?.body !== undefined)
-        void request.body.cancel(error).catch(() => {});
-      throw error;
+      const failure = uploadFailure === undefined ? error : uploadFailure.value;
+      try {
+        if (cancelUpload !== undefined) await cancelUpload(failure);
+        else if (!dispatched && request?.body !== null && request?.body !== undefined)
+          await request.body.cancel(failure);
+      } catch (cleanup) {
+        if (cleanup !== failure) throw new TnlCleanupError(failure, cleanup);
+      } finally {
+        if (cancelUpload !== undefined) uploads.delete(cancelUpload);
+      }
+      throw failure;
     } finally {
       active--;
     }
@@ -555,9 +601,10 @@ export function managedFetch(
   return Object.assign(run, {
     async close() {
       closed = true;
-      const results = await Promise.allSettled(
-        [...retired, ...(pool === undefined ? [] : [pool])].map((value) => value.destroy()),
-      );
+      const results = await Promise.allSettled([
+        ...[...uploads].map((cancel) => cancel(new TnlError("sdk.client_closed"))),
+        ...[...retired, ...(pool === undefined ? [] : [pool])].map((value) => value.destroy()),
+      ]);
       const failures = results.flatMap((result) =>
         result.status === "rejected" ? [result.reason as unknown] : [],
       );

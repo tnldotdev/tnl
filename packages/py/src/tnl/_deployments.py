@@ -38,7 +38,8 @@ class Deployment:
     def __init__(
         self, project: str, name: str, token: str | None, services: Mapping[str, Protocol]
     ) -> None:
-        service_name(name) if not name.startswith("pgrp_") else None
+        if re.fullmatch(r"dpl_[A-Za-z0-9]{22}", name) is None:
+            service_name(name)
         self._local = name == "local"
         if not self._local and token is None:
             raise TnlError("sdk.configuration_invalid", "supply an approved deployment credential")

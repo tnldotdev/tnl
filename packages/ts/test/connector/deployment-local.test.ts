@@ -205,6 +205,124 @@ describe("explicit local deployment", () => {
     }
   });
 
+  test("close aborts and joins a pending HTTP request and retains failed driver cleanup for retry", async () => {
+    const received = Promise.withResolvers<void>();
+    const disconnected = Promise.withResolvers<void>();
+    const listener = createServer((_request, response) => {
+      response.once("close", () => disconnected.resolve());
+      received.resolve();
+    });
+    await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
+    const local = createClient({ services }).deployment("local");
+    try {
+      const failure = new Error("driver cleanup failed");
+      const close = vi.fn().mockRejectedValueOnce(failure).mockResolvedValue(undefined);
+      await local.client("db", { create: () => ({}), close })();
+      const address = listener.address();
+      if (address === null || typeof address === "string") throw new Error("missing listener");
+      native.reply.protocol = "http";
+      native.reply.port = address.port;
+      native.reply.url = `http://127.0.0.1:${address.port}`;
+      const app = await local.connect("app");
+      const pending = app.fetch("/never-responds");
+      const rejected = expect(pending).rejects.toMatchObject({ code: "sdk.client_closed" });
+      await received.promise;
+      await expect(local.close()).rejects.toBe(failure);
+      await rejected;
+      await disconnected.promise;
+      await local.close();
+      expect(close).toHaveBeenCalledTimes(2);
+      await expect(app.fetch("/")).rejects.toMatchObject({ code: "sdk.client_closed" });
+    } finally {
+      listener.closeAllConnections();
+      await new Promise<void>((resolve) => listener.close(() => resolve()));
+      await local.close();
+    }
+  });
+
+  test.each(["close", "caller abort"])(
+    "%s cancels and joins a stalled HTTP upload before releasing its reader",
+    async (mode) => {
+      const received = Promise.withResolvers<string>();
+      const cancelStarted = Promise.withResolvers<unknown>();
+      const finishCancel = Promise.withResolvers<void>();
+      const listener = createServer((request) => {
+        request.once("data", (chunk: Buffer) => received.resolve(chunk.toString()));
+      });
+      await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
+      const local = createClient({ services }).deployment("local");
+      const controller = new AbortController();
+      let canceled = false;
+      const cancel = vi.fn(async (reason: unknown) => {
+        cancelStarted.resolve(reason);
+        await finishCancel.promise;
+        canceled = true;
+      });
+      const body = new ReadableStream<Uint8Array>({
+        start(stream) {
+          stream.enqueue(new TextEncoder().encode("first chunk"));
+        },
+        cancel,
+      });
+      try {
+        const address = listener.address();
+        if (address === null || typeof address === "string") throw new Error("missing listener");
+        native.reply.protocol = "http";
+        native.reply.port = address.port;
+        native.reply.url = `http://127.0.0.1:${address.port}`;
+        const app = await local.connect("app");
+        const pending = app.fetch("/stalled-upload", {
+          method: "POST",
+          body,
+          signal: controller.signal,
+        });
+        let settled = false;
+        const outcome = pending.then(
+          () => {
+            settled = true;
+            throw new Error("stalled upload unexpectedly succeeded");
+          },
+          (error: unknown) => {
+            settled = true;
+            return error;
+          },
+        );
+        expect(await received.promise).toBe("first chunk");
+        expect(body.locked).toBe(true);
+        const reason = new Error("caller stopped upload");
+        let closed = false;
+        let closing: Promise<void> | undefined;
+        if (mode === "close") {
+          closing = local.close().then(() => {
+            closed = true;
+          });
+          expect(await cancelStarted.promise).toMatchObject({ code: "sdk.client_closed" });
+        } else {
+          controller.abort(reason);
+          expect(await cancelStarted.promise).toBe(reason);
+        }
+        expect(settled).toBe(false);
+        expect(closed).toBe(false);
+        expect(canceled).toBe(false);
+        finishCancel.resolve();
+        const failure = await outcome;
+        if (mode === "close") expect(failure).toMatchObject({ code: "sdk.client_closed" });
+        else expect(failure).toBe(reason);
+        await closing;
+        expect(canceled).toBe(true);
+        expect(cancel).toHaveBeenCalledOnce();
+        expect(body.locked).toBe(false);
+        await local.close();
+      } finally {
+        finishCancel.resolve();
+        controller.abort();
+        listener.closeAllConnections();
+        await local.close();
+        await new Promise<void>((resolve) => listener.close(() => resolve()));
+      }
+    },
+  );
+
   test("TCP and MySQL stream settings dial the selected listener directly", async () => {
     const listener = createTCPServer((socket) => socket.end("local tcp"));
     await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
@@ -309,6 +427,31 @@ describe("explicit local deployment", () => {
     native.queued[0]?.();
     await observed;
     await closeFailure;
+  });
+
+  test("close preserves both an independent selection failure and a retryable driver failure", async () => {
+    const local = createClient({ services }).deployment("local");
+    const driverFailure = new Error("independent driver failure");
+    const close = vi.fn().mockRejectedValueOnce(driverFailure).mockResolvedValue(undefined);
+    await local.client("db", { create: () => ({}), close })();
+    native.wait = true;
+    const getting = local.connect("db");
+    const observed = expect(getting).rejects.toMatchObject({
+      code: "sdk.local_connection_unavailable",
+    });
+    const closing = local.close();
+    const failure = expect(closing).rejects.toMatchObject({
+      errors: [
+        expect.objectContaining({ code: "sdk.local_connection_unavailable" }),
+        driverFailure,
+      ],
+    });
+    native.error = new Error("independent native failure");
+    native.queued[0]?.();
+    await observed;
+    await failure;
+    await local.close();
+    expect(close).toHaveBeenCalledTimes(2);
   });
 
   test("manually closed driver factories release their capacity", async () => {

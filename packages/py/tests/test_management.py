@@ -15,7 +15,7 @@ from tnl import _management_client, models
 
 def deployment() -> dict[str, object]:
     return {
-        "id": "pgrp_selected",
+        "id": "dpl_0123456789ABCDEFGHIJKL",
         "team_id": "tm_selected",
         "project_key": "shop",
         "name": "production",
@@ -29,7 +29,7 @@ def publisher() -> dict[str, object]:
     return {
         "team_id": "tm_selected",
         "project_key": "shop",
-        "deployment_id": "pgrp_selected",
+        "deployment_id": "dpl_0123456789ABCDEFGHIJKL",
         "deployment_name": "production",
         "publisher_identity_id": "pub_selected",
         "key_id": "pkey_selected",
@@ -112,7 +112,10 @@ def test_project_management_preserves_original_keys_conditions_and_pagination(
         if operation == "deployments.list":
             return {
                 "schema": 1,
-                "data": {"deployments": [deployment()], "next_cursor": "pgrp_next"},
+                "data": {
+                    "deployments": [deployment()],
+                    "next_cursor": "dpl_0123456789ABCDEFGHIJKM",
+                },
             }
         if operation == "deployments.delete":
             return {"schema": 1}
@@ -127,10 +130,12 @@ def test_project_management_preserves_original_keys_conditions_and_pagination(
         created = await client.deployments.create(body, idempotency_key="original")
         recovered = await client.deployments.create(body, idempotency_key="original")
         assert created == recovered
-        assert created.data.id == "pgrp_selected" and created.etag == '"3"'
+        assert created.data.id == "dpl_0123456789ABCDEFGHIJKL" and created.etag == '"3"'
         assert (await client.deployments.get(created.data.id)) == created
-        page = await client.deployments.list(after="pgrp_previous", limit=1)
-        assert page.deployments == [created.data] and page.next_cursor == "pgrp_next"
+        page = await client.deployments.list(after="dpl_0123456789ABCDEFGHIJKK", limit=1)
+        assert (
+            page.deployments == [created.data] and page.next_cursor == "dpl_0123456789ABCDEFGHIJKM"
+        )
         await client.deployments.update(
             created.data.id, {"targets": {"db": {"address": "changed:5432"}}}, if_match=created.etag
         )
@@ -139,7 +144,7 @@ def test_project_management_preserves_original_keys_conditions_and_pagination(
     asyncio.run(run())
     assert requests[0] == requests[1]
     assert requests[0]["idempotency_key"] == "original"
-    assert requests[3]["after"] == "pgrp_previous" and requests[3]["limit"] == 1
+    assert requests[3]["after"] == "dpl_0123456789ABCDEFGHIJKK" and requests[3]["limit"] == 1
     assert requests[4]["if_match"] == requests[5]["if_match"] == '"3"'
     assert all(r["project"] == "acme/shop" and r["token"] == "tnc_private" for r in requests)
 
@@ -150,7 +155,7 @@ def test_publisher_management_returns_real_generated_models(
     enrollment = {
         "enrollment_key": "private_setup",
         "enrollment_id": "enrollment-original",
-        "deployment_id": "pgrp_selected",
+        "deployment_id": "dpl_0123456789ABCDEFGHIJKL",
         "expires_at": "2026-11-13T10:10:00Z",
         "max_members": 1,
         "services": {"db": "postgres"},
@@ -176,15 +181,17 @@ def test_publisher_management_returns_real_generated_models(
     async def run() -> None:
         client = tnl.create_client(project="acme/shop", token="tnc_private")
         setup = await client.publishers.create_enrollment(
-            "pgrp_selected", {"services": ["db"]}, idempotency_key="setup-original"
+            "dpl_0123456789ABCDEFGHIJKL", {"services": ["db"]}, idempotency_key="setup-original"
         )
         assert isinstance(setup, models.DeploymentPublisherEnrollment)
         assert setup.enrollment_key == "private_setup" and setup.services == {"db": "postgres"}
-        page = await client.publishers.list("pgrp_selected", after="pub_previous", limit=1)
-        item = await client.publishers.get("pgrp_selected", "pub_selected")
+        page = await client.publishers.list(
+            "dpl_0123456789ABCDEFGHIJKL", after="pub_previous", limit=1
+        )
+        item = await client.publishers.get("dpl_0123456789ABCDEFGHIJKL", "pub_selected")
         assert isinstance(item, models.DeploymentPublisher) and item == page.publishers[0]
         assert item.healthy is False
-        await client.publishers.revoke("pgrp_selected", "pub_selected")
+        await client.publishers.revoke("dpl_0123456789ABCDEFGHIJKL", "pub_selected")
 
     asyncio.run(run())
     assert requests[0]["idempotency_key"] == "setup-original"

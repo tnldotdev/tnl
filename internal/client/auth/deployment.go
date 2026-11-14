@@ -46,7 +46,7 @@ func (DeploymentCredential) GoString() string { return "private deployment crede
 func (c DeploymentCredential) key() (ed25519.PrivateKey, error) {
 	server, err := naming.CanonicalControlURL(c.ControlURL)
 	a := c.Approval
-	if err != nil || c.Version != 1 || server != c.ControlURL || !naming.ValidServiceName(c.Team) || !naming.ValidProjectKey(a.ProjectKey) ||
+	if err != nil || c.Version != 1 || server != c.ControlURL || !naming.ValidAuthorityLabel(c.Team) || !naming.ValidProjectKey(a.ProjectKey) ||
 		!opaqueid.Valid(a.TeamId, opaqueid.TeamPrefix) || !opaqueid.Valid(a.ClientId, opaqueid.PublisherIdentityPrefix) ||
 		!opaqueid.Valid(a.KeyId, opaqueid.PublisherIdentityKeyPrefix) || !opaqueid.Valid(a.GrantId, opaqueid.PublisherGrantPrefix) || !a.ExpiresAt.After(time.Now()) {
 		return nil, ErrDeploymentCredential
