@@ -574,7 +574,16 @@ export function deploymentConnector(
     if (closed) throw closedError;
     if (selection.token === undefined && selection.handle !== undefined) {
       const file = selection.handle;
-      const ipc = await (borrowed ??= ownerIPC(file));
+      if (borrowed === undefined) {
+        const opening = ownerIPC(file);
+        borrowed = opening;
+        // retry only this captured capability after an initialization failure.
+        // the original promise still reports the error to its waiting callers.
+        void opening.catch(() => {
+          if (borrowed === opening) borrowed = undefined;
+        });
+      }
+      const ipc = await borrowed;
       const prepared = parsePrepared(
         await ipc.prepare(name, undefined, undefined, {
           project: selection.project,

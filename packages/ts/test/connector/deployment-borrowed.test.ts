@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, realpath, readFile, writeFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createServer as createTLSServer } from "node:https";
 import { tmpdir } from "node:os";
@@ -135,6 +135,55 @@ async function fixture() {
 }
 
 const services = { api: { protocol: "http" } } as const;
+
+test("borrowed deployment retries failed initialization on its same captured handle", async () => {
+  const owner = await fixture();
+  const deployment = createClient({ project: "acme/project", services }).deployment("production");
+  const descriptor = await readFile(owner.file);
+  try {
+    await rm(owner.file);
+    await expect(deployment.connect("api")).rejects.toMatchObject({
+      code: "sdk.connection_unavailable",
+    });
+    expect(owner.requests).toEqual([]);
+    vi.stubEnv("TNL_CONNECTION_HANDLE", "/wrong/job/handle.json");
+    vi.stubEnv("TNL_TOKEN", "wrong-tenant");
+    await writeFile(owner.file, descriptor, { mode: 0o600 });
+    const connection = await deployment.connect("api");
+    expect(await (await connection.fetch("/")).text()).toBe("verified deployment traffic");
+    expect(owner.requests).toHaveLength(2);
+    expect(owner.requests.every((value) => value.selection.name === "production")).toBe(true);
+    await expect(deployment.close()).resolves.toBeUndefined();
+    vi.stubEnv("TNL_CONNECTION_HANDLE", owner.file);
+    vi.stubEnv("TNL_TOKEN", undefined);
+    const sibling = createClient({ project: "acme/project", services }).deployment("production");
+    try {
+      expect((await sibling.connect("api")).url).toBe("https://localhost:8443");
+    } finally {
+      await sibling.close();
+    }
+  } finally {
+    await deployment.close().catch(() => {});
+    await owner.close();
+  }
+});
+
+test("closing after observed borrowed initialization failure has no IPC client to clean up", async () => {
+  const owner = await fixture();
+  const deployment = createClient({ project: "acme/project", services }).deployment("production");
+  try {
+    await rm(owner.file);
+    await expect(deployment.connect("api")).rejects.toMatchObject({
+      code: "sdk.connection_unavailable",
+    });
+    await expect(deployment.close()).resolves.toBeUndefined();
+    await expect(deployment.close()).resolves.toBeUndefined();
+    expect(owner.requests).toEqual([]);
+  } finally {
+    await deployment.close().catch(() => {});
+    await owner.close();
+  }
+});
 
 test("borrowed deployments capture exact selection and own independent verified HTTP transports", async () => {
   const owner = await fixture();
