@@ -247,7 +247,10 @@ func (w *Workers) Run(ctx context.Context, service Service, observe func(uint64,
 		}
 		switch event.Type {
 		case publisher.EventPublicURLAssigned:
-			return tunnel.SetPublicURL(ctx, event.PublicURLID, event.PublicURL)
+			if err := tunnel.SetPublicURL(ctx, event.PublicURLID, event.PublicURL); err != nil {
+				return err
+			}
+			return w.Manager.bindPublicURL(service.Name, service.RegistrationID, service.Target, event.PublicURL)
 		case publisher.EventProvisioning:
 			if cfg.ServiceProtocol != "http" && cfg.ServiceProtocol != "" {
 				entry = &proofEntry{service: service, run: publisher.PublishRunIdentity{Number: event.PublishRunNumber}, target: configuration.TargetBinding}

@@ -473,6 +473,23 @@ func (m *Manager) BindTunnel(name, id, target, tunnelID string) error {
 	return m.writeErr
 }
 
+// allocation can finish after preparation. only the current listener owner can
+// replace its empty or previously allocated origin in the saved app snapshot.
+func (m *Manager) bindPublicURL(name, id, target, publicURL string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.currentRegistrationLocked(name, id, target) {
+		return ErrRegistrationStale
+	}
+	service := m.serviceLocked(name)
+	if service.PublicURL == publicURL {
+		return m.writeErr
+	}
+	service.PublicURL = publicURL
+	m.emitLocked("service.public_url", service)
+	return m.writeErr
+}
+
 func (m *Manager) RecordFailure(name, reason string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

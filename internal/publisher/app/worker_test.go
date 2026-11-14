@@ -125,6 +125,55 @@ func receiveConfig(t *testing.T, ready <-chan publisher.Config) publisher.Config
 	}
 }
 
+func TestAllocatedPublicURLReplacesEmptyPreparationInAppSnapshot(t *testing.T) {
+	w, _ := testWorkers(t)
+	ready := make(chan publisher.Config, 1)
+	const origin = "https://public.example:20007"
+	w.RunPublisher = func(ctx context.Context, cfg publisher.Config) error {
+		if err := cfg.Observe(publisher.Event{Type: publisher.EventPublicURLAssigned, PublicURLID: "url_0123456789abcdefghijkl", PublicURL: origin}); err != nil {
+			return err
+		}
+		if err := cfg.Observe(publisher.Event{Type: publisher.EventReady, PublicURL: origin, PublishRunNumber: 1}); err != nil {
+			return err
+		}
+		ready <- cfg
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	id, err := w.Manager.Reserve("web", "owner", 1, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Manager.Register(id, "owner", "http://127.0.0.1:3000", "node"); err != nil {
+		t.Fatal(err)
+	}
+	cfg := receiveConfig(t, ready)
+	service := w.Manager.Snapshot().Services[0]
+	if service.PublicURL != origin || !service.Routable {
+		t.Fatalf("allocated origin missing from live snapshot: %+v", service)
+	}
+	saved, err := ReadSnapshotFrom(t.Context(), w.Database, w.Manager.Snapshot().Project)
+	if err != nil || len(saved.Services) != 1 || saved.Services[0].PublicURL != origin {
+		t.Fatal("allocated origin missing from journal", err)
+	}
+	for _, candidate := range []struct{ name, registration, target string }{
+		{"other", id, service.Target}, {"web", "old-registration", service.Target}, {"web", id, "http://127.0.0.1:4000"},
+	} {
+		if err := w.Manager.bindPublicURL(candidate.name, candidate.registration, candidate.target, "https://stale.example:20008"); !errors.Is(err, ErrRegistrationStale) {
+			t.Fatal("allocation crossed the current listener boundary", err)
+		}
+	}
+	if err := w.Manager.Unregister(id, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Observe(publisher.Event{Type: publisher.EventPublicURLAssigned, PublicURL: "https://stale.example:20008"}); err == nil {
+		t.Fatal("ended worker replaced the retained allocated origin")
+	}
+	if w.Manager.Snapshot().Services[0].PublicURL != origin {
+		t.Fatal("stale allocation changed app metadata")
+	}
+}
+
 func TestOwnerProofIsFreshExactAndStaleReadinessCannotCrossReplacement(t *testing.T) {
 	w, ready := testWorkers(t)
 	id, err := w.Manager.Reserve("web", "owner", 1, "https://public.example")
