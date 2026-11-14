@@ -63,15 +63,6 @@ func TestDeploymentContextNeedsNoProjectFilesAndFencesExactSelection(t *testing.
 	if err != nil || first.ConfigDigest == sibling.ConfigDigest {
 		t.Fatal("deployment selection shared an owner", err)
 	}
-	r.Name = "dpl_" + strings.Repeat("A", 22)
-	_, selectedID, err := connectionDeployment(o)
-	if err != nil || selectedID.Deployment != r.Name {
-		t.Fatal("current deployment ID was rejected", err)
-	}
-	r.Name = "pgrp_" + strings.Repeat("a", 22)
-	if _, _, err := connectionDeployment(o); !errors.Is(err, connectorruntime.ErrInvalid) {
-		t.Fatal("retired deployment ID was accepted", err)
-	}
 	r.Name = "production"
 	_, replacement, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {

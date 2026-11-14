@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -20,6 +21,11 @@ func TestWorkerCancellationRetainsIndependentFailures(t *testing.T) {
 	}
 	if err := independentWorkerFailure(ErrRegistrationStale, false); !errors.Is(err, ErrRegistrationStale) {
 		t.Fatal("live worker failure was discarded", err)
+	}
+	wrapped := fmt.Errorf("worker: %w", errors.Join(context.Canceled, ErrRegistrationStale, operation, cleanup))
+	err = independentWorkerFailure(wrapped, true)
+	if !errors.Is(err, operation) || !errors.Is(err, cleanup) || errors.Is(err, context.Canceled) || errors.Is(err, ErrRegistrationStale) {
+		t.Fatal("wrapped cancellation concealed a reportable independent failure", err)
 	}
 }
 
@@ -78,6 +84,255 @@ func TestUnregisterJoinsWorkerBeforeRetryableExactCleanup(t *testing.T) {
 	}
 	if _, found := manager.ServiceForRegistration(id); found {
 		t.Fatal("successful cleanup retained its registration")
+	}
+}
+
+func TestPermanentCleanupRetiresJoinedRegistrationAndPreservesFailures(t *testing.T) {
+	for _, stopped := range []string{"close", "expired", "dead"} {
+		t.Run(stopped, func(t *testing.T) {
+			operation, cleanup := errors.New("worker failed independently"), errors.New("deletion authority was revoked")
+			canceled, release, joined := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "web"}}, func(ctx context.Context, _ Service, _ func(uint64, bool) error) error {
+				defer close(joined)
+				<-ctx.Done()
+				close(canceled)
+				<-release
+				return errors.Join(ctx.Err(), operation)
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer manager.Close()
+			var attempts atomic.Int32
+			manager.Cleanup = func(Service) error {
+				select {
+				case <-joined:
+				default:
+					t.Error("cleanup crossed the worker join")
+				}
+				attempts.Add(1)
+				return errors.Join(ErrCleanupPermanent, cleanup)
+			}
+			id, err := manager.Reserve("web", "owner", 1, "https://web.example")
+			if err != nil {
+				t.Fatal(err)
+			}
+			const target = "http://127.0.0.1:3000"
+			if err := manager.Register(id, "owner", target, "node"); err != nil {
+				t.Fatal(err)
+			}
+			stoppedResult := make(chan error, 1)
+			if stopped == "expired" {
+				manager.mu.Lock()
+				manager.registrations["web"].expires = time.Now().Add(-time.Second)
+				manager.mu.Unlock()
+			}
+			go func() {
+				if stopped == "close" {
+					stoppedResult <- manager.UnregisterTarget(id, "owner", target)
+				} else {
+					manager.Sweep(func(int) bool { return stopped != "dead" })
+					stoppedResult <- manager.RetirementError()
+				}
+			}()
+			<-canceled
+			if attempts.Load() != 0 {
+				t.Fatal("cleanup ran before the worker joined")
+			}
+			close(release)
+			result := <-stoppedResult
+			if !errors.Is(result, operation) || !errors.Is(result, cleanup) ||
+				stopped == "close" && !errors.Is(result, ErrRegistrationStopped) {
+				t.Fatal("local retirement lost its failure", result)
+			}
+			if _, found := manager.ServiceForRegistration(id); found {
+				t.Fatal("permanent cleanup retained a dead registration")
+			}
+			if failure := manager.Snapshot().Services[0].Failure; failure != "runtime.publication_cleanup_failed" {
+				t.Fatal("journal did not report failed remote cleanup", failure)
+			}
+			if err := manager.RetirementError(); !errors.Is(err, operation) || !errors.Is(err, cleanup) {
+				t.Fatal("owner retirement lost an independent failure", err)
+			}
+			manager.mu.Lock()
+			manager.idleSince = manager.idleSince.Add(-CleanupGrace)
+			manager.mu.Unlock()
+			if !manager.Sweep(func(int) bool { return false }) || attempts.Load() != 1 {
+				t.Fatal("idle owner retried permanent deletion or could not exit", attempts.Load())
+			}
+		})
+	}
+}
+
+func TestFinalCloseReportsRetryableCleanupFailure(t *testing.T) {
+	cleanup := errors.New("temporary deletion failure")
+	manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "web"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.Cleanup = func(Service) error { return cleanup }
+	if _, err := manager.Reserve("web", "owner", 1, ""); err != nil {
+		t.Fatal(err)
+	}
+	manager.Close()
+	if !errors.Is(manager.RetirementError(), cleanup) {
+		t.Fatal("final owner shutdown swallowed cleanup failure", manager.RetirementError())
+	}
+}
+
+func TestStoppedOutcomeReplayIsExactBoundedAndDoesNotDelayIdleExit(t *testing.T) {
+	manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "web"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	cleanup := errors.New("deletion permanently denied")
+	var attempts int
+	manager.Cleanup = func(Service) error {
+		attempts++
+		return errors.Join(ErrCleanupPermanent, cleanup)
+	}
+	id, err := manager.Reserve("web", "owner", 1, "https://web.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := manager.UnregisterTarget(id, "owner", "")
+	if !errors.Is(first, ErrRegistrationStopped) || !errors.Is(first, cleanup) {
+		t.Fatal("missing terminal cleanup outcome", first)
+	}
+	if replay := manager.UnregisterTarget(id, "owner", ""); replay != first || attempts != 1 {
+		t.Fatal("lost reply changed the terminal outcome or retried deletion", replay, attempts)
+	}
+	for _, wrong := range []struct{ id, owner, target string }{
+		{id, "other", ""}, {id, "owner", "http://127.0.0.1:3000"}, {"other", "owner", ""},
+	} {
+		if err := manager.UnregisterTarget(wrong.id, wrong.owner, wrong.target); !errors.Is(err, ErrRegistrationStale) {
+			t.Fatal("another binding replayed a stopped outcome", err)
+		}
+	}
+	manager.mu.Lock()
+	manager.idleSince = manager.idleSince.Add(-CleanupGrace)
+	manager.mu.Unlock()
+	if !manager.Sweep(nil) {
+		t.Fatal("outcome replay extended owner lifetime")
+	}
+	manager.mu.Lock()
+	outcome := manager.stopped[id]
+	outcome.expires = time.Now().Add(-time.Second)
+	manager.stopped[id] = outcome
+	manager.mu.Unlock()
+	if err := manager.UnregisterTarget(id, "owner", ""); !errors.Is(err, ErrRegistrationStale) {
+		t.Fatal("expired terminal outcome was retained", err)
+	}
+	for index := range maxStoppedOutcomes + 1 {
+		if _, err := manager.Reserve("web", "owner", 1, ""); err != nil {
+			t.Fatal(err)
+		}
+		// populate distinct stopped service names to prove the capacity bound.
+		manager.mu.Lock()
+		service := *manager.serviceLocked("web")
+		service.Name = fmt.Sprintf("service-%d", index)
+		manager.rememberStoppedLocked(service, "owner", service.Target, first)
+		manager.serviceLocked("web").releaseRegistration()
+		delete(manager.registrations, "web")
+		manager.mu.Unlock()
+	}
+	if len(manager.stopped) != maxStoppedOutcomes {
+		t.Fatal("stopped outcomes exceeded their capacity", len(manager.stopped))
+	}
+	manager.mu.Lock()
+	manager.stopped[id] = stoppedOutcome{service: "web", owner: "owner", expires: time.Now().Add(time.Minute), err: first}
+	manager.mu.Unlock()
+	if _, err := manager.Reserve("web", "replacement", 2, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.UnregisterTarget(id, "owner", ""); !errors.Is(err, ErrRegistrationStale) {
+		t.Fatal("a replacement binding retained the old stopped outcome", err)
+	}
+}
+
+func TestSuccessfulUnregisterReplyCanBeReplayedWithoutRepeatingCleanup(t *testing.T) {
+	manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "web"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	attempts := 0
+	manager.Cleanup = func(Service) error {
+		attempts++
+		return nil
+	}
+	id, err := manager.Reserve("web", "owner", 1, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := manager.UnregisterTarget(id, "owner", ""); err != nil {
+			t.Fatal("exact successful cleanup acknowledgment could not replay", err)
+		}
+	}
+	if attempts != 1 {
+		t.Fatal("successful cleanup repeated after losing its reply", attempts)
+	}
+	if err := manager.UnregisterTarget(id, "another-owner", ""); !errors.Is(err, ErrRegistrationStale) {
+		t.Fatal("successful acknowledgment crossed its owner fence", err)
+	}
+}
+
+func TestPreparedUnregisterRetainsAcceptedTargetWithoutBindingAListener(t *testing.T) {
+	for _, permanent := range []bool{false, true} {
+		t.Run(fmt.Sprint(permanent), func(t *testing.T) {
+			manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "web"}}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer manager.Close()
+			transient := errors.New("cleanup temporarily unavailable")
+			attempts := 0
+			manager.Cleanup = func(service Service) error {
+				attempts++
+				if service.Target != "" || service.Registered || service.RunNumber != 0 {
+					t.Fatal("unregister invented a listener binding", service)
+				}
+				if attempts == 1 {
+					return transient
+				}
+				if permanent {
+					return errors.Join(ErrCleanupPermanent, errors.New("cleanup permanently failed"))
+				}
+				return nil
+			}
+			id, err := manager.Reserve("web", "owner", 1, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			const target = "http://127.0.0.1:3000"
+			if err := manager.UnregisterTarget(id, "owner", target); !errors.Is(err, transient) {
+				t.Fatal("preparation cleanup did not retain its transient failure", err)
+			}
+			if err := manager.UnregisterTarget(id, "owner", "http://127.0.0.1:4000"); !errors.Is(err, ErrRegistrationStale) || attempts != 1 {
+				t.Fatal("a different target retried cleanup of an unbound preparation", err)
+			}
+			first := manager.UnregisterTarget(id, "owner", target)
+			if permanent != errors.Is(first, ErrRegistrationStopped) {
+				t.Fatal("wrong completed cleanup outcome", first)
+			}
+			if replay := manager.UnregisterTarget(id, "owner", target); replay != first || attempts != 2 {
+				t.Fatal("exact prepared-only replay lost its accepted target", replay, attempts)
+			}
+			for _, retry := range []struct{ id, owner, target string }{
+				{id, "owner", ""},
+				{id, "another-owner", target},
+				{"reg_00000000000000000000000000000000", "owner", target},
+			} {
+				if err := manager.UnregisterTarget(retry.id, retry.owner, retry.target); !errors.Is(err, ErrRegistrationStale) || attempts != 2 {
+					t.Fatal("prepared-only replay crossed its accepted binding", err, attempts)
+				}
+			}
+			if service := manager.Snapshot().Services[0]; service.Target != "" || service.Registered {
+				t.Fatal("cleanup outcome became publication metadata", service)
+			}
+		})
 	}
 }
 

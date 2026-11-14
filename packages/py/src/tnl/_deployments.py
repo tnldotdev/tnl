@@ -429,11 +429,12 @@ class Deployment:
                     await publication.aclose()
                 except BaseException as error:
                     failures.append(error)
-                else:
+                if publication._close_complete:
                     try:
                         await publication.wait()
                     except BaseException as error:
-                        failures.append(error)
+                        if error not in failures:
+                            failures.append(error)
             pending = await asyncio.gather(*tuple(self._pending), return_exceptions=True)
             failures.extend(
                 value

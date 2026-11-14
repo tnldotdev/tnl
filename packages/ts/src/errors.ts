@@ -1,5 +1,6 @@
 export type TnlErrorCode =
   | "sdk.publication_failed"
+  | "sdk.publication_cleanup_failed"
   | "sdk.owner_conflict"
   | "sdk.registration_stale"
   | "sdk.authentication_required"
@@ -40,6 +41,12 @@ const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; mes
     class: "unavailable",
     retry: "later",
     message: "the public URL did not become available; check tnl status and the local listener",
+  },
+  "sdk.publication_cleanup_failed": {
+    class: "unavailable",
+    retry: "never",
+    message:
+      "the publication stopped, but cleanup failed; the temporary public URL may remain until control expires it",
   },
   "sdk.owner_conflict": {
     class: "conflict",

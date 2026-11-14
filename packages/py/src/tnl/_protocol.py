@@ -31,6 +31,17 @@ class InvalidResponse(TnlError):
         super().__init__("sdk.response_invalid", "the local publisher returned an invalid response")
 
 
+class PublicationCleanupFailed(TnlError):
+    """native joined the worker and retired its registration, but cleanup failed."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "sdk.publication_cleanup_failed",
+            "the publication stopped, but cleanup failed; the temporary public URL may remain"
+            " until control expires it",
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class Endpoint:
     url: str

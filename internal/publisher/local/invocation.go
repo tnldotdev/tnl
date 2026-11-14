@@ -12,11 +12,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientserver "github.com/tnldotdev/tnl/internal/client/server"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/publisher"
@@ -71,12 +73,16 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 	var native *publisheridentity.Native
 	var profile *clientstate.Store
 	var publicURL controlv1.PublicURL
+	var credentialExpiry time.Time
 	server := ""
 	if request.Deployment != nil {
-		native, profile, publicURL, limits, err = a.prepareDeploymentInvocation(ctx, request)
+		var selection deploymentInvocation
+		selection, err = a.prepareDeploymentInvocation(ctx, request)
 		if err != nil {
 			return publisherprotocol.Registration{}, err
 		}
+		native, profile, publicURL, limits = selection.native, selection.profile, selection.publicURL, selection.limits
+		credentialExpiry = selection.expiresAt
 		server = native.ControlURL()
 	} else {
 		server = valueOrEmpty(a.project.Config.Server)
@@ -124,25 +130,7 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 			return publisherprotocol.Registration{}, err
 		}
 	}
-	// serialize cleanup attempts, but cache only success so transient deletion
-	// failures can be retried after the worker has joined.
-	var cleanupMu sync.Mutex
-	cleaned := false
-	cleanup := func() error {
-		cleanupMu.Lock()
-		defer cleanupMu.Unlock()
-		if cleaned || !publicURL.Ephemeral {
-			return nil
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		err := native.DeletePublicURL(ctx, publicURL.Id)
-		if err == nil || errors.Is(err, clientcontrol.ErrNotFound) {
-			cleaned = true
-			return nil
-		}
-		return err
-	}
+	cleanup := invocationCleanup(native, publicURL, credentialExpiry)
 	transferred, id := false, ""
 	defer func() {
 		if !transferred {
@@ -206,6 +194,42 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 	}
 	transferred = true
 	return publisherprotocol.Registration{Version: 1, RegistrationID: id, Owner: request.Owner, Target: request.Target}, nil
+}
+
+// retain one exact allocation for transient retries. permanent authority loss or
+// the captured grant deadline retires only local ownership, never remote state.
+func invocationCleanup(native *publisheridentity.Native, publicURL controlv1.PublicURL, expiresAt time.Time) func() error {
+	var mu sync.Mutex
+	cleaned := false
+	var permanent error
+	return func() error {
+		mu.Lock()
+		defer mu.Unlock()
+		if cleaned || !publicURL.Ephemeral {
+			return nil
+		}
+		if permanent != nil {
+			return permanent
+		}
+		if !expiresAt.IsZero() && !time.Now().Before(expiresAt) {
+			permanent = errors.Join(publisherapp.ErrCleanupPermanent, auth.ErrDeploymentCredential)
+			return permanent
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		err := native.DeletePublicURL(ctx, publicURL.Id)
+		if err == nil || errors.Is(err, clientcontrol.ErrNotFound) {
+			cleaned = true
+			return nil
+		}
+		reason, _ := failure.ReasonOf(err)
+		if errors.Is(err, clientauthority.ErrUnauthenticated) || errors.Is(err, clientcontrol.ErrUnauthenticated) ||
+			errors.Is(err, publisheridentity.ErrScope) || reason == failure.ServerDenied {
+			permanent = errors.Join(publisherapp.ErrCleanupPermanent, err)
+			return permanent
+		}
+		return err
+	}
 }
 
 func invocationLimits(input *controlv1.PublisherApplicationLimits) (applicationlimits.Limits, error) {

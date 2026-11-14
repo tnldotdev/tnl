@@ -439,8 +439,12 @@ export function createClient<const Services extends ServiceFacts = Record<never,
           )
             throw new TnlError("sdk.configuration_invalid");
           const work = (async () => {
-            const { publishServer, publishFetch, validatePublicationOptions } =
-              await import("../publisher/publication.js");
+            const {
+              publishServer,
+              publishFetch,
+              validatePublicationOptions,
+              publicationCleanupFailed,
+            } = await import("../publisher/publication.js");
             if (closed) throw closedError;
             validatePublicationOptions(options, service !== undefined);
             const selection: PublicationSelection =
@@ -483,7 +487,11 @@ export function createClient<const Services extends ServiceFacts = Record<never,
             const close = () =>
               (closingPublication ??= (async () => {
                 const results = await Promise.allSettled([base.close(), base.wait()]);
-                if (results[0]?.status === "fulfilled") publications.delete(handle);
+                if (
+                  results[0]?.status === "fulfilled" ||
+                  (results[0]?.status === "rejected" && publicationCleanupFailed(results[0].reason))
+                )
+                  publications.delete(handle);
                 const errors = [
                   ...new Set(
                     results.flatMap((result) =>
@@ -562,7 +570,13 @@ export function createClient<const Services extends ServiceFacts = Record<never,
               ...pending,
               ...stoppingPublications,
               ...[...failedPublications].map(async (cleanup) => {
-                await cleanup();
+                try {
+                  await cleanup();
+                } catch (cause) {
+                  if (cause instanceof TnlError && cause.code === "sdk.publication_cleanup_failed")
+                    failedPublications.delete(cleanup);
+                  throw cause;
+                }
                 failedPublications.delete(cleanup);
               }),
               ...[...factories].map(async (factory) => {

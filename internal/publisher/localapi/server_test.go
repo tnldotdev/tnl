@@ -2,6 +2,7 @@ package localapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/client/project/meta"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
@@ -16,6 +19,166 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 )
+
+func TestLostStoppedUnregisterReplyReplaysOnlyItsExactScopedBinding(t *testing.T) {
+	testLostUnregisterReply(t, false, true)
+}
+
+func TestLostPreparedUnregisterReplyReplaysOnlyItsExactAcceptedTarget(t *testing.T) {
+	t.Run("success", func(t *testing.T) { testLostUnregisterReply(t, true, false) })
+	t.Run("failure", func(t *testing.T) { testLostUnregisterReply(t, true, true) })
+}
+
+func testLostUnregisterReply(t *testing.T, prepared, permanent bool) {
+	t.Helper()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	database, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	manager, err := publisherapp.New(t.Context(), root, database, []publisherapp.Service{{Name: "web"}, {Name: "api"}}, func(ctx context.Context, _ publisherapp.Service, _ func(uint64, bool) error) error {
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	var cleanup atomic.Int32
+	manager.Cleanup = func(service publisherapp.Service) error {
+		cleanup.Add(1)
+		if prepared && (service.Target != "" || service.Registered) {
+			t.Error("prepared-only cleanup acquired a listener target")
+		}
+		if !permanent {
+			return nil
+		}
+		return errors.Join(publisherapp.ErrCleanupPermanent, errors.New("remote deletion denied"))
+	}
+	server := httptest.NewUnstartedServer(nil)
+	caps, err := publisherprotocol.NewCapabilities("http://" + server.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	web, api := "web", "api"
+	endpoint, err := caps.Issue(publisherprotocol.CapabilityRequest{Scope: "app", Service: &web})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := caps.Issue(publisherprotocol.CapabilityRequest{Scope: "app", Service: &api})
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundary := (&Server{Capabilities: caps, Manager: manager, Prepare: func(_ context.Context, request publisherprotocol.Prepare) (publisherprotocol.Assignment, error) {
+		id, err := manager.Reserve(request.Service, request.Owner, request.PID, "")
+		return publisherprotocol.Assignment{
+			Version: 1, RegistrationID: id, Service: request.Service,
+			Project: (meta.Metadata{Version: meta.Version, Services: map[string]meta.Service{}}).Public(true),
+		}, err
+	}}).Handler()
+	var dropped atomic.Bool
+	server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/unregister" || dropped.Swap(true) {
+			boundary.ServeHTTP(w, r)
+			return
+		}
+		reply := httptest.NewRecorder()
+		boundary.ServeHTTP(reply, r)
+		expected := http.StatusNoContent
+		if permanent {
+			expected = http.StatusConflict
+		}
+		if reply.Code != expected {
+			t.Error("wrong completed cleanup acknowledgment", reply.Code)
+		}
+		connection, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		_ = connection.Close()
+	})
+	server.Start()
+	defer server.Close()
+	owner := "0123456789abcdef0123456789abcdef"
+	var id string
+	if prepared {
+		var assignment publisherprotocol.Assignment
+		if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/prepare", publisherprotocol.Prepare{
+			Version: 1, Directory: root, Service: "web", Framework: "python", Owner: owner, PID: 1,
+		}, &assignment); err != nil {
+			t.Fatal(err)
+		}
+		if assignment.PublicURL != "" {
+			t.Fatal("private HTTP preparation invented a public URL")
+		}
+		id = assignment.RegistrationID
+	} else {
+		id, err = manager.Reserve("web", owner, 1, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	registration := publisherprotocol.Registration{Version: 1, RegistrationID: id, Owner: owner, Target: "http://127.0.0.1:3000"}
+	if !prepared {
+		if err := manager.Register(id, owner, registration.Target, "node"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/unregister", registration, nil); err == nil {
+		t.Fatal("fixture did not drop the terminal cleanup acknowledgment")
+	}
+	if _, found := manager.ServiceForRegistration(id); found {
+		t.Fatal("terminal acknowledgment retained a live registration")
+	}
+	replayCode := ""
+	if permanent {
+		replayCode = "runtime.publication_cleanup_failed"
+	}
+	for _, test := range []struct {
+		endpoint publisherprotocol.Endpoint
+		body     publisherprotocol.Registration
+		code     string
+	}{
+		{endpoint, registration, replayCode},
+		{other, registration, "runtime.registration_stale"},
+		{endpoint, publisherprotocol.Registration{Version: 1, RegistrationID: id, Owner: "fedcba9876543210fedcba9876543210", Target: registration.Target}, "runtime.registration_stale"},
+		{endpoint, publisherprotocol.Registration{Version: 1, RegistrationID: id, Owner: owner, Target: "http://127.0.0.1:4000"}, "runtime.registration_stale"},
+		{endpoint, publisherprotocol.Registration{Version: 1, RegistrationID: "reg_00000000000000000000000000000000", Owner: owner, Target: registration.Target}, "runtime.registration_stale"},
+		{endpoint, registration, replayCode},
+	} {
+		var response *publisherprotocol.ResponseError
+		err := publisherprotocol.Call(t.Context(), test.endpoint, "POST", "/v1/unregister", test.body, nil)
+		if test.code == "" && err == nil {
+			continue
+		}
+		if !errors.As(err, &response) || response.Code != test.code {
+			t.Fatal("unregister outcome crossed its scope or lost the cleanup failure", response, err)
+		}
+	}
+	if cleanup.Load() != 1 {
+		t.Fatal("replay repeated completed cleanup", cleanup.Load())
+	}
+}
+
+func TestStoppedPublicationCleanupFailureDoesNotClaimSuccessOrAuthenticationRecovery(t *testing.T) {
+	cleanup := errors.New("remote deletion failed")
+	for _, cause := range []error{clientcontrol.ErrUnauthenticated, publisherapp.ErrRegistrationStale} {
+		recorder := httptest.NewRecorder()
+		Problem(recorder, errors.Join(publisherapp.ErrRegistrationStopped, cause, cleanup))
+		var problem publisherprotocol.Problem
+		if err := json.Unmarshal(recorder.Body.Bytes(), &problem); err != nil {
+			t.Fatal(err)
+		}
+		if recorder.Code != http.StatusConflict || problem.Code != "runtime.publication_cleanup_failed" {
+			t.Fatal("joined cleanup failure lost its stopped outcome", recorder.Code, problem)
+		}
+	}
+}
 
 func TestAppCapabilityCannotReplaceAnotherServiceOrSubmitReadiness(t *testing.T) {
 	root, _ := filepath.EvalSymlinks(t.TempDir())

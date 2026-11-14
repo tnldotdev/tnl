@@ -215,6 +215,7 @@ async function publishServerUntraced(
   let assignedURL: `https://${string}` | undefined;
   let registration: z.output<typeof registrationSchema> | undefined;
   let uncertain = false;
+  let unregisterReplyLost = false;
   const register = async () => {
     uncertain = true;
     try {
@@ -238,6 +239,15 @@ async function publishServerUntraced(
           telemetry_disabled: request.telemetry_disabled,
         }),
       );
+      registration = {
+        version: 1 as const,
+        registration_id: assignment.registrationID,
+        owner,
+        target,
+      };
+      // prepare already reserved the registration, even without a public url.
+      // cleanup must release that acknowledgment, not repeat validation.
+      uncertain = false;
       if (
         endpoint.scope !== "app" ||
         assignment.service !== localService ||
@@ -247,12 +257,7 @@ async function publishServerUntraced(
       )
         throw new TnlError("sdk.response_invalid");
       assignedURL = assignment.publicURL;
-      registration = {
-        version: 1 as const,
-        registration_id: assignment.registrationID,
-        owner,
-        target,
-      };
+      uncertain = true;
       await runtime.request(endpoint, "register", registration);
       uncertain = false;
     } catch (cause) {
@@ -268,7 +273,11 @@ async function publishServerUntraced(
   };
   const unregister = async () => {
     // recover the original invocation before cleanup when its reply was lost.
-    for (let attempt = 0; uncertain; attempt++) {
+    for (
+      let attempt = 0;
+      uncertain && !(localService !== undefined && registration !== undefined);
+      attempt++
+    ) {
       try {
         await register();
       } catch (cause) {
@@ -277,7 +286,41 @@ async function publishServerUntraced(
         endpoint = await runtime.start(directory, undefined, selection);
       }
     }
-    if (registration !== undefined) await runtime.request(endpoint, "unregister", registration);
+    if (registration !== undefined) {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          await runtime.request(endpoint, "unregister", registration);
+          break;
+        } catch (cause) {
+          if (publicationCleanupFailed(cause)) {
+            registration = undefined;
+            uncertain = false;
+            unregisterReplyLost = false;
+          }
+          // an expired outcome or a replacement owner's capability rejection
+          // cannot turn a previously lost cleanup result into successful cleanup.
+          if (
+            unregisterReplyLost &&
+            cause instanceof TnlError &&
+            cause.code === "sdk.registration_stale"
+          )
+            throw new TnlError("sdk.dev_unavailable");
+          if (
+            cause instanceof TnlError &&
+            (cause.code === "sdk.dev_unavailable" || cause.code === "sdk.response_invalid")
+          )
+            unregisterReplyLost = true;
+          if (attempt >= 2 || !(cause instanceof TnlError) || cause.code !== "sdk.dev_unavailable")
+            throw cause;
+          // retry the same endpoint and exact registration. native retains the
+          // stopped error when a terminal unregister acknowledgment is lost.
+          await runtime.pause(100);
+        }
+      }
+      registration = undefined;
+      uncertain = false;
+      unregisterReplyLost = false;
+    }
   };
   try {
     await register();
@@ -285,7 +328,7 @@ async function publishServerUntraced(
     try {
       await unregister();
     } catch (cleanup) {
-      publication?.retainCleanup?.(unregister);
+      if (!publicationCleanupFailed(cleanup)) publication?.retainCleanup?.(unregister);
       throw new TnlCleanupError(cause, cleanup);
     }
     throw cause;
@@ -464,7 +507,7 @@ async function publishServerUntraced(
     try {
       await close();
     } catch (cleanupError) {
-      publication?.retainCleanup?.(close);
+      if (!publicationCleanupFailed(cleanupError)) publication?.retainCleanup?.(close);
       throw new TnlCleanupError(cause, cleanupError);
     }
     throw cause;
@@ -547,6 +590,30 @@ function aborted(): DOMException {
   return new DOMException("publication was aborted", "AbortError");
 }
 
+export function publicationCleanupFailed(cause: unknown): boolean {
+  return cause instanceof TnlError && cause.code === "sdk.publication_cleanup_failed";
+}
+
+async function closeOwnedPublication(
+  server: LocalHTTPServer,
+  cleanup: () => Promise<void>,
+): Promise<void> {
+  let publicationError: unknown;
+  try {
+    await cleanup();
+  } catch (cause) {
+    if (!publicationCleanupFailed(cause)) throw cause;
+    publicationError = cause;
+  }
+  try {
+    await closeServer(server);
+  } catch (cause) {
+    if (publicationError !== undefined) throw new TnlCleanupError(publicationError, cause);
+    throw cause;
+  }
+  if (publicationError !== undefined) throw publicationError;
+}
+
 // inline Fetch handlers own their Node listener; a supplied server is never closed.
 export async function publishFetch(
   handler: FetchHandler,
@@ -570,10 +637,7 @@ export async function publishFetch(
             ...publication,
             retainCleanup: (cleanup) => {
               retained = true;
-              publication.retainCleanup?.(async () => {
-                await cleanup();
-                await closeServer(server);
-              });
+              publication.retainCleanup?.(() => closeOwnedPublication(server, cleanup));
             },
           },
     );
@@ -589,10 +653,7 @@ export async function publishFetch(
   let closing: Promise<void> | undefined;
   const close = (): Promise<void> => {
     if (closing !== undefined) return closing;
-    closing = (async () => {
-      await base.close();
-      await closeServer(server);
-    })().catch((cause: unknown) => {
+    closing = closeOwnedPublication(server, base.close).catch((cause: unknown) => {
       closing = undefined;
       throw cause;
     });
@@ -613,7 +674,7 @@ export async function publishFetch(
       try {
         await close();
       } catch (cause) {
-        if (failure !== undefined) throw new TnlCleanupError(failure, cause);
+        if (failure !== undefined && failure !== cause) throw new TnlCleanupError(failure, cause);
         throw cause;
       }
       if (failure !== undefined) throw failure;

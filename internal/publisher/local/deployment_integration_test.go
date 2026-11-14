@@ -15,13 +15,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/client/auth"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	controlauthority "github.com/tnldotdev/tnl/internal/control/api/authority"
 	controlpublic "github.com/tnldotdev/tnl/internal/control/api/public"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
@@ -168,5 +171,77 @@ func TestIntegrationDeploymentApplicationUsesSharedRegistrationAndCleanup(t *tes
 		if stillRunning.StatusCode != 200 {
 			t.Fatal("app stopped serving")
 		}
+	}
+	inspect, err := pgx.Connect(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inspect.Close(context.Background())
+	for _, lost := range []string{"expired", "revoked"} {
+		t.Run(lost, func(t *testing.T) {
+			public, private, err := ed25519.GenerateKey(rand.Reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := registration
+			request.Name = lost
+			request.PublicKey = base64.RawURLEncoding.EncodeToString(public)
+			approved, err := api.RegisterDeploymentCredentialWithResponse(ctx, "shop", &controlv1.RegisterDeploymentCredentialParams{
+				TeamId: team, IdempotencyKey: lost,
+			}, request, func(_ context.Context, r *http.Request) error {
+				r.Header.Set("Authorization", "Bearer "+session.AccessToken.String())
+				return nil
+			})
+			if err != nil || approved.JSON201 == nil {
+				t.Fatal("register short-lived cleanup identity", err)
+			}
+			credential := auth.DeploymentCredential{Version: 1, ControlURL: remote.URL, Team: "acme", Approval: *approved.JSON201, PrivateKey: base64.RawURLEncoding.EncodeToString(private)}
+			token, err := credential.Encode()
+			if err != nil {
+				t.Fatal(err)
+			}
+			invocation, err := opaqueid.New(opaqueid.InvocationPrefix)
+			if err != nil {
+				t.Fatal(err)
+			}
+			endpoint, err := a.capabilities.Issue(publisherprotocol.CapabilityRequest{Scope: "invocation", InvocationId: &invocation})
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := map[string]any{
+				"version": 1, "invocation_id": invocation, "owner": "0123456789abcdef0123456789abcdef", "pid": os.Getpid(), "target": listener.URL,
+				"deployment": map[string]string{"project": "acme/shop", "name": "production", "credential": token},
+			}
+			var registered publisherprotocol.Registration
+			if err := publisherprotocol.Call(ctx, endpoint, "POST", "/v1/publications/register", body, &registered); err != nil {
+				t.Fatal(err)
+			}
+			var cfg publisher.Config
+			select {
+			case cfg = <-ready:
+			case <-time.After(5 * time.Second):
+				t.Fatal("temporary publication worker did not become routable")
+			}
+			if lost == "expired" {
+				if _, err := inspect.Exec(ctx, `UPDATE control.publisher_grants SET created_at=$2::timestamptz - interval '1 second', expires_at=$2 WHERE id=$1`, credential.Approval.GrantId, now.Add(-time.Second)); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := d.RevokePublisherIdentity(ctx, team, credential.Approval.ClientId, actor, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			var response *publisherprotocol.ResponseError
+			if err := publisherprotocol.Call(ctx, endpoint, "POST", "/v1/unregister", registered, nil); !errors.As(err, &response) || response.Code != "runtime.publication_cleanup_failed" {
+				t.Fatal("permanent deletion denial was not reported", err)
+			}
+			if _, found := a.manager.ServiceForRegistration(registered.RegistrationID); found {
+				t.Fatal("captured expired or revoked authority retained local ownership")
+			}
+			if err := a.manager.RetirementError(); !errors.Is(err, publisherapp.ErrCleanupPermanent) || !errors.Is(err, clientauthority.ErrUnauthenticated) {
+				t.Fatal("owner retirement lost its authorization failure", err)
+			}
+			if _, err := d.GetPublicURLForAuthorization(ctx, cfg.AssignedPublicURL.Id); err != nil {
+				t.Fatal("local retirement silently bypassed failed remote deletion", err)
+			}
+		})
 	}
 }

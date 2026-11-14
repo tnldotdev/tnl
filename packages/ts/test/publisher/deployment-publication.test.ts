@@ -209,6 +209,120 @@ test("local named publication uses framework registration and rejects policy ove
   expect(server.listening).toBe(true);
 });
 
+test.each(["node", "fetch"])(
+  "private HTTP prepare releases its acknowledgment and leaves %s listener ownership intact",
+  async (kind) => {
+    const { request, calls, sessions } = fixture();
+    native.request.mockImplementation(async (endpoint, operation, body) => {
+      const value = await request(endpoint, operation, body);
+      if (operation !== "prepare") return value;
+      return {
+        version: 1,
+        registration_id: z.looseObject({ registration_id: z.string() }).parse(value)
+          .registration_id,
+        service: "web",
+        hostname: "",
+        public_url: "",
+        project: { dev: true, namespace: "", services: {} },
+      };
+    });
+    const local = createClient({ services: { web: { protocol: "http" } } }).deployment("local");
+    const server = kind === "node" ? await listener() : undefined;
+    await expect(
+      local.publish("web", server ?? (() => new Response("owned"))),
+    ).rejects.toMatchObject({ code: "sdk.response_invalid" });
+    expect(calls.filter((call) => call.operation === "prepare")).toHaveLength(1);
+    expect(calls.filter((call) => call.operation === "register")).toHaveLength(0);
+    const unregistered = calls.filter((call) => call.operation === "unregister");
+    expect(unregistered).toHaveLength(1);
+    expect([...sessions.values()][0]?.stopped).toBe(true);
+    const target = payload.parse(unregistered[0]?.body).target;
+    if (server !== undefined) expect(server.listening).toBe(true);
+    else await expect(fetch(target)).rejects.toThrow();
+    await local.close();
+    expect(calls.filter((call) => call.operation === "prepare")).toHaveLength(1);
+  },
+);
+
+test("permanent cleanup during startup closes Fetch without replaying the allocation", async () => {
+  const { request, calls, sessions } = fixture();
+  const cleanup = new TnlError("sdk.publication_cleanup_failed");
+  native.request.mockImplementation(async (endpoint, operation, body) => {
+    const result = await request(endpoint, operation, body);
+    if (operation === "publications/register") {
+      const session = sessions.get(endpoint.capability);
+      if (session !== undefined) session.stopped = true;
+      throw cleanup;
+    }
+    return result;
+  });
+  const deployment = createClient({ project: "acme/shop", token: "private" }).deployment(
+    "production",
+  );
+  await expect(deployment.publish(() => new Response("owned"))).rejects.toBe(cleanup);
+  const registered = calls.filter((call) => call.operation === "publications/register");
+  expect(registered).toHaveLength(1);
+  await expect(fetch(payload.parse(registered[0]?.body).target)).rejects.toThrow();
+  await deployment.close();
+  expect(calls.filter((call) => call.operation === "unregister")).toHaveLength(0);
+});
+
+test("lost reply and permanent cleanup retain both failures while closing Fetch", async () => {
+  const { request, calls } = fixture();
+  const operation = new TnlError("sdk.dev_unavailable");
+  const cleanup = new TnlError("sdk.publication_cleanup_failed");
+  let lost = false;
+  native.request.mockImplementation(async (endpoint, name, body) => {
+    const value = await request(endpoint, name, body);
+    if (name === "publications/register" && !lost) {
+      lost = true;
+      throw operation;
+    }
+    if (name === "unregister") throw cleanup;
+    return value;
+  });
+  const deployment = createClient({ project: "acme/shop", token: "private" }).deployment(
+    "production",
+  );
+  await expect(deployment.publish(() => new Response("owned"))).rejects.toMatchObject({
+    code: "sdk.cleanup_failed",
+    errors: [operation, cleanup],
+  });
+  const registered = calls.filter((call) => call.operation === "publications/register");
+  expect(registered).toHaveLength(2);
+  expect(registered[0]?.body).toEqual(registered[1]?.body);
+  await expect(fetch(payload.parse(registered[0]?.body).target)).rejects.toThrow();
+  await deployment.close();
+});
+
+test.each(["node", "fetch"])(
+  "permanent native cleanup failure retires %s locally without claiming remote success",
+  async (kind) => {
+    const { request, calls, sessions } = fixture();
+    const cleanup = new TnlError("sdk.publication_cleanup_failed");
+    native.request.mockImplementation(async (endpoint, operation, body) => {
+      const result = await request(endpoint, operation, body);
+      if (operation === "unregister") throw cleanup;
+      return result;
+    });
+    const deployment = createClient({ project: "acme/shop", token: "private" }).deployment(
+      "production",
+    );
+    const server = kind === "node" ? await listener() : undefined;
+    const handle = await deployment.publish(server ?? (() => new Response("owned")));
+    const target = payload.parse(
+      calls.find((call) => call.operation === "publications/register")?.body,
+    ).target;
+    await expect(handle.close()).rejects.toBe(cleanup);
+    await expect(handle.wait()).rejects.toBe(cleanup);
+    expect([...sessions.values()][0]?.stopped).toBe(true);
+    if (server !== undefined) expect(server.listening).toBe(true);
+    else await expect(fetch(target)).rejects.toThrow();
+    await deployment.close();
+    expect(calls.filter((call) => call.operation === "unregister")).toHaveLength(1);
+  },
+);
+
 test("Fetch returns only when routable and joins its owned adapter", async () => {
   const { request, calls } = fixture();
   const entered = Promise.withResolvers<void>(),
@@ -306,6 +420,60 @@ test("lost initial reply recovers exact intent; failed startup cleanup remains r
   failing = false;
   await deployment.close();
   await expect(fetch(target)).rejects.toThrow();
+});
+
+test("retained startup cleanup retires Fetch when transient deletion becomes permanently denied", async () => {
+  const { request, calls } = fixture();
+  let lost = false;
+  let permanent = false;
+  const terminal = new TnlError("sdk.publication_cleanup_failed");
+  native.request.mockImplementation(async (endpoint, operation, body) => {
+    if (operation === "unregister" && !permanent) throw new TnlError("sdk.request_rejected");
+    const value = await request(endpoint, operation, body);
+    if (operation === "publications/register" && !lost) {
+      lost = true;
+      throw new TnlError("sdk.dev_unavailable");
+    }
+    if (operation === "unregister") throw terminal;
+    return value;
+  });
+  const deployment = createClient({ project: "acme/shop", token: "private" }).deployment(
+    "production",
+  );
+  await expect(deployment.publish(() => new Response("retained"))).rejects.toMatchObject({
+    code: "sdk.cleanup_failed",
+  });
+  const registered = calls.filter((call) => call.operation === "publications/register");
+  const target = payload.parse(registered[0]?.body).target;
+  expect(registered).toHaveLength(2);
+  expect(registered[0]?.body).toEqual(registered[1]?.body);
+  expect(await visit(target)).toBe("retained");
+  permanent = true;
+  await expect(deployment.close()).rejects.toBe(terminal);
+  await expect(fetch(target)).rejects.toThrow();
+  await deployment.close();
+  expect(calls.filter((call) => call.operation === "unregister")).toHaveLength(1);
+});
+
+test("permanent cleanup leaves a supplied Bun server app-owned and restores stop", async () => {
+  const { request } = fixture();
+  native.request.mockImplementation(async (endpoint, operation, body) => {
+    const value = await request(endpoint, operation, body);
+    if (operation === "unregister") throw new TnlError("sdk.publication_cleanup_failed");
+    return value;
+  });
+  const stop = vi.fn(async () => {});
+  const server: BunHTTPServer = { url: new URL("http://127.0.0.1:3000"), port: 3000, stop };
+  const deployment = createClient({ project: "acme/shop", token: "private" }).deployment(
+    "production",
+  );
+  const publication = await deployment.publish(server);
+  await expect(publication.close()).rejects.toMatchObject({
+    code: "sdk.publication_cleanup_failed",
+  });
+  expect(server.stop).toBe(stop);
+  expect(stop).not.toHaveBeenCalled();
+  await deployment.close();
 });
 
 test("Bun stop is shared and restored without closing application-owned listeners", async () => {

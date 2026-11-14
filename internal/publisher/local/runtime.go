@@ -337,7 +337,8 @@ func Serve(ctx context.Context, options Options) (result error) {
 	defer func() {
 		_, finish := observability.ClientOperation(observability.Independent(context.WithoutCancel(ctx)), "native.app.shutdown")
 		a.manager.Close()
-		finish(nil)
+		result = errors.Join(result, a.manager.RetirementError())
+		finish(result)
 	}()
 	// unregister joins the publication after draining its visitor streams.
 	requestBase := observability.Independent(ctx)
