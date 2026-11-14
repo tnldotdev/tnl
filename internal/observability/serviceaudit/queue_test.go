@@ -131,7 +131,7 @@ func TestHTTPReporterDoesNotExposeSecretsInErrors(t *testing.T) {
 	}))
 	defer s.Close()
 	report := HTTPReporter(s.Client(), func(context.Context) (Destination, error) {
-		return Destination{URL: s.URL + "/" + secret, Bearer: secret, PublishRunNumber: 1}, nil
+		return Destination{URL: s.URL + "/" + secret, Bearer: secret, RunNumber: 1}, nil
 	})
 	err := report(t.Context(), Batch{Events: []Observation{observation()}})
 	if err == nil || strings.Contains(err.Error(), secret) {

@@ -847,7 +847,11 @@ func workloadPublicEndpointDialer(t *testing.T, connector *ingress.PublicService
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := ingress.New(listener, ingress.Config{PublicServicesOnly: true, RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, PublicServices: connector, ServicePortRanges: []tcpport.Range{{First: port, Last: port}}, MaxConnections: 64})
+	var ranges []tcpport.Range
+	if port != 443 {
+		ranges = []tcpport.Range{{First: port, Last: port}}
+	}
+	server, err := ingress.New(listener, ingress.Config{RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, PublicServices: connector, ServicePortRanges: ranges, MaxConnections: 64})
 	if err != nil {
 		t.Fatal(err)
 	}

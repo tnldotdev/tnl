@@ -41,23 +41,23 @@ func runEndpointRelease(ctx context.Context, flags endpointReleaseCommand, outpu
 		return err
 	}
 	if service.Id != flags.ServiceID || service.TeamId != current.Team().Id || service.Endpoint == nil ||
-		service.Endpoint.Port != flags.Port || service.TrustRevision < 1 {
+		service.Endpoint.Port != flags.Port || service.EndpointRevision < 1 {
 		return failure.Wrap("select service endpoint", failure.InvalidTunnelFlags, errors.New("service does not have this port reservation in the selected team"))
 	}
 	if service.Endpoint.Public {
 		return failure.Wrap("release service endpoint", failure.InvalidTunnelFlags, errors.New("disable public access in the binding and apply before releasing its reservation"))
 	}
 	released, err := session.Authenticated().Control.ReleaseServiceEndpoint(ctx, service.Id, controlv1.ReleaseServiceEndpointRequest{
-		ExpectedTrustRevision: service.TrustRevision, ExpectedPort: flags.Port,
+		ExpectedEndpointRevision: service.EndpointRevision, ExpectedPort: flags.Port,
 	})
 	if err != nil {
 		return err
 	}
 	if released.Id != service.Id || released.TeamId != service.TeamId || released.Endpoint == nil || released.Endpoint.Public ||
-		released.Endpoint.Port != 0 || released.Endpoint.Hostname != service.Endpoint.Hostname || released.TrustRevision != service.TrustRevision+1 {
+		released.Endpoint.Port != 0 || released.Endpoint.Hostname != service.Endpoint.Hostname || released.EndpointRevision != service.EndpointRevision+1 || released.TrustRevision != service.TrustRevision {
 		return failure.Wrap("release service endpoint", failure.ServerResponseInvalid, errors.New("control returned an unexpected service binding"))
 	}
-	return writeHumanFrame(output, "tnl endpoint release", "retired", "restart publication with the current service binding", clioutput.Fields(
+	return writeHumanFrame(output, "tnl endpoint release", "retired", "connector access is unchanged", clioutput.Fields(
 		clioutput.Field{Label: "service ID", Value: released.Id},
 		clioutput.Field{Label: "TLS hostname", Value: released.Endpoint.Hostname},
 		clioutput.Field{Label: "former public port", Value: strconv.Itoa(flags.Port)},

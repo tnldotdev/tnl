@@ -89,7 +89,7 @@ func TestIntegrationDeploymentNamespaceAndRename(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, candidate := range changed.Services {
-		if candidate.Service == "orders" && (candidate.Hostname != endpoint.Hostname || candidate.ServiceID != endpoint.ServiceID || candidate.Port < 1024 || !candidate.Public || candidate.TrustRevision != endpoint.TrustRevision+1) {
+		if candidate.Service == "orders" && (candidate.Hostname != endpoint.Hostname || candidate.ServiceID != endpoint.ServiceID || candidate.Port < 1024 || !candidate.Public || candidate.TrustRevision != endpoint.TrustRevision) {
 			t.Fatal("reachability changed endpoint identity", candidate)
 		}
 	}

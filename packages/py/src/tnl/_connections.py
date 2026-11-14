@@ -272,7 +272,7 @@ def _prepared(value: object, service: str) -> Connection:
         or isinstance(connection, _TLSConnection)
         and name != connection.server_hostname
         or isinstance(connection, (HTTPConnection, KubernetesConnection))
-        and metadata.get("url") != connection.url
+        and connection.url != f"https://{name}"
     ):
         raise _error("invalid")
     return connection

@@ -66,7 +66,6 @@ func TestServiceHTTPInlineApplicationKeepsPolicyAndReservedPaths(t *testing.T) {
 func TestServiceHTTPInlinePreparationDoesNotRequireDummyTarget(t *testing.T) {
 	cfg, control := lifecycleFixture(t)
 	preparation := control.prep
-	preparation.ServicePort = 443
 	approved, err := control.GetPublisherService(t.Context(), "")
 	if err != nil {
 		t.Fatal(err)
@@ -83,7 +82,7 @@ func TestServiceHTTPInlinePreparationDoesNotRequireDummyTarget(t *testing.T) {
 		t.Fatal("inline service silently selected between target modes", err)
 	}
 	cfg.Target = ""
-	approved.Protocol, approved.Endpoint.Port, preparation.ServicePort = controlv1.Tcp, 0, 0
+	approved.Protocol, approved.Endpoint.Port = controlv1.Tcp, 0
 	if _, err := newManagedPrepared(preparation, approved, cfg); !errors.Is(err, ErrPrivateStream) {
 		t.Fatal("non-HTTP service accepted an HTTP handler", err)
 	}

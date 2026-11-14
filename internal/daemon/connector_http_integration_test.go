@@ -160,8 +160,8 @@ func TestIntegrationPrivateHTTPProductionControl(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if service.Endpoint == nil || service.Endpoint.Port != 0 || service.Endpoint.Public {
-					t.Fatal("private HTTP requires a public reservation", service.Endpoint)
+				if service.Endpoint == nil || service.Endpoint.Port != 443 || service.Endpoint.Public {
+					t.Fatal("connector-only HTTP lost its logical HTTPS identity", service.Endpoint)
 				}
 				startPrivateHTTPPublisher(t, f, service, target.Listener.Addr().String())
 				person, err := f.identity.authority.IdentityContext(t.Context())

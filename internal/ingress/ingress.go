@@ -76,7 +76,6 @@ type Config struct {
 	HandleRelay               func(net.Conn) bool
 	PublicServices            *PublicServices
 	ServicePortRanges         []tcpport.Range
-	PublicServicesOnly        bool
 	RequireProxyHeader        bool
 	TrustedProxyPeers         []netip.Prefix
 	MaxConnections            int
@@ -121,7 +120,7 @@ type Server struct {
 }
 
 func New(listener net.Listener, config Config) (*Server, error) {
-	if listener == nil || !config.PublicServicesOnly && config.Lookup == nil && config.PublicServices == nil || config.PublicServicesOnly && config.PublicServices == nil {
+	if listener == nil || config.Lookup == nil && config.PublicServices == nil {
 		return nil, errors.New("ingress: listener and service forwarding are required")
 	}
 	if config.MaxConnections <= 0 {
@@ -284,7 +283,7 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 	_ = public.SetReadDeadline(time.Time{})
 	// native database negotiation is not a TLS ClientHello. select a managed
 	// service by its trusted destination before attempting HTTPS inspection.
-	if s.config.PublicServicesOnly || s.servicePorts.Contains(int(destination.Port())) || s.config.RequireProxyHeader && destination.Port() != 443 {
+	if s.servicePorts.Contains(int(destination.Port())) || s.config.RequireProxyHeader && destination.Port() != 443 {
 		if s.config.PublicServices == nil || !s.servicePorts.Contains(int(destination.Port())) {
 			return nil
 		}

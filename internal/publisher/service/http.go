@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
@@ -34,17 +35,18 @@ type HTTPControl interface {
 // http binds each request to one trusted forwarding header. policy and
 // browser credential renewal are prepared once by the service run owner.
 type HTTP struct {
-	Control  HTTPControl
-	Subject  visitorscope.Scope
-	RunID    string
-	Number   int64
-	Token    credentials.ServiceRunToken
-	Hostname string
-	Port     uint16
-	Header   tunnelv1.ServiceForwardingHeader
-	Requests *requestlimit.HTTP
-	Policy   *visitorlease.Lease
-	browser  *httpaccess.Browser
+	AuditSink serviceaudit.Sink
+	Control   HTTPControl
+	Subject   visitorscope.Scope
+	RunID     string
+	Number    int64
+	Token     credentials.ServiceRunToken
+	Hostname  string
+	Port      uint16
+	Header    tunnelv1.ServiceForwardingHeader
+	Requests  *requestlimit.HTTP
+	Policy    *visitorlease.Lease
+	browser   *httpaccess.Browser
 }
 
 func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func(), error) {
@@ -85,6 +87,18 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 	wrap := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "no-store")
+			outcome, reason := "denied", "invalid_request"
+			reported := false
+			report := func() {
+				if reported {
+					return
+				}
+				reported = true
+				serviceaudit.Emit(f.AuditSink, serviceaudit.Observation{ServiceID: f.Subject.ID, ServiceKind: "service",
+					RunID: f.RunID, RunNumber: f.Number, VisitorConnectionID: h.VisitorConnectionID,
+					SourceIP: source.Unmap().String(), EventType: "http.decision", Outcome: outcome, Reason: reason})
+			}
+			defer report()
 			if !serviceendpoint.MatchesHTTPAuthority(f.Hostname, f.Port, r.Host) || r.Method == http.MethodConnect || r.URL.IsAbs() || r.URL.Host != "" || client.ConnectionState().ServerName != f.Hostname {
 				servicestream.DenyHTTP(w, http.StatusMisdirectedRequest)
 				return
@@ -92,6 +106,8 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 			// explicit preparation endpoints never send application bytes. TLS
 			// certificate holders cannot switch identity through browser endpoints.
 			if strings.HasPrefix(r.URL.Path, "/__tnl/") {
+				// browser preparation does not claim application access.
+				reported = true
 				if len(client.ConnectionState().PeerCertificates) != 0 || r.ContentLength != 0 || len(r.TransferEncoding) != 0 || r.Header.Get("Upgrade") != "" {
 					servicestream.DenyHTTP(w, http.StatusForbidden)
 					return
@@ -116,6 +132,7 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 			}
 			_, guard, guarded, err := httpaccess.AuthorizeRequest(w, r, f.Policy, tokens)
 			if err != nil {
+				reason = "authorization"
 				if f.browser.RedirectRestricted(w, r, true) {
 					return
 				}
@@ -126,6 +143,7 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 			w, r = guard, guarded
 			release, ok := f.Requests.Admit(w, r)
 			if !ok {
+				reason = "capacity"
 				return
 			}
 			defer release()
@@ -138,6 +156,9 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 					r.Header.Del(key)
 				}
 			}
+			// report the decision before an upgrade or long-lived response.
+			outcome, reason = "allowed", ""
+			report()
 			next.ServeHTTP(w, r)
 		})
 	}

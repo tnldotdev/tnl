@@ -36,7 +36,7 @@ func TestIntegrationServicePortInventory(t *testing.T) {
 	assertCapacity(1, 0, 0, 1)
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{
-		"api": {Target: "localhost:3000", Public: new(true)},
+		"api": {Protocol: "tcp", Target: "localhost:3000", Public: new(true)},
 	}}
 	r = selectedProjectRequest(r, "production")
 	first, err := d.ApplyProjectConfiguration(ctx, r)

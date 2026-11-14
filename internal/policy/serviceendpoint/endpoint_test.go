@@ -2,6 +2,14 @@ package serviceendpoint
 
 import "testing"
 
+func TestPermissionPortDoesNotDependOnIngressReservation(t *testing.T) {
+	for protocol, want := range map[string]uint16{"http": 443, "tcp": 0, "postgres": 0, "mysql": 0, "kubernetes": 0} {
+		if got := PermissionPort(protocol); got != want {
+			t.Fatalf("%s: permission port %d, want %d", protocol, got, want)
+		}
+	}
+}
+
 func TestServiceEndpointProtocolAndReachability(t *testing.T) {
 	for _, protocol := range []string{"http", "tcp", "postgres", "mysql", "kubernetes", "unknown"} {
 		for _, public := range []bool{false, true} {

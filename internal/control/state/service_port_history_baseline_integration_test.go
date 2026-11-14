@@ -10,8 +10,8 @@ func TestIntegrationServicePortHistoryBaselinePreservesAuthority(t *testing.T) {
 	ctx := t.Context()
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{
-		"app": {Target: "localhost:3000", Public: new(true)},
-		"old": {Target: "localhost:3001", Public: new(true)},
+		"app": {Protocol: "tcp", Target: "localhost:3000", Public: new(true)},
+		"old": {Protocol: "tcp", Target: "localhost:3001", Public: new(true)},
 	}}
 	r = selectedProjectRequest(r, "production")
 	applied, err := d.ApplyProjectConfiguration(ctx, r)

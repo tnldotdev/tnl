@@ -39,9 +39,9 @@ func saveConnectorPeerAuditBinding(ctx context.Context, tx pgx.Tx, pair controls
 	return nil
 }
 
-// IngestServiceRunObservations accepts facts from the run that owns the native
-// listener, not a connector or relay. identity and source come from control's
-// installed pair. this operation neither renews authority nor admits a stream.
+// IngestServiceRunObservations accepts facts from the owning publisher, not a
+// connector or relay. connector identity and source come from control's installed
+// pair; HTTP decisions carry no actor identity. reports never renew authority.
 func (d *Database) IngestServiceRunObservations(ctx context.Context, serviceID, runID, token string, number int64, batch serviceaudit.Batch, now time.Time) (result ServiceObservationResult, retErr error) {
 	if err := validateObservationBatch(batch, now); err != nil {
 		return result, err
@@ -82,12 +82,34 @@ func (d *Database) IngestServiceRunObservations(ctx context.Context, serviceID, 
 	if now.After(until.Add(serviceObservationDeliveryGrace)) {
 		return result, ErrServiceAccess
 	}
+	var protocol string
+	if err := tx.QueryRow(ctx, `SELECT protocol FROM control.services WHERE id=$1`, serviceID).Scan(&protocol); err != nil {
+		return result, err
+	}
 	for _, o := range batch.Events {
-		if o.ServiceKind != "service" || o.ServiceID != serviceID || o.RunID != runID || o.RunNumber != number || o.PairID == "" || o.EventType != "connection.open" && o.EventType != "connection.close" {
+		if o.ServiceKind != "service" || o.ServiceID != serviceID || o.RunID != runID || o.RunNumber != number {
 			return ServiceObservationResult{}, ErrServiceAuditAccess
 		}
 		e := observationEvent(o)
 		e.TeamID, e.PublisherIdentityID = run.TeamID, run.PublisherIdentityID
+		if o.EventType == "http.decision" {
+			// the HTTP frontend reports request decisions under its exact run
+			// credential. reports never grant access or supply an actor identity.
+			if protocol != "http" || o.PairID != "" || o.DeliveryGeneration != 0 ||
+				o.OccurredAt.Before(run.CreatedAt.Time.Add(-time.Second)) || o.OccurredAt.After(until) {
+				return ServiceObservationResult{}, ErrServiceAuditAccess
+			}
+			n, err := insertServiceAuditCount(ctx, tx, e, now)
+			if err != nil {
+				return ServiceObservationResult{}, err
+			}
+			result.Accepted += int(n)
+			result.Duplicates += 1 - int(n)
+			continue
+		}
+		if o.PairID == "" || o.EventType != "connection.open" && o.EventType != "connection.close" {
+			return ServiceObservationResult{}, ErrServiceAuditAccess
+		}
 		var created, expires time.Time
 		var retired pgtype.Timestamptz
 		// installation checked both claims and their immutable source agreement.

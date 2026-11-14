@@ -67,7 +67,7 @@ func TestIntegrationPrivateManagedLocalNamespacesAndCapturedPlans(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if prep.Hostname != want || prep.ServicePort != record.Endpoint.Port || prep.DomainID != record.DomainID || prep.CertificatePlan.Scope != want || !slices.Equal(prep.CertificatePlan.Identifiers, []string{want}) {
+	if prep.Hostname != want || prep.DomainID != record.DomainID || prep.CertificatePlan.Scope != want || !slices.Equal(prep.CertificatePlan.Identifiers, []string{want}) {
 		t.Fatalf("local certificate authority widened: %+v", prep)
 	}
 	scoped, err := d.GetServiceForPublisher(t.Context(), record.ID, access, now)

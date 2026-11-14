@@ -139,12 +139,12 @@ ORDER BY s.id LIMIT 101;
 INSERT INTO control.service_runs(preferred_regions, id, service_id, team_id, run_number,
     publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key,
     request_digest, preparation_expires_at, assignment_seed_ciphertext,
-    assignment_seed_storage_key_id, certificate_cache_key,certificate_scope,certificate_identifiers,certificate_domain_id,certificate_hostname,service_port,state, created_at, publisher_expires_at)
+    assignment_seed_storage_key_id, certificate_cache_key,certificate_scope,certificate_identifiers,certificate_domain_id,certificate_hostname,state, created_at, publisher_expires_at)
 VALUES (sqlc.arg(preferred_regions), sqlc.arg(id), sqlc.arg(service_id), sqlc.arg(team_id), sqlc.arg(run_number),
     sqlc.arg(publisher_identity_id), sqlc.arg(publisher_grant_id), sqlc.arg(publisher_key_id),
     sqlc.arg(idempotency_key), sqlc.arg(request_digest),
     sqlc.arg(preparation_expires_at), sqlc.arg(assignment_seed_ciphertext),
-    sqlc.arg(assignment_seed_storage_key_id),sqlc.arg(certificate_cache_key),sqlc.arg(certificate_scope),sqlc.arg(certificate_identifiers),sqlc.narg(certificate_domain_id),sqlc.arg(certificate_hostname),sqlc.narg(service_port), 'prepared', sqlc.arg(now), sqlc.arg(publisher_expires_at)) RETURNING *;
+    sqlc.arg(assignment_seed_storage_key_id),sqlc.arg(certificate_cache_key),sqlc.arg(certificate_scope),sqlc.arg(certificate_identifiers),sqlc.narg(certificate_domain_id),sqlc.arg(certificate_hostname), 'prepared', sqlc.arg(now), sqlc.arg(publisher_expires_at)) RETURNING *;
 
 -- name: LockServiceRun :one
 SELECT * FROM control.service_runs

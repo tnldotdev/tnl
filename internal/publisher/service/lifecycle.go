@@ -308,7 +308,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	bound.streamCapacity = int(config.StreamCapacity)
 	var certificateDone <-chan error
 	{
-		maintain, cancel, err := configureServiceRun(ctx, config, prepared, setup, managedControl, config.State)
+		maintain, cancel, err := configureServiceRun(ctx, config, prepared, setup, managedControl, config.State, audit)
 		if err != nil {
 			return err
 		}

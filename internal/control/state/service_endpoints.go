@@ -31,7 +31,7 @@ func (d *Database) ensureServiceEndpoint(ctx context.Context, tx pgx.Tx, service
 	if err = reconcileServiceEndpoint(ctx, tx, serviceEndpoint{ServiceID: service, DeploymentID: deployment, DomainID: domain, Hostname: hostname, Namespace: namespace, PoolID: pool, Public: public, Automation: automation}, now); err != nil {
 		return err
 	}
-	if err = bindServicePort(ctx, tx, service, port, public, now); err != nil {
+	if err = bindServicePort(ctx, tx, service, port, public); err != nil {
 		return err
 	}
 	_, err = tx.Exec(ctx, `UPDATE control.services SET
@@ -39,19 +39,11 @@ func (d *Database) ensureServiceEndpoint(ctx context.Context, tx pgx.Tx, service
 	return projectConstraintError(err)
 }
 
-// allocation or explicit release changes an exact signed binding for both local
-// and remote services. retained disable/re-enable keeps private run authority.
+// ingress reservations are not target trust or connector authority. changing
+// one advances the endpoint revision without closing a run or its connectors.
 // callers hold the service row lock before entering this operation.
-func bindServicePort(ctx context.Context, tx pgx.Tx, service string, port int, public bool, now time.Time) error {
-	if _, err := tx.Exec(ctx, `UPDATE control.service_runs run SET state='closed',closed_at=$3
-	    FROM control.services service WHERE service.id=$1 AND run.service_id=service.id
-	    AND run.closed_at IS NULL AND service.certificate_hostname<>''
-	    AND service.service_port IS DISTINCT FROM $2::integer`, service, port, now); err != nil {
-		return err
-	}
-	_, err := tx.Exec(ctx, `UPDATE control.services SET
-	    trust_revision=trust_revision+CASE WHEN certificate_hostname<>'' AND service_port IS DISTINCT FROM $2::integer THEN 1 ELSE 0 END,
-	    service_port=$2,public=$3 WHERE id=$1`, service, port, public)
+func bindServicePort(ctx context.Context, tx pgx.Tx, service string, port int, public bool) error {
+	_, err := tx.Exec(ctx, `UPDATE control.services SET service_port=$2,public=$3 WHERE id=$1`, service, port, public)
 	return projectConstraintError(err)
 }
 

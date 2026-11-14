@@ -25,9 +25,8 @@ func TestIntegrationLocalServiceExposureRetainsIdentityAndRuns(t *testing.T) {
 			r = selectedProjectRequest(r, "local")
 			request := RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Service: "app", WorktreeKey: "checkout-a", WorktreeLabel: "feature-a", ActorID: r.ActorID, Configuration: r.Configuration.Services["app"], Now: now}
 			privatePort, publicPort := 0, 25443
-			revisionIncrement := int64(1)
 			if protocol == "http" {
-				privatePort, publicPort, revisionIncrement = 443, 443, 0
+				privatePort, publicPort = 443, 443
 			}
 			private, err := d.RealizeLocalProjectService(ctx, request)
 			if err != nil || private.Metadata == nil || private.Metadata.Endpoint == nil || private.Metadata.Endpoint.Public || private.Metadata.Endpoint.Port != privatePort {
@@ -64,20 +63,18 @@ func TestIntegrationLocalServiceExposureRetainsIdentityAndRuns(t *testing.T) {
 				t.Fatal(err)
 			}
 			record, err := d.GetService(ctx, private.ServiceID, r.ActorID)
-			if err != nil || record.Endpoint == nil || !record.Endpoint.Public || record.Endpoint.Port != publicPort || record.Endpoint.Hostname != endpoint.Hostname || record.TrustRevision != private.Metadata.TrustRevision+revisionIncrement {
+			if err != nil || record.Endpoint == nil || !record.Endpoint.Public || record.Endpoint.Port != publicPort || record.Endpoint.Hostname != endpoint.Hostname || record.TrustRevision != private.Metadata.TrustRevision {
 				t.Fatal("first public binding lost captured identity or fencing", record, err)
 			}
 			started, err := d.StartServiceRun(ctx, oldRun.ServiceID, oldRun.RunID, oldRun.RunNumber, access, now)
-			if protocol == "http" && err != nil || protocol != "http" && !errors.Is(err, ErrServiceAccess) {
+			if err != nil {
 				t.Fatal("first exposure changed the wrong run authority", err)
 			}
-			if protocol == "http" {
-				if err := d.CloseServiceRun(ctx, oldRun.ServiceID, oldRun.RunID, started.Token, now); err != nil {
-					t.Fatal(err)
-				}
+			if err := d.CloseServiceRun(ctx, oldRun.ServiceID, oldRun.RunID, started.Token, now); err != nil {
+				t.Fatal(err)
 			}
 			next, err := d.PrepareServiceRun(ctx, private.ServiceID, access, "local-public", now, record.ServiceMetadata)
-			if err != nil || next.ServicePort != record.Endpoint.Port {
+			if err != nil || next.Hostname != record.Endpoint.Hostname {
 				t.Fatal("publisher lost its grant or binding", next, err)
 			}
 			revision := public.Revision

@@ -158,7 +158,7 @@ test("borrowed deployment retries failed initialization on its same captured han
     vi.stubEnv("TNL_TOKEN", undefined);
     const sibling = createClient({ project: "acme/project", services }).deployment("production");
     try {
-      expect((await sibling.connect("api")).url).toBe("https://localhost:8443");
+      expect((await sibling.connect("api")).url).toBe("https://localhost");
     } finally {
       await sibling.close();
     }

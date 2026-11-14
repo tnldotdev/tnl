@@ -24,6 +24,7 @@ var serviceName = regexp.MustCompile(`^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$`)
 type ServiceRecord struct {
 	ServiceMetadata
 	ID, TeamID, DomainID, Name string
+	EndpointRevision           int64
 	Placement                  *ServicePlacement   `json:"placement,omitempty"`
 	Source                     *LocalServiceSource `json:"source,omitempty"`
 	HTTPLimits                 *ProjectHTTPApplicationLimits
@@ -80,7 +81,7 @@ func checkedServiceRecord(row controlstatedb.ControlService) (ServiceRecord, err
 	if err != nil {
 		return ServiceRecord{}, err
 	}
-	return ServiceRecord{ServiceMetadata: metadata, ID: row.ID, TeamID: row.TeamID, DomainID: row.DomainID.String, Name: row.Name, Enabled: row.Enabled, CreatedAt: row.CreatedAt.Time, Placement: &ServicePlacement{DomainID: row.DomainID.String, WorktreeKey: row.PlacementWorktreeKey, WorktreeLabel: row.PlacementWorktreeLabel}}, nil
+	return ServiceRecord{ServiceMetadata: metadata, ID: row.ID, TeamID: row.TeamID, DomainID: row.DomainID.String, Name: row.Name, EndpointRevision: row.EndpointRevision, Enabled: row.Enabled, CreatedAt: row.CreatedAt.Time, Placement: &ServicePlacement{DomainID: row.DomainID.String, WorktreeKey: row.PlacementWorktreeKey, WorktreeLabel: row.PlacementWorktreeLabel}}, nil
 }
 
 func serviceManager(ctx context.Context, tx pgx.Tx, teamID, actorID string) error {

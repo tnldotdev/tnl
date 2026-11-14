@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -11,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -52,16 +55,17 @@ func TestIntegrationLocalHTTPServicePublicEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	service, err := f.identity.routes.GetService(t.Context(), realized.ServiceId)
-	if err != nil || service.Endpoint == nil || !service.Endpoint.Public || service.Endpoint.Port < 1024 {
-		t.Fatal("local HTTP has no allocated public endpoint", service, err)
+	if err != nil || service.Endpoint == nil || !service.Endpoint.Public || service.Endpoint.Port != 443 {
+		t.Fatal("local HTTP did not use shared HTTPS", service, err)
 	}
 	stopPublisher := startPrivateHTTPPublisher(t, f, service, target.Listener.Addr().String())
+	defer stopPublisher()
 	verification := f.visitorRoots.Clone()
 	verification.ServerName = service.Endpoint.Hostname
 	publicTransport := &http.Transport{TLSClientConfig: verification, ForceAttemptHTTP2: true, DialContext: workloadPublicEndpointDialer(t, process.ingresses[0].publicServices, service.Endpoint.Port)}
 	t.Cleanup(publicTransport.CloseIdleConnections)
 	publicClient := &http.Client{Transport: publicTransport, Timeout: 5 * time.Second}
-	base := "https://" + net.JoinHostPort(service.Endpoint.Hostname, strconv.Itoa(service.Endpoint.Port))
+	base := "https://" + service.Endpoint.Hostname
 	awaitServiceHTTPStatus(t, publicClient, base, "", "", http.StatusForbidden)
 	token, err := f.identity.routes.CreateServiceHTTPGrant(t.Context(), service.Id, controlv1.CreateVisitorCredentialRequest{Kind: "token", ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
@@ -143,31 +147,111 @@ func TestIntegrationLocalHTTPServicePublicEndpoint(t *testing.T) {
 		t.Fatal("local service created another publication or replayed a request", publicURLs, posts.Load(), err)
 	}
 	setPublic(false)
-	stop()
-	stopPublisher()
-	released, err := f.identity.routes.ReleaseServiceEndpoint(t.Context(), service.Id, controlv1.ReleaseServiceEndpointRequest{
-		ExpectedTrustRevision: service.TrustRevision, ExpectedPort: service.Endpoint.Port,
+	_, err = f.identity.routes.ReleaseServiceEndpoint(t.Context(), service.Id, controlv1.ReleaseServiceEndpointRequest{
+		ExpectedEndpointRevision: service.EndpointRevision, ExpectedPort: 443,
 	})
-	if err != nil || released.Endpoint == nil || released.Endpoint.Port != 0 || released.Endpoint.Hostname != service.Endpoint.Hostname {
-		t.Fatal("release replaced the local TLS identity", released, err)
+	var problem *clientcontrol.ProblemError
+	if !errors.As(err, &problem) || problem.Status != http.StatusBadRequest || problem.Problem.Code != controlv1.InvalidRequest {
+		t.Fatal("shared HTTPS was treated as an exclusive reservation", err)
 	}
-	startPrivateHTTPPublisher(t, f, released, target.Listener.Addr().String())
-	restarted, err := f.identity.state.ListenService(t.Context(), person.Identity.Id, service.Id, "tcp")
-	if err != nil || restarted.Addr().String() != local.Addr().String() {
-		t.Fatal("release changed the saved connector listener", restarted, err)
+	var claims int
+	if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.service_port_claims WHERE service_id=$1`, service.Id).Scan(&claims); err != nil || claims != 0 {
+		t.Fatal("HTTP acquired an exclusive port reservation", claims, err)
 	}
-	_, stopRestarted := startRuntimeConnectorOn(t, f, released, restarted, connectorstream.Config{Control: control, IdentityID: person.Identity.Id, RelayQUIC: quic, RelayTCP: tcp})
-	defer stopRestarted()
-	localTransport.CloseIdleConnections()
-	checkPost(localClient, localBase, "", "private after reservation release")
+	checkPost(localClient, localBase, "", "private after rejected reservation release")
 	publicTransport.CloseIdleConnections()
 	if response, err := publicClient.Get(base + "/"); err == nil {
 		_ = response.Body.Close()
-		t.Fatal("released public binding still admitted a visitor")
+		t.Fatal("disabled public binding still admitted a visitor")
 	}
 	if posts.Load() != 5 {
-		t.Fatal("release replayed application work", posts.Load())
+		t.Fatal("failed release replayed application work", posts.Load())
 	}
+}
+
+func TestIntegrationLocalServicePortReleaseRetainsLiveConnector(t *testing.T) {
+	testutil.RequireTestTier(t, testutil.TestTierIntegration)
+	f := newServiceRuntimeFixture(t, false, nil)
+	target := startPrivateEchoTarget(t, f.owner)
+	protocol := controlv1.Tcp
+	binding := controlv1.ProjectServiceConfiguration{Protocol: &protocol, Target: target.address, Public: new(true)}
+	request := controlv1.ApplyProjectConfigurationRequest{
+		TeamId: f.identity.teamID, Source: &testProjectSource, Deployment: "local",
+		ServiceDeclarations: controlv1.ProjectServiceDeclarations{"db": protocol},
+		Configuration:       controlv1.ProjectConfiguration{Services: map[string]controlv1.ProjectServiceConfiguration{"db": binding}, Webhooks: map[string]controlv1.ProjectWebhook{}},
+	}
+	applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "local-release", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	realized, err := f.identity.routes.RealizeLocalProjectService(t.Context(), "local-release", "db", controlv1.RealizeLocalProjectServiceRequest{
+		TeamId: f.identity.teamID, SourceFingerprint: applied.SourceFingerprint, WorktreeKey: "checkout", Configuration: binding,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := f.identity.routes.GetService(t.Context(), realized.ServiceId)
+	if err != nil || service.Endpoint == nil || service.Endpoint.Port < 1024 {
+		t.Fatal("non-HTTP service has no reserved endpoint", err)
+	}
+	stopPublisher := startPrivateHTTPPublisher(t, f, service, target.address)
+	defer stopPublisher()
+	person, err := f.identity.authority.IdentityContext(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	control, err := connectorstream.NewControl(f.identity.routes, f.identity.state, person.Identity.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := f.identity.state.ListenService(t.Context(), person.Identity.Id, service.Id, "tcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	quic, tcp := f.connectors()
+	local, stop := startRuntimeConnectorOn(t, f, service, listener, connectorstream.Config{Control: control, IdentityID: person.Identity.Id, RelayQUIC: quic, RelayTCP: tcp})
+	defer stop()
+	connection, err := net.Dial("tcp", local.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	connectorDirectExchange(t, connection, "before release\n")
+	request.ExpectedRevision = applied.Revision
+	binding.Public = new(false)
+	request.Configuration.Services["db"] = binding
+	if _, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "local-release", request); err != nil {
+		t.Fatal(err)
+	}
+	waitForIntegrationCondition(t, 10*time.Second, func(ctx context.Context) (bool, error) {
+		var settled bool
+		err := f.inspect.QueryRowContext(ctx, `SELECT bool_and(NOT public AND dns_state IN ('published','unmanaged')) FROM control.service_endpoints WHERE service_id=$1`, service.Id).Scan(&settled)
+		return settled, err
+	})
+	released, err := f.identity.routes.ReleaseServiceEndpoint(t.Context(), service.Id, controlv1.ReleaseServiceEndpointRequest{
+		ExpectedEndpointRevision: service.EndpointRevision, ExpectedPort: service.Endpoint.Port,
+	})
+	if err != nil || released.Endpoint == nil || released.Endpoint.Port != 0 || released.TrustRevision != service.TrustRevision {
+		t.Fatal("release invalidated the service or its target trust", err)
+	}
+	connectorDirectExchange(t, connection, "after release\n")
+	saved, found, err := f.identity.state.ServicePort(t.Context(), person.Identity.Id, service.Id)
+	if err != nil || !found || net.JoinHostPort("127.0.0.1", strconv.Itoa(saved)) != local.Addr().String() {
+		t.Fatal("release changed the saved connector port", saved, err)
+	}
+	target.mu.Lock()
+	sameTarget := target.received["before release\n"] == 1 && target.received["after release\n"] == 1 &&
+		target.receivedOn["before release\n"] == target.receivedOn["after release\n"]
+	target.mu.Unlock()
+	if !sameTarget {
+		t.Fatal("release replaced the established target stream")
+	}
+	stop()
+	restarted, err := f.identity.state.ListenService(t.Context(), person.Identity.Id, service.Id, "tcp")
+	if err != nil || restarted.Addr().String() != local.Addr().String() {
+		t.Fatal("restart lost the persistent assignment", err)
+	}
+	_ = restarted.Close()
 }
 
 func TestIntegrationLocalHTTPServiceRequestLimitsAcrossPublicAndConnectorAccess(t *testing.T) {
@@ -214,7 +298,7 @@ func TestIntegrationLocalHTTPServiceRequestLimitsAcrossPublicAndConnectorAccess(
 			publicTransport := &http.Transport{TLSClientConfig: verification, DialContext: workloadPublicEndpointDialer(t, process.ingresses[0].publicServices, service.Endpoint.Port)}
 			defer publicTransport.CloseIdleConnections()
 			publicClient := &http.Client{Transport: publicTransport, Timeout: 5 * time.Second}
-			publicBase := "https://" + net.JoinHostPort(service.Endpoint.Hostname, strconv.Itoa(service.Endpoint.Port))
+			publicBase := "https://" + service.Endpoint.Hostname
 			// unauthorized readiness probes must not consume application budget.
 			awaitServiceHTTPStatus(t, publicClient, publicBase, "", "", http.StatusForbidden)
 			token, err := f.identity.routes.CreateServiceHTTPGrant(t.Context(), service.Id, controlv1.CreateVisitorCredentialRequest{Kind: "token", ExpiresAt: time.Now().Add(time.Hour)})

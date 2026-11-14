@@ -16,7 +16,7 @@ func TestIntegrationPerServiceExposureKeepsPrivateRunsAndCapacity(t *testing.T) 
 	}
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{
-		"api":     {Target: "http://app.internal:3000", Public: new(true)},
+		"api":     {Protocol: "tcp", Target: "app.internal:3000", Public: new(true)},
 		"db":      {Protocol: "postgres", Target: "db.internal:5432", Public: new(false)},
 		"private": {Target: "http://private.internal:3000"},
 	}}
@@ -32,7 +32,7 @@ func TestIntegrationPerServiceExposureKeepsPrivateRunsAndCapacity(t *testing.T) 
 	if !byName["api"].Public || byName["api"].Port != 25443 || byName["db"].Public || byName["db"].Port != 0 {
 		t.Fatal("mixed exposure allocated the wrong public bindings", applied.Services)
 	}
-	if byName["private"].Public || byName["private"].Port != 0 || len(applied.Deployments) != 1 || !applied.Deployments[0].Public {
+	if byName["private"].Public || byName["private"].Port != 443 || len(applied.Deployments) != 1 || !applied.Deployments[0].Public {
 		t.Fatal("omission inherited exposure or deployment summary lost its public binding", applied)
 	}
 	enrollment, err := testDeploymentPublisherEnrollment(d, ctx, r.TeamID, r.ProjectKey, "production", r.ActorID, 1, time.Hour, now)

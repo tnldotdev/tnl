@@ -93,7 +93,7 @@ func (h *handler) PrepareServiceRun(w http.ResponseWriter, r *http.Request, serv
 		PublisherIdentityId: prepared.PublisherIdentityID, PublisherGrantId: prepared.PublisherGrantID,
 		PublisherKeyId: prepared.PublisherKeyID, IdempotencyKey: prepared.IdempotencyKey,
 		ExpiresAt: prepared.ExpiresAt,
-		Hostname:  prepared.Hostname, ServicePort: prepared.ServicePort, DomainId: prepared.DomainID,
+		Hostname:  prepared.Hostname, DomainId: prepared.DomainID,
 	}
 	if len(prepared.CertificatePlan.Identifiers) != 0 {
 		plan := managedCertificatePlan(prepared.CertificatePlan)

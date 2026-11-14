@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net"
 	"slices"
-	"strconv"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/config"
@@ -15,6 +14,7 @@ import (
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -82,7 +82,7 @@ func (p *servicePreparation) result() (*servingService, error) {
 
 func (p *servicePreparation) matches(service controlv1.Service) bool {
 	return p != nil && service.Id == p.service.Id && service.Protocol == p.service.Protocol && service.TrustRevision == p.service.TrustRevision &&
-		service.Endpoint != nil && p.service.Endpoint != nil && service.Endpoint.Hostname == p.service.Endpoint.Hostname && service.Endpoint.Port == p.service.Endpoint.Port
+		service.Endpoint != nil && p.service.Endpoint != nil && service.Endpoint.Hostname == p.service.Endpoint.Hostname
 }
 
 func (p *servicePreparation) serving(client *workload.Client) *servingService {
@@ -177,7 +177,7 @@ func (b *connectorConnectionBackend) prepareListener(ctx context.Context, name s
 	if err != nil {
 		return nil, err
 	}
-	if run.Protocol != string(service.Protocol) || run.Endpoint == nil || run.Endpoint.Hostname != endpoint.Hostname || run.Endpoint.Port != endpoint.Port {
+	if run.Protocol != string(service.Protocol) || run.Endpoint == nil || !serviceendpoint.Valid(run.Protocol, run.Endpoint.Hostname, run.Endpoint.Port, run.Endpoint.Public) || run.Endpoint.Hostname != endpoint.Hostname {
 		return nil, connectorruntime.ErrUnavailable
 	}
 	// the service and identity are already validated; the resolved revision must
@@ -266,9 +266,6 @@ func (b *connectorConnectionBackend) prepareListener(ctx context.Context, name s
 	}
 	if string(service.Protocol) == "http" || string(service.Protocol) == "kubernetes" {
 		serving.connection.URL = "https://" + endpoint.Hostname
-		if endpoint.Port != 0 && endpoint.Port != 443 {
-			serving.connection.URL = "https://" + net.JoinHostPort(endpoint.Hostname, strconv.Itoa(endpoint.Port))
-		}
 	}
 	kube := owner.kube
 	if string(service.Protocol) == "kubernetes" && kube.result.File == "" {

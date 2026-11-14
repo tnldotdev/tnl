@@ -37,7 +37,7 @@ func (d *Database) StartServiceRun(ctx context.Context, service, id string, numb
 	if run.RunNumber != number || run.PublisherIdentityID != publisher.ID || run.PublisherGrantID != publisher.GrantID || run.PublisherKeyID != publisher.KeyID || run.ClosedAt.Valid || len(run.CertificateIdentifiers) == 0 || !run.PublisherExpiresAt.Time.After(now) {
 		return result, ErrServiceAccess
 	}
-	if run.CertificateHostname != endpoint.CertificateHostname || run.CertificateDomainID != endpoint.DomainID || run.ServicePort != endpoint.ServicePort {
+	if run.CertificateHostname != endpoint.CertificateHostname || run.CertificateDomainID != endpoint.DomainID {
 		return result, ErrServiceAccess
 	}
 	plan, err := serviceCertificatePlan(ctx, tx, endpoint, publisher.ID, now)

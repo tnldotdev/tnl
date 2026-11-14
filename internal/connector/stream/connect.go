@@ -179,5 +179,5 @@ func sameEndpoint(left, right *controlv1.ServiceEndpoint) bool {
 	if left == nil || right == nil {
 		return left == right
 	}
-	return left.Hostname == right.Hostname && left.Port == right.Port
+	return left.Hostname == right.Hostname
 }

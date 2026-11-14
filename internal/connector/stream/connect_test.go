@@ -90,7 +90,11 @@ func (*connectorFixture) Close(context.Context) error { return nil }
 func (f *connectorFixture) VisitorPermission(context.Context, string) (controlv1.VisitorTokenResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKindService, Id: f.run.ServiceID}, Hostname: f.run.Endpoint.Hostname, Port: f.run.Endpoint.Port, ServiceTrustRevision: &f.run.TrustRevision, VisitorToken: "signed-fixture-visitor-permission", ExpiresAt: f.expires}, nil
+	port := 0
+	if f.run.Protocol == "http" {
+		port = 443
+	}
+	return controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKindService, Id: f.run.ServiceID}, Hostname: f.run.Endpoint.Hostname, Port: port, ServiceTrustRevision: &f.run.TrustRevision, VisitorToken: "signed-fixture-visitor-permission", ExpiresAt: f.expires}, nil
 }
 func (f *connectorFixture) ResolveService(context.Context, string) (Run, error) {
 	if f.denied.Load() {

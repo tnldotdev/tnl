@@ -78,6 +78,14 @@ A service can also have a public hostname and port, reached through ingress.
 That is **public endpoint access**, rather than **connector access**. Making an
 endpoint public does not remove its visitor access rules.
 
+HTTP services share ingress 443 by exact TLS hostname. Other protocols use
+allocated ingress ports. Neither selects the connector's machine-local listener.
+Endpoint allocation and release advance `endpoint_revision`, not target trust;
+authorized runs and connector sessions survive those changes. Public admission
+still checks the current endpoint, and a retired port cannot select that service.
+Port quarantine captures outstanding certificate issuance by revision, so a late
+certificate can delay reuse without later connector renewals pinning capacity.
+
 ## who decides what
 
 | Role      | Job                                                                                         |

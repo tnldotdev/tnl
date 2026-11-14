@@ -496,14 +496,15 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConn
 	if err != nil || metadata.Source.Addr().String() != header.SourceIP {
 		return ErrPrivateStream
 	}
-	if header.PublicService != nil && (metadata.Destination.Port() != header.PublicService.DestinationPort || header.PublicService.DestinationPort != b.prepared.servicePort) {
+	if header.PublicService != nil && (metadata.Destination.Port() != header.PublicService.DestinationPort ||
+		b.prepared.managedProtocol == config.ProtocolHTTP && header.PublicService.DestinationPort != 443) {
 		return ErrPrivateStream
 	}
 	authority := ""
 	// direct visitors use the exact managed origin. admitted connector clients
 	// can use a loopback authority, including an owned kubeconfig's local server.
-	if b.prepared.managedPublic && header.PublicService != nil {
-		authority = serviceendpoint.HTTPAuthority(b.prepared.managedHostname, b.prepared.servicePort)
+	if header.PublicService != nil {
+		authority = serviceendpoint.HTTPAuthority(b.prepared.managedHostname, header.PublicService.DestinationPort)
 	}
 	connection := &replayConn{Conn: stream, reader: replay}
 	if endStream != nil {

@@ -145,6 +145,7 @@ func TestIntegrationConnectionSharedOwnerStalledSibling(t *testing.T) {
 	serviceNames := []string{"api", "db"}
 	protocols := []string{"http", "postgres"}
 	servicePorts := []int{443, 15444}
+	permissionPorts := []int{443, 0}
 	trustRevision := int64(1)
 	session := authorityv1.WorkloadSession{Id: id, Credential: "wlc_" + strings.Repeat("x", 43), TeamId: team, ProjectKey: "project", Workload: "worker", Provider: controlv1.WorkloadVercel, Binding: strings.Repeat("a", 64), Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, ServiceIds: ids, ExpiresAt: new(now.Add(time.Hour)), LeaseExpiresAt: now.Add(90 * time.Second), RenewAfter: now.Add(30 * time.Second)}
 	session.IdentityExpiresAt = now.Add(2 * time.Hour)
@@ -233,7 +234,7 @@ func TestIntegrationConnectionSharedOwnerStalledSibling(t *testing.T) {
 					Protocol: controlv1.ServiceProtocol(protocols[i]), TrustRevision: trustRevision,
 					Endpoint: controlv1.ServiceEndpoint{Hostname: serviceNames[i] + ".example.test", Port: servicePorts[i]},
 					VisitorPermission: controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKindService, Id: pair.ServiceId},
-						Hostname: serviceNames[i] + ".example.test", Port: servicePorts[i], ServiceTrustRevision: &trustRevision, VisitorPolicyRevision: 1, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: pair.ExpiresAt}})
+						Hostname: serviceNames[i] + ".example.test", Port: permissionPorts[i], ServiceTrustRevision: &trustRevision, VisitorPolicyRevision: 1, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: pair.ExpiresAt}})
 				return
 			}
 			_ = json.NewEncoder(w).Encode(pair)
@@ -249,7 +250,7 @@ func TestIntegrationConnectionSharedOwnerStalledSibling(t *testing.T) {
 				w.WriteHeader(403)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(controlv1.VisitorTokenResponse{Resource: body.Resource, Hostname: serviceNames[i] + ".example.test", Port: servicePorts[i], ServiceTrustRevision: &trustRevision, VisitorPolicyRevision: 1, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: time.Now().Add(time.Minute)})
+			_ = json.NewEncoder(w).Encode(controlv1.VisitorTokenResponse{Resource: body.Resource, Hostname: serviceNames[i] + ".example.test", Port: permissionPorts[i], ServiceTrustRevision: &trustRevision, VisitorPolicyRevision: 1, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: time.Now().Add(time.Minute)})
 		case r.Method == http.MethodDelete:
 			w.WriteHeader(204)
 		default:

@@ -41,7 +41,7 @@ func (h *handler) AuthorizeServiceClientCertificate(w http.ResponseWriter, r *ht
 		return
 	}
 	var body controlv1.AuthorizeServiceClientCertificateRequest
-	if decodeJSONLimited(w, r, &body, 32<<10) != nil || body.RunNumber < 1 || !validVisitorSource(body.SourceIp) {
+	if decodeJSONLimited(w, r, &body, 32<<10) != nil || body.RunNumber < 1 || !validVisitorSource(body.SourceIp) || body.DestinationPort < 1024 || body.DestinationPort > 65535 {
 		writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, "invalid service client certificate decision")
 		return
 	}
@@ -51,7 +51,7 @@ func (h *handler) AuthorizeServiceClientCertificate(w http.ResponseWriter, r *ht
 		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "service client authorization is unavailable")
 		return
 	}
-	decision, err := store.AuthorizeServiceClientCertificate(r.Context(), service, run, token, body.VisitorConnectionId, body.RunNumber, source, body.Certificate, time.Now())
+	decision, err := store.AuthorizeServiceClientCertificate(r.Context(), service, run, token, body.VisitorConnectionId, body.RunNumber, source, body.DestinationPort, body.Certificate, time.Now())
 	if err != nil {
 		writeManagedCertificateProblem(r.Context(), w, "authorize service client certificate", err)
 		return

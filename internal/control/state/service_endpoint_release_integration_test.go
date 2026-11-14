@@ -65,7 +65,7 @@ func TestIntegrationServiceEndpointReleasePreservesServiceAndHistoricalClaims(t 
 		t.Run(protocol, func(t *testing.T) {
 			d, now, r, applied, service := serviceReleaseProject(t, protocol, false)
 			ctx := t.Context()
-			if _, err := d.ReleaseServiceEndpoint(ctx, service.ID, r.ActorID, service.TrustRevision, service.Endpoint.Port, now); !errors.Is(err, ErrServiceEndpointPublic) {
+			if _, err := d.ReleaseServiceEndpoint(ctx, service.ID, r.ActorID, service.EndpointRevision, service.Endpoint.Port, now); !errors.Is(err, ErrServiceEndpointPublic) {
 				t.Fatal("release silently disabled exposure", err)
 			}
 			setReleaseProjectExposure(t, d, &r, &applied, false)
@@ -84,28 +84,28 @@ func TestIntegrationServiceEndpointReleasePreservesServiceAndHistoricalClaims(t 
 				port     int
 				want     error
 			}{
-				{"identity-unrelated", service.TrustRevision, service.Endpoint.Port, ErrServiceAccess},
-				{r.ActorID, service.TrustRevision + 1, service.Endpoint.Port, ErrServiceConflict},
-				{r.ActorID, service.TrustRevision, 25445, ErrServiceConflict},
-				{r.ActorID, service.TrustRevision, 0, ErrServiceConflict},
+				{"identity-unrelated", service.EndpointRevision, service.Endpoint.Port, ErrServiceAccess},
+				{r.ActorID, service.EndpointRevision + 1, service.Endpoint.Port, ErrServiceConflict},
+				{r.ActorID, service.EndpointRevision, 25445, ErrServiceConflict},
+				{r.ActorID, service.EndpointRevision, 0, ErrServiceConflict},
 			} {
 				if _, err := d.ReleaseServiceEndpoint(ctx, service.ID, bad.actor, bad.revision, bad.port, now); !errors.Is(err, bad.want) {
 					t.Fatal("release accepted another actor or binding", err)
 				}
 			}
-			released, err := d.ReleaseServiceEndpoint(ctx, service.ID, r.ActorID, service.TrustRevision, service.Endpoint.Port, now)
+			released, err := d.ReleaseServiceEndpoint(ctx, service.ID, r.ActorID, service.EndpointRevision, service.Endpoint.Port, now)
 			if err != nil || released.ID != service.ID || released.Endpoint == nil || released.Endpoint.Hostname != service.Endpoint.Hostname ||
-				released.Endpoint.Port != 0 || released.Endpoint.Public || released.TrustRevision != service.TrustRevision+1 {
+				released.Endpoint.Port != 0 || released.Endpoint.Public || released.TrustRevision != service.TrustRevision || released.EndpointRevision != service.EndpointRevision+1 {
 				t.Fatal("release replaced service identity or failed to fence the binding", released, err)
 			}
-			if _, err := d.HeartbeatServiceRun(ctx, run.ServiceID, run.RunID, run.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 1}); !errors.Is(err, ErrServiceAccess) {
-				t.Fatal("old run survived release", err)
+			if _, err := d.HeartbeatServiceRun(ctx, run.ServiceID, run.RunID, run.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 1}); err != nil {
+				t.Fatal("release closed an authorized connector run", err)
 			}
-			if _, err := d.PrepareServiceRun(ctx, service.ID, publisher, "stale-metadata", now, service.ServiceMetadata); !errors.Is(err, ErrServiceConflict) {
-				t.Fatal("old trust revision prepared another run", err)
+			if err := d.CloseServiceRun(ctx, run.ServiceID, run.RunID, run.Token, now); err != nil {
+				t.Fatal(err)
 			}
 			private, err := d.PrepareServiceRun(ctx, service.ID, publisher, "after-release", now, released.ServiceMetadata)
-			if err != nil || private.ServicePort != 0 || private.RunNumber <= prepared.RunNumber {
+			if err != nil || private.Hostname != prepared.Hostname || private.RunNumber <= prepared.RunNumber {
 				t.Fatal("release revoked the publisher grant or zero-port binding", private, err)
 			}
 			privateRun, err := d.StartServiceRun(ctx, service.ID, private.RunID, private.RunNumber, publisher, now)
@@ -120,16 +120,16 @@ func TestIntegrationServiceEndpointReleasePreservesServiceAndHistoricalClaims(t 
 				t.Fatal("release skipped the minimum quarantine", count, err)
 			}
 			// later private authority is independent of the retired reservation.
-			futureOrder := serviceReleaseIssuance(t, d, private, privateRun, now)
+			futureOrder := serviceReleaseIssuance(t, d, private, privateRun, now.Add(time.Second))
 			if _, err := d.pool.Exec(ctx, `UPDATE control.service_runs SET publisher_expires_at=$2,certificate_expires_at=$3,certificate_issuance_id=$4 WHERE id=$1`, private.RunID, now.Add(30*24*time.Hour), now.Add(90*24*time.Hour), futureOrder.ID); err != nil {
 				t.Fatal(err)
 			}
 			setReleaseProjectExposure(t, d, &r, &applied, true)
 			next, err := d.GetService(ctx, service.ID, r.ActorID)
-			if err != nil || next.Endpoint.Port == service.Endpoint.Port || next.Endpoint.Hostname != service.Endpoint.Hostname || next.TrustRevision != released.TrustRevision+1 {
+			if err != nil || next.Endpoint.Port == service.Endpoint.Port || next.Endpoint.Hostname != service.Endpoint.Hostname || next.TrustRevision != released.TrustRevision || next.EndpointRevision != released.EndpointRevision+1 {
 				t.Fatal("new reservation reused quarantined authority", next, err)
 			}
-			if _, err := d.ReleaseServiceEndpoint(ctx, service.ID, r.ActorID, service.TrustRevision, service.Endpoint.Port, now); !errors.Is(err, ErrServiceConflict) {
+			if _, err := d.ReleaseServiceEndpoint(ctx, service.ID, r.ActorID, service.EndpointRevision, service.Endpoint.Port, now); !errors.Is(err, ErrServiceConflict) {
 				t.Fatal("delayed release retired a replacement reservation", err)
 			}
 			if count, err := d.ReleaseServicePorts(ctx, now.Add(8*24*time.Hour)); err != nil || count != 1 {
@@ -167,7 +167,11 @@ func TestIntegrationLocalServiceEndpointReleaseRetainsCapturedIdentity(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	released, err := d.ReleaseServiceEndpoint(t.Context(), first.ServiceID, r.ActorID, private.Metadata.TrustRevision, private.Metadata.Endpoint.Port, now)
+	current, err := d.GetService(t.Context(), first.ServiceID, r.ActorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	released, err := d.ReleaseServiceEndpoint(t.Context(), first.ServiceID, r.ActorID, current.EndpointRevision, private.Metadata.Endpoint.Port, now)
 	if err != nil || released.Endpoint.Hostname != first.Metadata.Endpoint.Hostname || released.Endpoint.Port != 0 ||
 		released.Source == nil || released.Source.ProjectKey != r.ProjectKey || released.Source.WorktreeKey != request.WorktreeKey {
 		t.Fatal("local release lost captured endpoint identity", released, err)
@@ -182,7 +186,7 @@ func TestIntegrationServiceEndpointReleaseRequiresSettledDNS(t *testing.T) {
 	d, now, r, applied, service := serviceReleaseProject(t, "postgres", true)
 	setReleaseProjectExposure(t, d, &r, &applied, false)
 	release := func() error {
-		_, err := d.ReleaseServiceEndpoint(t.Context(), service.ID, r.ActorID, service.TrustRevision, service.Endpoint.Port, now)
+		_, err := d.ReleaseServiceEndpoint(t.Context(), service.ID, r.ActorID, service.EndpointRevision, service.Endpoint.Port, now)
 		return err
 	}
 	if err := release(); !errors.Is(err, ErrServiceEndpointDNSPending) {
@@ -220,16 +224,18 @@ func TestIntegrationServiceEndpointReleaseQuarantineTracksLateIssuance(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	order := serviceReleaseIssuance(t, d, prepared, run, now)
-	if _, err := d.ReleaseServiceEndpoint(ctx, service.ID, r.ActorID, service.TrustRevision, service.Endpoint.Port, now); err != nil {
+	// the release request may wait behind issuance after capturing its clock.
+	// retirement must capture the committed issuance revision, not compare dates.
+	order := serviceReleaseIssuance(t, d, prepared, run, now.Add(time.Second))
+	if _, err := d.ReleaseServiceEndpoint(ctx, service.ID, r.ActorID, service.EndpointRevision, service.Endpoint.Port, now); err != nil {
 		t.Fatal(err)
 	}
 	var retiredCSR []byte
 	if err := d.pool.QueryRow(ctx, `SELECT csr_der FROM control.acme_orders WHERE id=$1`, order.ID).Scan(&retiredCSR); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.CreateServiceCertificateIssuance(ctx, service.ID, run.RunID, run.Token, "https://acme.example.test/directory", "after-retirement", run.RunNumber, retiredCSR, now); !errors.Is(err, ErrServiceAccess) {
-		t.Fatal("retired run authorized a new issuance", err)
+	if _, err := d.CreateServiceCertificateIssuance(ctx, service.ID, run.RunID, run.Token, "https://acme.example.test/directory", "after-retirement", run.RunNumber, retiredCSR, now); err != nil {
+		t.Fatal("ingress retirement revoked connector certificate authority", err)
 	}
 	assertHeld := func(at time.Time) {
 		t.Helper()
@@ -304,7 +310,7 @@ func TestIntegrationServiceEndpointReleaseSerializesWithReenable(t *testing.T) {
 			release, enable := make(chan error, 1), make(chan error, 1)
 			startRelease := func() {
 				workers.Go(func() {
-					_, err := d.ReleaseServiceEndpoint(ctx, service.ID, r.ActorID, service.TrustRevision, service.Endpoint.Port, now)
+					_, err := d.ReleaseServiceEndpoint(ctx, service.ID, r.ActorID, service.EndpointRevision, service.Endpoint.Port, now)
 					release <- err
 				})
 			}
@@ -365,7 +371,7 @@ func TestIntegrationServiceEndpointReleaseRechecksWaitingManager(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	workers.Go(func() {
-		_, err := d.ReleaseServiceEndpoint(ctx, service.ID, manager.IdentityID, service.TrustRevision, service.Endpoint.Port, now)
+		_, err := d.ReleaseServiceEndpoint(ctx, service.ID, manager.IdentityID, service.EndpointRevision, service.Endpoint.Port, now)
 		done <- err
 	})
 	waitForPostgresBlock(t, ctx, d, int32(gate.Conn().PgConn().PID()), done)

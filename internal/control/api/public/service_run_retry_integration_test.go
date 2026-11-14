@@ -164,7 +164,7 @@ func TestIntegrationPrivatePublisherRecoversCommittedLostResponses(t *testing.T)
 			t.Fatal(err)
 		}
 	}
-	if len(setup.PublisherConnections) != 2 || prep.CertificatePlan == nil || prep.Hostname != service.Endpoint.Hostname || prep.ServicePort != service.Endpoint.Port {
+	if len(setup.PublisherConnections) != 2 || prep.CertificatePlan == nil || prep.Hostname != service.Endpoint.Hostname {
 		t.Fatal("recovery changed endpoint or assignments")
 	}
 	var runs, number int
