@@ -51,7 +51,9 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 		}
 		return value
 	}
-	now := time.Now().UTC()
+	// force a sub-microsecond input even on platforms with coarser clocks.
+	// the first response and its retry must return the same persisted deadline.
+	now := time.Now().UTC().Truncate(time.Microsecond).Add(123 * time.Nanosecond)
 	owner, err := controltest.Session(ctx, d, "example.test", time.Hour, 24*time.Hour, now)
 	if err != nil {
 		t.Fatal(err)

@@ -110,7 +110,9 @@ func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressL
 		}
 		// verify the exact reserved identity even when the retry key collided.
 		var same bool
-		if err = tx.QueryRow(ctx, `SELECT service_id=$2 AND service_run_id=$3 AND ingress_id=$4 AND ingress_run_id=$5 AND ingress_lease_revision=$6 AND source_ip=$7 AND destination_port=$8 AND valid_until>$9 AND closed_at IS NULL FROM control.public_service_visitors WHERE visitor_connection_id=$1`, visitor, result.ServiceID, result.RunID, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), source.Unmap(), port, now).Scan(&same); err != nil || !same {
+		// return the stored deadline on the first response too. PostgreSQL stores
+		// microseconds, so an in-memory nanosecond deadline would change on retry.
+		if err = tx.QueryRow(ctx, `SELECT service_id=$2 AND service_run_id=$3 AND ingress_id=$4 AND ingress_run_id=$5 AND ingress_lease_revision=$6 AND source_ip=$7 AND destination_port=$8 AND valid_until>$9 AND closed_at IS NULL,valid_until FROM control.public_service_visitors WHERE visitor_connection_id=$1`, visitor, result.ServiceID, result.RunID, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), source.Unmap(), port, now).Scan(&same, &result.ExpiresAt); err != nil || !same {
 			return result, errors.Join(ErrServiceAccess, err)
 		}
 	}
