@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -49,10 +50,16 @@ func Requests(next http.Handler, timeout time.Duration) http.Handler {
 func ForwardTrailers(in, out *http.Request) {
 	if body, ok := in.Context().Value(requestBodyKey{}).(*requestBody); ok && out.Body != nil {
 		out.Trailer = make(http.Header, len(body.source.Trailer))
-		for key := range body.source.Trailer {
-			out.Trailer[key] = nil
+		for key, values := range body.source.Trailer {
+			if body.complete.Load() {
+				out.Trailer[key] = slices.Clone(values)
+			} else {
+				out.Trailer[key] = nil
+			}
 		}
-		body.trailers = out.Trailer
+		if !body.complete.Load() {
+			body.trailers = out.Trailer
+		}
 	}
 }
 
@@ -63,11 +70,13 @@ type requestBody struct {
 	trailers      http.Header
 	clearDeadline func()
 	once          sync.Once
+	complete      atomic.Bool
 }
 
 func (b *requestBody) Read(p []byte) (int, error) {
 	n, err := b.ReadCloser.Read(p)
 	if errors.Is(err, io.EOF) {
+		b.complete.Store(true)
 		// only this read owns completed incoming trailers. publish their values
 		// before the transport sees EOF and writes its final chunk.
 		if b.trailers != nil {

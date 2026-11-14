@@ -69,6 +69,11 @@ CI downloads and verifies both Go modules before running checks. Only transient
 dependency downloads retry; tests do not. Go module caches are shared across
 build variants, while compiled caches stay separate for ordinary and race builds.
 
+The separated HTTP transport load workload explicitly disables WAF inspection
+to measure forwarding capacity, recovery, and unbounded bandwidth. It does not
+measure WAF throughput; HTTP protection and its fail-fast capacity limits have
+separate application and inspector tests.
+
 For warm PostgreSQL latency, run `mise exec -- task go:test:load:postgres`.
 It compares a direct database connection with the connector/publisher path using
 the same query and retained sessions. The task owns its disposable databases;

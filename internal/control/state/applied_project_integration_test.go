@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
@@ -522,7 +524,7 @@ func TestIntegrationAppliedProjectHTTPSettingsAndTargetTrust(t *testing.T) {
 	total := 100
 	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"web": {
 		PublisherGroup: "production", Name: "application", Target: "https://192.0.2.8:8443", TargetTLS: trust,
-		HTTP: &config.HTTPService{Access: &config.Access{Mode: "restricted", IP: []string{"192.0.2.10"}}, Limits: &config.WorkLimits{Total: &total}},
+		HTTP: &config.HTTPService{Protection: &httpprotection.Settings{WAF: httpprotection.Detect, MaxBodyBytes: new(2048)}, Access: &config.Access{Mode: "restricted", IP: []string{"192.0.2.10"}}, Limits: &config.WorkLimits{Total: &total}},
 	}}}
 	status, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
@@ -556,10 +558,16 @@ func TestIntegrationAppliedProjectHTTPSettingsAndTargetTrust(t *testing.T) {
 	if a.Configuration.TargetTLS == nil || *a.Configuration.TargetTLS != *trust || a.Configuration.HTTP.Access.IP[0] != "192.0.2.10/32" {
 		t.Fatalf("assignment lost target trust or HTTP settings: %+v", a.Configuration)
 	}
+	if p := a.Configuration.HTTP.Protection; p == nil || p.WAF != httpprotection.Detect || p.MaxBodyBytes == nil || *p.MaxBodyBytes != 2048 {
+		t.Fatal("assignment lost protection settings", p)
+	}
 	old := groupAssignmentAccess(t, d, replica, a, now)
 	approved, err := d.GetServiceForPublisher(t.Context(), id, old.PublisherIdentity, now)
 	if err != nil || approved.HTTPLimits == nil || *approved.HTTPLimits.Total != 100 {
 		t.Fatal("publisher did not receive approved HTTP limits", err)
+	}
+	if p := approved.HTTPProtection; p == nil || p.WAF != httpprotection.Detect || p.MaxBodyBytes == nil || *p.MaxBodyBytes != 2048 {
+		t.Fatal("publisher did not receive approved protection", p)
 	}
 	s := r.Configuration.Services["web"]
 	s.HTTP.Access = &config.Access{Mode: "restricted", IP: []string{"203.0.113.0/24"}}

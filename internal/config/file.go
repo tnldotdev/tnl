@@ -264,6 +264,9 @@ func ValidateTNL(config TNL) error {
 			return fmt.Errorf("services.%s: http settings require protocol http", name)
 		}
 		if service.HTTP != nil {
+			if err := ServiceProtection(service).Validate(); err != nil {
+				return fmt.Errorf("services.%s.http.protection: %w", name, err)
+			}
 			if err := validateReadiness(service.HTTP.Readiness); err != nil {
 				return fmt.Errorf("services.%s: %w", name, err)
 			}
@@ -319,6 +322,11 @@ func ValidateTNL(config TNL) error {
 func ValidateGroupHTTP(value *HTTPService) error {
 	if value == nil {
 		return nil
+	}
+	if value.Protection != nil {
+		if err := value.Protection.Validate(); err != nil {
+			return err
+		}
 	}
 	if value.Readiness != nil || len(value.Paths) != 0 || value.Open != nil {
 		return errors.New("named groups do not support readiness, path mounts, or browser opening")

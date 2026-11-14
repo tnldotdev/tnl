@@ -145,6 +145,9 @@ schemas:
       http_limits:
         $ref: "../openapi.yaml#/components/schemas/ProjectHTTPApplicationLimits"
         description: Approved run-local HTTP request limits returned to the scoped publisher. Applies after visitor authorization on public and connector admissions.
+      http_protection:
+        $ref: "../openapi.yaml#/components/schemas/HTTPProtection"
+        description: Approved protection for public HTTP endpoint access. Connector traffic is not inspected.
       protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
       kubernetes_auth: { $ref: "../openapi.yaml#/components/schemas/KubernetesAuth" }
       target_tls: { $ref: "../openapi.yaml#/components/schemas/ServiceTargetTLS" }

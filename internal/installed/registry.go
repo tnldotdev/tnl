@@ -17,6 +17,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
+
 	"github.com/tnldotdev/tnl/internal/client/filelock"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
@@ -93,6 +95,7 @@ type Job struct {
 	TargetCAPEM []byte                   `json:"target_ca_pem,omitempty"`
 	ServerCAPEM []byte                   `json:"server_ca_pem,omitempty"`
 	Limits      applicationlimits.Limits `json:"limits"`
+	Protection  httpprotection.Settings  `json:"http_protection,omitempty"`
 	Enabled     bool                     `json:"enabled"`
 	Revision    uint64                   `json:"revision"`
 	Status      Status                   `json:"status"`
@@ -609,6 +612,9 @@ func validateJob(job *Job) error {
 	}
 	if err := job.Limits.Validate(); err != nil {
 		return ErrScope
+	}
+	if err := job.Protection.Validate(); err != nil {
+		return err
 	}
 	return validateTarget(job)
 }

@@ -305,7 +305,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		certificateDone = done
 		go func() { done <- maintain() }()
 		defer func() {
-			cancel()
+			result = errors.Join(result, cancel())
 			if certificateDone != nil {
 				<-certificateDone
 			}

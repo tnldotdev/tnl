@@ -14,8 +14,10 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
+	protectionpolicy "github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
+	"github.com/tnldotdev/tnl/internal/publisher/httpprotection"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	"github.com/tnldotdev/tnl/internal/transport/httpstream"
@@ -48,6 +50,7 @@ type PublicURLServerConfig struct {
 	BrowserLoginAvailable bool
 	Feedback              *feedbackRuntime
 	Limits                applicationlimits.Limits
+	Protection            protectionpolicy.Settings
 	VisitorPolicy         *visitorlease.Lease
 	VisitorTokens         *httpaccess.Tokens
 	VisitorSourceKey      [32]byte
@@ -79,6 +82,7 @@ type PublicURLServer struct {
 	queue              *publicURLListener
 	http               *http.Server
 	proxy              *publisherproxy.Proxy
+	protection         *httpprotection.Inspector
 	bodyTimeout        time.Duration
 	mu                 sync.Mutex
 	started            bool
@@ -205,6 +209,7 @@ func (r *PublicURLServer) Close() error {
 		if r.proxy != nil {
 			result = errors.Join(result, r.proxy.Close())
 		}
+		result = errors.Join(result, r.protection.Close())
 		if drainDone != nil {
 			<-drainDone
 		}

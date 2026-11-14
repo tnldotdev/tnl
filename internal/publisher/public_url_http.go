@@ -20,6 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
+	"github.com/tnldotdev/tnl/internal/publisher/httpprotection"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
@@ -105,6 +106,18 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		}
 		handler = proxy
 	}
+	// integration URLs retain their protocol-specific validation.
+	var protection *httpprotection.Inspector
+	if config.Purpose != controlv1.Oauth && config.Purpose != controlv1.Webhooks {
+		protection, err = httpprotection.New(config.Protection)
+		if err != nil {
+			if proxy != nil {
+				_ = proxy.Close()
+			}
+			return nil, err
+		}
+	}
+	application := protection.Handler(handler, nil)
 	queue := newRouteListener()
 	shareSlots := make(chan struct{}, 16)
 	probeSlots := make(chan struct{}, 4)
@@ -118,6 +131,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	life, cancelLife := context.WithCancel(context.WithoutCancel(base))
 	route := &PublicURLServer{
 		proxy:            proxy,
+		protection:       protection,
 		hostname:         hostname,
 		policy:           config.VisitorPolicy,
 		visitorSourceKey: config.VisitorSourceKey,
@@ -370,7 +384,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 				}
 				defer release()
 				emitAudit()
-				handler.ServeHTTP(response, request)
+				application.ServeHTTP(response, request)
 			})),
 			ConnContext: func(ctx context.Context, connection net.Conn) context.Context {
 				if secured, ok := connection.(*tls.Conn); ok {

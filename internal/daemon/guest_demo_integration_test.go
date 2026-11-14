@@ -385,7 +385,7 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 			t.Fatal(err)
 		}
 	}
-	clientstate, err := clientstate.Open(t.Context(), filepath.Join(t.TempDir(), "state"))
+	clientstate, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -637,25 +637,29 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 		t.Fatalf("guest share redirect = %d", redirected.StatusCode)
 	}
 	if !deadlineProof {
-		payload := bytes.Repeat([]byte("guest transfer\n"), (6<<20)/len("guest transfer\n")+1)
-		transferRequest, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ready.PublicURL+"/transfer", bytes.NewReader(payload))
-		if err != nil {
-			t.Fatal(err)
+		// retain default protection while exceeding the former cumulative guest
+		// transfer cap through several complete requests, not one oversized body.
+		payload := bytes.Repeat([]byte("x"), 1<<20)
+		for range 7 {
+			transferRequest, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ready.PublicURL+"/transfer", bytes.NewReader(payload))
+			if err != nil {
+				t.Fatal(err)
+			}
+			// wait for authorization before sending more than ingress's pending
+			// visitor budget; that budget is separate from cumulative transfer.
+			transferRequest.Header.Set("Expect", "100-continue")
+			transferRequest.Header.Set("Content-Type", "application/octet-stream")
+			transferred, err := visitor.client.Do(transferRequest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			echo, readErr := io.ReadAll(transferred.Body)
+			transferred.Body.Close()
+			if readErr != nil || transferred.StatusCode != http.StatusOK || !bytes.Equal(echo, payload) {
+				t.Fatalf("guest transfer = %d, %d bytes, %v", transferred.StatusCode, len(echo), readErr)
+			}
 		}
-		// wait for authorization before sending a body larger than ingress's pending
-		// visitor budget; that budget remains independent of cumulative transfer.
-		transferRequest.Header.Set("Expect", "100-continue")
-		transferRequest.Header.Set("Content-Type", "application/octet-stream")
-		transferred, err := visitor.client.Do(transferRequest)
-		if err != nil {
-			t.Fatal(err)
-		}
-		echo, readErr := io.ReadAll(transferred.Body)
-		transferred.Body.Close()
-		if readErr != nil || transferred.StatusCode != http.StatusOK || !bytes.Equal(echo, payload) {
-			t.Fatalf("guest transfer = %d, %d bytes, %v", transferred.StatusCode, len(echo), readErr)
-		}
-		t.Logf("guest uploaded and downloaded %d bytes with no cumulative transfer cap", len(payload))
+		t.Logf("guest uploaded and downloaded %d bytes with no cumulative transfer cap", 7*len(payload))
 		transferredAt := time.Now()
 		waitForIntegrationCondition(t, 20*time.Second, func(ctx context.Context) (bool, error) {
 			var renewed bool
@@ -680,7 +684,11 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 	if decodeErr != nil || response.StatusCode != http.StatusOK || state.PublicURL != ready.PublicURL || !state.Guest {
 		t.Fatalf("guest demo through visitor TLS = %d, %+v, %v", response.StatusCode, state, decodeErr)
 	}
-	ping, err := visitor.client.Post(ready.PublicURL+"/ping", "", nil)
+	pingRequest, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ready.PublicURL+"/ping", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ping, err := visitor.client.Do(pingRequest)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -147,6 +147,9 @@ func TestIntegrationWorkloadHTTPPublicTLS(t *testing.T) {
 			t.Fatal(err)
 		}
 		r.Header.Set("Authorization", "Bearer application-owned")
+		if len(payload) > 0 {
+			r.Header.Set("Content-Type", "application/octet-stream")
+		}
 		response, err := client.Do(r)
 		if err != nil {
 			t.Fatal(err)

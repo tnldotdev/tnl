@@ -72,6 +72,22 @@ func TestResolveNormalizesTypeScriptExactPublicURL(t *testing.T) {
 	}
 }
 
+func TestTypeScriptHTTPProtection(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "tnl.config.ts")
+	if err := os.WriteFile(path, []byte(`export default {services: {app: {publicURL: {}, http: {protection: {waf: "detect", maxBodyBytes: 2048, exclusions: [{ruleId: 942100, path: "/search", parameter: "q"}]}}}}};`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	project, err := Resolve(t.Context(), Selection{Path: path}, root, [32]byte{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := config.ServiceProtection(project.Config.Services["app"])
+	if p.WAF != "detect" || p.MaxBodyBytes == nil || *p.MaxBodyBytes != 2048 || len(p.Exclusions) != 1 || p.Exclusions[0].RuleID != 942100 {
+		t.Fatal("TypeScript protection settings changed", p)
+	}
+}
+
 func TestLoadResolvesProjectImportsAndTsconfigPaths(t *testing.T) {
 	root := t.TempDir()
 	api := filepath.Join(root, "apps", "api")

@@ -54,6 +54,7 @@ func (a *ProjectRuntime) PublicConfiguration(ctx context.Context, service app.Se
 		return app.Configuration{}, err
 	}
 	cfg := services.config(service.Target, policy.prefixes, limits)
+	cfg.Protection = config.ServiceProtection(project.Config.Services[service.Name])
 	if effective.Tunnel != nil {
 		cfg.RequirePostQuantum = effective.Tunnel.RequirePostQuantum
 	}

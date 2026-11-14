@@ -208,6 +208,9 @@ func (d *Database) GetServiceForPublisher(ctx context.Context, id string, publis
 	if err != nil {
 		return result, err
 	}
+	if settings != nil {
+		result.HTTPProtection = settings.Protection
+	}
 	if settings != nil && settings.Limits != nil {
 		limits := settings.Limits
 		result.HTTPLimits = &ProjectHTTPApplicationLimits{Total: limits.Total, Concurrency: limits.Concurrency}

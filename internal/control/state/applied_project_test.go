@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 )
 
@@ -58,9 +59,9 @@ func TestNormalizeAppliedPublicOriginsMatchRuntime(t *testing.T) {
 }
 
 func TestNormalizeAppliedHTTPSettingsDoNotDisappear(t *testing.T) {
-	settings := &config.HTTPService{Readiness: &config.Readiness{Path: "/health"}, Paths: map[string]config.PathMount{"/api": {Service: "api", StripPrefix: true}}}
+	settings := &config.HTTPService{Protection: &httpprotection.Settings{WAF: httpprotection.Detect}, Readiness: &config.Readiness{Path: "/health"}, Paths: map[string]config.PathMount{"/api": {Service: "api", StripPrefix: true}}}
 	c, _, err := NormalizeProjectConfiguration(ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"web": {Target: "app", PublicURL: &ProjectServicePublicURL{}, HTTP: settings}, "api": {Target: "http://localhost:3001"}}})
-	if err != nil || c.Services["web"].HTTP.Readiness.Path != "/health" || !c.Services["web"].HTTP.Paths["/api"].StripPrefix {
+	if err != nil || c.Services["web"].HTTP.Readiness.Path != "/health" || !c.Services["web"].HTTP.Paths["/api"].StripPrefix || c.Services["web"].HTTP.Protection.WAF != httpprotection.Detect {
 		t.Fatal("local HTTP settings lost", err)
 	}
 	for _, s := range []*config.HTTPService{{Readiness: &config.Readiness{Path: "/health"}}, {Paths: map[string]config.PathMount{"/api": {Service: "api"}}}, {Open: new(bool)}} {

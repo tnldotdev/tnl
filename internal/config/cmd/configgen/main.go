@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/naming/tcpport"
+	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 )
 
 func main() {
@@ -240,6 +241,7 @@ func serviceSchema(protocol string) *jsonschema.Schema {
 	properties.Set("target", target)
 	properties.Set("tls", jsonschema.FalseSchema)
 	httpProperties := jsonschema.NewProperties()
+	httpProperties.Set("protection", (&jsonschema.Reflector{Anonymous: true, ExpandedStruct: true, DoNotReference: true, RequiredFromJSONSchemaTags: true}).Reflect(httpprotection.Settings{}))
 	httpProperties.Set("access", accessSchema("restricted"))
 	httpLimits, _ := limits.Properties.Get("http")
 	httpProperties.Set("limits", httpLimits)
@@ -558,7 +560,7 @@ func collectTypeScriptKeys(valueType reflect.Type, result map[string]string) {
 		}
 		if fieldType.Kind() == reflect.Struct && fieldType != reflect.TypeOf(config.Target("")) && fieldType != reflect.TypeOf(config.Duration(0)) {
 			collectTypeScriptKeys(fieldType, result)
-		} else if fieldType.Kind() == reflect.Map {
+		} else if fieldType.Kind() == reflect.Map || fieldType.Kind() == reflect.Slice {
 			elementType := fieldType.Elem()
 			if elementType.Kind() == reflect.Pointer {
 				elementType = elementType.Elem()

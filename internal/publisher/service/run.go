@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	protectionpolicy "github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
@@ -45,6 +46,7 @@ type Prepared struct {
 	servicePort         uint16
 	managedPublic       bool
 	serviceHTTPRequests *requestlimit.HTTP
+	httpProtection      protectionpolicy.Settings
 	policy              *visitorlease.Lease
 	metadataRevision    int64
 }

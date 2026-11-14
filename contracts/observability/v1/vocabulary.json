@@ -172,6 +172,11 @@
         "TNL_CLIENT_WORKLOAD_REQUIRED",
         "TNL_CLIENT_WORKLOAD_SERVICE_DENIED",
         "TNL_DNS_SETUP_PENDING",
+        "TNL_HTTP_PROTECTION_BODY_INVALID",
+        "TNL_HTTP_PROTECTION_BODY_TOO_LARGE",
+        "TNL_HTTP_PROTECTION_ENCODING_UNSUPPORTED",
+        "TNL_HTTP_PROTECTION_REJECTED",
+        "TNL_HTTP_PROTECTION_UNAVAILABLE",
         "TNL_IP_POLICY_DENIED",
         "TNL_MEMBER_HOSTNAME_DEPTH_EXCEEDED",
         "TNL_OAUTH_CALLBACK_EXPIRED",
@@ -820,6 +825,26 @@
     {
       "key": "tnl.visitor_connection_id",
       "semantics": "high-churn correlation only; prohibited as a metric dimension",
+      "dimension_policy": "trace_log"
+    },
+    {
+      "key": "tnl.waf_mode",
+      "values": [
+        "block",
+        "detect",
+        "off"
+      ],
+      "semantics": "effective request inspection mode",
+      "dimension_policy": "trace_log"
+    },
+    {
+      "key": "tnl.waf_rule_id",
+      "semantics": "managed request rule ID; never matched data",
+      "dimension_policy": "trace_log"
+    },
+    {
+      "key": "tnl.waf_ruleset",
+      "semantics": "pinned managed request ruleset; no request data",
       "dimension_policy": "trace_log"
     },
     {

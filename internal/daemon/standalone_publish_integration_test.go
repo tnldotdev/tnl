@@ -348,6 +348,7 @@ func TestIntegrationPublisherTransportMatrix(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			request.Header.Set("Content-Type", "application/octet-stream")
 			response, body, err := fixture.visitor.request(request)
 			if err != nil {
 				t.Fatal(err)
