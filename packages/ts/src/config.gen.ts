@@ -34,950 +34,960 @@ export interface TnlConfig {
           public?: boolean;
           targets?: {
             [k: string]:
-              | {
-                  type?: "app";
-                  /**
-                   * Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS.
-                   */
-                  tls?: {
-                    /**
-                     * Verified target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known.
-                     */
-                    hostname?: string;
-                    /**
-                     * system (the default), aws-rds, or CA-only PEM certificates. Never a path or URL. aws-rds selects pinned regional roots offline and verifies the exact database hostname.
-                     */
-                    ca?: string;
-                  };
-                  address?: never;
-                  project?: never;
-                  file?: never;
-                  service?: never;
-                  port?: never;
-                  container?: never;
-                  region?: never;
-                  cluster?: never;
-                  instance?: never;
-                  endpoint?: never;
-                  name?: string;
-                  auth?: never;
-                  access?: {
-                    team: true;
-                  };
-                  /**
-                   * Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only.
-                   */
-                  public?: boolean;
-                  inspection?: Inspection;
-                  http?: {
-                    access?:
-                      | "restricted"
-                      | {
-                          mode?: "restricted";
+              | ((
+                  | {
+                      public?: never;
+                    }
+                  | {
+                      publicURL?: never;
+                    }
+                ) &
+                  (
+                    | {
+                        type?: "app";
+                        /**
+                         * Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS.
+                         */
+                        tls?: {
                           /**
-                           * @minItems 1
-                           * @maxItems 256
+                           * Verified target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known.
                            */
-                          ip?: [string, ...string[]];
-                        };
-                    limits?: {
-                      total?: number;
-                      concurrency?: number;
-                      rate?: {
-                        count?: number;
-                        per?: TnlRatePeriod;
-                        burst?: number;
-                      };
-                    };
-                    /**
-                     * Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings.
-                     */
-                    readiness?: {
-                      path: string;
-                    };
-                    open?: boolean;
-                    /**
-                     * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
-                     */
-                    paths?: {
-                      [k: string]:
-                        | string
-                        | {
-                            service: string;
-                            stripPrefix?: boolean;
-                          }
-                        | undefined;
-                    };
-                  };
-                  /**
-                   * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
-                   */
-                  publicURL?: {
-                    name?: never;
-                    /**
-                     * Ready team domain used for generated public URL hostnames.
-                     */
-                    domain?: string;
-                    /**
-                     * Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL.
-                     */
-                    hostname?: string;
-                    access?:
-                      | ("restricted" | "anonymous")
-                      | {
-                          mode?: "restricted" | "anonymous";
+                          hostname?: string;
                           /**
-                           * @minItems 1
-                           * @maxItems 256
+                           * system (the default), aws-rds, or CA-only PEM certificates. Never a path or URL. aws-rds selects pinned regional roots offline and verifies the exact database hostname.
                            */
-                          ip?: [string, ...string[]];
+                          ca?: string;
                         };
-                    /**
-                     * Remove the public URL when this tunnel stops.
-                     */
-                    ephemeral?: boolean;
-                    limits?: {
-                      http?: {
-                        total?: number;
-                        concurrency?: number;
-                        rate?: {
-                          count?: number;
-                          per?: TnlRatePeriod;
-                          burst?: number;
+                        address?: never;
+                        project?: never;
+                        file?: never;
+                        service?: never;
+                        port?: never;
+                        container?: never;
+                        region?: never;
+                        cluster?: never;
+                        instance?: never;
+                        endpoint?: never;
+                        name?: string;
+                        auth?: never;
+                        access?: {
+                          team: true;
                         };
-                      };
-                      tcp?: {
-                        total?: number;
-                        concurrency?: number;
-                        rate?: {
-                          count?: number;
-                          per?: TnlRatePeriod;
-                          burst?: number;
-                        };
-                      };
-                      traffic?: {
-                        connections?: number;
-                        rate?: number;
-                        burst?: number;
-                        downloadBytes?: number;
-                        ratePer?: TnlRatePeriod;
-                        totalConnections?: number;
-                        totalDownloadBytes?: number;
-                        totalUploadBytes?: number;
-                        uploadBytes?: number;
-                      };
-                    };
-                    publisherPool?: never;
-                    /**
-                     * Require hybrid post-quantum key agreement for public HTTPS visitors.
-                     */
-                    requirePostQuantum?: boolean;
-                  };
-                }
-              | {
-                  type?: "address";
-                  address: string | number;
-                  /**
-                   * Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS.
-                   */
-                  tls?: {
-                    /**
-                     * Verified target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known.
-                     */
-                    hostname?: string;
-                    /**
-                     * system (the default), aws-rds, or CA-only PEM certificates. Never a path or URL. aws-rds selects pinned regional roots offline and verifies the exact database hostname.
-                     */
-                    ca?: string;
-                  };
-                  project?: never;
-                  file?: never;
-                  service?: never;
-                  port?: never;
-                  container?: never;
-                  region?: never;
-                  cluster?: never;
-                  instance?: never;
-                  endpoint?: never;
-                  name?: string;
-                  auth?: never;
-                  access?: {
-                    team: true;
-                  };
-                  /**
-                   * Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only.
-                   */
-                  public?: boolean;
-                  inspection?: Inspection;
-                  http?: {
-                    access?:
-                      | "restricted"
-                      | {
-                          mode?: "restricted";
+                        /**
+                         * Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only.
+                         */
+                        public?: boolean;
+                        inspection?: Inspection;
+                        http?: {
+                          access?:
+                            | "restricted"
+                            | {
+                                mode?: "restricted";
+                                /**
+                                 * @minItems 1
+                                 * @maxItems 256
+                                 */
+                                ip?: [string, ...string[]];
+                              };
+                          limits?: {
+                            total?: number;
+                            concurrency?: number;
+                            rate?: {
+                              count?: number;
+                              per?: TnlRatePeriod;
+                              burst?: number;
+                            };
+                          };
                           /**
-                           * @minItems 1
-                           * @maxItems 256
+                           * Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings.
                            */
-                          ip?: [string, ...string[]];
-                        };
-                    limits?: {
-                      total?: number;
-                      concurrency?: number;
-                      rate?: {
-                        count?: number;
-                        per?: TnlRatePeriod;
-                        burst?: number;
-                      };
-                    };
-                    /**
-                     * Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings.
-                     */
-                    readiness?: {
-                      path: string;
-                    };
-                    open?: boolean;
-                    /**
-                     * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
-                     */
-                    paths?: {
-                      [k: string]:
-                        | string
-                        | {
-                            service: string;
-                            stripPrefix?: boolean;
-                          }
-                        | undefined;
-                    };
-                  };
-                  /**
-                   * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
-                   */
-                  publicURL?: {
-                    name?: never;
-                    /**
-                     * Ready team domain used for generated public URL hostnames.
-                     */
-                    domain?: string;
-                    /**
-                     * Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL.
-                     */
-                    hostname?: string;
-                    access?:
-                      | ("restricted" | "anonymous")
-                      | {
-                          mode?: "restricted" | "anonymous";
+                          readiness?: {
+                            path: string;
+                          };
+                          open?: boolean;
                           /**
-                           * @minItems 1
-                           * @maxItems 256
+                           * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
                            */
-                          ip?: [string, ...string[]];
+                          paths?: {
+                            [k: string]:
+                              | string
+                              | {
+                                  service: string;
+                                  stripPrefix?: boolean;
+                                }
+                              | undefined;
+                          };
                         };
-                    /**
-                     * Remove the public URL when this tunnel stops.
-                     */
-                    ephemeral?: boolean;
-                    limits?: {
-                      http?: {
-                        total?: number;
-                        concurrency?: number;
-                        rate?: {
-                          count?: number;
-                          per?: TnlRatePeriod;
-                          burst?: number;
-                        };
-                      };
-                      tcp?: {
-                        total?: number;
-                        concurrency?: number;
-                        rate?: {
-                          count?: number;
-                          per?: TnlRatePeriod;
-                          burst?: number;
-                        };
-                      };
-                      traffic?: {
-                        connections?: number;
-                        rate?: number;
-                        burst?: number;
-                        downloadBytes?: number;
-                        ratePer?: TnlRatePeriod;
-                        totalConnections?: number;
-                        totalDownloadBytes?: number;
-                        totalUploadBytes?: number;
-                        uploadBytes?: number;
-                      };
-                    };
-                    publisherPool?: never;
-                    /**
-                     * Require hybrid post-quantum key agreement for public HTTPS visitors.
-                     */
-                    requirePostQuantum?: boolean;
-                  };
-                }
-              | {
-                  type: "compose";
-                  project?: string;
-                  file?: string;
-                  service: string;
-                  port: number;
-                  /**
-                   * Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS.
-                   */
-                  tls?: {
-                    /**
-                     * Verified target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known.
-                     */
-                    hostname?: string;
-                    /**
-                     * system (the default), aws-rds, or CA-only PEM certificates. Never a path or URL. aws-rds selects pinned regional roots offline and verifies the exact database hostname.
-                     */
-                    ca?: string;
-                  };
-                  address?: never;
-                  container?: never;
-                  region?: never;
-                  cluster?: never;
-                  instance?: never;
-                  endpoint?: never;
-                  name?: string;
-                  auth?: never;
-                  access?: {
-                    team: true;
-                  };
-                  /**
-                   * Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only.
-                   */
-                  public?: boolean;
-                  inspection?: Inspection;
-                  http?: {
-                    access?:
-                      | "restricted"
-                      | {
-                          mode?: "restricted";
+                        /**
+                         * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
+                         */
+                        publicURL?: {
+                          name?: never;
                           /**
-                           * @minItems 1
-                           * @maxItems 256
+                           * Ready team domain used for generated public URL hostnames.
                            */
-                          ip?: [string, ...string[]];
-                        };
-                    limits?: {
-                      total?: number;
-                      concurrency?: number;
-                      rate?: {
-                        count?: number;
-                        per?: TnlRatePeriod;
-                        burst?: number;
-                      };
-                    };
-                    /**
-                     * Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings.
-                     */
-                    readiness?: {
-                      path: string;
-                    };
-                    open?: boolean;
-                    /**
-                     * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
-                     */
-                    paths?: {
-                      [k: string]:
-                        | string
-                        | {
-                            service: string;
-                            stripPrefix?: boolean;
-                          }
-                        | undefined;
-                    };
-                  };
-                  /**
-                   * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
-                   */
-                  publicURL?: {
-                    name?: never;
-                    /**
-                     * Ready team domain used for generated public URL hostnames.
-                     */
-                    domain?: string;
-                    /**
-                     * Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL.
-                     */
-                    hostname?: string;
-                    access?:
-                      | ("restricted" | "anonymous")
-                      | {
-                          mode?: "restricted" | "anonymous";
+                          domain?: string;
                           /**
-                           * @minItems 1
-                           * @maxItems 256
+                           * Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL.
                            */
-                          ip?: [string, ...string[]];
-                        };
-                    /**
-                     * Remove the public URL when this tunnel stops.
-                     */
-                    ephemeral?: boolean;
-                    limits?: {
-                      http?: {
-                        total?: number;
-                        concurrency?: number;
-                        rate?: {
-                          count?: number;
-                          per?: TnlRatePeriod;
-                          burst?: number;
-                        };
-                      };
-                      tcp?: {
-                        total?: number;
-                        concurrency?: number;
-                        rate?: {
-                          count?: number;
-                          per?: TnlRatePeriod;
-                          burst?: number;
-                        };
-                      };
-                      traffic?: {
-                        connections?: number;
-                        rate?: number;
-                        burst?: number;
-                        downloadBytes?: number;
-                        ratePer?: TnlRatePeriod;
-                        totalConnections?: number;
-                        totalDownloadBytes?: number;
-                        totalUploadBytes?: number;
-                        uploadBytes?: number;
-                      };
-                    };
-                    publisherPool?: never;
-                    /**
-                     * Require hybrid post-quantum key agreement for public HTTPS visitors.
-                     */
-                    requirePostQuantum?: boolean;
-                  };
-                }
-              | {
-                  type: "docker";
-                  container: string;
-                  port: number;
-                  /**
-                   * Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS.
-                   */
-                  tls?: {
-                    /**
-                     * Verified target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known.
-                     */
-                    hostname?: string;
-                    /**
-                     * system (the default), aws-rds, or CA-only PEM certificates. Never a path or URL. aws-rds selects pinned regional roots offline and verifies the exact database hostname.
-                     */
-                    ca?: string;
-                  };
-                  address?: never;
-                  project?: never;
-                  file?: never;
-                  service?: never;
-                  region?: never;
-                  cluster?: never;
-                  instance?: never;
-                  endpoint?: never;
-                  name?: string;
-                  auth?: never;
-                  access?: {
-                    team: true;
-                  };
-                  /**
-                   * Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only.
-                   */
-                  public?: boolean;
-                  inspection?: Inspection;
-                  http?: {
-                    access?:
-                      | "restricted"
-                      | {
-                          mode?: "restricted";
+                          hostname?: string;
+                          access?:
+                            | ("restricted" | "anonymous")
+                            | {
+                                mode?: "restricted" | "anonymous";
+                                /**
+                                 * @minItems 1
+                                 * @maxItems 256
+                                 */
+                                ip?: [string, ...string[]];
+                              };
                           /**
-                           * @minItems 1
-                           * @maxItems 256
+                           * Remove the public URL when this tunnel stops.
                            */
-                          ip?: [string, ...string[]];
-                        };
-                    limits?: {
-                      total?: number;
-                      concurrency?: number;
-                      rate?: {
-                        count?: number;
-                        per?: TnlRatePeriod;
-                        burst?: number;
-                      };
-                    };
-                    /**
-                     * Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings.
-                     */
-                    readiness?: {
-                      path: string;
-                    };
-                    open?: boolean;
-                    /**
-                     * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
-                     */
-                    paths?: {
-                      [k: string]:
-                        | string
-                        | {
-                            service: string;
-                            stripPrefix?: boolean;
-                          }
-                        | undefined;
-                    };
-                  };
-                  /**
-                   * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
-                   */
-                  publicURL?: {
-                    name?: never;
-                    /**
-                     * Ready team domain used for generated public URL hostnames.
-                     */
-                    domain?: string;
-                    /**
-                     * Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL.
-                     */
-                    hostname?: string;
-                    access?:
-                      | ("restricted" | "anonymous")
-                      | {
-                          mode?: "restricted" | "anonymous";
+                          ephemeral?: boolean;
+                          limits?: {
+                            http?: {
+                              total?: number;
+                              concurrency?: number;
+                              rate?: {
+                                count?: number;
+                                per?: TnlRatePeriod;
+                                burst?: number;
+                              };
+                            };
+                            tcp?: {
+                              total?: number;
+                              concurrency?: number;
+                              rate?: {
+                                count?: number;
+                                per?: TnlRatePeriod;
+                                burst?: number;
+                              };
+                            };
+                            traffic?: {
+                              connections?: number;
+                              rate?: number;
+                              burst?: number;
+                              downloadBytes?: number;
+                              ratePer?: TnlRatePeriod;
+                              totalConnections?: number;
+                              totalDownloadBytes?: number;
+                              totalUploadBytes?: number;
+                              uploadBytes?: number;
+                            };
+                          };
+                          publisherPool?: never;
                           /**
-                           * @minItems 1
-                           * @maxItems 256
+                           * Require hybrid post-quantum key agreement for public HTTPS visitors.
                            */
-                          ip?: [string, ...string[]];
+                          requirePostQuantum?: boolean;
                         };
-                    /**
-                     * Remove the public URL when this tunnel stops.
-                     */
-                    ephemeral?: boolean;
-                    limits?: {
-                      http?: {
-                        total?: number;
-                        concurrency?: number;
-                        rate?: {
-                          count?: number;
-                          per?: TnlRatePeriod;
-                          burst?: number;
-                        };
-                      };
-                      tcp?: {
-                        total?: number;
-                        concurrency?: number;
-                        rate?: {
-                          count?: number;
-                          per?: TnlRatePeriod;
-                          burst?: number;
-                        };
-                      };
-                      traffic?: {
-                        connections?: number;
-                        rate?: number;
-                        burst?: number;
-                        downloadBytes?: number;
-                        ratePer?: TnlRatePeriod;
-                        totalConnections?: number;
-                        totalDownloadBytes?: number;
-                        totalUploadBytes?: number;
-                        uploadBytes?: number;
-                      };
-                    };
-                    publisherPool?: never;
-                    /**
-                     * Require hybrid post-quantum key agreement for public HTTPS visitors.
-                     */
-                    requirePostQuantum?: boolean;
-                  };
-                }
-              | {
-                  type: "eks";
-                  region: string;
-                  cluster: string;
-                  tls?: never;
-                  address?: never;
-                  project?: never;
-                  file?: never;
-                  service?: never;
-                  port?: never;
-                  container?: never;
-                  instance?: never;
-                  endpoint?: never;
-                  name?: string;
-                  auth?: never;
-                  access?: {
-                    team: true;
-                  };
-                  /**
-                   * Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only.
-                   */
-                  public?: boolean;
-                  inspection?: Inspection;
-                  http?: {
-                    access?:
-                      | "restricted"
-                      | {
-                          mode?: "restricted";
+                      }
+                    | {
+                        type?: "address";
+                        address: string | number;
+                        /**
+                         * Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS.
+                         */
+                        tls?: {
                           /**
-                           * @minItems 1
-                           * @maxItems 256
+                           * Verified target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known.
                            */
-                          ip?: [string, ...string[]];
-                        };
-                    limits?: {
-                      total?: number;
-                      concurrency?: number;
-                      rate?: {
-                        count?: number;
-                        per?: TnlRatePeriod;
-                        burst?: number;
-                      };
-                    };
-                    /**
-                     * Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings.
-                     */
-                    readiness?: {
-                      path: string;
-                    };
-                    open?: boolean;
-                    /**
-                     * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
-                     */
-                    paths?: {
-                      [k: string]:
-                        | string
-                        | {
-                            service: string;
-                            stripPrefix?: boolean;
-                          }
-                        | undefined;
-                    };
-                  };
-                  /**
-                   * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
-                   */
-                  publicURL?: {
-                    name?: never;
-                    /**
-                     * Ready team domain used for generated public URL hostnames.
-                     */
-                    domain?: string;
-                    /**
-                     * Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL.
-                     */
-                    hostname?: string;
-                    access?:
-                      | ("restricted" | "anonymous")
-                      | {
-                          mode?: "restricted" | "anonymous";
+                          hostname?: string;
                           /**
-                           * @minItems 1
-                           * @maxItems 256
+                           * system (the default), aws-rds, or CA-only PEM certificates. Never a path or URL. aws-rds selects pinned regional roots offline and verifies the exact database hostname.
                            */
-                          ip?: [string, ...string[]];
+                          ca?: string;
                         };
-                    /**
-                     * Remove the public URL when this tunnel stops.
-                     */
-                    ephemeral?: boolean;
-                    limits?: {
-                      http?: {
-                        total?: number;
-                        concurrency?: number;
-                        rate?: {
-                          count?: number;
-                          per?: TnlRatePeriod;
-                          burst?: number;
+                        project?: never;
+                        file?: never;
+                        service?: never;
+                        port?: never;
+                        container?: never;
+                        region?: never;
+                        cluster?: never;
+                        instance?: never;
+                        endpoint?: never;
+                        name?: string;
+                        auth?: never;
+                        access?: {
+                          team: true;
                         };
-                      };
-                      tcp?: {
-                        total?: number;
-                        concurrency?: number;
-                        rate?: {
-                          count?: number;
-                          per?: TnlRatePeriod;
-                          burst?: number;
-                        };
-                      };
-                      traffic?: {
-                        connections?: number;
-                        rate?: number;
-                        burst?: number;
-                        downloadBytes?: number;
-                        ratePer?: TnlRatePeriod;
-                        totalConnections?: number;
-                        totalDownloadBytes?: number;
-                        totalUploadBytes?: number;
-                        uploadBytes?: number;
-                      };
-                    };
-                    publisherPool?: never;
-                    /**
-                     * Require hybrid post-quantum key agreement for public HTTPS visitors.
-                     */
-                    requirePostQuantum?: boolean;
-                  };
-                }
-              | {
-                  type: "rds";
-                  region: string;
-                  cluster?: never;
-                  instance: string;
-                  endpoint?: "writer";
-                  tls?: never;
-                  address?: never;
-                  project?: never;
-                  file?: never;
-                  service?: never;
-                  port?: never;
-                  container?: never;
-                  name?: string;
-                  auth?: never;
-                  access?: {
-                    team: true;
-                  };
-                  /**
-                   * Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only.
-                   */
-                  public?: boolean;
-                  inspection?: Inspection;
-                  http?: {
-                    access?:
-                      | "restricted"
-                      | {
-                          mode?: "restricted";
+                        /**
+                         * Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only.
+                         */
+                        public?: boolean;
+                        inspection?: Inspection;
+                        http?: {
+                          access?:
+                            | "restricted"
+                            | {
+                                mode?: "restricted";
+                                /**
+                                 * @minItems 1
+                                 * @maxItems 256
+                                 */
+                                ip?: [string, ...string[]];
+                              };
+                          limits?: {
+                            total?: number;
+                            concurrency?: number;
+                            rate?: {
+                              count?: number;
+                              per?: TnlRatePeriod;
+                              burst?: number;
+                            };
+                          };
                           /**
-                           * @minItems 1
-                           * @maxItems 256
+                           * Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings.
                            */
-                          ip?: [string, ...string[]];
-                        };
-                    limits?: {
-                      total?: number;
-                      concurrency?: number;
-                      rate?: {
-                        count?: number;
-                        per?: TnlRatePeriod;
-                        burst?: number;
-                      };
-                    };
-                    /**
-                     * Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings.
-                     */
-                    readiness?: {
-                      path: string;
-                    };
-                    open?: boolean;
-                    /**
-                     * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
-                     */
-                    paths?: {
-                      [k: string]:
-                        | string
-                        | {
-                            service: string;
-                            stripPrefix?: boolean;
-                          }
-                        | undefined;
-                    };
-                  };
-                  /**
-                   * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
-                   */
-                  publicURL?: {
-                    name?: never;
-                    /**
-                     * Ready team domain used for generated public URL hostnames.
-                     */
-                    domain?: string;
-                    /**
-                     * Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL.
-                     */
-                    hostname?: string;
-                    access?:
-                      | ("restricted" | "anonymous")
-                      | {
-                          mode?: "restricted" | "anonymous";
+                          readiness?: {
+                            path: string;
+                          };
+                          open?: boolean;
                           /**
-                           * @minItems 1
-                           * @maxItems 256
+                           * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
                            */
-                          ip?: [string, ...string[]];
+                          paths?: {
+                            [k: string]:
+                              | string
+                              | {
+                                  service: string;
+                                  stripPrefix?: boolean;
+                                }
+                              | undefined;
+                          };
                         };
-                    /**
-                     * Remove the public URL when this tunnel stops.
-                     */
-                    ephemeral?: boolean;
-                    limits?: {
-                      http?: {
-                        total?: number;
-                        concurrency?: number;
-                        rate?: {
-                          count?: number;
-                          per?: TnlRatePeriod;
-                          burst?: number;
-                        };
-                      };
-                      tcp?: {
-                        total?: number;
-                        concurrency?: number;
-                        rate?: {
-                          count?: number;
-                          per?: TnlRatePeriod;
-                          burst?: number;
-                        };
-                      };
-                      traffic?: {
-                        connections?: number;
-                        rate?: number;
-                        burst?: number;
-                        downloadBytes?: number;
-                        ratePer?: TnlRatePeriod;
-                        totalConnections?: number;
-                        totalDownloadBytes?: number;
-                        totalUploadBytes?: number;
-                        uploadBytes?: number;
-                      };
-                    };
-                    publisherPool?: never;
-                    /**
-                     * Require hybrid post-quantum key agreement for public HTTPS visitors.
-                     */
-                    requirePostQuantum?: boolean;
-                  };
-                }
-              | {
-                  type: "rds";
-                  region: string;
-                  cluster: string;
-                  instance?: never;
-                  endpoint?: "writer" | "reader";
-                  tls?: never;
-                  address?: never;
-                  project?: never;
-                  file?: never;
-                  service?: never;
-                  port?: never;
-                  container?: never;
-                  name?: string;
-                  auth?: never;
-                  access?: {
-                    team: true;
-                  };
-                  /**
-                   * Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only.
-                   */
-                  public?: boolean;
-                  inspection?: Inspection;
-                  http?: {
-                    access?:
-                      | "restricted"
-                      | {
-                          mode?: "restricted";
+                        /**
+                         * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
+                         */
+                        publicURL?: {
+                          name?: never;
                           /**
-                           * @minItems 1
-                           * @maxItems 256
+                           * Ready team domain used for generated public URL hostnames.
                            */
-                          ip?: [string, ...string[]];
-                        };
-                    limits?: {
-                      total?: number;
-                      concurrency?: number;
-                      rate?: {
-                        count?: number;
-                        per?: TnlRatePeriod;
-                        burst?: number;
-                      };
-                    };
-                    /**
-                     * Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings.
-                     */
-                    readiness?: {
-                      path: string;
-                    };
-                    open?: boolean;
-                    /**
-                     * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
-                     */
-                    paths?: {
-                      [k: string]:
-                        | string
-                        | {
-                            service: string;
-                            stripPrefix?: boolean;
-                          }
-                        | undefined;
-                    };
-                  };
-                  /**
-                   * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
-                   */
-                  publicURL?: {
-                    name?: never;
-                    /**
-                     * Ready team domain used for generated public URL hostnames.
-                     */
-                    domain?: string;
-                    /**
-                     * Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL.
-                     */
-                    hostname?: string;
-                    access?:
-                      | ("restricted" | "anonymous")
-                      | {
-                          mode?: "restricted" | "anonymous";
+                          domain?: string;
                           /**
-                           * @minItems 1
-                           * @maxItems 256
+                           * Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL.
                            */
-                          ip?: [string, ...string[]];
+                          hostname?: string;
+                          access?:
+                            | ("restricted" | "anonymous")
+                            | {
+                                mode?: "restricted" | "anonymous";
+                                /**
+                                 * @minItems 1
+                                 * @maxItems 256
+                                 */
+                                ip?: [string, ...string[]];
+                              };
+                          /**
+                           * Remove the public URL when this tunnel stops.
+                           */
+                          ephemeral?: boolean;
+                          limits?: {
+                            http?: {
+                              total?: number;
+                              concurrency?: number;
+                              rate?: {
+                                count?: number;
+                                per?: TnlRatePeriod;
+                                burst?: number;
+                              };
+                            };
+                            tcp?: {
+                              total?: number;
+                              concurrency?: number;
+                              rate?: {
+                                count?: number;
+                                per?: TnlRatePeriod;
+                                burst?: number;
+                              };
+                            };
+                            traffic?: {
+                              connections?: number;
+                              rate?: number;
+                              burst?: number;
+                              downloadBytes?: number;
+                              ratePer?: TnlRatePeriod;
+                              totalConnections?: number;
+                              totalDownloadBytes?: number;
+                              totalUploadBytes?: number;
+                              uploadBytes?: number;
+                            };
+                          };
+                          publisherPool?: never;
+                          /**
+                           * Require hybrid post-quantum key agreement for public HTTPS visitors.
+                           */
+                          requirePostQuantum?: boolean;
                         };
-                    /**
-                     * Remove the public URL when this tunnel stops.
-                     */
-                    ephemeral?: boolean;
-                    limits?: {
-                      http?: {
-                        total?: number;
-                        concurrency?: number;
-                        rate?: {
-                          count?: number;
-                          per?: TnlRatePeriod;
-                          burst?: number;
+                      }
+                    | {
+                        type: "compose";
+                        project?: string;
+                        file?: string;
+                        service: string;
+                        port: number;
+                        /**
+                         * Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS.
+                         */
+                        tls?: {
+                          /**
+                           * Verified target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known.
+                           */
+                          hostname?: string;
+                          /**
+                           * system (the default), aws-rds, or CA-only PEM certificates. Never a path or URL. aws-rds selects pinned regional roots offline and verifies the exact database hostname.
+                           */
+                          ca?: string;
                         };
-                      };
-                      tcp?: {
-                        total?: number;
-                        concurrency?: number;
-                        rate?: {
-                          count?: number;
-                          per?: TnlRatePeriod;
-                          burst?: number;
+                        address?: never;
+                        container?: never;
+                        region?: never;
+                        cluster?: never;
+                        instance?: never;
+                        endpoint?: never;
+                        name?: string;
+                        auth?: never;
+                        access?: {
+                          team: true;
                         };
-                      };
-                      traffic?: {
-                        connections?: number;
-                        rate?: number;
-                        burst?: number;
-                        downloadBytes?: number;
-                        ratePer?: TnlRatePeriod;
-                        totalConnections?: number;
-                        totalDownloadBytes?: number;
-                        totalUploadBytes?: number;
-                        uploadBytes?: number;
-                      };
-                    };
-                    publisherPool?: never;
-                    /**
-                     * Require hybrid post-quantum key agreement for public HTTPS visitors.
-                     */
-                    requirePostQuantum?: boolean;
-                  };
-                }
+                        /**
+                         * Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only.
+                         */
+                        public?: boolean;
+                        inspection?: Inspection;
+                        http?: {
+                          access?:
+                            | "restricted"
+                            | {
+                                mode?: "restricted";
+                                /**
+                                 * @minItems 1
+                                 * @maxItems 256
+                                 */
+                                ip?: [string, ...string[]];
+                              };
+                          limits?: {
+                            total?: number;
+                            concurrency?: number;
+                            rate?: {
+                              count?: number;
+                              per?: TnlRatePeriod;
+                              burst?: number;
+                            };
+                          };
+                          /**
+                           * Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings.
+                           */
+                          readiness?: {
+                            path: string;
+                          };
+                          open?: boolean;
+                          /**
+                           * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
+                           */
+                          paths?: {
+                            [k: string]:
+                              | string
+                              | {
+                                  service: string;
+                                  stripPrefix?: boolean;
+                                }
+                              | undefined;
+                          };
+                        };
+                        /**
+                         * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
+                         */
+                        publicURL?: {
+                          name?: never;
+                          /**
+                           * Ready team domain used for generated public URL hostnames.
+                           */
+                          domain?: string;
+                          /**
+                           * Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL.
+                           */
+                          hostname?: string;
+                          access?:
+                            | ("restricted" | "anonymous")
+                            | {
+                                mode?: "restricted" | "anonymous";
+                                /**
+                                 * @minItems 1
+                                 * @maxItems 256
+                                 */
+                                ip?: [string, ...string[]];
+                              };
+                          /**
+                           * Remove the public URL when this tunnel stops.
+                           */
+                          ephemeral?: boolean;
+                          limits?: {
+                            http?: {
+                              total?: number;
+                              concurrency?: number;
+                              rate?: {
+                                count?: number;
+                                per?: TnlRatePeriod;
+                                burst?: number;
+                              };
+                            };
+                            tcp?: {
+                              total?: number;
+                              concurrency?: number;
+                              rate?: {
+                                count?: number;
+                                per?: TnlRatePeriod;
+                                burst?: number;
+                              };
+                            };
+                            traffic?: {
+                              connections?: number;
+                              rate?: number;
+                              burst?: number;
+                              downloadBytes?: number;
+                              ratePer?: TnlRatePeriod;
+                              totalConnections?: number;
+                              totalDownloadBytes?: number;
+                              totalUploadBytes?: number;
+                              uploadBytes?: number;
+                            };
+                          };
+                          publisherPool?: never;
+                          /**
+                           * Require hybrid post-quantum key agreement for public HTTPS visitors.
+                           */
+                          requirePostQuantum?: boolean;
+                        };
+                      }
+                    | {
+                        type: "docker";
+                        container: string;
+                        port: number;
+                        /**
+                         * Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS.
+                         */
+                        tls?: {
+                          /**
+                           * Verified target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known.
+                           */
+                          hostname?: string;
+                          /**
+                           * system (the default), aws-rds, or CA-only PEM certificates. Never a path or URL. aws-rds selects pinned regional roots offline and verifies the exact database hostname.
+                           */
+                          ca?: string;
+                        };
+                        address?: never;
+                        project?: never;
+                        file?: never;
+                        service?: never;
+                        region?: never;
+                        cluster?: never;
+                        instance?: never;
+                        endpoint?: never;
+                        name?: string;
+                        auth?: never;
+                        access?: {
+                          team: true;
+                        };
+                        /**
+                         * Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only.
+                         */
+                        public?: boolean;
+                        inspection?: Inspection;
+                        http?: {
+                          access?:
+                            | "restricted"
+                            | {
+                                mode?: "restricted";
+                                /**
+                                 * @minItems 1
+                                 * @maxItems 256
+                                 */
+                                ip?: [string, ...string[]];
+                              };
+                          limits?: {
+                            total?: number;
+                            concurrency?: number;
+                            rate?: {
+                              count?: number;
+                              per?: TnlRatePeriod;
+                              burst?: number;
+                            };
+                          };
+                          /**
+                           * Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings.
+                           */
+                          readiness?: {
+                            path: string;
+                          };
+                          open?: boolean;
+                          /**
+                           * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
+                           */
+                          paths?: {
+                            [k: string]:
+                              | string
+                              | {
+                                  service: string;
+                                  stripPrefix?: boolean;
+                                }
+                              | undefined;
+                          };
+                        };
+                        /**
+                         * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
+                         */
+                        publicURL?: {
+                          name?: never;
+                          /**
+                           * Ready team domain used for generated public URL hostnames.
+                           */
+                          domain?: string;
+                          /**
+                           * Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL.
+                           */
+                          hostname?: string;
+                          access?:
+                            | ("restricted" | "anonymous")
+                            | {
+                                mode?: "restricted" | "anonymous";
+                                /**
+                                 * @minItems 1
+                                 * @maxItems 256
+                                 */
+                                ip?: [string, ...string[]];
+                              };
+                          /**
+                           * Remove the public URL when this tunnel stops.
+                           */
+                          ephemeral?: boolean;
+                          limits?: {
+                            http?: {
+                              total?: number;
+                              concurrency?: number;
+                              rate?: {
+                                count?: number;
+                                per?: TnlRatePeriod;
+                                burst?: number;
+                              };
+                            };
+                            tcp?: {
+                              total?: number;
+                              concurrency?: number;
+                              rate?: {
+                                count?: number;
+                                per?: TnlRatePeriod;
+                                burst?: number;
+                              };
+                            };
+                            traffic?: {
+                              connections?: number;
+                              rate?: number;
+                              burst?: number;
+                              downloadBytes?: number;
+                              ratePer?: TnlRatePeriod;
+                              totalConnections?: number;
+                              totalDownloadBytes?: number;
+                              totalUploadBytes?: number;
+                              uploadBytes?: number;
+                            };
+                          };
+                          publisherPool?: never;
+                          /**
+                           * Require hybrid post-quantum key agreement for public HTTPS visitors.
+                           */
+                          requirePostQuantum?: boolean;
+                        };
+                      }
+                    | {
+                        type: "eks";
+                        region: string;
+                        cluster: string;
+                        tls?: never;
+                        address?: never;
+                        project?: never;
+                        file?: never;
+                        service?: never;
+                        port?: never;
+                        container?: never;
+                        instance?: never;
+                        endpoint?: never;
+                        name?: string;
+                        auth?: never;
+                        access?: {
+                          team: true;
+                        };
+                        /**
+                         * Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only.
+                         */
+                        public?: boolean;
+                        inspection?: Inspection;
+                        http?: {
+                          access?:
+                            | "restricted"
+                            | {
+                                mode?: "restricted";
+                                /**
+                                 * @minItems 1
+                                 * @maxItems 256
+                                 */
+                                ip?: [string, ...string[]];
+                              };
+                          limits?: {
+                            total?: number;
+                            concurrency?: number;
+                            rate?: {
+                              count?: number;
+                              per?: TnlRatePeriod;
+                              burst?: number;
+                            };
+                          };
+                          /**
+                           * Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings.
+                           */
+                          readiness?: {
+                            path: string;
+                          };
+                          open?: boolean;
+                          /**
+                           * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
+                           */
+                          paths?: {
+                            [k: string]:
+                              | string
+                              | {
+                                  service: string;
+                                  stripPrefix?: boolean;
+                                }
+                              | undefined;
+                          };
+                        };
+                        /**
+                         * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
+                         */
+                        publicURL?: {
+                          name?: never;
+                          /**
+                           * Ready team domain used for generated public URL hostnames.
+                           */
+                          domain?: string;
+                          /**
+                           * Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL.
+                           */
+                          hostname?: string;
+                          access?:
+                            | ("restricted" | "anonymous")
+                            | {
+                                mode?: "restricted" | "anonymous";
+                                /**
+                                 * @minItems 1
+                                 * @maxItems 256
+                                 */
+                                ip?: [string, ...string[]];
+                              };
+                          /**
+                           * Remove the public URL when this tunnel stops.
+                           */
+                          ephemeral?: boolean;
+                          limits?: {
+                            http?: {
+                              total?: number;
+                              concurrency?: number;
+                              rate?: {
+                                count?: number;
+                                per?: TnlRatePeriod;
+                                burst?: number;
+                              };
+                            };
+                            tcp?: {
+                              total?: number;
+                              concurrency?: number;
+                              rate?: {
+                                count?: number;
+                                per?: TnlRatePeriod;
+                                burst?: number;
+                              };
+                            };
+                            traffic?: {
+                              connections?: number;
+                              rate?: number;
+                              burst?: number;
+                              downloadBytes?: number;
+                              ratePer?: TnlRatePeriod;
+                              totalConnections?: number;
+                              totalDownloadBytes?: number;
+                              totalUploadBytes?: number;
+                              uploadBytes?: number;
+                            };
+                          };
+                          publisherPool?: never;
+                          /**
+                           * Require hybrid post-quantum key agreement for public HTTPS visitors.
+                           */
+                          requirePostQuantum?: boolean;
+                        };
+                      }
+                    | {
+                        type: "rds";
+                        region: string;
+                        cluster?: never;
+                        instance: string;
+                        endpoint?: "writer";
+                        tls?: never;
+                        address?: never;
+                        project?: never;
+                        file?: never;
+                        service?: never;
+                        port?: never;
+                        container?: never;
+                        name?: string;
+                        auth?: never;
+                        access?: {
+                          team: true;
+                        };
+                        /**
+                         * Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only.
+                         */
+                        public?: boolean;
+                        inspection?: Inspection;
+                        http?: {
+                          access?:
+                            | "restricted"
+                            | {
+                                mode?: "restricted";
+                                /**
+                                 * @minItems 1
+                                 * @maxItems 256
+                                 */
+                                ip?: [string, ...string[]];
+                              };
+                          limits?: {
+                            total?: number;
+                            concurrency?: number;
+                            rate?: {
+                              count?: number;
+                              per?: TnlRatePeriod;
+                              burst?: number;
+                            };
+                          };
+                          /**
+                           * Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings.
+                           */
+                          readiness?: {
+                            path: string;
+                          };
+                          open?: boolean;
+                          /**
+                           * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
+                           */
+                          paths?: {
+                            [k: string]:
+                              | string
+                              | {
+                                  service: string;
+                                  stripPrefix?: boolean;
+                                }
+                              | undefined;
+                          };
+                        };
+                        /**
+                         * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
+                         */
+                        publicURL?: {
+                          name?: never;
+                          /**
+                           * Ready team domain used for generated public URL hostnames.
+                           */
+                          domain?: string;
+                          /**
+                           * Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL.
+                           */
+                          hostname?: string;
+                          access?:
+                            | ("restricted" | "anonymous")
+                            | {
+                                mode?: "restricted" | "anonymous";
+                                /**
+                                 * @minItems 1
+                                 * @maxItems 256
+                                 */
+                                ip?: [string, ...string[]];
+                              };
+                          /**
+                           * Remove the public URL when this tunnel stops.
+                           */
+                          ephemeral?: boolean;
+                          limits?: {
+                            http?: {
+                              total?: number;
+                              concurrency?: number;
+                              rate?: {
+                                count?: number;
+                                per?: TnlRatePeriod;
+                                burst?: number;
+                              };
+                            };
+                            tcp?: {
+                              total?: number;
+                              concurrency?: number;
+                              rate?: {
+                                count?: number;
+                                per?: TnlRatePeriod;
+                                burst?: number;
+                              };
+                            };
+                            traffic?: {
+                              connections?: number;
+                              rate?: number;
+                              burst?: number;
+                              downloadBytes?: number;
+                              ratePer?: TnlRatePeriod;
+                              totalConnections?: number;
+                              totalDownloadBytes?: number;
+                              totalUploadBytes?: number;
+                              uploadBytes?: number;
+                            };
+                          };
+                          publisherPool?: never;
+                          /**
+                           * Require hybrid post-quantum key agreement for public HTTPS visitors.
+                           */
+                          requirePostQuantum?: boolean;
+                        };
+                      }
+                    | {
+                        type: "rds";
+                        region: string;
+                        cluster: string;
+                        instance?: never;
+                        endpoint?: "writer" | "reader";
+                        tls?: never;
+                        address?: never;
+                        project?: never;
+                        file?: never;
+                        service?: never;
+                        port?: never;
+                        container?: never;
+                        name?: string;
+                        auth?: never;
+                        access?: {
+                          team: true;
+                        };
+                        /**
+                         * Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only.
+                         */
+                        public?: boolean;
+                        inspection?: Inspection;
+                        http?: {
+                          access?:
+                            | "restricted"
+                            | {
+                                mode?: "restricted";
+                                /**
+                                 * @minItems 1
+                                 * @maxItems 256
+                                 */
+                                ip?: [string, ...string[]];
+                              };
+                          limits?: {
+                            total?: number;
+                            concurrency?: number;
+                            rate?: {
+                              count?: number;
+                              per?: TnlRatePeriod;
+                              burst?: number;
+                            };
+                          };
+                          /**
+                           * Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings.
+                           */
+                          readiness?: {
+                            path: string;
+                          };
+                          open?: boolean;
+                          /**
+                           * Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.
+                           */
+                          paths?: {
+                            [k: string]:
+                              | string
+                              | {
+                                  service: string;
+                                  stripPrefix?: boolean;
+                                }
+                              | undefined;
+                          };
+                        };
+                        /**
+                         * Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present.
+                         */
+                        publicURL?: {
+                          name?: never;
+                          /**
+                           * Ready team domain used for generated public URL hostnames.
+                           */
+                          domain?: string;
+                          /**
+                           * Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL.
+                           */
+                          hostname?: string;
+                          access?:
+                            | ("restricted" | "anonymous")
+                            | {
+                                mode?: "restricted" | "anonymous";
+                                /**
+                                 * @minItems 1
+                                 * @maxItems 256
+                                 */
+                                ip?: [string, ...string[]];
+                              };
+                          /**
+                           * Remove the public URL when this tunnel stops.
+                           */
+                          ephemeral?: boolean;
+                          limits?: {
+                            http?: {
+                              total?: number;
+                              concurrency?: number;
+                              rate?: {
+                                count?: number;
+                                per?: TnlRatePeriod;
+                                burst?: number;
+                              };
+                            };
+                            tcp?: {
+                              total?: number;
+                              concurrency?: number;
+                              rate?: {
+                                count?: number;
+                                per?: TnlRatePeriod;
+                                burst?: number;
+                              };
+                            };
+                            traffic?: {
+                              connections?: number;
+                              rate?: number;
+                              burst?: number;
+                              downloadBytes?: number;
+                              ratePer?: TnlRatePeriod;
+                              totalConnections?: number;
+                              totalDownloadBytes?: number;
+                              totalUploadBytes?: number;
+                              uploadBytes?: number;
+                            };
+                          };
+                          publisherPool?: never;
+                          /**
+                           * Require hybrid post-quantum key agreement for public HTTPS visitors.
+                           */
+                          requirePostQuantum?: boolean;
+                        };
+                      }
+                  ))
               | undefined;
           };
           aws?: never;

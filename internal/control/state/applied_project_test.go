@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"math/big"
 	"strings"
 	"testing"
@@ -66,6 +67,34 @@ func TestNormalizeAppliedPublicOriginsMatchRuntime(t *testing.T) {
 				t.Fatal("apply and runtime disagree about public origin", c, err, runtimeErr)
 			}
 		})
+	}
+}
+
+func TestPublicURLConfigurationRejectsServiceEndpointExposure(t *testing.T) {
+	for _, public := range []bool{false, true} {
+		for _, target := range []string{"app", "http://app.internal:3000"} {
+			t.Run(fmt.Sprintf("%s/public=%t", target, public), func(t *testing.T) {
+				input := ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{
+					"web": {Target: target, PublicURL: &ProjectServicePublicURL{}, Public: new(public)},
+				}}
+				if _, _, err := NormalizeProjectConfiguration(input); !errors.Is(err, ErrProjectConfigurationInvalid) {
+					t.Fatal("public URL binding silently accepted service endpoint reachability", err)
+				}
+				service := input.Services["web"]
+				service.Public = nil
+				input.Services["web"] = service
+				if _, _, err := NormalizeProjectConfiguration(input); err != nil {
+					t.Fatal("omitted endpoint reachability changed public URL apply", err)
+				}
+			})
+		}
+		input := ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{
+			"web": {Target: "http://app.internal:3000", Public: new(public)},
+		}}
+		normalized, _, err := NormalizeProjectConfiguration(input)
+		if err != nil || normalized.Services["web"].Public == nil || *normalized.Services["web"].Public != public || normalized.Services["web"].PublicURL != nil {
+			t.Fatal("saved HTTP service lost endpoint reachability", normalized, err)
+		}
 	}
 }
 

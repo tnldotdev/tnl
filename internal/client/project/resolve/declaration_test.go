@@ -56,6 +56,30 @@ func TestRemoteDeclarationKeepsExposureOnEachService(t *testing.T) {
 	}
 }
 
+func TestDeclarationRejectsPublicURLWithEndpointExposure(t *testing.T) {
+	for _, public := range []bool{false, true} {
+		for _, target := range []*config.ServiceTarget{
+			{Type: "app"},
+			{Type: "address", Address: new(config.Target("http://app.internal:3000"))},
+		} {
+			project := clientproject.Project{Config: config.TNL{
+				Deployment: "production",
+				Services:   config.Services{"web": {Target: target, Tunnel: &config.Tunnel{}, Public: new(public)}},
+			}}
+			if declaration, err := Declaration(t.Context(), project, appliedTestContext(), nil); err == nil || len(declaration.Services) != 0 {
+				t.Fatal("declaration emitted ignored endpoint reachability for a public URL", public, err)
+			}
+			service := project.Config.Services["web"]
+			service.Public = nil
+			project.Config.Services["web"] = service
+			declaration, err := Declaration(t.Context(), project, appliedTestContext(), nil)
+			if err != nil || declaration.Services["web"].PublicUrl == nil || declaration.Services["web"].Public != nil {
+				t.Fatal("omitted endpoint reachability changed the public URL declaration", err)
+			}
+		}
+	}
+}
+
 func TestProjectDeclarationUsesPublicURLPresenceAndPreservesPolicyLimitsAndGrantIntent(t *testing.T) {
 	deployment := "cloud"
 	remote := config.Target("http://api.internal:8080")

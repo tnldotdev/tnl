@@ -5,6 +5,7 @@ import {
   type TnlConfigForServices,
   type TnlRatePeriod,
   type TnlByteSize,
+  type TnlServiceTarget,
 } from "@tnldotdev/tnl/config";
 import { assert, assertType, expectTypeOf, test } from "vitest";
 
@@ -70,6 +71,29 @@ test("saved services select exposure independently of protocol and placement", (
     // @ts-expect-error app-owned exposure has not switched to the service endpoint lifecycle yet.
     deployments: { local: { targets: { app: { public: true } } } },
   });
+});
+
+test("public URLs cannot carry service endpoint exposure in generated configuration types", () => {
+  assertType<TnlServiceTarget>({ publicURL: {} });
+  assertType<TnlServiceTarget>({ address: "http://web.internal:3000", public: false });
+  assertType<TnlServiceTarget>({ address: "http://web.internal:3000", public: true });
+  // @ts-expect-error the publication choice must not admit unknown binding fields.
+  assertType<TnlServiceTarget>({ publicURL: {}, unexpected: true });
+  for (const publicExposure of [false, true] as const) {
+    const binding = { publicURL: {}, public: publicExposure } as const;
+    // @ts-expect-error generated binding types reject either explicit endpoint flag.
+    assertType<TnlServiceTarget>(binding);
+    const project = {
+      services: { web: {} },
+      deployments: { production: { targets: { web: binding } } },
+    } as const;
+    // @ts-expect-error generated project types reject inferred mixed publication settings.
+    assertType<TnlConfig>(project);
+    // @ts-expect-error defineConfig must not admit the inferred combination either.
+    defineConfig(project);
+    // @ts-expect-error factories follow the same publication boundary.
+    defineConfig(() => project);
+  }
 });
 
 const config = defineConfig({

@@ -256,6 +256,22 @@
               },
               "targets": {
                 "additionalProperties": {
+                  "allOf": [
+                    {
+                      "anyOf": [
+                        {
+                          "properties": {
+                            "public": false
+                          }
+                        },
+                        {
+                          "properties": {
+                            "public_url": false
+                          }
+                        }
+                      ]
+                    }
+                  ],
                   "oneOf": [
                     {
                       "allOf": [

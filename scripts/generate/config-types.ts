@@ -28,6 +28,8 @@ const client = {
 renameProperties(client, keys);
 
 const generated = await compile(client, "TnlConfig", {
+  // constraint-only fragments must not open generated object types.
+  additionalProperties: false,
   bannerComment: "",
   format: false,
   strictIndexSignatures: true,

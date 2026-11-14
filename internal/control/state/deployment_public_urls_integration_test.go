@@ -222,6 +222,43 @@ func TestIntegrationDeploymentSavedPublicURLsBelongToTeamAcrossPublisherReplacem
 	}
 }
 
+func TestIntegrationDeploymentPublicURLRejectsEndpointExposureWithoutMutation(t *testing.T) {
+	d, now := newControlStateIntegrationDatabase(t, "deployment_url_exposure")
+	r := appliedProjectRequest(t, d, now)
+	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{
+		"web": {Target: "http://app.internal:3000", PublicURL: &ProjectServicePublicURL{
+			RequirePostQuantum: new(true), Access: &ProjectPublicAccess{Mode: "restricted", IP: []string{"192.0.2.0/24"}},
+		}},
+	}}
+	r = selectedProjectRequest(r, "production")
+	applied, err := d.ApplyProjectConfiguration(t.Context(), r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := DeploymentScope{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID}
+	original, err := d.GetDeployment(t.Context(), scope, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.ExpectedRevision = applied.Revision
+	for _, public := range []bool{false, true} {
+		service := r.Configuration.Services["web"]
+		service.Public = new(public)
+		r.Configuration.Services["web"] = service
+		if _, err := d.ApplyProjectConfiguration(t.Context(), r); !errors.Is(err, ErrProjectConfigurationInvalid) {
+			t.Fatal("direct apply silently accepted public URL endpoint reachability", public, err)
+		}
+		current, err := d.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, r.ActorID, "production")
+		if err != nil || current.Revision != applied.Revision || current.ConfigurationHash != applied.ConfigurationHash || current.Configuration.Services["web"].Public != nil {
+			t.Fatal("rejected reachability change mutated the project", current, err)
+		}
+		deployment, err := d.GetDeployment(t.Context(), scope, "production")
+		if err != nil || deployment.Revision != original.Revision || deployment.Services["web"] != original.Services["web"] {
+			t.Fatal("rejected reachability change mutated the saved URL binding", deployment, err)
+		}
+	}
+}
+
 func TestIntegrationDeploymentPublicURLChangesDoNotMutateSiblingOrAdoptNamespace(t *testing.T) {
 	f := newDeploymentPublicationFixture(t)
 	scope := DeploymentScope{TeamID: f.project.TeamID, ProjectKey: f.project.ProjectKey, ActorID: f.project.ActorID}

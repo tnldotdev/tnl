@@ -104,6 +104,14 @@ def test_generated_inputs_keep_required_fields_and_tagged_json() -> None:
     assert models.Deployment.model_validate_json(parsed.model_dump_json()) == parsed
 
 
+@pytest.mark.parametrize("public", [False, True])
+def test_generated_runtime_management_models_reject_publication_configuration(public: bool) -> None:
+    target = {"address": "http://app.internal:3000"}
+    assert models.DeploymentTarget.model_validate(target).address == target["address"]
+    with pytest.raises(ValidationError):
+        models.DeploymentTarget.model_validate({**target, "public_url": {}, "public": public})
+
+
 def test_project_management_preserves_original_keys_conditions_and_pagination(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

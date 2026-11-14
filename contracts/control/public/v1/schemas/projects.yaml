@@ -288,6 +288,7 @@ schemas:
     type: object
     additionalProperties: false
     required: [target]
+    not: { required: [public, public_url] }
     properties:
       name: { type: string, maxLength: 32 }
       protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
@@ -298,7 +299,7 @@ schemas:
       target_discovery: { $ref: "../openapi.yaml#/components/schemas/ProjectTargetDiscovery" }
       public:
         type: boolean
-        description: Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only. Overrides the retained deployment default.
+        description: Public endpoint access for this saved service binding, independent of visitor authorization. False keeps connector access only. Overrides the retained deployment default. Cannot be combined with public_url, which uses its own public HTTPS publication.
       public_url: { $ref: "../openapi.yaml#/components/schemas/ProjectServicePublicURL" }
       target_tls: { $ref: "../openapi.yaml#/components/schemas/ProjectTargetTLS" }
       access: { $ref: "../openapi.yaml#/components/schemas/ProjectServiceAccess" }

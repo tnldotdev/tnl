@@ -212,6 +212,23 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 			t.Fatal("apply accepted an unknown field", nested, err)
 		}
 	}
+	for _, public := range []bool{false, true} {
+		var invalid map[string]any
+		if err := json.Unmarshal(encoded, &invalid); err != nil {
+			t.Fatal(err)
+		}
+		configuration := invalid["configuration"].(map[string]any)
+		web := configuration["services"].(map[string]any)["web"].(map[string]any)
+		web["public_url"], web["public"] = map[string]any{}, public
+		data, err := json.Marshal(invalid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response, err := rawAPI.ApplyProjectConfigurationWithBodyWithResponse(ctx, project, "application/json", bytes.NewReader(data), auth)
+		if err != nil || response.StatusCode() != http.StatusBadRequest {
+			t.Fatal("apply HTTP accepted ignored public URL endpoint reachability", public, err)
+		}
+	}
 	var missing map[string]any
 	if err = json.Unmarshal(encoded, &missing); err != nil {
 		t.Fatal(err)

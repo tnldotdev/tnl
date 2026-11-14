@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json/v2"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -167,6 +168,39 @@ func TestSavedDeploymentKeepsPerServiceExposure(t *testing.T) {
 	}
 	if selected.Services["web"].Public == nil || !*selected.Services["web"].Public || selected.Services["db"].Public == nil || *selected.Services["db"].Public || selected.DeploymentSettings.Public {
 		t.Fatal("service exposure changed another binding or the deployment default")
+	}
+}
+
+func TestPublicURLBindingRejectsServiceEndpointExposure(t *testing.T) {
+	for _, public := range []bool{false, true} {
+		for _, deployment := range []string{"local", "production"} {
+			t.Run(fmt.Sprintf("%s/public=%t", deployment, public), func(t *testing.T) {
+				project := Project{
+					Services: map[string]ServiceDeclaration{"web": {}},
+					Deployments: map[string]Deployment{deployment: {Targets: map[string]DeploymentBinding{
+						"web": {Tunnel: &Tunnel{}, Public: new(public)},
+					}}},
+				}
+				if err := ValidateProject(project); err == nil {
+					t.Fatal("public URL binding silently accepted service endpoint reachability")
+				}
+				binding := project.Deployments[deployment].Targets["web"]
+				binding.Public = nil
+				project.Deployments[deployment].Targets["web"] = binding
+				if err := ValidateProject(project); err != nil {
+					t.Fatal("omitted endpoint reachability changed public URL syntax", err)
+				}
+			})
+		}
+		project := Project{
+			Services: map[string]ServiceDeclaration{"web": {}},
+			Deployments: map[string]Deployment{"production": {Targets: map[string]DeploymentBinding{
+				"web": {ServiceTarget: ServiceTarget{Address: new(Target("http://web.internal:3000"))}, Public: new(public)},
+			}}},
+		}
+		if err := ValidateProject(project); err != nil {
+			t.Fatal("saved HTTP service lost endpoint reachability", public, err)
+		}
 	}
 }
 

@@ -275,6 +275,16 @@ func deploymentBindingSchema() *jsonschema.Schema {
 			variant.Required = slices.DeleteFunc(variant.Required, func(name string) bool { return name == "type" })
 		}
 	}
+	// use explicit forbidden fields so generated TypeScript also rejects the
+	// combination on inferred objects, not only fresh object literals.
+	noEndpointExposure := jsonschema.NewProperties()
+	noEndpointExposure.Set("public", jsonschema.FalseSchema)
+	noPublicURL := jsonschema.NewProperties()
+	noPublicURL.Set("public_url", jsonschema.FalseSchema)
+	result.AllOf = []*jsonschema.Schema{{AnyOf: []*jsonschema.Schema{
+		{Properties: noEndpointExposure},
+		{Properties: noPublicURL},
+	}}}
 	return result
 }
 
