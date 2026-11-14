@@ -16,7 +16,9 @@ import (
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/control/turnstile"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -24,20 +26,43 @@ type challengeStore struct {
 	httpChallengeStore
 	attempt             controlstate.HTTPChallengeAttempt
 	browser             []byte
+	attempts            map[string]challengeStoreAttempt
+	hostnames           map[visitorscope.Scope]string
 	claims, completions int
 }
 
+type challengeStoreAttempt struct {
+	attempt controlstate.HTTPChallengeAttempt
+	browser []byte
+}
+
 func (s *challengeStore) BeginHTTPChallenge(_ context.Context, scope visitorscope.Scope, browser, publisher []byte, now time.Time) (controlstate.HTTPChallengeAttempt, error) {
+	id, err := opaqueid.New(opaqueid.HTTPChallengePrefix)
+	if err != nil {
+		return controlstate.HTTPChallengeAttempt{}, err
+	}
+	if s.attempts == nil {
+		s.attempts = make(map[string]challengeStoreAttempt)
+	}
+	hostname, port := "preview.example.test", uint16(25443)
+	if scope.Kind == visitorscope.PublicURL {
+		port = 443
+	}
+	if saved, ok := s.hostnames[scope]; ok {
+		hostname = saved
+	}
 	s.browser = browser
-	s.attempt = controlstate.HTTPChallengeAttempt{ID: "cha_" + strings.Repeat("A", 22), Scope: scope, Hostname: "preview.example.test", Port: 25443, ExpiresAt: now.Add(5 * time.Minute)}
+	s.attempt = controlstate.HTTPChallengeAttempt{ID: id, Scope: scope, Hostname: hostname, Port: port, ExpiresAt: now.Add(5 * time.Minute)}
+	s.attempts[id] = challengeStoreAttempt{s.attempt, browser}
 	return s.attempt, nil
 }
 
 func (s *challengeStore) ReadHTTPChallenge(_ context.Context, id string, hash []byte, _ time.Time) (controlstate.HTTPChallengeAttempt, error) {
-	if id != s.attempt.ID || string(hash) != string(s.browser) {
+	record, ok := s.attempts[id]
+	if !ok || string(hash) != string(record.browser) {
 		return controlstate.HTTPChallengeAttempt{}, controlstate.ErrHTTPChallenge
 	}
-	return s.attempt, nil
+	return record.attempt, nil
 }
 
 func (s *challengeStore) ClaimHTTPChallenge(ctx context.Context, id string, hash []byte, now time.Time) error {
@@ -49,16 +74,112 @@ func (s *challengeStore) ClaimHTTPChallenge(ctx context.Context, id string, hash
 }
 
 func (s *challengeStore) CompleteHTTPChallenge(_ context.Context, proof turnstile.VerifiedAttempt, _ time.Time) (controlstate.HTTPChallengeHandoff, error) {
-	if proof.ID() != s.attempt.ID {
+	record, ok := s.attempts[proof.ID()]
+	if !ok {
 		return controlstate.HTTPChallengeHandoff{}, controlstate.ErrHTTPChallenge
 	}
 	s.completions++
-	return controlstate.HTTPChallengeHandoff{Origin: "https://preview.example.test:25443", Secret: "single-use-secret"}, nil
+	return controlstate.HTTPChallengeHandoff{Origin: visitortoken.ClearanceOrigin(record.attempt.Hostname, record.attempt.Port), Secret: "single-use-secret"}, nil
 }
 
 type challengeRoundTripper func(*http.Request) (*http.Response, error)
 
 func (f challengeRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestChallengeControlKeepsConcurrentBrowserAttempts(t *testing.T) {
+	scopes := []visitorscope.Scope{
+		{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)},
+		{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("B", 22)},
+	}
+	store := &challengeStore{hostnames: map[visitorscope.Scope]string{
+		scopes[0]: "first.example.test", scopes[1]: "second.example.test",
+	}}
+	providerCalls := 0
+	h, err := NewHandler(Config{ControlURL: "https://control.example.test", TurnstileSiteKey: "site", TurnstileSecretKey: "secret",
+		HTTPClient: &http.Client{Transport: challengeRoundTripper(func(r *http.Request) (*http.Response, error) {
+			providerCalls++
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			raw, _ := json.Marshal(map[string]any{"success": true, "hostname": "control.example.test", "action": turnstile.Action, "cdata": r.PostForm.Get("response"), "challenge_ts": time.Now()})
+			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(string(raw)))}, nil
+		})}}, Stores{HTTPChallenges: store}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var browser *http.Cookie
+	serve := func(method, path, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		if browser != nil {
+			r.AddCookie(browser)
+		}
+		if method == http.MethodPost {
+			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			r.Header.Set("Origin", "https://control.example.test")
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		for _, cookie := range w.Result().Cookies() {
+			if cookie.Name == challengeBrowserCookie {
+				browser = cookie
+			}
+		}
+		return w
+	}
+	var pages []string
+	for _, scope := range scopes {
+		path := "/v1/browser/challenge/start?" + url.Values{
+			"resource_kind": {string(scope.Kind)}, "resource_id": {scope.ID},
+			"binding": {base64.RawURLEncoding.EncodeToString(make([]byte, 32))},
+		}.Encode()
+		w := serve(http.MethodGet, path, "")
+		if w.Code != 303 {
+			t.Fatal("challenge preparation failed", w.Code)
+		}
+		pages = append(pages, w.Header().Get("Location"))
+	}
+	for i, page := range pages {
+		if w := serve(http.MethodGet, page, ""); w.Code != 200 {
+			t.Fatal("starting another challenge invalidated the first browser binding", w.Code)
+		}
+		attempt := strings.TrimPrefix(page, "/v1/browser/challenge/")
+		w := serve(http.MethodPost, page, url.Values{"response": {attempt}}.Encode())
+		if w.Code != 303 || !strings.HasPrefix(w.Header().Get("Location"), "https://"+store.hostnames[scopes[i]]+"/__tnl/challenge?") {
+			t.Fatal("another browser attempt prevented verification", w.Code)
+		}
+	}
+	if store.claims != 2 || store.completions != 2 || providerCalls != 2 {
+		t.Fatal("both browser attempts did not finish independently")
+	}
+}
+
+func TestChallengeControlReplacesInvalidBrowserBindings(t *testing.T) {
+	valid := base64.RawURLEncoding.EncodeToString(make([]byte, 32))
+	for _, cookies := range [][]string{nil, {"invalid"}, {strings.Repeat("!", 43)}, {valid, valid}} {
+		store := &challengeStore{}
+		h, err := NewHandler(Config{ControlURL: "https://control.example.test", TurnstileSiteKey: "site", TurnstileSecretKey: "secret"}, Stores{HTTPChallenges: store}, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := "/v1/browser/challenge/start?resource_kind=service&resource_id=svc_" + strings.Repeat("A", 22) + "&binding=" + valid
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		for _, cookie := range cookies {
+			r.AddCookie(&http.Cookie{Name: challengeBrowserCookie, Value: cookie})
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != 303 || len(w.Result().Cookies()) != 1 {
+			t.Fatal("invalid browser binding was not replaced", w.Code)
+		}
+		cookie := w.Result().Cookies()[0]
+		raw, err := base64.RawURLEncoding.Strict().DecodeString(cookie.Value)
+		hash := sha256.Sum256(raw)
+		if err != nil || len(raw) != 32 || cookie.Value == valid || string(hash[:]) != string(store.browser) {
+			t.Fatal("replacement cookie did not supply a fresh, hashed browser binding")
+		}
+	}
+}
 
 func TestChallengeControlBrowserBindingOriginAndProviderFailure(t *testing.T) {
 	store := &challengeStore{}

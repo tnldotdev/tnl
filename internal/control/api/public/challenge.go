@@ -46,17 +46,17 @@ func (h *handler) challengeRequest(w http.ResponseWriter, r *http.Request) (cont
 	return call, finish, true
 }
 
-func challengeCookieHash(r *http.Request) ([]byte, bool) {
+func challengeBrowserBinding(r *http.Request) (string, []byte) {
 	cookies := r.CookiesNamed(challengeBrowserCookie)
 	if len(cookies) != 1 || len(cookies[0].Value) != 43 {
-		return nil, false
+		return "", nil
 	}
 	secret, err := base64.RawURLEncoding.Strict().DecodeString(cookies[0].Value)
 	if err != nil || len(secret) != 32 {
-		return nil, false
+		return "", nil
 	}
 	hash := sha256.Sum256(secret)
-	return hash[:], true
+	return cookies[0].Value, hash[:]
 }
 
 func (h *handler) BeginHTTPChallenge(w http.ResponseWriter, r *http.Request, params controlv1.BeginHTTPChallengeParams) {
@@ -75,19 +75,25 @@ func (h *handler) BeginHTTPChallenge(w http.ResponseWriter, r *http.Request, par
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid challenge resource or browser binding")
 		return
 	}
-	var browser [32]byte
-	if _, err := rand.Read(browser[:]); err != nil {
-		writeProblem(w, 503, controlv1.Unavailable, "challenge preparation is unavailable")
-		return
+	// attempts share the control origin across tabs and publisher hostnames.
+	// starting one must not replace another attempt's browser binding.
+	browser, hash := challengeBrowserBinding(r)
+	if hash == nil {
+		var secret [32]byte
+		if _, err := rand.Read(secret[:]); err != nil {
+			writeProblem(w, 503, controlv1.Unavailable, "challenge preparation is unavailable")
+			return
+		}
+		digest := sha256.Sum256(secret[:])
+		browser, hash = base64.RawURLEncoding.EncodeToString(secret[:]), digest[:]
 	}
-	hash := sha256.Sum256(browser[:])
 	now := time.Now()
-	attempt, err := h.dependencies.HTTPChallenges.BeginHTTPChallenge(ctx, scope, hash[:], publisherHash, now)
+	attempt, err := h.dependencies.HTTPChallenges.BeginHTTPChallenge(ctx, scope, hash, publisherHash, now)
 	if err != nil {
 		writeHTTPChallengeProblem(ctx, w, err)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: challengeBrowserCookie, Value: base64.RawURLEncoding.EncodeToString(browser[:]), Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, Expires: now.Add(httpprotection.ChallengeAttemptLifetime)})
+	http.SetCookie(w, &http.Cookie{Name: challengeBrowserCookie, Value: browser, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, Expires: now.Add(httpprotection.ChallengeAttemptLifetime)})
 	http.Redirect(w, r, "/v1/browser/challenge/"+attempt.ID, http.StatusSeeOther)
 }
 
@@ -104,8 +110,8 @@ func (h *handler) GetHTTPChallenge(w http.ResponseWriter, r *http.Request, attem
 		return
 	}
 	defer finish()
-	hash, ok := challengeCookieHash(r)
-	if !ok {
+	_, hash := challengeBrowserBinding(r)
+	if hash == nil {
 		writeHTTPChallengeProblem(ctx, w, controlstate.ErrHTTPChallenge)
 		return
 	}
@@ -129,8 +135,8 @@ func (h *handler) VerifyHTTPChallenge(w http.ResponseWriter, r *http.Request, at
 		return
 	}
 	defer finish()
-	hash, bound := challengeCookieHash(r)
-	if !bound || r.Header.Get("Origin") != h.config.ControlURL || r.URL.RawQuery != "" {
+	_, hash := challengeBrowserBinding(r)
+	if hash == nil || r.Header.Get("Origin") != h.config.ControlURL || r.URL.RawQuery != "" {
 		writeHTTPChallengeProblem(ctx, w, controlstate.ErrHTTPChallenge)
 		return
 	}
