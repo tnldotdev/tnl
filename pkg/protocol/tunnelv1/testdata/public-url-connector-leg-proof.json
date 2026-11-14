@@ -1,0 +1,18 @@
+{
+  "pair_id": "cpp_1234567890123456789012",
+  "delivery_generation": 3,
+  "public_url_id": "url_1234567890123456789012",
+  "publish_run_id": "pr_1234567890123456789012",
+  "publish_run_number": 4,
+  "publisher_identity_id": "pub_1234567890123456789012",
+  "connection_slot": 1,
+  "publisher_connection_id": "pc_1234567890123456789012",
+  "assignment_revision": 7,
+  "relay_service_id": "relay-b",
+  "relay_id": "relay-1",
+  "relay_run_id": "process-1",
+  "relay_lease_revision": 2,
+  "requested_at": "2026-01-01T00:00:00Z",
+  "nonce": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+  "signature": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg=="
+}

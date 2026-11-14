@@ -17,9 +17,12 @@ import (
 type ConnectorPairLegProof struct {
 	PairID                string    `json:"pair_id"`
 	DeliveryGeneration    int64     `json:"delivery_generation"`
-	ServiceID             string    `json:"service_id"`
-	ServiceRunID          string    `json:"service_run_id"`
-	RunNumber             int64     `json:"run_number"`
+	ServiceID             string    `json:"service_id,omitempty"`
+	ServiceRunID          string    `json:"service_run_id,omitempty"`
+	RunNumber             int64     `json:"run_number,omitempty"`
+	PublicURLID           string    `json:"public_url_id,omitempty"`
+	PublishRunID          string    `json:"publish_run_id,omitempty"`
+	PublishRunNumber      int64     `json:"publish_run_number,omitempty"`
 	PublisherIdentityID   string    `json:"publisher_identity_id"`
 	ConnectionSlot        int       `json:"connection_slot"`
 	PublisherConnectionID string    `json:"publisher_connection_id"`
@@ -42,6 +45,7 @@ const MaxConnectorPairLegProofBytes = 4 << 10
 func (p ConnectorPairLegProof) SameLeg(other ConnectorPairLegProof) bool {
 	return p.PairID == other.PairID && p.DeliveryGeneration == other.DeliveryGeneration && p.ServiceID == other.ServiceID &&
 		p.ServiceRunID == other.ServiceRunID && p.RunNumber == other.RunNumber && p.PublisherIdentityID == other.PublisherIdentityID &&
+		p.PublicURLID == other.PublicURLID && p.PublishRunID == other.PublishRunID && p.PublishRunNumber == other.PublishRunNumber &&
 		p.ConnectionSlot == other.ConnectionSlot && p.PublisherConnectionID == other.PublisherConnectionID && p.AssignmentRevision == other.AssignmentRevision &&
 		p.RelayServiceID == other.RelayServiceID && p.RelayID == other.RelayID && p.RelayRunID == other.RelayRunID && p.RelayLeaseRevision == other.RelayLeaseRevision
 }
@@ -49,9 +53,10 @@ func (p ConnectorPairLegProof) SameLeg(other ConnectorPairLegProof) bool {
 // Message is signed with the enrolled connector key, independent of pair
 // preparation and visitor opening proofs. the signature is never part of it.
 func (p ConnectorPairLegProof) Message() ([]byte, error) {
+	publication := connectorPublication{serviceID: p.ServiceID, serviceRunID: p.ServiceRunID, runNumber: uint64(p.RunNumber),
+		publicURLID: p.PublicURLID, publishRunID: p.PublishRunID, publishRunNumber: uint64(p.PublishRunNumber)}
 	if !opaqueid.Valid(p.PairID, "cpp_") || p.DeliveryGeneration < 1 ||
-		!opaqueid.Valid(p.ServiceID, opaqueid.ServicePrefix) || !opaqueid.Valid(p.ServiceRunID, opaqueid.ServiceRunPrefix) ||
-		!opaqueid.Valid(p.PublisherIdentityID, opaqueid.PublisherIdentityPrefix) || p.RunNumber < 1 ||
+		!publication.valid() || !opaqueid.Valid(p.PublisherIdentityID, opaqueid.PublisherIdentityPrefix) ||
 		(p.ConnectionSlot != 0 && p.ConnectionSlot != 1) ||
 		!opaqueid.Valid(p.PublisherConnectionID, opaqueid.PublisherConnectionPrefix) || p.AssignmentRevision < 1 ||
 		p.RelayServiceID == "" || len(p.RelayServiceID) > 256 || p.RelayID == "" || len(p.RelayID) > 256 ||
@@ -59,13 +64,19 @@ func (p ConnectorPairLegProof) Message() ([]byte, error) {
 		p.RequestedAt.IsZero() || len(p.Nonce) != 32 {
 		return nil, ErrConnectorPairLegProof
 	}
-	body, err := json.Marshal([]any{p.PairID, p.DeliveryGeneration, p.ServiceID, p.ServiceRunID, p.RunNumber,
+	id, runID, number := p.ServiceID, p.ServiceRunID, p.RunNumber
+	domain := "tnl connector pair leg claim v1\x00"
+	if p.PublicURLID != "" {
+		id, runID, number = p.PublicURLID, p.PublishRunID, p.PublishRunNumber
+		domain = "tnl public URL connector pair leg claim v1\x00"
+	}
+	body, err := json.Marshal([]any{p.PairID, p.DeliveryGeneration, id, runID, number,
 		p.PublisherIdentityID, p.ConnectionSlot, p.PublisherConnectionID, p.AssignmentRevision,
 		p.RelayServiceID, p.RelayID, p.RelayRunID, p.RelayLeaseRevision, p.RequestedAt.UTC().Truncate(time.Microsecond), p.Nonce})
 	if err != nil {
 		return nil, err
 	}
-	return append([]byte("tnl connector pair leg claim v1\x00"), body...), nil
+	return append([]byte(domain), body...), nil
 }
 
 // RelayClaimMessage binds the connector's signed proof to the source observed
@@ -77,8 +88,12 @@ func (p ConnectorPairLegProof) RelayClaimMessage(observedSource netip.Addr) ([]b
 		return nil, ErrConnectorPairLegProof
 	}
 	address := observedSource.Unmap().AsSlice()
-	result := make([]byte, 0, len(message)+len(p.Signature)+len(address)+40)
-	result = append(result, "tnl relay connector pair leg claim v1\x00"...)
+	domain := "tnl relay connector pair leg claim v1\x00"
+	if p.PublicURLID != "" {
+		domain = "tnl public URL relay connector pair leg claim v1\x00"
+	}
+	result := make([]byte, 0, len(domain)+len(message)+len(p.Signature)+len(address))
+	result = append(result, domain...)
 	result = append(result, message...)
 	result = append(result, p.Signature...)
 	return append(result, address...), nil

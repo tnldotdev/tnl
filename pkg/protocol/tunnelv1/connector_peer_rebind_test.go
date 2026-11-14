@@ -148,10 +148,15 @@ func TestConnectorPeerPairRebindProofRejectsInvalidPhases(t *testing.T) {
 		{"abort proofs", "abort", func(p *ConnectorPeerPairRebindProof) { p.PathProofs = make([]ConnectorPeerPairPathProof, 2) }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			p := connectorRebindFixture(t, test.phase)
-			test.edit(&p)
-			if _, err := p.Message(); !errors.Is(err, ErrConnectorPeerPairRebindProof) {
-				t.Fatal("invalid phase-specific proof signed", err)
+			for _, publicURL := range []bool{false, true} {
+				p := connectorRebindFixture(t, test.phase)
+				if publicURL {
+					p = publicURLRebindFixture(t, test.phase)
+				}
+				test.edit(&p)
+				if _, err := p.Message(); !errors.Is(err, ErrConnectorPeerPairRebindProof) {
+					t.Fatalf("invalid phase-specific proof signed (public URL=%t): %v", publicURL, err)
+				}
 			}
 		})
 	}
@@ -183,12 +188,17 @@ func FuzzConnectorPeerPairRebindProof(f *testing.F) {
 		f.Add(phase, p.IdempotencyKey, p.ExpectedGeneration, p.BindingChallenge, frame)
 	}
 	f.Fuzz(func(t *testing.T, phase, owner string, generation int64, challenge, frame string) {
-		p := connectorRebindFixture(t, phase)
-		p.Phase, p.IdempotencyKey, p.ExpectedGeneration, p.BindingChallenge = phase, owner, generation, challenge
-		if len(p.PathProofs) > 0 {
-			p.PathProofs[0].ReplyFrame = frame
+		for _, publicURL := range []bool{false, true} {
+			p := connectorRebindFixture(t, phase)
+			if publicURL {
+				p = publicURLRebindFixture(t, phase)
+			}
+			p.Phase, p.IdempotencyKey, p.ExpectedGeneration, p.BindingChallenge = phase, owner, generation, challenge
+			if len(p.PathProofs) > 0 {
+				p.PathProofs[0].ReplyFrame = frame
+			}
+			_, _ = p.Message()
 		}
-		_, _ = p.Message()
 	})
 }
 

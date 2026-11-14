@@ -56,6 +56,8 @@ tasks:
       - go test ./pkg/protocol/tunnelv1 -run='^$' -fuzz='^FuzzReadFrames$' -fuzztime='{{.TIME}}'
       - go test ./pkg/protocol/tunnelv1 -run='^$' -fuzz='^FuzzReturnFrame$' -fuzztime='{{.TIME}}'
       - go test ./pkg/protocol/tunnelv1 -run='^$' -fuzz='^FuzzWireTraceContext$' -fuzztime='{{.TIME}}' -parallel=2
+      - go test ./pkg/protocol/tunnelv1 -run='^$' -fuzz='^FuzzConnectorPairLegProof$' -fuzztime='{{.TIME}}' -parallel=2
+      - go test ./pkg/protocol/tunnelv1 -run='^$' -fuzz='^FuzzConnectorPeerPairRebindProof$' -fuzztime='{{.TIME}}' -parallel=2
       - go test ./internal/policy/target -run='^$' -fuzz='^FuzzNormalizeTarget$' -fuzztime='{{.TIME}}'
       - go test ./internal/naming -run='^$' -fuzz='^FuzzCanonicalize$' -fuzztime='{{.TIME}}'
       - go test ./internal/naming -run='^$' -fuzz='^FuzzDomainPolicy$' -fuzztime='{{.TIME}}'

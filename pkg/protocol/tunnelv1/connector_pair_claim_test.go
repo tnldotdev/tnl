@@ -10,14 +10,18 @@ import (
 	"time"
 )
 
-func TestConnectorPairLegProofWireAndBounds(t *testing.T) {
-	p := ConnectorPairLegProof{PairID: "cpp_1234567890123456789012", DeliveryGeneration: 3,
+func connectorLegProofFixture() ConnectorPairLegProof {
+	return ConnectorPairLegProof{PairID: "cpp_1234567890123456789012", DeliveryGeneration: 3,
 		ServiceID: "svc_1234567890123456789012", ServiceRunID: "srun_1234567890123456789012",
 		PublisherIdentityID: "pub_1234567890123456789012", RunNumber: 4, ConnectionSlot: 1,
 		PublisherConnectionID: "pc_1234567890123456789012", AssignmentRevision: 7,
 		RelayServiceID: "relay-b", RelayID: "relay-1", RelayRunID: "process-1", RelayLeaseRevision: 2,
 		RequestedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Nonce: bytes.Repeat([]byte{1}, 32),
 		Signature: bytes.Repeat([]byte{2}, ed25519.SignatureSize)}
+}
+
+func TestConnectorPairLegProofWireAndBounds(t *testing.T) {
+	p := connectorLegProofFixture()
 	message, err := p.Message()
 	if err != nil || !bytes.HasPrefix(message, []byte("tnl connector pair leg claim v1\x00")) {
 		t.Fatal("missing signed domain", err)

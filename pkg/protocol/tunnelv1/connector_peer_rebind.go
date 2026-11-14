@@ -50,6 +50,8 @@ type ConnectorPeerPairRebindProof struct {
 	RequestedAt                                           time.Time
 	ServiceRunID, PublisherIdentityID                     string
 	RunNumber, TrustRevision                              int64
+	PublicURLID, PublishRunID                             string
+	PublishRunNumber                                      int64
 	Subject                                               VisitorSubject
 	ExpectedRelays                                        []ConnectorPeerPairRelay
 	BindingChallenge                                      string
@@ -60,9 +62,11 @@ type ConnectorPeerPairRebindProof struct {
 // encoded as [], and each uncertain phase retry retains its original timestamp.
 // this domain and format do not change the original pair preparation proof.
 func (p ConnectorPeerPairRebindProof) Message() ([]byte, error) {
-	if !opaqueid.Valid(p.ServiceID, opaqueid.ServicePrefix) || !opaqueid.Valid(p.PairID, "cpp_") ||
-		!opaqueid.Valid(p.ServiceRunID, opaqueid.ServiceRunPrefix) || !opaqueid.Valid(p.PublisherIdentityID, opaqueid.PublisherIdentityPrefix) ||
-		p.RunNumber < 1 || p.TrustRevision < 1 || p.ExpectedGeneration < 1 || p.RequestedAt.IsZero() ||
+	publication := connectorPublication{serviceID: p.ServiceID, serviceRunID: p.ServiceRunID, runNumber: uint64(p.RunNumber),
+		publicURLID: p.PublicURLID, publishRunID: p.PublishRunID, publishRunNumber: uint64(p.PublishRunNumber)}
+	if !publication.valid() || !opaqueid.Valid(p.PairID, "cpp_") ||
+		!opaqueid.Valid(p.PublisherIdentityID, opaqueid.PublisherIdentityPrefix) ||
+		p.TrustRevision < 1 || p.ExpectedGeneration < 1 || p.RequestedAt.IsZero() ||
 		!rebindText(p.IdempotencyKey, 128) || p.Subject.Validate() != nil ||
 		len(p.ExpectedRelays) > 2 || len(p.PathProofs) > 2 {
 		return nil, ErrConnectorPeerPairRebindProof
@@ -80,9 +84,16 @@ func (p ConnectorPeerPairRebindProof) Message() ([]byte, error) {
 			return nil, ErrConnectorPeerPairRebindProof
 		}
 		for slot, relay := range p.ExpectedRelays {
-			ref := ServicePublisherConnectionRef{ServiceID: p.ServiceID, ServiceRunID: p.ServiceRunID, RunNumber: uint64(p.RunNumber),
-				PublisherConnectionID: relay.PublisherConnectionID, ConnectionSlot: uint8(slot), ConnectionAssignmentRevision: uint64(relay.AssignmentRevision), RelayServiceID: relay.RelayLease.RelayServiceID}
-			if ref.Validate() != nil || relay.AssignmentRevision < 1 || !rebindText(relay.RelayLease.RelayServiceID, 256) ||
+			var refError error
+			if p.PublicURLID != "" {
+				refError = (PublisherConnectionRef{PublicURLID: p.PublicURLID, PublishRunID: p.PublishRunID, PublishRunNumber: uint64(p.PublishRunNumber),
+					PublisherConnectionID: relay.PublisherConnectionID, ConnectionSlot: uint8(slot), ConnectionAssignmentRevision: uint64(relay.AssignmentRevision), RelayServiceID: relay.RelayLease.RelayServiceID}).Validate()
+			} else {
+				refError = (ServicePublisherConnectionRef{ServiceID: p.ServiceID, ServiceRunID: p.ServiceRunID, RunNumber: uint64(p.RunNumber),
+					PublisherConnectionID: relay.PublisherConnectionID, ConnectionSlot: uint8(slot), ConnectionAssignmentRevision: uint64(relay.AssignmentRevision), RelayServiceID: relay.RelayLease.RelayServiceID}).Validate()
+			}
+			if refError != nil || !opaqueid.Valid(relay.PublisherConnectionID, opaqueid.PublisherConnectionPrefix) ||
+				relay.AssignmentRevision < 1 || !rebindText(relay.RelayLease.RelayServiceID, 256) ||
 				!rebindText(relay.RelayLease.RelayID, 256) || !opaqueid.Valid(relay.RelayLease.RelayRunID, opaqueid.RelayRunPrefix) ||
 				relay.RelayLease.RelayLeaseRevision < 1 || relay.RelayLease.RelayLeaseRevision > math.MaxInt64 ||
 				!rebindText(relay.RelayAddress, 256) || !rebindText(relay.TLSServerName, 256) {
@@ -119,13 +130,19 @@ func (p ConnectorPeerPairRebindProof) Message() ([]byte, error) {
 	}
 	relays := append([]ConnectorPeerPairRelay{}, p.ExpectedRelays...)
 	proofs := append([]ConnectorPeerPairPathProof{}, p.PathProofs...)
-	body, err := json.Marshal([]any{p.Phase, p.ServiceID, p.PairID, p.IdempotencyKey, p.OperationID,
-		p.ExpectedGeneration, p.RequestedAt.UTC().Truncate(time.Microsecond), p.ServiceRunID, p.RunNumber,
+	id, runID, number := p.ServiceID, p.ServiceRunID, p.RunNumber
+	domain := "tnl connector peer rebind v1\x00"
+	if p.PublicURLID != "" {
+		id, runID, number = p.PublicURLID, p.PublishRunID, p.PublishRunNumber
+		domain = "tnl public URL connector peer rebind v1\x00"
+	}
+	body, err := json.Marshal([]any{p.Phase, id, p.PairID, p.IdempotencyKey, p.OperationID,
+		p.ExpectedGeneration, p.RequestedAt.UTC().Truncate(time.Microsecond), runID, number,
 		p.PublisherIdentityID, p.TrustRevision, p.Subject, relays, p.BindingChallenge, proofs})
 	if err != nil {
 		return nil, err
 	}
-	return append([]byte("tnl connector peer rebind v1\x00"), body...), nil
+	return append([]byte(domain), body...), nil
 }
 
 func rebindText(value string, limit int) bool {
