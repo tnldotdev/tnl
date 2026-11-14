@@ -817,8 +817,11 @@ export function deploymentConnector(selection: NonNullable<SelectionOptions["dep
     if ("reason" in value) throw machineError({ stderr: JSON.stringify(value) }, "sdk-prepare");
     if (value.owner.executable !== scope.binary) throw new TnlError("sdk.response_invalid");
     const prepared = parsePrepared(value.prepared, name, value.owner.connection_handle);
-    if (scope.entry === undefined)
-      scope.entry = { file: prepared.file, ipc: scope.open(prepared.file) };
+    if (scope.entry === undefined) {
+      const ipc = scope.open(prepared.file);
+      void ipc.catch(() => {});
+      scope.entry = { file: prepared.file, ipc };
+    }
     if (closed) throw closedError;
     return prepared;
   };
