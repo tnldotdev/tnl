@@ -82,9 +82,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	if config.Handler != nil {
 		handler = config.Handler
 	} else {
-		hooks := publisherproxy.ResponseHooks{ModifyHTML: modifyResponse, Observe: config.ObserveResponse, ObserveStatus: observe, OnForwarded: func(request *http.Request) {
-			inspection.ApplicationResponse(request)
-		}}
+		hooks := httpstream.ResponseHooks{ModifyHTML: modifyResponse, Observe: config.ObserveResponse, ObserveStatus: observe}
 		proxyConfig := publisherproxy.Config{
 			Target: config.Target, Hostname: hostname, Mounts: config.Mounts,
 			Hooks: hooks, TargetOptions: config.TargetOptions,
@@ -165,10 +163,10 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					return
 				}
 				proof := config.ReadinessProof.Consume(request, httpaccess.ReadinessRun{Subject: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: config.PublicURLID}, Hostname: hostname, ID: config.PublishRunID, Number: config.PublishRunNumber})
-				request.Header.Del(publisherproxy.ReadinessProbeHeader)
+				request.Header.Del(httpstream.ReadinessProbeHeader)
 				if proof {
 					auditReport = false
-					request = publisherproxy.WithReadinessProbe(request)
+					request = httpstream.WithReadinessProbe(request)
 				}
 				if config.AdmitRequest != nil {
 					if err := config.AdmitRequest(request); err != nil {

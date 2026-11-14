@@ -372,7 +372,7 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	if s := read(identity.ClientId); s.Active || s.Address == nil || *s.Address != "1.1.1.1" || s.Epoch != 2 {
 		t.Fatal("installed stop lost last evidence", s)
 	}
-	service, err := owner.CreateService(ctx, m.TeamID, "installed-db", "installed-db", controlv1.ServiceMetadata{Protocol: controlv1.Postgres, TrustRevision: 1})
+	service, err := owner.CreateService(ctx, m.TeamID, "installed-db", "installed-db", controlv1.ServiceMetadata{Protocol: controlv1.Postgres, TrustRevision: 1}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

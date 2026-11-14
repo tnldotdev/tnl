@@ -82,7 +82,7 @@ func privatePresentation(ctx context.Context, flags publishCommand, output, diag
 }
 
 func privateOptions(flags publishCommand) invocation.ServiceOptions {
-	return invocation.ServiceOptions{PublicOptions: publicOptions(flags), Protocol: flags.Protocol, ConfiguredPrivate: flags.service, TargetTLS: flags.TargetTLS, EnrollmentKey: flags.EnrollmentKey, PublisherIdentityID: flags.PublisherIdentityID, PublisherCredentialFile: flags.PublisherCredentialFile, EnrollmentInput: os.Stdin, Install: flags.Install, System: flags.System, ServiceName: flags.ServiceName, SystemStateDir: flags.SystemStateDir, ServerCAFile: flags.ServerCAFile}
+	return invocation.ServiceOptions{PublicOptions: publicOptions(flags), Protocol: flags.Protocol, ConfiguredPrivate: flags.service, TargetTLS: flags.TargetTLS, EnrollmentKey: flags.EnrollmentKey, PublisherIdentityID: flags.PublisherIdentityID, PublisherCredentialFile: flags.PublisherCredentialFile, EnrollmentInput: os.Stdin, Install: flags.Install, System: flags.System, ServiceName: flags.ServiceName, SystemStateDir: flags.SystemStateDir, ServerCAFile: flags.ServerCAFile, Traffic: flags.traffic}
 }
 
 func captureServiceTargetTrust(ctx context.Context, flags publishCommand, protocol controlv1.ServiceProtocol, target string) (*targettrust.Snapshot, error) {

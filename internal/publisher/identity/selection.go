@@ -115,14 +115,18 @@ func LoadFile(path, server string, control NativeControl, authority AssertionExc
 	if server == "" || f.ControlURL != server {
 		return nil, ErrScope
 	}
-	if control.PublicURLControl == nil || control.ControlURL() != f.ControlURL {
-		return nil, ErrScope
-	}
 	i, key, err := f.Validate()
 	if err != nil {
 		return nil, err
 	}
-	return NewNative(control, authority, i, key)
+	native, err := NewNative(control, authority, i, key)
+	if err != nil {
+		return nil, err
+	}
+	if native.ControlURL() != f.ControlURL {
+		return nil, ErrScope
+	}
+	return native, nil
 }
 
 // ResolveAdHoc selects one scoped identity for temporary app-owned HTTP

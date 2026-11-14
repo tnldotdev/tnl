@@ -130,7 +130,7 @@ func TestIntegrationSharedPublisherStorageAndPoolAuthorizationReview(t *testing.
 	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.publisher_service_connection_slots WHERE service_id=$1 AND session_open`, current.ID).Scan(&live); err != nil || live != 2 {
 		t.Fatalf("shared slot parent cascade did not preserve sibling: %d %v", live, err)
 	}
-	private, err := d.CreateServiceAt(t.Context(), creation.TeamID, creation.ActingIdentityID, "private", "private", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
+	private, err := d.CreateServiceAt(t.Context(), creation.TeamID, creation.ActingIdentityID, "private", "private", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -112,7 +112,8 @@ func (h *handler) PrepareServiceRun(w http.ResponseWriter, r *http.Request, serv
 		PublisherKeyId: prepared.PublisherKeyID, IdempotencyKey: prepared.IdempotencyKey,
 		ExpiresAt: prepared.ExpiresAt,
 		Hostname:  prepared.Hostname, DomainId: prepared.DomainID,
-		Traffic: *approval,
+		Traffic:            *approval,
+		RequirePostQuantum: prepared.RequirePostQuantum,
 	}
 	if len(prepared.CertificatePlan.Identifiers) != 0 {
 		plan := managedCertificatePlan(prepared.CertificatePlan)

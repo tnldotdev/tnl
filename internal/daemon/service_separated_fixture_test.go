@@ -58,7 +58,7 @@ type privateSeparatedFixture struct {
 	composed                    *daemon
 	sharedTCP, sharedQUIC       string
 	defaultTiming               bool
-	configurePublicServices     func(*ingress.PublicServicesConfig)
+	configureIngress            func(*ingress.Config)
 	visitorRoots                *tls.Config
 	visitorRootPEM              []byte
 	processContext              func(string) context.Context
@@ -173,7 +173,7 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 		}
 		owner.cleanupResource(t, func() { _ = settings.publicListener.Close() })
 		settings.relayTransportTLS = serviceRuntimeTLS(t, ca, settings.relayHostname)
-		settings.configurePublicServices = func(config *ingress.PublicServicesConfig) {
+		settings.configureIngress = func(config *ingress.Config) {
 			if !defaults {
 				config.RecheckInterval, config.RecheckTimeout, config.HardAuthorizationTTL = 500*time.Millisecond, 500*time.Millisecond, 3*time.Second
 			}

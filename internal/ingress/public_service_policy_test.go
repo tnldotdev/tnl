@@ -1,14 +1,19 @@
 package ingress
 
 import (
+	"context"
 	"errors"
 	"net"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
-func publicServiceWaitAuthorized(t *testing.T, p *PublicServices) {
+func publicServiceWaitAuthorized(t *testing.T, p *Server) {
 	t.Helper()
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
@@ -118,6 +123,78 @@ func TestPublicServiceLiveVisitorOutageHonorsInitialClaimDeadline(t *testing.T) 
 			t.Fatal("relay copy survived initial expiry")
 		}
 	})
+}
+
+type delayedServiceVisitorStatus struct {
+	PublicServiceControl
+	status func(context.Context, string, ingressv1.PublicServiceVisitorLookup) (ingressv1.PublicServiceVisitorStatus, error)
+}
+
+func (c delayedServiceVisitorStatus) PublicServiceVisitorStatus(ctx context.Context, id string, lookup ingressv1.PublicServiceVisitorLookup) (ingressv1.PublicServiceVisitorStatus, error) {
+	return c.status(ctx, id, lookup)
+}
+
+func TestPublicServiceLiveVisitorCannotExtendExpiredLeaseOrTimedOutCheck(t *testing.T) {
+	for _, boundary := range []string{"ingress lease", "drain deadline", "timed-out check"} {
+		t.Run(boundary, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				server, control, forwarder, lease := publicServiceTestSetup(t)
+				server.config.RecheckInterval, server.config.RecheckTimeout = 30*time.Millisecond, 10*time.Millisecond
+				server.config.HardAuthorizationTTL = 125 * time.Millisecond
+				until := time.Now().Add(server.config.HardAuthorizationTTL)
+				events := make(chan serviceaudit.Observation, 2)
+				server.config.AuditSink = auditSinkFunc(func(event serviceaudit.Observation) bool { events <- event; return true })
+				var lateChecks, activeChecks atomic.Int32
+				var draining atomic.Pointer[ingressv1.IngressLease]
+				if boundary == "ingress lease" {
+					lease.LeaseExpiresAt = until
+					server.config.HardAuthorizationTTL = time.Second
+					server.config.CurrentLease = func() ingressv1.IngressLease { return lease }
+				} else if boundary == "drain deadline" {
+					server.config.HardAuthorizationTTL = time.Second
+					draining.Store(&lease)
+					server.config.CurrentLease = func() ingressv1.IngressLease { return *draining.Load() }
+				} else {
+					server.config.Control = delayedServiceVisitorStatus{PublicServiceControl: control,
+						status: func(ctx context.Context, id string, lookup ingressv1.PublicServiceVisitorLookup) (ingressv1.PublicServiceVisitorStatus, error) {
+							if lateChecks.Add(1) == 1 {
+								return control.PublicServiceVisitorStatus(ctx, id, lookup)
+							}
+							activeChecks.Add(1)
+							defer activeChecks.Add(-1)
+							<-ctx.Done()
+							// a late success cannot count as a fresh authorization.
+							return ingressv1.PublicServiceVisitorStatus{State: ingressv1.PublicServiceVisitorAllowed, ValidUntil: time.Now().Add(time.Minute)}, nil
+						}}
+				}
+				stream, stop := publicServiceActiveStream(t, server, forwarder)
+				opened := ingressAwait(t, events)
+				if opened.EventType != "connection.open" || opened.Outcome != "allowed" {
+					t.Fatal("visitor was not authorized before the expiry check", opened)
+				}
+				if boundary == "drain deadline" {
+					current := lease
+					current.Draining, current.DrainDeadline = true, &until
+					draining.Store(&current)
+				}
+				_ = stream.SetReadDeadline(until.Add(time.Millisecond))
+				_, err := stream.Read(make([]byte, 1))
+				var timeout net.Error
+				if err == nil || errors.As(err, &timeout) && timeout.Timeout() || time.Now().After(until) {
+					t.Fatal("idle visitor survived its exact authority deadline", boundary, time.Now().Sub(until), err)
+				}
+				stop()
+				if control.recheckActive.Load() != 0 || activeChecks.Load() != 0 || server.Load() != 0 || !publicServiceCapacityReleased(server) {
+					t.Fatal("expired visitor retained rechecks, physical load, or quota")
+				}
+				ingressAwait(t, forwarder.relayDone)
+				closed := ingressAwait(t, events)
+				if closed.EventType != "connection.close" || closed.VisitorConnectionID != opened.VisitorConnectionID {
+					t.Fatal("expiry lost the visitor's close record", closed)
+				}
+			})
+		})
+	}
 }
 
 func TestPublicServiceLiveVisitorDefaultsRefreshShortInitialLease(t *testing.T) {

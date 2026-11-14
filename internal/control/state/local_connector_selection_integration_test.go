@@ -18,7 +18,7 @@ func TestIntegrationAppliedProjectLocalConnectorVisitorBinding(t *testing.T) {
 	}
 	member := addAuthorityMember(t, d, now, base.ActingIdentityID, base.TeamID, "connector-reader", TeamRoleMember)
 	local := RealizeLocalProjectServiceRequest{TeamID: base.TeamID, ProjectKey: "orders-project", SourceFingerprint: strings.Repeat("a", 64), Service: "orders", WorktreeKey: "checkout-a", ActorID: base.ActingIdentityID, Configuration: ProjectServiceConfiguration{Name: "database", Target: "http://secret-target.internal:3000", Access: &ProjectServiceAccess{Team: true}}, Now: now}
-	manual, err := d.CreateServiceAt(ctx, base.TeamID, base.ActingIdentityID, "orders", "manual-orders", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
+	manual, err := d.CreateServiceAt(ctx, base.TeamID, base.ActingIdentityID, "orders", "manual-orders", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -72,7 +72,7 @@ func TestIntegrationServicePermissionReportsCurrentTrustRevisionWithoutSelecting
 	session := newOIDCSession(t, d, now)
 	principal := ControlPrincipal{IdentityID: session.Identity.Identity.ID, SessionID: session.SessionID}
 	ctx := WithControlPrincipal(t.Context(), principal)
-	service, err := d.CreateServiceAt(ctx, request.TeamID, principal.IdentityID, "revision", "revision", ServicePlacement{}, now, ServiceMetadata{Protocol: "http"})
+	service, err := d.CreateServiceAt(ctx, request.TeamID, principal.IdentityID, "revision", "revision", ServicePlacement{}, now, ServiceMetadata{Protocol: "http"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestIntegrationConcurrentVisitorGrantAndCertificatePreparation(t *testing.T
 	session := newOIDCSession(t, d, now)
 	principal := ControlPrincipal{IdentityID: session.Identity.Identity.ID, SessionID: session.SessionID}
 	ctx := WithControlPrincipal(t.Context(), principal)
-	service, err := d.CreateServiceAt(ctx, request.TeamID, principal.IdentityID, "concurrent", "concurrent", ServicePlacement{}, now, ServiceMetadata{Protocol: "http"})
+	service, err := d.CreateServiceAt(ctx, request.TeamID, principal.IdentityID, "concurrent", "concurrent", ServicePlacement{}, now, ServiceMetadata{Protocol: "http"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +209,7 @@ func TestIntegrationVisitorTokenNativeAndExplicitCredentialsNeedOneScopedGrantMo
 	session := newOIDCSession(t, d, now)
 	principal := ControlPrincipal{IdentityID: session.Identity.Identity.ID, SessionID: session.SessionID}
 	ctx := WithControlPrincipal(t.Context(), principal)
-	service, err := d.CreateServiceAt(ctx, request.TeamID, principal.IdentityID, "native", "native", ServicePlacement{}, now, ServiceMetadata{Protocol: "http"})
+	service, err := d.CreateServiceAt(ctx, request.TeamID, principal.IdentityID, "native", "native", ServicePlacement{}, now, ServiceMetadata{Protocol: "http"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

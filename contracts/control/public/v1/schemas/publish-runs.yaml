@@ -151,44 +151,6 @@ schemas:
           x-go-type: int64,
           x-oapi-codegen-extra-tags: { json: "publish_run_number,string" },
         }
-  EnableShareAccessRequest:
-    type: object
-    additionalProperties: false
-    required: [publish_run_number]
-    properties:
-      publish_run_number:
-        {
-          type: string,
-          pattern: "^[0-9]+$",
-          x-go-type: int64,
-          x-oapi-codegen-extra-tags: { json: "publish_run_number,string" },
-        }
-      preview_id:
-        $ref: "../openapi.yaml#/components/schemas/PreviewID"
-  RedeemShareRequest:
-    type: object
-    additionalProperties: false
-    required: [publish_run_number]
-    properties:
-      publish_run_number:
-        {
-          type: string,
-          pattern: "^[0-9]+$",
-          x-go-type: int64,
-          x-oapi-codegen-extra-tags: { json: "publish_run_number,string" },
-        }
-      share_id:
-        $ref: "../openapi.yaml#/components/schemas/ShareID"
-      secret:
-        type: string
-        minLength: 43
-        maxLength: 43
-        pattern: "^[A-Za-z0-9_-]+$"
-      handoff_token:
-        type: string
-        minLength: 43
-        maxLength: 43
-        pattern: "^[A-Za-z0-9_-]+$"
   PublishRunHeartbeat:
     type: object
     additionalProperties: false

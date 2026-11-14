@@ -39,7 +39,7 @@ func TestRunCleansExactAllocationAfterCanceledCallback(t *testing.T) {
 	defer cancel()
 	registrationErr := errors.New("registration is no longer current")
 	allocated := ""
-	err = Run(ctx, Options{ControlURL: f.URL, HTTPClient: f.HTTP, State: state, EnrollmentKey: secret, InvocationID: invocation, Target: "http://app.internal:3000", Limits: applicationlimits.Limits{Requests: 1}, OnAllocated: func(publicURL controlv1.PublicURL) error { allocated = publicURL.Id; cancel(); return registrationErr }})
+	err = Run(ctx, Options{ControlURL: f.URL, HTTPClient: f.HTTP, State: state, EnrollmentKey: secret, InvocationID: invocation, Target: "http://app.internal:3000", Limits: applicationlimits.Limits{Requests: 1}, OnAllocated: func(service controlv1.Service) error { allocated = service.Id; cancel(); return registrationErr }})
 	deleted := f.DeletedIDs()
 	if !errors.Is(err, registrationErr) || f.Allocations.Load() != 1 || f.Deletions.Load() != 1 || len(deleted) != 1 || deleted[0] != allocated || f.Runs.Load() != 0 {
 		t.Fatalf("allocation cleanup lost exact ownership: err=%v allocations=%d deleted=%v allocated=%s", err, f.Allocations.Load(), deleted, allocated)

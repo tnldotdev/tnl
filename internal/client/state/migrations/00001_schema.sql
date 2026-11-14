@@ -110,6 +110,7 @@ CREATE TABLE local_tunnels (
     project_root TEXT NOT NULL,
     service TEXT CHECK (service IS NULL OR service <> ''),
     service_protocol TEXT NOT NULL DEFAULT 'http' CHECK (service_protocol IN ('http','tcp','mysql','postgres','kubernetes')),
+    service_id TEXT CHECK (service_id IS NULL OR (length(service_id)=26 AND substr(service_id,1,4)='svc_')),
     primary_project_root TEXT,
     integration_namespace TEXT,
     hostname TEXT CHECK (hostname IS NULL OR hostname <> ''),
@@ -146,32 +147,32 @@ CREATE INDEX local_tunnels_cleanup_idx
 CREATE INDEX local_tunnels_integration_scope_idx ON local_tunnels (server_origin, primary_project_root, integration_namespace, lease_expires_at)
     WHERE stopped_at IS NULL;
 
--- locally observed public URL IDs let status read server state after a tunnel
+-- locally observed service IDs let status read server state after a tunnel
 -- stops. the cache contains no credentials or targets and is bounded per
--- project/server, including projects that create many temporary URLs.
-CREATE TABLE project_url_inventory (
+-- project/server, including projects that create many temporary services.
+CREATE TABLE project_service_inventory (
     project_root TEXT NOT NULL,
     server_origin TEXT NOT NULL REFERENCES server_profiles(origin) ON DELETE CASCADE,
-    public_url_id TEXT NOT NULL,
+    service_id TEXT NOT NULL,
     last_seen_at INTEGER NOT NULL,
-    PRIMARY KEY (project_root, server_origin, public_url_id)
+    PRIMARY KEY (project_root, server_origin, service_id)
 ) STRICT;
 
 -- +goose StatementBegin
-CREATE TRIGGER local_project_url_seen AFTER UPDATE OF public_url_id ON local_tunnels
-WHEN NEW.public_url_id IS NOT NULL BEGIN
-    INSERT INTO project_url_inventory (project_root, server_origin, public_url_id, last_seen_at)
-    VALUES (NEW.project_root, NEW.server_origin, NEW.public_url_id, NEW.updated_at)
-    ON CONFLICT (project_root, server_origin, public_url_id)
+CREATE TRIGGER local_project_service_seen AFTER INSERT ON local_tunnels
+WHEN NEW.service_id IS NOT NULL BEGIN
+    INSERT INTO project_service_inventory (project_root, server_origin, service_id, last_seen_at)
+    VALUES (NEW.project_root, NEW.server_origin, NEW.service_id, NEW.updated_at)
+    ON CONFLICT (project_root, server_origin, service_id)
     DO UPDATE SET last_seen_at = excluded.last_seen_at;
-    DELETE FROM project_url_inventory
+    DELETE FROM project_service_inventory
     WHERE project_root = NEW.project_root AND server_origin = NEW.server_origin
       AND last_seen_at < NEW.updated_at - 2592000000000000;
-    DELETE FROM project_url_inventory
+    DELETE FROM project_service_inventory
     WHERE rowid IN (
-        SELECT rowid FROM project_url_inventory
+        SELECT rowid FROM project_service_inventory
         WHERE project_root = NEW.project_root AND server_origin = NEW.server_origin
-        ORDER BY last_seen_at DESC, public_url_id LIMIT -1 OFFSET 256
+        ORDER BY last_seen_at DESC, service_id LIMIT -1 OFFSET 256
     );
 END;
 -- +goose StatementEnd
@@ -519,6 +520,7 @@ SELECT id,
         'tunnel_id', id, 'command', command, 'state', state, 'process_id', process_id,
         'server', server_origin, 'project', project_root, 'service', coalesce(service, ''),
         'service_protocol', service_protocol,
+        'service_id', coalesce(service_id, ''),
         'public_url_id', coalesce(public_url_id, ''), 'publish_run_number', coalesce(publish_run_number, 0),
         'hostname', coalesce(hostname, ''),
         'public_url', CASE WHEN hostname IS NULL THEN '' ELSE 'https://' || hostname END,

@@ -50,7 +50,7 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 		TeamId: f.identity.teamID, Source: &testProjectSource, Deployment: "production",
 		ServiceDeclarations: controlv1.ProjectServiceDeclarations{"web": protocol},
 		Configuration: controlv1.ProjectConfiguration{Settings: &controlv1.DeploymentSettings{}, Services: map[string]controlv1.ProjectServiceConfiguration{
-			"web": {Target: "app", Protocol: &protocol, PublicUrl: &controlv1.ProjectServicePublicURL{Access: &controlv1.ProjectPublicAccess{Mode: &mode}}},
+			"web": {Target: "app", Protocol: &protocol, Public: new(true), Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: &mode}}},
 		}},
 	})
 	if err != nil || applied.Deployments == nil {

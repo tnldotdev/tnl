@@ -21,6 +21,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -74,7 +75,13 @@ type Config struct {
 	HandleControl             func(net.Conn) bool
 	RelayHostname             string
 	HandleRelay               func(net.Conn) bool
-	PublicServices            *PublicServices
+	Control                   PublicServiceControl
+	Forwarder                 ServiceForwarder
+	CurrentLease              func() ingressv1.IngressLease
+	IngressPoolID             string
+	RecheckInterval           time.Duration
+	HardAuthorizationTTL      time.Duration
+	RecheckTimeout            time.Duration
 	ServicePortRanges         []tcpport.Range
 	RequireProxyHeader        bool
 	TrustedProxyPeers         []netip.Prefix
@@ -94,13 +101,17 @@ type Config struct {
 }
 
 type Server struct {
-	listener    net.Listener
-	config      Config
-	openContext context.Context
-	cancelOpens context.CancelFunc
+	listener       net.Listener
+	config         Config
+	openContext    context.Context
+	cancelOpens    context.CancelFunc
+	admissions     context.Context
+	stopAdmissions context.CancelFunc
+	closeOnce      sync.Once
+	closeErr       error
 
 	mu              sync.Mutex
-	connections     map[net.Conn]struct{}
+	connections     map[net.Conn]bool // true for public visitors, false during inspection.
 	backends        map[net.Conn]struct{}
 	byPublicURL     map[string]int
 	byDenied        map[string]int
@@ -119,7 +130,7 @@ type Server struct {
 }
 
 func New(listener net.Listener, config Config) (*Server, error) {
-	if listener == nil || config.Lookup == nil && config.PublicServices == nil {
+	if listener == nil || config.Lookup == nil && config.Control == nil {
 		return nil, errors.New("ingress: listener and service forwarding are required")
 	}
 	if config.MaxConnections <= 0 {
@@ -129,6 +140,9 @@ func New(listener net.Listener, config Config) (*Server, error) {
 		return nil, errors.New("PROXY metadata requires explicit trusted ingress peers")
 	}
 	if err := admissionDefaults(&config); err != nil {
+		return nil, err
+	}
+	if err := serviceDefaults(&config); err != nil {
 		return nil, err
 	}
 	var err error
@@ -162,6 +176,7 @@ func New(listener net.Listener, config Config) (*Server, error) {
 		config.OpenTimeout = defaultOpenTimeout
 	}
 	openContext, cancelOpens := context.WithCancel(context.Background())
+	admissions, stopAdmissions := context.WithCancel(context.Background())
 	if metrics, ok := config.Metrics.(*observability.Metrics); ok {
 		openContext = observability.WithMetrics(openContext, metrics)
 	}
@@ -171,7 +186,9 @@ func New(listener net.Listener, config Config) (*Server, error) {
 		config:          config,
 		openContext:     openContext,
 		cancelOpens:     cancelOpens,
-		connections:     make(map[net.Conn]struct{}),
+		admissions:      admissions,
+		stopAdmissions:  stopAdmissions,
+		connections:     make(map[net.Conn]bool),
 		backends:        make(map[net.Conn]struct{}),
 		byPublicURL:     make(map[string]int),
 		byDenied:        make(map[string]int),
@@ -179,12 +196,6 @@ func New(listener net.Listener, config Config) (*Server, error) {
 		traffic:         traffic,
 		servicePorts:    servicePorts,
 		pendingVisitors: make(map[string]*visitorAdmission),
-	}
-	if config.PublicServices != nil {
-		if err := config.PublicServices.bindServer(server); err != nil {
-			cancelOpens()
-			return nil, err
-		}
 	}
 	return server, nil
 }
@@ -210,16 +221,20 @@ func (s *Server) Serve() error {
 			}
 			return err
 		}
+		connection = onceCloseConn(connection)
 		if !s.admit(connection) {
 			_ = connection.Close()
 			continue
 		}
 		go func() {
 			defer s.active.Done()
-			defer s.release(connection)
 			finishInspection := sync.OnceFunc(s.finishInspection)
-			defer finishInspection()
-			if err := s.handle(connection, finishInspection); err != nil && s.config.OnError != nil {
+			err := func() (retErr error) {
+				defer func() { retErr = errors.Join(retErr, s.release(connection)) }()
+				defer finishInspection()
+				return s.handle(connection, finishInspection)
+			}()
+			if err != nil && s.config.OnError != nil {
 				s.config.OnError(err)
 			}
 		}()
@@ -227,9 +242,7 @@ func (s *Server) Serve() error {
 }
 
 func (s *Server) Drain(ctx context.Context) error {
-	s.mu.Lock()
-	s.closing = true
-	s.mu.Unlock()
+	s.StopAccepting()
 	_ = s.listener.Close()
 	wait := make(chan struct{})
 	go func() {
@@ -238,12 +251,28 @@ func (s *Server) Drain(ctx context.Context) error {
 	}()
 	select {
 	case <-wait:
-		s.cancelOpens()
-		return nil
+		return s.Close()
 	case <-ctx.Done():
-		s.closeConnections()
-		return ctx.Err()
+		return errors.Join(context.Cause(ctx), s.Close())
 	}
+}
+
+func (s *Server) StopAccepting() {
+	s.stopAdmissions()
+	s.mu.Lock()
+	s.closing = true
+	s.mu.Unlock()
+}
+
+// Close cancels and joins every owned accepted connection and backend.
+func (s *Server) Close() error {
+	s.closeOnce.Do(func() {
+		s.StopAccepting()
+		_ = s.listener.Close()
+		s.closeErr = s.closeConnections()
+		s.active.Wait()
+	})
+	return s.closeErr
 }
 
 func (s *Server) Done() <-chan struct{} { return s.done }
@@ -254,11 +283,18 @@ func (s *Server) Ready() bool {
 	return s.serving && !s.closing
 }
 
-// Load reports the number of admitted public visitor connections.
+// Load counts physical public visitors, including pending authorization and the
+// final socket close. quota reservations never add another physical connection.
 func (s *Server) Load() int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return int64(s.admitted[visitorConnection])
+	var visitors int64
+	for _, visitor := range s.connections {
+		if visitor {
+			visitors++
+		}
+	}
+	return visitors
 }
 
 func (s *Server) handle(public net.Conn, finishInspection func()) error {
@@ -289,11 +325,12 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 	// native database negotiation is not a TLS ClientHello. select a managed
 	// service by its trusted destination before attempting HTTPS inspection.
 	if s.servicePorts.Contains(int(destination.Port())) || s.config.RequireProxyHeader && destination.Port() != 443 {
-		if s.config.PublicServices == nil || !s.servicePorts.Contains(int(destination.Port())) {
+		if s.config.Control == nil || !s.servicePorts.Contains(int(destination.Port())) {
 			return nil
 		}
 		finishInspection()
-		return s.forwardService(&readerConn{Conn: public, reader: reader}, source, destination, "", nil)
+		s.markVisitor(public)
+		return s.forwardService(s.openContext, &readerConn{Conn: public, reader: reader}, source, destination, "", nil)
 	}
 	inspected := &readerConn{Conn: public, reader: reader}
 	hello, err := clienthello.InspectClientHello(inspected)
@@ -333,11 +370,12 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 	if !canonicalSNI {
 		return ErrServiceAdmission
 	}
-	return s.forwardService(&readerConn{Conn: public, reader: hello.Remainder}, source, destination, hello.ServerName, hello.Prefix)
+	s.markVisitor(public)
+	return s.forwardService(s.openContext, &readerConn{Conn: public, reader: hello.Remainder}, source, destination, hello.ServerName, hello.Prefix)
 }
 
-func (s *Server) forwardService(public net.Conn, source, destination netip.AddrPort, hostname string, initial []byte) error {
-	if s.config.PublicServices == nil {
+func (s *Server) forwardService(ctx context.Context, public net.Conn, source, destination netip.AddrPort, hostname string, initial []byte) error {
+	if s.config.Control == nil {
 		return ErrServiceAdmission
 	}
 	release, rejected := s.admitClass(serviceConnection, "")
@@ -346,7 +384,7 @@ func (s *Server) forwardService(public net.Conn, source, destination netip.AddrP
 		return nil
 	}
 	defer release()
-	return s.config.PublicServices.AcceptPublic(s.openContext, public, source, destination, hostname, initial)
+	return s.acceptPublic(ctx, public, source, destination, hostname, initial)
 }
 
 func (s *Server) handoff(
@@ -416,19 +454,31 @@ func (s *Server) admit(connection net.Conn) bool {
 	if s.config.Metrics != nil {
 		s.config.Metrics.SetIngressConnections("client_hello", s.pending)
 	}
-	s.connections[connection] = struct{}{}
+	s.connections[connection] = false
 	// register before launch so Drain cannot miss an accepted handler.
 	s.active.Add(1)
 	return true
 }
 
-func (s *Server) release(connection net.Conn) {
+func (s *Server) release(connection net.Conn) error {
 	s.mu.Lock()
 	_, owned := s.connections[connection]
-	delete(s.connections, connection)
 	s.mu.Unlock()
 	if owned {
-		_ = connection.Close()
+		err := connection.Close()
+		s.mu.Lock()
+		delete(s.connections, connection)
+		s.mu.Unlock()
+		return err
+	}
+	return nil
+}
+
+func (s *Server) markVisitor(connection net.Conn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, owned := s.connections[connection]; owned {
+		s.connections[connection] = true
 	}
 }
 
@@ -438,38 +488,7 @@ func (s *Server) transfer(connection net.Conn) {
 	s.mu.Unlock()
 }
 
-func (s *Server) trackBackend(connection net.Conn) bool {
-	s.mu.Lock()
-	if s.closing {
-		s.mu.Unlock()
-		return false
-	}
-	s.backends[connection] = struct{}{}
-	active := len(s.backends)
-	if s.config.Metrics != nil {
-		s.config.Metrics.SetIngressStreams(active)
-	}
-	s.mu.Unlock()
-	return true
-}
-
-func (s *Server) releaseBackend(ctx context.Context, connection net.Conn) error {
-	s.mu.Lock()
-	delete(s.backends, connection)
-	active := len(s.backends)
-	if s.config.Metrics != nil {
-		s.config.Metrics.SetIngressStreams(active)
-	}
-	s.mu.Unlock()
-	started := time.Now()
-	err := connection.Close()
-	if s.config.Observer != nil {
-		s.config.Observer.ObserveOperationContext(ctx, observability.OpIngressBackendCleanup, err, time.Since(started))
-	}
-	return err
-}
-
-func (s *Server) closeConnections() {
+func (s *Server) closeConnections() error {
 	s.cancelOpens()
 	s.mu.Lock()
 	connections := make([]net.Conn, 0, len(s.connections)+len(s.backends))
@@ -480,9 +499,11 @@ func (s *Server) closeConnections() {
 		connections = append(connections, connection)
 	}
 	s.mu.Unlock()
+	var err error
 	for _, connection := range connections {
-		_ = connection.Close()
+		err = errors.Join(err, connection.Close())
 	}
+	return err
 }
 
 type readerConn struct {

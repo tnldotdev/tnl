@@ -71,7 +71,7 @@ func (q *Queries) GetDeploymentServiceConfiguration(ctx context.Context, service
 }
 
 const getLocalProjectService = `-- name: GetLocalProjectService :one
-SELECT local.source_fingerprint, s.id, s.team_id, s.name, s.name_scope, s.placement_worktree_key, s.placement_worktree_label, s.protocol, s.tls_metadata, s.trust_revision, s.endpoint_revision, s.visitor_revision, s.publisher_pool, s.domain_id, s.certificate_hostname, s.certificate_scope, s.service_port, s.ingress_pool_id, s.public, s.created_by_identity_id, s.idempotency_key, s.request_digest, s.enabled, s.next_run_number, s.created_at, s.updated_at, s.deleted_at
+SELECT local.source_fingerprint, s.id, s.team_id, s.name, s.name_scope, s.placement_worktree_key, s.placement_worktree_label, s.protocol, s.tls_metadata, s.configuration_ciphertext, s.storage_key_id, s.trust_revision, s.endpoint_revision, s.visitor_revision, s.publisher_pool, s.ephemeral, s.expires_at, s.require_post_quantum, s.domain_id, s.certificate_hostname, s.certificate_scope, s.service_port, s.ingress_pool_id, s.public, s.created_by_identity_id, s.idempotency_key, s.request_digest, s.enabled, s.next_run_number, s.created_at, s.updated_at, s.deleted_at
 FROM control.local_project_services local
 JOIN control.services s ON s.id=local.service_id AND s.team_id=local.team_id
 WHERE local.team_id=$1 AND local.project_key=$2
@@ -108,10 +108,15 @@ func (q *Queries) GetLocalProjectService(ctx context.Context, arg GetLocalProjec
 		&i.ControlService.PlacementWorktreeLabel,
 		&i.ControlService.Protocol,
 		&i.ControlService.TlsMetadata,
+		&i.ControlService.ConfigurationCiphertext,
+		&i.ControlService.StorageKeyID,
 		&i.ControlService.TrustRevision,
 		&i.ControlService.EndpointRevision,
 		&i.ControlService.VisitorRevision,
 		&i.ControlService.PublisherPool,
+		&i.ControlService.Ephemeral,
+		&i.ControlService.ExpiresAt,
+		&i.ControlService.RequirePostQuantum,
 		&i.ControlService.DomainID,
 		&i.ControlService.CertificateHostname,
 		&i.ControlService.CertificateScope,
@@ -127,23 +132,6 @@ func (q *Queries) GetLocalProjectService(ctx context.Context, arg GetLocalProjec
 		&i.ControlService.UpdatedAt,
 		&i.ControlService.DeletedAt,
 	)
-	return i, err
-}
-
-const getLocalServiceHTTPConfiguration = `-- name: GetLocalServiceHTTPConfiguration :one
-SELECT http_configuration_ciphertext,http_storage_key_id
-FROM control.local_project_services WHERE service_id=$1
-`
-
-type GetLocalServiceHTTPConfigurationRow struct {
-	HttpConfigurationCiphertext []byte
-	HttpStorageKeyID            pgtype.Text
-}
-
-func (q *Queries) GetLocalServiceHTTPConfiguration(ctx context.Context, serviceID pgtype.Text) (GetLocalServiceHTTPConfigurationRow, error) {
-	row := q.db.QueryRow(ctx, getLocalServiceHTTPConfiguration, serviceID)
-	var i GetLocalServiceHTTPConfigurationRow
-	err := row.Scan(&i.HttpConfigurationCiphertext, &i.HttpStorageKeyID)
 	return i, err
 }
 
@@ -703,24 +691,4 @@ func (q *Queries) ServiceNamespaceOwnsHostname(ctx context.Context, hostname str
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err
-}
-
-const setLocalServiceHTTPConfiguration = `-- name: SetLocalServiceHTTPConfiguration :execrows
-UPDATE control.local_project_services
-SET http_configuration_ciphertext=$1,http_storage_key_id=$2
-WHERE service_id=$3
-`
-
-type SetLocalServiceHTTPConfigurationParams struct {
-	Ciphertext   []byte
-	StorageKeyID pgtype.Text
-	ServiceID    pgtype.Text
-}
-
-func (q *Queries) SetLocalServiceHTTPConfiguration(ctx context.Context, arg SetLocalServiceHTTPConfigurationParams) (int64, error) {
-	result, err := q.db.Exec(ctx, setLocalServiceHTTPConfiguration, arg.Ciphertext, arg.StorageKeyID, arg.ServiceID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
 }

@@ -31,8 +31,10 @@ AND (EXISTS(SELECT 1 FROM control.deployment_publisher_members m JOIN control.de
  LEFT JOIN control.services s ON s.id=g.service_id
  LEFT JOIN control.domains d ON d.id=COALESCE(g.domain_id,u.domain_id,s.domain_id)
  WHERE g.id=r.scope_id AND g.publisher_identity_id=p.id AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>sqlc.arg(now))
- AND ((g.kind='service' AND s.team_id=p.team_id AND s.enabled AND s.deleted_at IS NULL
-       AND (s.domain_id IS NULL OR d.state='ready' AND d.released_at IS NULL AND (d.kind='managed' OR d.team_id=p.team_id)))
+  AND ((g.kind='service' AND EXISTS(SELECT 1 FROM control.publisher_service_permission(p.id,g.id,s.id,sqlc.arg(now))))
+    OR (g.kind='deployment_credential' AND control.deployment_credential_available(g.id)
+        AND EXISTS(SELECT 1 FROM control.services selected WHERE EXISTS(
+            SELECT 1 FROM control.publisher_service_permission(p.id,g.id,selected.id,sqlc.arg(now)))))
    OR (d.state='ready' AND d.released_at IS NULL AND (d.kind='managed' OR d.team_id=p.team_id)
        AND (g.kind='namespace' OR g.kind='saved_public_url' AND u.team_id=p.team_id AND u.lifecycle_state='enabled' AND NOT u.ephemeral
             AND u.purpose IN ('app','alias','demo','oauth','webhooks')))))))::boolean;

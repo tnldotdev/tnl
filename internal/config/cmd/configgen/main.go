@@ -90,8 +90,6 @@ func schemaForType(valueType reflect.Type) *jsonschema.Schema {
 		return &jsonschema.Schema{Type: "string", Pattern: config.DurationPattern}
 	case reflect.TypeOf(config.ByteSize(0)):
 		return &jsonschema.Schema{Type: "string", Pattern: `^(102[4-9]|10[3-9][0-9]|1[1-9][0-9]{2}|[2-9][0-9]{3}|[1-9][0-9]{4,5}|10[0-3][0-9]{4}|104[0-7][0-9]{3}|1048[0-4][0-9]{2}|10485[0-6][0-9]|104857[0-6])KiB$|^([1-9]|[1-9][0-9]|[1-9][0-9]{2}|10[01][0-9]|102[0-4])MiB$|^1GiB$`}
-	case reflect.TypeOf(config.Tunnel{}):
-		return tunnelSchema()
 	case reflect.TypeOf(map[string]config.ServiceDeclaration{}):
 		return servicesSchema()
 	case reflect.TypeOf(config.DeploymentBinding{}):
@@ -238,14 +236,14 @@ func deploymentBindingSchema() *jsonschema.Schema {
 	properties.Set("access", &jsonschema.Schema{Type: "object", Properties: access, Required: []string{"team"}, AdditionalProperties: jsonschema.FalseSchema})
 	properties.Set("public", &jsonschema.Schema{Type: "boolean", Description: "Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only."})
 	properties.Set("inspection", &jsonschema.Schema{Ref: "#/$defs/Inspection"})
-	tunnel := tunnelSchema()
-	tunnel.Description = "Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present."
-	limits, _ := tunnel.Properties.Get("limits")
-	properties.Set("public_url", tunnel)
+	properties.Set("hostname", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), MaxLength: integerPointer(253), Description: "Exact canonical DNS hostname for the service endpoint; never an HTTPS origin."})
+	properties.Set("domain", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), MaxLength: integerPointer(253), Description: "Ready team domain used for the service endpoint."})
+	properties.Set("ephemeral", &jsonschema.Schema{Type: "boolean", Description: "Remove the service after its publication stops."})
+	properties.Set("require_post_quantum", &jsonschema.Schema{Type: "boolean", Description: "Require hybrid post-quantum key agreement for visitor TLS."})
+	properties.Set("traffic", trafficLimitsSchema())
 	httpProperties := jsonschema.NewProperties()
-	httpProperties.Set("access", accessSchema("restricted"))
-	httpLimits, _ := limits.Properties.Get("http")
-	httpProperties.Set("limits", httpLimits)
+	httpProperties.Set("access", accessSchema("restricted", "anonymous"))
+	httpProperties.Set("limits", workLimitsSchema())
 	readiness := jsonschema.NewProperties()
 	readiness.Set("path", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1)})
 	httpProperties.Set("readiness", &jsonschema.Schema{Type: "object", Properties: readiness, Required: []string{"path"}, AdditionalProperties: jsonschema.FalseSchema, Description: "Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings."})
@@ -259,19 +257,13 @@ func deploymentBindingSchema() *jsonschema.Schema {
 			{Type: "string", Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`},
 			{Type: "object", Required: []string{"service"}, Properties: mountProperties, AdditionalProperties: jsonschema.FalseSchema},
 		}},
-		Description: "Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts.",
+		Description: "Mount another local HTTP service at a path on this HTTP service. Remote publisher assignments do not support path mounts.",
 	})
 	properties.Set("http", &jsonschema.Schema{Type: "object", Properties: httpProperties, AdditionalProperties: jsonschema.FalseSchema})
 	result := targetSchema("*")
 	for _, variant := range result.OneOf {
 		for pair := properties.Oldest(); pair != nil; pair = pair.Next() {
 			variant.Properties.Set(pair.Key, pair.Value)
-		}
-		conflict := jsonschema.NewProperties()
-		conflict.Set("public_url", &jsonschema.Schema{Required: []string{"hostname"}})
-		variant.AllOf = []*jsonschema.Schema{
-			{Not: &jsonschema.Schema{Required: []string{"name", "public_url"}, Properties: conflict}},
-			{Not: &jsonschema.Schema{Required: []string{"public", "public_url"}}},
 		}
 		kind, _ := variant.Properties.Get("type")
 		if kind.Const == "address" || kind.Const == "app" {
@@ -281,35 +273,21 @@ func deploymentBindingSchema() *jsonschema.Schema {
 	return result
 }
 
-func tunnelSchema() *jsonschema.Schema {
+func workLimitsSchema() *jsonschema.Schema {
 	properties := jsonschema.NewProperties()
-	// explicit forbidden fields also reject inferred or non-fresh TypeScript
-	// objects; the saved name and pool opt-in belong on the service only.
-	properties.Set("name", jsonschema.FalseSchema)
-	properties.Set("publisher_pool", jsonschema.FalseSchema)
-	properties.Set("domain", &jsonschema.Schema{Type: "string", Description: "Ready team domain used for generated public URL hostnames."})
-	properties.Set("hostname", &jsonschema.Schema{Type: "string", Description: "Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL."})
-	properties.Set("access", accessSchema("restricted", "anonymous"))
-	properties.Set("ephemeral", &jsonschema.Schema{Type: "boolean", Description: "Remove the public URL when this tunnel stops."})
-	properties.Set("require_post_quantum", &jsonschema.Schema{Type: "boolean", Description: "Require hybrid post-quantum key agreement for public HTTPS visitors."})
-	limits := jsonschema.NewProperties()
-	for _, protocol := range []string{"http", "tcp"} {
-		work := jsonschema.NewProperties()
-		work.Set("total", positiveInteger())
-		work.Set("concurrency", positiveInteger())
-		work.Set("rate", rateSchema("count", "burst"))
-		limits.Set(protocol, &jsonschema.Schema{Type: "object", Properties: work, AdditionalProperties: jsonschema.FalseSchema})
-	}
+	properties.Set("total", positiveInteger())
+	properties.Set("concurrency", positiveInteger())
+	properties.Set("rate", rateSchema("count", "burst"))
+	return &jsonschema.Schema{Type: "object", Properties: properties, AdditionalProperties: jsonschema.FalseSchema}
+}
+
+func trafficLimitsSchema() *jsonschema.Schema {
 	traffic := jsonschema.NewProperties()
 	for _, field := range []string{"connections", "rate", "burst", "upload_bytes", "download_bytes", "total_connections", "total_upload_bytes", "total_download_bytes"} {
 		traffic.Set(field, positiveInteger())
 	}
 	traffic.Set("rate_per", &jsonschema.Schema{Type: "string", Pattern: config.DurationPattern})
-	limits.Set("traffic", &jsonschema.Schema{Type: "object", Properties: traffic, AdditionalProperties: jsonschema.FalseSchema})
-	properties.Set("limits", &jsonschema.Schema{Type: "object", Properties: limits, AdditionalProperties: jsonschema.FalseSchema})
-	return &jsonschema.Schema{
-		Type: "object", Properties: properties, AdditionalProperties: jsonschema.FalseSchema,
-	}
+	return &jsonschema.Schema{Type: "object", Properties: traffic, AdditionalProperties: jsonschema.FalseSchema}
 }
 
 func accessSchema(modes ...any) *jsonschema.Schema {
@@ -324,7 +302,7 @@ func accessSchema(modes ...any) *jsonschema.Schema {
 
 func webhookSchema() *jsonschema.Schema {
 	properties := jsonschema.NewProperties()
-	properties.Set("service", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), Description: "Configured local HTTP service with an explicit public_url block. App, address, Compose and Docker targets are supported."})
+	properties.Set("service", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), Description: "Configured local HTTP service. App, address, Compose and Docker targets are supported."})
 	properties.Set("path", &jsonschema.Schema{Type: "string", Pattern: `^/[a-zA-Z0-9._~-]+(/[a-zA-Z0-9._~-]+)*$`})
 	properties.Set("delivery", &jsonschema.Schema{Type: "string", Enum: []any{"fanout", "selected"}})
 	properties.Set("methods", &jsonschema.Schema{Type: "array", MinItems: integerPointer(1), Items: &jsonschema.Schema{Type: "string", Enum: []any{"GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"}}, UniqueItems: true})
@@ -424,17 +402,15 @@ func targetSchema(protocol string) *jsonschema.Schema {
 
 func aliasSchema() *jsonschema.Schema {
 	properties := jsonschema.NewProperties()
-	properties.Set("service", &jsonschema.Schema{Type: "string", Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`, Description: "configured local HTTP entry service with an explicit public_url block."})
+	properties.Set("service", &jsonschema.Schema{Type: "string", Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`, Description: "configured local HTTP entry service."})
 	properties.Set("name", &jsonschema.Schema{Type: "string", Pattern: `^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$`, MinLength: integerPointer(1), MaxLength: integerPointer(253), Description: "Relative DNS name beneath the member namespace; defaults to the alias key. Nested names require server permission."})
 	properties.Set("domain", &jsonschema.Schema{Type: "string", Description: "Ready team domain; otherwise inherit the entry service's domain."})
-	properties.Set("public_url", &jsonschema.Schema{Type: "string", Description: "Exact authorized public URL hostname or HTTPS origin; mutually exclusive with name and domain."})
-	tunnel := tunnelSchema()
-	value, _ := tunnel.Properties.Get("access")
-	properties.Set("access", value)
+	properties.Set("hostname", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), MaxLength: integerPointer(253), Description: "Exact canonical DNS hostname; mutually exclusive with name and domain."})
+	properties.Set("access", accessSchema("restricted", "anonymous"))
 	return &jsonschema.Schema{Type: "object", Required: []string{"service"}, Properties: properties, AdditionalProperties: jsonschema.FalseSchema,
 		AllOf: []*jsonschema.Schema{
-			{Not: &jsonschema.Schema{Required: []string{"name", "public_url"}}},
-			{Not: &jsonschema.Schema{Required: []string{"domain", "public_url"}}},
+			{Not: &jsonschema.Schema{Required: []string{"name", "hostname"}}},
+			{Not: &jsonschema.Schema{Required: []string{"domain", "hostname"}}},
 		}}
 }
 

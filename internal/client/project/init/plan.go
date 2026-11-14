@@ -132,7 +132,7 @@ export default defineConfig({
   services: { %s: {} },
   deployments: {
     local: {
-      targets: { %s: { publicURL: {}, type: "app" } },
+      targets: { %s: { public: true, type: "app" } },
     },
   },
 });

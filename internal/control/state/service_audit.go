@@ -374,7 +374,23 @@ func (d *Database) IngestIngressServiceObservations(ctx context.Context, lease I
 			return ServiceObservationResult{}, ErrServiceAuditAccess
 		}
 		e := observationEvent(o)
-		if o.ServiceKind == "public_url" {
+		if o.ServiceKind == "service" && o.RunID == "" {
+			if o.RunNumber != 0 || o.EventType != "connection.open" || o.Outcome != "denied" ||
+				o.Reason != "capacity" && o.Reason != "unavailable" && o.Reason != "invalid_request" {
+				return ServiceObservationResult{}, ErrServiceAuditAccess
+			}
+			// a failed local selection still has a real control admission receipt.
+			// recover only its team; it did not select a serving run or identity.
+			err = tx.QueryRow(ctx, `SELECT service.team_id
+				FROM control.public_service_visitors visitor JOIN control.services service ON service.id=visitor.service_id
+				WHERE visitor.visitor_connection_id=$1 AND visitor.service_id=$2
+				AND visitor.ingress_id=$3 AND visitor.ingress_run_id=$4 AND visitor.ingress_lease_revision=$5
+				AND host(visitor.source_ip)=$6 AND visitor.identity_id IS NULL AND visitor.device_id IS NULL
+				AND visitor.workload_session_id IS NULL AND visitor.authorized_at IS NULL AND visitor.promoted_at IS NULL
+				AND visitor.created_at<=$7 AND visitor.valid_until>=$8`,
+				o.VisitorConnectionID, o.ServiceID, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision),
+				o.SourceIP, o.OccurredAt.Add(time.Second), o.OccurredAt.Add(-serviceObservationDeliveryGrace)).Scan(&e.TeamID)
+		} else if o.ServiceKind == "public_url" {
 			if o.RunID == "" {
 				err = tx.QueryRow(ctx, `SELECT team_id FROM control.public_urls WHERE id=$1`, o.ServiceID).Scan(&e.TeamID)
 			} else {

@@ -95,11 +95,35 @@ func serviceFixture(t *testing.T) (*companyHTTPFixture, authorityv1.ControlSessi
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, err := f.d.CreateServiceAt(t.Context(), team.ID, owner.Identity.Identity.Id, "api", "service", controlstate.ServicePlacement{}, f.now, controlstate.ServiceMetadata{Protocol: "http"})
+	service, err := f.d.CreateServiceAt(t.Context(), team.ID, owner.Identity.Identity.Id, "api", "service", controlstate.ServicePlacement{}, f.now, controlstate.ServiceMetadata{Protocol: "http"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return f, owner, recipient, team, service
+}
+
+func serviceActorNamedService(t *testing.T, f *companyHTTPFixture, team, actor string) controlstate.ServiceRecord {
+	t.Helper()
+	applied, err := f.d.ApplyProjectConfiguration(t.Context(), controlstate.ApplyProjectConfigurationRequest{
+		TeamID: team, ActorID: actor, ProjectKey: "service-role-boundary",
+		SourceFingerprint: strings.Repeat("b", 64), Now: f.now,
+		Deployment: "production", ServiceDeclarations: map[string]string{"shared": "http"},
+		Configuration: controlstate.ProjectConfiguration{
+			Settings: &controlstate.DeploymentSettings{},
+			Services: map[string]controlstate.ProjectServiceConfiguration{"shared": {Target: "shared.internal:3000"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(applied.Services) != 1 || applied.Services[0].ServiceID == "" {
+		t.Fatal("named deployment did not create its saved service")
+	}
+	service, err := f.d.GetService(t.Context(), applied.Services[0].ServiceID, actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return service
 }
 
 func TestIntegrationServiceActorRequestBindingAndCurrentManager(t *testing.T) {
@@ -182,6 +206,10 @@ func TestIntegrationServiceActorRequestBindingAndCurrentManager(t *testing.T) {
 		t.Fatal("service proof authenticated public URL operation")
 	}
 	serviceProblem(t, f.serviceCall("GET", "/v1/service/services/purl_0123456789ABCDEFGHIJKL", serviceOwnerSub, nil, nil), 403, authorityv1.Forbidden)
+	named := serviceActorNamedService(t, f, team.ID, owner.Identity.Identity.Id)
+	namedBase := "/v1/service/services/" + named.ID
+	serviceResult(t, f.serviceCall("GET", namedBase, serviceOwnerSub, nil, nil), 200, nil)
+	serviceResult(t, f.serviceCall("POST", namedBase+"/invitations", serviceOwnerSub, controlv1.CreateServiceInvitationRequest{Email: "recipient@example.test", ExpiresAt: f.now.Add(time.Hour)}, nil), 201, nil)
 	// page state and issuer-signed role strings are not management permission.
 	var member string
 	if err = f.sql.QueryRow(t.Context(), `SELECT id FROM control.team_memberships WHERE team_id=$1 AND identity_id=$2`, team.ID, owner.Identity.Identity.Id).Scan(&member); err != nil {
@@ -192,7 +220,12 @@ func TestIntegrationServiceActorRequestBindingAndCurrentManager(t *testing.T) {
 		t.Fatal(err)
 	}
 	serviceProblem(t, f.serviceRaw("GET", target, companyWebsiteSecret, stalePageToken, nil), 403, authorityv1.ManagerRequired)
-	serviceProblem(t, f.serviceCall("POST", base+"/invitations", serviceOwnerSub, controlv1.CreateServiceInvitationRequest{Email: "recipient@example.test", ExpiresAt: f.now.Add(time.Hour)}, nil), 403, authorityv1.ManagerRequired)
+	// demotion retains the actual member-owned service, not the named service
+	// created by the same actor while they held a team-admin role.
+	serviceResult(t, f.serviceCall("GET", base, serviceOwnerSub, nil, nil), 200, nil)
+	serviceResult(t, f.serviceCall("POST", base+"/invitations", serviceOwnerSub, controlv1.CreateServiceInvitationRequest{Email: "recipient@example.test", ExpiresAt: f.now.Add(time.Hour)}, nil), 201, nil)
+	serviceProblem(t, f.serviceCall("GET", namedBase, serviceOwnerSub, nil, nil), 403, authorityv1.ManagerRequired)
+	serviceProblem(t, f.serviceCall("POST", namedBase+"/invitations", serviceOwnerSub, controlv1.CreateServiceInvitationRequest{Email: "recipient@example.test", ExpiresAt: f.now.Add(time.Hour)}, nil), 403, authorityv1.ManagerRequired)
 	serviceProblem(t, f.serviceCall("GET", "/v1/service/teams/"+recipient.Identity.PersonalTeamId+"/services", serviceOwnerSub, nil, nil), 403, authorityv1.ManagerRequired)
 	if _, err = f.sql.Exec(t.Context(), `UPDATE control.identities SET disabled_at=CURRENT_TIMESTAMP WHERE id=$1`, owner.Identity.Identity.Id); err != nil {
 		t.Fatal(err)
@@ -294,7 +327,7 @@ func TestIntegrationServiceActorInvitationAndServiceHTTPLifecycle(t *testing.T) 
 	if err != nil || nativeList.JSON200 == nil || len(*nativeList.JSON200) != 1 || (*nativeList.JSON200)[0].Id != httpGrant.GrantId || bytes.Contains(nativeList.Body, []byte(httpGrant.RefreshCredential)) || bytes.Contains(nativeList.Body, []byte(httpGrant.Permission.VisitorToken)) {
 		t.Fatal("native HTTP grant inventory did not expose the owned secretless ID", err)
 	}
-	other, err := f.d.CreateServiceAt(t.Context(), team.ID, owner.Identity.Identity.Id, "other", "other", controlstate.ServicePlacement{}, f.now, controlstate.ServiceMetadata{Protocol: "tcp"})
+	other, err := f.d.CreateServiceAt(t.Context(), team.ID, owner.Identity.Identity.Id, "other", "other", controlstate.ServicePlacement{}, f.now, controlstate.ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -487,12 +520,19 @@ func TestIntegrationServiceActorAccessPagination(t *testing.T) {
 		t.Fatal("grant history became visitor access", err)
 	}
 	serviceResult(t, f.serviceCall("GET", base+"/grants", serviceOwnerSub, nil, nil), 200, nil)
+	named := serviceActorNamedService(t, f, team.ID, owner.Identity.Identity.Id)
+	namedBase := "/v1/service/services/" + named.ID
+	for _, suffix := range []string{"/grants?cursor=sgr_0000000000000000000100", "/invitations?cursor=sivt_0000000000000000000100"} {
+		serviceResult(t, f.serviceCall("GET", namedBase+suffix, serviceOwnerSub, nil, nil), 200, nil)
+	}
 	if _, err := f.sql.Exec(ctx, `UPDATE control.team_memberships SET role='member' WHERE team_id=$1 AND identity_id=$2`, team.ID, owner.Identity.Identity.Id); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{base + "/grants?cursor=sgr_0000000000000000000100", base + "/invitations?cursor=sivt_0000000000000000000100"} {
-		serviceProblem(t, f.serviceCall("GET", path, serviceOwnerSub, nil, nil), 403, authorityv1.ManagerRequired)
+	for _, suffix := range []string{"/grants?cursor=sgr_0000000000000000000100", "/invitations?cursor=sivt_0000000000000000000100"} {
+		serviceResult(t, f.serviceCall("GET", base+suffix, serviceOwnerSub, nil, nil), 200, nil)
+		serviceProblem(t, f.serviceCall("GET", namedBase+suffix, serviceOwnerSub, nil, nil), 403, authorityv1.ManagerRequired)
 	}
+	serviceProblem(t, f.serviceCall("GET", "/v1/service/teams/"+team.ID+"/services", serviceOwnerSub, nil, nil), 403, authorityv1.ManagerRequired)
 }
 
 func TestIntegrationServiceActorInvitationLostResponse(t *testing.T) {
@@ -525,7 +565,7 @@ func TestIntegrationServiceActorInvitationLostResponse(t *testing.T) {
 	} {
 		serviceProblem(t, call(path, serviceOwnerSub, "lost-response", changed, nil), 409, authorityv1.Conflict)
 	}
-	other, err := f.d.CreateServiceAt(ctx, team.ID, owner.Identity.Identity.Id, "other", "other", controlstate.ServicePlacement{}, f.now, controlstate.ServiceMetadata{Protocol: "tcp"})
+	other, err := f.d.CreateServiceAt(ctx, team.ID, owner.Identity.Identity.Id, "other", "other", controlstate.ServicePlacement{}, f.now, controlstate.ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

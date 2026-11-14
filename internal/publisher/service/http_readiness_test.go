@@ -12,8 +12,8 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
-	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
+	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -30,7 +30,7 @@ func TestServiceHTTPReadinessHasIndependentBoundedCapacity(t *testing.T) {
 			defer func() { close(finish); workers.Wait() }()
 			var proof *httpaccess.ReadinessProof
 			client, _, _, token := serviceHTTPConfiguredFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if publisherproxy.IsReadinessProbe(r) {
+				if httpstream.IsReadinessProbe(r) {
 					entered <- struct{}{}
 					select {
 					case <-finish:
@@ -59,7 +59,7 @@ func TestServiceHTTPReadinessHasIndependentBoundedCapacity(t *testing.T) {
 				if err != nil {
 					return 0, err
 				}
-				r.Header.Set(publisherproxy.ReadinessProbeHeader, secret)
+				r.Header.Set(httpstream.ReadinessProbeHeader, secret)
 				if credential != "" {
 					r.Header.Set(httpaccess.VisitorTokenHeader, credential)
 				}
@@ -110,15 +110,16 @@ func TestServiceHTTPReadinessIsExactAndDoesNotSpendApplicationBudget(t *testing.
 		}
 		t.Run(name, func(t *testing.T) {
 			var proof *httpaccess.ReadinessProof
+			var budget *requestlimit.HTTP
 			var probes, applications atomic.Int32
 			var stale atomic.Bool
 			events := make(chan serviceaudit.Observation, 16)
 			client, _, _, token := serviceHTTPConfiguredFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Header.Get(publisherproxy.ReadinessProbeHeader) != "" || r.Header.Get(httpaccess.VisitorTokenHeader) != "" ||
+				if r.Header.Get(httpstream.ReadinessProbeHeader) != "" || r.Header.Get(httpaccess.VisitorTokenHeader) != "" ||
 					r.Header.Get("Forwarded") != "" || r.Header.Get("X-Forwarded-Host") != "" || r.Header.Get("X-Real-IP") != "" {
 					t.Error("target received a readiness or visitor credential, or untrusted forwarding metadata")
 				}
-				if publisherproxy.IsReadinessProbe(r) {
+				if httpstream.IsReadinessProbe(r) {
 					probes.Add(1)
 				} else {
 					applications.Add(1)
@@ -135,6 +136,7 @@ func TestServiceHTTPReadinessIsExactAndDoesNotSpendApplicationBudget(t *testing.
 				if err != nil {
 					t.Fatal(err)
 				}
+				budget = f.Requests
 				f.probes, err = requestlimit.NewHTTP(&controlv1.ProjectHTTPApplicationLimits{Concurrency: new(4)})
 				if err != nil {
 					t.Fatal(err)
@@ -153,7 +155,7 @@ func TestServiceHTTPReadinessIsExactAndDoesNotSpendApplicationBudget(t *testing.
 				if err != nil {
 					t.Fatal(err)
 				}
-				r.Header.Set(publisherproxy.ReadinessProbeHeader, secret)
+				r.Header.Set(httpstream.ReadinessProbeHeader, secret)
 				r.Header.Set("Forwarded", "for=private")
 				r.Header.Set("X-Forwarded-Host", "private")
 				r.Header.Set("X-Real-IP", "192.0.2.99")
@@ -176,8 +178,14 @@ func TestServiceHTTPReadinessIsExactAndDoesNotSpendApplicationBudget(t *testing.
 			request(http.MethodGet, "/other", secret, "", http.StatusForbidden)
 			request(http.MethodGet, "/health", secret, "", http.StatusNoContent)
 			request(http.MethodGet, "/health", secret, "", http.StatusForbidden)
+			select {
+			case <-budget.Completed():
+				t.Fatal("readiness or rejected work completed the application budget")
+			default:
+			}
 			// a forged probe with a valid visitor token is an ordinary request.
 			request(http.MethodGet, "/app", "invalid-proof", token.Reveal(), http.StatusNoContent)
+			serviceHTTPAwait(t, budget.Completed())
 			request(http.MethodGet, "/app", "", token.Reveal(), http.StatusServiceUnavailable)
 			next, err := proof.Renew()
 			if err != nil {

@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/observability"
-	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
+	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 )
 
-const ProbeHeader = publisherproxy.ReadinessProbeHeader
+const ProbeHeader = httpstream.ReadinessProbeHeader
 const DiagnosticHeader = "Tnl-Error-Code"
 
 type Readiness struct {

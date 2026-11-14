@@ -48,8 +48,7 @@ func TestPublicOpeningMaximumClientHelloAndForwardedBytes(t *testing.T) {
 	config := serviceIngressConfig(t, func(ctx context.Context, header tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
 		return f.open(ctx, header)
 	})
-	p := config.PublicServices
-	control := p.config.Control.(*httpsServiceControl)
+	control := config.Control.(*httpsServiceControl)
 	relay := control.relays[0]
 	ref := tunnelv1.ServicePublisherConnectionRef{
 		ServiceID: control.service, ServiceRunID: control.run, RunNumber: 1,
@@ -59,7 +58,7 @@ func TestPublicOpeningMaximumClientHelloAndForwardedBytes(t *testing.T) {
 	f = newServiceTransportFixture(t, ref, relay)
 	control.relays[0] = f.relay
 	metrics := &testMetrics{visitorOutcomes: make(chan string, 2)}
-	config.Metrics, p.config.Metrics = metrics, metrics
+	config.Metrics = metrics
 	server, address := startIngress(t, config)
 	hello := maximumOpeningClientHello()
 	if len(hello) != clienthello.MaxClientHelloBytes {
@@ -150,6 +149,9 @@ func TestPublicOpeningMaximumClientHelloAndForwardedBytes(t *testing.T) {
 		}
 		if outcome := ingressAwait(t, metrics.visitorOutcomes); outcome != "forwarded" {
 			t.Fatal("maximum ClientHello forwarding failed", outcome)
+		}
+		if transfer := ingressAwait(t, f.transfers); transfer.err != nil {
+			t.Fatal("maximum ClientHello relay copy failed", transfer.err)
 		}
 		metrics.forwardedMu.Lock()
 		upload, download := metrics.forwardedBytes["visitor_to_publisher"], metrics.forwardedBytes["publisher_to_visitor"]

@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
-	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
+	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 )
 
 // ReadinessRun identifies the exact publication accepting a probe. a hostname
@@ -79,7 +79,7 @@ func (p *ReadinessProof) Consume(r *http.Request, run ReadinessRun) bool {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	values := r.Header.Values(publisherproxy.ReadinessProbeHeader)
+	values := r.Header.Values(httpstream.ReadinessProbeHeader)
 	if p.secret == "" || !time.Now().Before(p.expires) || run != p.run || r.Method != http.MethodGet ||
 		r.URL.EscapedPath() != p.path || r.URL.RawQuery != "" || r.ContentLength != 0 || len(r.TransferEncoding) != 0 || r.Header.Get("Upgrade") != "" || len(values) != 1 ||
 		subtle.ConstantTimeCompare([]byte(values[0]), []byte(p.secret)) != 1 {

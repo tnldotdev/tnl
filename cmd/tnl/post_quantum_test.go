@@ -28,7 +28,7 @@ func TestPublishPostQuantumFlagOverridesProjectDefault(t *testing.T) {
 			if _, err := parser.Parse(append([]string{"publish", "3000"}, test.args...)); err != nil {
 				t.Fatal(err)
 			}
-			applyTunnelConfiguration(&flags.Publish.tunnelFlags, &config.Tunnel{RequirePostQuantum: test.configured})
+			applyServiceConfiguration(&flags.Publish.tunnelFlags, config.Service{RequirePostQuantum: test.configured})
 			got := publicOptions(flags.Publish).RequirePostQuantum
 			if (got == nil) != (test.want == nil) || got != nil && *got != *test.want {
 				t.Fatalf("public HTTPS requirement = %v, want %v", got, test.want)

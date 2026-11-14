@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -100,6 +101,7 @@ func TestIntegrationPublisherIdentitySurvivesTaskStateDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := filepath.Join(t.TempDir(), "state")
+	var captured []controlv1.DeploymentPublisherServiceAssignment
 	for replacement := range 3 {
 		encoded, err := os.ReadFile(secret)
 		if err != nil {
@@ -119,6 +121,15 @@ func TestIntegrationPublisherIdentitySurvivesTaskStateDeletion(t *testing.T) {
 		assignments, err := client.Assignments(ctx, lease.AccessToken)
 		if err != nil || assignments.CertificateStatePlans == nil || len(assignments.CertificateStatePlans) != 0 {
 			t.Fatal("real control HTTP did not preserve the precise fresh recovery contract", err)
+		}
+		if len(assignments.Services) != 1 || assignments.Services[0].Configuration.Protocol == nil || *assignments.Services[0].Configuration.Protocol != controlv1.ServiceProtocolHTTP || assignments.Services[0].TrustRevision < 1 ||
+			!strings.HasPrefix(assignments.Services[0].ServiceId, "svc_") || assignments.Services[0].GrantId == "" || assignments.Member.PublisherIdentityId != member.PublisherIdentityID || assignments.Member.KeyId != member.KeyID {
+			t.Fatal("expired bootstrap lost the original HTTP service assignment, exact grant, or key")
+		}
+		if captured == nil {
+			captured = assignments.Services
+		} else if !reflect.DeepEqual(captured, assignments.Services) {
+			t.Fatal("task state deletion changed the captured HTTP service or exact grant")
 		}
 		state, err := clientstate.OpenWithOptions(ctx, root, clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
 		if err != nil {

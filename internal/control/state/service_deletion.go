@@ -2,7 +2,6 @@ package state
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -14,26 +13,13 @@ func (d *Database) DeleteService(ctx context.Context, serviceID, actorID string,
 	if !opaqueid.Valid(serviceID, opaqueid.ServicePrefix) {
 		return ErrServiceAccess
 	}
-	tx, err := d.pool.Begin(ctx)
+	tx, err := d.beginServiceAccess(ctx, pgx.TxOptions{})
 	if err != nil {
 		return err
 	}
 	defer rollback(ctx, tx, "delete service", &retErr)()
-	var teamID string
-	if err = tx.QueryRow(ctx, `SELECT team_id FROM control.services WHERE id=$1 AND deleted_at IS NULL`, serviceID).Scan(&teamID); errors.Is(err, pgx.ErrNoRows) {
-		return ErrServiceAccess
-	} else if err != nil {
-		return err
-	}
-	if _, err = controlstatedb.New(tx).LockLocalTeamForMutation(ctx, teamID); errors.Is(err, pgx.ErrNoRows) {
-		return ErrServiceAccess
-	} else if err != nil {
-		return err
-	}
-	if err = serviceManager(ctx, tx, teamID, actorID); err != nil {
-		return err
-	}
-	if err = lockEnabledService(ctx, tx, serviceID); err != nil {
+	service, err := lockService(ctx, tx, serviceID, actorID)
+	if err != nil {
 		return err
 	}
 	if err = rejectProjectManagedDefinition(ctx, tx, serviceID); err != nil {
@@ -44,7 +30,7 @@ func (d *Database) DeleteService(ctx context.Context, serviceID, actorID string,
 		WHERE service_id=$1 AND closed_at IS NULL`, serviceID, now); err != nil {
 		return err
 	}
-	if _, err = q.DeleteService(ctx, controlstatedb.DeleteServiceParams{ID: serviceID, TeamID: teamID, Now: timestamptz(now)}); err != nil {
+	if _, err = q.DeleteService(ctx, controlstatedb.DeleteServiceParams{ID: serviceID, TeamID: service.TeamID, Now: timestamptz(now)}); err != nil {
 		return err
 	}
 	if err = auditPrivateMutation(ctx, tx, serviceID, actorID, "service.delete", serviceID, now); err != nil {

@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -31,8 +30,6 @@ type PublicURLControl interface {
 	PublisherAuditControl
 	ControlURL() string
 	PublisherPublicURL(context.Context, string) (controlv1.PublicURL, error)
-	AllocatePublisherPublicURL(context.Context, string, controlv1.AllocateEphemeralPublicURLRequest) (controlv1.PublicURL, error)
-	DeletePublisherPublicURL(context.Context, string, string) error
 	// nil traffic selection uses control's defaults.
 	CreatePublisherRun(context.Context, string, string, string, string, *trafficlimits.Selection, ...string) (controlv1.PublishRunSetup, error)
 	ClosePublishRun(context.Context, string, credentials.PublishRunToken) error
@@ -47,38 +44,49 @@ type PublicURLControl interface {
 // public URL callers leave Services nil; deployed owners supply Runtime.
 type NativeControl struct {
 	PublicURLControl
-	Services ServiceControl
-	Runtime  processidentity.Control
+	Services    ServiceControl
+	Allocations ServiceAllocationControl
+	Runtime     processidentity.Control
 }
 
 // Native is the single grant-scoped adapter for CLI, app, SDK, and guest
 // entrypoints. construct one per selected URL/worker; it owns no local database.
 type Native struct {
 	NativeControl
-	authority AssertionExchanger
-	identity  nativeScope
-	private   ed25519.PrivateKey
-	publicURL controlv1.PublicURL
-	traffic   *trafficlimits.Selection
-	runtime   *processidentity.Owner
+	authority            AssertionExchanger
+	identity             nativeScope
+	selectedServiceID    string
+	allocationInvocation string
+	allocatedServiceID   string
+	private              ed25519.PrivateKey
+	publicURL            controlv1.PublicURL
+	traffic              *trafficlimits.Selection
+	runtime              *processidentity.Owner
 }
 
 func NewNative(control NativeControl, authority AssertionExchanger, identity authorityv1.PublisherEnrollmentResult, private ed25519.PrivateKey) (*Native, error) {
-	if control.PublicURLControl == nil || authority == nil || !validSigningKey(private) {
-		return nil, ErrScope
-	}
-	server, err := naming.CanonicalControlURL(control.ControlURL())
-	if err != nil || server != control.ControlURL() {
-		return nil, ErrScope
-	}
 	scope, err := newNativeScope(identity)
 	if err != nil {
 		return nil, err
 	}
-	if scope.kind == authorityv1.Service && control.Services == nil {
+	return newNative(control, authority, scope, private)
+}
+
+func newNative(control NativeControl, authority AssertionExchanger, scope nativeScope, private ed25519.PrivateKey) (*Native, error) {
+	if authority == nil || !validSigningKey(private) || control.Services == nil && control.PublicURLControl == nil {
 		return nil, ErrScope
 	}
-	return &Native{NativeControl: control, authority: authority, identity: scope, private: append(ed25519.PrivateKey(nil), private...)}, nil
+	n := &Native{NativeControl: control, authority: authority, identity: scope, selectedServiceID: scope.serviceID, private: append(ed25519.PrivateKey(nil), private...)}
+	server, err := naming.CanonicalControlURL(n.ControlURL())
+	if err != nil || server != n.ControlURL() ||
+		(scope.kind == "service" || scope.kind == "deployment_credential") && control.Services == nil ||
+		scope.kind == "saved_public_url" && control.PublicURLControl == nil {
+		return nil, ErrScope
+	}
+	if control.PublicURLControl != nil && control.PublicURLControl.ControlURL() != server {
+		return nil, ErrScope
+	}
+	return n, nil
 }
 
 func validSigningKey(private ed25519.PrivateKey) bool {
@@ -96,13 +104,27 @@ func (n *Native) PublisherIdentityID() string {
 	return n.identity.clientID
 }
 
+func (n *Native) PublisherGrantID() string { return n.identity.grantID }
+func (n *Native) PublisherKeyID() string   { return n.identity.keyID }
+
 // ForGrant creates an independent worker adapter for another explicitly issued
 // grant on this identity. token exchange verifies its live ownership on control.
 func (n *Native) ForGrant(g controlv1.PublisherGrant) (*Native, error) {
 	if n == nil || !opaqueid.Valid(g.Id, opaqueid.PublisherGrantPrefix) || g.RevokedAt != nil || g.ExpiresAt != nil && !g.ExpiresAt.After(time.Now()) || g.TeamId != nil && *g.TeamId != n.identity.teamID {
 		return nil, ErrScope
 	}
-	i := n.identity.enrollment()
+	if g.Kind == "deployment_credential" {
+		if g.ServiceId != nil || g.PublicUrlId != nil || g.DomainId != nil || g.Namespace != nil {
+			return nil, ErrScope
+		}
+		scope := nativeScope{clientID: n.identity.clientID, keyID: n.identity.keyID, grantID: g.Id, teamID: n.identity.teamID, kind: string(g.Kind)}
+		copy, err := newNative(n.NativeControl, n.authority, scope, n.private)
+		if err != nil {
+			return nil, err
+		}
+		return copy.WithTraffic(n.traffic)
+	}
+	i := authorityv1.PublisherEnrollmentResult{ClientId: n.identity.clientID, KeyId: n.identity.keyID, TeamId: n.identity.teamID}
 	i.GrantId, i.Kind, i.PublicUrlId, i.DomainId, i.Namespace = g.Id, authorityv1.PublisherEnrollmentResultKind(g.Kind), g.PublicUrlId, g.DomainId, g.Namespace
 	i.ServiceId = g.ServiceId
 	copy, err := NewNative(n.NativeControl, n.authority, i, n.private)
@@ -113,17 +135,13 @@ func (n *Native) ForGrant(g controlv1.PublisherGrant) (*Native, error) {
 }
 
 func (n *Native) SelectPublicURL(publicURL controlv1.PublicURL) error {
-	if n.identity.kind != authorityv1.SavedPublicUrl && n.identity.kind != authorityv1.Namespace {
+	if n.identity.kind != "saved_public_url" {
 		return ErrScope
 	}
 	if publicURL.TeamId != n.identity.teamID || publicURL.LifecycleState != controlv1.Enabled || !opaqueid.Valid(publicURL.Id, opaqueid.PublicURLPrefix) || n.publicURL.Id != "" && n.publicURL.Id != publicURL.Id {
 		return ErrScope
 	}
-	if n.identity.kind == "saved_public_url" {
-		if publicURL.Id != n.identity.publicURLID {
-			return ErrScope
-		}
-	} else if !publicURL.Ephemeral || publicURL.ServiceProtocol != controlv1.Http || publicURL.DomainId != n.identity.domainID || !strings.HasSuffix(publicURL.CanonicalHostname, "."+n.identity.namespace) {
+	if publicURL.Id != n.identity.publicURLID {
 		return ErrScope
 	}
 	n.publicURL = clonePublicURL(publicURL)
@@ -139,21 +157,6 @@ func (n *Native) SavedPublicURL(ctx context.Context) (controlv1.PublicURL, error
 		return controlv1.PublicURL{}, err
 	}
 	u, err := n.NativeControl.PublisherPublicURL(ctx, token)
-	if err != nil {
-		return u, err
-	}
-	return u, n.SelectPublicURL(u)
-}
-
-func (n *Native) Allocate(ctx context.Context, body controlv1.AllocateEphemeralPublicURLRequest) (controlv1.PublicURL, error) {
-	if n.identity.kind != "namespace" {
-		return controlv1.PublicURL{}, ErrScope
-	}
-	token, err := n.Access(ctx)
-	if err != nil {
-		return controlv1.PublicURL{}, err
-	}
-	u, err := n.NativeControl.AllocatePublisherPublicURL(ctx, token, body)
 	if err != nil {
 		return u, err
 	}
@@ -190,15 +193,4 @@ func (n *Native) CreatePublishRun(ctx context.Context, id, retry string, preferr
 		return controlv1.PublishRunSetup{}, err
 	}
 	return n.NativeControl.CreatePublisherRun(ctx, id, retry, token, proof, n.traffic.Clone(), preferred...)
-}
-
-func (n *Native) DeletePublicURL(ctx context.Context, id string) error {
-	if n.identity.kind != "namespace" || n.publicURL.Id != id {
-		return ErrScope
-	}
-	token, err := n.Access(ctx)
-	if err != nil {
-		return err
-	}
-	return n.NativeControl.DeletePublisherPublicURL(ctx, token, id)
 }

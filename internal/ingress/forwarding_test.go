@@ -23,6 +23,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/relay"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
@@ -32,6 +33,27 @@ import (
 )
 
 const forwardingClusterSecret = "forwarding-cluster-secret-012345678901"
+
+var testForwardingSourceSequence atomic.Uint64
+
+func testForwardingSourceSigner(entry ingressv1.IngressRoutingTableEntry, visitorID string, source, destination netip.AddrPort) (string, error) {
+	now := time.Now()
+	authority, child, err := visitortoken.IssueVisitorSourceAuthority([32]byte{1}, tunnelv1.VisitorSourceAuthority{
+		PublicURLID: entry.PublicUrlId, PublishRunID: entry.PublishRunId, PublishRunNumber: uint64(entry.PublishRunNumber),
+		IngressID: "fixture-ingress", IngressRunID: "fixture-process", IngressLeaseRevision: 1, VisitorPolicyRevision: 1, ValidUntil: now.Add(10 * time.Second).Unix(),
+	}, now)
+	if err != nil {
+		return "", err
+	}
+	proof, err := visitortoken.SignVisitorSource(child, authority, testForwardingSourceSequence.Add(1), tunnelv1.VisitorSourceBinding{
+		PublicURLID: entry.PublicUrlId, PublishRunID: entry.PublishRunId, PublishRunNumber: uint64(entry.PublishRunNumber), VisitorID: visitorID, Source: source, Destination: destination,
+	}, now)
+	if err != nil {
+		return "", err
+	}
+	wire, err := proof.MarshalBinary()
+	return string(wire), err
+}
 
 func TestForwarderPoolsExactRelaySessionAndPreservesBytes(t *testing.T) {
 	material := newForwardingTestMaterial(t)

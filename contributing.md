@@ -65,6 +65,15 @@ executables. CLI and connector
 suites also build the native client once and pass it with `-tnl-cli-binary`;
 individual tests do not rebuild it.
 
+To check one PostgreSQL-backed API boundary:
+
+```sh
+mise exec -- task go:test:integration:api PACKAGES=./internal/control/api/public RUN='^TestIntegrationCreateServiceDeclarationAPI$'
+```
+
+Omit `PACKAGES` to run the full API package set used by CI. A selected package
+run checks only that boundary, not the full API suite.
+
 CI downloads and verifies both Go modules before running checks. Only transient
 dependency downloads retry; tests do not. Go module caches are shared across
 build variants, while compiled caches stay separate for ordinary and race builds.

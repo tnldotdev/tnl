@@ -93,7 +93,7 @@ type PreviewStore interface {
 	ListPreviews(context.Context, string, string, string) (controlstate.PreviewPage, error)
 	CreatePreview(context.Context, string, string, string, time.Time) (controlstate.Preview, error)
 	GetPreview(context.Context, string) (controlstate.Preview, error)
-	AddPreviewPublicURL(context.Context, controlstate.AddPreviewPublicURLRequest, time.Time) (controlstate.Preview, error)
+	AddPreviewService(context.Context, controlstate.AddPreviewServiceRequest, time.Time) (controlstate.Preview, error)
 }
 
 type PreviewTeamAccessStore interface {
@@ -122,13 +122,12 @@ type ShareStore interface {
 }
 
 type ShareAccessStore interface {
-	EnableShareAccess(context.Context, controlstate.PublishRunAuthentication, string) error
-	RedeemShare(context.Context, controlstate.PublishRunAuthentication, string, []byte, []byte, time.Time) (controlstate.ShareRedemption, error)
+	RedeemShare(context.Context, controlstate.ServiceHTTPRun, string, []byte, []byte, time.Time) (controlstate.ShareRedemption, error)
 }
 
 type FeedbackStore interface {
 	ListFeedbackForPublicURL(context.Context, string, string, string, string, string) (controlstate.FeedbackThreadPage, error)
-	CreatePublishRunPreview(context.Context, controlstate.PublishRunAuthentication, time.Time) (controlstate.Preview, error)
+	CreateServiceRunPreview(context.Context, controlstate.ServiceHTTPRun, time.Time) (controlstate.Preview, error)
 	CreateFeedback(context.Context, controlstate.PublishRunAuthentication, controlstate.CreateFeedbackRequest, time.Time) (controlstate.FeedbackThread, error)
 	AppendFeedback(context.Context, controlstate.AppendFeedbackRequest, time.Time) (controlstate.FeedbackEvent, error)
 	GetFeedback(context.Context, string) (controlstate.FeedbackThread, error)

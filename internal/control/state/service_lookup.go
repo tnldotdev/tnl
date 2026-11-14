@@ -65,7 +65,11 @@ func (d *Database) GetService(ctx context.Context, serviceID, actorID string) (r
 	} else {
 		row, err = controlstatedb.New(tx).GetService(ctx, serviceID)
 		if err == nil {
-			err = serviceManager(ctx, tx, row.TeamID, actorID)
+			var member serviceMembership
+			member, err = serviceMembershipForActor(ctx, tx, row.TeamID, actorID, time.Now())
+			if err == nil {
+				err = requireServiceManagement(ctx, tx, row, member)
+			}
 		}
 	}
 	if errors.Is(err, pgx.ErrNoRows) {

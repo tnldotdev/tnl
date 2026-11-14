@@ -9,15 +9,18 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 )
 
-// private runs use the same expiration worker and relay reservation counters
-// as HTTP runs. a departed publisher must not hold placement indefinitely.
+const ephemeralServiceGracePeriod = 2 * time.Minute
+
+// every protocol uses the same expiration worker and relay reservation counters.
+// a departed publisher must not hold placement indefinitely.
 func (d *Database) ExpireServiceRuns(ctx context.Context, now time.Time) (count int, retErr error) {
+	clock := newAuthorizationClock(now)
 	rows, err := d.pool.Query(ctx, `SELECT run.id,run.service_id FROM control.service_runs run
-	    JOIN control.services service ON service.id=run.service_id JOIN control.teams team ON team.id=service.team_id
-	    JOIN control.publisher_grants grant_record ON grant_record.id=run.publisher_grant_id JOIN control.publisher_identities publisher ON publisher.id=run.publisher_identity_id
 	    WHERE run.closed_at IS NULL AND(run.publisher_expires_at<=$1 OR run.state='prepared' AND run.preparation_expires_at<=$1
-	        OR NOT service.enabled OR service.deleted_at IS NOT NULL OR team.deleted_at IS NOT NULL OR publisher.revoked_at IS NOT NULL
-	        OR grant_record.revoked_at IS NOT NULL OR grant_record.expires_at<=$1)
+	        OR NOT EXISTS(SELECT 1 FROM control.publisher_service_permission(run.publisher_identity_id,run.publisher_grant_id,run.service_id,$1) permission
+	            JOIN control.publisher_grants grant_record ON grant_record.id=run.publisher_grant_id
+	            JOIN control.publisher_identity_keys signing ON signing.id=run.publisher_key_id AND signing.publisher_identity_id=run.publisher_identity_id
+	            WHERE grant_record.kind='service' OR signing.retired_at IS NULL))
 	    ORDER BY run.publisher_expires_at,run.id LIMIT 100`, now)
 	if err != nil {
 		return 0, err
@@ -45,7 +48,7 @@ func (d *Database) ExpireServiceRuns(ctx context.Context, now time.Time) (count 
 			}
 			defer rollback(ctx, tx, "expire service run", &retErr)()
 			q := controlstatedb.New(tx)
-			service, err := q.LockService(ctx, c.service)
+			_, err = q.LockService(ctx, c.service)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return false, nil
 			}
@@ -59,16 +62,15 @@ func (d *Database) ExpireServiceRuns(ctx context.Context, now time.Time) (count 
 			if run.ClosedAt.Valid {
 				return false, nil
 			}
-			var current bool
-			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.teams team JOIN control.publisher_grants g ON g.id=$2
-			    JOIN control.publisher_identities p ON p.id=$3 WHERE team.id=$1 AND team.deleted_at IS NULL AND g.revoked_at IS NULL
-			    AND(g.expires_at IS NULL OR g.expires_at>$4) AND p.revoked_at IS NULL)`, service.TeamID, run.PublisherGrantID, run.PublisherIdentityID, now).Scan(&current); err != nil {
-				return false, err
+			checkedAt := clock.current()
+			_, permissionErr := serviceRunPublisherPermission(ctx, tx, run, checkedAt)
+			if permissionErr != nil && !errors.Is(permissionErr, ErrServiceAccess) {
+				return false, permissionErr
 			}
-			if current && service.Enabled && !service.DeletedAt.Valid && run.PublisherExpiresAt.Time.After(now) && (run.State != "prepared" || run.PreparationExpiresAt.Time.After(now)) {
+			if permissionErr == nil && run.PublisherExpiresAt.Time.After(checkedAt) && (run.State != "prepared" || run.PreparationExpiresAt.Time.After(checkedAt)) {
 				return false, nil
 			}
-			if _, err = q.CloseServiceRun(ctx, controlstatedb.CloseServiceRunParams{ID: c.id, ServiceID: c.service, RunNumber: run.RunNumber, Now: timestamptz(now)}); err != nil {
+			if _, err = q.CloseServiceRun(ctx, controlstatedb.CloseServiceRunParams{ID: c.id, ServiceID: c.service, RunNumber: run.RunNumber, Now: timestamptz(checkedAt)}); err != nil {
 				return false, err
 			}
 			return true, tx.Commit(ctx)
@@ -93,5 +95,82 @@ func (d *Database) ExpireServiceRuns(ctx context.Context, now time.Time) (count 
 	if _, err = d.ReleaseServicePorts(ctx, now); err != nil {
 		return count, err
 	}
+	if err = d.expireServices(ctx, clock.current()); err != nil {
+		return count, err
+	}
 	return count, nil
+}
+
+// a fixed expiration never renews. ephemeral cleanup instead waits for the last
+// run to close and a short idle grace period; endpoint edits cannot extend it.
+func (d *Database) expireServices(ctx context.Context, now time.Time) error {
+	rows, err := d.pool.Query(ctx, `SELECT service.id,service.team_id FROM control.services service
+	    WHERE service.deleted_at IS NULL
+	      AND NOT EXISTS(SELECT 1 FROM control.service_runs run WHERE run.service_id=service.id AND run.closed_at IS NULL)
+	      AND (service.expires_at<=$1 OR service.ephemeral
+	        AND COALESCE((SELECT max(run.closed_at) FROM control.service_runs run WHERE run.service_id=service.id),service.created_at)<=$2)
+	    ORDER BY service.created_at,service.id LIMIT 100`, now, now.Add(-ephemeralServiceGracePeriod))
+	if err != nil {
+		return err
+	}
+	type candidate struct{ id, team string }
+	var candidates []candidate
+	for rows.Next() {
+		var service candidate
+		if err := rows.Scan(&service.id, &service.team); err != nil {
+			rows.Close()
+			return err
+		}
+		candidates = append(candidates, service)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, candidate := range candidates {
+		err := func() (retErr error) {
+			tx, err := d.pool.Begin(ctx)
+			if err != nil {
+				return err
+			}
+			defer rollback(ctx, tx, "expire service", &retErr)()
+			q := controlstatedb.New(tx)
+			if _, err := q.LockLocalTeamForMutation(ctx, candidate.team); errors.Is(err, pgx.ErrNoRows) {
+				return nil
+			} else if err != nil {
+				return err
+			}
+			service, err := q.LockService(ctx, candidate.id)
+			if err != nil {
+				return err
+			}
+			if service.DeletedAt.Valid {
+				return nil
+			}
+			var open bool
+			var idleSince time.Time
+			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.service_runs WHERE service_id=$1 AND closed_at IS NULL),
+			    COALESCE((SELECT max(closed_at) FROM control.service_runs WHERE service_id=$1),$2::timestamptz)`,
+				service.ID, service.CreatedAt.Time).Scan(&open, &idleSince); err != nil {
+				return err
+			}
+			expired := service.ExpiresAt.Valid && !service.ExpiresAt.Time.After(now)
+			idle := service.Ephemeral && !idleSince.Add(ephemeralServiceGracePeriod).After(now)
+			if open || !expired && !idle {
+				return nil
+			}
+			if _, err := q.DeleteService(ctx, controlstatedb.DeleteServiceParams{ID: service.ID, TeamID: service.TeamID, Now: timestamptz(now)}); err != nil {
+				return err
+			}
+			if err := auditPrivateMutation(ctx, tx, service.ID, "", "service.delete", "expiration/"+service.ID, now); err != nil {
+				return err
+			}
+			return tx.Commit(ctx)
+		}()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

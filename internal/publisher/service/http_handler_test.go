@@ -66,7 +66,7 @@ func TestServiceHTTPInlineApplicationKeepsPolicyAndReservedPaths(t *testing.T) {
 func TestServiceHTTPInlinePreparationDoesNotRequireDummyTarget(t *testing.T) {
 	cfg, control := lifecycleFixture(t)
 	preparation := control.prep
-	approved, err := control.GetPublisherService(t.Context(), "")
+	approved, err := control.GetPublisherService(t.Context(), cfg.ServiceID, "")
 	if err != nil {
 		t.Fatal(err)
 	}

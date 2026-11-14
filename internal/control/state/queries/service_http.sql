@@ -11,6 +11,20 @@ WHERE s.id=sqlc.arg(service_id) AND s.protocol='http' AND s.enabled AND s.delete
 INSERT INTO control.service_http_browser_logins(state_digest,binding_digest,service_id,run_ids,return_path,nonce,verifier_ciphertext,storage_key_id,expires_at)
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9);
 
+-- name: ReadyServiceBrowserHosts :many
+SELECT service.id AS service_id,service.certificate_hostname,
+    array_agg(run.id ORDER BY run.run_number)::text[] AS run_ids
+FROM control.services service JOIN control.service_runs run ON run.service_id=service.id
+WHERE service.enabled AND service.deleted_at IS NULL AND service.protocol='http'
+    AND run.state='ready' AND run.healthy AND run.closed_at IS NULL
+    AND run.publisher_expires_at>sqlc.arg(now) AND run.certificate_expires_at>sqlc.arg(now)
+    AND EXISTS(SELECT 1 FROM control.publisher_service_permission(run.publisher_identity_id,
+        run.publisher_grant_id,service.id,sqlc.arg(now)))
+    AND (service.id=sqlc.arg(service_id) OR EXISTS(
+        SELECT 1 FROM control.preview_services included WHERE included.preview_id=sqlc.arg(preview_id)::text
+            AND included.service_id=service.id))
+GROUP BY service.id,service.certificate_hostname ORDER BY service.id LIMIT 32;
+
 -- name: ConsumeServiceHTTPBrowserLogin :one
 UPDATE control.service_http_browser_logins SET consumed_at=sqlc.arg(now)
 WHERE state_digest=sqlc.arg(state_digest) AND binding_digest=sqlc.arg(binding_digest)
@@ -70,7 +84,7 @@ WHERE service_id=sqlc.arg(service_id) ORDER BY id;
 -- name: ServiceHTTPTransportBinding :one
 SELECT (v.authorized_at IS NOT NULL)::boolean AS authorized,
     (v.promoted_at IS NOT NULL)::boolean AS admitted,LEAST(sqlc.arg(now)::timestamptz+interval '2 minutes',
-    run.publisher_expires_at,run.certificate_expires_at,g.expires_at,ingress.lease_expires_at,
+    run.publisher_expires_at,run.certificate_expires_at,permission.expires_at,ingress.lease_expires_at,
     (SELECT max(relay.lease_expires_at) FROM control.service_connection_slots slot
      JOIN control.relay_leases relay ON relay.relay_id=slot.relay_id AND relay.relay_run_id=slot.relay_run_id
      AND relay.relay_lease_revision=slot.relay_lease_revision AND relay.relay_service_id=slot.relay_service_id
@@ -84,8 +98,10 @@ JOIN control.service_runs run ON run.id=v.service_run_id AND run.service_id=serv
     AND run.publisher_expires_at>sqlc.arg(now) AND run.certificate_expires_at>sqlc.arg(now)
 JOIN control.ingress_leases ingress ON ingress.ingress_id=v.ingress_id AND ingress.ingress_run_id=v.ingress_run_id
     AND ingress.ingress_lease_revision=v.ingress_lease_revision AND ingress.lease_expires_at>sqlc.arg(now)
-JOIN control.publisher_grants g ON g.id=run.publisher_grant_id AND g.kind='service'
-    AND g.service_id=service.id AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>sqlc.arg(now))
+JOIN LATERAL control.publisher_service_permission(run.publisher_identity_id,run.publisher_grant_id,service.id,sqlc.arg(now)) permission ON true
+JOIN control.publisher_grants g ON g.id=run.publisher_grant_id
+JOIN control.publisher_identity_keys signing ON signing.id=run.publisher_key_id AND signing.publisher_identity_id=run.publisher_identity_id
+    AND (g.kind='service' OR signing.retired_at IS NULL)
 JOIN control.publisher_identities publisher ON publisher.id=g.publisher_identity_id AND publisher.id=run.publisher_identity_id AND publisher.revoked_at IS NULL
 WHERE v.visitor_connection_id=sqlc.arg(visitor_connection_id) AND v.service_id=sqlc.arg(service_id)
 AND v.service_run_id=sqlc.arg(service_run_id) AND v.run_number=sqlc.arg(run_number)

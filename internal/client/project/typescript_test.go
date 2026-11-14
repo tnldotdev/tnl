@@ -20,11 +20,10 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
   server: env.TNL_SERVER === undefined ? "https://control.example.com" : "leaked",
   feedback: true,
   inspection: {mode: "none"},
-  publicURL: {domain: "routes.example.test", limits: {http: {total: 20, rate: {count: 5, per: "1m"}, concurrency: 750}}},
   services: {api: {}, site: {}},
   deployments: {local: {targets: {
-    api: {address: 3000, inspection: {mode: "summary"}, name: worktree.label.fullLabel, http: {readiness: {path: "/status"}}},
-    site: {publicURL: {hostname: "https://site.example.test"}, http: {open: true, paths: {"/api": "api", "/v1": {service: "api", stripPrefix: true}}}},
+    api: {domain: "routes.example.test", address: 3000, inspection: {mode: "summary"}, name: worktree.label.fullLabel, http: {readiness: {path: "/status"}, limits: {total: 20, rate: {count: 5, per: "1m"}, concurrency: 750}}},
+    site: {hostname: "site.example.test", http: {open: true, paths: {"/api": "api", "/v1": {service: "api", stripPrefix: true}}}},
   }}},
 });`
 	if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
@@ -40,40 +39,39 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if value.Server == nil || *value.Server != "https://control.example.com" || value.Feedback == nil || !*value.Feedback || value.Tunnel == nil || value.Tunnel.Domain == nil ||
+	if value.Server == nil || *value.Server != "https://control.example.com" || value.Feedback == nil || !*value.Feedback || value.Services["api"].Domain == nil ||
 		value.Inspection == nil || value.Inspection.Mode == nil || *value.Inspection.Mode != "none" ||
 		value.Services["api"].Inspection == nil || value.Services["api"].Inspection.Mode == nil || *value.Services["api"].Inspection.Mode != "summary" ||
-		*value.Tunnel.Domain != "routes.example.test" ||
+		*value.Services["api"].Domain != "routes.example.test" ||
 		value.Services["api"].Name == nil || *value.Services["api"].Name != worktree.Label.FullLabel ||
-		value.Services["site"].Tunnel == nil || value.Services["site"].Tunnel.PublicURL == nil ||
-		*value.Services["site"].Tunnel.PublicURL != "https://site.example.test" ||
+		value.Services["site"].Hostname == nil || *value.Services["site"].Hostname != "site.example.test" ||
 		value.Services["site"].HTTP.Open == nil || !*value.Services["site"].HTTP.Open ||
 		value.Services["site"].HTTP.Paths["/api"].Service != "api" || !value.Services["site"].HTTP.Paths["/v1"].StripPrefix ||
-		value.Tunnel.Limits == nil || value.Tunnel.Limits.HTTP.Concurrency == nil || *value.Tunnel.Limits.HTTP.Concurrency != 750 ||
-		value.Tunnel.Limits.HTTP.Total == nil || *value.Tunnel.Limits.HTTP.Total != 20 ||
-		value.Tunnel.Limits.HTTP.Rate == nil || value.Tunnel.Limits.HTTP.Rate.Count == nil || *value.Tunnel.Limits.HTTP.Rate.Count != 5 ||
-		value.Tunnel.Limits.HTTP.Rate.Per == nil || value.Tunnel.Limits.HTTP.Rate.Per.Value() != time.Minute ||
+		value.Services["api"].HTTP.Limits == nil || value.Services["api"].HTTP.Limits.Concurrency == nil || *value.Services["api"].HTTP.Limits.Concurrency != 750 ||
+		value.Services["api"].HTTP.Limits.Total == nil || *value.Services["api"].HTTP.Limits.Total != 20 ||
+		value.Services["api"].HTTP.Limits.Rate == nil || value.Services["api"].HTTP.Limits.Rate.Count == nil || *value.Services["api"].HTTP.Limits.Rate.Count != 5 ||
+		value.Services["api"].HTTP.Limits.Rate.Per == nil || value.Services["api"].HTTP.Limits.Rate.Per.Value() != time.Minute ||
 		value.Services["api"].Target == nil || string(*value.Services["api"].Target.Address) != "3000" ||
 		value.Services["api"].HTTP.Readiness == nil || value.Services["api"].HTTP.Readiness.Path != "/status" {
 		t.Fatalf("config = %#v", value)
 	}
 }
 
-func TestResolveNormalizesTypeScriptExactPublicURL(t *testing.T) {
+func TestResolvePreservesTypeScriptExactDNSHostname(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "tnl.config.ts")
-	if err := os.WriteFile(path, []byte(`export default {services: {api: {}}, deployments: {local: {targets: {api: {publicURL: {hostname: "api.example.test"}}}}}, aliases: {review: {service: "api", publicURL: "review.example.test"}}};`), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(`export default {services: {api: {}}, deployments: {local: {targets: {api: {hostname: "api.example.test"}}}}, aliases: {review: {service: "api", hostname: "review.example.test"}}};`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	project, err := Resolve(t.Context(), Selection{Path: path}, root, [32]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := *project.Config.Services["api"].Tunnel.PublicURL; got != "https://api.example.test" {
-		t.Fatalf("service public URL = %q", got)
+	if got := *project.Config.Services["api"].Hostname; got != "api.example.test" {
+		t.Fatalf("service hostname = %q", got)
 	}
-	if got := *project.Config.Aliases["review"].PublicURL; got != "https://review.example.test" {
-		t.Fatalf("alias public URL = %q", got)
+	if got := *project.Config.Aliases["review"].Hostname; got != "review.example.test" {
+		t.Fatalf("alias hostname = %q", got)
 	}
 }
 
@@ -167,7 +165,7 @@ func TestLoadAliasesValidatesComputedServiceReferences(t *testing.T) {
 	}{{"api", true}, {"missing", false}} {
 		directory := t.TempDir()
 		path := filepath.Join(directory, "tnl.config.ts")
-		source := fmt.Sprintf(`export default () => ({ services: {api: {}}, deployments: {local: {targets: {api: {publicURL: {}}}}}, aliases: {review: {service: [%q].join(""), name: "api.shop", access: "anonymous"}} });`, test.service)
+		source := fmt.Sprintf(`export default () => ({ services: {api: {}}, deployments: {local: {targets: {api: {}}}}, aliases: {review: {service: [%q].join(""), name: "api.shop", access: "anonymous"}} });`, test.service)
 		if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -185,8 +183,12 @@ func TestLoadRejectsVersionedOrDaemonResult(t *testing.T) {
 	for field, source := range map[string]string{
 		"version":         `export default {version: 1};`,
 		"tnld":            `export default {tnld: {mode: "relay"}};`,
-		"allow_ip":        `export default {publicURL: {allow_ip: ["192.0.2.1"]}};`,
-		"allow_providers": `export default {publicURL: {allow_providers: ["github", "stripe"]}};`,
+		"allow_ip":        `export default {allow_ip: ["192.0.2.1"]};`,
+		"allow_providers": `export default {allow_providers: ["github", "stripe"]};`,
+		"publicURL":       `export default {publicURL: {}};`,
+		"public_url":      `export default {public_url: {}};`,
+		"traffic":         `export default {traffic: {connections: 8}};`,
+		"hostname":        `export default {hostname: "app.example"};`,
 	} {
 		path := filepath.Join(t.TempDir(), "tnl.config.ts")
 		if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
@@ -202,15 +204,15 @@ func TestLoadAppliesStaticValidationToNestedServices(t *testing.T) {
 	for name, test := range map[string]struct{ source, category string }{
 		"service server":    {`export default {services: {api: {server: "https://control.example"}}};`, `unknown TypeScript configuration field "server"`},
 		"service team":      {`export default {services: {api: {team: "studio"}}};`, `unknown TypeScript configuration field "team"`},
-		"concurrency":       {"export default " + typeScriptServiceCase("api", "http", `{publicURL: {limits: {http: {concurrency: 0}}}}`), "positive safe integers"},
-		"old request limit": {"export default " + typeScriptServiceCase("api", "http", `{publicURL: {requestLimit: 2}}`), "unknown TypeScript configuration field"},
+		"concurrency":       {"export default " + typeScriptServiceCase("api", "http", `{http: {limits: {concurrency: 0}}}`), "positive safe integers"},
+		"old request limit": {"export default " + typeScriptServiceCase("api", "http", `{http: {requestLimit: 2}}`), "unknown TypeScript configuration field"},
 		"inspection":        {"export default " + typeScriptServiceCase("api", "http", `{inspection: {mode: "all"}}`), "services.api.inspection: mode must be none or summary"},
 		"retired dev":       {`export default {services: {api: {dev: {startupTimeout: "+1s"}}}};`, "dev"},
 		"target":            {"export default " + typeScriptServiceCase("api", "http", `{address: "https://example.com/path"}`), "services.api: target.address:"},
 		"raw SSH":           {"export default " + typeScriptServiceCase("shell", "ssh", `{inspection: {mode: "none"}, address: "sshd:22"}`), "use tcp for an existing sshd"},
 		"raw SSH TLS":       {`export default () => ({services: {shell: {protocol: ["s", "sh"].join("")}}, deployments: {local: {targets: {shell: {address: "sshd:22", tls: {hostname: "sshd", ca: "system"}}}}}});`, "use tcp for an existing sshd"},
-		"ip":                {"export default " + typeScriptServiceCase("api", "http", `{publicURL: {access: {ip: ["192.0.2.7/24"]}}}`), "distinct canonical addresses or prefixes"},
-		"duplicate":         {"export default " + typeScriptServiceCase("api", "http", `{publicURL: {access: {ip: ["192.0.2.1", "192.0.2.1/32"]}}}`), "distinct canonical addresses or prefixes"},
+		"ip":                {"export default " + typeScriptServiceCase("api", "http", `{http: {access: {ip: ["192.0.2.7/24"]}}}`), "distinct canonical addresses or prefixes"},
+		"duplicate":         {"export default " + typeScriptServiceCase("api", "http", `{http: {access: {ip: ["192.0.2.1", "192.0.2.1/32"]}}}`), "distinct canonical addresses or prefixes"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "tnl.config.ts")
@@ -374,16 +376,16 @@ func TestLoadPreservesParentDeadline(t *testing.T) {
 func TestTypeScriptServicesUseCamelCaseFields(t *testing.T) {
 	value, err := unmarshalTypeScriptTNL([]byte(`{
   "team":"Team One",
-    "services":{"web":{}}, "deployments":{"local":{"targets":{"web":{"publicURL":{"access":{"ip":["192.0.2.1"]},"ephemeral":true,"requirePostQuantum":true},"http":{"readiness":{"path":"/health"}}}}}}
+    "services":{"web":{}}, "deployments":{"local":{"targets":{"web":{"ephemeral":true,"requirePostQuantum":true,"http":{"access":{"ip":["192.0.2.1"]},"readiness":{"path":"/health"}}}}}}
 }`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	service := value.Deployments["local"].Targets["web"]
-	if service.Tunnel.RequirePostQuantum == nil || !*service.Tunnel.RequirePostQuantum {
+	if service.RequirePostQuantum == nil || !*service.RequirePostQuantum {
 		t.Fatal("TypeScript lost the public HTTPS requirement")
 	}
-	if service.Tunnel == nil || service.Tunnel.Access == nil || len(service.Tunnel.Access.IP) != 1 || service.Tunnel.Ephemeral == nil || !*service.Tunnel.Ephemeral ||
+	if service.HTTP == nil || service.HTTP.Access == nil || len(service.HTTP.Access.IP) != 1 || service.Ephemeral == nil || !*service.Ephemeral ||
 		service.HTTP.Readiness == nil || service.HTTP.Readiness.Path != "/health" {
 		t.Fatalf("service = %#v", service)
 	}
@@ -403,7 +405,7 @@ func TestTypeScriptDatabaseTargetTLSIsPublisherSide(t *testing.T) {
 	}
 	options := config.ServicePublish(value.Services["orders"])
 	service := value.Services["orders"]
-	if config.ServiceName("orders", service) != "orders" || service.Tunnel != nil ||
+	if config.ServiceName("orders", service) != "orders" || service.Public != nil ||
 		service.Target.TLS == nil || service.Target.TLS.Hostname == nil || *service.Target.TLS.Hostname != "db.internal" || service.Target.TLS.CA == nil || *service.Target.TLS.CA != "system" ||
 		options == nil || options.Protocol == nil || *options.Protocol != "postgres" ||
 		options.Target == nil || string(*options.Target) != "db.internal:5432" ||

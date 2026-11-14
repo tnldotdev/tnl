@@ -143,14 +143,12 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 		relayHeaders <- header
 		return gate, nil
 	})
-	p := config.PublicServices
-	control := p.config.Control.(*httpsServiceControl)
+	control := config.Control.(*httpsServiceControl)
 	control.pending = true
 	control.recheckStarted, control.recheckGate, control.promoteStarted = make(chan struct{}, 2), make(chan struct{}), make(chan struct{}, 2)
 	unblockRecheck := sync.OnceFunc(func() { close(control.recheckGate) })
 	t.Cleanup(unblockRecheck)
 	config.Metrics, config.Observer = metrics, cleanup
-	p.config.Metrics, p.config.Observer = metrics, cleanup
 	config.OnError = func(err error) {
 		failureCalls.Add(1)
 		select {
@@ -159,6 +157,7 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 		}
 	}
 	server, address := startIngress(t, config)
+	p := server
 	certificate := testCertificate(t, "route.example")
 	headers := make(chan proxyproto.Header, 1)
 	peerResult, peerDone := make(chan error, 1), make(chan struct{})
@@ -202,7 +201,7 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 	// authenticate only after the pending reservation and live stream are visible.
 	completionAwait(t, ctx, control.recheckStarted)
 	p.mu.Lock()
-	sessions, streams := p.sessions, p.streams
+	sessions, streams := p.admitted[serviceConnection], len(p.backends)
 	p.mu.Unlock()
 	pending, active := publicServiceAdmissionCounts(p)
 	if sessions != 1 || pending != 1 || active != 0 || streams != 1 || metrics.streams.Load() != 1 {
@@ -214,7 +213,7 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 	unblockRecheck()
 	completionAwait(t, ctx, control.promoteStarted)
 	p.mu.Lock()
-	sessions, streams = p.sessions, p.streams
+	sessions, streams = p.admitted[serviceConnection], len(p.backends)
 	p.mu.Unlock()
 	pending, active = publicServiceAdmissionCounts(p)
 	if sessions != 1 || pending != 0 || active != 1 || streams != 1 {
@@ -295,7 +294,7 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 		}
 	}
 	p.mu.Lock()
-	sessions, streams = p.sessions, p.streams
+	sessions, streams = p.admitted[serviceConnection], len(p.backends)
 	connections = len(p.connections)
 	p.mu.Unlock()
 	pending, active = publicServiceAdmissionCounts(p)

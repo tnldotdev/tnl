@@ -90,7 +90,7 @@ func TestIntegrationPreparedConnectorHasNoArrivalRPCOrSigning(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "native", key, controlv1.ServiceMetadata{Protocol: controlv1.Tcp})
+				service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "native", key, controlv1.ServiceMetadata{Protocol: controlv1.Tcp}, nil)
 				if err != nil {
 					t.Fatal(err)
 				}

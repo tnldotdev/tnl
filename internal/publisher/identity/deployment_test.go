@@ -24,7 +24,7 @@ type deploymentFixtureControl struct {
 	leases, acks int
 }
 
-func deploymentIdentityFixture(t *testing.T, kind string) (*Deployment, *deploymentFixtureControl) {
+func deploymentIdentityFixture(t *testing.T, protocol controlv1.ServiceProtocol) (*Deployment, *deploymentFixtureControl) {
 	t.Helper()
 	native, control := privateScopeFixture(t)
 	public, private, err := ed25519.GenerateKey(rand.Reader)
@@ -35,54 +35,51 @@ func deploymentIdentityFixture(t *testing.T, kind string) (*Deployment, *deploym
 		member: controlv1.DeploymentPublisherIdentity{TeamId: native.identity.teamID, ProjectKey: "example", DeploymentId: "dpl_example", DeploymentName: "production", PublisherIdentityId: native.identity.clientID, KeyId: native.identity.keyID},
 		public: public,
 		assignment: controlv1.DeploymentPublisherServiceAssignment{
-			Service: "db", ServiceId: native.identity.serviceID, ServiceKind: "service", GrantId: native.identity.grantID, TrustRevision: 3,
-			Configuration: controlv1.ProjectServiceConfiguration{Protocol: new(controlv1.Postgres), Target: "db.internal:5432"},
+			Service: "db", ServiceId: native.identity.serviceID, GrantId: native.identity.grantID, TrustRevision: 3,
+			Configuration: controlv1.ProjectServiceConfiguration{Protocol: &protocol, Target: "db.internal:5432"},
 		},
 	}
-	if kind == "public_url" {
-		id, err := opaqueid.New(opaqueid.PublicURLPrefix)
-		if err != nil {
-			t.Fatal(err)
-		}
+	if protocol == controlv1.ServiceProtocolHTTP {
 		fake.assignment = controlv1.DeploymentPublisherServiceAssignment{
-			Service: "web", ServiceId: id, ServiceKind: "public_url", GrantId: native.identity.grantID, Hostname: new("web.example"),
+			Service: "web", ServiceId: native.identity.serviceID, GrantId: native.identity.grantID, TrustRevision: 3,
 			Configuration: controlv1.ProjectServiceConfiguration{
 				Protocol: new(controlv1.ServiceProtocolHTTP), Target: "https://web.internal:3000",
+				Hostname: new("web.example"), Traffic: &controlv1.TrafficSelection{Connections: new(7)},
 				TargetTls: &controlv1.ProjectTargetTLS{Hostname: "web.internal", Digest: strings.Repeat("a", 64)},
-				PublicUrl: &controlv1.ProjectServicePublicURL{Access: &controlv1.ProjectPublicAccess{Mode: new(controlv1.Restricted)}},
+				Public:    new(true), Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: new(controlv1.Restricted)}},
 			},
 		}
 	}
-	deployment, err := NewDeployment(NativeControl{PublicURLControl: control, Services: control}, fake, &lostEnrollmentResponse{}, "https://control.example", fake.member, private)
+	deployment, err := NewDeployment(NativeControl{Services: control}, fake, &lostEnrollmentResponse{}, "https://control.example", fake.member, private)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return deployment, fake
 }
 
-func TestDeploymentPublicURLPollAndServiceUseExactAssignmentWithoutTrustRevision(t *testing.T) {
-	deployment, fake := deploymentIdentityFixture(t, "public_url")
+func TestDeploymentHTTPPollAndServiceUseExactAssignment(t *testing.T) {
+	deployment, fake := deploymentIdentityFixture(t, controlv1.ServiceProtocolHTTP)
 	encoded, err := json.Marshal(fake.assignment)
-	if err != nil || bytes.Contains(encoded, []byte(`"trust_revision"`)) {
-		t.Fatal("public URL fixture did not use the canonical omitted trust revision", err)
+	if err != nil || !bytes.Contains(encoded, []byte(`"trust_revision":"3"`)) || bytes.Contains(encoded, []byte(`"service_kind"`)) {
+		t.Fatal("HTTP fixture did not use an ordinary service trust revision", err)
 	}
 	if err := json.Unmarshal(encoded, &fake.assignment); err != nil {
 		t.Fatal(err)
 	}
 	assignments, err := deployment.Poll(t.Context())
 	if err != nil {
-		t.Fatal("public URL without a service trust revision was rejected", err)
+		t.Fatal("HTTP service assignment was rejected", err)
 	}
 	original := assignments.Services[0]
 	adapter, err := deployment.Service(original)
-	if err != nil || adapter.identity.kind != "saved_public_url" || adapter.identity.publicURLID != original.ServiceId || adapter.identity.serviceID != "" || adapter.identity.grantID != original.GrantId || adapter.identity.clientID != fake.member.PublisherIdentityId || adapter.identity.keyID != fake.member.KeyId || adapter.identity.teamID != fake.member.TeamId || !bytes.Equal(adapter.private, deployment.private) {
-		t.Fatal("public URL adapter changed the exact signing identity or grant", err)
+	if err != nil || adapter.identity.kind != "service" || adapter.identity.publicURLID != "" || adapter.identity.serviceID != original.ServiceId || adapter.identity.grantID != original.GrantId || adapter.identity.clientID != fake.member.PublisherIdentityId || adapter.identity.keyID != fake.member.KeyId || adapter.identity.teamID != fake.member.TeamId || !bytes.Equal(adapter.private, deployment.private) {
+		t.Fatal("HTTP adapter changed the exact signing identity or grant", err)
 	}
 	for name, mutate := range map[string]func(*controlv1.DeploymentPublisherServiceAssignment){
-		"grant":    func(a *controlv1.DeploymentPublisherServiceAssignment) { a.GrantId = "pgrant_bbbbbbbbbbbbbbbbbbbbbb" },
-		"URL ID":   func(a *controlv1.DeploymentPublisherServiceAssignment) { a.ServiceId = "url_bbbbbbbbbbbbbbbbbbbbbb" },
-		"hostname": func(a *controlv1.DeploymentPublisherServiceAssignment) { *a.Hostname = "other.example" },
-		"service":  func(a *controlv1.DeploymentPublisherServiceAssignment) { a.Service = "other" },
+		"grant":      func(a *controlv1.DeploymentPublisherServiceAssignment) { a.GrantId = "pgrant_bbbbbbbbbbbbbbbbbbbbbb" },
+		"service ID": func(a *controlv1.DeploymentPublisherServiceAssignment) { a.ServiceId = "svc_bbbbbbbbbbbbbbbbbbbbbb" },
+		"hostname":   func(a *controlv1.DeploymentPublisherServiceAssignment) { *a.Configuration.Hostname = "other.example" },
+		"service":    func(a *controlv1.DeploymentPublisherServiceAssignment) { a.Service = "other" },
 		"target": func(a *controlv1.DeploymentPublisherServiceAssignment) {
 			a.Configuration.Target = "https://other.internal:3000"
 		},
@@ -90,9 +87,14 @@ func TestDeploymentPublicURLPollAndServiceUseExactAssignmentWithoutTrustRevision
 			a.Configuration.TargetTls.Hostname = "other.internal"
 		},
 		"policy": func(a *controlv1.DeploymentPublisherServiceAssignment) {
-			a.Configuration.PublicUrl.Access.Mode = new(controlv1.Anonymous)
+			a.Configuration.Http.Access.Mode = new(controlv1.Anonymous)
 		},
-		"trust field": func(a *controlv1.DeploymentPublisherServiceAssignment) { a.TrustRevision = 1 },
+		"trust field": func(a *controlv1.DeploymentPublisherServiceAssignment) { a.TrustRevision++ },
+		"protocol":    func(a *controlv1.DeploymentPublisherServiceAssignment) { a.Configuration.Protocol = new(controlv1.Tcp) },
+		"traffic":     func(a *controlv1.DeploymentPublisherServiceAssignment) { a.Configuration.Traffic.Connections = new(9) },
+		"post quantum": func(a *controlv1.DeploymentPublisherServiceAssignment) {
+			a.Configuration.RequirePostQuantum = new(true)
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var changed controlv1.DeploymentPublisherServiceAssignment
@@ -112,39 +114,58 @@ func TestDeploymentPublicURLPollAndServiceUseExactAssignmentWithoutTrustRevision
 	fake.assignment.GrantId = "pgrant_cccccccccccccccccccccc"
 	current, err := deployment.Poll(t.Context())
 	if err != nil || fake.leases != 1 {
-		t.Fatal("public URL assignment refresh did not reuse its valid signed lease", err)
+		t.Fatal("HTTP assignment refresh did not reuse its valid signed lease", err)
 	}
 	if _, err := deployment.Service(original); !errors.Is(err, ErrScope) {
-		t.Fatal("replaced public URL assignment retained adapter authority", err)
+		t.Fatal("replaced HTTP assignment retained adapter authority", err)
 	}
 	adapter, err = deployment.Service(current.Services[0])
-	if err != nil || adapter.identity.grantID != fake.assignment.GrantId || adapter.identity.publicURLID != original.ServiceId {
-		t.Fatal("refreshed public URL assignment changed its canonical URL or lost its exact grant", err)
+	if err != nil || adapter.identity.grantID != fake.assignment.GrantId || adapter.identity.serviceID != original.ServiceId || !bytes.Equal(adapter.private, deployment.private) {
+		t.Fatal("refreshed HTTP assignment changed its saved service, key, or exact grant", err)
 	}
 }
 
-func TestDeploymentPollRequiresTrustRevisionOnlyForSavedServices(t *testing.T) {
-	for _, kind := range []string{"service", "public_url"} {
-		t.Run(kind, func(t *testing.T) {
+func TestDeploymentPollRequiresServiceIDProtocolAndTrustRevisionForEveryProtocol(t *testing.T) {
+	for _, protocol := range []controlv1.ServiceProtocol{controlv1.ServiceProtocolHTTP, controlv1.Tcp, controlv1.Mysql, controlv1.Postgres, controlv1.Kubernetes} {
+		t.Run(string(protocol), func(t *testing.T) {
 			for _, revision := range []int64{-1, 0, 1, 3} {
-				deployment, fake := deploymentIdentityFixture(t, kind)
+				deployment, fake := deploymentIdentityFixture(t, protocol)
 				fake.assignment.TrustRevision = revision
-				accepted := kind == "service" && revision > 0 || kind == "public_url" && revision == 0
+				accepted := revision > 0
 				assignments, err := deployment.Poll(t.Context())
 				if !accepted {
 					if !errors.Is(err, ErrScope) || len(assignments.Services) != 0 {
-						t.Fatal("invalid trust revision was accepted or exposed assignments", kind, revision, err)
+						t.Fatal("invalid trust revision was accepted or exposed assignments", protocol, revision, err)
 					}
 					if _, err := deployment.Service(fake.assignment); !errors.Is(err, ErrScope) {
-						t.Fatal("rejected poll installed an assignment", kind, revision, err)
+						t.Fatal("rejected poll installed an assignment", protocol, revision, err)
 					}
 					continue
 				}
 				if err != nil || len(assignments.Services) != 1 {
-					t.Fatal("valid assignment was rejected", kind, revision, err)
+					t.Fatal("valid assignment was rejected", protocol, revision, err)
 				}
 				if _, err := deployment.Service(assignments.Services[0]); err != nil {
-					t.Fatal("valid poll could not adapt its exact assignment", kind, revision, err)
+					t.Fatal("valid poll could not adapt its exact assignment", protocol, revision, err)
+				}
+			}
+			for _, mutate := range []func(*controlv1.DeploymentPublisherServiceAssignment){
+				func(a *controlv1.DeploymentPublisherServiceAssignment) { a.Configuration.Protocol = nil },
+				func(a *controlv1.DeploymentPublisherServiceAssignment) {
+					a.Configuration.Protocol = new(controlv1.ServiceProtocol("unknown"))
+				},
+				func(a *controlv1.DeploymentPublisherServiceAssignment) {
+					a.ServiceId = opaqueid.PublicURLPrefix + "0000000000000000000001"
+				},
+				func(a *controlv1.DeploymentPublisherServiceAssignment) { a.ServiceId = "" },
+			} {
+				deployment, fake := deploymentIdentityFixture(t, protocol)
+				mutate(&fake.assignment)
+				if assignments, err := deployment.Poll(t.Context()); !errors.Is(err, ErrScope) || len(assignments.Services) != 0 {
+					t.Fatal("invalid service identity or protocol reached the worker", err)
+				}
+				if _, err := deployment.Service(fake.assignment); !errors.Is(err, ErrScope) {
+					t.Fatal("rejected poll installed an invalid assignment", err)
 				}
 			}
 		})
@@ -180,8 +201,8 @@ func TestDeploymentUsesReplicaKeyAndOnlyLatestExactAssignments(t *testing.T) {
 	}
 	deploymentName := "production"
 	fake := &deploymentFixtureControl{member: controlv1.DeploymentPublisherIdentity{TeamId: native.identity.teamID, ProjectKey: "example", DeploymentId: "dpl_example", DeploymentName: deploymentName, PublisherIdentityId: native.identity.clientID, KeyId: native.identity.keyID}, public: public}
-	fake.assignment = controlv1.DeploymentPublisherServiceAssignment{Service: "db", ServiceId: native.identity.serviceID, ServiceKind: "service", GrantId: native.identity.grantID, TrustRevision: 3, Configuration: controlv1.ProjectServiceConfiguration{Target: "db.internal:5432"}}
-	deployment, err := NewDeployment(NativeControl{PublicURLControl: control, Services: control}, fake, &lostEnrollmentResponse{}, "https://control.example", fake.member, private)
+	fake.assignment = controlv1.DeploymentPublisherServiceAssignment{Service: "db", ServiceId: native.identity.serviceID, GrantId: native.identity.grantID, TrustRevision: 3, Configuration: controlv1.ProjectServiceConfiguration{Protocol: new(controlv1.Postgres), Target: "db.internal:5432"}}
+	deployment, err := NewDeployment(NativeControl{Services: control}, fake, &lostEnrollmentResponse{}, "https://control.example", fake.member, private)
 	if err != nil {
 		t.Fatal(err)
 	}

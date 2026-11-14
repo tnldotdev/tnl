@@ -226,26 +226,6 @@ schemas:
       public_url_id: { $ref: "../openapi.yaml#/components/schemas/PublicURLID" }
       service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
       domain_id: { $ref: "../openapi.yaml#/components/schemas/DomainID" }
-  PublisherApplicationLimits:
-    type: object
-    additionalProperties: false
-    properties:
-      requests:
-        type: integer
-        minimum: 1
-      concurrency:
-        type: integer
-        minimum: 1
-      rate:
-        type: object
-        additionalProperties: false
-        required: [requests, per]
-        properties:
-          requests:
-            type: integer
-            minimum: 1
-          per:
-            type: string
   PublisherEnrollment:
     type: object
     additionalProperties: false

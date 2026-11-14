@@ -19,6 +19,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -53,6 +54,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/oidctest"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -582,7 +584,7 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 }
 
 type cliWorkflow struct {
-	publicServices               *ingress.PublicServices
+	publicIngress                *ingress.Server
 	url                          string
 	publicAddress                string
 	databaseURL                  string
@@ -662,14 +664,28 @@ func newCLIWorkflow(t *testing.T, additionalRoots ...[]byte) *cliWorkflow {
 	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots}
 	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 		host, port, _ := net.SplitHostPort(address)
+		publicHTTPS := false
 		if strings.HasSuffix(host, ".apps.integration.test") && f.publicAddress != "" {
 			if port == "443" {
 				address = f.publicAddress
+				publicHTTPS = true
 			} else {
 				address = net.JoinHostPort("127.0.0.1", port)
 			}
 		}
-		return (&net.Dialer{}).DialContext(ctx, network, address)
+		connection, err := (&net.Dialer{}).DialContext(ctx, network, address)
+		if err != nil || !publicHTTPS {
+			return connection, err
+		}
+		header, err := proxyproto.Encode(proxyproto.Header{Source: connection.LocalAddr().(*net.TCPAddr).AddrPort(), Destination: netip.MustParseAddrPort("203.0.113.10:443")})
+		if err == nil {
+			_, err = connection.Write(header)
+		}
+		if err != nil {
+			_ = connection.Close()
+			return nil, err
+		}
+		return connection, nil
 	}
 	original := http.DefaultTransport
 	http.DefaultTransport = transport
@@ -1020,31 +1036,28 @@ func (f *cliWorkflow) ingress(t *testing.T, database *controlstate.Database, id 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = forwarder.Close() })
-	direct, err := ingress.NewPublicServices(ingress.PublicServicesConfig{Control: client, Forwarder: forwarder, CurrentLease: controller.Lease})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if f.publicServices == nil {
-		f.publicServices = direct
-	}
-	t.Cleanup(func() { _ = direct.Close() })
 	publicListener := workflowListen(t)
 	if f.publicAddress == "" {
 		f.publicAddress = publicListener.Addr().String()
 	}
-	publicServer, err := ingress.New(publicListener, ingress.Config{MaxConnections: 128, Lookup: func(host string) ([]ingress.PublicURL, ingress.LookupReason) {
-		entries, reason := controller.Lookup(host, time.Now())
-		if reason != ingress.LookupCurrent {
-			return nil, reason
-		}
-		result, err := forwarder.PublicURLs(entries)
-		if err != nil {
-			return nil, ingress.LookupInvalidProjection
-		}
-		return result, ingress.LookupCurrent
-	}})
+	publicServer, err := ingress.New(publicListener, ingress.Config{Control: client, Forwarder: forwarder, CurrentLease: controller.Lease,
+		RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")},
+		MaxConnections: 128, Lookup: func(host string) ([]ingress.PublicURL, ingress.LookupReason) {
+			entries, reason := controller.Lookup(host, time.Now())
+			if reason != ingress.LookupCurrent {
+				return nil, reason
+			}
+			result, err := forwarder.PublicURLs(entries)
+			if err != nil {
+				return nil, ingress.LookupInvalidProjection
+			}
+			return result, ingress.LookupCurrent
+		}})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if f.publicIngress == nil {
+		f.publicIngress = publicServer
 	}
 	context.AfterFunc(f.ctx, func() { _ = publicListener.Close() })
 	t.Cleanup(func() {

@@ -12,7 +12,7 @@ func deploymentProjectFixture() Project {
 		Services: map[string]ServiceDeclaration{"web": {}, "db": {Protocol: new("postgres")}},
 		Deployments: map[string]Deployment{
 			"local": {Targets: map[string]DeploymentBinding{
-				"web": {Tunnel: &Tunnel{}},
+				"web": {Public: new(true)},
 				"db":  {ServiceTarget: ServiceTarget{Type: "compose", Service: new("database"), Port: new(5432)}},
 			}},
 			"production": {Targets: map[string]DeploymentBinding{"db": {ServiceTarget: ServiceTarget{Address: new(Target("orders.internal:5432"))}}}},
@@ -132,24 +132,25 @@ func TestDeploymentConfigurationCapturesWorkloadSelection(t *testing.T) {
 	}
 }
 
-func TestDeploymentConfigurationPublicAppDoesNotRepeatItsListener(t *testing.T) {
+func TestDeploymentConfigurationAppDoesNotRepeatItsListener(t *testing.T) {
 	p := deploymentProjectFixture()
-	p.Deployments["production"].Targets["web"] = DeploymentBinding{Tunnel: &Tunnel{Access: &Access{Mode: "restricted"}}}
+	p.Deployments["production"].Targets["web"] = DeploymentBinding{Public: new(true), HTTP: &HTTPService{Access: &Access{Mode: "restricted"}}}
 	selected, err := ResolveDeployment(p, "production")
 	if err != nil {
 		t.Fatal(err)
 	}
 	web := selected.Services["web"]
-	if TargetType(web) != "app" || web.Target.Address != nil || !IsPublicService(web) || SelectedDeployment(selected) != "production" {
+	if TargetType(web) != "app" || web.Target.Address != nil || web.Public == nil || !*web.Public || SelectedDeployment(selected) != "production" {
 		t.Fatal("deployment public app invented a listener or selected a developer namespace")
 	}
-	p.Deployments["production"].Targets["web"] = DeploymentBinding{Tunnel: &Tunnel{Ephemeral: new(true)}}
-	if err := ValidateProject(p); err == nil {
-		t.Fatal("named deployment app accepted temporary saved URL settings")
+	p.Deployments["production"].Targets["web"] = DeploymentBinding{Ephemeral: new(true)}
+	selected, err = ResolveDeployment(p, "production")
+	if err != nil || selected.Services["web"].Ephemeral == nil || !*selected.Services["web"].Ephemeral {
+		t.Fatal("application-owned binding lost its ephemeral lifetime", err)
 	}
 	p.Deployments["production"].Targets["web"] = DeploymentBinding{}
-	if err := ValidateProject(p); err == nil {
-		t.Fatal("unpublished remote app was accepted without a serving owner")
+	if err := ValidateProject(p); err != nil {
+		t.Fatal("connector-only app binding depended on public exposure", err)
 	}
 }
 
@@ -196,7 +197,7 @@ func TestLocalDeploymentKeepsPerServiceExposure(t *testing.T) {
 	project := deploymentProjectFixture()
 	local := project.Deployments["local"]
 	web := local.Targets["web"]
-	web.Tunnel, web.Public = nil, new(true)
+	web.Public = new(true)
 	local.Targets["web"] = web
 	db := local.Targets["db"]
 	db.Public = new(false)
@@ -206,13 +207,19 @@ func TestLocalDeploymentKeepsPerServiceExposure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if selected.Services["web"].Public == nil || !*selected.Services["web"].Public || IsPublicService(selected.Services["web"]) || selected.Services["db"].Public == nil || *selected.Services["db"].Public {
-		t.Fatal("local exposure changed a sibling binding or selected the preview URL lifecycle")
+	if selected.Services["web"].Public == nil || !*selected.Services["web"].Public || selected.Services["db"].Public == nil || *selected.Services["db"].Public {
+		t.Fatal("local exposure changed a sibling binding")
 	}
-	web.Tunnel = &Tunnel{}
+	web.Hostname, web.Domain, web.RequirePostQuantum = new("web.example.test"), new("example.test"), new(true)
+	web.Ephemeral, web.Traffic = new(true), &TrafficLimits{Connections: new(8)}
 	local.Targets["web"] = web
-	if _, err := ResolveDeployment(project, "local"); err == nil {
-		t.Fatal("binding selected both public endpoint and preview URL lifecycles")
+	selected, err = ResolveDeployment(project, "local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved := selected.Services["web"]
+	if resolved.Hostname != web.Hostname || resolved.Domain != web.Domain || resolved.Ephemeral != web.Ephemeral || resolved.RequirePostQuantum != web.RequirePostQuantum || resolved.Traffic != web.Traffic {
+		t.Fatal("materializing the binding lost direct endpoint and run settings")
 	}
 }
 

@@ -27,12 +27,10 @@ import (
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/ingress"
-	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/githubtest"
-	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -328,7 +326,7 @@ func TestIntegrationWorkloadTransportHTTPNoFallback(t *testing.T) {
 	verification := f.visitorRoots.Clone()
 	verification.ServerName = s.Endpoint.Hostname
 	verification.Certificates = []tls.Certificate{certificate}
-	tr := &http.Transport{TLSClientConfig: verification, DialContext: workloadPublicEndpointDialer(t, process.ingresses[0].publicServices, s.Endpoint.Port)}
+	tr := &http.Transport{TLSClientConfig: verification, DialContext: workloadPublicEndpointDialer(t, process.ingresses[0].server, s.Endpoint.Port)}
 	t.Cleanup(tr.CloseIdleConnections)
 	client := &http.Client{Transport: tr, Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	humanTLS := verification.Clone()
@@ -456,7 +454,7 @@ func startWorkloadPublishers(t *testing.T, f *privateSeparatedFixture, group, tr
 		}
 		ready, done := make(chan struct{}), make(chan error, 1)
 		go func() {
-			done <- publisherservice.Publish(ctx, publisherservice.RunConfig{Control: control, State: f.identity.state, Access: native.Access, Identity: identity, ServiceID: service.Id, Target: assignment.Configuration.Target, Metadata: publisheridentity.ServiceMetadata(service), HeartbeatInterval: time.Second, Ready: func() error { close(ready); return nil }, RelayQUIC: quic, RelayTCP: tcp})
+			done <- publisherservice.Publish(ctx, publisherservice.RunConfig{Control: control, State: f.identity.state, Access: native.Access, PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: service.Id, Target: assignment.Configuration.Target, Metadata: publisheridentity.ServiceMetadata(service), HeartbeatInterval: time.Second, Ready: func() error { close(ready); return nil }, RelayQUIC: quic, RelayTCP: tcp})
 		}()
 		t.Cleanup(func() {
 			cancel()
@@ -841,43 +839,39 @@ func (p *workloadRuntimePaths) denied(t *testing.T, bound time.Duration) {
 	}
 }
 
-func workloadPublicEndpointDialer(t *testing.T, connector *ingress.PublicServices, port int) func(context.Context, string, string) (net.Conn, error) {
+func workloadPublicEndpointDialer(t *testing.T, server *ingress.Server, port int) func(context.Context, string, string) (net.Conn, error) {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var ranges []tcpport.Range
-	if port != 443 {
-		ranges = []tcpport.Range{{First: port, Last: port}}
-	}
-	server, err := ingress.New(listener, ingress.Config{RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, PublicServices: connector, ServicePortRanges: ranges, MaxConnections: 64})
-	if err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan error, 1)
-	go func() { done <- server.Serve() }()
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-		_ = server.Drain(ctx)
-		if err := <-done; err != nil {
-			t.Error(err)
+	return func(ctx context.Context, network, address string) (net.Conn, error) {
+		hostname := ""
+		if port == 443 {
+			var err error
+			hostname, _, err = net.SplitHostPort(address)
+			if err != nil {
+				return nil, err
+			}
 		}
-	})
-	return func(ctx context.Context, network, _ string) (net.Conn, error) {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return nil, err
+		}
+		defer listener.Close()
 		conn, err := (&net.Dialer{}).DialContext(ctx, network, listener.Addr().String())
 		if err != nil {
 			return nil, err
 		}
-		header, err := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.44:4242"), Destination: netip.AddrPortFrom(netip.MustParseAddr("203.0.113.10"), uint16(port))})
-		if err == nil {
-			_, err = conn.Write(header)
-		}
+		accepted, err := listener.Accept()
 		if err != nil {
 			_ = conn.Close()
 			return nil, err
 		}
+		done := make(chan struct{})
+		life, cancel := context.WithCancel(t.Context())
+		go func() {
+			defer close(done)
+			_ = server.AcceptPublic(life, accepted, netip.MustParseAddrPort("192.0.2.44:4242"),
+				netip.AddrPortFrom(netip.MustParseAddr("203.0.113.10"), uint16(port)), hostname, nil)
+		}()
+		t.Cleanup(func() { cancel(); _ = conn.Close(); <-done })
 		return conn, nil
 	}
 }

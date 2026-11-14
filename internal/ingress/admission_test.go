@@ -36,7 +36,7 @@ func TestPublicURLConnectionClassUsesProcessCapacity(t *testing.T) {
 
 func TestClientHelloCapacityAndTimeoutRelease(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		server := &Server{config: Config{MaxClientHelloConnections: 1}, connections: make(map[net.Conn]struct{})}
+		server := &Server{config: Config{MaxClientHelloConnections: 1}, connections: make(map[net.Conn]bool)}
 		a, b := net.Pipe()
 		defer a.Close()
 		defer b.Close()

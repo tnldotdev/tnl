@@ -226,12 +226,16 @@ func (a *trafficAdmission) acquirePending(key trafficKey, addr netip.Addr) (func
 	if p.active >= a.pending.PublicURLConnections {
 		return nil, "pending_service_connections"
 	}
-	if !take(&s.pending, float64(a.pending.SourceRate), float64(a.pending.SourceBurst), now) {
+	// check both rate buckets before spending either. a full run must not
+	// consume another source token when the same visitor tries a sibling.
+	if s.pending.refill(float64(a.pending.SourceRate), float64(a.pending.SourceBurst), now) < 1 {
 		return nil, "pending_source_rate"
 	}
-	if !take(&p.attempts, float64(a.pending.PublicURLRate), float64(a.pending.PublicURLBurst), now) {
+	if p.attempts.refill(float64(a.pending.PublicURLRate), float64(a.pending.PublicURLBurst), now) < 1 {
 		return nil, "pending_service_rate"
 	}
+	s.pending.tokens--
+	p.attempts.tokens--
 	s.active++
 	p.active++
 	return sync.OnceFunc(func() {

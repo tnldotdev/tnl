@@ -68,9 +68,9 @@ func (c *Client) AppendFeedbackEvent(ctx context.Context, id, key string, body c
 	})
 }
 
-func (c *Client) CreatePublishRunPreview(ctx context.Context, runID string, version uint64, token credentials.PublishRunToken) (controlv1.Preview, error) {
+func (c *Client) CreateServiceRunPreview(ctx context.Context, serviceID, runID string, number int64, token credentials.ServiceRunToken) (controlv1.Preview, error) {
 	return request[controlv1.Preview](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.CreatePublishRunPreview(ctx, runID, controlv1.PublishRunVersionRequest{PublishRunNumber: int64(version)}, editors...)
+		return c.api.CreateServiceRunPreview(ctx, serviceID, runID, controlv1.ServiceRunPreviewRequest{RunNumber: number}, editors...)
 	})
 }
 

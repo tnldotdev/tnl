@@ -15,9 +15,8 @@ JOIN control.deployment_publisher_enrollments enrollment ON enrollment.id=member
 WHERE member.publisher_identity_id=sqlc.arg(publisher_id) AND member.deployment_id=sqlc.arg(deployment_id)::text
 AND EXISTS(SELECT 1 FROM control.deployment_publisher_enrollment_services scope
     WHERE scope.enrollment_id=enrollment.id AND scope.service=sqlc.arg(service)
-    AND scope.service_id IS NOT DISTINCT FROM sqlc.narg(service_id)::text
-    AND scope.public_url_id IS NOT DISTINCT FROM sqlc.narg(public_url_id)::text
-    AND scope.revoked_at IS NULL AND scope.protocol=COALESCE((SELECT protocol FROM control.services WHERE id=scope.service_id),'http')))::boolean;
+    AND scope.service_id=sqlc.arg(service_id)::text
+    AND scope.revoked_at IS NULL AND scope.protocol=(SELECT protocol FROM control.services WHERE id=scope.service_id)))::boolean;
 
 -- name: ListDeploymentPublisherIDs :many
 SELECT member.publisher_identity_id FROM control.deployment_publisher_members member

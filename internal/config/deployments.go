@@ -18,7 +18,6 @@ type Project struct {
 	Feedback    *bool                         `json:"feedback,omitempty" yaml:"feedback,omitempty"`
 	OAuth       bool                          `json:"oauth,omitempty" yaml:"oauth,omitempty"`
 	Inspection  *Inspection                   `json:"inspection,omitempty" yaml:"inspection,omitempty"`
-	Tunnel      *Tunnel                       `json:"public_url,omitempty" yaml:"public_url,omitempty"`
 	Services    map[string]ServiceDeclaration `json:"services,omitempty" yaml:"services,omitempty"`
 	Deployments map[string]Deployment         `json:"deployments,omitempty" yaml:"deployments,omitempty"`
 	Webhooks    map[string]Webhook            `json:"webhooks,omitempty" yaml:"webhooks,omitempty"`
@@ -39,13 +38,17 @@ type Deployment struct {
 // DeploymentBinding reuses the target mechanics without repeating a protocol.
 // an omitted target type selects address when present, otherwise an app listener.
 type DeploymentBinding struct {
-	ServiceTarget `yaml:",inline"`
-	Name          *string        `json:"name,omitempty" yaml:"name,omitempty" jsonschema_description:"Saved endpoint label; defaults to the logical service key."`
-	Access        *ServiceAccess `json:"access,omitempty" yaml:"access,omitempty"`
-	Public        *bool          `json:"public,omitempty" yaml:"public,omitempty" jsonschema_description:"Add public endpoint access for this service binding. Visitor access remains separate; false keeps connector access only."`
-	Inspection    *Inspection    `json:"inspection,omitempty" yaml:"inspection,omitempty"`
-	Tunnel        *Tunnel        `json:"public_url,omitempty" yaml:"public_url,omitempty"`
-	HTTP          *HTTPService   `json:"http,omitempty" yaml:"http,omitempty"`
+	ServiceTarget      `yaml:",inline"`
+	Name               *string        `json:"name,omitempty" yaml:"name,omitempty" jsonschema_description:"Saved endpoint label; defaults to the logical service key."`
+	Access             *ServiceAccess `json:"access,omitempty" yaml:"access,omitempty"`
+	Public             *bool          `json:"public,omitempty" yaml:"public,omitempty" jsonschema_description:"Add public endpoint access for this service binding. Visitor access remains separate; false keeps connector access only."`
+	Inspection         *Inspection    `json:"inspection,omitempty" yaml:"inspection,omitempty"`
+	Hostname           *string        `json:"hostname,omitempty" yaml:"hostname,omitempty"`
+	Domain             *string        `json:"domain,omitempty" yaml:"domain,omitempty"`
+	Ephemeral          *bool          `json:"ephemeral,omitempty" yaml:"ephemeral,omitempty"`
+	RequirePostQuantum *bool          `json:"require_post_quantum,omitempty" yaml:"require_post_quantum,omitempty"`
+	Traffic            *TrafficLimits `json:"traffic,omitempty" yaml:"traffic,omitempty"`
+	HTTP               *HTTPService   `json:"http,omitempty" yaml:"http,omitempty"`
 }
 
 type DeploymentWorkload struct {
@@ -58,9 +61,6 @@ func DeclaredProtocol(service ServiceDeclaration) string {
 }
 
 func ValidateProject(project Project) error {
-	if len(project.Services) != 0 && (project.Name != nil || project.Tunnel != nil && (project.Tunnel.Name != nil || project.Tunnel.PublicURL != nil)) {
-		return errors.New("name and public_url.hostname belong under deployments.NAME.targets.SERVICE when services are declared")
-	}
 	if len(project.Services) > 128 || len(project.Deployments) > 32 || len(project.Workloads) > 32 {
 		return errors.New("configure at most 128 services, 32 deployments, and 32 workload policies")
 	}
@@ -99,16 +99,6 @@ func ValidateProject(project Project) error {
 	return nil
 }
 
-func NormalizeProjectPublicURLs(project *Project) {
-	defaults := TNL{Tunnel: project.Tunnel, Aliases: project.Aliases}
-	NormalizePublicURLs(&defaults)
-	for _, deployment := range project.Deployments {
-		for _, binding := range deployment.Targets {
-			normalizeTunnelPublicURL(binding.Tunnel)
-		}
-	}
-}
-
 func ResolveDeployment(project Project, name string) (TNL, error) {
 	if err := ValidateProject(project); err != nil {
 		return TNL{}, err
@@ -126,7 +116,7 @@ func ResolveDeployment(project Project, name string) (TNL, error) {
 
 func resolveProjectDeployment(project Project, name string) (TNL, error) {
 	deployment := project.Deployments[name]
-	resolved := TNL{Name: project.Name, Server: project.Server, Team: project.Team, Tunnel: project.Tunnel, Services: Services{}, Deployment: name, Workloads: map[string]Workload{}}
+	resolved := TNL{Name: project.Name, Server: project.Server, Team: project.Team, Services: Services{}, Deployment: name, Workloads: map[string]Workload{}}
 	if name == "local" {
 		if deployment.Description != nil || deployment.Domain != nil {
 			return TNL{}, errors.New("local is client-side selection and has no server domain or description")
@@ -149,7 +139,8 @@ func resolveProjectDeployment(project Project, name string) (TNL, error) {
 			}
 		}
 		protocol := DeclaredProtocol(declaration)
-		resolved.Services[service] = Service{Name: binding.Name, Protocol: &protocol, Target: &target, Access: binding.Access, Public: binding.Public, Inspection: binding.Inspection, Tunnel: binding.Tunnel, HTTP: binding.HTTP}
+		resolved.Services[service] = Service{Name: binding.Name, Protocol: &protocol, Target: &target, Access: binding.Access, Public: binding.Public, Inspection: binding.Inspection, HTTP: binding.HTTP,
+			Hostname: binding.Hostname, Domain: binding.Domain, Ephemeral: binding.Ephemeral, RequirePostQuantum: binding.RequirePostQuantum, Traffic: binding.Traffic}
 	}
 	for policy, entry := range project.Workloads {
 		if entry.Deployment == name {

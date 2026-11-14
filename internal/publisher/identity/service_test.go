@@ -23,6 +23,8 @@ type privateScopeControl struct {
 	reads        int
 }
 
+func (*privateScopeControl) ControlURL() string { return "https://control.example" }
+
 type privateOwnerControl struct {
 	*privateScopeControl
 	enrollment controlv1.PublisherEnrollment
@@ -68,8 +70,8 @@ func TestPrivateOwnerEnrollmentRecoversResponseLossWithoutAnotherGrant(t *testin
 	}
 }
 
-func (c *privateScopeControl) GetPublisherService(_ context.Context, access string) (controlv1.Service, error) {
-	if access != "access" {
+func (c *privateScopeControl) GetPublisherService(_ context.Context, serviceID, access string) (controlv1.Service, error) {
+	if access != "access" || serviceID == "" {
 		return controlv1.Service{}, ErrScope
 	}
 	c.reads++

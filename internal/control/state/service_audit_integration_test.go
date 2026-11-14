@@ -19,11 +19,11 @@ import (
 func TestIntegrationServiceAuditTransactionalManagement(t *testing.T) {
 	d, now, _, _ := newPublishRunPrerequisites(t)
 	creation := oidcRouteRequest(t, d, now)
-	service, err := d.CreateServiceAt(t.Context(), creation.TeamID, creation.ActingIdentityID, "audit-db", "audit-db", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
+	service, err := d.CreateServiceAt(t.Context(), creation.TeamID, creation.ActingIdentityID, "audit-db", "audit-db", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	retry, err := d.CreateServiceAt(t.Context(), creation.TeamID, creation.ActingIdentityID, "audit-db", "audit-db", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
+	retry, err := d.CreateServiceAt(t.Context(), creation.TeamID, creation.ActingIdentityID, "audit-db", "audit-db", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil || retry.ID != service.ID {
 		t.Fatal("unstable retry", err)
 	}
@@ -164,7 +164,7 @@ func TestIntegrationServiceAuditAuthenticatedBatches(t *testing.T) {
 func TestIntegrationServiceAuditPrivateSourceScope(t *testing.T) {
 	runs, _, _, creation := poolReviewFixtures(t)
 	d, now := runs[0].database, runs[0].now
-	service, err := d.CreateServiceAt(t.Context(), creation.TeamID, creation.ActingIdentityID, "audit-private", "audit-private", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
+	service, err := d.CreateServiceAt(t.Context(), creation.TeamID, creation.ActingIdentityID, "audit-private", "audit-private", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +262,7 @@ func TestIntegrationServiceAuditPrivateSourceScope(t *testing.T) {
 func TestIntegrationServiceAuditCursorFollowsCommitOrder(t *testing.T) {
 	d, now, _, _ := newPublishRunPrerequisites(t)
 	creation := oidcRouteRequest(t, d, now)
-	service, err := d.CreateServiceAt(t.Context(), creation.TeamID, creation.ActingIdentityID, "audit-order", "audit-order", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
+	service, err := d.CreateServiceAt(t.Context(), creation.TeamID, creation.ActingIdentityID, "audit-order", "audit-order", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -374,7 +374,7 @@ func TestIntegrationServiceAuditCrossTeamClockOrder(t *testing.T) {
 	}
 	var services []ServiceRecord
 	for _, team := range teams {
-		s, err := d.CreateServiceAt(t.Context(), team, creation.ActingIdentityID, "audit-clock", "audit-clock-"+team, ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
+		s, err := d.CreateServiceAt(t.Context(), team, creation.ActingIdentityID, "audit-clock", "audit-clock-"+team, ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

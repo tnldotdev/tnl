@@ -15,24 +15,33 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/observability/inspection"
 )
 
 var ErrClosed = errors.New("selected HTTP upstream connection is closed")
+
+// drain is an optional run-owned signal, not a server registry. the owner
+// publishes a fixed deadline before closing Started. cancellation of the serving
+// context always closes immediately, even while graceful shutdown is in progress.
+// Started and Deadline must be supplied together; the zero value disables drain.
+type Drain struct {
+	Started  <-chan struct{}
+	Deadline func() time.Time
+}
 
 func Forward(ctx context.Context, client, upstream net.Conn, target *url.URL) error {
 	if client == nil || upstream == nil || target == nil || target.Host == "" || target.Scheme != "http" && target.Scheme != "https" {
 		return ErrClosed
 	}
 	defer upstream.Close()
-	return Serve(ctx, client, target, func(context.Context) (net.Conn, error) { return upstream, nil }, nil)
+	return Serve(ctx, client, target, func(context.Context) (net.Conn, error) { return upstream, nil }, nil, ResponseHooks{}, Drain{})
 }
 
 // Serve checks each request before the first target dial or any target bytes.
 // wrap can serve bounded authentication endpoints without opening the target.
 // one failed/closed upstream is final, including on an idempotent HTTP request.
-func Serve(ctx context.Context, client net.Conn, target *url.URL, connect func(context.Context) (net.Conn, error), wrap func(http.Handler) http.Handler) error {
+func Serve(ctx context.Context, client net.Conn, target *url.URL, connect func(context.Context) (net.Conn, error), wrap func(http.Handler) http.Handler, hooks ResponseHooks, drain Drain) error {
 	if client == nil || target == nil || target.Host == "" || connect == nil || target.Scheme != "http" && target.Scheme != "https" {
 		return ErrClosed
 	}
@@ -61,7 +70,7 @@ func Serve(ctx context.Context, client net.Conn, target *url.URL, connect func(c
 		mu.Unlock()
 		return conn, err
 	}
-	transport := &http.Transport{Proxy: nil, MaxConnsPerHost: 1, MaxResponseHeaderBytes: 64 << 10, ExpectContinueTimeout: time.Second, DialContext: dial, DialTLSContext: dial}
+	transport := &http.Transport{Proxy: nil, DisableCompression: true, MaxConnsPerHost: 1, MaxResponseHeaderBytes: 64 << 10, ExpectContinueTimeout: time.Second, DialContext: dial, DialTLSContext: dial}
 	defer transport.CloseIdleConnections()
 	defer func() {
 		mu.Lock()
@@ -79,43 +88,53 @@ func Serve(ctx context.Context, client net.Conn, target *url.URL, connect func(c
 			observability.PublisherHTTPForward(request.Out.Context())
 			request.SetURL(target)
 			request.Out.Host = target.Host
+			hooks.Rewrite(request)
 		}, ModifyResponse: func(response *http.Response) error {
-			inspection.ApplicationResponse(response.Request)
-			observability.PublisherHTTPResponse(response.Request.Context())
-			observability.PublisherHTTPUpgrade(response)
+			if err := hooks.ModifyResponse(response); err != nil {
+				return err
+			}
 			if response.StatusCode != http.StatusSwitchingProtocols && response.Close {
 				response.Header.Set("Connection", "close")
 			}
 			return nil
 		}, ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			observability.PublisherHTTPError(r.Context(), err)
+			hooks.ForwardingFailed(r)
 			w.Header().Set("Connection", "close")
 			_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(5 * time.Second))
+			if code, ok := diagnostic.CodeOf(err); ok {
+				diagnostic.WriteHTTP(w, r, code, "")
+				return
+			}
 			http.Error(w, "service connection closed", http.StatusBadGateway)
 		}, ErrorLog: log.New(io.Discard, "", 0)}
 	var handler http.Handler = proxy
 	if wrap != nil {
 		handler = wrap(handler)
 	}
-	return ServeHandler(ctx, client, handler)
+	return ServeHandler(ctx, client, handler, drain)
 }
 
 // ServeHandler serves an in-process HTTP application on the admitted visitor
 // connection. TLS negotiation is preserved; no target socket or local listener
 // is created. completion joins HTTP/1 upgrades and concurrent HTTP/2 handlers.
-func ServeHandler(ctx context.Context, client net.Conn, handler http.Handler) error {
-	if client == nil || handler == nil {
+func ServeHandler(ctx context.Context, client net.Conn, handler http.Handler, drain Drain) (result error) {
+	if client == nil || handler == nil || (drain.Started == nil) != (drain.Deadline == nil) {
 		return ErrClosed
 	}
+	life, cancel := context.WithCancel(ctx)
+	defer cancel()
 	var workers sync.WaitGroup
-	workers.Add(1)
-	stop := context.AfterFunc(ctx, func() { defer workers.Done(); _ = client.Close() })
+	var callbacks sync.WaitGroup
+	callbacks.Add(1)
+	stop := context.AfterFunc(life, func() { defer callbacks.Done(); _ = client.Close() })
 	defer func() {
 		if stop() {
-			workers.Done()
+			callbacks.Done()
 		}
 		// listener cleanup must unblock the connection before joining.
 		workers.Wait()
+		callbacks.Wait()
 	}()
 	listener := &singleListener{connection: client, done: make(chan struct{})}
 	handler = Requests(observability.PublisherHTTP(handler), RequestBodyTimeout)
@@ -148,6 +167,13 @@ func ServeHandler(ctx context.Context, client net.Conn, handler http.Handler) er
 				workers.Done()
 			}
 		}()
+		select {
+		case <-drain.Started:
+			w.Header().Set("Connection", "close")
+			http.Error(w, "service is draining", http.StatusServiceUnavailable)
+			return
+		default:
+		}
 		handler.ServeHTTP(w, r)
 	}), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 32 << 10,
 		ConnState: func(_ net.Conn, state http.ConnState) {
@@ -163,28 +189,79 @@ func ServeHandler(ctx context.Context, client net.Conn, handler http.Handler) er
 				workers.Done()
 			}
 		},
-		BaseContext: func(net.Listener) context.Context { return ctx }, ErrorLog: log.New(io.Discard, "", 0),
+		BaseContext: func(net.Listener) context.Context { return life }, ErrorLog: log.New(io.Discard, "", 0),
 		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"h2", "http/1.1"}}}
-	defer server.Close()
+	// Shutdown closes the listener before responses finish. Serve returning must
+	// not run Close until Shutdown and the connection/handler joins have finished.
+	servingDone := make(chan struct{})
+	shutdownDone := make(chan error, 1)
+	go func() {
+		select {
+		case <-servingDone:
+			shutdownDone <- nil
+		case <-life.Done():
+			shutdownDone <- nil
+		case <-drain.Started:
+			until := drain.Deadline()
+			// a zero or expired published deadline fails closed at actual drain.
+			shutdown, stop := context.WithDeadline(life, until)
+			defer stop()
+			// Shutdown does not track hijacked HTTP/1 connections. retain the
+			// deadline fence until those handlers and the connection worker join.
+			forced := make(chan struct{})
+			force := context.AfterFunc(shutdown, func() { defer close(forced); cancel() })
+			err := server.Shutdown(shutdown)
+			if err != nil {
+				cancel()
+				err = errors.Join(err, server.Close())
+			}
+			<-servingDone
+			workers.Wait()
+			handlerMu.Lock()
+			acceptHandlers = false
+			handlerMu.Unlock()
+			handlers.Wait()
+			if !force() {
+				<-forced
+			}
+			if err == nil {
+				err = shutdown.Err()
+			}
+			shutdownDone <- err
+		}
+	}()
 	err := server.Serve(listener)
+	close(servingDone)
+	result = <-shutdownDone
+	cancel()
+	result = errors.Join(result, server.Close())
 	if errors.Is(err, net.ErrClosed) || errors.Is(err, http.ErrServerClosed) {
-		return nil
+		return result
 	}
-	return err
+	return errors.Join(result, err)
 }
 
 type singleListener struct {
 	connection net.Conn
 	done       chan struct{}
 	once       sync.Once
+	mu         sync.Mutex
 	accepted   bool
+	closed     bool
 }
 
 func (l *singleListener) Accept() (net.Conn, error) {
+	l.mu.Lock()
+	if l.closed {
+		l.mu.Unlock()
+		return nil, net.ErrClosed
+	}
 	if !l.accepted {
 		l.accepted = true
+		l.mu.Unlock()
 		return l.connection, nil
 	}
+	l.mu.Unlock()
 	<-l.done
 	return nil, net.ErrClosed
 }
@@ -192,9 +269,11 @@ func (l *singleListener) Accept() (net.Conn, error) {
 func (l *singleListener) finish() { l.once.Do(func() { close(l.done) }) }
 
 func (l *singleListener) Close() error {
-	err := l.connection.Close()
+	l.mu.Lock()
+	l.closed = true
+	l.mu.Unlock()
 	l.finish()
-	return err
+	return nil
 }
 
 func (l *singleListener) Addr() net.Addr { return l.connection.LocalAddr() }

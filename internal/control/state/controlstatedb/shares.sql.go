@@ -11,128 +11,43 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const addGuestSharePublicURL = `-- name: AddGuestSharePublicURL :one
-INSERT INTO control.share_public_urls (share_id, team_id, public_url_id)
-SELECT share.id, share.team_id, included.public_url_id
-FROM control.shares share
-JOIN control.guest_public_urls included ON included.guest_id = share.guest_id
-JOIN control.public_urls url ON url.id = included.public_url_id AND url.team_id = share.team_id
-WHERE share.id = $1 AND share.scope = 'guest'
-  AND included.public_url_id = $2 AND url.lifecycle_state = 'enabled'
-ON CONFLICT (share_id, public_url_id) DO UPDATE SET public_url_id = control.share_public_urls.public_url_id
-RETURNING public_url_id
+const addShareService = `-- name: AddShareService :one
+INSERT INTO control.share_services(share_id,team_id,service_id)
+SELECT share.id,share.team_id,service.id FROM control.shares share
+JOIN control.services service ON service.id=$1 AND service.team_id=share.team_id
+WHERE share.id=$2 AND share.created_by_identity_id=$3
+    AND service.enabled AND service.deleted_at IS NULL AND service.protocol='http'
+    AND (share.scope='service' OR (share.scope='preview' AND EXISTS(
+        SELECT 1 FROM control.preview_services included WHERE included.preview_id=share.preview_id
+            AND included.team_id=share.team_id AND included.service_id=service.id)))
+RETURNING service_id
 `
 
-type AddGuestSharePublicURLParams struct {
-	ShareID     string
-	PublicURLID string
+type AddShareServiceParams struct {
+	ServiceID  string
+	ShareID    string
+	IdentityID string
 }
 
-func (q *Queries) AddGuestSharePublicURL(ctx context.Context, arg AddGuestSharePublicURLParams) (string, error) {
-	row := q.db.QueryRow(ctx, addGuestSharePublicURL, arg.ShareID, arg.PublicURLID)
-	var public_url_id string
-	err := row.Scan(&public_url_id)
-	return public_url_id, err
-}
-
-const addSharePublicURL = `-- name: AddSharePublicURL :one
-INSERT INTO control.share_public_urls (share_id, team_id, public_url_id)
-SELECT g.id, g.team_id, u.id
-FROM control.shares g
-JOIN control.public_urls u ON u.id = $1 AND u.team_id = g.team_id
-WHERE g.id = $2 AND g.created_by_identity_id = $3
-  AND ((g.scope = 'url' AND u.purpose IN ('app', 'alias', 'demo'))
-    OR (g.scope = 'preview' AND EXISTS (SELECT 1 FROM control.preview_public_urls p
-        WHERE p.preview_id = g.preview_id AND p.team_id = g.team_id AND p.public_url_id = u.id)))
-ON CONFLICT (share_id, public_url_id) DO UPDATE SET
-    public_url_id = control.share_public_urls.public_url_id
-RETURNING public_url_id
-`
-
-type AddSharePublicURLParams struct {
-	PublicURLID string
-	ShareID     string
-	IdentityID  string
-}
-
-func (q *Queries) AddSharePublicURL(ctx context.Context, arg AddSharePublicURLParams) (string, error) {
-	row := q.db.QueryRow(ctx, addSharePublicURL, arg.PublicURLID, arg.ShareID, arg.IdentityID)
-	var public_url_id string
-	err := row.Scan(&public_url_id)
-	return public_url_id, err
-}
-
-const createGuestShare = `-- name: CreateGuestShare :one
-INSERT INTO control.shares (id, team_id, guest_id, scope, label, created_by_identity_id,
-    idempotency_key, request_digest, secret_digest, created_at, expires_at)
-SELECT $1, trial.team_id, trial.id, 'guest', $2, trial.id,
-    $3, $4, $5, $6,
-    LEAST($7::timestamptz, trial.expires_at)
-FROM control.guest_trials trial
-JOIN control.guest_public_urls included ON included.guest_id = trial.id AND included.public_url_id = $8
-JOIN control.public_urls url ON url.id = included.public_url_id AND url.team_id = trial.team_id
-WHERE trial.id = $9 AND control.guest_share_live(trial.id, $6)
-  AND url.lifecycle_state = 'enabled' AND url.purpose = 'demo' AND url.service_protocol = 'http'
-ON CONFLICT (created_by_identity_id, idempotency_key)
-DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
-RETURNING id, schema_version, preview_id, team_id, guest_id, scope, label, created_by_identity_id, idempotency_key, request_digest, secret_digest, created_at, expires_at, revoked_at, revoked_by_identity_id
-`
-
-type CreateGuestShareParams struct {
-	ID             string
-	Label          string
-	IdempotencyKey string
-	RequestDigest  []byte
-	SecretDigest   []byte
-	Now            pgtype.Timestamptz
-	ExpiresAt      pgtype.Timestamptz
-	PublicURLID    string
-	GuestID        string
-}
-
-func (q *Queries) CreateGuestShare(ctx context.Context, arg CreateGuestShareParams) (ControlShare, error) {
-	row := q.db.QueryRow(ctx, createGuestShare,
-		arg.ID,
-		arg.Label,
-		arg.IdempotencyKey,
-		arg.RequestDigest,
-		arg.SecretDigest,
-		arg.Now,
-		arg.ExpiresAt,
-		arg.PublicURLID,
-		arg.GuestID,
-	)
-	var i ControlShare
-	err := row.Scan(
-		&i.ID,
-		&i.SchemaVersion,
-		&i.PreviewID,
-		&i.TeamID,
-		&i.GuestID,
-		&i.Scope,
-		&i.Label,
-		&i.CreatedByIdentityID,
-		&i.IdempotencyKey,
-		&i.RequestDigest,
-		&i.SecretDigest,
-		&i.CreatedAt,
-		&i.ExpiresAt,
-		&i.RevokedAt,
-		&i.RevokedByIdentityID,
-	)
-	return i, err
+func (q *Queries) AddShareService(ctx context.Context, arg AddShareServiceParams) (string, error) {
+	row := q.db.QueryRow(ctx, addShareService, arg.ServiceID, arg.ShareID, arg.IdentityID)
+	var service_id string
+	err := row.Scan(&service_id)
+	return service_id, err
 }
 
 const createShare = `-- name: CreateShare :one
 INSERT INTO control.shares (
-    id, preview_id, team_id, scope, label, created_by_identity_id,
-    idempotency_key, request_digest, secret_digest, created_at, expires_at
-) VALUES ($1, $2, $3, $4, $5,
-    $6, $7, $8,
-    $9, $10, $11)
-ON CONFLICT (created_by_identity_id, idempotency_key)
-DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
-RETURNING id, schema_version, preview_id, team_id, guest_id, scope, label, created_by_identity_id, idempotency_key, request_digest, secret_digest, created_at, expires_at, revoked_at, revoked_by_identity_id
+    id, preview_id, team_id, scope, label, entry_service_id, control_session_id,
+    created_by_identity_id,idempotency_key,request_digest,secret_digest,created_at,expires_at
+) VALUES (
+    $1,$2,$3,$4,$5,
+    $6,$7,$8,
+    $9,$10,$11,$12,$13
+)
+ON CONFLICT (created_by_identity_id,idempotency_key)
+DO UPDATE SET idempotency_key=EXCLUDED.idempotency_key
+RETURNING id, schema_version, preview_id, team_id, guest_id, authority_team_id, scope, entry_service_id, control_session_id, label, created_by_identity_id, authority_creator_identity_id, idempotency_key, request_digest, secret_digest, created_at, expires_at, revoked_at, revoked_by_identity_id
 `
 
 type CreateShareParams struct {
@@ -141,6 +56,8 @@ type CreateShareParams struct {
 	TeamID              string
 	Scope               string
 	Label               string
+	EntryServiceID      string
+	ControlSessionID    pgtype.Text
 	CreatedByIdentityID string
 	IdempotencyKey      string
 	RequestDigest       []byte
@@ -156,6 +73,8 @@ func (q *Queries) CreateShare(ctx context.Context, arg CreateShareParams) (Contr
 		arg.TeamID,
 		arg.Scope,
 		arg.Label,
+		arg.EntryServiceID,
+		arg.ControlSessionID,
 		arg.CreatedByIdentityID,
 		arg.IdempotencyKey,
 		arg.RequestDigest,
@@ -170,9 +89,13 @@ func (q *Queries) CreateShare(ctx context.Context, arg CreateShareParams) (Contr
 		&i.PreviewID,
 		&i.TeamID,
 		&i.GuestID,
+		&i.AuthorityTeamID,
 		&i.Scope,
+		&i.EntryServiceID,
+		&i.ControlSessionID,
 		&i.Label,
 		&i.CreatedByIdentityID,
+		&i.AuthorityCreatorIdentityID,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.SecretDigest,
@@ -185,7 +108,7 @@ func (q *Queries) CreateShare(ctx context.Context, arg CreateShareParams) (Contr
 }
 
 const findShareRequest = `-- name: FindShareRequest :one
-SELECT id, schema_version, preview_id, team_id, guest_id, scope, label, created_by_identity_id, idempotency_key, request_digest, secret_digest, created_at, expires_at, revoked_at, revoked_by_identity_id FROM control.shares WHERE created_by_identity_id = $1 AND idempotency_key = $2
+SELECT id, schema_version, preview_id, team_id, guest_id, authority_team_id, scope, entry_service_id, control_session_id, label, created_by_identity_id, authority_creator_identity_id, idempotency_key, request_digest, secret_digest, created_at, expires_at, revoked_at, revoked_by_identity_id FROM control.shares WHERE created_by_identity_id=$1 AND idempotency_key=$2
 `
 
 type FindShareRequestParams struct {
@@ -202,9 +125,13 @@ func (q *Queries) FindShareRequest(ctx context.Context, arg FindShareRequestPara
 		&i.PreviewID,
 		&i.TeamID,
 		&i.GuestID,
+		&i.AuthorityTeamID,
 		&i.Scope,
+		&i.EntryServiceID,
+		&i.ControlSessionID,
 		&i.Label,
 		&i.CreatedByIdentityID,
+		&i.AuthorityCreatorIdentityID,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.SecretDigest,
@@ -217,9 +144,12 @@ func (q *Queries) FindShareRequest(ctx context.Context, arg FindShareRequestPara
 }
 
 const getShare = `-- name: GetShare :one
-SELECT id, schema_version, preview_id, team_id, guest_id, scope, label, created_by_identity_id, idempotency_key, request_digest, secret_digest, created_at, expires_at, revoked_at, revoked_by_identity_id FROM control.shares WHERE id = $1
+
+SELECT id, schema_version, preview_id, team_id, guest_id, authority_team_id, scope, entry_service_id, control_session_id, label, created_by_identity_id, authority_creator_identity_id, idempotency_key, request_digest, secret_digest, created_at, expires_at, revoked_at, revoked_by_identity_id FROM control.shares WHERE id=$1
 `
 
+// guest share writes require the paused guest service ownership seam.
+// no URL ownership or creator-based substitute authorizes those writes.
 func (q *Queries) GetShare(ctx context.Context, id string) (ControlShare, error) {
 	row := q.db.QueryRow(ctx, getShare, id)
 	var i ControlShare
@@ -229,9 +159,13 @@ func (q *Queries) GetShare(ctx context.Context, id string) (ControlShare, error)
 		&i.PreviewID,
 		&i.TeamID,
 		&i.GuestID,
+		&i.AuthorityTeamID,
 		&i.Scope,
+		&i.EntryServiceID,
+		&i.ControlSessionID,
 		&i.Label,
 		&i.CreatedByIdentityID,
+		&i.AuthorityCreatorIdentityID,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.SecretDigest,
@@ -243,24 +177,23 @@ func (q *Queries) GetShare(ctx context.Context, id string) (ControlShare, error)
 	return i, err
 }
 
-const listSharePublicURLs = `-- name: ListSharePublicURLs :many
-SELECT public_url_id FROM control.share_public_urls
-WHERE share_id = $1 ORDER BY public_url_id
+const listShareServices = `-- name: ListShareServices :many
+SELECT service_id FROM control.share_services WHERE share_id=$1 ORDER BY service_id
 `
 
-func (q *Queries) ListSharePublicURLs(ctx context.Context, shareID string) ([]string, error) {
-	rows, err := q.db.Query(ctx, listSharePublicURLs, shareID)
+func (q *Queries) ListShareServices(ctx context.Context, shareID string) ([]string, error) {
+	rows, err := q.db.Query(ctx, listShareServices, shareID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var items []string
 	for rows.Next() {
-		var public_url_id string
-		if err := rows.Scan(&public_url_id); err != nil {
+		var service_id string
+		if err := rows.Scan(&service_id); err != nil {
 			return nil, err
 		}
-		items = append(items, public_url_id)
+		items = append(items, service_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -269,9 +202,7 @@ func (q *Queries) ListSharePublicURLs(ctx context.Context, shareID string) ([]st
 }
 
 const listShares = `-- name: ListShares :many
-SELECT id, schema_version, preview_id, team_id, guest_id, scope, label, created_by_identity_id, idempotency_key, request_digest, secret_digest, created_at, expires_at, revoked_at, revoked_by_identity_id FROM control.shares
-WHERE preview_id = $1
-  AND id > $2
+SELECT id, schema_version, preview_id, team_id, guest_id, authority_team_id, scope, entry_service_id, control_session_id, label, created_by_identity_id, authority_creator_identity_id, idempotency_key, request_digest, secret_digest, created_at, expires_at, revoked_at, revoked_by_identity_id FROM control.shares WHERE preview_id=$1 AND id>$2
 ORDER BY id LIMIT 101
 `
 
@@ -295,9 +226,13 @@ func (q *Queries) ListShares(ctx context.Context, arg ListSharesParams) ([]Contr
 			&i.PreviewID,
 			&i.TeamID,
 			&i.GuestID,
+			&i.AuthorityTeamID,
 			&i.Scope,
+			&i.EntryServiceID,
+			&i.ControlSessionID,
 			&i.Label,
 			&i.CreatedByIdentityID,
+			&i.AuthorityCreatorIdentityID,
 			&i.IdempotencyKey,
 			&i.RequestDigest,
 			&i.SecretDigest,
@@ -317,10 +252,8 @@ func (q *Queries) ListShares(ctx context.Context, arg ListSharesParams) ([]Contr
 }
 
 const listTeamShares = `-- name: ListTeamShares :many
-SELECT id, schema_version, preview_id, team_id, guest_id, scope, label, created_by_identity_id, idempotency_key, request_digest, secret_digest, created_at, expires_at, revoked_at, revoked_by_identity_id FROM control.shares
-WHERE team_id = $1
-  AND created_by_identity_id = $2
-  AND id > $3
+SELECT id, schema_version, preview_id, team_id, guest_id, authority_team_id, scope, entry_service_id, control_session_id, label, created_by_identity_id, authority_creator_identity_id, idempotency_key, request_digest, secret_digest, created_at, expires_at, revoked_at, revoked_by_identity_id FROM control.shares WHERE team_id=$1
+    AND created_by_identity_id=$2 AND id>$3
 ORDER BY id LIMIT 101
 `
 
@@ -345,9 +278,13 @@ func (q *Queries) ListTeamShares(ctx context.Context, arg ListTeamSharesParams) 
 			&i.PreviewID,
 			&i.TeamID,
 			&i.GuestID,
+			&i.AuthorityTeamID,
 			&i.Scope,
+			&i.EntryServiceID,
+			&i.ControlSessionID,
 			&i.Label,
 			&i.CreatedByIdentityID,
+			&i.AuthorityCreatorIdentityID,
 			&i.IdempotencyKey,
 			&i.RequestDigest,
 			&i.SecretDigest,
@@ -367,28 +304,20 @@ func (q *Queries) ListTeamShares(ctx context.Context, arg ListTeamSharesParams) 
 }
 
 const revokeShare = `-- name: RevokeShare :one
-UPDATE control.shares
-SET revoked_at = COALESCE(revoked_at, $1::timestamptz),
-    revoked_by_identity_id = COALESCE(revoked_by_identity_id, $2::text)
-WHERE id = $3
-  AND created_by_identity_id = $4
-RETURNING id, schema_version, preview_id, team_id, guest_id, scope, label, created_by_identity_id, idempotency_key, request_digest, secret_digest, created_at, expires_at, revoked_at, revoked_by_identity_id
+UPDATE control.shares SET revoked_at=COALESCE(revoked_at,$1::timestamptz),
+    revoked_by_identity_id=COALESCE(revoked_by_identity_id,$2::text)
+WHERE id=$3 AND created_by_identity_id=$2
+RETURNING id, schema_version, preview_id, team_id, guest_id, authority_team_id, scope, entry_service_id, control_session_id, label, created_by_identity_id, authority_creator_identity_id, idempotency_key, request_digest, secret_digest, created_at, expires_at, revoked_at, revoked_by_identity_id
 `
 
 type RevokeShareParams struct {
-	RevokedAt           pgtype.Timestamptz
-	RevokedByIdentityID string
-	ShareID             string
-	IdentityID          string
+	RevokedAt  pgtype.Timestamptz
+	IdentityID string
+	ShareID    string
 }
 
 func (q *Queries) RevokeShare(ctx context.Context, arg RevokeShareParams) (ControlShare, error) {
-	row := q.db.QueryRow(ctx, revokeShare,
-		arg.RevokedAt,
-		arg.RevokedByIdentityID,
-		arg.ShareID,
-		arg.IdentityID,
-	)
+	row := q.db.QueryRow(ctx, revokeShare, arg.RevokedAt, arg.IdentityID, arg.ShareID)
 	var i ControlShare
 	err := row.Scan(
 		&i.ID,
@@ -396,9 +325,13 @@ func (q *Queries) RevokeShare(ctx context.Context, arg RevokeShareParams) (Contr
 		&i.PreviewID,
 		&i.TeamID,
 		&i.GuestID,
+		&i.AuthorityTeamID,
 		&i.Scope,
+		&i.EntryServiceID,
+		&i.ControlSessionID,
 		&i.Label,
 		&i.CreatedByIdentityID,
+		&i.AuthorityCreatorIdentityID,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.SecretDigest,

@@ -24,12 +24,15 @@ func recheckPublicServiceVisitor(ctx context.Context, tx pgx.Tx, service, run st
 		return result, err
 	}
 	var deadline time.Time
-	err = tx.QueryRow(ctx, `SELECT v.promoted_at IS NOT NULL,LEAST($9::timestamptz+interval '2 minutes',run.publisher_expires_at,run.certificate_expires_at,g.expires_at,ingress.lease_expires_at,cert.expires_at,
+	err = tx.QueryRow(ctx, `SELECT v.promoted_at IS NOT NULL,LEAST($9::timestamptz+interval '2 minutes',run.publisher_expires_at,run.certificate_expires_at,permission.expires_at,ingress.lease_expires_at,cert.expires_at,
 	    (SELECT max(relay.lease_expires_at) FROM control.service_connection_slots slot JOIN control.relay_leases relay ON relay.relay_id=slot.relay_id AND relay.relay_run_id=slot.relay_run_id AND relay.relay_lease_revision=slot.relay_lease_revision AND relay.relay_service_id=slot.relay_service_id WHERE slot.service_run_id=run.id AND slot.state='ready' AND slot.session_open AND relay.lease_expires_at>$9 AND NOT relay.draining))
 	    FROM control.public_service_visitors v JOIN control.services service ON service.id=v.service_id AND service.public AND service.enabled AND service.deleted_at IS NULL AND service.service_port=v.destination_port
 	    JOIN control.service_runs run ON run.id=v.service_run_id AND run.service_id=service.id AND run.run_number=v.run_number AND run.state='ready' AND run.healthy AND run.closed_at IS NULL AND run.publisher_expires_at>$9 AND run.certificate_expires_at>$9
 	    JOIN control.ingress_leases ingress ON ingress.ingress_id=v.ingress_id AND ingress.ingress_run_id=v.ingress_run_id AND ingress.ingress_lease_revision=v.ingress_lease_revision AND ingress.lease_expires_at>$9
-	    JOIN control.publisher_grants g ON g.id=run.publisher_grant_id AND g.kind='service' AND g.service_id=service.id AND g.revoked_at IS NULL AND(g.expires_at IS NULL OR g.expires_at>$9)
+	    JOIN LATERAL control.publisher_service_permission(run.publisher_identity_id,run.publisher_grant_id,service.id,$9) permission ON true
+	    JOIN control.publisher_grants g ON g.id=run.publisher_grant_id
+	    JOIN control.publisher_identity_keys signing ON signing.id=run.publisher_key_id AND signing.publisher_identity_id=run.publisher_identity_id
+	        AND (g.kind='service' OR signing.retired_at IS NULL)
 	    JOIN control.publisher_identities p ON p.id=run.publisher_identity_id AND p.id=g.publisher_identity_id AND p.revoked_at IS NULL
 	    JOIN control.service_client_certificates cert ON cert.certificate_digest=COALESCE($8::bytea,v.certificate_digest) AND cert.service_id=service.id AND cert.identity_id=$5 AND cert.device_id=$6 AND cert.revoked_at IS NULL AND cert.expires_at>$9
 	    JOIN control.visitor_devices device ON device.id=cert.device_id AND device.identity_id=cert.identity_id AND device.revoked_at IS NULL

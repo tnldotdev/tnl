@@ -45,10 +45,28 @@ func NewHTTP(input *controlv1.ProjectHTTPApplicationLimits) (*HTTP, error) {
 
 // admit holds one run-wide request slot until the returned release is called.
 func (l *HTTP) Admit(w http.ResponseWriter, r *http.Request) (func(), bool) {
-	if l == nil {
-		return func() {}, true
+	reservation, ok := l.Reserve(w, r)
+	if !ok {
+		return nil, false
 	}
-	release, status, retry := l.admission.Acquire(r.Context())
+	return reservation.Finish, true
+}
+
+// completed belongs to the exact application budget shared by every HTTP path.
+func (l *HTTP) Completed() <-chan struct{} {
+	if l == nil {
+		return nil
+	}
+	return l.admission.Completed()
+}
+
+// reserve permits refund only before application forwarding. finish and refund
+// are mutually exclusive, including when deferred cleanup races cancellation.
+func (l *HTTP) Reserve(w http.ResponseWriter, r *http.Request) (*Reservation, bool) {
+	if l == nil {
+		return &Reservation{}, true
+	}
+	reservation, status, retry := l.admission.Reserve(r.Context())
 	if status != 0 {
 		if retry > 0 {
 			w.Header().Set("Retry-After", fmt.Sprint(RetryAfterSeconds(retry)))
@@ -58,7 +76,28 @@ func (l *HTTP) Admit(w http.ResponseWriter, r *http.Request) (func(), bool) {
 		http.Error(w, "HTTP request limit reached", status)
 		return nil, false
 	}
-	return release, true
+	return reservation, true
+}
+
+type Reservation struct {
+	budget *Budget
+	once   sync.Once
+}
+
+func (r *Reservation) Finish() {
+	r.once.Do(func() {
+		if r.budget != nil {
+			r.budget.leave()
+		}
+	})
+}
+
+func (r *Reservation) Refund() {
+	r.once.Do(func() {
+		if r.budget != nil {
+			r.budget.Refund()
+		}
+	})
 }
 
 // Budget owns admission for one run, not one visitor connection.
@@ -86,6 +125,14 @@ func (a *Budget) Completed() <-chan struct{}       { return a.completed }
 // acquire has no wait queue. cancellation cannot leave a held concurrency slot.
 // release is idempotent so cancellation and normal cleanup may race safely.
 func (a *Budget) Acquire(ctx context.Context) (func(), int, time.Duration) {
+	reservation, status, retry := a.Reserve(ctx)
+	if status != 0 {
+		return nil, status, retry
+	}
+	return reservation.Finish, 0, 0
+}
+
+func (a *Budget) Reserve(ctx context.Context) (*Reservation, int, time.Duration) {
 	if ctx.Err() != nil {
 		return nil, http.StatusServiceUnavailable, time.Second
 	}
@@ -93,13 +140,12 @@ func (a *Budget) Acquire(ctx context.Context) (func(), int, time.Duration) {
 	if status != 0 {
 		return nil, status, retry
 	}
-	var once sync.Once
-	release := func() { once.Do(a.leave) }
+	reservation := &Reservation{budget: a}
 	if ctx.Err() != nil {
-		a.Refund()
+		reservation.Refund()
 		return nil, http.StatusServiceUnavailable, time.Second
 	}
-	return release, 0, 0
+	return reservation, 0, 0
 }
 
 // refund is used only before application forwarding, when promotion fails or

@@ -26,9 +26,17 @@ type PublicServiceVisitorAdmission struct {
 // AdmitPublicServiceVisitor reserves bounded pre-authentication capacity. HTTP
 // selects an exact inspected hostname on 443; other protocols select a trusted
 // destination port without inspecting their native negotiation.
-func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressLeaseIdentity, pool, visitor, hostname string, port int, source netip.Addr, now time.Time) (result PublicServiceVisitorAdmission, retErr error) {
-	if validateIngressLeaseIdentity(lease) != nil || !opaqueid.Valid(visitor, opaqueid.VisitorConnectionPrefix) || !tcpport.ValidNetwork(port) || port != 443 && port < 1024 || !source.IsValid() || source.Zone() != "" {
+func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressLeaseIdentity, pool, visitor, hostname string, port int, source netip.Addr, now time.Time, excluded ...ServiceRunReference) (result PublicServiceVisitorAdmission, retErr error) {
+	clock := newAuthorizationClock(now)
+	if validateIngressLeaseIdentity(lease) != nil || !opaqueid.Valid(visitor, opaqueid.VisitorConnectionPrefix) || !tcpport.ValidNetwork(port) || port != 443 && port < 1024 || !source.IsValid() || source.Zone() != "" || len(excluded) > 7 {
 		return result, ErrServiceAccess
+	}
+	seenIDs, seenNumbers := make(map[string]bool, len(excluded)), make(map[int64]bool, len(excluded))
+	for _, run := range excluded {
+		if _, err := checkedServiceRunBinding(run.ServiceID, run.RunID, run.RunNumber); err != nil || seenIDs[run.RunID] || seenNumbers[run.RunNumber] {
+			return result, ErrServiceAccess
+		}
+		seenIDs[run.RunID], seenNumbers[run.RunNumber] = true, true
 	}
 	if port == 443 {
 		canonical, err := naming.CanonicalizeHostname(hostname)
@@ -50,6 +58,11 @@ func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressL
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}
+	for _, run := range excluded {
+		if run.ServiceID != result.ServiceID {
+			return PublicServiceVisitorAdmission{}, ErrServiceAccess
+		}
+	}
 	if err = lockServiceAdmission(ctx, tx, result.ServiceID); err != nil {
 		return result, err
 	}
@@ -69,7 +82,7 @@ func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressL
 		}
 		result.Anonymous = mode == VisitorAccessAnonymous
 	}
-	current, err := lockCurrentIngressLease(ctx, q, lease, now)
+	current, err := lockCurrentIngressLease(ctx, q, lease, clock.current())
 	if err != nil || current.Draining {
 		return result, errors.Join(ErrServiceAccess, err)
 	}
@@ -79,16 +92,21 @@ func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressL
 		return result, errors.Join(ErrServiceAccess, err)
 	}
 	var existing bool
-	err = tx.QueryRow(ctx, `SELECT service_run_id,run_number,valid_until FROM control.public_service_visitors WHERE visitor_connection_id=$1 AND service_id=$2 AND ingress_id=$3 AND ingress_run_id=$4 AND ingress_lease_revision=$5 AND source_ip=$6 AND destination_port=$7 AND valid_until>$8 AND closed_at IS NULL`, visitor, result.ServiceID, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), source.Unmap(), port, now).Scan(&result.RunID, &result.RunNumber, &result.ExpiresAt)
+	err = tx.QueryRow(ctx, `SELECT service_run_id,run_number,valid_until FROM control.public_service_visitors WHERE visitor_connection_id=$1 AND service_id=$2 AND ingress_id=$3 AND ingress_run_id=$4 AND ingress_lease_revision=$5 AND source_ip=$6 AND destination_port=$7 AND valid_until>$8 AND closed_at IS NULL`, visitor, result.ServiceID, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), source.Unmap(), port, clock.current()).Scan(&result.RunID, &result.RunNumber, &result.ExpiresAt)
 	if err == nil {
 		existing = true
+		for _, run := range excluded {
+			if run.RunID == result.RunID && run.RunNumber == result.RunNumber {
+				return PublicServiceVisitorAdmission{}, ErrServiceAccess
+			}
+		}
 	} else if errors.Is(err, pgx.ErrNoRows) {
-		result.RunID, result.RunNumber, _, err = selectRoutableServiceRun(ctx, tx, result.ServiceID, now)
+		result.RunID, result.RunNumber, _, err = selectRoutableServiceRun(ctx, tx, result.ServiceID, clock.current(), excluded...)
 	}
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}
-	result.Relays, _, err = privateConnectedRelays(ctx, tx, result.RunID, now)
+	result.Relays, _, err = privateConnectedRelays(ctx, tx, result.RunID, clock.current())
 	if err != nil || len(result.Relays) == 0 {
 		return result, errors.Join(ErrServiceAccess, err)
 	}
@@ -99,12 +117,14 @@ func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressL
 	// and certificate. a saved pending row cannot revive expired serving state.
 	var runUntil time.Time
 	var traffic []byte
-	err = tx.QueryRow(ctx, `SELECT LEAST(run.publisher_expires_at,run.certificate_expires_at,g.expires_at),run.traffic_limits
-	    FROM control.service_runs run JOIN control.publisher_grants g ON g.id=run.publisher_grant_id
-	    JOIN control.publisher_identities publisher ON publisher.id=run.publisher_identity_id
+	err = tx.QueryRow(ctx, `SELECT LEAST(run.publisher_expires_at,run.certificate_expires_at,permission.expires_at),run.traffic_limits
+	    FROM control.service_runs run
+	    JOIN LATERAL control.publisher_service_permission(run.publisher_identity_id,run.publisher_grant_id,run.service_id,$4) permission ON true
+	    JOIN control.publisher_grants g ON g.id=run.publisher_grant_id
+	    JOIN control.publisher_identity_keys signing ON signing.id=run.publisher_key_id AND signing.publisher_identity_id=run.publisher_identity_id
 	    WHERE run.id=$1 AND run.service_id=$2 AND run.run_number=$3 AND run.state='ready' AND run.healthy
 	    AND run.closed_at IS NULL AND run.publisher_expires_at>$4 AND run.certificate_expires_at>$4
-	    AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>$4) AND publisher.revoked_at IS NULL`, result.RunID, result.ServiceID, result.RunNumber, now).Scan(&runUntil, &traffic)
+	    AND (g.kind='service' OR signing.retired_at IS NULL)`, result.RunID, result.ServiceID, result.RunNumber, clock.current()).Scan(&runUntil, &traffic)
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}
@@ -122,9 +142,15 @@ func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressL
 		var same bool
 		// return the stored deadline on the first response too. PostgreSQL stores
 		// microseconds, so an in-memory nanosecond deadline would change on retry.
-		if err = tx.QueryRow(ctx, `SELECT service_id=$2 AND service_run_id=$3 AND ingress_id=$4 AND ingress_run_id=$5 AND ingress_lease_revision=$6 AND source_ip=$7 AND destination_port=$8 AND valid_until>$9 AND closed_at IS NULL,valid_until FROM control.public_service_visitors WHERE visitor_connection_id=$1`, visitor, result.ServiceID, result.RunID, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), source.Unmap(), port, now).Scan(&same, &result.ExpiresAt); err != nil || !same {
+		if err = tx.QueryRow(ctx, `SELECT service_id=$2 AND service_run_id=$3 AND ingress_id=$4 AND ingress_run_id=$5 AND ingress_lease_revision=$6 AND source_ip=$7 AND destination_port=$8 AND valid_until>$9 AND closed_at IS NULL,valid_until FROM control.public_service_visitors WHERE visitor_connection_id=$1`, visitor, result.ServiceID, result.RunID, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), source.Unmap(), port, clock.current()).Scan(&same, &result.ExpiresAt); err != nil || !same {
 			return result, errors.Join(ErrServiceAccess, err)
 		}
+	}
+	if _, err = tx.Exec(ctx, "SET CONSTRAINTS ALL IMMEDIATE"); err != nil {
+		return PublicServiceVisitorAdmission{}, err
+	}
+	if !result.ExpiresAt.After(clock.current()) {
+		return PublicServiceVisitorAdmission{}, ErrServiceAccess
 	}
 	result.ConnectionID = visitor
 	return result, tx.Commit(ctx)

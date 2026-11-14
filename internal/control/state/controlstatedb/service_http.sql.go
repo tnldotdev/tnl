@@ -283,6 +283,53 @@ func (q *Queries) LockServiceHTTPBrowserSession(ctx context.Context, arg LockSer
 	return i, err
 }
 
+const readyServiceBrowserHosts = `-- name: ReadyServiceBrowserHosts :many
+SELECT service.id AS service_id,service.certificate_hostname,
+    array_agg(run.id ORDER BY run.run_number)::text[] AS run_ids
+FROM control.services service JOIN control.service_runs run ON run.service_id=service.id
+WHERE service.enabled AND service.deleted_at IS NULL AND service.protocol='http'
+    AND run.state='ready' AND run.healthy AND run.closed_at IS NULL
+    AND run.publisher_expires_at>$1 AND run.certificate_expires_at>$1
+    AND EXISTS(SELECT 1 FROM control.publisher_service_permission(run.publisher_identity_id,
+        run.publisher_grant_id,service.id,$1))
+    AND (service.id=$2 OR EXISTS(
+        SELECT 1 FROM control.preview_services included WHERE included.preview_id=$3::text
+            AND included.service_id=service.id))
+GROUP BY service.id,service.certificate_hostname ORDER BY service.id LIMIT 32
+`
+
+type ReadyServiceBrowserHostsParams struct {
+	Now       pgtype.Timestamptz
+	ServiceID string
+	PreviewID string
+}
+
+type ReadyServiceBrowserHostsRow struct {
+	ServiceID           string
+	CertificateHostname string
+	RunIds              []string
+}
+
+func (q *Queries) ReadyServiceBrowserHosts(ctx context.Context, arg ReadyServiceBrowserHostsParams) ([]ReadyServiceBrowserHostsRow, error) {
+	rows, err := q.db.Query(ctx, readyServiceBrowserHosts, arg.Now, arg.ServiceID, arg.PreviewID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ReadyServiceBrowserHostsRow
+	for rows.Next() {
+		var i ReadyServiceBrowserHostsRow
+		if err := rows.Scan(&i.ServiceID, &i.CertificateHostname, &i.RunIds); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const redeemServiceHTTPBrowserSession = `-- name: RedeemServiceHTTPBrowserSession :one
 UPDATE control.service_http_browser_sessions SET cookie_digest=$1
 WHERE handoff_digest=$2 AND service_id=$3
@@ -454,7 +501,7 @@ func (q *Queries) ServiceHTTPBrowserPermission(ctx context.Context, arg ServiceH
 const serviceHTTPTransportBinding = `-- name: ServiceHTTPTransportBinding :one
 SELECT (v.authorized_at IS NOT NULL)::boolean AS authorized,
     (v.promoted_at IS NOT NULL)::boolean AS admitted,LEAST($1::timestamptz+interval '2 minutes',
-    run.publisher_expires_at,run.certificate_expires_at,g.expires_at,ingress.lease_expires_at,
+    run.publisher_expires_at,run.certificate_expires_at,permission.expires_at,ingress.lease_expires_at,
     (SELECT max(relay.lease_expires_at) FROM control.service_connection_slots slot
      JOIN control.relay_leases relay ON relay.relay_id=slot.relay_id AND relay.relay_run_id=slot.relay_run_id
      AND relay.relay_lease_revision=slot.relay_lease_revision AND relay.relay_service_id=slot.relay_service_id
@@ -468,8 +515,10 @@ JOIN control.service_runs run ON run.id=v.service_run_id AND run.service_id=serv
     AND run.publisher_expires_at>$1 AND run.certificate_expires_at>$1
 JOIN control.ingress_leases ingress ON ingress.ingress_id=v.ingress_id AND ingress.ingress_run_id=v.ingress_run_id
     AND ingress.ingress_lease_revision=v.ingress_lease_revision AND ingress.lease_expires_at>$1
-JOIN control.publisher_grants g ON g.id=run.publisher_grant_id AND g.kind='service'
-    AND g.service_id=service.id AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>$1)
+JOIN LATERAL control.publisher_service_permission(run.publisher_identity_id,run.publisher_grant_id,service.id,$1) permission ON true
+JOIN control.publisher_grants g ON g.id=run.publisher_grant_id
+JOIN control.publisher_identity_keys signing ON signing.id=run.publisher_key_id AND signing.publisher_identity_id=run.publisher_identity_id
+    AND (g.kind='service' OR signing.retired_at IS NULL)
 JOIN control.publisher_identities publisher ON publisher.id=g.publisher_identity_id AND publisher.id=run.publisher_identity_id AND publisher.revoked_at IS NULL
 WHERE v.visitor_connection_id=$2 AND v.service_id=$3
 AND v.service_run_id=$4 AND v.run_number=$5

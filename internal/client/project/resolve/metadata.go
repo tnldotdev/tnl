@@ -52,7 +52,7 @@ func (r *MetadataResolver) Generate(ctx context.Context) (meta.Metadata, error) 
 	deployment := config.SelectedDeployment(r.project.Config)
 	hasPublic := r.project.Config.OAuth || len(r.project.Config.Webhooks) != 0 || len(r.project.Config.Aliases) != 0 || deployment != "local" && len(r.project.Config.Services) != 0
 	for _, service := range r.project.Config.Services {
-		hasPublic = hasPublic || config.IsPublicService(service) || config.Protocol(service) == "http" && service.Public != nil && *service.Public
+		hasPublic = hasPublic || config.Protocol(service) == "http" && service.Public != nil && *service.Public
 	}
 	if !hasPublic {
 		metadata := meta.Metadata{Version: meta.Version, Services: map[string]meta.Service{}}
@@ -69,11 +69,7 @@ func (r *MetadataResolver) Generate(ctx context.Context) (meta.Metadata, error) 
 	if err != nil {
 		return meta.Metadata{}, err
 	}
-	selectedDomain := ""
-	if root.Tunnel != nil && root.Tunnel.Domain != nil {
-		selectedDomain = *root.Tunnel.Domain
-	}
-	domain, err := current.ReadyDomain(selectedDomain)
+	domain, err := current.ReadyDomain("")
 	if err != nil {
 		return meta.Metadata{}, err
 	}
@@ -97,10 +93,17 @@ func (r *MetadataResolver) Generate(ctx context.Context) (meta.Metadata, error) 
 		metadata.OAuth = &oauth
 	}
 	names := make([]string, 0, len(r.project.Config.Services))
+	referenced := make(map[string]bool)
+	for _, alias := range r.project.Config.Aliases {
+		referenced[alias.Service] = true
+	}
+	for _, webhook := range r.project.Config.Webhooks {
+		referenced[webhook.Service] = true
+	}
 	for name := range r.project.Config.Services {
 		service := r.project.Config.Services[name]
 		localEndpoint := config.Protocol(service) == "http" && service.Public != nil && *service.Public
-		if !config.IsPublicService(service) && !localEndpoint && deployment == "local" {
+		if !localEndpoint && !referenced[name] && deployment == "local" {
 			continue
 		}
 		names = append(names, name)
@@ -149,18 +152,19 @@ func (r *MetadataResolver) Generate(ctx context.Context) (meta.Metadata, error) 
 				return meta.Metadata{}, domainErr
 			}
 			serviceMetadata, err = meta.NewEndpoint(domain.CanonicalDomain, endpoint.Hostname, string(assigned.Protocol), endpoint.Port, endpoint.Public)
-		} else if !config.IsPublicService(r.project.Config.Services[name]) {
+		} else {
 			serviceMetadata, err = r.localServiceMetadata(ctx, name, effective, serviceContext)
 			if errors.Is(err, clientcontrol.ErrNotFound) {
 				// publication owns allocation. metadata generation must not realize
 				// a local service or invent its future public port.
 				continue
 			}
-		} else {
-			serviceMetadata, err = ConfiguredService(name, r.project.Worktree, effective, serviceContext)
 		}
 		if err != nil {
 			return meta.Metadata{}, fmt.Errorf("service %q: %w", name, err)
+		}
+		if deployment == "local" && !serviceMetadata.Public && !referenced[name] {
+			continue
 		}
 		if paths := config.ServicePaths(r.project.Config.Services[name]); len(paths) > 0 {
 			serviceMetadata.Paths = make(map[string]meta.Path, len(paths))
@@ -203,19 +207,15 @@ func (r *MetadataResolver) localServiceMetadata(ctx context.Context, name string
 	if err != nil {
 		return meta.Service{}, err
 	}
-	if assigned.Service != name || assigned.WorktreeKey != worktree || assigned.ServiceKind != "service" || assigned.ServiceId == "" || assigned.Metadata == nil || assigned.Metadata.Endpoint == nil || assigned.Metadata.Protocol != controlv1.ServiceProtocolHTTP {
+	if assigned.Service != name || assigned.WorktreeKey != worktree || assigned.ServiceId == "" || assigned.Metadata == nil || assigned.Metadata.Endpoint == nil || assigned.Metadata.Protocol != controlv1.ServiceProtocolHTTP {
 		return meta.Service{}, errors.New("control returned another local HTTP service")
 	}
 	endpoint := assigned.Metadata.Endpoint
-	if !endpoint.Public {
-		// local configuration is not proof of current control-owned exposure.
-		return meta.Service{}, clientcontrol.ErrNotFound
-	}
 	domain, err := team.ReadyDomainForHostname(current.Domains(), endpoint.Hostname)
 	if err != nil {
 		return meta.Service{}, err
 	}
-	return meta.NewEndpoint(domain.CanonicalDomain, endpoint.Hostname, "http", endpoint.Port, true)
+	return meta.NewEndpoint(domain.CanonicalDomain, endpoint.Hostname, "http", endpoint.Port, endpoint.Public)
 }
 
 func projectAliasMetadata(ctx context.Context, resolver *MetadataResolver, metadata meta.Metadata) (map[string]meta.Alias, error) {
@@ -235,22 +235,22 @@ func projectAliasMetadata(ctx context.Context, resolver *MetadataResolver, metad
 		domainName := ""
 		if definition.Domain != nil {
 			domainName = *definition.Domain
-		} else if effective.Tunnel != nil && effective.Tunnel.Domain != nil {
-			domainName = *effective.Tunnel.Domain
+		} else if effective.Domain != nil {
+			domainName = *effective.Domain
 		}
-		publicURL := ""
-		if definition.PublicURL != nil {
-			publicURL = *definition.PublicURL
+		exactHostname := ""
+		if definition.Hostname != nil {
+			exactHostname = *definition.Hostname
 		}
 		nameFlag := name
-		if publicURL != "" {
+		if exactHostname != "" {
 			nameFlag = ""
 		}
-		hostname, domain, _, err := PublishHostname(publicURL, nameFlag, domainName, current)
+		hostname, domain, err := PublishHostname(exactHostname, nameFlag, domainName, current)
 		if err != nil {
 			return nil, err
 		}
-		if definition.PublicURL == nil {
+		if definition.Hostname == nil {
 			namespace, _ := current.Namespace(domain)
 			hostname = definition.RelativeName(name) + "." + namespace
 		}
@@ -281,41 +281,6 @@ func projectWebhookMetadata(ctx context.Context, state *clientstate.Database, pr
 		result[name] = meta.Webhook{Hostname: origin.Hostname, URL: origin.URL + definition.Path, Service: definition.Service, Path: definition.Path, Methods: methods}
 	}
 	return result, nil
-}
-
-func ConfiguredService(
-	service string,
-	worktree clientproject.Worktree,
-	effective clientproject.ResolvedService,
-	current team.Context,
-) (meta.Service, error) {
-	protocol := config.ServiceProtocol(effective.Publish)
-	if protocol != "http" {
-		return meta.Service{}, failure.Wrap("resolve public URL metadata", failure.ProjectConfigInvalid, errors.New("public URL metadata requires protocol http"))
-	}
-	publicURL, name, selectedDomain := "", "", ""
-	ephemeral := false
-	if effective.Tunnel != nil {
-		if effective.Tunnel.PublicURL != nil {
-			publicURL = *effective.Tunnel.PublicURL
-		}
-		if effective.Tunnel.Name != nil {
-			name = *effective.Tunnel.Name
-		}
-		if effective.Tunnel.Domain != nil {
-			selectedDomain = *effective.Tunnel.Domain
-		}
-		ephemeral = effective.Tunnel.Ephemeral != nil && *effective.Tunnel.Ephemeral
-	}
-	if publicURL == "" && name == "" && !ephemeral {
-		name = clientproject.ServiceWorktreeLabel(service, worktree)
-	}
-	hostname, domain, _, err := PublishHostname(publicURL, name, selectedDomain, current)
-	if err != nil {
-		return meta.Service{}, err
-	}
-	namespace, _ := current.Namespace(domain)
-	return meta.NewEndpoint(namespace, hostname, protocol, 443, true)
 }
 
 func (r *MetadataResolver) Context(

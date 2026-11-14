@@ -40,7 +40,7 @@ func Select(ctx context.Context, control ServiceReader, project clientproject.Pr
 			if err != nil {
 				return controlv1.Service{}, err
 			}
-			if bound.Service != key || bound.WorktreeKey != params.WorktreeKey || bound.ServiceKind != controlv1.LocalProjectServiceServiceKindService || bound.ServiceId == "" || bound.Metadata == nil {
+			if bound.Service != key || bound.WorktreeKey != params.WorktreeKey || bound.ServiceId == "" || bound.Metadata == nil {
 				return controlv1.Service{}, failure.Wrap("find local service", failure.ServerResponseInvalid, errors.New("control returned another local project service"))
 			}
 			localID = bound.ServiceId
@@ -70,22 +70,14 @@ func Select(ctx context.Context, control ServiceReader, project clientproject.Pr
 // reject overlapping aliases rather than choosing a map iteration's first match.
 func ConfiguredService(project clientproject.Project, name string) (string, error) {
 	selected := ""
-	publicMatch := false
 	for key, service := range project.Config.Services {
 		if key != name && config.ServiceName(key, service) != name {
-			continue
-		}
-		if isConnectPublicURL(project.Config, service) {
-			publicMatch = true
 			continue
 		}
 		if selected != "" {
 			return "", publisherCLIError("configured service name is ambiguous; use an unambiguous service key or --no-config with the service ID")
 		}
 		selected = key
-	}
-	if publicMatch {
-		return "", publisherCLIError("configured name selects a public URL service; use its HTTPS URL or --no-config with an exact service ID")
 	}
 	if selected == "" && project.Declared != nil {
 		if _, declared := project.Declared.Services[name]; declared {
@@ -124,9 +116,4 @@ func serviceIDSelection(services []controlv1.Service, id, team string) (controlv
 		}
 	}
 	return controlv1.Service{}, failure.Wrap("select service ID", failure.ServerResourceNotFound, errors.New("service ID is absent from visitor inventory"))
-}
-
-// only local public_url bindings use the app's public URL lifecycle.
-func isConnectPublicURL(configuration config.TNL, service config.Service) bool {
-	return config.SelectedDeployment(configuration) == "local" && config.IsPublicService(service)
 }

@@ -1,12 +1,14 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"regexp"
 	"time"
 
@@ -23,13 +25,15 @@ var serviceName = regexp.MustCompile(`^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$`)
 
 type ServiceRecord struct {
 	ServiceMetadata
-	ID, TeamID, DomainID, Name string
-	EndpointRevision           int64
-	Placement                  *ServicePlacement   `json:"placement,omitempty"`
-	Source                     *LocalServiceSource `json:"source,omitempty"`
-	HTTPLimits                 *ProjectHTTPApplicationLimits
-	Enabled                    bool
-	CreatedAt                  time.Time
+	ID, TeamID, DomainID, Name    string
+	EndpointRevision              int64
+	Placement                     *ServicePlacement   `json:"placement,omitempty"`
+	Source                        *LocalServiceSource `json:"source,omitempty"`
+	HTTPLimits                    *ProjectHTTPApplicationLimits
+	Enabled                       bool
+	Ephemeral, RequirePostQuantum bool
+	ExpiresAt                     *time.Time
+	CreatedAt                     time.Time
 }
 
 type ServiceGrant struct {
@@ -60,7 +64,8 @@ func lockService(ctx context.Context, tx pgx.Tx, serviceID, actorID string) (con
 	if err != nil {
 		return controlstatedb.ControlService{}, err
 	}
-	if err = serviceManager(ctx, tx, teamID, actorID); err != nil {
+	member, err := serviceMembershipForActor(ctx, tx, teamID, actorID, time.Now())
+	if err != nil {
 		return controlstatedb.ControlService{}, err
 	}
 	service, err := controlstatedb.New(tx).LockService(ctx, serviceID)
@@ -73,6 +78,9 @@ func lockService(ctx context.Context, tx pgx.Tx, serviceID, actorID string) (con
 	if service.TeamID != teamID || !service.Enabled || service.DeletedAt.Valid {
 		return service, ErrServiceAccess
 	}
+	if err = requireServiceManagement(ctx, tx, service, member); err != nil {
+		return service, err
+	}
 	return service, nil
 }
 
@@ -81,35 +89,122 @@ func checkedServiceRecord(row controlstatedb.ControlService) (ServiceRecord, err
 	if err != nil {
 		return ServiceRecord{}, err
 	}
-	return ServiceRecord{ServiceMetadata: metadata, ID: row.ID, TeamID: row.TeamID, DomainID: row.DomainID.String, Name: row.Name, EndpointRevision: row.EndpointRevision, Enabled: row.Enabled, CreatedAt: row.CreatedAt.Time, Placement: &ServicePlacement{DomainID: row.DomainID.String, WorktreeKey: row.PlacementWorktreeKey, WorktreeLabel: row.PlacementWorktreeLabel}}, nil
+	return ServiceRecord{ServiceMetadata: metadata, ID: row.ID, TeamID: row.TeamID, DomainID: row.DomainID.String, Name: row.Name, EndpointRevision: row.EndpointRevision, Enabled: row.Enabled, Ephemeral: row.Ephemeral, RequirePostQuantum: row.RequirePostQuantum, ExpiresAt: optionalTime(row.ExpiresAt), CreatedAt: row.CreatedAt.Time, Placement: &ServicePlacement{DomainID: row.DomainID.String, Hostname: row.CertificateHostname, WorktreeKey: row.PlacementWorktreeKey, WorktreeLabel: row.PlacementWorktreeLabel}}, nil
 }
 
 func serviceManager(ctx context.Context, tx pgx.Tx, teamID, actorID string) error {
 	if _, signed := serviceActor(ctx); signed {
 		return serviceActorManager(ctx, tx, teamID, actorID, time.Now())
 	}
-	var current bool
-	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.teams team
-		JOIN control.team_memberships member ON member.team_id = team.id
-		JOIN control.identities person ON person.id = member.identity_id
-		WHERE team.id = $1 AND person.id = $2 AND team.deleted_at IS NULL AND person.disabled_at IS NULL
-		AND control.active_membership(member.id,CURRENT_TIMESTAMP) AND member.role IN ('owner','admin'))`, teamID, actorID).Scan(&current)
+	member, err := serviceMembershipForActor(ctx, tx, teamID, actorID, time.Now())
 	if err != nil {
 		return err
 	}
-	if !current {
+	if !member.administrator() {
 		return ErrServiceAccess
-	}
-	if err := requireTeamSession(ctx, controlstatedb.New(tx), teamID, actorID, time.Now()); err != nil {
-		if errors.Is(err, ErrAuthorityAccess) {
-			return errors.Join(ErrServiceAccess, err)
-		}
-		return err
 	}
 	return nil
 }
 
-func (d *Database) CreateServiceAt(ctx context.Context, teamID, actorID, name, key string, placement ServicePlacement, now time.Time, metadata ServiceMetadata) (result ServiceRecord, retErr error) {
+// service membership is validated once in the operation's transaction, then
+// reused for each exact service. it carries no publisher or visitor authority.
+type serviceMembership struct {
+	teamID, id, role string
+}
+
+func (m serviceMembership) administrator() bool {
+	return m.role == "owner" || m.role == "admin"
+}
+
+func requireServiceManagement(ctx context.Context, tx pgx.Tx, service controlstatedb.ControlService, member serviceMembership) error {
+	denied := ErrServiceAccess
+	if _, signed := serviceActor(ctx); signed {
+		denied = ErrServiceManagerRequired
+	}
+	if member.id == "" || member.teamID != service.TeamID || service.DeletedAt.Valid {
+		return denied
+	}
+	if member.administrator() {
+		return nil
+	}
+	// ownership comes from exactly one stored source, never the creator, a
+	// hostname suffix, or a publisher's current ability to serve the service.
+	var owned bool
+	err := tx.QueryRow(ctx, `SELECT
+	    NOT EXISTS(SELECT 1 FROM control.applied_project_services WHERE service_id=$1)
+	    AND CASE WHEN EXISTS(SELECT 1 FROM control.publisher_namespace_allocations WHERE service_id=$1)
+	    THEN
+	        NOT EXISTS(SELECT 1 FROM control.local_project_services WHERE service_id=$1)
+	        AND NOT EXISTS(SELECT 1 FROM control.service_endpoints
+	            WHERE service_id=$1 AND (local_source_key<>'' OR deployment_id IS NOT NULL))
+	        AND EXISTS(SELECT 1 FROM control.publisher_namespace_allocations allocation
+	            JOIN control.publisher_grants grant_record
+	              ON grant_record.id=allocation.publisher_grant_id
+	              AND grant_record.publisher_identity_id=allocation.publisher_identity_id
+	            JOIN control.publisher_identities publisher ON publisher.id=allocation.publisher_identity_id
+	            WHERE allocation.service_id=$1 AND allocation.deployment_id IS NULL
+	              AND publisher.team_id=$2 AND grant_record.kind='namespace'
+	              AND grant_record.public_url_scope='member' AND grant_record.membership_id=$3)
+	    ELSE
+	        (SELECT count(*)=1 AND COALESCE(bool_and(
+	            endpoint.hostname=$4 AND endpoint.local_source_key<>''
+	            AND endpoint.deployment_id IS NULL AND claim.deployment_id IS NULL
+	            AND claim.membership_id=$3 AND claim.retired_at IS NULL),false)
+	        FROM control.service_endpoints endpoint
+	        LEFT JOIN control.service_namespace_claims claim
+	          ON claim.namespace=endpoint.namespace
+	          AND claim.local_source_key=endpoint.local_source_key AND claim.domain_id=endpoint.domain_id
+	        WHERE endpoint.service_id=$1 AND endpoint.retired_at IS NULL)
+	    END`, service.ID, service.TeamID, member.id, service.CertificateHostname).Scan(&owned)
+	if err != nil {
+		return err
+	}
+	if !owned {
+		return denied
+	}
+	return nil
+}
+
+func (d *Database) CreateServiceAt(ctx context.Context, teamID, actorID, name, key string, placement ServicePlacement, now time.Time, metadata ServiceMetadata, configuration *ProjectServiceConfiguration) (result ServiceRecord, retErr error) {
+	public, ephemeral, postQuantum := false, false, false
+	if configuration != nil {
+		// normalize a private copy of the canonical declaration. metadata and
+		// placement may select the same facts, never replace declaration policy.
+		data, err := json.Marshal(configuration)
+		if err != nil || len(data) > 512<<10 {
+			return result, ErrProjectConfigurationInvalid
+		}
+		var normalized ProjectServiceConfiguration
+		if err := json.Unmarshal(data, &normalized); err != nil {
+			return result, err
+		}
+		if err := normalizeAppliedProjectService(name, &normalized, true); err != nil {
+			return result, err
+		}
+		if normalized.Name != name {
+			return result, ErrProjectConfigurationInvalid
+		}
+		trust, err := appliedServiceTargetTrust(normalized.TargetTLS)
+		if err != nil {
+			return result, err
+		}
+		if metadata.Protocol != "" && metadata.Protocol != normalized.Protocol ||
+			metadata.TLS != nil && !reflect.DeepEqual(metadata.TLS, trust) ||
+			placement.Hostname != "" && normalized.Hostname != "" && placement.Hostname != normalized.Hostname ||
+			placement.DomainID != "" && normalized.DomainID != "" && placement.DomainID != normalized.DomainID {
+			return result, ErrServiceConflict
+		}
+		metadata.Protocol, metadata.TLS = normalized.Protocol, trust
+		if normalized.Hostname != "" {
+			placement.Hostname = normalized.Hostname
+		}
+		if normalized.DomainID != "" {
+			placement.DomainID = normalized.DomainID
+		}
+		public, ephemeral = projectServicePublic(normalized), normalized.Ephemeral
+		postQuantum = normalized.RequirePostQuantum != nil && *normalized.RequirePostQuantum
+		configuration = &normalized
+	}
 	if err := placement.Validate(); err != nil {
 		return result, err
 	}
@@ -123,7 +218,16 @@ func (d *Database) CreateServiceAt(ctx context.Context, teamID, actorID, name, k
 	if err != nil {
 		return result, err
 	}
-	digest := sha256.Sum256([]byte(teamID + "\x00" + name))
+	intent, err := json.Marshal(struct {
+		Team, Name    string
+		Placement     ServicePlacement
+		Metadata      ServiceMetadata
+		Configuration *ProjectServiceConfiguration
+	}{teamID, name, placement, ServiceMetadata{Protocol: metadata.Protocol, TLS: metadata.TLS, PublisherPool: metadata.PublisherPool}, configuration})
+	if err != nil {
+		return result, err
+	}
+	digest := sha256.Sum256(intent)
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return result, err
@@ -152,10 +256,27 @@ func (d *Database) CreateServiceAt(ctx context.Context, teamID, actorID, name, k
 		if err != nil {
 			return result, err
 		}
-		if row.DeletedAt.Valid || row.TeamID != teamID || row.Name != name || !serviceMetadataMatches(saved, metadata) || row.PublisherPool != metadata.PublisherPool {
+		if row.DeletedAt.Valid || !row.Enabled || row.TeamID != teamID || row.CreatedByIdentityID != actorID ||
+			row.Name != name || row.NameScope != "member/"+actorID+"/"+placement.WorktreeKey ||
+			!bytes.Equal(row.RequestDigest, digest[:]) || !serviceMetadataMatches(saved, metadata) ||
+			row.PublisherPool != metadata.PublisherPool || row.Public != public || row.Ephemeral != ephemeral || row.RequirePostQuantum != postQuantum {
 			return result, ErrServiceConflict
 		}
-		if err = d.ensureLocalServiceEndpoint(ctx, tx, row.ID, actorID, name, placement, row.Public, now); err != nil {
+		stored, err := controlstatedb.New(tx).GetServiceConfiguration(ctx, row.ID)
+		if err != nil {
+			return result, err
+		}
+		if stored.LocalOwned || stored.DeploymentOwned || stored.AllocationOwned {
+			return result, ErrServiceConflict
+		}
+		previous, err := d.openServiceConfiguration(row.ID, row.Name, stored.StorageKeyID.String, stored.ConfigurationCiphertext, "")
+		if err != nil {
+			return result, err
+		}
+		if !reflect.DeepEqual(previous, configuration) {
+			return result, ErrServiceConflict
+		}
+		if err = d.ensureLocalServiceEndpoint(ctx, tx, row.ID, actorID, name, placement, public, now); err != nil {
 			return result, err
 		}
 		result, err = checkedServiceRecord(row)
@@ -185,10 +306,16 @@ func (d *Database) CreateServiceAt(ctx context.Context, teamID, actorID, name, k
 			return result, err
 		}
 	}
-	if _, err = tx.Exec(ctx, `UPDATE control.services SET protocol=$2, tls_metadata=convert_from($3::bytea,'UTF8')::jsonb, publisher_pool=$4 WHERE id=$1`, id, metadata.Protocol, encoded, metadata.PublisherPool); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE control.services SET protocol=$2, tls_metadata=convert_from($3::bytea,'UTF8')::jsonb, publisher_pool=$4,
+	    ephemeral=$5,require_post_quantum=$6 WHERE id=$1`, id, metadata.Protocol, encoded, metadata.PublisherPool, ephemeral, postQuantum); err != nil {
 		return result, err
 	}
-	if err = d.ensureLocalServiceEndpoint(ctx, tx, id, actorID, name, placement, false, now); err != nil {
+	if configuration != nil {
+		if err = d.saveServiceConfiguration(ctx, tx, id, *configuration); err != nil {
+			return result, err
+		}
+	}
+	if err = d.ensureLocalServiceEndpoint(ctx, tx, id, actorID, name, placement, public, now); err != nil {
 		return result, err
 	}
 	row, err := controlstatedb.New(tx).LockService(ctx, id)

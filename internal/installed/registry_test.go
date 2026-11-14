@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -15,6 +16,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
@@ -52,13 +54,58 @@ func fixture(t *testing.T, name string) (Job, authorityv1.PublisherEnrollmentRes
 		}
 		return result
 	}
-	job := Job{Kind: KindPublicURL, ID: name, Server: "https://control.example", PublisherIdentityID: id(opaqueid.PublisherIdentityPrefix), GrantID: id(opaqueid.PublisherGrantPrefix), PublicURLID: id(opaqueid.PublicURLPrefix), Target: "http://127.0.0.1:3000", Protocol: config.ProtocolHTTP}
-	identity := authorityv1.PublisherEnrollmentResult{ClientId: job.PublisherIdentityID, GrantId: job.GrantID, KeyId: id(opaqueid.PublisherIdentityKeyPrefix), TeamId: "team", Kind: "saved_public_url", PublicUrlId: &job.PublicURLID}
+	job := Job{Kind: KindService, ID: name, Server: "https://control.example", PublisherIdentityID: id(opaqueid.PublisherIdentityPrefix), GrantID: id(opaqueid.PublisherGrantPrefix), ServiceID: id(opaqueid.ServicePrefix), TrustRevision: 1, Target: "http://127.0.0.1:3000", Protocol: config.ProtocolHTTP}
+	identity := authorityv1.PublisherEnrollmentResult{ClientId: job.PublisherIdentityID, GrantId: job.GrantID, KeyId: id(opaqueid.PublisherIdentityKeyPrefix), TeamId: "team", Kind: authorityv1.Service, ServiceId: &job.ServiceID}
 	_, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return job, identity, private
+}
+
+func capturedTrust(t *testing.T, hostname string, pem []byte) *targettrust.Snapshot {
+	t.Helper()
+	declaration, err := targettrust.NewDeclaration(hostname, pem)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trust, err := declaration.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return trust
+}
+
+func TestInstalledObservationsFenceReplacedJobRevision(t *testing.T) {
+	registry := testRegistry(t)
+	job, identity, key := fixture(t, "web")
+	if err := registry.Install(t.Context(), job, identity, key); err != nil {
+		t.Fatal(err)
+	}
+	before, err := registry.ResolveJob(t.Context(), job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Start(t.Context(), job.ID); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	engine := Engine{Registry: registry, Observe: func(Job, Status) error { calls++; return nil }}
+	if err := engine.status(t.Context(), before, Status{State: JobReady, RunNumber: 1, Address: "https://old.example"}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := registry.ResolveJob(t.Context(), job.ID)
+	if err != nil || calls != 0 || after.Revision == before.Revision || after.Status.State != JobStarting || after.Status.Address != "" || after.Status.RunNumber != 0 {
+		t.Fatal("old work overwrote its replacement or emitted an observation", calls, after.Status, err)
+	}
+	current := Status{State: JobReady, RunNumber: 2, Address: "https://current.example"}
+	if err := engine.status(t.Context(), after, current); err != nil || calls != 1 {
+		t.Fatal("current job observation was rejected", calls, err)
+	}
+	data, err := json.Marshal(current)
+	if err != nil || !bytes.Contains(data, []byte(`"address":"https://current.example"`)) || bytes.Contains(data, []byte("public_url")) {
+		t.Fatal("service observation retained the retired address field", string(data), err)
+	}
 }
 
 func TestRegistryRestartAndScopeBinding(t *testing.T) {
@@ -68,7 +115,8 @@ func TestRegistryRestartAndScopeBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	job, identity, private := fixture(t, "web")
-	job.Target, job.TargetTLSName = "https://127.0.0.1:3000", "web.internal"
+	job.Target = "https://127.0.0.1:3000"
+	job.Trust = capturedTrust(t, "web.internal", nil)
 	job.ReadinessPath = "/health"
 	if err := r.Install(t.Context(), job, identity, private); err != nil {
 		t.Fatal(err)
@@ -82,7 +130,7 @@ func TestRegistryRestartAndScopeBinding(t *testing.T) {
 	}
 	defer r.Close()
 	jobs, err := r.List(t.Context())
-	if err != nil || len(jobs) != 1 || !jobs[0].Enabled || jobs[0].TargetTLSName != "web.internal" || jobs[0].ReadinessPath != "/health" {
+	if err != nil || len(jobs) != 1 || !jobs[0].Enabled || jobs[0].Trust == nil || jobs[0].Trust.Hostname != "web.internal" || jobs[0].ReadinessPath != "/health" {
 		t.Fatalf("restart: %+v, %v", jobs, err)
 	}
 	loaded, key, _, err := r.signingIdentity(t.Context(), jobs[0])
@@ -104,7 +152,7 @@ func TestRegistryRestartAndScopeBinding(t *testing.T) {
 		func(j *Job) { j.Server = "https://other.example" },
 		func(j *Job) { j.ID = "other" },
 		func(j *Job) { j.GrantID, _ = opaqueid.New(opaqueid.PublisherGrantPrefix) },
-		func(j *Job) { j.PublicURLID, _ = opaqueid.New(opaqueid.PublicURLPrefix) },
+		func(j *Job) { j.ServiceID, _ = opaqueid.New(opaqueid.ServicePrefix) },
 	} {
 		changed := jobs[0]
 		mutate(&changed)
@@ -120,7 +168,7 @@ func TestRegistryRestartAndScopeBinding(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if bytes.Contains(value, private) || bytes.Contains(value, []byte(job.Target)) || bytes.Contains(value, []byte(job.TargetTLSName)) {
+		if bytes.Contains(value, private) || bytes.Contains(value, []byte(job.Target)) || bytes.Contains(value, []byte(job.Trust.Hostname)) {
 			t.Fatal("private job state stored in plaintext")
 		}
 	}
@@ -217,12 +265,12 @@ func TestInstallRetryRefreshesSettingsWithoutReplacingScopeOrKey(t *testing.T) {
 func TestStableJobKeyAndDisplayName(t *testing.T) {
 	r := testRegistry(t)
 	job, identity, private := fixture(t, "placeholder")
-	if PublicURLJobKey(job.Server+"/", job.PublicURLID) != PublicURLJobKey(job.Server, job.PublicURLID) {
+	if ServiceJobKey(job.Server+"/", job.ServiceID) != ServiceJobKey(job.Server, job.ServiceID) {
 		t.Fatal("server spelling changed the stable job key")
 	}
-	job.ID = PublicURLJobKey(job.Server, job.PublicURLID)
-	if job.ID == ServiceJobKey(job.Server, job.PublicURLID) {
-		t.Fatal("different resource kinds share a job key")
+	job.ID = ServiceJobKey(job.Server, job.ServiceID)
+	if job.ID == JobKey(job.Server, "connector", job.ServiceID) {
+		t.Fatal("publisher and connector share a job key")
 	}
 	job.Name = "first"
 	if err := r.Install(t.Context(), job, identity, private); err != nil {

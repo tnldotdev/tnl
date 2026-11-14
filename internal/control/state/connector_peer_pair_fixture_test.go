@@ -34,7 +34,7 @@ func connectorPairFixtureFromRun(t *testing.T, f publishRunFixture, retainedPubl
 	principal := ControlPrincipal{IdentityID: session.Identity.Identity.ID, SessionID: session.SessionID}
 	visitor := WithControlPrincipal(t.Context(), principal)
 	actor := oidcRouteRequest(t, d, now)
-	service, err := d.CreateServiceAt(visitor, actor.TeamID, principal.IdentityID, "observations", "observations", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
+	service, err := d.CreateServiceAt(visitor, actor.TeamID, principal.IdentityID, "observations", "observations", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

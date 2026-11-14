@@ -119,13 +119,7 @@ func managedIngressListener(t *testing.T, managed servicestream.Stream, visitors
 	if len(visitors) != 0 {
 		forwarder.visitor = visitors[0]
 	}
-	connector, err := ingress.NewPublicServices(ingress.PublicServicesConfig{Control: control, Forwarder: forwarder, CurrentLease: func() ingressv1.IngressLease { return lease }})
-	if err != nil {
-		_ = front.Close()
-		_ = backend.Close()
-		t.Fatal(err)
-	}
-	server, err := ingress.New(backend, ingress.Config{PublicServices: connector, RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, ServicePortRanges: []tcpport.Range{{First: port, Last: port}}, MaxConnections: 8})
+	server, err := ingress.New(backend, ingress.Config{Control: control, Forwarder: forwarder, CurrentLease: func() ingressv1.IngressLease { return lease }, RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, ServicePortRanges: []tcpport.Range{{First: port, Last: port}}, MaxConnections: 8})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +159,7 @@ func managedIngressListener(t *testing.T, managed servicestream.Stream, visitors
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		_ = server.Drain(ctx)
-		_ = connector.Close()
+		_ = server.Close()
 		if err := <-done; err != nil {
 			t.Error(err)
 		}

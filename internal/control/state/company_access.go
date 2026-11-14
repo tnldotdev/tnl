@@ -504,15 +504,14 @@ func closeInactiveCompanySubjects(ctx context.Context, tx pgx.Tx, q *controlstat
 			return err
 		}
 	}
-	rows, err = tx.Query(ctx, `SELECT p.id,COALESCE(g.service_id,'') FROM control.publisher_identities p LEFT JOIN control.publisher_grants g ON g.publisher_identity_id=p.id WHERE p.team_id=$1 AND p.ownership='member' AND NOT control.active_membership(p.owner_membership_id,$2) ORDER BY p.id,g.id`, team, now)
+	rows, err = tx.Query(ctx, `SELECT p.id FROM control.publisher_identities p WHERE p.team_id=$1 AND p.ownership='member' AND NOT control.active_membership(p.owner_membership_id,$2) ORDER BY p.id`, team, now)
 	if err != nil {
 		return err
 	}
-	type publication struct{ id, service string }
-	var publishers []publication
+	var publishers []string
 	for rows.Next() {
-		var p publication
-		if err = rows.Scan(&p.id, &p.service); err != nil {
+		var p string
+		if err = rows.Scan(&p); err != nil {
 			rows.Close()
 			return err
 		}
@@ -524,19 +523,14 @@ func closeInactiveCompanySubjects(ctx context.Context, tx pgx.Tx, q *controlstat
 		return err
 	}
 	for _, p := range publishers {
-		if p.service != "" {
-			err = closeRevokedPrivatePublication(ctx, tx, q, p.service, p.id, "", now)
-			if err != nil {
-				return err
-			}
+		if err = closePublisherServiceRuns(ctx, tx, q, p, "", now); err != nil {
+			return err
 		}
 	}
 	// public routing changes commit with the authorization mutation.
 	for _, p := range publishers {
-		if p.service == "" {
-			if err = closeRevokedPublicPublications(ctx, tx, q, p.id, "", now); err != nil {
-				return err
-			}
+		if err = closeRevokedPublicPublications(ctx, tx, q, p, "", now); err != nil {
+			return err
 		}
 	}
 	if err = pending.publish(ctx, q); err != nil {

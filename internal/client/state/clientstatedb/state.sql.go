@@ -200,6 +200,7 @@ INSERT INTO local_tunnels (
     project_root,
     service,
     service_protocol,
+    service_id,
     hostname,
     target,
     framework,
@@ -221,19 +222,20 @@ INSERT INTO local_tunnels (
     ?5,
     nullif(?6, ''),
     ?7,
+    ?8,
     NULL,
-    nullif(?8, ''),
+    nullif(?9, ''),
     NULL,
     NULL,
     NULL,
     'starting',
-    ?9,
-    ?9,
-    ?9,
     ?10,
-    NULL,
+    ?10,
+    ?10,
     ?11,
-    ?12
+    NULL,
+    ?12,
+    ?13
 )
 `
 
@@ -245,6 +247,7 @@ type InsertTunnelParams struct {
 	ProjectRoot          string
 	Service              interface{}
 	ServiceProtocol      string
+	ServiceID            sql.NullString
 	Target               interface{}
 	Now                  int64
 	LeaseExpiresAt       int64
@@ -261,6 +264,7 @@ func (q *Queries) InsertTunnel(ctx context.Context, arg InsertTunnelParams) erro
 		arg.ProjectRoot,
 		arg.Service,
 		arg.ServiceProtocol,
+		arg.ServiceID,
 		arg.Target,
 		arg.Now,
 		arg.LeaseExpiresAt,
@@ -271,7 +275,7 @@ func (q *Queries) InsertTunnel(ctx context.Context, arg InsertTunnelParams) erro
 }
 
 const listOpenTunnels = `-- name: ListOpenTunnels :many
-SELECT id, command, process_id, server_origin, project_root, service, service_protocol, primary_project_root, integration_namespace, hostname, target, framework, public_url_id, publish_run_number, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, failure_code
+SELECT id, command, process_id, server_origin, project_root, service, service_protocol, service_id, primary_project_root, integration_namespace, hostname, target, framework, public_url_id, publish_run_number, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, failure_code
 FROM local_tunnels
 WHERE stopped_at IS NULL
 ORDER BY started_at, id
@@ -294,6 +298,7 @@ func (q *Queries) ListOpenTunnels(ctx context.Context) ([]LocalTunnel, error) {
 			&i.ProjectRoot,
 			&i.Service,
 			&i.ServiceProtocol,
+			&i.ServiceID,
 			&i.PrimaryProjectRoot,
 			&i.IntegrationNamespace,
 			&i.Hostname,
@@ -323,7 +328,7 @@ func (q *Queries) ListOpenTunnels(ctx context.Context) ([]LocalTunnel, error) {
 }
 
 const listOpenTunnelsForProject = `-- name: ListOpenTunnelsForProject :many
-SELECT id, command, process_id, server_origin, project_root, service, service_protocol, primary_project_root, integration_namespace, hostname, target, framework, public_url_id, publish_run_number, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, failure_code
+SELECT id, command, process_id, server_origin, project_root, service, service_protocol, service_id, primary_project_root, integration_namespace, hostname, target, framework, public_url_id, publish_run_number, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, failure_code
 FROM local_tunnels
 WHERE stopped_at IS NULL AND project_root = ?1
 ORDER BY started_at, id
@@ -346,6 +351,7 @@ func (q *Queries) ListOpenTunnelsForProject(ctx context.Context, projectRoot str
 			&i.ProjectRoot,
 			&i.Service,
 			&i.ServiceProtocol,
+			&i.ServiceID,
 			&i.PrimaryProjectRoot,
 			&i.IntegrationNamespace,
 			&i.Hostname,

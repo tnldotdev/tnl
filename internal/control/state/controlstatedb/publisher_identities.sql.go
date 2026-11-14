@@ -32,6 +32,33 @@ func (q *Queries) ClaimPublisherAssertion(ctx context.Context, arg ClaimPublishe
 	return result.RowsAffected(), nil
 }
 
+const findPublisherAllocation = `-- name: FindPublisherAllocation :one
+SELECT service_id, publisher_identity_id, publisher_grant_id, invocation_id, deployment_id, required_temporary_approval, requested_expires_at FROM control.publisher_namespace_allocations
+WHERE publisher_identity_id=$1
+AND publisher_grant_id=$2 AND invocation_id=$3
+`
+
+type FindPublisherAllocationParams struct {
+	PublisherIdentityID string
+	PublisherGrantID    string
+	InvocationID        string
+}
+
+func (q *Queries) FindPublisherAllocation(ctx context.Context, arg FindPublisherAllocationParams) (ControlPublisherNamespaceAllocation, error) {
+	row := q.db.QueryRow(ctx, findPublisherAllocation, arg.PublisherIdentityID, arg.PublisherGrantID, arg.InvocationID)
+	var i ControlPublisherNamespaceAllocation
+	err := row.Scan(
+		&i.ServiceID,
+		&i.PublisherIdentityID,
+		&i.PublisherGrantID,
+		&i.InvocationID,
+		&i.DeploymentID,
+		&i.RequiredTemporaryApproval,
+		&i.RequestedExpiresAt,
+	)
+	return i, err
+}
+
 const getPublisherAccess = `-- name: GetPublisherAccess :one
 SELECT access_token_digest, publisher_identity_id, grant_id, key_id, created_at, expires_at FROM control.publisher_access_tokens WHERE access_token_digest = $1
 `
@@ -51,18 +78,20 @@ func (q *Queries) GetPublisherAccess(ctx context.Context, accessTokenDigest []by
 }
 
 const getPublisherAllocation = `-- name: GetPublisherAllocation :one
-SELECT public_url_id, publisher_identity_id, publisher_grant_id, invocation_id, deployment_id FROM control.publisher_namespace_allocations WHERE public_url_id = $1
+SELECT service_id, publisher_identity_id, publisher_grant_id, invocation_id, deployment_id, required_temporary_approval, requested_expires_at FROM control.publisher_namespace_allocations WHERE service_id = $1
 `
 
-func (q *Queries) GetPublisherAllocation(ctx context.Context, publicUrlID string) (ControlPublisherNamespaceAllocation, error) {
-	row := q.db.QueryRow(ctx, getPublisherAllocation, publicUrlID)
+func (q *Queries) GetPublisherAllocation(ctx context.Context, serviceID string) (ControlPublisherNamespaceAllocation, error) {
+	row := q.db.QueryRow(ctx, getPublisherAllocation, serviceID)
 	var i ControlPublisherNamespaceAllocation
 	err := row.Scan(
-		&i.PublicURLID,
+		&i.ServiceID,
 		&i.PublisherIdentityID,
 		&i.PublisherGrantID,
 		&i.InvocationID,
 		&i.DeploymentID,
+		&i.RequiredTemporaryApproval,
+		&i.RequestedExpiresAt,
 	)
 	return i, err
 }
@@ -184,25 +213,29 @@ func (q *Queries) InsertPublisherAccess(ctx context.Context, arg InsertPublisher
 }
 
 const insertPublisherAllocation = `-- name: InsertPublisherAllocation :exec
-INSERT INTO control.publisher_namespace_allocations(public_url_id, publisher_identity_id, publisher_grant_id, invocation_id, deployment_id)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO control.publisher_namespace_allocations(service_id, publisher_identity_id, publisher_grant_id, invocation_id, deployment_id, required_temporary_approval, requested_expires_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 `
 
 type InsertPublisherAllocationParams struct {
-	PublicURLID         string
-	PublisherIdentityID string
-	PublisherGrantID    string
-	InvocationID        string
-	DeploymentID        pgtype.Text
+	ServiceID                 string
+	PublisherIdentityID       string
+	PublisherGrantID          string
+	InvocationID              string
+	DeploymentID              pgtype.Text
+	RequiredTemporaryApproval string
+	RequestedExpiresAt        pgtype.Timestamptz
 }
 
 func (q *Queries) InsertPublisherAllocation(ctx context.Context, arg InsertPublisherAllocationParams) error {
 	_, err := q.db.Exec(ctx, insertPublisherAllocation,
-		arg.PublicURLID,
+		arg.ServiceID,
 		arg.PublisherIdentityID,
 		arg.PublisherGrantID,
 		arg.InvocationID,
 		arg.DeploymentID,
+		arg.RequiredTemporaryApproval,
+		arg.RequestedExpiresAt,
 	)
 	return err
 }

@@ -61,7 +61,7 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 	person, team := owner.Identity.Identity.ID, owner.Identity.Memberships[0].TeamID
 	digest := sha256.Sum256([]byte("db.internal\x00system\x00"))
 	metadata := controlstate.ServiceMetadata{Protocol: "mysql", PublisherPool: true, TrustRevision: 1, TLS: &controlstate.ServiceTargetTLS{Hostname: "db.internal", System: true, Digest: hex.EncodeToString(digest[:])}}
-	service, err := d.CreateServiceAt(ctx, team, person, "common-database", "create", controlstate.ServicePlacement{}, now, metadata)
+	service, err := d.CreateServiceAt(ctx, team, person, "common-database", "create", controlstate.ServicePlacement{}, now, metadata, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

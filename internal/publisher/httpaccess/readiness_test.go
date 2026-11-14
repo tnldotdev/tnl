@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
-	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
+	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 )
 
 func readinessTestRun() ReadinessRun {
@@ -30,7 +30,7 @@ func TestReadinessProofFencesEveryRunAndRequestFact(t *testing.T) {
 			}
 			other := run
 			r := httptest.NewRequest(http.MethodGet, "/health", nil)
-			r.Header.Set(publisherproxy.ReadinessProbeHeader, proof.HeaderValue())
+			r.Header.Set(httpstream.ReadinessProbeHeader, proof.HeaderValue())
 			switch boundary {
 			case "resource":
 				other.Subject.ID = "svc_" + strings.Repeat("T", 22)
@@ -53,15 +53,15 @@ func TestReadinessProofFencesEveryRunAndRequestFact(t *testing.T) {
 			case "upgrade":
 				r.Header.Set("Upgrade", "websocket")
 			case "duplicate":
-				r.Header.Add(publisherproxy.ReadinessProbeHeader, proof.HeaderValue())
+				r.Header.Add(httpstream.ReadinessProbeHeader, proof.HeaderValue())
 			case "secret":
-				r.Header.Set(publisherproxy.ReadinessProbeHeader, "wrong")
+				r.Header.Set(httpstream.ReadinessProbeHeader, "wrong")
 			}
 			if proof.Consume(r, other) {
 				t.Fatal("proof crossed", boundary)
 			}
 			valid := httptest.NewRequest(http.MethodGet, "/health", nil)
-			valid.Header.Set(publisherproxy.ReadinessProbeHeader, proof.HeaderValue())
+			valid.Header.Set(httpstream.ReadinessProbeHeader, proof.HeaderValue())
 			if !proof.Consume(valid, run) || proof.Consume(valid, run) || proof.HeaderValue() != "" {
 				t.Fatal("rejection spent the proof or valid use was not single-use")
 			}
@@ -82,12 +82,12 @@ func TestReadinessProofExpiresAtDeadlineAndRenewalReplacesSecret(t *testing.T) {
 			t.Fatal("renewal did not replace the secret", err)
 		}
 		request := httptest.NewRequest(http.MethodGet, "/health", nil)
-		request.Header.Set(publisherproxy.ReadinessProbeHeader, old)
+		request.Header.Set(httpstream.ReadinessProbeHeader, old)
 		if proof.Consume(request, run) {
 			t.Fatal("renewal retained an earlier secret")
 		}
 		time.Sleep(2 * time.Minute)
-		request.Header.Set(publisherproxy.ReadinessProbeHeader, next)
+		request.Header.Set(httpstream.ReadinessProbeHeader, next)
 		if proof.Consume(request, run) {
 			t.Fatal("proof was usable at its deadline")
 		}
@@ -95,7 +95,7 @@ func TestReadinessProofExpiresAtDeadlineAndRenewalReplacesSecret(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		request.Header.Set(publisherproxy.ReadinessProbeHeader, next)
+		request.Header.Set(httpstream.ReadinessProbeHeader, next)
 		if !proof.Consume(request, run) {
 			t.Fatal("a fresh proof could not be used after expiry")
 		}
@@ -114,7 +114,7 @@ func TestReadinessProofConcurrentUseHasOneWinner(t *testing.T) {
 	for range 16 {
 		workers.Go(func() {
 			r := httptest.NewRequest(http.MethodGet, "/health", nil)
-			r.Header.Set(publisherproxy.ReadinessProbeHeader, secret)
+			r.Header.Set(httpstream.ReadinessProbeHeader, secret)
 			if proof.Consume(r, run) {
 				accepted.Add(1)
 			}

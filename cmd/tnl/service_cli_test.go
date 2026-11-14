@@ -14,6 +14,7 @@ import (
 	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/failure"
 	installedjobs "github.com/tnldotdev/tnl/internal/installed"
+	"github.com/tnldotdev/tnl/internal/security/targettrust"
 )
 
 func TestSystemServiceCommandWiring(t *testing.T) {
@@ -197,12 +198,12 @@ type testServiceRunner func(context.Context) error
 func (f testServiceRunner) Serve(ctx context.Context) error { return f(ctx) }
 
 func TestSystemServiceNativeStateOutput(t *testing.T) {
-	job := installedjobs.Job{ID: "url-012345", Name: "orders", Server: "https://control.example", PublisherIdentityID: "pub_selected", PublicURLID: "url_selected", Target: "private-target-secret", Protocol: "postgres", TargetCAPEM: []byte("trust-secret"), Enabled: true, Status: installedjobs.Status{State: "ready", RunNumber: 42}}
+	job := installedjobs.Job{Kind: installedjobs.KindService, ID: "service-012345", Name: "orders", Server: "https://control.example", PublisherIdentityID: "pub_selected", ServiceID: "svc_selected", Target: "private-target-secret", Protocol: "postgres", Trust: &targettrust.Snapshot{PEM: []byte("trust-secret")}, Enabled: true, Status: installedjobs.Status{State: "ready", RunNumber: 42, Address: "orders.example:25443"}}
 	var output bytes.Buffer
 	if err := renderSystemJobs(&output, "tnl service list", []installedjobs.Job{job}, ""); err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"orders", "url-012345", "postgres", "ready", "42", "url_selected", "pub_selected"} {
+	for _, expected := range []string{"orders", "service-012345", "postgres", "ready", "service run", "42", "svc_selected", "pub_selected", "orders.example:25443"} {
 		if !strings.Contains(output.String(), expected) {
 			t.Fatalf("publication field missing: %s", expected)
 		}
@@ -219,5 +220,34 @@ func TestSystemServiceNativeStateOutput(t *testing.T) {
 				t.Fatal("non-ASCII output")
 			}
 		}
+	}
+}
+
+func TestSystemServiceHTTPAndConnectorUseServiceIdentity(t *testing.T) {
+	for _, kind := range []installedjobs.Kind{installedjobs.KindService, installedjobs.KindConnector} {
+		t.Run(string(kind), func(t *testing.T) {
+			job := installedjobs.Job{Kind: kind, ID: "selected", Name: "web", ServiceID: "svc_web", Protocol: "http",
+				Server: "https://control.example", PublisherIdentityID: "pub_web", Target: "127.0.0.1:23080",
+				Status: installedjobs.Status{State: installedjobs.JobReady, RunNumber: 3, Address: "https://web.example"}}
+			var output bytes.Buffer
+			if err := renderSystemJobs(&output, "tnl service show", []installedjobs.Job{job}, job.ID); err != nil {
+				t.Fatal(err)
+			}
+			for _, expected := range []string{"service ID", "svc_web", "http"} {
+				if !strings.Contains(output.String(), expected) {
+					t.Fatal("installed HTTP job lost its service identity", output.String())
+				}
+			}
+			if strings.Contains(output.String(), "public URL") || strings.Contains(output.String(), "publish run") {
+				t.Fatal("installed HTTP job rendered a retired resource family", output.String())
+			}
+			if kind == installedjobs.KindConnector {
+				if !strings.Contains(output.String(), "127.0.0.1:23080") || strings.Contains(output.String(), "https://web.example") {
+					t.Fatal("connector listener was replaced by a public endpoint", output.String())
+				}
+			} else if !strings.Contains(output.String(), "https://web.example") || strings.Contains(output.String(), job.Target) {
+				t.Fatal("publisher output lost its address or disclosed its target", output.String())
+			}
+		})
 	}
 }

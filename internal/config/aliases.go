@@ -12,14 +12,14 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 )
 
-// Alias names a saved public URL serving one configured entry service.
+// Alias names an HTTP service serving one configured entry service.
 // an omitted visitor policy remains restricted, independent of the entry service.
 type Alias struct {
-	Service   string  `json:"service" yaml:"service"`
-	Name      *string `json:"name,omitempty" yaml:"name,omitempty"`
-	Domain    *string `json:"domain,omitempty" yaml:"domain,omitempty"`
-	PublicURL *string `json:"public_url,omitempty" yaml:"public_url,omitempty"`
-	Access    *Access `json:"access,omitempty" yaml:"access,omitempty"`
+	Service  string  `json:"service" yaml:"service"`
+	Name     *string `json:"name,omitempty" yaml:"name,omitempty"`
+	Domain   *string `json:"domain,omitempty" yaml:"domain,omitempty"`
+	Hostname *string `json:"hostname,omitempty" yaml:"hostname,omitempty"`
+	Access   *Access `json:"access,omitempty" yaml:"access,omitempty"`
 }
 
 func (a Alias) RelativeName(key string) string {
@@ -32,32 +32,24 @@ func (a Alias) RelativeName(key string) string {
 // DefinitionBytes normalizes equivalent relative names and IP ordering for
 // agreement between live worktrees. local targets are not alias declarations.
 func (a Alias) DefinitionBytes(key string) ([]byte, [32]byte, error) {
-	overrideVisitorPolicy := a.Access != nil
-	if a.PublicURL == nil {
+	if err := validateServiceEndpoint(a.Hostname, a.Domain); err != nil {
+		return nil, [32]byte{}, err
+	}
+	if a.Hostname == nil {
 		name := a.RelativeName(key)
 		a.Name = &name
-	} else {
-		hostname, err := naming.ParseExactPublicURL(*a.PublicURL)
-		if err != nil {
-			return nil, [32]byte{}, err
-		}
-		publicURL := "https://" + hostname
-		a.PublicURL = &publicURL
 	}
 	if a.Access != nil {
 		policy := *a.Access
 		policy.IP = slices.Sorted(slices.Values(policy.IP))
 		a.Access = &policy
 	}
-	encoded, err := json.Marshal(struct {
-		Alias
-		OverrideVisitorPolicy bool `json:"override_visitor_policy"`
-	}{a, overrideVisitorPolicy})
+	encoded, err := json.Marshal(a)
 	return encoded, sha256.Sum256(encoded), err
 }
 
 // ValidateAliases validates local declarations without resolving a member
-// namespace, consulting server policy, or creating public URLs.
+// namespace, consulting server policy, or creating services.
 func ValidateAliases(config TNL) error {
 	if len(config.Aliases) > 32 {
 		return errors.New("aliases may contain at most 32 entries")
@@ -75,23 +67,26 @@ func ValidateAliases(config TNL) error {
 		if Protocol(service) != "http" {
 			return fmt.Errorf("aliases.%s: service must use protocol http", key)
 		}
-		if !IsPublicService(service) || SelectedDeployment(config) != "local" {
-			return fmt.Errorf("aliases.%s: service must use the local publisher and an explicit public_url block", key)
+		if SelectedDeployment(config) != "local" {
+			return fmt.Errorf("aliases.%s: service must use the local publisher", key)
 		}
-		if alias.Name != nil && alias.PublicURL != nil {
-			return fmt.Errorf("aliases.%s: name and public_url are mutually exclusive", key)
+		if alias.Name != nil && alias.Hostname != nil {
+			return fmt.Errorf("aliases.%s: name and hostname are mutually exclusive", key)
 		}
-		// public URL validation owns domain, exact hostname, and IP policy rules.
-		if err := validateTunnel(&Tunnel{Domain: alias.Domain, PublicURL: alias.PublicURL, Access: alias.Access}); err != nil {
+		if err := validateServiceEndpoint(alias.Hostname, alias.Domain); err != nil {
 			return fmt.Errorf("aliases.%s: %w", key, err)
 		}
-		identity := ""
-		if alias.PublicURL != nil {
-			if alias.Domain != nil {
-				return fmt.Errorf("aliases.%s: public_url selects its domain; omit domain", key)
+		if alias.Access != nil {
+			if err := alias.Access.Validate(); err != nil {
+				return fmt.Errorf("aliases.%s.access: %w", key, err)
 			}
-			hostname, _ := naming.ParseExactPublicURL(*alias.PublicURL)
-			identity = hostname
+		}
+		identity := ""
+		if alias.Hostname != nil {
+			if alias.Domain != nil {
+				return fmt.Errorf("aliases.%s: hostname selects its domain; omit domain", key)
+			}
+			identity = *alias.Hostname
 		} else {
 			name := alias.RelativeName(key)
 			canonical, err := naming.CanonicalizeHostname(name)
@@ -99,7 +94,7 @@ func ValidateAliases(config TNL) error {
 				return fmt.Errorf("aliases.%s: name must use lowercase ASCII DNS labels without a trailing dot", key)
 			}
 			domain := ""
-			for _, value := range []*string{domainOf(config.Tunnel), domainOf(service.Tunnel), alias.Domain} {
+			for _, value := range []*string{service.Domain, alias.Domain} {
 				if value != nil {
 					domain = *value
 				}
@@ -112,11 +107,4 @@ func ValidateAliases(config TNL) error {
 		hostnames[identity] = key
 	}
 	return nil
-}
-
-func domainOf(tunnel *Tunnel) *string {
-	if tunnel == nil {
-		return nil
-	}
-	return tunnel.Domain
 }

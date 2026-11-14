@@ -13,7 +13,7 @@ import (
 // and their optional fields never remain part of its authorization decisions.
 type nativeScope struct {
 	clientID, keyID, grantID, teamID string
-	kind                             authorityv1.PublisherEnrollmentResultKind
+	kind                             string
 	publicURLID, serviceID           string
 	domainID, namespace              string
 }
@@ -22,7 +22,7 @@ func newNativeScope(i authorityv1.PublisherEnrollmentResult) (nativeScope, error
 	if !opaqueid.Valid(i.ClientId, opaqueid.PublisherIdentityPrefix) || !opaqueid.Valid(i.KeyId, opaqueid.PublisherIdentityKeyPrefix) || !opaqueid.Valid(i.GrantId, opaqueid.PublisherGrantPrefix) || i.TeamId == "" || !i.Kind.Valid() {
 		return nativeScope{}, ErrScope
 	}
-	s := nativeScope{clientID: i.ClientId, keyID: i.KeyId, grantID: i.GrantId, teamID: i.TeamId, kind: i.Kind}
+	s := nativeScope{clientID: i.ClientId, keyID: i.KeyId, grantID: i.GrantId, teamID: i.TeamId, kind: string(i.Kind)}
 	switch i.Kind {
 	case authorityv1.SavedPublicUrl:
 		if i.PublicUrlId == nil || !opaqueid.Valid(*i.PublicUrlId, opaqueid.PublicURLPrefix) || i.ServiceId != nil || i.Namespace != nil || i.DomainId != nil {
@@ -45,19 +45,6 @@ func newNativeScope(i authorityv1.PublisherEnrollmentResult) (nativeScope, error
 		s.domainID, s.namespace = *i.DomainId, canonical
 	}
 	return s, nil
-}
-
-func (s nativeScope) enrollment() authorityv1.PublisherEnrollmentResult {
-	i := authorityv1.PublisherEnrollmentResult{ClientId: s.clientID, KeyId: s.keyID, GrantId: s.grantID, TeamId: s.teamID, Kind: s.kind}
-	switch s.kind {
-	case authorityv1.SavedPublicUrl:
-		i.PublicUrlId = &s.publicURLID
-	case authorityv1.Service:
-		i.ServiceId = &s.serviceID
-	case authorityv1.Namespace:
-		i.DomainId, i.Namespace = &s.domainID, &s.namespace
-	}
-	return i
 }
 
 func copyOptional[T any](value *T) *T {

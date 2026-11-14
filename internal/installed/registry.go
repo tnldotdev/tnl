@@ -25,8 +25,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
+	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
 	"github.com/tnldotdev/tnl/internal/region"
@@ -56,7 +56,6 @@ type OpenOptions struct {
 type Kind string
 
 const (
-	KindPublicURL  Kind = "public_url"
 	KindService    Kind = "service"
 	KindConnector  Kind = "connector"
 	KindDeployment Kind = "deployment"
@@ -83,19 +82,16 @@ type Job struct {
 	Server              string                                 `json:"server"`
 	PublisherIdentityID string                                 `json:"publisher_identity_id"`
 	GrantID             string                                 `json:"grant_id"`
-	PublicURLID         string                                 `json:"public_url_id"`
 	Target              string                                 `json:"target"`
 	Protocol            config.ProtocolName                    `json:"protocol"`
-	TargetTLSName       string                                 `json:"target_tls_name,omitempty"`
-	VerifyReadiness     bool                                   `json:"verify_readiness,omitempty"`
 	ReadinessPath       string                                 `json:"readiness_path,omitempty"`
-	// trust is captured at install time, so boot never depends on a user's files.
-	TargetCAPEM []byte                   `json:"target_ca_pem,omitempty"`
-	ServerCAPEM []byte                   `json:"server_ca_pem,omitempty"`
-	Limits      applicationlimits.Limits `json:"limits"`
-	Enabled     bool                     `json:"enabled"`
-	Revision    uint64                   `json:"revision"`
-	Status      Status                   `json:"status"`
+	// target trust is captured in Trust; control-server roots are independent.
+	ServerCAPEM    []byte                   `json:"server_ca_pem,omitempty"`
+	StreamCapacity int32                    `json:"stream_capacity,omitempty"`
+	Traffic        *trafficlimits.Selection `json:"traffic,omitempty"`
+	Enabled        bool                     `json:"enabled"`
+	Revision       uint64                   `json:"revision"`
+	Status         Status                   `json:"status"`
 }
 
 // String keeps private key material out of incidental diagnostic formatting.
@@ -108,7 +104,7 @@ func (j Job) GoString() string { return j.String() }
 
 // status contains approved observations only; errors and tokens never enter it.
 type Status struct {
-	PublicURL        string   `json:"public_url,omitempty"`
+	Address          string   `json:"address,omitempty"`
 	ObservedRevision int64    `json:"observed_revision,omitempty"`
 	State            JobState `json:"state"`
 	Failure          string   `json:"failure,omitempty"`
@@ -240,7 +236,7 @@ func (r *Registry) Install(ctx context.Context, job Job, identity authorityv1.Pu
 	return r.update(ctx, func(jobs *[]Job) error {
 		for i, existing := range *jobs {
 			if existing.ID == job.ID {
-				if existing.Server != job.Server || existing.PublisherIdentityID != job.PublisherIdentityID || existing.GrantID != job.GrantID || existing.PublicURLID != job.PublicURLID || existing.ServiceID != job.ServiceID || existing.Kind != job.Kind {
+				if existing.Server != job.Server || existing.PublisherIdentityID != job.PublisherIdentityID || existing.GrantID != job.GrantID || existing.ServiceID != job.ServiceID || existing.Kind != job.Kind {
 					return ErrScope
 				}
 				loaded, key, _, err := r.signingIdentity(ctx, existing)
@@ -258,7 +254,7 @@ func (r *Registry) Install(ctx context.Context, job Job, identity authorityv1.Pu
 				(*jobs)[i] = job
 				return nil
 			}
-			if existing.Server == job.Server && existing.Kind == job.Kind && (job.PublicURLID != "" && existing.PublicURLID == job.PublicURLID || job.ServiceID != "" && existing.ServiceID == job.ServiceID) {
+			if existing.Server == job.Server && existing.Kind == job.Kind && existing.ServiceID == job.ServiceID {
 				return ErrJobExists
 			}
 			// independently supervised jobs need independent runtime identities.
@@ -289,8 +285,7 @@ func (r *Registry) Install(ctx context.Context, job Job, identity authorityv1.Pu
 	})
 }
 
-// JobKey keeps the resource kind in the key, so a future service ID
-// cannot collide with a public URL ID on the same server.
+// JobKey separates publisher, connector, and deployment jobs on the same server.
 func JobKey(server, kind, resourceID string) string {
 	if canonical, err := clientstate.CanonicalServer(server); err == nil {
 		server = canonical
@@ -300,10 +295,6 @@ func JobKey(server, kind, resourceID string) string {
 		kind = "dpl"
 	}
 	return kind + "-" + hex.EncodeToString(digest[:12])
-}
-
-func PublicURLJobKey(server, publicURLID string) string {
-	return JobKey(server, "url", publicURLID)
 }
 
 func ServiceJobKey(server, serviceID string) string {
@@ -357,8 +348,6 @@ func matches(job Job, identity authorityv1.PublisherEnrollmentResult) bool {
 	switch job.Kind {
 	case KindService:
 		return identity.Kind == authorityv1.Service && identity.ServiceId != nil && *identity.ServiceId == job.ServiceID && identity.PublicUrlId == nil && identity.Namespace == nil && identity.DomainId == nil
-	case KindPublicURL:
-		return identity.Kind == authorityv1.SavedPublicUrl && identity.PublicUrlId != nil && *identity.PublicUrlId == job.PublicURLID && identity.ServiceId == nil && identity.Namespace == nil && identity.DomainId == nil
 	default:
 		return false
 	}
@@ -440,18 +429,26 @@ func (r *Registry) ResolveJob(ctx context.Context, selected string) (Job, error)
 }
 
 func (r *Registry) status(ctx context.Context, id string, revision uint64, status Status) error {
+	_, err := r.updateStatus(ctx, id, revision, status)
+	return err
+}
+
+func (r *Registry) updateStatus(ctx context.Context, id string, revision uint64, status Status) (bool, error) {
 	if !status.State.Valid() {
-		return ErrScope
+		return false, ErrScope
 	}
-	return r.update(ctx, func(jobs *[]Job) error {
+	applied := false
+	err := r.update(ctx, func(jobs *[]Job) error {
 		for i := range *jobs {
 			if (*jobs)[i].ID == id && (*jobs)[i].Revision == revision {
 				(*jobs)[i].Status = status
+				applied = true
 				return nil
 			}
 		}
 		return nil // an observation from replaced work must not overwrite new state.
 	})
+	return applied, err
 }
 
 func (r *Registry) update(ctx context.Context, change func(*[]Job) error) error {
@@ -540,14 +537,14 @@ func (r *Registry) WaitStopped(ctx context.Context, id string) error {
 
 func validateJob(job *Job) error {
 	preferences, err := region.Preferences(job.PreferredRegions)
-	if err != nil || len(preferences) != 0 && job.Kind != KindPublicURL && job.Kind != KindService {
+	if err != nil || len(preferences) != 0 && job.Kind != KindService {
 		return ErrScope
 	}
 	job.PreferredRegions = preferences
 	if !job.Status.State.Valid() {
 		return ErrScope
 	}
-	if job.ReadinessPath != "" && (job.Kind != KindPublicURL || job.Protocol != config.ProtocolHTTP || job.ReadinessPath != "/" && !targetsyntax.ValidMountPrefix(job.ReadinessPath)) {
+	if job.ReadinessPath != "" && (job.Kind != KindService || job.Protocol != config.ProtocolHTTP || job.ReadinessPath != "/" && !targetsyntax.ValidMountPrefix(job.ReadinessPath)) {
 		return ErrScope
 	}
 	if !naming.ValidServiceName(job.ID) || len(job.Name) > 128 || strings.TrimSpace(job.Name) != job.Name || strings.ContainsAny(job.Name, "\x00\r\n") || job.Server == "" {
@@ -559,7 +556,8 @@ func validateJob(job *Job) error {
 		job.Kind != KindConnector && (job.IdentityID != "" || job.StateDir != "") ||
 		job.Kind != KindService && job.Kind != KindConnector && job.Endpoint != nil ||
 		job.Kind != KindService && (job.Project != nil || job.ProjectService != "" || job.PublisherPool) ||
-		(job.Kind == KindPublicURL || job.Kind == KindDeployment) && (job.Trust != nil || job.TrustRevision != 0) {
+		job.Kind == KindDeployment && (job.Trust != nil || job.TrustRevision != 0) ||
+		job.Kind != KindService && (job.StreamCapacity != 0 || job.Traffic != nil) {
 		return ErrScope
 	}
 	switch job.Kind {
@@ -574,27 +572,28 @@ func validateJob(job *Job) error {
 			job.DeploymentMember.DeploymentName == "local" || !naming.ValidServiceName(job.DeploymentMember.DeploymentName) ||
 			!opaqueid.Valid(job.PublisherIdentityID, opaqueid.PublisherIdentityPrefix) || !opaqueid.Valid(job.DeploymentMember.KeyId, opaqueid.PublisherIdentityKeyPrefix) ||
 			job.DeploymentMember.TeamId == "" || job.DeploymentMember.DeploymentId == "" || job.DeploymentMember.ProjectKey == "" ||
-			job.ServiceID != "" || job.PublicURLID != "" || job.Target != "" || job.GrantID != "" || job.Protocol != "" ||
-			job.VerifyReadiness ||
-			job.TargetTLSName != "" || len(job.TargetCAPEM) != 0 || job.Limits != (applicationlimits.Limits{}) {
+			job.ServiceID != "" || job.Target != "" || job.GrantID != "" || job.Protocol != "" {
 			return ErrScope
 		}
 	case KindConnector:
-		if !opaqueid.Valid(job.ServiceID, opaqueid.ServicePrefix) || job.PublicURLID != "" || job.PublisherIdentityID != "" || job.GrantID != "" ||
+		if !opaqueid.Valid(job.ServiceID, opaqueid.ServicePrefix) || job.PublisherIdentityID != "" || job.GrantID != "" ||
 			!opaqueid.Valid(job.IdentityID, opaqueid.IdentityPrefix) || !filepath.IsAbs(job.StateDir) || job.TrustRevision < 1 ||
-			job.Limits != (applicationlimits.Limits{}) || !job.Protocol.Valid() {
+			!job.Protocol.Valid() {
 			return ErrScope
 		}
-	case KindService, KindPublicURL:
+	case KindService:
 		if !opaqueid.Valid(job.PublisherIdentityID, opaqueid.PublisherIdentityPrefix) || !opaqueid.Valid(job.GrantID, opaqueid.PublisherGrantPrefix) {
 			return ErrScope
 		}
-		if job.Kind == KindService {
-			if !opaqueid.Valid(job.ServiceID, opaqueid.ServicePrefix) || job.PublicURLID != "" || job.TrustRevision < 1 || !job.Protocol.Valid() || job.Project == nil && job.ProjectService != "" {
+		if !opaqueid.Valid(job.ServiceID, opaqueid.ServicePrefix) || job.TrustRevision < 1 || !job.Protocol.Valid() || job.Project == nil && job.ProjectService != "" ||
+			job.StreamCapacity < 0 || job.StreamCapacity > 4096 {
+			return ErrScope
+		}
+		if job.Traffic != nil {
+			if err := job.Traffic.Validate(); err != nil {
 				return ErrScope
 			}
-		} else if !opaqueid.Valid(job.PublicURLID, opaqueid.PublicURLPrefix) || job.Protocol != config.ProtocolHTTP || job.ServiceID != "" {
-			return ErrScope
+			job.Traffic = job.Traffic.Clone()
 		}
 	default:
 		return ErrScope
@@ -609,9 +608,6 @@ func validateJob(job *Job) error {
 	}
 	if job.Kind == KindDeployment {
 		return nil
-	}
-	if err := job.Limits.Validate(); err != nil {
-		return ErrScope
 	}
 	return validateTarget(job)
 }

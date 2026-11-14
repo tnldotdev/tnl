@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/benchworkload"
-	"github.com/tnldotdev/tnl/internal/publisher"
 )
 
 func activateSeparatedPublishers(t *testing.T, database *sql.DB, routes int) separatedPublishers {
@@ -22,24 +21,24 @@ func activateSeparatedPublishers(t *testing.T, database *sql.DB, routes int) sep
 	}
 	defer stopTrace()
 	separatedWrite(t, "publish.start", activation)
-	publishers := separatedPublishers{URLs: make([]string, routes), Ready: make([]publisher.Event, routes)}
+	publishers := separatedPublishers{URLs: make([]string, routes), Runs: make([]benchworkload.ServiceRun, routes)}
 	// each publisher retains its own readiness deadline, starting at launch.
 	parallel := min(routes, *runtimeLoadStartParallel)
 	waves := (routes + parallel - 1) / parallel
 	for shard := range separatedNames("publishers") {
 		var result separatedPublishers
 		separatedWait(t, separatedPublisherShardKey(shard, "ready"), time.Duration(waves)*(*runtimeLoadReadyTimeout)+10*time.Second, &result)
-		if len(result.URLs) != routes || len(result.Ready) != routes {
+		if len(result.URLs) != routes || len(result.Runs) != routes {
 			t.Fatalf("publisher shard %d has incomplete route slots", shard+1)
 		}
 		for index, url := range result.URLs {
 			if url == "" {
 				continue
 			}
-			if publishers.URLs[index] != "" || result.Ready[index].Type != publisher.EventReady || result.Ready[index].PublicURL != url {
+			if publishers.URLs[index] != "" || !result.Runs[index].Valid() || result.Runs[index].URL() != url {
 				t.Fatalf("publisher shard %d has duplicate or invalid route index %d", shard+1, index)
 			}
-			publishers.URLs[index], publishers.Ready[index] = url, result.Ready[index]
+			publishers.URLs[index], publishers.Runs[index] = url, result.Runs[index]
 		}
 		publishers.Activation = append(publishers.Activation, result.Activation...)
 		publishers.ActivationDuration = max(publishers.ActivationDuration, result.ActivationDuration)
@@ -58,13 +57,18 @@ func activateSeparatedPublishers(t *testing.T, database *sql.DB, routes int) sep
 	if *runtimeLoadScenario == "udp-fallback" {
 		separatedWait(t, "udp.cleaned", 15*time.Second, nil)
 	}
-	for _, ready := range publishers.Ready {
-		waitForReadyPublisherConnections(t, database, ready.PublicURLID, ready.PublishRunNumber, 2)
+	for _, run := range publishers.Runs {
+		ctx, cancel := context.WithTimeout(t.Context(), 25*time.Second)
+		err := separatedAwaitServiceConnections(ctx, database, []benchworkload.ServiceRun{run})
+		cancel()
+		if err != nil {
+			t.Fatalf("service %s run %d connections did not become ready: %v", run.ServiceID, run.Number, err)
+		}
 	}
 	waitForIngressRoutingCurrentWithin(t, database, len(separatedNames("ingresses")), separatedRoutingAcknowledgmentTimeout)
-	var orders, installed, distinctPublicURLs int
+	var orders, installed, distinctServices int
 	var workerAttempts int64
-	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT count(*), count(*) FILTER (WHERE state = 'installed'), count(DISTINCT public_url_id), coalesce(sum(attempts), 0) FROM control.acme_orders`).Scan(&orders, &installed, &distinctPublicURLs, &workerAttempts); err != nil {
+	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT count(*), count(*) FILTER (WHERE state = 'installed'), count(DISTINCT service_id), coalesce(sum(attempts), 0) FROM control.acme_orders WHERE service_id<>''`).Scan(&orders, &installed, &distinctServices, &workerAttempts); err != nil {
 		t.Fatal(err)
 	}
 	caOrders := separatedCAOrders(t)
@@ -78,8 +82,8 @@ func activateSeparatedPublishers(t *testing.T, database *sql.DB, routes int) sep
 	separatedArtifact(t, "activation", map[string]any{"parallel": parallel, "certificate_workers": *runtimeLoadCertificateWorkers, "launch_to_ready": durations,
 		"publishers_ready": publishers.ActivationDuration, "verified": activationElapsed, "ca_orders": caOrders, "certificate_work_attempts": workerAttempts})
 	separatedReportResources(t, "activation", activationBefore, separatedCapture(t, database, "activation-after"))
-	if orders != routes || installed != routes || distinctPublicURLs != routes || caOrders != int64(routes) {
-		t.Fatalf("duplicate/incomplete issuance: routes=%d orders=%d installed=%d distinct=%d CA=%d", routes, orders, installed, distinctPublicURLs, caOrders)
+	if orders != routes || installed != routes || distinctServices != routes || caOrders != int64(routes) {
+		t.Fatalf("duplicate/incomplete issuance: services=%d orders=%d installed=%d distinct=%d CA=%d", routes, orders, installed, distinctServices, caOrders)
 	}
 	t.Logf("separated_activation_verified routes=%d installed=%d CA_new_orders=%d elapsed=%s", routes, installed, caOrders, activationElapsed)
 	return publishers
@@ -163,7 +167,7 @@ func runSeparatedWorkloadPhases(t *testing.T, database *sql.DB, publishers separ
 		if phase == "publisher-blackhole" {
 			waitForIntegrationCondition(t, 65*time.Second, func(ctx context.Context) (bool, error) {
 				var count int
-				err := database.QueryRowContext(ctx, `SELECT count(*) FROM control.publish_run_connection_slots WHERE connected_relay_id=$1 AND state='ready'`, faultRelayID).Scan(&count)
+				err := database.QueryRowContext(ctx, `SELECT count(*) FROM control.publisher_service_connection_slots WHERE service_kind='private' AND connected_relay_id=$1 AND state='ready'`, faultRelayID).Scan(&count)
 				return count == 0, err
 			})
 			t.Logf("publisher_connection_loss_detected elapsed_since_drop=%s", time.Since(restart.Exited))
@@ -231,7 +235,7 @@ func runSeparatedWorkloadPhases(t *testing.T, database *sql.DB, publishers separ
 		if phase == "steady" && runtimeBlackhole(*runtimeLoadScenario) {
 			assertRelayOpenedVisitors(t, before, after, faultRelay)
 		}
-		// cover every live public URL, not only those sampled late in a traffic window.
+		// cover every live service, not only those sampled late in a traffic window.
 		separatedProbe(t, &sequence, benchworkload.Phase{Name: phase + "-correctness", URLs: urls})
 		if phase == "steady" && *runtimeLoadCapacityOnly && *runtimeLoadHeldStreams > 0 {
 			separatedProbe(t, &sequence, benchworkload.Phase{Name: "tunnel-held-close", URLs: publishers.URLs, CloseHeld: true})
@@ -275,8 +279,8 @@ func verifySeparatedShutdown(t *testing.T, database *sql.DB, routes int) {
 	waitForIntegrationCondition(t, 10*time.Second, func(ctx context.Context) (bool, error) {
 		var active int
 		err := database.QueryRowContext(ctx, `SELECT
-			(SELECT count(*) FROM control.publish_runs WHERE closed_at IS NULL OR assignments_open) +
-			(SELECT count(*) FROM control.publish_run_connection_slots WHERE state <> 'closed') +
+			(SELECT count(*) FROM control.service_runs WHERE closed_at IS NULL OR assignments_open) +
+			(SELECT count(*) FROM control.publisher_service_connection_slots WHERE service_kind='private' AND (state <> 'closed' OR session_open)) +
 			(SELECT coalesce(sum(reserved_slot_count), 0) FROM control.relay_service_reservations)`).Scan(&active)
 		return active == 0, err
 	})

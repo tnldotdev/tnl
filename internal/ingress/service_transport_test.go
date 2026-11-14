@@ -26,14 +26,20 @@ type serviceTransportFixture struct {
 	relayServer     *forwardingTestServer
 	ref             tunnelv1.ServicePublisherConnectionRef
 	relay           ingressv1.ServiceRelay
+	transfers       chan serviceTransportTransfer
 	close           func() error
+}
+
+type serviceTransportTransfer struct {
+	streamcopy.Result
+	err error
 }
 
 // both hops use verified TLS/yamux and real service stream acknowledgments.
 func newServiceTransportFixture(t *testing.T, ref tunnelv1.ServicePublisherConnectionRef, relay ingressv1.ServiceRelay) *serviceTransportFixture {
 	t.Helper()
 	material := newForwardingTestMaterial(t)
-	f := &serviceTransportFixture{ref: ref, relay: relay}
+	f := &serviceTransportFixture{ref: ref, relay: relay, transfers: make(chan serviceTransportTransfer, 8)}
 	registered := make(chan *tunnel.Session, 1)
 	f.publisherServer = startForwardingTestServer(t, material, func(ctx context.Context, transport muxsession.Session) error {
 		session, _, err := tunnel.Accept(ctx, transport, func(_ context.Context, hello tunnelv1.Message) error {
@@ -113,8 +119,11 @@ func newServiceTransportFixture(t *testing.T, ref tunnelv1.ServicePublisherConne
 				if err := incoming.Accept(); err != nil {
 					return err
 				}
-				_, err = streamcopy.Copy(incoming.Stream(), upstream)
-				return err
+				copied, err := streamcopy.Copy(incoming.Stream(), upstream)
+				// a visitor stream failure does not close the shared relay session.
+				// callers assert each transfer's bytes and expected close result.
+				f.transfers <- serviceTransportTransfer{Result: copied, err: err}
+				return nil
 			}(); err != nil {
 				return err
 			}

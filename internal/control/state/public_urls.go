@@ -83,10 +83,6 @@ type CreatePublicURLRequest struct {
 	DNSAuthorityReference string
 	PolicyRevision        uint64
 	Ephemeral             bool
-	PublisherIdentityID   string
-	PublisherGrantID      string
-	PublisherInvocationID string
-	PublisherNamespace    string
 }
 
 type AuthorizedPublicURLUpdateRequest struct {
@@ -107,8 +103,6 @@ type AuthorizedPublicURLDeleteRequest struct {
 	GuestID                  string
 	PolicyRevision           uint64
 	ExpectedMutationRevision uint64
-	PublisherIdentityID      string
-	PublisherGrantID         string
 }
 
 type PublicURLPage struct {
@@ -117,7 +111,7 @@ type PublicURLPage struct {
 }
 
 func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLRequest, now time.Time) (result PublicURL, retErr error) {
-	if request.PublisherPool && (request.GuestID != "" || request.Ephemeral || request.PublisherIdentityID != "") {
+	if request.PublisherPool && (request.GuestID != "" || request.Ephemeral) {
 		return result, ErrPublicURLAccess
 	}
 	if request.ServiceProtocol == "" {
@@ -153,20 +147,10 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 			return PublicURL{}, fmt.Errorf("controlstate: create public_url: lock team: %w", err)
 		}
 	}
-	if request.PublisherIdentityID == "" {
-		if _, err := queries.LockPublicURLCreator(ctx, request.ActingIdentityID); errors.Is(err, pgx.ErrNoRows) {
-			return PublicURL{}, ErrPublicURLAccess
-		} else if err != nil {
-			return PublicURL{}, fmt.Errorf("controlstate: create public_url: lock creator: %w", err)
-		}
-	}
-	if request.PublisherIdentityID != "" {
-		publisher, domain, err := d.validatePublisherAllocation(ctx, queries, request, now)
-		if err != nil {
-			return PublicURL{}, err
-		}
-		request.DNSAuthorityReference = domain.DnsAuthorityReference.String
-		request.PublicURLScope, request.MembershipID = publisher.Scope.PublicURLScope, publisher.Scope.MembershipID
+	if _, err := queries.LockPublicURLCreator(ctx, request.ActingIdentityID); errors.Is(err, pgx.ErrNoRows) {
+		return PublicURL{}, ErrPublicURLAccess
+	} else if err != nil {
+		return PublicURL{}, fmt.Errorf("controlstate: create public_url: lock creator: %w", err)
 	}
 	policyRevision := int64(0)
 	namespace := ""
@@ -179,13 +163,6 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		IdentityID: request.ActingIdentityID, IdempotencyKey: request.IdempotencyKey,
 	})
 	if err == nil {
-		if request.PublisherIdentityID != "" {
-			allocation, lookupErr := queries.GetPublisherAllocation(ctx, existing.ID)
-			if lookupErr != nil || allocation.PublisherIdentityID != request.PublisherIdentityID || allocation.PublisherGrantID != request.PublisherGrantID ||
-				allocation.InvocationID != request.PublisherInvocationID {
-				return PublicURL{}, ErrPublicURLAccess
-			}
-		}
 		if PublicURLLifecycleState(existing.LifecycleState) == PublicURLLifecycleDeleted {
 			return PublicURL{}, ErrPublicURLIdempotency
 		}
@@ -212,12 +189,6 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return PublicURL{}, fmt.Errorf("controlstate: create public_url: read idempotent public_url: %w", err)
-	}
-	if request.PublisherIdentityID != "" {
-		request.CanonicalHostname, err = newEphemeralHostname(request.PublisherNamespace)
-		if err != nil {
-			return PublicURL{}, err
-		}
 	}
 	if request.GuestID != "" {
 		guest, err := queries.LockGuestTrialByID(ctx, request.GuestID)
@@ -261,24 +232,7 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 	if !enabled {
 		return PublicURL{}, ErrPublicURLCreationGated
 	}
-	if request.PublisherIdentityID != "" {
-		namespace = request.PublisherNamespace
-		policyRevision = positive(request.PolicyRevision)
-		_, err := queries.LockLocalTeamForSession(ctx, request.TeamID)
-		if err != nil {
-			return PublicURL{}, err
-		}
-		if err := tx.QueryRow(ctx, `SELECT ingress_pool_id, policy_revision FROM control.teams WHERE id=$1`, request.TeamID).Scan(&ingressPoolID, &policyRevision); err != nil {
-			return PublicURL{}, err
-		}
-		domain, err := queries.GetPublisherDomain(ctx, controlstatedb.GetPublisherDomainParams{ID: request.DomainID, TeamID: text(request.TeamID)})
-		if err != nil {
-			return PublicURL{}, err
-		}
-		if domain.Kind == "managed" && namespace == domain.CanonicalDomain {
-			return PublicURL{}, ErrPublicURLAccess
-		}
-	} else if request.GuestID == "" {
+	if request.GuestID == "" {
 		creation, err := authorizePublicURLCreation(ctx, queries, request)
 		if err != nil {
 			return PublicURL{}, err
@@ -318,11 +272,6 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		return PublicURL{}, fmt.Errorf("controlstate: create public_url: insert public_url: %w", err)
 	}
 	publicURLID := row.ID
-	if request.PublisherIdentityID != "" {
-		if err := queries.InsertPublisherAllocation(ctx, controlstatedb.InsertPublisherAllocationParams{PublicURLID: publicURLID, PublisherIdentityID: request.PublisherIdentityID, PublisherGrantID: request.PublisherGrantID, InvocationID: request.PublisherInvocationID}); err != nil {
-			return PublicURL{}, err
-		}
-	}
 	if request.GuestID != "" {
 		if err := queries.InsertGuestPublicURL(ctx, controlstatedb.InsertGuestPublicURLParams{
 			PublicURLID: publicURLID, GuestID: request.GuestID, CreatedAt: timestamptz(now),

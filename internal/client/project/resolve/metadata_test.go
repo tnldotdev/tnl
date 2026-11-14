@@ -73,7 +73,7 @@ func TestProjectMetadataUsesVisitorProjectionWithoutManagerConfiguration(t *test
 	}
 	protocol, public, port = "postgres", true, 20001
 	service := resolver.project.Config.Services["web"]
-	service.Protocol, service.Tunnel = &protocol, nil
+	service.Protocol = &protocol
 	service.HTTP = nil
 	service.Target.Address = testTarget("db.internal:5432")
 	resolver.project.Config.Services["web"] = service
@@ -115,6 +115,7 @@ func TestLocalPublicMetadataUsesExactWorktreeEndpoint(t *testing.T) {
 	}}
 	source, worktree := project.LocalPublicationIdentity(), project.LocalWorktreeKey()
 	public, port, status := true, 443, http.StatusOK
+	returnedProtocol := "http"
 	returnedWorktree := worktree
 	requests := 0
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -135,8 +136,8 @@ func TestLocalPublicMetadataUsesExactWorktreeEndpoint(t *testing.T) {
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"service": "api", "worktree_key": returnedWorktree, "service_kind": "service", "service_id": "svc_api",
-			"metadata": map[string]any{"protocol": "http", "trust_revision": "1", "endpoint": map[string]any{"hostname": "api.feature.tnl.dev", "port": port, "public": public}},
+			"service": "api", "worktree_key": returnedWorktree, "service_id": "svc_api",
+			"metadata": map[string]any{"protocol": returnedProtocol, "trust_revision": "1", "endpoint": map[string]any{"hostname": "api.feature.tnl.dev", "port": port, "public": public}},
 		})
 	}))
 	defer server.Close()
@@ -157,6 +158,12 @@ func TestLocalPublicMetadataUsesExactWorktreeEndpoint(t *testing.T) {
 	if err != nil || len(metadata.Services) != 0 {
 		t.Fatal("local config overrode current private exposure", metadata, err)
 	}
+	resolver.project.Config.Aliases = map[string]config.Alias{"review": {Service: "api", Hostname: new("review.tnl.dev")}}
+	metadata, err = resolver.Generate(t.Context())
+	if err != nil || metadata.Services["api"].Public || metadata.Services["api"].Hostname != "api.feature.tnl.dev" || metadata.Aliases["review"].URL != "https://review.tnl.dev" {
+		t.Fatal("alias lost its private entry service or changed its reachability", metadata, err)
+	}
+	resolver.project.Config.Aliases = nil
 	public, port = true, 0
 	if _, err := resolver.Generate(t.Context()); err == nil {
 		t.Fatal("public service without an allocated port was accepted")
@@ -165,6 +172,14 @@ func TestLocalPublicMetadataUsesExactWorktreeEndpoint(t *testing.T) {
 	if _, err := resolver.Generate(t.Context()); err == nil {
 		t.Fatal("metadata adopted another worktree endpoint")
 	}
+	returnedWorktree = worktree
+	for _, protocol := range []string{"tcp", "postgres", "mysql", "kubernetes", "", "ssh"} {
+		returnedProtocol = protocol
+		if _, err := resolver.Generate(t.Context()); err == nil {
+			t.Fatalf("local HTTP metadata accepted protocol %q", protocol)
+		}
+	}
+	returnedProtocol = "http"
 	status = http.StatusNotFound
 	metadata, err = resolver.Generate(t.Context())
 	if err != nil || len(metadata.Services) != 0 {

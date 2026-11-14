@@ -16,13 +16,14 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/config"
-	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 )
 
 func TestNormalizeProjectConfiguration(t *testing.T) {
 	input := ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"web": {Target: "http://localhost:3000"}}}
 	c, hash, err := NormalizeProjectConfiguration(input)
-	if err != nil || c.Services["web"].Protocol != "http" || c.Settings != nil || c.Services["web"].PublicURL != nil {
+	if err != nil || c.Services["web"].Protocol != "http" || c.Settings != nil || projectServicePublic(c.Services["web"]) {
 		t.Fatalf("private HTTP default: %#v %v", c, err)
 	}
 	_, hash2, err := NormalizeProjectConfiguration(ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"web": {Target: "http://localhost:3000", Name: "web", Protocol: "http"}}})
@@ -34,7 +35,7 @@ func TestNormalizeProjectConfiguration(t *testing.T) {
 	}
 	for name, c := range map[string]ProjectConfiguration{
 		"invalid settings":    {Settings: &DeploymentSettings{Description: "invalid\rdescription"}},
-		"public tcp":          {Services: map[string]ProjectServiceConfiguration{"db": {Target: "localhost:5432", Protocol: "postgres", PublicURL: &ProjectServicePublicURL{}}}},
+		"invalid hostname":    {Services: map[string]ProjectServiceConfiguration{"db": {Target: "localhost:5432", Protocol: "postgres", Hostname: "UPPER.example.test"}}},
 		"target userinfo":     {Services: map[string]ProjectServiceConfiguration{"web": {Target: "http://user:secret@localhost:3000"}}},
 		"invalid port target": {Services: map[string]ProjectServiceConfiguration{"db": {Target: "missing-port", Protocol: "tcp"}}},
 	} {
@@ -47,6 +48,7 @@ func TestNormalizeProjectConfiguration(t *testing.T) {
 	for _, invalid := range []string{
 		`{"unknown":{}}`,
 		`{"services":{"db":{"unknown":true}}}`,
+		`{"services":{"web":{"target":"app","public_url":{}}}}`,
 	} {
 		var c ProjectConfiguration
 		decoder := json.NewDecoder(strings.NewReader(invalid))
@@ -58,12 +60,53 @@ func TestNormalizeProjectConfiguration(t *testing.T) {
 }
 
 func TestNormalizeAppliedPublicOriginsMatchRuntime(t *testing.T) {
-	for _, target := range []string{"http://localhost:3000", "https://EXAMPLE.test:443", "3000", "http://example.test", "https://example.test", "http://example.test:80/", "http://example.test:80#", "http://example.test:80?", "http://[2001:db8::1]:80", "http://user:secret@example.test:80", "http://example.test:0"} {
-		t.Run(target, func(t *testing.T) {
-			want, runtimeErr := targetsyntax.NormalizeTarget(target)
-			c, _, err := NormalizeProjectConfiguration(ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"web": {Target: target, PublicURL: &ProjectServicePublicURL{}}}})
-			if (runtimeErr != nil) != (err != nil) || err == nil && c.Services["web"].Target != want {
-				t.Fatal("apply and runtime disagree about public origin", c, err, runtimeErr)
+	for _, test := range []struct{ target, want string }{
+		{"http://localhost:3000", "localhost:3000"}, {"https://EXAMPLE.test:443", "EXAMPLE.test:443"},
+		{"3000", ""}, {"http://example.test", "example.test:80"}, {"https://example.test", "example.test:443"},
+		{"http://example.test:80/", "example.test:80"}, {"http://example.test:80#", "example.test:80"},
+		{"http://example.test:80?", ""}, {"http://[2001:db8::1]:80", "[2001:db8::1]:80"},
+		{"http://user:secret@example.test:80", ""}, {"http://example.test:0", ""},
+	} {
+		t.Run(test.target, func(t *testing.T) {
+			service := ProjectServiceConfiguration{Target: test.target, Public: new(true)}
+			if strings.HasPrefix(test.target, "https://") {
+				service.TargetTLS = appliedTargetTrust(t, "upstream.internal")
+			}
+			c, _, err := NormalizeProjectConfiguration(ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"web": service}})
+			if (test.want == "") != (err != nil) || err == nil && c.Services["web"].Target != test.want {
+				t.Fatal("public reachability changed service target normalization", c, err)
+			}
+		})
+	}
+}
+
+func TestNormalizeAppliedServicePublicationFields(t *testing.T) {
+	domain := mustOpaqueID(t, opaqueid.DomainPrefix)
+	for _, protocol := range []string{"http", "tcp", "postgres"} {
+		t.Run(protocol, func(t *testing.T) {
+			service := ProjectServiceConfiguration{Protocol: protocol, Target: "localhost:3000",
+				Hostname: "app.example.test", DomainID: domain, Ephemeral: true, RequirePostQuantum: new(false),
+				Traffic: &trafficlimits.Selection{Connections: new(4), TotalConnections: new(int64(0))}}
+			c, hash, err := NormalizeProjectConfiguration(ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"app": service}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := c.Services["app"]
+			if got.Hostname != service.Hostname || got.DomainID != domain || !got.Ephemeral || got.RequirePostQuantum == nil || *got.RequirePostQuantum || got.Traffic == nil || *got.Traffic.Connections != 4 || *got.Traffic.TotalConnections != 0 || projectServicePublic(got) {
+				t.Fatal("direct publication settings were lost or enabled ingress", got)
+			}
+			if _, retry, err := NormalizeProjectConfiguration(c); err != nil || retry != hash {
+				t.Fatal("direct publication settings do not normalize idempotently", err)
+			}
+		})
+	}
+	for name, service := range map[string]ProjectServiceConfiguration{
+		"domain":  {Target: "app", DomainID: "not-a-domain"},
+		"traffic": {Target: "app", Traffic: &trafficlimits.Selection{TotalConnections: new(int64(config.MaxConfigInteger + 1))}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := NormalizeProjectConfiguration(ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"app": service}}); !errors.Is(err, ErrProjectConfigurationInvalid) {
+				t.Fatal("invalid direct publication setting accepted", err)
 			}
 		})
 	}
@@ -71,7 +114,7 @@ func TestNormalizeAppliedPublicOriginsMatchRuntime(t *testing.T) {
 
 func TestNormalizeAppliedHTTPSettingsDoNotDisappear(t *testing.T) {
 	settings := &config.HTTPService{Readiness: &config.Readiness{Path: "/health"}, Paths: map[string]config.PathMount{"/api": {Service: "api", StripPrefix: true}}}
-	c, _, err := NormalizeProjectConfiguration(ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"web": {Target: "app", PublicURL: &ProjectServicePublicURL{}, HTTP: settings}, "api": {Target: "http://localhost:3001"}}})
+	c, _, err := NormalizeProjectConfiguration(ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"web": {Target: "app", Public: new(true), HTTP: settings}, "api": {Target: "http://localhost:3001"}}})
 	if err != nil || c.Services["web"].HTTP.Readiness.Path != "/health" || !c.Services["web"].HTTP.Paths["/api"].StripPrefix {
 		t.Fatal("local HTTP settings lost", err)
 	}
@@ -85,7 +128,7 @@ func TestNormalizeAppliedHTTPSettingsDoNotDisappear(t *testing.T) {
 
 func TestLocalServiceNormalizationDoesNotInventProjectDestinations(t *testing.T) {
 	service := func(prefix, destination string) ProjectServiceConfiguration {
-		return ProjectServiceConfiguration{Target: "app", PublicURL: &ProjectServicePublicURL{}, HTTP: &config.HTTPService{
+		return ProjectServiceConfiguration{Target: "app", HTTP: &config.HTTPService{
 			Paths: map[string]config.PathMount{prefix: {Service: destination}},
 		}}
 	}
@@ -135,7 +178,7 @@ func TestNormalizeAppliedProjectTargetsAndTrustBoundaries(t *testing.T) {
 	trust := appliedTargetTrust(t, "upstream.internal")
 	withoutDigest := *trust
 	withoutDigest.Digest = ""
-	derived, _, err := NormalizeProjectConfiguration(ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"web": {Target: "https://upstream.internal:8443", PublicURL: &ProjectServicePublicURL{}, TargetTLS: &withoutDigest}}})
+	derived, _, err := NormalizeProjectConfiguration(ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"web": {Target: "https://upstream.internal:8443", Public: new(true), TargetTLS: &withoutDigest}}})
 	if err != nil || derived.Services["web"].TargetTLS.Digest != trust.Digest || withoutDigest.Digest != "" {
 		t.Fatal("control did not derive the existing project digest without mutating input", err)
 	}
@@ -147,8 +190,9 @@ func TestNormalizeAppliedProjectTargetsAndTrustBoundaries(t *testing.T) {
 		"local app":                  {Target: "app"},
 		"local compose":              {Target: "compose:postgres:5432", Protocol: "postgres"},
 		"local docker":               {Target: "docker:redis_1:6379", Protocol: "tcp"},
-		"local deferred public":      {Target: "app", PublicURL: &ProjectServicePublicURL{Ephemeral: true}},
-		"public target trust":        {Target: "https://upstream.internal:8443", PublicURL: &ProjectServicePublicURL{}, TargetTLS: trust},
+		"local deferred public":      {Target: "app", Public: new(true), Ephemeral: true},
+		"public target trust":        {Target: "https://upstream.internal:8443", Public: new(true), TargetTLS: trust},
+		"remote app":                 {Target: "app"},
 		"remote literal docker host": {Target: "docker:5432", Protocol: "postgres"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -157,13 +201,17 @@ func TestNormalizeAppliedProjectTargetsAndTrustBoundaries(t *testing.T) {
 				input.Settings = &DeploymentSettings{}
 			}
 			c, _, err := NormalizeProjectConfiguration(input)
-			if err != nil || c.Services["service"].Target != s.Target {
+			want := s.Target
+			if strings.HasPrefix(want, "https://") {
+				want = "upstream.internal:8443"
+			}
+			if err != nil || c.Services["service"].Target != want {
 				t.Fatalf("target changed or rejected: %v", err)
 			}
 		})
 	}
 	for name, s := range map[string]ProjectServiceConfiguration{
-		"remote app":                {Target: "app"},
+		"remote ephemeral app":      {Target: "app", Ephemeral: true},
 		"remote compose":            {Protocol: "postgres", Target: "compose:db:5432"},
 		"remote docker":             {Protocol: "tcp", Target: "docker:cache:6379"},
 		"tcp app":                   {Protocol: "tcp", Target: "app"},
@@ -172,9 +220,9 @@ func TestNormalizeAppliedProjectTargetsAndTrustBoundaries(t *testing.T) {
 		"descriptor args":           {Target: "compose:web:3000:extra"},
 		"descriptor port":           {Target: "compose:web:65536"},
 		"descriptor ambiguous port": {Target: "compose:web:03000"},
-		"target TLS plaintext":      {Target: "http://upstream.internal:3000", PublicURL: &ProjectServicePublicURL{}, TargetTLS: trust},
-		"target trust tamper":       {Target: "https://upstream.internal:8443", PublicURL: &ProjectServicePublicURL{}, TargetTLS: &ProjectTargetTLS{Hostname: "different.internal", CAPEM: trust.CAPEM, Digest: trust.Digest}},
-		"target trust key material": {Target: "https://upstream.internal:8443", PublicURL: &ProjectServicePublicURL{}, TargetTLS: &keyTrust},
+		"target TLS plaintext":      {Target: "http://upstream.internal:3000", Public: new(true), TargetTLS: trust},
+		"target trust tamper":       {Target: "https://upstream.internal:8443", Public: new(true), TargetTLS: &ProjectTargetTLS{Hostname: "different.internal", CAPEM: trust.CAPEM, Digest: trust.Digest}},
+		"target trust key material": {Target: "https://upstream.internal:8443", Public: new(true), TargetTLS: &keyTrust},
 	} {
 		t.Run(name, func(t *testing.T) {
 			input := ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"service": s}}

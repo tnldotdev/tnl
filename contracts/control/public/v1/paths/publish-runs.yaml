@@ -54,52 +54,6 @@ paths:
                 $ref: "../openapi.yaml#/components/schemas/PublishRunHeartbeat"
         default:
           $ref: "../openapi.yaml#/components/responses/Problem"
-  /v1/publish-runs/{publish_run_id}/share-access:
-    post:
-      operationId: enableShareAccess
-      tags: [shares]
-      description: Report that the publisher has installed share-aware HTTP handling for this exact run and number. Authenticate with its publish run token; this does not create a share or grant visitor access by itself.
-      summary: Enable share-aware HTTP handling for this preview publish run
-      security:
-        - publishRunAuth: []
-      parameters:
-        - $ref: "../openapi.yaml#/components/parameters/PublishRunID"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "../openapi.yaml#/components/schemas/EnableShareAccessRequest"
-      responses:
-        "204":
-          description: Publisher can check shares for this publish run
-        default:
-          $ref: "../openapi.yaml#/components/responses/Problem"
-  /v1/publish-runs/{publish_run_id}/share-redemptions:
-    post:
-      operationId: redeemPublishRunShare
-      tags: [shares]
-      description: Authenticate the publisher with its exact publish run token and redeem the body's share secret or one-time cross-host handoff. Control checks the share's captured public URL IDs, deadline, and revocation before issuing a host-only visitor session.
-      summary: Redeem a share link or one short-lived cross-host handoff
-      security:
-        - publishRunAuth: []
-      parameters:
-        - $ref: "../openapi.yaml#/components/parameters/PublishRunID"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "../openapi.yaml#/components/schemas/RedeemShareRequest"
-      responses:
-        "200":
-          description: Host-only cookie secret and the next review hostname
-          content:
-            application/json:
-              schema:
-                $ref: "../openapi.yaml#/components/schemas/ShareRedemption"
-        default:
-          $ref: "../openapi.yaml#/components/responses/Problem"
   /v1/publish-runs/{publish_run_id}/ready:
     post:
       operationId: markPublishRunReady

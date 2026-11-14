@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
@@ -17,6 +18,43 @@ import (
 )
 
 type serviceRelayOpening func(context.Context, tunnelv1.ServiceForwardingHeader) (net.Conn, error)
+
+type httpsService struct {
+	service, run string
+	certificate  tls.Certificate
+}
+
+type httpsServiceControl struct {
+	*publicServiceControlFixture
+	services map[string]httpsService
+	claims   chan ingressv1.PublicServiceVisitorClaim
+	sources  netip.Prefix
+}
+
+func (c *httpsServiceControl) AdmitPublicServiceVisitor(_ context.Context, ingress string, claim ingressv1.PublicServiceVisitorClaim) (ingressv1.PublicServiceVisitorAdmission, error) {
+	c.claims <- claim
+	sources := c.sources
+	if !sources.IsValid() {
+		sources = netip.MustParsePrefix("192.0.2.4/32")
+	}
+	source, err := netip.ParseAddr(claim.ObservedSourceIp)
+	if ingress != "ingress-a" || claim.Hostname == nil || claim.DestinationPort != 443 || err != nil || !sources.Contains(source) || claim.IngressLeaseRevision != 1 {
+		return ingressv1.PublicServiceVisitorAdmission{}, ErrServiceAdmission
+	}
+	service, ok := c.services[*claim.Hostname]
+	if !ok {
+		return ingressv1.PublicServiceVisitorAdmission{}, ErrServiceAdmission
+	}
+	for _, excluded := range claim.ExcludedRuns {
+		if excluded.ServiceId == service.service && excluded.ServiceRunId == service.run && excluded.RunNumber == 1 {
+			return ingressv1.PublicServiceVisitorAdmission{}, ErrServiceAdmission
+		}
+	}
+	return ingressv1.PublicServiceVisitorAdmission{
+		ServiceId: service.service, ServiceRunId: service.run, RunNumber: 1, Traffic: c.traffic, Anonymous: c.anonymous,
+		VisitorConnectionId: claim.VisitorConnectionId, ExpiresAt: time.Now().Add(time.Minute), ConnectedRelays: c.relays,
+	}, nil
+}
 
 type serviceRelayForwarder struct {
 	openings []serviceRelayOpening
@@ -36,18 +74,19 @@ func serviceIngressConfig(t *testing.T, openings ...serviceRelayOpening) Config 
 	if len(openings) < 1 || len(openings) > 2 {
 		t.Fatal("service fixture requires one or two relay slots")
 	}
-	p, base, _, _ := publicServiceTestSetup(t, true)
+	config, base, _, _ := publicServiceTestConfig(t)
 	base.relays = base.relays[:len(openings)]
-	p.config.Control = &httpsServiceControl{
+	config.Control = &httpsServiceControl{
 		publicServiceControlFixture: base,
 		services: map[string]httpsService{
 			"route.example": {service: base.service, run: base.run},
 		},
 		claims: make(chan ingressv1.PublicServiceVisitorClaim, 8),
 	}
-	p.config.Forwarder = serviceRelayForwarder{openings: openings}
-	return Config{PublicServices: p, RequireProxyHeader: true,
-		TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}}
+	config.Forwarder = serviceRelayForwarder{openings: openings}
+	config.RequireProxyHeader = true
+	config.TrustedProxyPeers = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}
+	return config
 }
 
 type serviceTLSRelay struct {
@@ -57,8 +96,11 @@ type serviceTLSRelay struct {
 	result     chan backendResult
 }
 
-func newServiceTLSRelay(t *testing.T) *serviceTLSRelay {
+func newServiceTLSRelay(t *testing.T, authorized ...<-chan struct{}) *serviceTLSRelay {
 	t.Helper()
+	if len(authorized) > 1 {
+		t.Fatal("service TLS fixture accepts one authorization signal")
+	}
 	a, b := net.Pipe()
 	ownIngressConn(t, a)
 	ownIngressConn(t, b)
@@ -75,6 +117,13 @@ func newServiceTLSRelay(t *testing.T) *serviceTLSRelay {
 		secured := tls.Server(&testReaderConn{Conn: b, reader: replay}, &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS13})
 		request := make([]byte, 4)
 		_, err = io.ReadFull(secured, request)
+		if err == nil && len(authorized) != 0 {
+			select {
+			case <-authorized[0]:
+			case <-t.Context().Done():
+				return t.Context().Err()
+			}
+		}
 		if err == nil {
 			_, err = secured.Write([]byte("pong"))
 		}

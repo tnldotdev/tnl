@@ -138,7 +138,7 @@ func TestSignedCloudAssignmentProductionCallbackAndTargetTLS(t *testing.T) {
 }
 
 func TestCloudAssignmentRejectsSavedServiceDriftBeforeAWS(t *testing.T) {
-	for _, name := range []string{"protocol", "trust-revision", "service", "mixed-target", "mixed-trust", "empty-selector", "wrong-provider-protocol"} {
+	for _, name := range []string{"protocol", "trust-revision", "service", "team", "disabled", "mixed-target", "mixed-trust", "empty-selector", "wrong-provider-protocol"} {
 		t.Run(name, func(t *testing.T) {
 			fixture := deploymentdiscovery.New(t)
 			assignment := fixture.Assignment()
@@ -149,6 +149,10 @@ func TestCloudAssignmentRejectsSavedServiceDriftBeforeAWS(t *testing.T) {
 				fixture.ChangeService(func(s *controlv1.Service) { s.TrustRevision++ })
 			case "service":
 				fixture.ChangeService(func(s *controlv1.Service) { s.Id = "another-service" })
+			case "team":
+				fixture.ChangeService(func(s *controlv1.Service) { s.TeamId = "another-team" })
+			case "disabled":
+				fixture.ChangeService(func(s *controlv1.Service) { s.Enabled = false })
 			case "mixed-target":
 				assignment.Configuration.Target = "unapproved.example:443"
 			case "mixed-trust":

@@ -3,14 +3,31 @@ package benchworkload
 import (
 	"context"
 	"errors"
-	"strings"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/publisher"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
+	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
+
+func benchmarkTestPreparation(_ context.Context, index int, cfg publisherservice.RunConfig) (publisherservice.RunConfig, func(context.Context) error, error) {
+	cfg.ServiceID = fmt.Sprintf("svc_%022d", index+1)
+	cfg.Metadata = controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocolHTTP, TrustRevision: 1,
+		Endpoint: &controlv1.ServiceEndpoint{Hostname: fmt.Sprintf("p%d.example.test", index), Port: 443, Public: true}}
+	return cfg, nil, nil
+}
+
+func benchmarkTestReady(cfg publisherservice.RunConfig) error {
+	if err := cfg.Prepared(controlv1.ServiceRunPreparation{ServiceId: cfg.ServiceID, ServiceRunId: "srun_" + cfg.ServiceID[4:],
+		RunNumber: 1, Hostname: cfg.Metadata.Endpoint.Hostname}); err != nil {
+		return err
+	}
+	return cfg.Ready()
+}
 
 func TestActivationTimeoutRetainsPartialSuccessAndCapturesBeforeCancel(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -19,7 +36,7 @@ func TestActivationTimeoutRetainsPartialSuccessAndCapturesBeforeCancel(t *testin
 		var captured bool
 		failedIndex := -1
 		reportedIndex := -1
-		group := &Publishers{ctx: ctx, cancel: cancel, namespace: "test", failures: make(chan error, 1), config: PublisherConfig{Parallel: 1, ReadyTimeout: 30 * time.Second, StopTimeout: 10 * time.Second, OnFailure: func() {
+		group := &Publishers{ctx: ctx, cancel: cancel, prepare: benchmarkTestPreparation, failures: make(chan error, 1), config: PublisherConfig{Parallel: 1, ReadyTimeout: 30 * time.Second, StopTimeout: 10 * time.Second, OnFailure: func() {
 			if ctx.Err() != nil {
 				t.Error("canceled before failure snapshot")
 			}
@@ -35,11 +52,17 @@ func TestActivationTimeoutRetainsPartialSuccessAndCapturesBeforeCancel(t *testin
 			}
 			reportedIndex = index
 		}}}
-		group.run = func(ctx context.Context, c publisher.Config) error {
-			if strings.Contains(c.Hostname, "r000000") {
-				_ = c.Observe(publisher.Event{Type: publisher.EventReady})
+		problem := errors.New("connection timeout")
+		group.base.Connect = func(context.Context, *publisherservice.Bound, uint8, publisherservice.ConnectOptions) (publisherservice.SlotSession, error) {
+			return nil, problem
+		}
+		group.run = func(ctx context.Context, c publisherservice.RunConfig) error {
+			if c.Metadata.Endpoint.Hostname == "p0.example.test" {
+				if err := benchmarkTestReady(c); err != nil {
+					return err
+				}
 			} else {
-				c.Logf("%v", errors.New("connection timeout"))
+				_, _ = c.Connect(ctx, nil, 0, publisherservice.ConnectOptions{})
 			}
 			<-ctx.Done()
 			return ctx.Err()
@@ -71,6 +94,15 @@ func TestPublisherQUICPathMTUDiagnosticOverridesDefault(t *testing.T) {
 	if config := benchmarkQUICConfig(false, true, 5*time.Second); config.Config == nil || config.Config.KeepAlivePeriod != 5*time.Second || config.Config.Tracer == nil || config.Config.DisablePathMTUDiscovery {
 		t.Fatalf("QUIC keepalive diagnostic changed other settings: %+v", config.Config)
 	}
+	for _, config := range []muxsession.QUICConfig{
+		benchmarkQUICConfig(true, false, 0),
+		benchmarkQUICConfig(false, true, 0),
+		benchmarkQUICConfig(false, false, 5*time.Second),
+	} {
+		if !config.Config.EnableDatagrams {
+			t.Fatal("diagnostic override removed service-required QUIC DATAGRAM support")
+		}
+	}
 }
 
 func TestStopBoundsConcurrencyAndPreservesJoinedErrors(t *testing.T) {
@@ -80,7 +112,7 @@ func TestStopBoundsConcurrencyAndPreservesJoinedErrors(t *testing.T) {
 		failure := errors.New("close failed")
 		for i := range 6 {
 			ctx, cancel := context.WithCancel(t.Context())
-			p := &publicURLProcess{index: i, cancel: cancel, done: make(chan struct{})}
+			p := &serviceProcess{index: i, cancel: cancel, done: make(chan struct{})}
 			group.processes = append(group.processes, p)
 			go func() {
 				<-ctx.Done()
@@ -111,14 +143,14 @@ func TestStopBoundsConcurrencyAndPreservesJoinedErrors(t *testing.T) {
 	})
 }
 
-func TestStopDeadlineStillCancelsQueuedPublicURLs(t *testing.T) {
+func TestStopDeadlineStillCancelsQueuedServices(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 		defer cancel()
 		var canceled atomic.Int64
 		group := &Publishers{config: PublisherConfig{Parallel: 2, StopTimeout: 10 * time.Second}}
 		for i := range 6 {
-			group.processes = append(group.processes, &publicURLProcess{index: i, cancel: func() { canceled.Add(1) }, done: make(chan struct{})})
+			group.processes = append(group.processes, &serviceProcess{index: i, cancel: func() { canceled.Add(1) }, done: make(chan struct{})})
 		}
 		at := time.Now()
 		_, err := group.Stop(ctx, []int{0, 1, 2, 3, 4, 5})

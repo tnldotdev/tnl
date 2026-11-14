@@ -14,11 +14,13 @@ import (
 func TestPrivatePublisherCannotUseAPublicURLGrant(t *testing.T) {
 	r := testRegistry(t)
 	job, identity, key := fixture(t, "private")
+	legacyID := opaqueid.PublicURLPrefix + "0000000000000000000001"
+	identity.Kind, identity.ServiceId, identity.PublicUrlId = authorityv1.SavedPublicUrl, nil, &legacyID
 	service, err := opaqueid.New(opaqueid.ServicePrefix)
 	if err != nil {
 		t.Fatal(err)
 	}
-	job.Kind, job.ServiceID, job.PublicURLID = KindService, service, ""
+	job.Kind, job.ServiceID = KindService, service
 	job.TrustRevision = 1
 	job.Protocol, job.Target = "tcp", "127.0.0.1:22"
 	if err := r.Install(t.Context(), job, identity, key); !errors.Is(err, ErrScope) {

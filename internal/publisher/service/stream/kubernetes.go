@@ -92,5 +92,5 @@ func (s Stream) forwardKubernetes(ctx context.Context, client net.Conn, state tl
 			// Authorization belongs to the cluster, independently of tnl admission.
 			next.ServeHTTP(w, r)
 		}))
-	})
+	}, httpstream.ResponseHooks{}, s.HTTPDrain)
 }

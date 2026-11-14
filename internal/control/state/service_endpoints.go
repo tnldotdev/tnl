@@ -6,20 +6,71 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 // endpoint identity is durable across runs, publisher replicas and deployment-key
 // renames. deployment moves never silently broaden certificate authority.
-func (d *Database) ensureServiceEndpoint(ctx context.Context, tx pgx.Tx, service, deployment string, public, automation bool, now time.Time) error {
-	var namespace, domain, pool, name, hostname string
-	err := tx.QueryRow(ctx, `SELECT g.namespace,g.domain_id,t.ingress_pool_id,s.name,s.certificate_hostname FROM control.deployments g JOIN control.teams t ON t.id=g.team_id JOIN control.services s ON s.id=$1 AND s.team_id=g.team_id WHERE g.id=$2 AND g.deleted_at IS NULL FOR UPDATE OF s`, service, deployment).Scan(&namespace, &domain, &pool, &name, &hostname)
+func (d *Database) ensureServiceEndpoint(ctx context.Context, tx pgx.Tx, service, deployment, actor string, placement ServicePlacement, public, automation bool, now time.Time) error {
+	if err := placement.Validate(); err != nil || placement.WorktreeKey != "" || placement.WorktreeLabel != "" {
+		return errors.Join(ErrProjectConfigurationInvalid, err)
+	}
+	var namespace, domain, pool, name, hostname, team string
+	err := tx.QueryRow(ctx, `SELECT g.namespace,g.domain_id,t.ingress_pool_id,s.name,s.certificate_hostname,s.team_id FROM control.deployments g JOIN control.teams t ON t.id=g.team_id JOIN control.services s ON s.id=$1 AND s.team_id=g.team_id WHERE g.id=$2 AND g.deleted_at IS NULL FOR UPDATE OF s`, service, deployment).Scan(&namespace, &domain, &pool, &name, &hostname, &team)
 	if err != nil {
 		return err
+	}
+	if placement.DomainID != "" {
+		domain = placement.DomainID
 	}
 	// a desired deployment move changes the endpoint, not the service's identity or
 	// visitor grants. the apply transaction has already revoked old publishers.
 	hostname = name + "." + namespace
+	if placement.Hostname != "" {
+		hostname = placement.Hostname
+		facts, err := serviceHostnameAuthority(ctx, tx, team, actor, domain, now)
+		if err != nil {
+			return err
+		}
+		labels, err := controlstatedb.New(tx).ListTeamNamespaceLabels(ctx, team)
+		if err != nil {
+			return err
+		}
+		if err := authorizeServiceHostname(facts, labels, team, "", hostname, "shared", d.managedURLMode); err != nil {
+			return err
+		}
+		var conflict bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.service_namespace_claims
+		    WHERE ($1=namespace OR right($1,length(namespace)+1)='.'||namespace)
+		    AND deployment_id IS DISTINCT FROM $2::text
+		    AND (retired_at IS NULL OR NOT control.service_namespace_reusable(namespace,$3)))
+		    OR EXISTS(SELECT 1 FROM control.public_urls WHERE canonical_hostname=$1 AND lifecycle_state<>'deleted')`,
+			hostname, deployment, now).Scan(&conflict); err != nil {
+			return err
+		}
+		if conflict {
+			return ErrServiceConflict
+		}
+		var claim string
+		if err := tx.QueryRow(ctx, `INSERT INTO control.service_namespace_claims(namespace,deployment_id,domain_id,created_at)
+		    VALUES($1,$2,$3,$4) ON CONFLICT(namespace) DO UPDATE SET namespace=EXCLUDED.namespace
+		    WHERE control.service_namespace_claims.deployment_id=EXCLUDED.deployment_id
+		      AND control.service_namespace_claims.domain_id=EXCLUDED.domain_id
+		      AND control.service_namespace_claims.retired_at IS NULL RETURNING namespace`,
+			hostname, deployment, domain, now).Scan(&claim); err != nil {
+			return publisherLookupError(err, ErrServiceConflict)
+		}
+		namespace = hostname
+	} else {
+		selected, err := controlstatedb.New(tx).GetPublisherDomain(ctx, controlstatedb.GetPublisherDomainParams{ID: domain, TeamID: text(team)})
+		if err != nil {
+			return publisherLookupError(err, ErrServiceAccess)
+		}
+		if !hostnameWithin(namespace, selected.CanonicalDomain) {
+			return ErrProjectConfigurationInvalid
+		}
+	}
 	canonical, err := naming.CanonicalizeHostname(hostname)
 	if err != nil || canonical != hostname {
 		return ErrProjectConfigurationInvalid

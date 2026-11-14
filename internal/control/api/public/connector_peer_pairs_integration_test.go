@@ -47,7 +47,7 @@ func TestIntegrationConnectorPeerPairPublicDevice(t *testing.T) {
 	}
 	identity, member := owner.Identity.Identity.ID, owner.Identity.Memberships[0]
 	team := member.TeamID
-	service, err := d.CreateServiceAt(ctx, team, identity, "connector-pair", "connector-pair", controlstate.ServicePlacement{}, now, controlstate.ServiceMetadata{Protocol: "tcp"})
+	service, err := d.CreateServiceAt(ctx, team, identity, "connector-pair", "connector-pair", controlstate.ServicePlacement{}, now, controlstate.ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,7 +301,7 @@ func TestIntegrationConnectorPeerPairPublicDevice(t *testing.T) {
 	assertDenied(owner.AccessToken.String(), pair.DeliveryGeneration)
 	assertDenied("not-a-run-token", pair.DeliveryGeneration)
 	assertDenied(run.Token, pair.DeliveryGeneration+1)
-	otherService, err := d.CreateServiceAt(ctx, team, identity, "unrelated-pair", "unrelated-pair", controlstate.ServicePlacement{}, now, controlstate.ServiceMetadata{Protocol: "tcp"})
+	otherService, err := d.CreateServiceAt(ctx, team, identity, "unrelated-pair", "unrelated-pair", controlstate.ServicePlacement{}, now, controlstate.ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

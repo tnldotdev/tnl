@@ -3,15 +3,42 @@ package identity
 import (
 	"context"
 
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type serviceHTTPControl interface {
+	httpaccess.PolicyClient
+	httpaccess.TokenClient
 	AuthorizeServiceHTTPVisitor(context.Context, string, string, credentials.ServiceRunToken, controlv1.AuthorizeServiceHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error)
 	RedeemServiceBrowserHandoff(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceBrowserRequest) (controlv1.BrowserHandoffResponse, error)
 	CheckServiceBrowserSession(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceBrowserRequest) (controlv1.BrowserAccessResponse, error)
 	RevokeServiceBrowserSession(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceBrowserRequest) error
+}
+
+func (n *Native) ReadPublisherVisitorPolicy(ctx context.Context, request controlv1.PublisherVisitorPolicyRequest, token string) (controlv1.VisitorPolicyUpdate, error) {
+	if n == nil || request.Resource.Kind != "service" || request.RunNumber < 1 ||
+		!opaqueid.Valid(request.RunId, opaqueid.ServiceRunPrefix) || token == "" {
+		return controlv1.VisitorPolicyUpdate{}, ErrScope
+	}
+	control, err := n.serviceHTTP(request.Resource.Id)
+	if err != nil {
+		return controlv1.VisitorPolicyUpdate{}, err
+	}
+	return control.ReadPublisherVisitorPolicy(ctx, request, token)
+}
+
+func (n *Native) IssueVisitorToken(ctx context.Context, request controlv1.VisitorTokenRequest) (controlv1.VisitorTokenResponse, error) {
+	if n == nil || request.Resource.Kind != "service" {
+		return controlv1.VisitorTokenResponse{}, ErrScope
+	}
+	control, err := n.serviceHTTP(request.Resource.Id)
+	if err != nil {
+		return controlv1.VisitorTokenResponse{}, err
+	}
+	return control.IssueVisitorToken(ctx, request)
 }
 
 func (n *Native) serviceHTTP(service string) (serviceHTTPControl, error) {

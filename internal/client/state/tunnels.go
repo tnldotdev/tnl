@@ -53,6 +53,7 @@ type BeginTunnelOptions struct {
 	ServiceProtocol  controlv1.ServiceProtocol
 	Project          string
 	Service          string
+	ServiceID        string
 	IntegrationScope IntegrationScope
 }
 
@@ -95,6 +96,7 @@ type TunnelInfo struct {
 	Project          string                    `json:"project"`
 	Service          string                    `json:"service,omitempty"`
 	ServiceProtocol  controlv1.ServiceProtocol `json:"service_protocol,omitempty"`
+	ServiceID        string                    `json:"service_id,omitempty"`
 	PublicURLID      string                    `json:"public_url_id,omitempty"`
 	PublishRunNumber uint64                    `json:"publish_run_number,omitempty"`
 	Hostname         string                    `json:"hostname,omitempty"`
@@ -125,6 +127,9 @@ func (d *Database) BeginTunnel(ctx context.Context, options BeginTunnelOptions) 
 	}
 	if !protocol.Valid() {
 		return nil, errors.New("clientstate: invalid tunnel service protocol")
+	}
+	if options.ServiceID != "" && !opaqueid.Valid(options.ServiceID, opaqueid.ServicePrefix) {
+		return nil, errors.New("clientstate: invalid publication service ID")
 	}
 	options.ServiceProtocol = protocol
 	if options.Target != "" {
@@ -168,7 +173,8 @@ func (d *Database) BeginTunnel(ctx context.Context, options BeginTunnelOptions) 
 	if err := d.queries.InsertTunnel(ctx, clientstatedb.InsertTunnelParams{
 		ID: id, Command: string(options.Command), ProcessID: int64(os.Getpid()), ServerOrigin: server,
 		ProjectRoot: options.Project, Service: options.Service, ServiceProtocol: string(options.ServiceProtocol), Target: options.Target,
-		Now: now.UnixNano(), LeaseExpiresAt: now.Add(tunnelLeaseDuration).UnixNano(),
+		ServiceID: sql.NullString{String: options.ServiceID, Valid: options.ServiceID != ""},
+		Now:       now.UnixNano(), LeaseExpiresAt: now.Add(tunnelLeaseDuration).UnixNano(),
 		PrimaryProjectRoot: options.IntegrationScope.primaryProjectRoot(), IntegrationNamespace: options.IntegrationScope.namespace(),
 	}); err != nil {
 		return nil, fmt.Errorf("clientstate: begin tunnel: %w", err)
@@ -394,8 +400,8 @@ func tunnelInfo(row clientstatedb.LocalTunnel, observedAt time.Time) TunnelInfo 
 	info := TunnelInfo{
 		ID: row.ID, Command: TunnelCommand(row.Command), State: state, ProcessID: int(row.ProcessID),
 		Server: row.ServerOrigin, Project: row.ProjectRoot, Service: row.Service.String,
-		ServiceProtocol: controlv1.ServiceProtocol(row.ServiceProtocol),
-		PublicURLID:     row.PublicURLID.String, PublishRunNumber: uint64(row.PublishRunNumber.Int64),
+		ServiceProtocol: controlv1.ServiceProtocol(row.ServiceProtocol), ServiceID: row.ServiceID.String,
+		PublicURLID: row.PublicURLID.String, PublishRunNumber: uint64(row.PublishRunNumber.Int64),
 		Hostname: row.Hostname.String, Target: row.Target.String, Framework: row.Framework.String,
 		IntegrationScope: IntegrationScope{PrimaryProjectRoot: row.PrimaryProjectRoot.String, Namespace: row.IntegrationNamespace.String},
 		StartedAt:        unixNanoTime(row.StartedAt), UpdatedAt: unixNanoTime(row.UpdatedAt),

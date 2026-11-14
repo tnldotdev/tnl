@@ -310,8 +310,23 @@ func startExternalPlanSession(t *testing.T, database *Database, now time.Time, p
 	return PublishRunAuthentication{PublishRunID: setup.PublishRunID, PublicURLID: publicURL.ID, PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken}
 }
 
-func createPlanIssuanceWork(t *testing.T, database *Database, now time.Time, authentication PublishRunAuthentication, plan CertificatePlan, complete bool, edit func(*ACMEOrderWork), private ...ServiceRunState) ACMEOrderWork {
+type planIssuanceOptions struct {
+	privateRun *ServiceRunState
+	lifetime   time.Duration
+}
+
+func createPlanIssuanceWork(t *testing.T, database *Database, now time.Time, authentication PublishRunAuthentication, plan CertificatePlan, complete bool, edit func(*ACMEOrderWork), options ...planIssuanceOptions) ACMEOrderWork {
 	t.Helper()
+	if len(options) > 1 {
+		t.Fatal("select at most one certificate fixture option")
+	}
+	option := planIssuanceOptions{lifetime: 24 * time.Hour}
+	if len(options) == 1 {
+		option = options[0]
+	}
+	if option.lifetime <= 0 {
+		t.Fatal("certificate fixture lifetime must be positive")
+	}
 	plan.Identifiers = slices.Clone(plan.Identifiers)
 	slices.Sort(plan.Identifiers)
 	account, err := database.EnsureACMEAccount(t.Context(), "https://acme.example.test/directory", "operator@example.test", now)
@@ -330,8 +345,8 @@ func createPlanIssuanceWork(t *testing.T, database *Database, now time.Time, aut
 		t.Fatal(err)
 	}
 	var issuance CertificateIssuance
-	if len(private) == 1 {
-		run := private[0]
+	if option.privateRun != nil {
+		run := *option.privateRun
 		issuance, err = database.CreateServiceCertificateIssuance(t.Context(), run.ServiceID, run.RunID, run.Token, account.DirectoryURL, "issuance", run.RunNumber, csr, now)
 	} else {
 		issuance, err = database.CreateCertificateIssuance(t.Context(), CreateCertificateIssuanceRequest{Authentication: authentication, DirectoryURL: account.DirectoryURL, IdempotencyKey: "issuance", RequestDigest: sha256.Sum256(csr), CSRDER: csr}, now)
@@ -361,7 +376,7 @@ func createPlanIssuanceWork(t *testing.T, database *Database, now time.Time, aut
 			t.Fatal(err)
 		}
 		ca := &x509.Certificate{SerialNumber: big.NewInt(1), IsCA: true, BasicConstraintsValid: true,
-			KeyUsage: x509.KeyUsageCertSign, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(48 * time.Hour)}
+			KeyUsage: x509.KeyUsageCertSign, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(max(48*time.Hour, option.lifetime+24*time.Hour))}
 		caDER, err := x509.CreateCertificate(rand.Reader, ca, ca, &caKey.PublicKey, caKey)
 		if err != nil {
 			t.Fatal(err)
@@ -371,7 +386,7 @@ func createPlanIssuanceWork(t *testing.T, database *Database, now time.Time, aut
 			t.Fatal(err)
 		}
 		leaf := &x509.Certificate{SerialNumber: big.NewInt(2), DNSNames: plan.Identifiers,
-			NotBefore: now.Add(-time.Minute), NotAfter: now.Add(24 * time.Hour),
+			NotBefore: now.Add(-time.Minute), NotAfter: now.Add(option.lifetime),
 			KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
 		der, err := x509.CreateCertificate(rand.Reader, leaf, ca, &key.PublicKey, caKey)
 		if err != nil {
@@ -404,9 +419,16 @@ func createPlanIssuanceWork(t *testing.T, database *Database, now time.Time, aut
 	return work
 }
 
-func installPrivateTestCertificate(t *testing.T, d *Database, prep ServiceRunPreparation, run ServiceRunState, now time.Time) {
+func installPrivateTestCertificate(t *testing.T, d *Database, prep ServiceRunPreparation, run ServiceRunState, now time.Time, lifetime ...time.Duration) {
 	t.Helper()
-	work := createPlanIssuanceWork(t, d, now, PublishRunAuthentication{}, prep.CertificatePlan, true, nil, run)
+	if len(lifetime) > 1 {
+		t.Fatal("select at most one certificate fixture lifetime")
+	}
+	option := planIssuanceOptions{privateRun: &run, lifetime: 24 * time.Hour}
+	if len(lifetime) == 1 {
+		option.lifetime = lifetime[0]
+	}
+	work := createPlanIssuanceWork(t, d, now, PublishRunAuthentication{}, prep.CertificatePlan, true, nil, option)
 	if err := d.MarkServiceCertificateInstalled(t.Context(), run.ServiceID, run.RunID, run.Token, work.ID, run.RunNumber, *work.NotAfter, now); err != nil {
 		t.Fatal(err)
 	}

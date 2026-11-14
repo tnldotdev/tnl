@@ -12,8 +12,9 @@ tasks:
     desc: Check APIs, database bindings, certificates, DNS, and relay claims with disposable PostgreSQL
     vars:
       RUN: '{{default "^TestIntegration" .RUN}}'
+      PACKAGES: '{{default "./internal/client/control ./internal/control/api/authority ./internal/control/api/public ./internal/control/state/controlstatedb ./internal/control/certificates ./internal/control/dns ./internal/relay ./internal/publisher/deployment ./internal/publisher/local" .PACKAGES}}'
     cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/client/control ./internal/control/api/authority ./internal/control/api/public ./internal/control/state/controlstatedb ./internal/control/certificates ./internal/control/dns ./internal/relay ./internal/publisher/deployment ./internal/publisher/local -run='{{.RUN}}' -count=1 -timeout=8m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres -- go test -race -v {{.PACKAGES}} -run='{{.RUN}}' -count=1 -timeout=8m -args -tnl-test-tier=integration
 
   state:shard:
     desc: Check control state with disposable PostgreSQL (optional SHARD=1/4)

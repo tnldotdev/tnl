@@ -23,32 +23,6 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-type httpsService struct {
-	service, run string
-	certificate  tls.Certificate
-}
-
-type httpsServiceControl struct {
-	*publicServiceControlFixture
-	services map[string]httpsService
-	claims   chan ingressv1.PublicServiceVisitorClaim
-}
-
-func (c *httpsServiceControl) AdmitPublicServiceVisitor(_ context.Context, ingress string, claim ingressv1.PublicServiceVisitorClaim) (ingressv1.PublicServiceVisitorAdmission, error) {
-	c.claims <- claim
-	if ingress != "ingress-a" || claim.Hostname == nil || claim.DestinationPort != 443 || claim.ObservedSourceIp != "192.0.2.4" || claim.IngressLeaseRevision != 1 {
-		return ingressv1.PublicServiceVisitorAdmission{}, ErrServiceAdmission
-	}
-	service, ok := c.services[*claim.Hostname]
-	if !ok {
-		return ingressv1.PublicServiceVisitorAdmission{}, ErrServiceAdmission
-	}
-	return ingressv1.PublicServiceVisitorAdmission{
-		ServiceId: service.service, ServiceRunId: service.run, RunNumber: 1, Traffic: c.traffic, Anonymous: c.anonymous,
-		VisitorConnectionId: claim.VisitorConnectionId, ExpiresAt: time.Now().Add(time.Minute), ConnectedRelays: c.relays,
-	}, nil
-}
-
 type httpsServiceObservation struct {
 	header    tunnelv1.ServiceForwardingHeader
 	metadata  proxyproto.Header
@@ -96,7 +70,7 @@ func (f *httpsServiceForwarder) OpenPrivate(_ context.Context, _ ingressv1.Servi
 }
 
 func TestServiceHTTPSRoutesTwoHostnamesOnShared443(t *testing.T) {
-	p, base, _, _ := publicServiceTestSetup(t, true)
+	config, base, _, _ := publicServiceTestConfig(t)
 	control := &httpsServiceControl{publicServiceControlFixture: base, services: make(map[string]httpsService), claims: make(chan ingressv1.PublicServiceVisitorClaim, 8)}
 	targets := &httpsServiceForwarder{ctx: t.Context(), services: make(map[string]httpsService), observed: make(chan httpsServiceObservation, 8)}
 	roots := x509.NewCertPool()
@@ -108,14 +82,15 @@ func TestServiceHTTPSRoutesTwoHostnamesOnShared443(t *testing.T) {
 		control.services[hostname], targets.services[service.service] = service, service
 		roots.AddCert(service.certificate.Leaf)
 	}
-	p.config.Control, p.config.Forwarder = control, targets
+	config.Control, config.Forwarder = control, targets
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := New(listener, Config{
-		PublicServices: p, RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}, MaxConnections: 8,
-	})
+	config.RequireProxyHeader = true
+	config.TrustedProxyPeers = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}
+	config.MaxConnections = 8
+	server, err := New(listener, config)
 	if err != nil {
 		listener.Close()
 		t.Fatal(err)
@@ -128,7 +103,7 @@ func TestServiceHTTPSRoutesTwoHostnamesOnShared443(t *testing.T) {
 		if err := server.Drain(stop); err != nil {
 			t.Error(err)
 		}
-		_ = p.Close()
+		_ = server.Close()
 		targets.workers.Wait()
 		if err := ingressAwait(t, done); err != nil {
 			t.Error(err)

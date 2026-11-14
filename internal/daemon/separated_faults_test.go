@@ -70,34 +70,55 @@ func separatedWaitForRecovery(t *testing.T, database *sql.DB, publishers separat
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), timeout)
 	defer cancel()
-	if err := pollCondition(ctx, 25*time.Millisecond, 2*time.Second, func(ctx context.Context) (bool, error) {
-		var count int
-		err := database.QueryRowContext(ctx, `SELECT count(*) FROM control.publish_run_connection_slots c
-			JOIN control.relay_leases l ON l.relay_id = c.connected_relay_id AND l.relay_run_id = c.connected_relay_run_id
-			AND l.relay_lease_revision = c.connected_relay_lease_revision
-			WHERE c.state = 'ready' AND NOT l.draining AND l.lease_expires_at > now()`).Scan(&count)
-		return count == len(publishers.Ready)*2, err
-	}); err != nil {
+	if err := separatedAwaitServiceConnections(ctx, database, publishers.Runs); err != nil {
 		t.Fatalf("publisher connections did not recover within %s: %v; current assignments=%s", timeout, err, separatedConnectionAssignments(t, database))
 	}
-	// ordinary public URL updates are acknowledged at the 10-second ingress
+	// control updates are acknowledged at the 10-second ingress
 	// lease-renewal cadence; allow the next renewal plus scheduling headroom.
 	waitForIngressRoutingCurrentWithin(t, database, len(separatedNames("ingresses")), separatedRoutingAcknowledgmentTimeout)
-	for _, ready := range publishers.Ready {
-		assertPublishRunNumber(t, database, ready.PublicURLID, ready.PublishRunNumber)
+	for _, ready := range publishers.Runs {
+		var id string
+		var number int64
+		if err := database.QueryRowContext(integrationOperationContext(t), `SELECT id,run_number FROM control.service_runs WHERE service_id=$1 ORDER BY run_number DESC LIMIT 1`, ready.ServiceID).Scan(&id, &number); err != nil ||
+			id != ready.RunID || number != ready.Number {
+			t.Fatal("recovery replaced the service run instead of repairing its connections", err)
+		}
 	}
 	return time.Now()
+}
+
+func separatedAwaitServiceConnections(ctx context.Context, database *sql.DB, expected []benchworkload.ServiceRun) error {
+	services, runs, numbers := make([]string, len(expected)), make([]string, len(expected)), make([]int64, len(expected))
+	for index, run := range expected {
+		if !run.Valid() {
+			return fmt.Errorf("publisher %d has no exact service run", index)
+		}
+		services[index], runs[index], numbers[index] = run.ServiceID, run.RunID, run.Number
+	}
+	return pollCondition(ctx, 25*time.Millisecond, 2*time.Second, func(ctx context.Context) (bool, error) {
+		var count int
+		err := database.QueryRowContext(ctx, `SELECT count(*) FROM control.publisher_service_connection_slots c
+			JOIN unnest($1::text[],$2::text[],$3::bigint[]) expected(service_id,run_id,run_number)
+				ON (c.service_id,c.run_id,c.run_number)=(expected.service_id,expected.run_id,expected.run_number)
+			JOIN control.service_runs run ON (run.id,run.service_id,run.run_number)=(c.run_id,c.service_id,c.run_number)
+			JOIN control.relay_leases l ON l.relay_id = c.connected_relay_id AND l.relay_run_id = c.connected_relay_run_id
+			AND l.relay_lease_revision = c.connected_relay_lease_revision
+			WHERE c.service_kind='private' AND c.session_open AND c.state = 'ready' AND run.state='ready'
+				AND run.closed_at IS NULL AND run.publisher_expires_at>now()
+				AND NOT l.draining AND l.lease_expires_at > now()`, services, runs, numbers).Scan(&count)
+		return count == len(expected)*2, err
+	})
 }
 
 func separatedConnectionAssignments(t *testing.T, database *sql.DB) string {
 	t.Helper()
 	var assignments string
 	if err := database.QueryRowContext(integrationOperationContext(t), `
-		SELECT coalesce(jsonb_agg(jsonb_build_array(public_url_id, publish_run_number, connection_slot,
+		SELECT coalesce(jsonb_agg(jsonb_build_array(service_id, run_id, run_number, connection_slot,
 			publisher_connection_id, connection_assignment_revision, relay_service_id,
 			connected_relay_id, connected_relay_run_id, connected_relay_lease_revision, state)
-			ORDER BY public_url_id, connection_slot), '[]'::jsonb)::text
-		FROM control.publish_run_connection_slots WHERE state IN ('assigned', 'connected', 'ready')
+			ORDER BY service_id, connection_slot), '[]'::jsonb)::text
+		FROM control.publisher_service_connection_slots WHERE service_kind='private' AND session_open AND state IN ('assigned', 'connected', 'ready')
 	`).Scan(&assignments); err != nil {
 		t.Fatal(err)
 	}

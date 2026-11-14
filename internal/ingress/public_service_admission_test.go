@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
@@ -29,6 +30,51 @@ func TestPublicServiceAdmissionExpiryAtUse(t *testing.T) {
 			if err := validatePublicServiceAdmission(p, now); !errors.Is(err, ErrServiceAdmission) {
 				t.Fatalf("claim accepted at expiry: %v", err)
 			}
+		})
+	}
+}
+
+func TestPublicServiceExpiredAdmissionNeedsFreshControlDecisionNotFreshIngressLease(t *testing.T) {
+	for _, expiry := range []string{"run", "relay"} {
+		t.Run(expiry, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				server, control, forwarder, lease := publicServiceTestSetup(t)
+				now := time.Now()
+				if expiry == "run" {
+					control.initialValidUntil = now
+				} else {
+					control.relays[0].LeaseExpiresAt = now
+				}
+				// renewing only ingress cannot make an expired service claim usable.
+				lease.RenewedAt, lease.LeaseExpiresAt = now, now.Add(time.Hour)
+				server.config.CurrentLease = func() ingressv1.IngressLease { return lease }
+				connection, visitor := net.Pipe()
+				err := server.AcceptPublic(t.Context(), connection, netip.MustParseAddrPort("192.0.2.4:42000"), netip.MustParseAddrPort("203.0.113.8:20000"), "", nil)
+				_ = visitor.Close()
+				if !errors.Is(err, ErrServiceAdmission) || forwarder.count() != 0 || control.closed != 1 ||
+					server.Load() != 0 || !publicServiceCapacityReleased(server) {
+					t.Fatal("fresh ingress lease revived an expired service admission", err)
+				}
+				if current, err := server.liveLease(now); err != nil || !samePrivateLease(current, lease) {
+					t.Fatal("one expired service invalidated the process lease", err)
+				}
+				control.initialValidUntil = now.Add(time.Minute)
+				for i := range control.relays {
+					control.relays[i].LeaseExpiresAt = now.Add(time.Minute)
+				}
+				stream, stop := publicServiceActiveStream(t, server, forwarder)
+				header := ingressAwait(t, forwarder.observed)
+				if header.ServiceID != control.service || header.ServiceRunID != control.run || header.RunNumber != 1 ||
+					!header.ExpiresAt.Equal(control.initialValidUntil) {
+					t.Fatal("recovery used another service run or an expired claim", header)
+				}
+				_ = stream.Close()
+				stop()
+				ingressAwait(t, forwarder.relayDone)
+				if control.recheckActive.Load() != 0 || server.Load() != 0 || !publicServiceCapacityReleased(server) {
+					t.Fatal("fresh admission retained workers or capacity after close")
+				}
+			})
 		})
 	}
 }

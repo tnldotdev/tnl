@@ -26,7 +26,7 @@ func TestConnectionContextAppliedTeamNameWithoutHumanState(t *testing.T) {
 			t.Fatalf("fixture git: %v %s", err, output)
 		}
 	}
-	configuration := `{"version":1,"tnl":{"server":"https://control.example","team":"acme","services":{"database":{"protocol":"postgres"},"unrequested":{"protocol":"mysql"},"web":{},"managed":{}},"deployments":{"local":{"targets":{"database":{"address":"unused.invalid:5432"},"unrequested":{"address":"unused.invalid:3306"},"web":{"public_url":{},"address":"http://unused.invalid:3000"},"managed":{"address":"http://unused.invalid:3001","http":{}}}},"production":{"targets":{"database":{"address":"prod.invalid:5432"}}}},"workloads":{"migrate":{"deployment":"production","github":{"workflow":".github/workflows/migrate.yml","branch":"main","events":["push"]},"services":["database"]}}}}`
+	configuration := `{"version":1,"tnl":{"server":"https://control.example","team":"acme","services":{"database":{"protocol":"postgres"},"unrequested":{"protocol":"mysql"},"web":{},"managed":{}},"deployments":{"local":{"targets":{"database":{"public":true,"address":"unused.invalid:5432"},"unrequested":{"address":"unused.invalid:3306"},"web":{"public":true,"address":"http://unused.invalid:3000","http":{"access":{"mode":"anonymous"}}},"managed":{"address":"http://unused.invalid:3001","http":{}}}},"production":{"targets":{"database":{"address":"prod.invalid:5432"}}}},"workloads":{"migrate":{"deployment":"production","github":{"workflow":".github/workflows/migrate.yml","branch":"main","events":["push"]},"services":["database"]}}}}`
 	if err := os.WriteFile(filepath.Join(root, "tnl.json"), []byte(configuration), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -44,12 +44,16 @@ func TestConnectionContextAppliedTeamNameWithoutHumanState(t *testing.T) {
 	all := options
 	all.Service = nil
 	_, implicit, err := connectionProject(t.Context(), all)
-	if err != nil || !slices.Equal(implicit.Services, []string{"database", "managed", "unrequested"}) {
-		t.Fatal("context confused managed policy with public URL declarations", implicit.Services, err)
+	if err != nil || !slices.Equal(implicit.Services, []string{"database", "managed", "unrequested", "web"}) {
+		t.Fatal("context treated public reachability or anonymous HTTP as a different service", implicit.Services, err)
 	}
 	all.Service = []string{"web"}
+	if _, scope, err := connectionProject(t.Context(), all); err != nil || !slices.Equal(scope.Services, []string{"web"}) {
+		t.Fatal("native context could not select a public HTTP service", scope.Services, err)
+	}
+	all.Service = []string{"missing"}
 	if _, _, err := connectionProject(t.Context(), all); !errors.Is(err, connectorruntime.ErrInvalid) {
-		t.Fatal("native context selected a public URL declaration", err)
+		t.Fatal("native context accepted an undeclared service", err)
 	}
 	options.Workload = "migrate"
 	if _, scope, err := connectionProject(t.Context(), options); err != nil || scope.TeamID != "acme" {

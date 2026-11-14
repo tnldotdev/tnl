@@ -42,17 +42,17 @@ func TestServiceContractAcrossStaticFormats(t *testing.T) {
 		{"named remote publisher", `{"services":{"db":{"protocol":"postgres"}},"deployments":{"cloud":{"description":"production database","targets":{"db":{"address":"db.internal:5432","access":{"team":true}}}}}}`, true},
 		{"reserved local server facts", `{"deployments":{"local":{"public":true}}}`, false},
 		{"publisher type removed", `{"deployments":{"cloud":{"type":"self-hosted"}}}`, false},
-		{"remote app unsupported", `{"services":{"web":{}},"deployments":{"cloud":{"targets":{"web":{}}}}}`, false},
+		{"remote app owned by application", `{"services":{"web":{}},"deployments":{"cloud":{"targets":{"web":{}}}}}`, true},
 		{"remote readiness unsupported", `{"services":{"web":{}},"deployments":{"cloud":{"targets":{"web":{"address":3000,"http":{"readiness":{"path":"/health"}}}}}}}`, false},
 		{"remote mounts unsupported", `{"services":{"web":{},"api":{}},"deployments":{"cloud":{"targets":{"web":{"address":3000,"http":{"paths":{"/api":"api"}}},"api":{"address":4000}}}}}`, false},
-		{"mount to remote unsupported", `{"services":{"web":{},"api":{}},"deployments":{"local":{"targets":{"web":{"public_url":{},"http":{"paths":{"/api":"api"}}}}},"cloud":{"targets":{"api":{"address":4000}}}}}`, false},
+		{"mount to remote unsupported", `{"services":{"web":{},"api":{}},"deployments":{"local":{"targets":{"web":{"http":{"paths":{"/api":"api"}}}}},"cloud":{"targets":{"api":{"address":4000}}}}}`, false},
 		{"private webhook rejected", `{"services":{"api":{}},"webhooks":{"event":{"service":"api","path":"/event","provider":"custom"}}}`, false},
 		{"remote webhook rejected", `{"services":{"api":{}},"deployments":{"cloud":{"targets":{"api":{"address":3000,"http":{}}}}},"webhooks":{"event":{"service":"api","path":"/event","provider":"custom"}}}`, false},
-		{"local address webhook", `{"services":{"api":{}},"deployments":{"local":{"targets":{"api":{"public_url":{},"address":3000}}}},"webhooks":{"event":{"service":"api","path":"/event","provider":"custom"}}}`, true},
-		{"local compose webhook", `{"services":{"api":{}},"deployments":{"local":{"targets":{"api":{"public_url":{},"type":"compose","service":"api","port":3000}}}},"webhooks":{"event":{"service":"api","path":"/event","provider":"custom"}}}`, true},
-		{"local docker webhook", `{"services":{"api":{}},"deployments":{"local":{"targets":{"api":{"public_url":{},"type":"docker","container":"api","port":3000}}}},"webhooks":{"event":{"service":"api","path":"/event","provider":"custom"}}}`, true},
+		{"local address webhook", `{"services":{"api":{}},"deployments":{"local":{"targets":{"api":{"address":3000}}}},"webhooks":{"event":{"service":"api","path":"/event","provider":"custom"}}}`, true},
+		{"local compose webhook", `{"services":{"api":{}},"deployments":{"local":{"targets":{"api":{"type":"compose","service":"api","port":3000}}}},"webhooks":{"event":{"service":"api","path":"/event","provider":"custom"}}}`, true},
+		{"local docker webhook", `{"services":{"api":{}},"deployments":{"local":{"targets":{"api":{"type":"docker","container":"api","port":3000}}}},"webhooks":{"event":{"service":"api","path":"/event","provider":"custom"}}}`, true},
 		{"private HTTP team access", serviceCase("web", "", `{"access":{"team":true}}`), true},
-		{"public HTTP team access", serviceCase("web", "", `{"public_url":{},"access":{"team":true}}`), true},
+		{"public HTTP team access", serviceCase("web", "", `{"public":true,"access":{"team":true}}`), true},
 		{"no root pool default", `{"publisher_pool":true,"services":{"web":{}}}`, false},
 		{"no public URL pool", serviceCase("web", "", `{"public_url":{"publisher_pool":true,"access":"anonymous"}}`), false},
 		{"pool boolean required", serviceCase("web", "", `{"publisher_pool":"true"}`), false},
@@ -62,8 +62,8 @@ func TestServiceContractAcrossStaticFormats(t *testing.T) {
 		{"compose", serviceCase("db", "postgres", `{"type":"compose","project":"shop-feature","file":"dev/compose.yml","service":"db","port":5432,"tls":{"hostname":"db.internal","ca":"system"}}`), true},
 		{"compose defaults", serviceCase("db", "tcp", `{"type":"compose","service":"db","port":5432}`), true},
 		{"docker", serviceCase("cache", "tcp", `{"type":"docker","container":"shop-cache_1","port":6379}`), true},
-		{"mixed public defaults", `{"public_url":{"access":"anonymous","limits":{"http":{"concurrency":3}}},"services":{"web":{},"db":{"protocol":"tcp"}},"deployments":{"local":{"targets":{"web":{},"db":{"address":5432}}}}}`, true},
-		{"public HTTPS upstream TLS name", serviceCase("web", "", `{"public_url":{},"address":"https://127.0.0.1:3000","tls":{"hostname":"web.internal","ca":"system"}}`), true},
+		{"removed public defaults", `{"public_url":{"access":"anonymous","limits":{"http":{"concurrency":3}}},"services":{"web":{},"db":{"protocol":"tcp"}},"deployments":{"local":{"targets":{"web":{},"db":{"address":5432}}}}}`, false},
+		{"public HTTPS upstream TLS name", serviceCase("web", "", `{"public":true,"address":"https://127.0.0.1:3000","tls":{"hostname":"web.internal","ca":"system"}}`), true},
 		{"MySQL system TLS", serviceCase("db", "mysql", `{"address":3306,"tls":{}}`), true},
 		{"MySQL system CA", serviceCase("db", "mysql", `{"address":"db.internal:3306","tls":{"hostname":"db.internal","ca":"system"}}`), true},
 		{"RDS regional CA", serviceCase("db", "postgres", `{"address":"db.abc.us-east-1.rds.amazonaws.com:5432","tls":{"ca":"aws-rds"}}`), true},
@@ -77,10 +77,13 @@ func TestServiceContractAcrossStaticFormats(t *testing.T) {
 		{"empty explicit private name", serviceCase("db", "tcp", `{"name":"","address":5432}`), false},
 		{"invalid private name", serviceCase("db", "tcp", `{"name":"db-","address":5432}`), false},
 		{"TCP with public URL", serviceCase("db", "tcp", `{"public_url":{"hostname":"https://db.example.com"},"address":5432}`), false},
-		{"HTTP name override", serviceCase("web", "", `{"name":"website","public_url":{"access":"anonymous"}}`), true},
-		{"HTTP exact hostname", serviceCase("web", "", `{"public_url":{"hostname":"website.example"}}`), true},
-		{"duplicate exact hostnames", `{"services":{"web":{},"other":{}},"deployments":{"local":{"targets":{"web":{"public_url":{"hostname":"website.example"}},"other":{"public_url":{"hostname":"https://website.example"}}}}}}`, false},
-		{"HTTP name and exact hostname", serviceCase("web", "", `{"name":"website","public_url":{"hostname":"website.example"}}`), false},
+		{"HTTP name override", serviceCase("web", "", `{"name":"website","http":{"access":"anonymous"}}`), true},
+		{"HTTP exact hostname", serviceCase("web", "", `{"hostname":"website.example"}`), true},
+		{"duplicate exact hostnames", `{"services":{"web":{},"other":{}},"deployments":{"local":{"targets":{"web":{"hostname":"website.example"},"other":{"hostname":"website.example"}}}}}`, false},
+		{"saved name and endpoint hostname", serviceCase("web", "", `{"name":"website","hostname":"website.example"}`), true},
+		{"non HTTP exact hostname", serviceCase("db", "postgres", `{"address":5432,"hostname":"db.example","domain":"example","ephemeral":true,"require_post_quantum":true,"traffic":{"connections":8}}`), true},
+		{"hostname origin rejected", serviceCase("web", "", `{"hostname":"https://website.example"}`), false},
+		{"hostname outside domain", serviceCase("web", "", `{"hostname":"website.example","domain":"other.example"}`), false},
 		{"removed tunnel block", serviceCase("web", "", `{"tunnel":{}}`), false},
 		{"removed nested name", serviceCase("web", "", `{"public_url":{"name":"website"}}`), false},
 		{"existing sshd", serviceCase("shell", "tcp", `{"address":"localhost:22"}`), true},
@@ -96,7 +99,8 @@ func TestServiceContractAcrossStaticFormats(t *testing.T) {
 		{"removed TLS name", serviceCase("db", "postgres", `{"address":5432,"tls":{"server_name":"db.internal"}}`), false},
 		{"removed CA file", serviceCase("db", "postgres", `{"address":5432,"tls":{"ca_file":"ca.pem"}}`), false},
 		{"CA path", serviceCase("db", "postgres", `{"address":5432,"tls":{"ca":"ca.pem"}}`), false},
-		{"public HTTP has no visitor target TLS", serviceCase("api", "", `{"public_url":{},"address":"https://api.internal:8443","visitor_tls":{}}`), false},
+		{"public HTTP has no visitor target TLS", serviceCase("api", "", `{"public":true,"address":"https://api.internal:8443","tls":{},"visitor_tls":{}}`), false},
+		{"public HTTPS still needs target trust", serviceCase("api", "", `{"public":true,"address":"https://api.internal:8443"}`), false},
 		{"app system TLS", serviceCase("web", "", `{"tls":{"ca":"system","hostname":"app.internal"}}`), true},
 		{"insecure CA URL", serviceCase("db", "postgres", `{"address":5432,"tls":{"ca":"http://certs.example.com/root.pem"}}`), false},
 		{"CA URL credentials", serviceCase("db", "postgres", `{"address":5432,"tls":{"ca":"https://user:password@certs.example.com/ca.pem"}}`), false},
@@ -106,7 +110,7 @@ func TestServiceContractAcrossStaticFormats(t *testing.T) {
 		{"invalid TLS A-label", serviceCase("db", "postgres", `{"address":5432,"tls":{"hostname":"xn--a.example"}}`), false},
 		{"HTTP database TLS mode", serviceCase("web", "", `{"address":"https://db.internal","tls":{"mode":"postgres"}}`), false},
 		{"retention", `{"inspection":{"mode":"summary","retention":"720h","max_bytes":"1024MiB"}}`, true},
-		{"traffic", `{"public_url":{"limits":{"http":{"rate":{"count":5,"per":"1m","burst":10}},"tcp":{"concurrency":4},"traffic":{"connections":8,"rate":5,"rate_per":"1s","burst":10,"upload_bytes":1048576,"download_bytes":2097152,"total_upload_bytes":4194304}}}}`, true},
+		{"traffic", serviceCase("web", "", `{"http":{"limits":{"rate":{"count":5,"per":"1m","burst":10}}},"traffic":{"connections":8,"rate":5,"rate_per":"1s","burst":10,"upload_bytes":1048576,"download_bytes":2097152,"total_upload_bytes":4194304}}`), true},
 		{"old root publish", `{"publish":{"target":3000}}`, false},
 		{"old root readiness", `{"readiness":{"path":"/"}}`, false},
 		{"old service publish", serviceCase("web", "", `{"publish":{"target":3000}}`), false},
@@ -130,7 +134,7 @@ func TestServiceContractAcrossStaticFormats(t *testing.T) {
 		{"large port", serviceCase("db", "tcp", `{"type":"docker","container":"db","port":65536}`), false},
 		{"TCP app", serviceCase("db", "tcp", `{"type":"app"}`), false},
 		{"TCP HTTP", serviceCase("db", "tcp", `{"address":5432,"http":{"open":false}}`), false},
-		{"HTTP TCP limits", serviceCase("web", "", `{"public_url":{"limits":{"tcp":{"total":1}}}}`), false},
+		{"HTTP TCP limits", serviceCase("web", "", `{"http":{"limits":{"tcp":{"total":1}}}}`), false},
 		{"TLS plain HTTP", serviceCase("web", "", `{"address":3000,"tls":{}}`), false},
 		{"TLS invalid name", serviceCase("db", "postgres", `{"address":5432,"tls":{"hostname":"db/path"}}`), false},
 		{"null target", serviceCase("web", "", `null`), false},
@@ -141,12 +145,15 @@ func TestServiceContractAcrossStaticFormats(t *testing.T) {
 		{"small inspection", `{"inspection":{"max_bytes":"1023KiB"}}`, false},
 		{"large inspection", `{"inspection":{"max_bytes":"2GiB"}}`, false},
 		{"overflow inspection", `{"inspection":{"max_bytes":"9999999999999999999999GiB"}}`, false},
-		{"unsafe count", `{"public_url":{"limits":{"http":{"total":9007199254740992}}}}`, false},
-		{"unsafe traffic", `{"public_url":{"limits":{"traffic":{"total_upload_bytes":9007199254740992}}}}`, false},
-		{"removed byte total", `{"public_url":{"limits":{"traffic":{"total_bytes":1000}}}}`, false},
-		{"removed byte rate", `{"public_url":{"limits":{"traffic":{"rate":{"bytes":1000,"per":"1s"}}}}}`, false},
-		{"partial root rate", `{"public_url":{"limits":{"tcp":{"rate":{"count":1}}}}}`, false},
-		{"zero traffic period", `{"public_url":{"limits":{"traffic":{"rate_per":"0s"}}}}`, false},
+		{"unsafe count", serviceCase("web", "", `{"http":{"limits":{"total":9007199254740992}}}`), false},
+		{"unsafe traffic", serviceCase("web", "", `{"traffic":{"total_upload_bytes":9007199254740992}}`), false},
+		{"removed byte total", serviceCase("web", "", `{"traffic":{"total_bytes":1000}}`), false},
+		{"removed byte rate", serviceCase("web", "", `{"traffic":{"rate":{"bytes":1000,"per":"1s"}}}`), false},
+		{"partial HTTP rate", serviceCase("web", "", `{"http":{"limits":{"rate":{"count":1}}}}`), false},
+		{"zero traffic period", serviceCase("web", "", `{"traffic":{"rate_per":"0s"}}`), false},
+		{"null traffic", serviceCase("web", "", `{"traffic":null}`), false},
+		{"removed root traffic", `{"traffic":{"connections":8}}`, false},
+		{"removed binding limits", serviceCase("web", "", `{"limits":{"http":{"total":1}}}`), false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var value map[string]any
@@ -189,7 +196,7 @@ func integerValues(value map[string]any) {
 	}
 }
 
-func TestInspectionAndLimitsMergeWithoutChangingDefaults(t *testing.T) {
+func TestInspectionMergeWithoutChangingDefaults(t *testing.T) {
 	retention := Duration(24 * time.Hour)
 	size := ByteSize(64 << 20)
 	mode := InspectionSummary
@@ -198,27 +205,21 @@ func TestInspectionAndLimitsMergeWithoutChangingDefaults(t *testing.T) {
 	if *merged.Mode != InspectionNone || merged.Retention != &retention || merged.MaxBytes != &size {
 		t.Fatalf("inspection: %#v", merged)
 	}
-	count, burst := 5, 10
-	per := Duration(time.Second)
-	bytes := int64(1 << 20)
-	base := &Limits{HTTP: &WorkLimits{Rate: &Rate{Count: &count, Per: &per}}, Traffic: &TrafficLimits{UploadBytes: &bytes, RatePer: &per}}
-	result := MergeLimits(base, &Limits{HTTP: &WorkLimits{Rate: &Rate{Burst: &burst}}})
-	result.HTTP.Rate.Per = nil
-	result.Traffic.RatePer = nil
-	if base.HTTP.Rate.Per == nil || base.Traffic.RatePer == nil {
-		t.Fatal("merge mutated project defaults")
+	merged.Mode = nil
+	if mode != InspectionSummary {
+		t.Fatal("inspection resolution changed project defaults")
 	}
 }
 
 func TestNativeResolutionHelpersSelectProtocolAndInspection(t *testing.T) {
 	count, connections, burst := 5, 2, 10
 	per := Duration(time.Second)
-	limits := &Limits{HTTP: &WorkLimits{Rate: &Rate{Count: &count, Per: &per, Burst: &burst}}, TCP: &WorkLimits{Total: &connections}}
-	http, err := ResolveWorkLimits(limits, "http")
+	limits := &WorkLimits{Rate: &Rate{Count: &count, Per: &per, Burst: &burst}}
+	http, err := ResolveWorkLimits(limits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	tcp, err := ResolveWorkLimits(limits, "tcp")
+	tcp, err := ResolveWorkLimits(&WorkLimits{Total: &connections})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,13 +265,13 @@ func TestServiceNameDefaultsToValidatedServiceKey(t *testing.T) {
 }
 
 func TestSavedServiceNamesAndExactHostnamesHaveDeterministicCollisions(t *testing.T) {
-	name, hostname, url := "database", "web.example", "https://web.example"
+	name, hostname := "database", "web.example"
 	for _, test := range []struct {
 		services Services
 		want     string
 	}{
 		{Services{"beta": {Name: &name}, "alpha": {Name: &name}}, `services.beta: saved name "database" is already used by services.alpha`},
-		{Services{"beta": {Tunnel: &Tunnel{PublicURL: &hostname}}, "alpha": {Tunnel: &Tunnel{PublicURL: &url}}}, "services.beta: public_url.hostname is already used by services.alpha"},
+		{Services{"beta": {Hostname: &hostname}, "alpha": {Hostname: &hostname}}, "services.beta: hostname is already used by services.alpha"},
 	} {
 		if err := ValidateTNL(TNL{Services: test.services}); err == nil || err.Error() != test.want {
 			t.Fatalf("collision = %v, want %s", err, test.want)
@@ -282,14 +283,14 @@ func TestTrafficSelectionUsesIndependentControlFields(t *testing.T) {
 	connections, rate, burst := 12, 7, 15
 	upload, download, totalDownload := int64(1<<20), int64(2<<20), int64(10<<20)
 	period := Duration(2 * time.Second)
-	root := &Limits{Traffic: &TrafficLimits{Connections: &connections, Rate: &rate, RatePer: &period, UploadBytes: &upload}}
-	service := &Limits{Traffic: &TrafficLimits{Burst: &burst, DownloadBytes: &download, TotalDownloadBytes: &totalDownload}}
-	selection, err := ResolveTrafficSelection(MergeLimits(root, service))
+	service := &TrafficLimits{Connections: &connections, Rate: &rate, RatePer: &period, UploadBytes: &upload, Burst: &burst, DownloadBytes: &download, TotalDownloadBytes: &totalDownload}
+	selection, err := ResolveTrafficSelection(service)
 	if err != nil || selection.Connections != &connections || selection.Rate != &rate || selection.RatePer == nil || *selection.RatePer != "2s" || selection.Burst != &burst || selection.UploadBytes != &upload || selection.DownloadBytes != &download || selection.TotalDownloadBytes != &totalDownload || selection.TotalUploadBytes != nil {
 		t.Fatalf("traffic selection = %+v: %v", selection, err)
 	}
-	if root.Traffic.DownloadBytes != nil || root.Traffic.Burst != nil {
-		t.Fatal("service override changed root traffic limits")
+	selection.RatePer = nil
+	if service.RatePer == nil {
+		t.Fatal("resolving traffic changed its configured period")
 	}
 	if empty, err := ResolveTrafficSelection(nil); err != nil || empty != nil {
 		t.Fatalf("empty traffic selection = %+v: %v", empty, err)

@@ -305,25 +305,25 @@ type Event struct {
 type Invocation struct {
 	AccessMode *InvocationAccessMode `json:"access_mode,omitempty"`
 
-	// Deployment Private captured selection. Omit service for a temporary URL; named publication retains saved visitor policy and limits.
+	// Deployment Private captured selection. Omit service for a temporary service; named publication retains saved visitor policy and limits.
 	Deployment *struct {
 		Credential string `json:"credential"`
 		Name       string `json:"name"`
 		Project    string `json:"project"`
 		Service    string `json:"service,omitempty"`
 	} `json:"deployment,omitempty"`
-	InvocationId            string                                   `json:"invocation_id"`
-	Ip                      *[]string                                `json:"ip,omitempty"`
-	Limits                  *externalRef0.PublisherApplicationLimits `json:"limits,omitempty"`
-	Owner                   string                                   `json:"owner"`
-	Pid                     int                                      `json:"pid"`
-	PublisherCredentialFile string                                   `json:"publisher_credential_file,omitempty"`
-	PublisherIdentityId     string                                   `json:"publisher_identity_id,omitempty"`
-	RequirePostQuantum      *bool                                    `json:"require_post_quantum,omitempty"`
-	ServerUrl               *string                                  `json:"server_url,omitempty"`
-	Target                  string                                   `json:"target"`
-	TelemetryDisabled       bool                                     `json:"telemetry_disabled,omitempty"`
-	Version                 InvocationVersion                        `json:"version"`
+	InvocationId            string                                     `json:"invocation_id"`
+	Ip                      *[]string                                  `json:"ip,omitempty"`
+	Limits                  *externalRef0.ProjectHTTPApplicationLimits `json:"limits,omitempty"`
+	Owner                   string                                     `json:"owner"`
+	Pid                     int                                        `json:"pid"`
+	PublisherCredentialFile string                                     `json:"publisher_credential_file,omitempty"`
+	PublisherIdentityId     string                                     `json:"publisher_identity_id,omitempty"`
+	RequirePostQuantum      *bool                                      `json:"require_post_quantum,omitempty"`
+	ServerUrl               *string                                    `json:"server_url,omitempty"`
+	Target                  string                                     `json:"target"`
+	TelemetryDisabled       bool                                       `json:"telemetry_disabled,omitempty"`
+	Version                 InvocationVersion                          `json:"version"`
 }
 
 // InvocationAccessMode defines model for Invocation.AccessMode.

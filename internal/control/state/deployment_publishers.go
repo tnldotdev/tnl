@@ -138,10 +138,10 @@ func (d *Database) CreateDeploymentPublisherEnrollment(ctx context.Context, r Cr
 		for _, name := range names {
 			binding, bound := byName[name]
 			service, saved := configuration.Services[name]
-			if !bound || !saved || !binding.ServiceID.Valid && !binding.PublicURLID.Valid {
+			if !bound || !saved || !binding.ServiceID.Valid {
 				return result, ErrProjectConfigurationInvalid
 			}
-			scopes = append(scopes, controlstatedb.ControlDeploymentPublisherEnrollmentService{Service: name, Protocol: service.Protocol, ServiceID: binding.ServiceID, PublicURLID: binding.PublicURLID})
+			scopes = append(scopes, controlstatedb.ControlDeploymentPublisherEnrollmentService{Service: name, Protocol: service.Protocol, ServiceID: binding.ServiceID.String})
 		}
 		until := r.Now.Add(r.Lifetime)
 		if access.grantID != "" && access.expiresAt.Before(until) {
@@ -189,7 +189,7 @@ func (d *Database) issueDeploymentPublisherEnrollment(ctx context.Context, tx pg
 	}
 	result = DeploymentPublisherEnrollment{ID: id, Services: map[string]string{}, Key: secret, DeploymentID: deployment, ExpiresAt: until, MaxMembers: maxMembers}
 	for _, scope := range scopes {
-		if _, err = tx.Exec(ctx, `INSERT INTO control.deployment_publisher_enrollment_services(enrollment_id,service,protocol,service_id,public_url_id) VALUES($1,$2,$3,$4,$5)`, id, scope.Service, scope.Protocol, scope.ServiceID, scope.PublicURLID); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO control.deployment_publisher_enrollment_services(enrollment_id,service,protocol,service_id) VALUES($1,$2,$3,$4)`, id, scope.Service, scope.Protocol, scope.ServiceID); err != nil {
 			return result, err
 		}
 		result.Services[scope.Service] = scope.Protocol
@@ -226,8 +226,9 @@ func (d *Database) currentPublisherEnrollmentServices(ctx context.Context, q *co
 	}
 	result := map[string]string{}
 	for _, scope := range scopes {
-		binding := byName[scope.Service]
-		if scope.RevokedAt.Valid || binding.ServiceID != scope.ServiceID || binding.PublicURLID != scope.PublicURLID || configuration.Services[scope.Service].Protocol != scope.Protocol {
+		binding, bound := byName[scope.Service]
+		service, saved := configuration.Services[scope.Service]
+		if !bound || !saved || scope.RevokedAt.Valid || !binding.ServiceID.Valid || binding.ServiceID.String != scope.ServiceID || service.Protocol != scope.Protocol {
 			return nil, ErrPublisherEnrollment
 		}
 		result[scope.Service] = scope.Protocol

@@ -24,8 +24,8 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 	var result error
 	deadline := time.Now().Add(timeout)
 	for _, runtime := range d.ingresses {
-		if runtime.publicServices != nil {
-			runtime.publicServices.StopAccepting()
+		if runtime.server != nil {
+			runtime.server.StopAccepting()
 		}
 	}
 	// drain ingress visitors before closing recovery and audit reporters.
@@ -35,9 +35,6 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 		}
 		if runtime.server != nil {
 			result = errors.Join(result, shutdownStep("ingress_visitors", func() error { return runtime.server.Drain(drainCtx) }))
-		}
-		if runtime.publicServices != nil {
-			result = errors.Join(result, shutdownStep("public_service_streams", func() error { return runtime.publicServices.Drain(drainCtx) }))
 		}
 		if runtime.recovery != nil {
 			result = errors.Join(result, runtime.recovery.Close(drainCtx))
@@ -80,9 +77,6 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 		d.cancel()
 	}
 	for _, runtime := range d.ingresses {
-		if runtime.publicServices != nil {
-			result = errors.Join(result, runtime.publicServices.Close())
-		}
 		if runtime.forwarder != nil {
 			result = errors.Join(result, runtime.forwarder.Close())
 		}

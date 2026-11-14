@@ -158,3 +158,93 @@ func testDirectManagedAdmission(t *testing.T, d *Database, r ApplyProjectConfigu
 		t.Fatal(err)
 	}
 }
+
+func TestIntegrationPublicServiceAdmissionRunExclusions(t *testing.T) {
+	d, now, _, leases := newPublishRunPrerequisites(t)
+	ctx := t.Context()
+	request := appliedProjectRequest(t, d, now)
+	request.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{
+		"web": {Protocol: "http", Target: "http://localhost:3000", Public: new(true)},
+	}}
+	request = selectedProjectRequest(request, "production")
+	applied, err := d.ApplyProjectConfiguration(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := d.GetService(ctx, applied.Services[0].ServiceID, request.ActorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enrollment, err := testDeploymentPublisherEnrollment(d, ctx, request.TeamID, request.ProjectKey, "production", request.ActorID, 2, time.Hour, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runs := make([]ServiceRunState, 0, 2)
+	for range 2 {
+		replica := enrollAppliedDeployment(t, d, request, enrollment, now)
+		access := deploymentAssignmentAccess(t, d, replica, replica.assignments.Services[0], now)
+		runs = append(runs, readyAppliedServiceRun(t, d, access, replica.private, service, leases, now))
+	}
+	ingress, err := d.RegisterIngress(ctx, IngressRegistration{
+		IngressID: "service-run-exclusions", IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix),
+		ProtocolVersion: tunnelv1.Version, HTTPS: true, ConnectionCapacity: 64, IngressPoolID: PrimaryIngressPoolID,
+	}, now, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	visitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
+	admit := func(id string, excluded ...ServiceRunReference) (PublicServiceVisitorAdmission, error) {
+		return d.AdmitPublicServiceVisitor(ctx, ingress.IngressLeaseIdentity, PrimaryIngressPoolID, id,
+			service.Endpoint.Hostname, 443, netip.MustParseAddr("192.0.2.30"), now, excluded...)
+	}
+	first, err := admit(visitor)
+	if err != nil || first.RunID != runs[0].RunID || first.RunNumber != runs[0].RunNumber {
+		t.Fatal("first selection lost the exact ready run", first, err)
+	}
+	rejected := ServiceRunReference{ServiceID: service.ID, RunID: first.RunID, RunNumber: first.RunNumber}
+	if _, err := admit(visitor, rejected); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("changing exclusions moved an existing visitor reservation", err)
+	}
+	retry, err := admit(visitor)
+	if err != nil || retry.RunID != first.RunID || !retry.ExpiresAt.Equal(first.ExpiresAt) {
+		t.Fatal("denied reselection changed the original reservation", retry, err)
+	}
+	secondVisitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
+	second, err := admit(secondVisitor, rejected)
+	if err != nil || second.ServiceID != first.ServiceID || second.RunID != runs[1].RunID || second.RunNumber != runs[1].RunNumber {
+		t.Fatal("exclusion did not select the ready sibling", second, err)
+	}
+	for _, id := range []string{visitor, secondVisitor} {
+		if err := d.ClosePublicServiceVisitor(ctx, ingress.IngressLeaseIdentity, id, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wrongNumber := rejected
+	wrongNumber.RunNumber += 100
+	exact, err := admit(mustOpaqueID(t, opaqueid.VisitorConnectionPrefix), wrongNumber)
+	if err != nil || exact.RunID != first.RunID {
+		t.Fatal("another run number excluded the current run", exact, err)
+	}
+	if err := d.ClosePublicServiceVisitor(ctx, ingress.IngressLeaseIdentity, exact.ConnectionID, now); err != nil {
+		t.Fatal(err)
+	}
+	other := rejected
+	other.ServiceID = mustOpaqueID(t, opaqueid.ServicePrefix)
+	contradictoryID := rejected
+	contradictoryID.RunID = runs[1].RunID
+	contradictoryNumber := rejected
+	contradictoryNumber.RunNumber++
+	all := []ServiceRunReference{rejected, {ServiceID: service.ID, RunID: second.RunID, RunNumber: second.RunNumber}}
+	for _, exclusions := range [][]ServiceRunReference{
+		{other}, {rejected, rejected}, {rejected, contradictoryID}, {rejected, contradictoryNumber},
+		{rejected, rejected, rejected, rejected, rejected, rejected, rejected, rejected}, all,
+	} {
+		if _, err := admit(mustOpaqueID(t, opaqueid.VisitorConnectionPrefix), exclusions...); !errors.Is(err, ErrServiceAccess) {
+			t.Fatal("invalid or exhausted exclusion set admitted a run", exclusions, err)
+		}
+	}
+	var pending int
+	if err := d.pool.QueryRow(ctx, `SELECT count(*) FROM control.public_service_visitors WHERE service_id=$1 AND closed_at IS NULL`, service.ID).Scan(&pending); err != nil || pending != 0 {
+		t.Fatal("rejected selections retained visitor reservations", pending, err)
+	}
+}

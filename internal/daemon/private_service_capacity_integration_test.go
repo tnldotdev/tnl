@@ -28,7 +28,7 @@ func TestIntegrationPrivatePostgresWithoutPublicCapacity(t *testing.T) {
 		t.Fatal(err)
 	}
 	target := net.JoinHostPort(database.Host, strconv.Itoa(int(database.Port)))
-	service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "private-postgres", "private-postgres", controlv1.ServiceMetadata{Protocol: controlv1.Postgres})
+	service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "private-postgres", "private-postgres", controlv1.ServiceMetadata{Protocol: controlv1.Postgres}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -43,16 +43,22 @@ func (n *Native) Fork() (*Native, error) {
 	if n == nil {
 		return nil, ErrScope
 	}
-	copy, err := NewNative(n.NativeControl, n.authority, n.identity.enrollment(), n.private)
+	copy, err := newNative(n.NativeControl, n.authority, n.identity, n.private)
 	if err != nil {
 		return nil, err
 	}
+	copy.selectedServiceID = n.selectedServiceID
+	copy.allocationInvocation = n.allocationInvocation
+	copy.allocatedServiceID = n.allocatedServiceID
 	return copy.WithTraffic(n.traffic)
 }
 
 // ControlURL lets native-only callers keep certificate state on the same
 // server as the adapter's explicit HTTP authentication boundary.
 func (n *Native) ControlURL() string {
+	if n.Services != nil {
+		return n.Services.ControlURL()
+	}
 	return n.NativeControl.ControlURL()
 }
 

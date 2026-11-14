@@ -78,12 +78,12 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	}
 	body := controlv1.ApplyProjectConfigurationRequest{TeamId: team, Source: &testProjectSource, ExpectedRevision: 0, Configuration: controlv1.ProjectConfiguration{Settings: &controlv1.DeploymentSettings{}, Services: map[string]controlv1.ProjectServiceConfiguration{"web": {Target: "http://app.internal:3000"}}}}
 	body.Configuration.Oauth = true
-	body.Configuration.Services["local-app"] = controlv1.ProjectServiceConfiguration{Target: "app", PublicUrl: &controlv1.ProjectServicePublicURL{}}
+	body.Configuration.Services["local-app"] = controlv1.ProjectServiceConfiguration{Target: "app", Public: new(true)}
 	body.Configuration.Services["local-private"] = controlv1.ProjectServiceConfiguration{Target: "app"}
 	body.Configuration.Webhooks = map[string]controlv1.ProjectWebhook{"payments": {Service: "local-app", Path: "/hooks/payments", Provider: controlv1.Custom}}
 	name, hostname, mode := "website", "upstream.internal", controlv1.Restricted
 	digest := sha256.Sum256([]byte("tnl-target-tls/v1\x00" + hostname + "\x00"))
-	body.Configuration.Services["public"] = controlv1.ProjectServiceConfiguration{Name: &name, Public: new(true), Target: "https://192.0.2.5:8443", TargetTls: &controlv1.ProjectTargetTLS{Hostname: hostname, Digest: hex.EncodeToString(digest[:])}, Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectPublicAccess{Mode: &mode}}}
+	body.Configuration.Services["public"] = controlv1.ProjectServiceConfiguration{Name: &name, Public: new(true), Target: "https://192.0.2.5:8443", TargetTls: &controlv1.ProjectTargetTLS{Hostname: hostname, Digest: hex.EncodeToString(digest[:])}, Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: &mode}}}
 	body.Deployment = deployment
 	body.ServiceDeclarations = controlv1.ProjectServiceDeclarations{"web": "http", "public": "http", "local-app": "http", "local-private": "http"}
 	localBody := body
@@ -312,7 +312,7 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 		t.Fatal("public metadata omitted the public binding or leaked private bindings", projection, err)
 	}
 	projected := projection.Services[0]
-	if projected.Service != "public" || projected.ServiceId == nil || *projected.ServiceId != pub.ServiceId || projected.PublicUrlId != nil || projected.Port != 443 {
+	if projected.Service != "public" || projected.ServiceId != pub.ServiceId || projected.Port != 443 {
 		t.Fatal("public service projection changed resource identity or port", projected)
 	}
 	local, err := owner.RealizeLocalProjectService(ctx, project, "local-app", controlv1.RealizeLocalProjectServiceRequest{TeamId: team, SourceFingerprint: applied.SourceFingerprint, WorktreeKey: "checkout-a", Configuration: localBody.Configuration.Services["local-app"]})
@@ -349,7 +349,7 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	if len(assignments.Services) != 2 || web.Configuration.Target != "app.internal:3000" || web.GrantId == "" || web.TrustRevision != 1 || web.Configuration.TargetTls != nil {
 		t.Fatalf("wire assignment: %+v", assignments)
 	}
-	if pub.ServiceKind != "service" || pub.Configuration.TargetTls == nil || pub.Configuration.TargetTls.Hostname != hostname || pub.Configuration.PublicUrl != nil || pub.Configuration.Http == nil || pub.Configuration.Http.Access.Mode == nil || *pub.Configuration.Http.Access.Mode != mode {
+	if pub.ServiceId == "" || pub.TrustRevision < 1 || pub.Configuration.TargetTls == nil || pub.Configuration.TargetTls.Hostname != hostname || pub.Configuration.Public != nil || pub.Configuration.Http == nil || pub.Configuration.Http.Access.Mode == nil || *pub.Configuration.Http.Access.Mode != mode {
 		t.Fatal("wire dropped service HTTP scope or target trust")
 	}
 	if pub.Configuration.Target != "192.0.2.5:8443" {

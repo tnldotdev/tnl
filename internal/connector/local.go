@@ -59,8 +59,8 @@ func ConnectLocal(ctx context.Context, directory, name, protocol string, resolve
 		return nil, err
 	}
 	service, found := p.Config.Services[name]
-	if !found || config.SelectedDeployment(p.Config) != "local" || config.IsPublicService(service) {
-		return nil, errors.New("select a configured local private service")
+	if !found || config.SelectedDeployment(p.Config) != "local" {
+		return nil, errors.New("select a configured local service")
 	}
 	if !config.ValidProtocol(protocol) || config.Protocol(service) != protocol {
 		return nil, errors.New("local connection requires a matching service protocol")

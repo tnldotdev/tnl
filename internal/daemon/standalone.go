@@ -33,20 +33,20 @@ var standaloneRelays = [...]struct {
 }
 
 type standaloneSettings struct {
-	control                 controlSettings
-	publicListen            string
-	publicListener          net.Listener
-	relayUDPListen          string
-	relayUDPPacket          net.PacketConn
-	quic                    muxsession.QUICConfig
-	serverHostname          string
-	relayHostname           string
-	relayTransportTLS       *tls.Config
-	ingressLeaseDuration    time.Duration
-	relayLeaseDuration      time.Duration
-	ingress                 ingressSettings
-	relay                   relaySettings
-	configurePublicServices func(*ingress.PublicServicesConfig)
+	control              controlSettings
+	publicListen         string
+	publicListener       net.Listener
+	relayUDPListen       string
+	relayUDPPacket       net.PacketConn
+	quic                 muxsession.QUICConfig
+	serverHostname       string
+	relayHostname        string
+	relayTransportTLS    *tls.Config
+	ingressLeaseDuration time.Duration
+	relayLeaseDuration   time.Duration
+	ingress              ingressSettings
+	relay                relaySettings
+	configureIngress     func(*ingress.Config)
 }
 
 func standaloneSettingsFrom(cfg daemonconfig.Config) standaloneSettings {
@@ -179,11 +179,14 @@ func (d *daemon) startStandalone(
 	}
 	if err := d.startIngressRuntime(ctx, settings.ingress, metrics, ingressRuntimeConfig{
 		client: ingressClient, ingressID: standaloneIngressID, listener: publicListener,
-		clusterSecret: d.clusterSecret, configurePublicServices: settings.configurePublicServices,
+		clusterSecret: d.clusterSecret,
 		configure: func(ingressConfig *ingress.Config) {
 			// only publisher transport is handed off from raw visitor ingress.
 			ingressConfig.RelayHostname = settings.relayHostname
 			ingressConfig.HandleRelay = relayListener.Enqueue
+			if settings.configureIngress != nil {
+				settings.configureIngress(ingressConfig)
+			}
 		},
 	}); err != nil {
 		return err

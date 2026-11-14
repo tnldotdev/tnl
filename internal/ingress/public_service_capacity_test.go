@@ -12,7 +12,7 @@ import (
 
 func TestPublicServicePendingSourceAndServiceCapacity(t *testing.T) {
 	p, _, _, _ := publicServiceTestSetup(t)
-	s := p.server
+	s := p
 	s.config.Pending.Connections = 3
 	s.traffic.pending.PublicURLConnections, s.traffic.pending.SourceConnections = 2, 1
 	limits := s.config.Traffic.Default
@@ -75,36 +75,35 @@ func TestPublicServicePendingSourceAndServiceCapacity(t *testing.T) {
 	connection, peer := net.Pipe()
 	defer connection.Close()
 	defer peer.Close()
-	if _, release, ok := p.acquireSession(t.Context(), connection); ok {
-		release()
+	if err := p.AcceptPublic(t.Context(), connection, netip.MustParseAddrPort("192.0.2.1:42000"), netip.MustParseAddrPort("203.0.113.8:20000"), "", nil); err == nil {
 		t.Fatal("stopped owner admitted work")
 	}
 }
 
-func publicServiceAdmissionCounts(p *PublicServices) (pending, active int) {
-	p.server.mu.Lock()
-	defer p.server.mu.Unlock()
-	return p.server.admitted[pendingConnection], p.server.admitted[visitorConnection]
+func publicServiceAdmissionCounts(p *Server) (pending, active int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.admitted[pendingConnection], p.admitted[visitorConnection]
 }
 
-func publicServiceCapacityReleased(p *PublicServices) bool {
+func publicServiceCapacityReleased(p *Server) bool {
 	pending, active := publicServiceAdmissionCounts(p)
 	if pending != 0 || active != 0 {
 		return false
 	}
-	p.server.traffic.mu.Lock()
-	defer p.server.traffic.mu.Unlock()
-	for _, run := range p.server.traffic.runs {
+	p.traffic.mu.Lock()
+	defer p.traffic.mu.Unlock()
+	for _, run := range p.traffic.runs {
 		if run.active != 0 {
 			return false
 		}
 	}
-	for _, run := range p.server.traffic.pendingRuns {
+	for _, run := range p.traffic.pendingRuns {
 		if run.active != 0 {
 			return false
 		}
 	}
-	for _, source := range p.server.traffic.sources {
+	for _, source := range p.traffic.sources {
 		if source.active != 0 || source.connections != 0 {
 			return false
 		}

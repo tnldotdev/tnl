@@ -135,6 +135,7 @@ type LocalTunnel struct {
 	ProjectRoot          string
 	Service              sql.NullString
 	ServiceProtocol      string
+	ServiceID            sql.NullString
 	PrimaryProjectRoot   sql.NullString
 	IntegrationNamespace sql.NullString
 	Hostname             sql.NullString
@@ -250,10 +251,10 @@ type ProjectPreview struct {
 	UpdatedAt    int64
 }
 
-type ProjectUrlInventory struct {
+type ProjectServiceInventory struct {
 	ProjectRoot  string
 	ServerOrigin string
-	PublicURLID  string
+	ServiceID    string
 	LastSeenAt   int64
 }
 

@@ -116,7 +116,7 @@ func TestIntegrationPrivateInventoryLargeTrust(t *testing.T) {
 	metadata := controlstate.ServiceMetadata{Protocol: "postgres", TLS: &controlstate.ServiceTargetTLS{Hostname: "database.internal", PEM: bundle, Digest: hex.EncodeToString(digest[:])}}
 	var exact string
 	for i := range 101 {
-		s, err := f.d.CreateServiceAt(t.Context(), team.ID, owner.Identity.Identity.Id, fmt.Sprintf("db-%03d", i), fmt.Sprintf("db-%03d", i), controlstate.ServicePlacement{}, f.now, metadata)
+		s, err := f.d.CreateServiceAt(t.Context(), team.ID, owner.Identity.Identity.Id, fmt.Sprintf("db-%03d", i), fmt.Sprintf("db-%03d", i), controlstate.ServicePlacement{}, f.now, metadata, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

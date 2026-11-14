@@ -99,7 +99,7 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 		t.Run(fmt.Sprintf("standalone=%t", standalone), func(t *testing.T) {
 			opened := make(chan privateObservation, 8)
 			f := newServiceRuntimeFixture(t, standalone, opened)
-			service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "audit-private", "audit-private", controlv1.ServiceMetadata{Protocol: controlv1.Tcp})
+			service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "audit-private", "audit-private", controlv1.ServiceMetadata{Protocol: controlv1.Tcp}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -116,7 +116,7 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 			pubCtx, stopPub := context.WithCancel(t.Context())
 			ready, pubDone := make(chan struct{}), make(chan error, 1)
 			go func() {
-				pubDone <- publisherservice.Publish(pubCtx, publisherservice.RunConfig{Control: f.identity.routes, State: f.identity.state, Access: native.Access, Identity: identity, ServiceID: service.Id, Target: target.address,
+				pubDone <- publisherservice.Publish(pubCtx, publisherservice.RunConfig{Control: f.identity.routes, State: f.identity.state, Access: native.Access, PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: service.Id, Target: target.address,
 					Metadata: controlv1.ServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool}, HeartbeatInterval: 100 * time.Millisecond, Ready: func() error { close(ready); return nil }, RelayQUIC: quic, RelayTCP: tcp})
 			}()
 			t.Cleanup(func() {

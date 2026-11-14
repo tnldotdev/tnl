@@ -16,7 +16,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
-	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
@@ -33,20 +32,22 @@ type Decision struct {
 // selected service owns its certificate name; SNI cannot select another target.
 // target trust is independent of the public WebPKI identity presented to clients.
 type Stream struct {
-	Protocol       config.ProtocolName
-	Public         bool
-	Hostname       string
-	HTTPRequests   RequestLimits
-	Kubernetes     KubernetesLimits
-	Authority      string
-	Target         string
-	Handler        http.Handler
-	InspectionMode inspection.Mode
-	ObserveSummary inspection.Observer
-	AdmitRequest   func(*http.Request) error
-	TLS            *tls.Config
-	TargetTLS      *tls.Config
-	Visitor        Authentication
+	Protocol          config.ProtocolName
+	Public            bool
+	Hostname          string
+	HTTPRequests      RequestLimits
+	HTTPDrain         httpstream.Drain
+	Kubernetes        KubernetesLimits
+	Authority         string
+	Target            string
+	Handler           http.Handler
+	InspectionMode    inspection.Mode
+	ObserveSummary    inspection.Observer
+	AdmitRequest      func(*http.Request) error
+	HTTPResponseHooks httpstream.ResponseHooks
+	TLS               *tls.Config
+	TargetTLS         *tls.Config
+	Visitor           Authentication
 }
 
 func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
@@ -85,11 +86,11 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 		}
 		visitor = &connectorServiceConn{conn: visitor, ctx: ctx, admission: connector}
 	}
-	// connector HTTP handlers and upgraded copies are part of the stream lifetime,
-	// not merely net/http's connection close notification.
-	var handlerMu sync.Mutex
-	var handlers sync.WaitGroup
-	acceptHandlers := true
+	// target dials can outlive their requesting HTTP handlers, which httpstream
+	// joins separately. keep entered target work until connector cleanup finishes.
+	var targetWorkMu sync.Mutex
+	var targetWork sync.WaitGroup
+	acceptTargetWork := true
 	life, cancelLife := context.WithCancel(ctx)
 	if connector != nil {
 		ctx = life
@@ -150,36 +151,31 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 	if connector != nil {
 		defer func() {
 			connector.Stop()
-			handlerMu.Lock()
-			acceptHandlers = false
-			handlerMu.Unlock()
+			targetWorkMu.Lock()
+			acceptTargetWork = false
+			targetWorkMu.Unlock()
 			cancelLife()
 			closeSockets()
-			handlers.Wait()
+			targetWork.Wait()
 		}()
 	}
 	enterConnectorWork := func() (func(), bool) {
 		if connector == nil {
 			return func() {}, true
 		}
-		handlerMu.Lock()
-		defer handlerMu.Unlock()
-		if !acceptHandlers {
+		targetWorkMu.Lock()
+		defer targetWorkMu.Unlock()
+		if !acceptTargetWork {
 			return nil, false
 		}
-		handlers.Add(1)
-		return handlers.Done, true
+		targetWork.Add(1)
+		return targetWork.Done, true
 	}
 	wrapHandler := func(next http.Handler) http.Handler {
 		if connector == nil {
 			return next
 		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			finish, ok := enterConnectorWork()
-			if !ok {
-				return
-			}
-			defer finish()
 			if connectorCheck(r.Context(), connector) == nil {
 				next.ServeHTTP(w, r)
 			}
@@ -289,7 +285,7 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 			return err
 		}
 		admissionDone(nil)
-		return httpVisitor.Frontend.Forward(ctx, secured, HTTPTarget{Address: s.Target, Handler: s.Handler, Transport: transport})
+		return httpVisitor.Frontend.Forward(ctx, secured, HTTPTarget{Address: s.Target, Handler: s.Handler, Transport: transport, Drain: s.HTTPDrain})
 	}
 	authCtx, authDone := observability.PublisherOperation(setup, "visitor_authorization")
 	decision, err := s.Visitor.authorize(authCtx, secured.ConnectionState())
@@ -334,7 +330,7 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 				w, r, finishInspection := inspection.BeginHTTP(w, r, s.InspectionMode, s.ObserveSummary)
 				defer finishInspection()
 				// a connector request is not an owner readiness proof.
-				r.Header.Del(publisherproxy.ReadinessProbeHeader)
+				r.Header.Del(httpstream.ReadinessProbeHeader)
 				// connector admission is the credential, but every HTTP request still
 				// rechecks current policy before any target bytes on the shared socket.
 				check, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -358,16 +354,16 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 					return
 				}
 				defer release()
-				next.ServeHTTP(w, r)
+				next.ServeHTTP(w, httpstream.WithVisitorHost(r, s.Hostname))
 			}))
 		}
 		// the underlying visitor and target sockets remain connector-gated.
 		// preserve *tls.Conn here so net/http can serve the negotiated HTTP/2;
 		// every handler also rechecks admission before application work.
 		if inline {
-			return httpstream.ServeHandler(live, secured, wrap(s.Handler))
+			return httpstream.ServeHandler(live, secured, wrap(s.Handler), s.HTTPDrain)
 		}
-		return httpstream.Serve(live, secured, &url.URL{Scheme: scheme, Host: s.Target}, target.Dial, wrap)
+		return httpstream.Serve(live, secured, &url.URL{Scheme: scheme, Host: s.Target}, target.Dial, wrap, s.HTTPResponseHooks, s.HTTPDrain)
 	}
 	if backend == nil {
 		backend, err = dial(setup)

@@ -1,122 +1,71 @@
--- name: EnablePublishRunShareAccess :one
-UPDATE control.publish_runs AS run
-SET share_capable = true
-WHERE run.id = sqlc.arg(publish_run_id)
-  AND run.public_url_id = sqlc.arg(public_url_id)
-  AND run.publish_run_number = sqlc.arg(publish_run_number)
-  AND run.state = 'starting'
-  AND EXISTS (SELECT 1 FROM control.public_urls AS url WHERE url.id = run.public_url_id
-      AND url.service_protocol = 'http' AND url.purpose IN ('app', 'alias', 'demo')
-      AND (sqlc.arg(preview_id)::text = '' OR (url.purpose = 'app' AND EXISTS (
-          SELECT 1 FROM control.preview_public_urls AS membership
-          JOIN control.previews AS preview ON preview.id = membership.preview_id
-          WHERE membership.preview_id = sqlc.arg(preview_id) AND membership.public_url_id = url.id
-            AND preview.created_by_identity_id = run.acting_identity_id AND preview.demo_publish_run_id IS NULL))))
-RETURNING run.id;
+-- name: GetActiveShareForService :one
+SELECT share.* FROM control.shares share
+JOIN control.share_services included ON included.share_id=share.id
+WHERE share.id=sqlc.arg(share_id) AND included.service_id=sqlc.arg(service_id)
+    AND share.revoked_at IS NULL AND share.expires_at>sqlc.arg(now)
+    AND (share.scope<>'guest' OR control.guest_share_live(share.guest_id,sqlc.arg(now)));
 
--- name: GetActiveShareForPublicURL :one
-SELECT share.id, share.secret_digest, share.expires_at
-FROM control.shares AS share
-JOIN control.share_public_urls AS included ON included.share_id = share.id
-WHERE share.id = sqlc.arg(share_id)
-  AND included.public_url_id = sqlc.arg(public_url_id)
-  AND share.revoked_at IS NULL
-  AND share.expires_at > sqlc.arg(now)
-  AND (share.scope != 'guest' OR control.guest_share_live(share.guest_id, sqlc.arg(now)));
+-- name: CountActiveSharesForService :one
+SELECT count(*)::bigint FROM control.shares share
+JOIN control.share_services included ON included.share_id=share.id
+WHERE included.service_id=sqlc.arg(service_id) AND share.revoked_at IS NULL AND share.expires_at>sqlc.arg(now)
+    AND (share.scope<>'guest' OR control.guest_share_live(share.guest_id,sqlc.arg(now)));
 
--- name: CountActiveSharesForPublicURL :one
-SELECT count(*)::bigint FROM control.shares AS share
-JOIN control.share_public_urls AS included ON included.share_id = share.id
-WHERE included.public_url_id = sqlc.arg(public_url_id)
-  AND share.revoked_at IS NULL AND share.expires_at > sqlc.arg(now)
-  AND (share.scope != 'guest' OR control.guest_share_live(share.guest_id, sqlc.arg(now)));
+-- name: CountActiveShareCookiesForService :one
+SELECT count(*)::bigint FROM control.share_cookies cookie
+JOIN control.shares share ON share.id=cookie.share_id
+WHERE cookie.service_id=sqlc.arg(service_id) AND cookie.expires_at>sqlc.arg(now)
+    AND share.revoked_at IS NULL AND share.expires_at>sqlc.arg(now)
+    AND (share.scope<>'guest' OR control.guest_share_live(share.guest_id,sqlc.arg(now)));
 
--- name: CountActiveShareCookiesForPublicURL :one
-SELECT count(*)::bigint FROM control.share_cookies AS cookie
-JOIN control.shares AS share ON share.id = cookie.share_id
-WHERE cookie.public_url_id = sqlc.arg(public_url_id)
-  AND cookie.expires_at > sqlc.arg(now)
-  AND share.revoked_at IS NULL AND share.expires_at > sqlc.arg(now)
-  AND (share.scope != 'guest' OR control.guest_share_live(share.guest_id, sqlc.arg(now)));
-
--- name: ListReadyShareHostnames :many
-SELECT url.id AS public_url_id, url.canonical_hostname
-FROM control.share_public_urls AS included
-JOIN control.public_urls AS url ON url.id = included.public_url_id
-JOIN control.publish_runs AS run ON run.public_url_id = url.id
-WHERE included.share_id = sqlc.arg(share_id)
-  AND url.lifecycle_state = 'enabled'
-  AND url.service_protocol = 'http' AND url.purpose IN ('app', 'alias', 'demo')
-  AND run.state = 'ready'
-  AND run.publisher_expires_at > sqlc.arg(now)
-  AND run.share_capable = true
-ORDER BY url.id;
+-- name: ListReadyShareServices :many
+-- aggregate replica runs before building one redirect per service hostname.
+SELECT service.id AS service_id,service.certificate_hostname,
+    array_agg(run.id ORDER BY run.run_number)::text[] AS run_ids
+FROM control.share_services included
+JOIN control.services service ON service.id=included.service_id
+JOIN control.service_runs run ON run.service_id=service.id
+WHERE included.share_id=sqlc.arg(share_id) AND service.enabled AND service.deleted_at IS NULL
+    AND service.protocol='http' AND run.state='ready' AND run.healthy AND run.closed_at IS NULL
+    AND run.publisher_expires_at>sqlc.arg(now) AND run.certificate_expires_at>sqlc.arg(now)
+    AND EXISTS(SELECT 1 FROM control.publisher_service_permission(run.publisher_identity_id,
+        run.publisher_grant_id,service.id,sqlc.arg(now)))
+GROUP BY service.id,service.certificate_hostname ORDER BY service.id;
 
 -- name: InsertShareCookie :one
-INSERT INTO control.share_cookies (token_digest, share_id, public_url_id, team_id, created_at, expires_at)
-SELECT sqlc.arg(token_digest), share.id, sqlc.arg(public_url_id), share.team_id,
-       sqlc.arg(created_at), share.expires_at
-FROM control.shares AS share
-JOIN control.share_public_urls AS included
-  ON included.share_id = share.id AND included.public_url_id = sqlc.arg(public_url_id)
-WHERE share.id = sqlc.arg(share_id)
-  AND share.revoked_at IS NULL
-  AND share.expires_at > sqlc.arg(created_at)
-  AND (share.scope != 'guest' OR control.guest_share_live(share.guest_id, sqlc.arg(created_at)))
+INSERT INTO control.share_cookies(token_digest,share_id,service_id,team_id,run_ids,created_at,expires_at)
+SELECT sqlc.arg(token_digest),share.id,included.service_id,share.team_id,sqlc.arg(run_ids)::text[],
+    sqlc.arg(created_at),LEAST(share.expires_at,sqlc.arg(expires_at)::timestamptz)
+FROM control.shares share
+JOIN control.share_services included ON included.share_id=share.id AND included.service_id=sqlc.arg(service_id)
+WHERE share.id=sqlc.arg(share_id) AND share.revoked_at IS NULL AND share.expires_at>sqlc.arg(created_at)
+    AND (share.scope<>'guest' OR control.guest_share_live(share.guest_id,sqlc.arg(created_at)))
 RETURNING token_digest;
 
 -- name: InsertShareHandoff :one
-INSERT INTO control.share_handoffs (token_digest, share_id, public_url_id, team_id, redirect_url, bridge, created_at, expires_at)
-SELECT sqlc.arg(token_digest), share.id, sqlc.arg(public_url_id), share.team_id,
-       sqlc.arg(next_url), sqlc.arg(bridge), sqlc.arg(created_at), sqlc.arg(expires_at)
-FROM control.shares AS share
-JOIN control.share_public_urls AS included
-  ON included.share_id = share.id AND included.public_url_id = sqlc.arg(public_url_id)
-WHERE share.id = sqlc.arg(share_id)
-  AND share.revoked_at IS NULL
-  AND share.expires_at > sqlc.arg(created_at)
-  AND (share.scope != 'guest' OR control.guest_share_live(share.guest_id, sqlc.arg(created_at)))
+INSERT INTO control.share_handoffs(token_digest,share_id,service_id,team_id,run_ids,redirect_url,bridge,created_at,expires_at)
+SELECT sqlc.arg(token_digest),share.id,included.service_id,share.team_id,sqlc.arg(run_ids)::text[],
+    sqlc.arg(next_url),sqlc.arg(bridge),sqlc.arg(created_at),sqlc.arg(expires_at)
+FROM control.shares share
+JOIN control.share_services included ON included.share_id=share.id AND included.service_id=sqlc.arg(service_id)
+WHERE share.id=sqlc.arg(share_id) AND share.revoked_at IS NULL AND share.expires_at>sqlc.arg(created_at)
+    AND (share.scope<>'guest' OR control.guest_share_live(share.guest_id,sqlc.arg(created_at)))
 RETURNING token_digest;
 
 -- name: ConsumeShareHandoff :one
-UPDATE control.share_handoffs AS handoff
-SET consumed_at = sqlc.arg(now)
-FROM control.shares AS share
-WHERE handoff.token_digest = sqlc.arg(token_digest)
-  AND handoff.public_url_id = sqlc.arg(public_url_id)
-  AND handoff.consumed_at IS NULL
-  AND handoff.expires_at > sqlc.arg(now)
-  AND share.id = handoff.share_id
-  AND share.revoked_at IS NULL
-  AND share.expires_at > sqlc.arg(now)
-  AND (share.scope != 'guest' OR control.guest_share_live(share.guest_id, sqlc.arg(now)))
-RETURNING handoff.share_id, handoff.redirect_url, handoff.bridge;
-
--- name: GetShareCapablePublishRun :one
-SELECT run.id
-FROM control.publish_runs AS run
-JOIN control.public_urls AS url ON url.id = run.public_url_id AND url.service_protocol = 'http' AND url.purpose IN ('app', 'alias', 'demo')
-WHERE run.id = sqlc.arg(publish_run_id)
-  AND run.public_url_id = sqlc.arg(public_url_id)
-  AND run.publish_run_number = sqlc.arg(publish_run_number)
-  AND run.share_capable = true
-  AND run.state IN ('starting', 'ready')
-  AND run.publisher_expires_at > sqlc.arg(now);
+UPDATE control.share_handoffs handoff SET consumed_at=sqlc.arg(now)
+FROM control.shares share
+WHERE handoff.token_digest=sqlc.arg(token_digest) AND handoff.service_id=sqlc.arg(service_id)
+    AND sqlc.arg(service_run_id)::text=ANY(handoff.run_ids)
+    AND handoff.consumed_at IS NULL AND handoff.expires_at>sqlc.arg(now)
+    AND share.id=handoff.share_id AND share.revoked_at IS NULL AND share.expires_at>sqlc.arg(now)
+    AND (share.scope<>'guest' OR control.guest_share_live(share.guest_id,sqlc.arg(now)))
+RETURNING handoff.share_id,handoff.redirect_url,handoff.bridge,handoff.run_ids;
 
 -- name: DeleteExpiredShareCookies :exec
-WITH expired AS (
-    SELECT candidate.token_digest FROM control.share_cookies AS candidate
-    WHERE candidate.expires_at <= sqlc.arg(now)
-    LIMIT 100
-)
-DELETE FROM control.share_cookies AS cookie
-USING expired WHERE cookie.token_digest = expired.token_digest;
+DELETE FROM control.share_cookies cookie WHERE cookie.token_digest IN
+    (SELECT expired.token_digest FROM control.share_cookies expired WHERE expired.expires_at<=sqlc.arg(now) LIMIT 100);
 
 -- name: DeleteFinishedShareHandoffs :exec
-WITH finished AS (
-    SELECT candidate.token_digest FROM control.share_handoffs AS candidate
-    WHERE candidate.expires_at <= sqlc.arg(now) OR candidate.consumed_at IS NOT NULL
-    LIMIT 100
-)
-DELETE FROM control.share_handoffs AS handoff
-USING finished WHERE handoff.token_digest = finished.token_digest;
+DELETE FROM control.share_handoffs handoff WHERE handoff.token_digest IN
+    (SELECT finished.token_digest FROM control.share_handoffs finished WHERE finished.expires_at<=sqlc.arg(now) OR finished.consumed_at IS NOT NULL LIMIT 100);

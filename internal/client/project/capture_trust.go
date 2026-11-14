@@ -14,8 +14,7 @@ import (
 // CaptureServiceTrust captures trust for a service's resolved target.
 // the caller compares it with control's approved metadata before mutations.
 func (p Project) CaptureServiceTrust(ctx context.Context, name, target string) (*targettrust.Snapshot, error) {
-	service, found := p.Config.Services[name]
-	if !found || config.IsPublicService(service) {
+	if _, found := p.Config.Services[name]; !found {
 		return nil, fmt.Errorf("service %q is not a configured service", name)
 	}
 	return p.captureTrust(ctx, name, target)
@@ -30,7 +29,7 @@ func (p Project) captureTrust(ctx context.Context, name, target string) (*target
 		return nil, fmt.Errorf("service %q is not configured", name)
 	}
 	if service.Target == nil || service.Target.TLS == nil {
-		if !config.IsPublicService(service) && strings.HasPrefix(target, "https://") {
+		if strings.HasPrefix(target, "https://") {
 			return nil, fmt.Errorf("service %q HTTPS listener requires target.tls", name)
 		}
 		return nil, nil

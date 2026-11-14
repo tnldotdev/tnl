@@ -31,8 +31,8 @@ func TestForwarderWarmStalledAssignmentFallsBackBeforeVisitorBytes(t *testing.T)
 		fallbackHeaders <- header
 		return fallback.open(ctx, header)
 	})
-	control := config.PublicServices.config.Control.(*httpsServiceControl)
-	lease := config.PublicServices.config.CurrentLease()
+	control := config.Control.(*httpsServiceControl)
+	lease := config.CurrentLease()
 	expectedRelay := control.relays[0]
 	ref := tunnelv1.ServicePublisherConnectionRef{
 		ServiceID: control.service, ServiceRunID: control.run, RunNumber: 1,
@@ -153,7 +153,7 @@ func TestForwarderWarmStalledAssignmentFallsBackBeforeVisitorBytes(t *testing.T)
 	if err != nil || !reused {
 		t.Fatalf("warm service assignment was not pooled: reused=%t error=%v", reused, err)
 	}
-	config.PublicServices.config.PendingTimeout = 2 * time.Second
+	config.OpenTimeout = 2 * time.Second
 	_, address := startIngress(t, config)
 	client := ingressClient(t, address, "route.example", "192.0.2.4:42000")
 	_ = client.SetDeadline(time.Now().Add(2 * time.Second))

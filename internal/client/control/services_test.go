@@ -82,7 +82,7 @@ func TestServiceRunUsesSeparatePersonPublisherAndRunCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := t.Context()
-	if _, err := client.CreateService(ctx, "team", "orders", "service-once", controlv1.ServiceMetadata{Protocol: controlv1.Tcp}); err != nil {
+	if _, err := client.CreateService(ctx, "team", "orders", "service-once", controlv1.ServiceMetadata{Protocol: controlv1.Tcp}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if services, err := client.ListServices(ctx, "team"); err != nil || len(services) != 1 {
@@ -124,5 +124,41 @@ func TestServiceAuditCursorIsCopiedVerbatim(t *testing.T) {
 	}
 	if _, err := client.ListServiceAudit(t.Context(), "team", controlv1.ListServiceAuditParams{After: &cursor}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCreateServiceSendsCanonicalDeclarationWithoutInventedMetadata(t *testing.T) {
+	configuration := &controlv1.ProjectServiceConfiguration{
+		Target: "http://origin.internal:8080", Public: new(true),
+		Http: &controlv1.ProjectServiceHTTP{Limits: &controlv1.ProjectHTTPApplicationLimits{Concurrency: new(7)}},
+	}
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/services" ||
+			r.Header.Get("Authorization") != "Bearer person-token" || r.Header.Get("Idempotency-Key") != "create-once" {
+			t.Error("service declaration changed the creation or credential boundary")
+		}
+		var body controlv1.CreateServiceRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		if body.Protocol != nil || body.TargetTls != nil || body.Placement != nil || body.Configuration == nil ||
+			body.Configuration.Target != configuration.Target || body.Configuration.Public == nil || !*body.Configuration.Public ||
+			body.Configuration.Http == nil || body.Configuration.Http.Limits == nil || *body.Configuration.Http.Limits.Concurrency != 7 {
+			t.Error("client changed the canonical declaration or invented protocol/placement")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(controlv1.Service{Id: "svc_service", TeamId: "team", Name: "web"})
+	}))
+	defer server.Close()
+	client, err := New(server.URL, server.Client(), "person-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CreateService(t.Context(), "team", "web", "create-once", controlv1.ServiceMetadata{}, configuration); err != nil {
+		t.Fatal(err)
+	}
+	if configuration.Protocol != nil || configuration.Name != nil || configuration.Target != "http://origin.internal:8080" {
+		t.Fatal("client mutated its canonical declaration")
 	}
 }

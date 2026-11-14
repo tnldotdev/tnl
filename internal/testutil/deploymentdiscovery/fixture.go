@@ -87,7 +87,7 @@ func New(t *testing.T) *Fixture {
 	serviceID, runID, grantID := id(opaqueid.ServicePrefix), id(opaqueid.ServiceRunPrefix), id(opaqueid.PublisherGrantPrefix)
 	f := &Fixture{Key: key, Heartbeat: make(chan controlv1.ServiceRunHeartbeat, 16), TargetHandshake: make(chan struct{}, 1), DiscoveryStarted: make(chan struct{}), DiscoveryStopped: make(chan struct{}), proofs: map[string]bool{}}
 	protocol := controlv1.ServiceProtocol("kubernetes")
-	f.assignment = controlv1.DeploymentPublisherAssignments{Member: member, Revision: 1, ConfigurationHash: strings.Repeat("a", 64), CertificateStatePlans: []controlv1.CertificatePlan{}, Services: []controlv1.DeploymentPublisherServiceAssignment{{Service: "cluster", ServiceId: serviceID, ServiceKind: "service", GrantId: grantID, TrustRevision: 1, Configuration: controlv1.ProjectServiceConfiguration{Protocol: &protocol, TargetDiscovery: &controlv1.ProjectTargetDiscovery{Type: controlv1.Eks, Region: "us-east-1", Cluster: new("production")}}}}}
+	f.assignment = controlv1.DeploymentPublisherAssignments{Member: member, Revision: 1, ConfigurationHash: strings.Repeat("a", 64), CertificateStatePlans: []controlv1.CertificatePlan{}, Services: []controlv1.DeploymentPublisherServiceAssignment{{Service: "cluster", ServiceId: serviceID, GrantId: grantID, TrustRevision: 1, Configuration: controlv1.ProjectServiceConfiguration{Protocol: &protocol, TargetDiscovery: &controlv1.ProjectTargetDiscovery{Type: controlv1.Eks, Region: "us-east-1", Cluster: new("production")}}}}}
 	f.service = controlv1.Service{Id: serviceID, TeamId: member.TeamId, Name: "cluster", Protocol: protocol, Enabled: true, TrustRevision: 1, PublisherPool: true, CreatedAt: time.Now(), Endpoint: &controlv1.ServiceEndpoint{Hostname: "managed.example.test", Port: 25443}}
 	f.prepare = controlv1.ServiceRunPreparation{ServiceId: serviceID, ServiceRunId: runID, TeamId: member.TeamId, PublisherIdentityId: member.PublisherIdentityId, PublisherGrantId: grantID, PublisherKeyId: member.KeyId, RunNumber: 1, Hostname: f.service.Endpoint.Hostname, DomainId: id(opaqueid.DomainPrefix), ExpiresAt: time.Now().Add(time.Minute), CertificatePlan: &controlv1.CertificatePlan{CacheKey: "group-fixture", Scope: f.service.Endpoint.Hostname, Identifiers: []string{f.service.Endpoint.Hostname}, ChallengeMethod: controlv1.Dns01}}
 	f.prepare.Traffic = controlv1.TrafficLimits{Connections: 32, Rate: 20, RatePerNs: int64(time.Second), Burst: 40, UploadBytes: 8 << 20, DownloadBytes: 16 << 20}
@@ -229,7 +229,7 @@ func (f *Fixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		write(w, authorityv1.PublisherTokenResponse{AccessToken: "fixture-service", GrantId: request.GrantId, TokenType: "Bearer", ExpiresIn: 60})
-	case "/v1/publisher/service":
+	case "/v1/publisher/services/" + f.assignment.Services[0].ServiceId:
 		if r.Header.Get("Authorization") != "Bearer fixture-service" {
 			t.Error("saved service lacked scoped grant")
 			w.WriteHeader(401)
@@ -239,7 +239,7 @@ func (f *Fixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 	case "/v1/services/" + f.service.Id + "/runs":
 		var declaration controlv1.ServiceRunDeclaration
 		_ = json.NewDecoder(r.Body).Decode(&declaration)
-		if declaration.Protocol != f.service.Protocol || declaration.TrustRevision != f.service.TrustRevision || declaration.TargetTls != nil {
+		if declaration.Protocol != f.service.Protocol || declaration.TrustRevision < 1 || declaration.TrustRevision != f.service.TrustRevision || declaration.TargetTls != nil {
 			t.Error("discovered trust leaked into control declaration")
 		}
 		preparation := f.prepare

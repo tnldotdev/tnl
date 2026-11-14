@@ -17,8 +17,7 @@ import (
 
 type RealizeLocalProjectServiceRequest struct {
 	TeamID, ProjectKey, SourceFingerprint, Service, WorktreeKey, ActorID string
-	PublicURLID                                                          string
-	DomainID, WorktreeLabel                                              string
+	WorktreeLabel                                                        string
 	DNSAutomation                                                        bool
 	Configuration                                                        ProjectServiceConfiguration
 	Now                                                                  time.Time
@@ -27,7 +26,6 @@ type RealizeLocalProjectServiceRequest struct {
 type LocalProjectService struct {
 	Service     string           `json:"service"`
 	WorktreeKey string           `json:"worktree_key"`
-	Kind        string           `json:"service_kind"`
 	ServiceID   string           `json:"service_id"`
 	Hostname    string           `json:"hostname,omitempty"`
 	Metadata    *ServiceMetadata `json:"metadata,omitempty"`
@@ -79,11 +77,11 @@ func (d *Database) GetLocalProjectService(ctx context.Context, r GetLocalProject
 		return result, err
 	}
 	m.TLS = nil
-	result = LocalProjectService{Service: r.Service, WorktreeKey: r.WorktreeKey, Kind: "service", ServiceID: row.ControlService.ID, Metadata: &m}
+	result = LocalProjectService{Service: r.Service, WorktreeKey: r.WorktreeKey, ServiceID: row.ControlService.ID, Hostname: row.ControlService.CertificateHostname, Metadata: &m}
 	return result, tx.Commit(ctx)
 }
 
-func localProjectPrivateName(r RealizeLocalProjectServiceRequest, name string) string {
+func localProjectServiceName(r RealizeLocalProjectServiceRequest, name string) string {
 	digest := sha256.Sum256([]byte(r.TeamID + "\x00" + r.ProjectKey + "\x00" + r.SourceFingerprint + "\x00" + r.Service + "\x00" + r.WorktreeKey))
 	return fmt.Sprintf("%.20s-%x", name, digest[:5])
 }
@@ -116,15 +114,17 @@ func checkLocalProjectSource(ctx context.Context, tx pgx.Tx, team, project, sour
 	return nil
 }
 
-// realization owns only this worktree's local resource. it neither evaluates nor
-// applies remote declarations. private IDs are allocated here, never found by name.
-// public IDs must be exact caller-owned app URLs allocated by the normal runtime.
+// realization owns only this worktree's service. it neither evaluates nor applies
+// remote declarations. service IDs are allocated here, never supplied or adopted.
 func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLocalProjectServiceRequest) (result LocalProjectService, retErr error) {
 	if !validLocalProjectServiceScope(r.ProjectKey, r.SourceFingerprint, r.Service, r.WorktreeKey) {
 		return result, ErrProjectConfigurationInvalid
 	}
-	if err := (ServicePlacement{WorktreeKey: r.WorktreeKey, WorktreeLabel: r.WorktreeLabel, DomainID: r.DomainID}).Validate(); err != nil {
+	if err := (ServicePlacement{WorktreeKey: r.WorktreeKey, WorktreeLabel: r.WorktreeLabel, DomainID: r.Configuration.DomainID}).Validate(); err != nil {
 		return result, err
+	}
+	if r.Configuration.HTTP != nil && r.Configuration.HTTP.Access != nil && r.Configuration.HTTP.Access.IP != nil && len(r.Configuration.HTTP.Access.IP) == 0 {
+		return result, ErrProjectConfigurationInvalid
 	}
 	data, err := json.Marshal(r.Configuration)
 	if err != nil || len(data) > 512<<10 {
@@ -138,9 +138,6 @@ func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLoca
 	// cross-service destinations; never invent neighboring declarations here.
 	if err = normalizeAppliedProjectService(r.Service, &s, true); err != nil {
 		return result, err
-	}
-	if (s.PublicURL != nil) != (r.PublicURLID != "") {
-		return result, ErrProjectConfigurationInvalid
 	}
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
@@ -174,7 +171,7 @@ func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLoca
 	}
 	entry := controlstatedb.ControlAppliedProjectService{TeamID: r.TeamID, ProjectKey: r.ProjectKey, Service: r.Service}
 	var oldGrant, creator string
-	err = tx.QueryRow(ctx, `SELECT service_id,public_url_id,COALESCE(visitor_grant_id,''),created_by_identity_id FROM control.local_project_services WHERE team_id=$1 AND project_key=$2 AND service=$3 AND worktree_key=$4 FOR UPDATE`, r.TeamID, r.ProjectKey, r.Service, r.WorktreeKey).Scan(&entry.ServiceID, &entry.PublicURLID, &oldGrant, &creator)
+	err = tx.QueryRow(ctx, `SELECT service_id,COALESCE(visitor_grant_id,''),created_by_identity_id FROM control.local_project_services WHERE team_id=$1 AND project_key=$2 AND service=$3 AND worktree_key=$4 FOR UPDATE`, r.TeamID, r.ProjectKey, r.Service, r.WorktreeKey).Scan(&entry.ServiceID, &oldGrant, &creator)
 	found := err == nil
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return result, err
@@ -182,135 +179,70 @@ func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLoca
 	if found && creator != r.ActorID {
 		return result, ErrServiceAccess
 	}
-	if found && (s.PublicURL == nil) != entry.ServiceID.Valid {
-		return result, ErrProjectManaged
-	}
-	if found && s.PublicURL != nil && entry.PublicURLID.String != r.PublicURLID {
-		previous, e := q.LockPublicURLForRun(ctx, entry.PublicURLID.String)
+	if found {
+		previous, e := q.LockService(ctx, entry.ServiceID.String)
 		if e != nil {
 			return result, e
 		}
-		// automatic ephemeral expiry is runtime lifecycle, not a definition edit.
-		// only a deleted ephemeral resource may release this provenance binding.
-		if !previous.Ephemeral || previous.LifecycleState != "deleted" {
-			return result, ErrProjectManaged
-		}
-		if e = reconcileLocalVisitorGrant(ctx, tx, entry, r.WorktreeKey, r.ActorID, oldGrant, false, r.Now); e != nil {
-			return result, e
-		}
-		if _, e = tx.Exec(ctx, `DELETE FROM control.local_project_services WHERE team_id=$1 AND project_key=$2 AND service=$3 AND worktree_key=$4`, r.TeamID, r.ProjectKey, r.Service, r.WorktreeKey); e != nil {
-			return result, e
-		}
-		entry.PublicURLID = nullableText("")
-		found, oldGrant = false, ""
-	}
-	result = LocalProjectService{Service: r.Service, WorktreeKey: r.WorktreeKey, Kind: "service"}
-	if s.PublicURL == nil {
-		if !found {
-			// scope saved names too, so two worktrees cannot share a private run.
-			local := s
-			local.Name = localProjectPrivateName(r, s.Name)
-			id, e := d.createAppliedService(ctx, tx, q, ApplyProjectConfigurationRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, Now: r.Now}, r.Service, "local/"+r.ProjectKey+"/"+r.WorktreeKey, local, false)
-			if e != nil {
-				return result, e
-			}
-			entry.ServiceID = text(id)
-		} else {
-			row, e := q.LockService(ctx, entry.ServiceID.String)
-			if e != nil {
-				return result, e
-			}
-			if row.DeletedAt.Valid {
+		if previous.DeletedAt.Valid {
+			// only runtime deletion of an ephemeral service releases this exact
+			// source/worktree binding. a saved deleted service cannot be adopted.
+			if !previous.Ephemeral {
 				return result, ErrServiceAccess
 			}
-			local := s
-			local.Name = localProjectPrivateName(r, s.Name)
-			if e = d.updateLocalService(ctx, tx, q, row, local, r.Now); e != nil {
+			if e = reconcileLocalVisitorGrant(ctx, tx, entry, r.WorktreeKey, r.ActorID, oldGrant, false, r.Now); e != nil {
 				return result, e
 			}
+			if _, e = tx.Exec(ctx, `DELETE FROM control.local_project_services WHERE team_id=$1 AND project_key=$2 AND service=$3 AND worktree_key=$4`, r.TeamID, r.ProjectKey, r.Service, r.WorktreeKey); e != nil {
+				return result, e
+			}
+			entry.ServiceID = nullableText("")
+			found, oldGrant = false, ""
 		}
+	}
+	result = LocalProjectService{Service: r.Service, WorktreeKey: r.WorktreeKey}
+	local := s
+	local.Name = localProjectServiceName(r, s.Name)
+	if !found {
+		id, e := d.createAppliedService(ctx, tx, q, ApplyProjectConfigurationRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, Now: r.Now}, r.Service, "local/"+r.ProjectKey+"/"+r.WorktreeKey, local, false)
+		if e != nil {
+			return result, e
+		}
+		entry.ServiceID = text(id)
+	} else {
 		row, e := q.LockService(ctx, entry.ServiceID.String)
 		if e != nil {
 			return result, e
 		}
-		if e = d.ensureLocalServiceEndpoint(ctx, tx, row.ID, r.ActorID, s.Name, ServicePlacement{DomainID: r.DomainID, WorktreeKey: localPlacementKey(r.WorktreeKey), WorktreeLabel: r.WorktreeLabel, SourceKey: r.ProjectKey + "/" + r.SourceFingerprint + "/" + r.WorktreeKey + "/" + r.Service, DNSAutomation: r.DNSAutomation}, projectServicePublic(s), r.Now); e != nil {
+		if e = d.updateLocalService(ctx, tx, q, row, local, r.Now); e != nil {
 			return result, e
 		}
-		row, e = q.LockService(ctx, row.ID)
-		if e != nil {
-			return result, e
-		}
-		m, e := checkedServiceMetadata(row)
-		if e != nil {
-			return result, e
-		}
-		result.Metadata = &m
-		result.ServiceID = row.ID
-	} else {
-		u, e := q.LockPublicURLForRun(ctx, r.PublicURLID)
-		if e != nil {
-			return result, publisherLookupError(e, ErrPublicURLAccess)
-		}
-		if u.TeamID != r.TeamID || u.CreatedByIdentityID != r.ActorID || u.Purpose != "app" || u.PublisherPool || u.LifecycleState != "enabled" {
-			return result, ErrPublicURLAccess
-		}
-		if e = d.authorizeLocalProjectPublicURL(ctx, q, u, r.ActorID); e != nil {
-			return result, e
-		}
-		if s.PublicURL.Hostname != "" && s.PublicURL.Hostname != u.CanonicalHostname || s.PublicURL.DomainID != "" && s.PublicURL.DomainID != u.DomainID || s.PublicURL.Ephemeral != u.Ephemeral {
-			return result, ErrProjectConfigurationInvalid
-		}
-		if s.PublicURL.RequirePostQuantum != nil && *s.PublicURL.RequirePostQuantum != u.RequirePostQuantum {
-			return result, ErrProjectConfigurationInvalid
-		}
-		if !found {
-			if e = rejectProjectManagedDefinition(ctx, tx, u.ID); e != nil {
-				return result, e
-			}
-		}
-		entry.PublicURLID = text(u.ID)
-		result.Kind, result.ServiceID, result.Hostname = "public_url", u.ID, u.CanonicalHostname
 	}
+	if err = d.ensureLocalServiceEndpoint(ctx, tx, entry.ServiceID.String, r.ActorID, s.Name, ServicePlacement{DomainID: s.DomainID, Hostname: s.Hostname, WorktreeKey: localPlacementKey(r.WorktreeKey), WorktreeLabel: r.WorktreeLabel, SourceKey: r.ProjectKey + "/" + r.SourceFingerprint + "/" + r.WorktreeKey + "/" + r.Service, DNSAutomation: r.DNSAutomation}, projectServicePublic(s), r.Now); err != nil {
+		return result, err
+	}
+	row, err := q.LockService(ctx, entry.ServiceID.String)
+	if err != nil {
+		return result, err
+	}
+	m, err := checkedServiceMetadata(row)
+	if err != nil {
+		return result, err
+	}
+	result.Metadata, result.ServiceID, result.Hostname = &m, row.ID, row.CertificateHostname
 	if !found {
-		_, err = tx.Exec(ctx, `INSERT INTO control.local_project_services(team_id,project_key,source_fingerprint,service,worktree_key,service_id,public_url_id,created_by_identity_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, r.TeamID, r.ProjectKey, r.SourceFingerprint, r.Service, r.WorktreeKey, entry.ServiceID, entry.PublicURLID, r.ActorID)
+		_, err = tx.Exec(ctx, `INSERT INTO control.local_project_services(team_id,project_key,source_fingerprint,service,worktree_key,service_id,created_by_identity_id) VALUES($1,$2,$3,$4,$5,$6,$7)`, r.TeamID, r.ProjectKey, r.SourceFingerprint, r.Service, r.WorktreeKey, entry.ServiceID, r.ActorID)
 		if err != nil {
 			return result, projectConstraintError(err)
 		}
 	}
-	if entry.ServiceID.Valid {
-		if err = d.saveLocalServiceHTTP(ctx, tx, entry.ServiceID.String, s.HTTP); err != nil {
-			return result, err
-		}
+	if err = d.saveServiceConfiguration(ctx, tx, entry.ServiceID.String, s); err != nil {
+		return result, err
 	}
 	if err = reconcileLocalVisitorGrant(ctx, tx, entry, r.WorktreeKey, r.ActorID, oldGrant, s.Access != nil && s.Access.Team, r.Now); err != nil {
 		return result, err
 	}
 	return result, tx.Commit(ctx)
-}
-
-func (d *Database) authorizeLocalProjectPublicURL(ctx context.Context, q *controlstatedb.Queries, u controlstatedb.ControlPublicUrl, actor string) error {
-	creation, err := q.GetPublicURLCreationContext(ctx, controlstatedb.GetPublicURLCreationContextParams{IdentityID: actor, DomainID: u.DomainID, TeamID: u.TeamID})
-	if err != nil {
-		return publisherLookupError(err, ErrPublicURLAccess)
-	}
-	switch u.PublicURLScope {
-	case "member":
-		if !u.MembershipID.Valid || u.MembershipID.String != creation.ActorMembershipID {
-			return ErrPublicURLAccess
-		}
-	case "shared":
-		_, direct := naming.PublicURLNamespace(naming.NamespaceFacts{Domain: creation.CanonicalDomain, Managed: creation.DomainKind == "managed", Mode: d.managedURLMode, Personal: creation.TeamKind == "personal", TeamName: creation.TeamDisplayName, MemberSlug: creation.ActorMemberSlug, ManagedLabel: creation.ActorManagedLabel})
-		if creation.TeamKind != "personal" || creation.TeamCreatorIdentityID != actor || !direct || u.MembershipID.Valid || creation.ActorRole != "owner" && creation.ActorRole != "admin" {
-			return ErrPublicURLAccess
-		}
-	default:
-		return ErrPublicURLAccess
-	}
-	labels, err := q.ListTeamNamespaceLabels(ctx, u.TeamID)
-	if err != nil {
-		return err
-	}
-	return authorizeRouteCreation(CreatePublicURLRequest{TeamID: u.TeamID, DomainID: u.DomainID, ActingIdentityID: actor, MembershipID: u.MembershipID.String, CanonicalHostname: u.CanonicalHostname, PublicURLScope: PublicURLScope(u.PublicURLScope), ManagedURLMode: d.managedURLMode}, creation, labels)
 }
 
 func reconcileLocalVisitorGrant(ctx context.Context, tx pgx.Tx, entry controlstatedb.ControlAppliedProjectService, worktree, actor, grant string, enabled bool, now time.Time) error {
@@ -324,7 +256,7 @@ func reconcileLocalVisitorGrant(ctx context.Context, tx pgx.Tx, entry controlsta
 
 // apply reconciles only already-proven local IDs. deferred listeners are never
 // allocated here, and removing access revokes only the configuration-owned grant.
-func (d *Database) reconcileProjectLocalRealizations(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, r ApplyProjectConfigurationRequest, old, current ProjectConfiguration) error {
+func (d *Database) reconcileProjectLocalRealizations(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, r ApplyProjectConfigurationRequest, current ProjectConfiguration) error {
 	rows, err := tx.Query(ctx, `SELECT DISTINCT service FROM control.local_project_services WHERE team_id=$1 AND project_key=$2 ORDER BY service`, r.TeamID, r.ProjectKey)
 	if err != nil {
 		return err
@@ -348,17 +280,15 @@ func (d *Database) reconcileProjectLocalRealizations(ctx context.Context, tx pgx
 		if s, found := current.Services[key]; found {
 			declared = &s
 		}
-		previous, hadPrevious := old.Services[key]
-		reset := hadPrevious && declared != nil && previous.PublicURL != nil && declared.PublicURL != nil && (!sameAppliedResource(previous, *declared, true) || previous.Name != declared.Name || previous.PublicURL.Ephemeral != declared.PublicURL.Ephemeral)
-		if err = d.reconcileLocalProjectServices(ctx, tx, q, r, key, declared, !reflect.DeepEqual(previous.PublicURL, current.Services[key].PublicURL), reset); err != nil {
+		if err = d.reconcileLocalProjectServices(ctx, tx, q, r, key, declared); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (d *Database) reconcileLocalProjectServices(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, r ApplyProjectConfigurationRequest, key string, s *ProjectServiceConfiguration, publicChanged, reset bool) error {
-	rows, err := tx.Query(ctx, `SELECT worktree_key,service_id,public_url_id,COALESCE(visitor_grant_id,'') FROM control.local_project_services WHERE team_id=$1 AND project_key=$2 AND service=$3 ORDER BY worktree_key`, r.TeamID, r.ProjectKey, key)
+func (d *Database) reconcileLocalProjectServices(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, r ApplyProjectConfigurationRequest, key string, s *ProjectServiceConfiguration) error {
+	rows, err := tx.Query(ctx, `SELECT worktree_key,service_id,COALESCE(visitor_grant_id,'') FROM control.local_project_services WHERE team_id=$1 AND project_key=$2 AND service=$3 ORDER BY worktree_key`, r.TeamID, r.ProjectKey, key)
 	if err != nil {
 		return err
 	}
@@ -369,7 +299,7 @@ func (d *Database) reconcileLocalProjectServices(ctx context.Context, tx pgx.Tx,
 	var locals []local
 	for rows.Next() {
 		v := local{entry: controlstatedb.ControlAppliedProjectService{TeamID: r.TeamID, ProjectKey: r.ProjectKey, Service: key}}
-		if err = rows.Scan(&v.worktree, &v.entry.ServiceID, &v.entry.PublicURLID, &v.grant); err != nil {
+		if err = rows.Scan(&v.worktree, &v.entry.ServiceID, &v.grant); err != nil {
 			rows.Close()
 			return err
 		}
@@ -381,11 +311,10 @@ func (d *Database) reconcileLocalProjectServices(ctx context.Context, tx pgx.Tx,
 		return err
 	}
 	for _, v := range locals {
-		compatible := !reset && s != nil && (s.PublicURL == nil) == v.entry.ServiceID.Valid
-		if err = reconcileLocalVisitorGrant(ctx, tx, v.entry, v.worktree, r.ActorID, v.grant, compatible && s.Access != nil && s.Access.Team, r.Now); err != nil {
+		if err = reconcileLocalVisitorGrant(ctx, tx, v.entry, v.worktree, r.ActorID, v.grant, s != nil && s.Access != nil && s.Access.Team, r.Now); err != nil {
 			return err
 		}
-		if !compatible {
+		if s == nil {
 			if err = d.revokeProjectResourcePublishers(ctx, tx, q, v.entry, r.Now); err != nil {
 				return err
 			}
@@ -397,38 +326,33 @@ func (d *Database) reconcileLocalProjectServices(ctx context.Context, tx pgx.Tx,
 			}
 			continue
 		}
-		if v.entry.PublicURLID.Valid && publicChanged {
-			if err = d.reconcileAppliedPublicSettings(ctx, tx, q, v.entry.PublicURLID.String, s.PublicURL, r.Now); err != nil {
-				return err
-			}
+		row, e := q.LockService(ctx, v.entry.ServiceID.String)
+		if e != nil {
+			return e
 		}
-		if v.entry.ServiceID.Valid {
-			row, e := q.LockService(ctx, v.entry.ServiceID.String)
-			if e != nil {
-				return e
-			}
-			local := *s
-			local.Name = localProjectPrivateName(RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Service: key, WorktreeKey: v.worktree}, s.Name)
-			if err = d.updateLocalService(ctx, tx, q, row, local, r.Now); err != nil {
-				return err
-			}
-			if err = d.setLocalServiceExposure(ctx, tx, row.ID, projectServicePublic(*s), r.Now); err != nil {
-				return err
-			}
-			if err = d.saveLocalServiceHTTP(ctx, tx, row.ID, s.HTTP); err != nil {
-				return err
-			}
+		if s.Hostname != "" && s.Hostname != row.CertificateHostname || s.DomainID != "" && s.DomainID != row.DomainID.String {
+			return ErrServiceConflict
+		}
+		local := *s
+		local.Name = localProjectServiceName(RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Service: key, WorktreeKey: v.worktree}, s.Name)
+		if err = d.updateLocalService(ctx, tx, q, row, local, r.Now); err != nil {
+			return err
+		}
+		if err = d.setLocalServiceExposure(ctx, tx, row.ID, projectServicePublic(*s), r.Now); err != nil {
+			return err
+		}
+		if err = d.saveServiceConfiguration(ctx, tx, row.ID, *s); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
 type ProjectPublicService struct {
-	Service     string `json:"service"`
-	PublicURLID string `json:"public_url_id,omitempty"`
-	ServiceID   string `json:"service_id,omitempty"`
-	Port        int    `json:"port"`
-	Hostname    string `json:"hostname"`
+	Service   string `json:"service"`
+	ServiceID string `json:"service_id"`
+	Port      int    `json:"port"`
+	Hostname  string `json:"hostname"`
 }
 type ProjectPublicMetadata struct {
 	SourceFingerprint string                 `json:"source_fingerprint"`
@@ -451,26 +375,21 @@ func (d *Database) GetProjectPublicMetadata(ctx context.Context, team, project, 
 	err = tx.QueryRow(ctx, `SELECT source_fingerprint FROM control.applied_projects WHERE team_id=$1 AND project_key=$2
 	    UNION SELECT source_fingerprint FROM control.local_project_services WHERE team_id=$1 AND project_key=$2 LIMIT 1`, team, project).Scan(&result.SourceFingerprint)
 	if err != nil {
-		return result, publisherLookupError(err, ErrPublicURLNotFound)
+		return result, publisherLookupError(err, ErrServiceAccess)
 	}
-	rows, err := tx.Query(ctx, `WITH public_services AS (
-	    SELECT service,public_url_id FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2
-	    UNION SELECT service,public_url_id FROM control.local_project_services WHERE team_id=$1 AND project_key=$2)
-	    SELECT s.service,u.id,''::text,u.canonical_hostname,443 FROM public_services s JOIN control.public_urls u ON u.id=s.public_url_id AND u.lifecycle_state='enabled'
-	    WHERE $5 OR EXISTS(SELECT 1 FROM control.visitor_identity_permission('public_url',u.id,$3,$6,'',$4))
-	    UNION ALL SELECT a.service,''::text,s.id,s.certificate_hostname,s.service_port FROM (
+	rows, err := tx.Query(ctx, `SELECT a.service,s.id,s.certificate_hostname,s.service_port FROM (
 	      SELECT team_id,project_key,service,service_id FROM control.applied_project_services
 	      UNION SELECT team_id,project_key,service,service_id FROM control.local_project_services
 	    ) a JOIN control.services s ON s.id=a.service_id
 	    WHERE a.team_id=$1 AND a.project_key=$2 AND s.enabled AND s.deleted_at IS NULL AND s.public AND s.protocol='http'
-	    ORDER BY 1,2,3`, team, project, actor, now, manager, companySessionID(ctx, actor))
+	    ORDER BY 1,2`, team, project)
 	if err != nil {
 		return result, err
 	}
 	result.Services = []ProjectPublicService{}
 	for rows.Next() {
 		var s ProjectPublicService
-		if err = rows.Scan(&s.Service, &s.PublicURLID, &s.ServiceID, &s.Hostname, &s.Port); err != nil {
+		if err = rows.Scan(&s.Service, &s.ServiceID, &s.Hostname, &s.Port); err != nil {
 			rows.Close()
 			return result, err
 		}
@@ -496,7 +415,7 @@ func (d *Database) GetProjectPublicMetadata(ctx context.Context, team, project, 
 		result.Services = visible
 	}
 	if !manager && len(result.Services) == 0 {
-		return ProjectPublicMetadata{}, ErrPublicURLAccess
+		return ProjectPublicMetadata{}, ErrServiceAccess
 	}
 	return result, tx.Commit(ctx)
 }

@@ -29,8 +29,8 @@ func TestV1ProjectJournalAndHandoffState(t *testing.T) {
 	}
 	if _, err := database.db.ExecContext(ctx, `INSERT INTO local_tunnels
 		(id, command, process_id, server_origin, project_root, hostname, target, framework,
-		 public_url_id, publish_run_number, state, started_at, updated_at, heartbeat_at, lease_expires_at, failure_code)
-		VALUES (?, 'publish', 1, ?, ?, NULL, 'http://127.0.0.1:3000', NULL, NULL, NULL, 'starting', ?, ?, ?, ?, NULL)`,
+		 public_url_id, publish_run_number, service_id, state, started_at, updated_at, heartbeat_at, lease_expires_at, failure_code)
+		VALUES (?, 'publish', 1, ?, ?, NULL, 'http://127.0.0.1:3000', NULL, NULL, NULL, 'svc_0123456789abcdefghijkl', 'starting', ?, ?, ?, ?, NULL)`,
 		"tun_0123456789abcdefghijkl", server, root, now, now, now, now+int64(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
@@ -46,20 +46,20 @@ func TestV1ProjectJournalAndHandoffState(t *testing.T) {
 		"url_example", "app.example.test", now+1, "tun_0123456789abcdefghijkl"); err != nil {
 		t.Fatal(err)
 	}
-	var journalEvents, knownURLs int
+	var journalEvents, knownServices int
 	if err := database.db.QueryRowContext(ctx, `SELECT count(*) FROM project_events WHERE project_root = ?`, root).Scan(&journalEvents); err != nil || journalEvents != 2 {
 		t.Fatalf("project journal events = %d, %v; want 2", journalEvents, err)
 	}
-	if err := database.db.QueryRowContext(ctx, `SELECT count(*) FROM project_url_inventory WHERE project_root = ? AND server_origin = ?`, root, server).Scan(&knownURLs); err != nil || knownURLs != 1 {
-		t.Fatalf("known project URLs = %d, %v; want 1", knownURLs, err)
+	if err := database.db.QueryRowContext(ctx, `SELECT count(*) FROM project_service_inventory WHERE project_root = ? AND server_origin = ?`, root, server).Scan(&knownServices); err != nil || knownServices != 1 {
+		t.Fatalf("known project services = %d, %v; want 1", knownServices, err)
 	}
-	urls, err := database.KnownProjectURLs(ctx, root, server+"/")
-	if err != nil || len(urls) != 1 || urls[0] != "url_example" {
-		t.Fatalf("read-only project URL selection: %v %v", urls, err)
+	services, err := database.KnownProjectServices(ctx, root, server+"/")
+	if err != nil || len(services) != 1 || services[0] != "svc_0123456789abcdefghijkl" {
+		t.Fatalf("read-only project service selection: %v %v", services, err)
 	}
-	other, err := database.KnownProjectURLs(ctx, root, "https://other.example.test")
+	other, err := database.KnownProjectServices(ctx, root, "https://other.example.test")
 	if err != nil || len(other) != 0 {
-		t.Fatalf("project URL selection crossed servers: %v %v", other, err)
+		t.Fatalf("project service selection crossed servers: %v %v", other, err)
 	}
 	if _, err := database.db.ExecContext(ctx, `UPDATE local_tunnels SET primary_project_root = ?, integration_namespace = ? WHERE id = ?`,
 		root, "member.example.test", "tun_0123456789abcdefghijkl"); err != nil {

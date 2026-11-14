@@ -33,7 +33,7 @@ func TestDirectAuthorizationWaitsForAdmissionAndPreservesInfrastructureCause(t *
 	for _, infrastructureFailure := range []bool{false, true} {
 		t.Run(map[bool]string{false: "pending-then-admitted", true: "infrastructure-failure"}[infrastructureFailure], func(t *testing.T) {
 			cfg, control := lifecycleFixture(t)
-			approved, err := control.GetPublisherService(t.Context(), "")
+			approved, err := control.GetPublisherService(t.Context(), cfg.ServiceID, "")
 			if err != nil {
 				t.Fatal(err)
 			}

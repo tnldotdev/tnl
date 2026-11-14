@@ -12,7 +12,7 @@ import (
 func TestIntegrationSharedServiceSlotLifecycleReview(t *testing.T) {
 	runs, _, _, creation := poolReviewFixtures(t)
 	d, now := runs[0].database, runs[0].now
-	service, err := d.CreateServiceAt(t.Context(), creation.TeamID, creation.ActingIdentityID, "database", "database", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
+	service, err := d.CreateServiceAt(t.Context(), creation.TeamID, creation.ActingIdentityID, "database", "database", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

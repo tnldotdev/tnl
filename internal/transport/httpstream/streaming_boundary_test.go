@@ -79,7 +79,7 @@ func streamingProxy(t *testing.T, kind string, h2 bool, backend string) (*http.C
 					defer conn.Close()
 					if err := httpstream.Serve(ctx, uploadDeadlineConn{conn}, target, func(ctx context.Context) (net.Conn, error) {
 						return (&net.Dialer{}).DialContext(ctx, "tcp", target.Host)
-					}, nil); err != nil {
+					}, nil, httpstream.ResponseHooks{}, httpstream.Drain{}); err != nil {
 						t.Error(err)
 					}
 				})

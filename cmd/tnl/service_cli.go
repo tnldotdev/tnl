@@ -308,23 +308,21 @@ func renderSystemJobs(output io.Writer, command string, jobs []installedjobs.Job
 			desired = "running"
 		}
 		fields := []clioutput.Field{{Label: "name", Value: displayJobName(job)}, {Label: "job ID", Value: job.ID}, {Label: "server", Value: job.Server}, {Label: "protocol", Value: string(job.Protocol)}, {Label: "desired", Value: desired}, {Label: "state", Value: string(job.Status.State)}}
-		if job.Kind == "deployment" && job.DeploymentMember != nil {
+		if job.Kind == installedjobs.KindDeployment && job.DeploymentMember != nil {
 			fields = append(fields, clioutput.Field{Label: "deployment", Value: job.DeploymentMember.DeploymentName}, clioutput.Field{Label: "project key", Value: job.DeploymentMember.ProjectKey}, clioutput.Field{Label: "observed revision", Value: strconv.FormatInt(job.Status.ObservedRevision, 10)})
-		} else if job.Kind == "private" || job.Kind == "connector" {
+		} else if job.Kind == installedjobs.KindService || job.Kind == installedjobs.KindConnector {
 			fields = append(fields, clioutput.Field{Label: "service ID", Value: job.ServiceID})
-		} else {
-			fields = append(fields, clioutput.Field{Label: "public URL ID", Value: job.PublicURLID})
-			if job.Status.PublicURL != "" {
-				fields = append(fields, clioutput.Field{Label: "public URL", Value: job.Status.PublicURL})
-			}
 		}
-		if job.Kind == "connector" {
+		if job.Kind == installedjobs.KindService && job.Status.Address != "" {
+			fields = append(fields, clioutput.Field{Label: "address", Value: job.Status.Address})
+		}
+		if job.Kind == installedjobs.KindConnector {
 			fields = append(fields, clioutput.Field{Label: "listen", Value: job.Target})
 		} else {
 			fields = append(fields, clioutput.Field{Label: "publisher", Value: job.PublisherIdentityID})
 		}
 		if job.Status.RunNumber != 0 {
-			fields = append(fields, clioutput.Field{Label: "publish run", Value: strconv.FormatUint(job.Status.RunNumber, 10)})
+			fields = append(fields, clioutput.Field{Label: "service run", Value: strconv.FormatUint(job.Status.RunNumber, 10)})
 		}
 		if job.Status.Failure != "" {
 			fields = append(fields, clioutput.Field{Label: "failure", Value: job.Status.Failure})

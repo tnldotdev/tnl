@@ -73,6 +73,10 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	if err != nil {
 		return err
 	}
+	flags.traffic, err = config.ResolveTrafficSelection(effective.Traffic)
+	if err != nil {
+		return err
+	}
 	flags.Service = service
 	if service != "" && config.SelectedDeployment(c.Config) != "local" {
 		return publisherCLIError("this service belongs to a remote deployment; run tnl apply and tnl publisher serve --deployment NAME")
@@ -108,13 +112,11 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	if usingConfiguredTarget && flags.TargetTLS == nil {
 		flags.TargetTLS = local.TargetTLS
 	}
-	private := service != "" && !config.IsPublicService(c.Config.Services[service])
+	definition := c.Config.Services[service]
+	private := service != "" && (definition.Public == nil || !*definition.Public)
 	flags.service = private
-	if private && (flags.Anonymous || len(flags.IP) != 0 || flags.PublicURL != "" || flags.Ephemeral || flags.Open) {
-		return publisherCLIError("this configured service is private; add an explicit publicURL block to enable public HTTPS")
-	}
-	if private && flags.Protocol != "" && flags.Protocol != config.Protocol(c.Config.Services[service]) {
-		return publisherCLIError("--protocol differs from the configured service")
+	if private && flags.Open {
+		return publisherCLIError("--open requires public: true on the selected service")
 	}
 	if service != "" && flags.Protocol != "" && flags.Protocol != config.Protocol(c.Config.Services[service]) {
 		return publisherCLIError("--protocol differs from the configured service")
@@ -129,15 +131,13 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 		flags.TargetTLSName = *local.TargetTLSName
 	}
 	if !enrolled {
-		if !private && !config.NonHTTPProtocol(flags.Protocol) {
-			applyTunnelConfiguration(&flags.tunnelFlags, effective.Tunnel)
-		}
-	} else if service != "" && config.IsPublicService(c.Config.Services[service]) && effective.Tunnel != nil {
-		applyTunnelLimits(&flags.tunnelFlags, effective.Tunnel.Limits)
+		applyServiceConfiguration(&flags.tunnelFlags, effective.Service)
+	} else if service != "" && effective.HTTP != nil {
+		flags.httpLimits = effective.HTTP.Limits
 	}
 	applyInspection(&flags.tunnelFlags, effective)
-	if !private && !config.NonHTTPProtocol(flags.Protocol) {
-		applyOpenConfiguration(&flags.openOptions, effective.Tunnel)
+	if !private && effective.HTTP != nil {
+		applyOpenConfiguration(&flags.openOptions, effective.HTTP)
 	}
 	if !private && !enrolled && !config.NonHTTPProtocol(flags.Protocol) {
 		applyBuiltInHostname(&flags.tunnelFlags, service, c.Worktree)
@@ -147,7 +147,7 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 			errors.New("pass a target or select a configured service"))
 	}
 	if enrolled && flags.Protocol == "" {
-		// the enrolled URL selects the protocol before its limits are applied.
+		// the saved service selects the protocol before its limits are applied.
 		return nil
 	}
 	protocol, err := publishProtocol(flags.Protocol)
@@ -164,7 +164,7 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 }
 
 // applyInstalledService snapshots local target settings before setup selects a
-// saved URL and hands its scoped identity to the supervisor.
+// saved service and hands its scoped identity to the supervisor.
 func (c projectConfiguration) applyInstalledService(flags *publishCommand) error {
 	service := flags.Target
 	definition, found := c.Config.Services[service]
@@ -172,6 +172,10 @@ func (c projectConfiguration) applyInstalledService(flags *publishCommand) error
 		return nil
 	}
 	effective, err := c.EffectiveService(service)
+	if err != nil {
+		return err
+	}
+	flags.traffic, err = config.ResolveTrafficSelection(effective.Traffic)
 	if err != nil {
 		return err
 	}
@@ -185,7 +189,7 @@ func (c projectConfiguration) applyInstalledService(flags *publishCommand) error
 	if config.SelectedDeployment(c.Config) != "local" {
 		return publisherCLIError("install the assigned deployment with tnl publisher serve --deployment NAME --install")
 	}
-	flags.service = !config.IsPublicService(definition)
+	flags.service = definition.Public == nil || !*definition.Public
 	flags.ServiceName = service
 	flags.Target = ""
 	selected, _, err := resolve.Server(flags.ServerURL, effective.Server, "")
@@ -205,6 +209,8 @@ func (c projectConfiguration) applyInstalledService(flags *publishCommand) error
 	}
 	if flags.Protocol == "" {
 		flags.Protocol = config.Protocol(definition)
+	} else if flags.Protocol != config.Protocol(definition) {
+		return publisherCLIError("--protocol differs from the configured service")
 	}
 	if local.Target != nil {
 		flags.Target = string(*local.Target)
@@ -212,25 +218,24 @@ func (c projectConfiguration) applyInstalledService(flags *publishCommand) error
 	if flags.TargetTLSName == "" && local.TargetTLSName != nil {
 		flags.TargetTLSName = *local.TargetTLSName
 	}
-	if flags.service || config.NonHTTPProtocol(flags.Protocol) {
-		if config.TargetType(definition) == "app" {
-			return failure.Wrap("select installed target", failure.InstalledTargetMissing, errors.New("service requires an address, Docker, or Compose target"))
-		}
-		return nil
+	if config.TargetType(definition) == "app" {
+		return failure.Wrap("select installed target", failure.InstalledTargetMissing, errors.New("service requires an address, Docker, or Compose target"))
 	}
-	if flags.Target == "" {
+	if flags.Target == "" && config.TargetType(definition) == "address" {
 		return failure.Wrap("select installed target", failure.InstalledTargetMissing, errors.New("configured service has no stable target"))
 	}
-	if effective.Tunnel != nil {
-		applyTunnelLimits(&flags.tunnelFlags, effective.Tunnel.Limits)
-		if effective.Tunnel.Ephemeral != nil && *effective.Tunnel.Ephemeral {
-			return publisherCLIError("installed publications require a saved public URL")
-		}
+	if effective.Ephemeral != nil && *effective.Ephemeral {
+		return publisherCLIError("installed publications require a saved service")
+	}
+	if effective.HTTP != nil {
+		flags.httpLimits = effective.HTTP.Limits
 	}
 	if err := applyProtocolLimits(&flags.tunnelFlags, flags.Protocol); err != nil {
 		return err
 	}
-	flags.Target, err = targetplan.NormalizePublicAddress(flags.Target, controlv1.PublicURLServiceProtocol(flags.Protocol))
+	if flags.Target != "" {
+		flags.Target, err = targetplan.NormalizePrivateAddress(flags.Target, controlv1.ServiceProtocol(flags.Protocol))
+	}
 	return err
 }
 
@@ -253,46 +258,41 @@ func applyBuiltInHostname(flags *tunnelFlags, service string, worktree clientpro
 	}
 }
 
-func applyOpenConfiguration(flags *openOptions, tunnel *config.Tunnel) {
-	if !flags.openFromCLI && tunnel != nil && tunnel.Open != nil {
-		flags.Open = *tunnel.Open
+func applyOpenConfiguration(flags *openOptions, http *config.HTTPService) {
+	if !flags.openFromCLI && http != nil && http.Open != nil {
+		flags.Open = *http.Open
 	}
 }
 
-func applyTunnelConfiguration(flags *tunnelFlags, tunnel *config.Tunnel) {
-	if tunnel == nil {
-		return
+func applyServiceConfiguration(flags *tunnelFlags, service config.Service) {
+	if service.HTTP != nil {
+		flags.httpLimits = service.HTTP.Limits
 	}
-	applyTunnelLimits(flags, tunnel.Limits)
 	if flags.RequirePostQuantum == nil {
-		flags.RequirePostQuantum = tunnel.RequirePostQuantum
+		flags.RequirePostQuantum = service.RequirePostQuantum
 	}
-	if flags.Domain == "" && tunnel.Domain != nil {
-		flags.Domain = *tunnel.Domain
+	if flags.Domain == "" && service.Domain != nil {
+		flags.Domain = *service.Domain
 	}
 	if flags.PublicURL == "" && flags.Name == "" {
-		if tunnel.PublicURL != nil {
-			flags.PublicURL = *tunnel.PublicURL
-		}
-		if tunnel.Name != nil {
-			flags.Name = *tunnel.Name
+		if service.Hostname != nil {
+			flags.PublicURL = *service.Hostname
 		}
 	}
-	if tunnel.Access != nil {
-		flags.access = tunnel.Access
+	if service.HTTP != nil && service.HTTP.Access != nil {
+		flags.access = service.HTTP.Access
 	}
 	_, ephemeralFromEnvironment := os.LookupEnv("TNL_EPHEMERAL")
-	if tunnel.Ephemeral != nil && !flags.ephemeralFromCLI && !ephemeralFromEnvironment {
-		flags.Ephemeral = *tunnel.Ephemeral
+	if service.Ephemeral != nil && !flags.ephemeralFromCLI && !ephemeralFromEnvironment {
+		flags.Ephemeral = *service.Ephemeral
 	}
-}
-
-func applyTunnelLimits(flags *tunnelFlags, limits *config.Limits) {
-	flags.workLimits = limits
 }
 
 func applyProtocolLimits(flags *tunnelFlags, protocol string) error {
-	resolved, err := config.ResolveWorkLimits(flags.workLimits, protocol)
+	if protocol != "http" && flags.httpLimits != nil {
+		return errors.New("HTTP request limits require protocol http")
+	}
+	resolved, err := config.ResolveWorkLimits(flags.httpLimits)
 	if err != nil {
 		return err
 	}

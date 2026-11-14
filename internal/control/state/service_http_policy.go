@@ -2,10 +2,8 @@ package state
 
 import (
 	"context"
-	"errors"
 	"net/netip"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 )
@@ -37,30 +35,12 @@ func (d *Database) serviceHTTPSourcePolicy(ctx context.Context, q *controlstated
 }
 
 func (d *Database) serviceHTTPSettings(ctx context.Context, q *controlstatedb.Queries, service string) (*config.HTTPService, error) {
-	local, err := q.GetLocalServiceHTTPConfiguration(ctx, text(service))
-	if err == nil {
-		return d.openLocalServiceHTTP(service, local.HttpStorageKeyID.String, local.HttpConfigurationCiphertext)
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+	declaration, err := d.serviceConfiguration(ctx, q, service)
+	if err != nil {
 		return nil, err
 	}
-	row, err := q.GetDeploymentServiceConfiguration(ctx, text(service))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if declaration == nil {
 		return nil, nil
 	}
-	if err != nil {
-		return nil, err
-	}
-	c, err := d.openDeploymentConfiguration(row.ControlDeployment)
-	if err != nil {
-		return nil, err
-	}
-	s, ok := c.Services[row.Service]
-	if !ok {
-		return nil, ErrServiceAccess
-	}
-	if err := config.ValidateRemoteHTTP(s.HTTP); err != nil {
-		return nil, errors.Join(ErrServiceAccess, err)
-	}
-	return s.HTTP, nil
+	return serviceHTTPRequestPolicy(declaration.HTTP), nil
 }

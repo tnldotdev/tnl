@@ -12,7 +12,7 @@ import (
 )
 
 func appliedWebhookConfiguration() ProjectConfiguration {
-	return ProjectConfiguration{OAuth: true, Services: map[string]ProjectServiceConfiguration{"app": {Target: "app", PublicURL: &ProjectServicePublicURL{}}}, Webhooks: map[string]ProjectWebhook{
+	return ProjectConfiguration{OAuth: true, Services: map[string]ProjectServiceConfiguration{"app": {Target: "app", Public: new(true)}}, Webhooks: map[string]ProjectWebhook{
 		"payments": {Service: "app", Path: "/hooks/payments", Provider: "stripe", Methods: []string{"POST", "GET"}, SourceIPs: []string{"198.51.100.0/24", "192.0.2.10"}},
 		"chat":     {Service: "app", Path: "/hooks/chat", Provider: "slack"},
 	}}
@@ -74,7 +74,7 @@ func TestNormalizeAppliedWebhooksRequireCurrentLocalPublicHTTPApp(t *testing.T) 
 			c.Webhooks["payments"] = w
 		}},
 		{"missing service", func(c *ProjectConfiguration) { w := c.Webhooks["payments"]; w.Service = ""; c.Webhooks["payments"] = w }},
-		{"private app", func(c *ProjectConfiguration) { s := c.Services["app"]; s.PublicURL = nil; c.Services["app"] = s }},
+		{"private app", func(c *ProjectConfiguration) { s := c.Services["app"]; s.Public = new(false); c.Services["app"] = s }},
 		{"private protocol", func(c *ProjectConfiguration) {
 			c.Services["app"] = ProjectServiceConfiguration{Protocol: "tcp", Target: "db.internal:5432"}
 		}},
@@ -84,7 +84,7 @@ func TestNormalizeAppliedWebhooksRequireCurrentLocalPublicHTTPApp(t *testing.T) 
 				t.Fatal(err)
 			}
 			c.Settings = &DeploymentSettings{}
-			c.Services["app"] = ProjectServiceConfiguration{Target: "http://eks.internal:3000", PublicURL: &ProjectServicePublicURL{DomainID: id}}
+			c.Services["app"] = ProjectServiceConfiguration{Target: "http://eks.internal:3000", Public: new(true), DomainID: id}
 		}},
 		{"duplicate path", func(c *ProjectConfiguration) {
 			w := c.Webhooks["chat"]

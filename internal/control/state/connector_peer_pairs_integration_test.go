@@ -165,7 +165,7 @@ func TestIntegrationConnectorPeerPairExactAuthority(t *testing.T) {
 	principal := ControlPrincipal{IdentityID: session.Identity.Identity.ID, SessionID: session.SessionID}
 	visitor := WithControlPrincipal(ctx, principal)
 	actor := oidcRouteRequest(t, d, now)
-	service, err := d.CreateServiceAt(visitor, actor.TeamID, principal.IdentityID, "pair", "pair", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
+	service, err := d.CreateServiceAt(visitor, actor.TeamID, principal.IdentityID, "pair", "pair", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
