@@ -115,8 +115,12 @@ func (h *handler) GetHTTPChallenge(w http.ResponseWriter, r *http.Request, attem
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; script-src https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src https://challenges.cloudflare.com; style-src 'unsafe-inline'")
-	_ = challengePage.Execute(w, struct{ Origin, SiteKey, ID, Action string }{visitortoken.ClearanceOrigin(record.Hostname, record.Port), h.challengeVerifier.SiteKey, record.ID, turnstile.Action})
+	origin := visitortoken.ClearanceOrigin(record.Hostname, record.Port)
+	// preserve the same-origin form's Origin header without sending the attempt
+	// path to third parties. form-action also covers the publisher redirect.
+	w.Header().Set("Referrer-Policy", "same-origin")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' "+origin+"; script-src https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src https://challenges.cloudflare.com; style-src 'unsafe-inline'")
+	_ = challengePage.Execute(w, struct{ Origin, SiteKey, ID, Action string }{origin, h.challengeVerifier.SiteKey, record.ID, turnstile.Action})
 }
 
 func (h *handler) VerifyHTTPChallenge(w http.ResponseWriter, r *http.Request, attempt string) {

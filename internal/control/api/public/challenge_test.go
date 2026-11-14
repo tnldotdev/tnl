@@ -106,6 +106,10 @@ func TestChallengeControlBrowserBindingOriginAndProviderFailure(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Header().Get("Content-Security-Policy"), "frame-ancestors 'none'") || strings.Contains(w.Body.String(), "single-use-secret") {
 		t.Fatal("challenge page lost isolation", w.Code)
 	}
+	if w.Header().Get("Referrer-Policy") != "same-origin" ||
+		!strings.Contains(w.Header().Get("Content-Security-Policy"), "form-action 'self' https://preview.example.test:25443;") {
+		t.Fatal("challenge browser policy blocks form origin or exact publisher handoff")
+	}
 	post := func(origin string, bound bool) *http.Request {
 		r := httptest.NewRequest("POST", path, strings.NewReader(url.Values{"response": {"widget-token"}}.Encode()))
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")

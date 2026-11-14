@@ -3,10 +3,42 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 )
+
+func TestHTTPProtectionChallengeStaticConfiguration(t *testing.T) {
+	for _, value := range []string{`"turnstile"`, `false`, `true`, `"false"`, `null`, `1`, `{}`} {
+		for _, name := range []string{"tnl.json", "tnl.yml"} {
+			t.Run(name+"/"+value, func(t *testing.T) {
+				source := `{"version":1,"tnl":{"services":{"app":{"public_url":{},"http":{"protection":{"challenge":` + value + `}}}}}}`
+				if strings.HasSuffix(name, ".yml") {
+					source = "version: 1\ntnl:\n  services:\n    app:\n      public_url: {}\n      http:\n        protection:\n          challenge: " + value + "\n"
+				}
+				path := filepath.Join(t.TempDir(), name)
+				if err := os.WriteFile(path, []byte(source), 0600); err != nil {
+					t.Fatal(err)
+				}
+				document, err := LoadDocument(path)
+				valid := value == `"turnstile"` || value == `false`
+				if (err == nil) != valid {
+					t.Fatal("challenge configuration acceptance differs from its contract", err)
+				}
+				if valid {
+					want := httpprotection.Challenge("")
+					if value == `"turnstile"` {
+						want = httpprotection.Turnstile
+					}
+					if got := ServiceProtection(document.TNL.Services["app"]).Challenge; got != want {
+						t.Fatal("lost challenge setting", got)
+					}
+				}
+			})
+		}
+	}
+}
 
 func TestHTTPProtectionStaticConfiguration(t *testing.T) {
 	for name, source := range map[string]string{
