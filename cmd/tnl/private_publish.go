@@ -25,7 +25,7 @@ func runPrivatePublish(ctx context.Context, flags publishCommand, output, diagno
 		return err
 	}
 	if protocol == controlv1.ServiceProtocolHTTP && !flags.service || flags.Demo {
-		return publisherCLIError("private HTTP requires a configured service without publicURL; select tcp, mysql, or postgres for an opaque target")
+		return publisherCLIError("HTTP service publication requires a configured binding; select tcp, mysql, or postgres for an opaque target")
 	}
 	if err := applyProtocolLimits(&flags.tunnelFlags, string(protocol)); err != nil {
 		return err
@@ -66,7 +66,17 @@ func privatePresentation(ctx context.Context, flags publishCommand, output, diag
 					Target        string `json:"target"`
 				}{1, event.State, event.ServiceID, event.Name, event.Target})
 			}
-			return writeHumanFrame(diagnostics, "tnl publish", event.State, "", clioutput.Fields(clioutput.Field{Label: "service ID", Value: event.ServiceID}, clioutput.Field{Label: "name", Value: event.Name}, clioutput.Field{Label: "endpoint", Value: net.JoinHostPort(event.Hostname, strconv.Itoa(event.Port))}, clioutput.Field{Label: "visitor TLS", Value: "verified native TLS"}, clioutput.Field{Label: "target", Value: event.Target}))
+			address := clioutput.Field{Label: "TLS hostname", Value: event.Hostname}
+			reachability := "connector access only"
+			if event.Public {
+				address.Label = "public endpoint"
+				address.Value = net.JoinHostPort(event.Hostname, strconv.Itoa(event.Port))
+				if event.Protocol == "http" {
+					address.Label, address.Value = "public URL", "https://"+address.Value
+				}
+				reachability = "public and connector access; visitors still need access"
+			}
+			return writeHumanFrame(diagnostics, "tnl publish", event.State, "", clioutput.Fields(clioutput.Field{Label: "service ID", Value: event.ServiceID}, clioutput.Field{Label: "name", Value: event.Name}, address, clioutput.Field{Label: "reachability", Value: reachability}, clioutput.Field{Label: "visitor TLS", Value: "verified native TLS"}, clioutput.Field{Label: "target", Value: event.Target}))
 		},
 	}
 }

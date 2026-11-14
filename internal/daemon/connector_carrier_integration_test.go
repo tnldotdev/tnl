@@ -325,6 +325,11 @@ func TestRevokedConnectorOwnerStopClassification(t *testing.T) {
 func startRuntimeConnector(t *testing.T, f *privateSeparatedFixture, service controlv1.Service, config connectorstream.Config, expectedStop ...func(error) bool) (net.Listener, func()) {
 	t.Helper()
 	listener := serviceRuntimeListener(t, f.owner)
+	return startRuntimeConnectorOn(t, f, service, listener, config, expectedStop...)
+}
+
+func startRuntimeConnectorOn(t *testing.T, f *privateSeparatedFixture, service controlv1.Service, listener net.Listener, config connectorstream.Config, expectedStop ...func(error) bool) (net.Listener, func()) {
+	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
 	ready, done := make(chan struct{}), make(chan error, 1)
 	config.ServiceID, config.Protocol, config.TrustRevision, config.Endpoint = service.Id, string(service.Protocol), service.TrustRevision, service.Endpoint

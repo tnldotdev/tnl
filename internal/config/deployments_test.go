@@ -170,6 +170,30 @@ func TestSavedDeploymentKeepsPerServiceExposure(t *testing.T) {
 	}
 }
 
+func TestLocalDeploymentKeepsPerServiceExposure(t *testing.T) {
+	project := deploymentProjectFixture()
+	local := project.Deployments["local"]
+	web := local.Targets["web"]
+	web.Tunnel, web.Public = nil, new(true)
+	local.Targets["web"] = web
+	db := local.Targets["db"]
+	db.Public = new(false)
+	local.Targets["db"] = db
+	project.Deployments["local"] = local
+	selected, err := ResolveDeployment(project, "local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.Services["web"].Public == nil || !*selected.Services["web"].Public || IsPublicService(selected.Services["web"]) || selected.Services["db"].Public == nil || *selected.Services["db"].Public {
+		t.Fatal("local exposure changed a sibling binding or selected the preview URL lifecycle")
+	}
+	web.Tunnel = &Tunnel{}
+	local.Targets["web"] = web
+	if _, err := ResolveDeployment(project, "local"); err == nil {
+		t.Fatal("binding selected both public endpoint and preview URL lifecycles")
+	}
+}
+
 func TestWorkloadSelectionIsCheckedAtTheDeploymentBoundary(t *testing.T) {
 	selected := TNL{
 		Services: Services{"db": {Protocol: new("postgres"), Target: &ServiceTarget{Type: "address", Address: new(Target("localhost:5432"))}}},

@@ -107,3 +107,71 @@ func TestProjectMetadataUsesVisitorProjectionWithoutManagerConfiguration(t *test
 }
 
 func testTarget(value string) *config.Target { target := config.Target(value); return &target }
+
+func TestLocalPublicMetadataUsesExactWorktreeEndpoint(t *testing.T) {
+	root := t.TempDir()
+	project := clientproject.Project{Root: root, Selection: clientproject.Selection{Path: filepath.Join(root, "tnl.json")}, Config: config.TNL{
+		Services: config.Services{"api": {Public: new(true)}, "db": {Protocol: new("postgres"), Public: new(true), Target: &config.ServiceTarget{Type: "address", Address: testTarget("db.internal:5432")}}, "private": {}},
+	}}
+	source, worktree := project.LocalPublicationIdentity(), project.LocalWorktreeKey()
+	public, port, status := true, 25443, http.StatusOK
+	returnedWorktree := worktree
+	requests := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/projects/"+source.Key+"/local-services/api" || r.URL.Query().Get("team_id") != "team_1" || r.URL.Query().Get("source_fingerprint") != source.Fingerprint || r.URL.Query().Get("worktree_key") != worktree {
+			t.Errorf("metadata read another worktree or mutated state: %s %s", r.Method, r.URL)
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if status != http.StatusOK {
+			w.WriteHeader(status)
+			code := "forbidden"
+			if status == http.StatusNotFound {
+				code = "not_found"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": code, "message": "unavailable"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"service": "api", "worktree_key": returnedWorktree, "service_kind": "service", "service_id": "svc_api",
+			"metadata": map[string]any{"protocol": "http", "trust_revision": "1", "endpoint": map[string]any{"hostname": "api.feature.tnl.dev", "port": port, "public": public}},
+		})
+	}))
+	defer server.Close()
+	project.Config.Server = &server.URL
+	control, err := clientcontrol.New(server.URL, server.Client(), "visitor-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver := NewMetadataResolver(nil, project, nil)
+	resolver.Seed(server.URL, &auth.Client{ServerEndpoint: server.URL, Control: control})
+	resolver.contexts[server.URL+"\x00"] = appliedTestContext()
+	metadata, err := resolver.Generate(t.Context())
+	if err != nil || requests != 1 || len(metadata.Services) != 1 || metadata.Services["api"].URL != "https://api.feature.tnl.dev:25443" || !metadata.Services["api"].Public {
+		t.Fatal("metadata invented a port or included private/database bindings", metadata, requests, err)
+	}
+	public = false
+	metadata, err = resolver.Generate(t.Context())
+	if err != nil || len(metadata.Services) != 0 {
+		t.Fatal("local config overrode current private exposure", metadata, err)
+	}
+	public, port = true, 0
+	if _, err := resolver.Generate(t.Context()); err == nil {
+		t.Fatal("public service without an allocated port was accepted")
+	}
+	port, returnedWorktree = 25443, "another-worktree"
+	if _, err := resolver.Generate(t.Context()); err == nil {
+		t.Fatal("metadata adopted another worktree endpoint")
+	}
+	status = http.StatusNotFound
+	metadata, err = resolver.Generate(t.Context())
+	if err != nil || len(metadata.Services) != 0 {
+		t.Fatal("metadata tried to allocate an unrealized service", metadata, err)
+	}
+	status = http.StatusForbidden
+	if _, err := resolver.Generate(t.Context()); err == nil {
+		t.Fatal("metadata ignored a current authorization failure")
+	}
+}

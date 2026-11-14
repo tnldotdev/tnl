@@ -71,6 +71,8 @@ type ServiceEvent struct {
 	Target    string
 	Hostname  string
 	Port      int
+	Protocol  string
+	Public    bool
 }
 
 type ServicePresentation struct {

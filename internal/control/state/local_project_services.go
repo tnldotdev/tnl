@@ -234,7 +234,7 @@ func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLoca
 		if e != nil {
 			return result, e
 		}
-		if e = d.ensureLocalServiceEndpoint(ctx, tx, row.ID, r.ActorID, s.Name, ServicePlacement{DomainID: r.DomainID, WorktreeKey: localPlacementKey(r.WorktreeKey), WorktreeLabel: r.WorktreeLabel, SourceKey: r.ProjectKey + "/" + r.SourceFingerprint + "/" + r.WorktreeKey + "/" + r.Service, DNSAutomation: r.DNSAutomation}, r.Now); e != nil {
+		if e = d.ensureLocalServiceEndpoint(ctx, tx, row.ID, r.ActorID, s.Name, ServicePlacement{DomainID: r.DomainID, WorktreeKey: localPlacementKey(r.WorktreeKey), WorktreeLabel: r.WorktreeLabel, SourceKey: r.ProjectKey + "/" + r.SourceFingerprint + "/" + r.WorktreeKey + "/" + r.Service, DNSAutomation: r.DNSAutomation}, projectServicePublic(nil, s), r.Now); e != nil {
 			return result, e
 		}
 		row, e = q.LockService(ctx, row.ID)
@@ -408,6 +408,9 @@ func (d *Database) reconcileLocalProjectServices(ctx context.Context, tx pgx.Tx,
 			if err = d.updateLocalService(ctx, tx, q, row, local, r.Now); err != nil {
 				return err
 			}
+			if err = d.setLocalServiceExposure(ctx, tx, row.ID, projectServicePublic(nil, *s), r.Now); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -448,7 +451,10 @@ func (d *Database) GetProjectPublicMetadata(ctx context.Context, team, project, 
 	    UNION SELECT service,public_url_id FROM control.local_project_services WHERE team_id=$1 AND project_key=$2)
 	    SELECT s.service,u.id,''::text,u.canonical_hostname,443 FROM public_services s JOIN control.public_urls u ON u.id=s.public_url_id AND u.lifecycle_state='enabled'
 	    WHERE $5 OR EXISTS(SELECT 1 FROM control.visitor_identity_permission('public_url',u.id,$3,$6,'',$4))
-	    UNION ALL SELECT a.service,''::text,s.id,s.certificate_hostname,s.service_port FROM control.applied_project_services a JOIN control.services s ON s.id=a.service_id
+	    UNION ALL SELECT a.service,''::text,s.id,s.certificate_hostname,s.service_port FROM (
+	      SELECT team_id,project_key,service,service_id FROM control.applied_project_services
+	      UNION SELECT team_id,project_key,service,service_id FROM control.local_project_services
+	    ) a JOIN control.services s ON s.id=a.service_id
 	    WHERE a.team_id=$1 AND a.project_key=$2 AND s.enabled AND s.deleted_at IS NULL AND s.public AND s.protocol='http'
 	    ORDER BY 1,2,3`, team, project, actor, now, manager, companySessionID(ctx, actor))
 	if err != nil {
