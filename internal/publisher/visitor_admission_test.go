@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
@@ -26,7 +28,7 @@ import (
 
 func TestReadinessHasIndependentBoundedProbeCapacity(t *testing.T) {
 	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", Number: 1}
-	proof, err := NewReadinessProof(run, "/health")
+	proof, err := httpaccess.NewReadinessProof(httpaccess.ReadinessRun{Subject: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: run.PublicURLID}, ID: run.PublishRunID, Number: run.Number, Hostname: run.Hostname}, "/health")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,21 +95,22 @@ func TestReadinessHasIndependentBoundedProbeCapacity(t *testing.T) {
 
 func TestReadinessProofDoesNotAuthorizeBodiesOrUpgrades(t *testing.T) {
 	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", Number: 1}
-	proof, _ := NewReadinessProof(run, "/health")
+	probeRun := httpaccess.ReadinessRun{Subject: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: run.PublicURLID}, ID: run.PublishRunID, Number: run.Number, Hostname: run.Hostname}
+	proof, _ := httpaccess.NewReadinessProof(probeRun, "/health")
 	body := httptest.NewRequest("GET", "/health", strings.NewReader("private-body"))
 	body.Header.Set(publisherproxy.ReadinessProbeHeader, proof.HeaderValue())
-	if proof.consume(body, run) {
+	if proof.Consume(body, probeRun) {
 		t.Fatal("body was admitted as a probe")
 	}
 	upgrade := httptest.NewRequest("GET", "/health", nil)
 	upgrade.Header.Set(publisherproxy.ReadinessProbeHeader, proof.HeaderValue())
 	upgrade.Header.Set("Upgrade", "websocket")
-	if proof.consume(upgrade, run) {
+	if proof.Consume(upgrade, probeRun) {
 		t.Fatal("upgrade was admitted as a probe")
 	}
 	get := httptest.NewRequest("GET", "/health", nil)
 	get.Header.Set(publisherproxy.ReadinessProbeHeader, proof.HeaderValue())
-	if !proof.consume(get, run) {
+	if !proof.Consume(get, probeRun) {
 		t.Fatal("rejected requests consumed a valid proof")
 	}
 }
@@ -149,7 +152,7 @@ func TestReadinessDoesNotPromoteOrSpendApplicationBudgets(t *testing.T) {
 			}
 			t.Run(name, func(t *testing.T) {
 				run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", Number: 1}
-				proof, err := NewReadinessProof(run, "/health")
+				proof, err := httpaccess.NewReadinessProof(httpaccess.ReadinessRun{Subject: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: run.PublicURLID}, ID: run.PublishRunID, Number: run.Number, Hostname: run.Hostname}, "/health")
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -236,7 +239,7 @@ func TestReadinessDoesNotPromoteOrSpendApplicationBudgets(t *testing.T) {
 func TestReadinessDoesNotCacheRejectedApplicationPromotion(t *testing.T) {
 	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", Number: 1}
 	for _, h2 := range []bool{false, true} {
-		proof, _ := NewReadinessProof(run, "/health")
+		proof, _ := httpaccess.NewReadinessProof(httpaccess.ReadinessRun{Subject: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: run.PublicURLID}, ID: run.PublishRunID, Number: run.Number, Hostname: run.Hostname}, "/health")
 		var calls atomic.Int32
 		route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, Certificate: visitorfixture.Certificate(t, run.Hostname), ReadinessProof: proof,
 			PromoteVisitor: func(context.Context, Visitor) error {
@@ -387,7 +390,7 @@ func TestHTTP2CanceledFirstRequestDoesNotPoisonConnection(t *testing.T) {
 
 func TestHTTP2ProofDoesNotWaitForApplicationPromotion(t *testing.T) {
 	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", Number: 1}
-	proof, _ := NewReadinessProof(run, "/health")
+	proof, _ := httpaccess.NewReadinessProof(httpaccess.ReadinessRun{Subject: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: run.PublicURLID}, ID: run.PublishRunID, Number: run.Number, Hostname: run.Hostname}, "/health")
 	started, release := make(chan struct{}), make(chan struct{})
 	var calls atomic.Int32
 	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, Certificate: visitorfixture.Certificate(t, run.Hostname), ReadinessProof: proof,

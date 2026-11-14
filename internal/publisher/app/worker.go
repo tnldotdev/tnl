@@ -11,7 +11,9 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
 	telemetryv1 "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 )
@@ -34,7 +36,7 @@ type Configuration struct {
 type proofEntry struct {
 	service      Service
 	run          publisher.PublishRunIdentity
-	proof        *publisher.ReadinessProof
+	proof        *httpaccess.ReadinessProof
 	target       *target.TargetBinding
 	check        sync.Mutex
 	privateCheck func(context.Context, Service) Observation
@@ -204,12 +206,12 @@ func (w *Workers) Run(ctx context.Context, service Service, observe func(uint64,
 	}
 	var entry *proofEntry
 	if cfg.ServiceProtocol == "http" || cfg.ServiceProtocol == "" {
-		cfg.ReadinessProof = func(run publisher.PublishRunIdentity) *publisher.ReadinessProof {
+		cfg.ReadinessProof = func(run publisher.PublishRunIdentity) *httpaccess.ReadinessProof {
 			path := service.Readiness.Path
 			if path == "" {
 				path = "/"
 			}
-			proof, err := publisher.NewReadinessProof(run, path)
+			proof, err := httpaccess.NewReadinessProof(httpaccess.ReadinessRun{Subject: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: run.PublicURLID}, ID: run.PublishRunID, Number: run.Number, Hostname: run.Hostname}, path)
 			if err != nil {
 				return nil
 			}

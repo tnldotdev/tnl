@@ -18,6 +18,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
@@ -163,7 +164,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					diagnostic.WriteHTTP(response, request, code, "")
 					return
 				}
-				proof := config.ReadinessProof.consume(request, PublishRunIdentity{Hostname: hostname, PublicURLID: config.PublicURLID, PublishRunID: config.PublishRunID, Number: config.PublishRunNumber})
+				proof := config.ReadinessProof.Consume(request, httpaccess.ReadinessRun{Subject: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: config.PublicURLID}, Hostname: hostname, ID: config.PublishRunID, Number: config.PublishRunNumber})
 				request.Header.Del(publisherproxy.ReadinessProbeHeader)
 				if proof {
 					auditReport = false

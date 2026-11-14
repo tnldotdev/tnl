@@ -140,7 +140,9 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	startPrivateHTTPPublisher(t, f, service, target.address, defaultConnectorPublisherControl{f.identity.routes, faults})
+	startPrivateHTTPPublisher(t, f, service, target.address, func(cfg *publisherservice.RunConfig) {
+		cfg.Control = defaultConnectorPublisherControl{f.identity.routes, faults}
+	})
 	person, err := f.identity.authority.IdentityContext(t.Context())
 	if err != nil {
 		t.Fatal(err)

@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
+	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
@@ -42,6 +43,7 @@ type Stream struct {
 	Handler        http.Handler
 	InspectionMode inspection.Mode
 	ObserveSummary inspection.Observer
+	AdmitRequest   func(*http.Request) error
 	TLS            *tls.Config
 	TargetTLS      *tls.Config
 	Visitor        Authentication
@@ -331,6 +333,8 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 			return wrapHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w, r, finishInspection := inspection.BeginHTTP(w, r, s.InspectionMode, s.ObserveSummary)
 				defer finishInspection()
+				// a connector request is not an owner readiness proof.
+				r.Header.Del(publisherproxy.ReadinessProbeHeader)
 				// connector admission is the credential, but every HTTP request still
 				// rechecks current policy before any target bytes on the shared socket.
 				check, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -342,6 +346,12 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 				if err != nil || !decision.Allowed || !decision.ValidUntil.After(time.Now()) {
 					DenyHTTP(w, HTTPDecisionStatus(err))
 					return
+				}
+				if s.AdmitRequest != nil {
+					if err := s.AdmitRequest(r); err != nil {
+						DenyHTTP(w, http.StatusServiceUnavailable)
+						return
+					}
 				}
 				release, ok := admitRequest(s.HTTPRequests, w, r)
 				if !ok {

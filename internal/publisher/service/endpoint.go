@@ -19,6 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/policy/tcptarget"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -60,6 +61,7 @@ func newManagedPrepared(preparation controlv1.ServiceRunPreparation, approved co
 	}
 	prepared := &Prepared{Preparation: preparation, target: target, handler: cfg.Handler, managedHostname: approved.Endpoint.Hostname, servicePort: uint16(approved.Endpoint.Port), managedProtocol: serviceconfig.ProtocolName(approved.Protocol), clock: time.Now, preparedCertificate: &preparedCertificate{}}
 	prepared.inspectionMode, prepared.observeSummary = cfg.InspectionMode, cfg.ObserveSummary
+	prepared.admitRequest = cfg.AdmitRequest
 	prepared.managedPublic = approved.Endpoint.Public
 	prepared.metadataRevision = approved.TrustRevision
 	prepared.targetResolver = cfg.TargetResolver
@@ -126,10 +128,19 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 	closeHTTP := func() {}
 	var httpFrontend HTTP
 	if prepared.managedProtocol == serviceconfig.ProtocolHTTP {
+		var proof *httpaccess.ReadinessProof
+		if config.ReadinessProof != nil {
+			proof = config.ReadinessProof(httpaccess.ReadinessRun{Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: setup.ServiceId},
+				ID: setup.ServiceRunId, Number: uint64(setup.RunNumber), Hostname: prepared.managedHostname})
+			if proof == nil {
+				return nil, nil, ErrPrivateStream
+			}
+		}
 		var err error
 		httpFrontend, closeHTTP, err = PrepareHTTP(ctx, HTTP{
 			AuditSink:      audit,
 			InspectionMode: config.InspectionMode, ObserveSummary: config.ObserveSummary,
+			AdmitRequest: config.AdmitRequest, ReadinessProof: proof,
 			Control: control, Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: setup.ServiceId},
 			RunID: setup.ServiceRunId, Number: setup.RunNumber, Token: credentials.ServiceRunToken(setup.RunToken),
 			Hostname: prepared.managedHostname, Port: prepared.servicePort, Requests: prepared.serviceHTTPRequests,
